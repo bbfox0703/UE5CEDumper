@@ -103,8 +103,12 @@ public class TeleportViewModelTests
 
         // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
         public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
+        public int GetForcedFieldsCalls { get; private set; }
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
-            => NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+        {
+            GetForcedFieldsCalls++;
+            return NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+        }
 
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind, double value = 0, bool on = false, CancellationToken ct = default)
         { ForceFieldCalls++; LastForceClass = className; LastForceField = fieldName; LastForceKind = kind; LastForceValue = value; return Task.FromResult(NextForce); }
@@ -530,6 +534,66 @@ public class TeleportViewModelTests
         await vm.PollHoldsOnceAsync();
         // Matched whole and ordinally: a job on another spelling is another job, which this card's Reset does not end.
         Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+    }
+
+    private const string StealthJob = Constants.HoldForceFieldPrefix + "BP_Player_C"
+                                      + Constants.HoldForceFieldSeparator + "Visibility";
+
+    private static ForcedFieldInfo StealthJobAt(double value)
+        => new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = value, Held = 1 };
+
+    /// <summary>A window whose Stealth card detected BP_Player_C::Visibility, then held and released it itself: the
+    /// card then knows that no stealth hold exists.</summary>
+    private static async Task<(TeleportViewModel Vm, FakeDumpService Dump)> StealthReleasedVm()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextStealthCandidates = new List<StealthCandidate>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
+        };
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(1, dump.ResetFieldCalls);
+        return (vm, dump);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the chip says the card's Reset takes the feature over and ends it.
+    [Fact]
+    public async Task TheStealthCardsReset_EndsTheJobItsChipNames()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));          // an AI session forces the same meter
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(2, dump.ResetFieldCalls);
+        Assert.Equal(("BP_Player_C", "Visibility"), (dump.LastForceClass, dump.LastForceField));
+    }
+
+    [Fact]
+    public async Task TheStealthBadge_FollowsTheJobSomeoneElseHolds_WithoutSearchingAgain()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        int searches = dump.FindStealthCalls;
+
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Holding @0", vm.StealthState);
+
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(5) };   // held, at a value this card never sets
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Unknown", vm.StealthState);
+
+        dump.NextHolds = Report();                             // they let go
+        dump.NextForcedFields = new List<ForcedFieldInfo>();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Off", vm.StealthState);
+        Assert.Equal(searches, dump.FindStealthCalls);         // the forced fields only: no search of the pawn
     }
 
     [Fact]
