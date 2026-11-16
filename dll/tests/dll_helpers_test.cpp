@@ -595,6 +595,13 @@ static void Test_D23_InvokeOwnersAndDenyList() {
                           "AddInterpFloat", "AddInterpVector", "AddInterpLinearColor", "LoadStreamLevel",
                           "LoadStreamLevelBySoftObjectPtr", "UnloadStreamLevel", "UnloadStreamLevelBySoftObjectPtr"})
         EXPECT((std::string("phase 1b's scan: refused ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
+    // Review: the same level load and unload under other names (UE 5.8: CheatManager's exec trio, ULevelStreaming's
+    // setters, ULevelStreamingDynamic's and ILevelInstanceInterface's level instances).
+    for (const char* n : {"StreamLevelIn", "StreamLevelOut", "OnlyLoadLevel", "SetShouldBeLoaded",
+                          "SetIsRequestingUnloadAndRemoval", "LoadLevelInstance", "LoadLevelInstanceBySoftObjectPtr",
+                          "UnloadLevelInstance"})
+        EXPECT((std::string("a level load or unload is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
     // An async action's Activate does the online-service write, the session join or the save its factory set up.
     // Refused by the resolved full name: UActorComponent::Activate is an everyday function of the same name.
     EXPECT("an async action's Activate is refused by its full name",
