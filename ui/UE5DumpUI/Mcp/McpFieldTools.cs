@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
@@ -28,7 +29,7 @@ namespace UE5DumpUI.Mcp;
 /// (get_object's template, DLL 3718+): a class default, a class default's subobject or a Blueprint component template
 /// holds what every instance spawned later starts with, which is more than the grant's "every live instance".</para>
 /// </summary>
-internal static class McpFieldTools
+internal static partial class McpFieldTools
 {
     private const int LookupSeconds = 30;
     private const int MaxSuperHops = 64;
@@ -282,16 +283,40 @@ internal static class McpFieldTools
                    : null);
     }
 
-    /// <summary>A decimal or exponent form of an integer as its digits, while a double holds it exactly (below 2^53);
-    /// anything else, a name included, as given, for the converters to take or refuse.</summary>
+    /// <summary>A decimal or exponent form of an integer (42.0, 1e3, 4200e-2) as its digits; anything else, a name
+    /// included, as given, for the converters to take or refuse. Decided from the text: a double would round
+    /// 0.99999999999999999 to 1 and 1e-400 to 0, writing an integer the caller never sent.</summary>
     private static string IntegralText(string text)
     {
         if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)) return text;
-        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
-               && d == Math.Floor(d) && Math.Abs(d) < 9007199254740992.0
-            ? ((long)d).ToString(CultureInfo.InvariantCulture)
+        var m = NumberText().Match(text);
+        if (!m.Success) return text;
+        string digits = m.Groups[2].Value + m.Groups[3].Value;
+        int exponent = m.Groups[4].Success ? int.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture) : 0;
+        int after = m.Groups[3].Value.Length - exponent;   // digits left after the point once the exponent is applied
+        string whole;
+        if (after <= 0)
+        {
+            if (-after > 20) return text;   // past any 64-bit integer: the converter refuses it
+            whole = digits + new string('0', -after);
+        }
+        else
+        {
+            bool zeros = after >= digits.Length ? digits.All(c => c == '0') : digits[^after..].All(c => c == '0');
+            if (!zeros) return text;
+            whole = after >= digits.Length ? "0" : digits[..^after];
+        }
+        bool negative = m.Groups[1].Value == "-";
+        if (long.TryParse((negative ? "-" : "") + whole, NumberStyles.Integer, CultureInfo.InvariantCulture, out long v))
+            return v.ToString(CultureInfo.InvariantCulture);
+        return !negative && ulong.TryParse(whole, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong u)
+            ? u.ToString(CultureInfo.InvariantCulture)
             : text;
     }
+
+    // A number's text: its sign, its integer digits, a fraction's digits, an exponent.
+    [GeneratedRegex(@"^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d{1,4}))?$", RegexOptions.CultureInvariant)]
+    private static partial Regex NumberText();
 
     private static string ShortName(string name)
     {
