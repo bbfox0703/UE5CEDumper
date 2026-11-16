@@ -94,6 +94,17 @@ internal sealed class McpArgs(JsonObject? args)
     /// <summary>An integer clamped to [min, max]; the schema advertises the same bounds.</summary>
     public int Int(string name, int def, int min, int max) => Math.Clamp(OptInt(name) ?? def, min, max);
 
+    /// <summary>An integer that must lie in [min, max]: refused outside, never clamped, for a value that changes the
+    /// game, where a silent clamp would do something the caller did not ask for.</summary>
+    public int IntIn(string name, int def, int min, int max)
+    {
+        int v = OptInt(name) ?? def;
+        if (v < min || v > max)
+            throw new McpToolError($"'{name}' must be from {min} to {max} ({v.ToString(CultureInfo.InvariantCulture)} "
+                                   + "given).");
+        return v;
+    }
+
     /// <summary>A finite number, or null when absent. A numeric string is read too.</summary>
     public double? OptDouble(string name)
     {
@@ -255,6 +266,15 @@ internal static class McpSchema
     public static JsonObject Long(string description) => new() { ["type"] = "integer", ["description"] = description };
 
     public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
+
+    /// <summary>A number with the range its tool refuses outside of, so the model sees it before calling.</summary>
+    public static JsonObject Number(string description, double min, double max, bool exclusiveMin = false)
+    {
+        var o = Number(description);
+        o[exclusiveMin ? "exclusiveMinimum" : "minimum"] = min;
+        o["maximum"] = max;
+        return o;
+    }
 
     public static JsonObject Bool(string description, bool def) => new()
     {

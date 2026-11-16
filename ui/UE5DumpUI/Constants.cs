@@ -89,6 +89,25 @@ public static class Constants
     /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
     public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
     public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
+    // The ranges an AI's gameplay values must lie in: the UI's own, refused outside rather than clamped, because the
+    // DLL clamps several silently and allows more than the UI for two (time dilation, jump).
+    /// <summary>The world time-dilation slider's ceiling (TeleportPanel); the DLL's TIME_DILATION_MAX is 100.</summary>
+    public const double McpWorldTimeDilationMax = 3.0;
+    /// <summary>The pawn time-dilation slider's ceiling.</summary>
+    public const double McpPawnTimeDilationMax = 10.0;
+    /// <summary>The walk-speed and gravity multipliers: the DLL's MOVE_MULT_MIN / MOVE_MULT_MAX and the UI's sliders.
+    /// </summary>
+    public const double McpMoveMultiplierMin = 0.1;
+    public const double McpMoveMultiplierMax = 10.0;
+    /// <summary>The jump knob's multiplier is velocity, and the UI's slider is height, 10% to 30x: velocity is the
+    /// square root. Kept exact, never as a rounded 0.316 / 5.48, which would refuse the edge itself.</summary>
+    public static readonly double McpJumpVelocityMin = Math.Sqrt(0.1);
+    public static readonly double McpJumpVelocityMax = Math.Sqrt(30.0);
+    /// <summary>Fly's speed in uu/s: the DLL's FLY_SPEED_MIN / FLY_SPEED_MAX and the UI's slider.</summary>
+    public const double McpFlySpeedMin = 50.0;
+    public const double McpFlySpeedMax = 20000.0;
+    /// <summary>See-through's pierce count: the DLL's SCHLACHT_PIERCE_MAX and the UI's box.</summary>
+    public const int McpSeeThroughCountMax = 10;
     /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
     /// prompt shows a call's arguments in full (Phase 0, M1), so the user approves these words, not the model's own.
     /// </summary>

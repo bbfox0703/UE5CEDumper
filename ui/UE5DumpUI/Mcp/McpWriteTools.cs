@@ -76,7 +76,9 @@ internal static class McpWriteTools
             "Holds a movement knob of the player's movement component at its captured base times a multiplier "
             + "(walk_speed, gravity scale, jump), or resets it to the base. Refused when someone else holds that knob.",
             [("knob", McpSchema.Enum("Which knob.", "walk_speed", "gravity", "jump"), true),
-             ("multiplier", McpSchema.Number("Times the base, e.g. 1.5. Leave out with reset."), false),
+             ("multiplier", McpSchema.Number("Times the base, e.g. 1.5; 0.1 to 10, and for jump 0.317 to 5.477 "
+                 + "(the velocity for 10% to 30x the jump height). Leave out with reset.", Constants.McpMoveMultiplierMin,
+                 Constants.McpMoveMultiplierMax), false),
              ("reset", McpSchema.Bool("Reset the knob to its base instead.", false), false)],
             (a, r) =>
             {
@@ -90,7 +92,11 @@ internal static class McpWriteTools
                     return;
                 }
                 double m = a.ReqDouble("multiplier");
-                if (m <= 0) throw new McpToolError("'multiplier' must be above 0.");
+                if (knob == "jump")
+                    InRange(m, "multiplier", Constants.McpJumpVelocityMin, Constants.McpJumpVelocityMax,
+                        " for jump (the velocity for 10% to 30x the jump height, as the UI's slider)");
+                else
+                    InRange(m, "multiplier", Constants.McpMoveMultiplierMin, Constants.McpMoveMultiplierMax, "");
                 r["multiplier"] = m;
             }, "set_movement_multiplier", kind: McpGrantKind.Movement);
 
@@ -108,16 +114,23 @@ internal static class McpWriteTools
                     r["cmd"] = "reset_gravity_direction";
                     return;
                 }
-                r["x"] = a.ReqDouble("x");
-                r["y"] = a.ReqDouble("y");
-                r["z"] = a.ReqDouble("z");
+                double x = a.ReqDouble("x"), y = a.ReqDouble("y"), z = a.ReqDouble("z");
+                // The DLL reads a zero vector as its own OFF, which a set would carry past the gate as no release.
+                if (x == 0 && y == 0 && z == 0)
+                    throw new McpToolError("'x', 'y' and 'z' are all 0, which is no direction. Pass reset to give the "
+                                           + "game back its own gravity.");
+                r["x"] = x;
+                r["y"] = y;
+                r["z"] = z;
             }, "set_gravity_direction", kind: McpGrantKind.Movement);
 
         yield return Write(game, experimentalEnabled, grants, "write_time_dilation", "Time dilation",
             "Holds world time dilation (target global) or the player pawn's own (target pawn) at a value, or resets it "
             + "to its natural value. 0.5 is half speed. Refused when someone else holds that lane.",
             [("target", McpSchema.Enum("Which lane.", "global", "pawn"), true),
-             ("value", McpSchema.Number("The dilation, e.g. 0.5. Leave out with reset."), false),
+             ("value", McpSchema.Number("The dilation, e.g. 0.5: above 0, at most 3 for global and 10 for pawn, as "
+                 + "the UI's sliders. Leave out with reset.", 0, Constants.McpPawnTimeDilationMax, exclusiveMin: true),
+                 false),
              ("reset", McpSchema.Bool("Reset the lane instead.", false), false)],
             (a, r) =>
             {
@@ -131,6 +144,8 @@ internal static class McpWriteTools
                 }
                 double v = a.ReqDouble("value");
                 if (v <= 0) throw new McpToolError("'value' must be above 0.");
+                InRange(v, "value", 0, target == "global"
+                    ? Constants.McpWorldTimeDilationMax : Constants.McpPawnTimeDilationMax, " for " + target);
                 r["value"] = v;
             }, "set_time_dilation", kind: McpGrantKind.Toggles);
 
@@ -147,7 +162,8 @@ internal static class McpWriteTools
             "Experimental. Turns flying on or off and sets its speed, key preset (0 WASD, 1 numpad, 2 arrows) and "
             + "noclip. Refused when someone else holds fly, or while the UI's experimental features are off.",
             [("enable", McpSchema.Bool("On or off.", false), false),
-             ("speed", McpSchema.Number("Speed in units per second."), false),
+             ("speed", McpSchema.Number("Speed in units per second, 50 to 20000.", Constants.McpFlySpeedMin,
+                 Constants.McpFlySpeedMax), false),
              ("preset", McpSchema.Int("Key preset.", 0, 2), false),
              ("noclip", McpSchema.Bool("Through walls.", false), false)],
             (a, r) =>
@@ -155,8 +171,10 @@ internal static class McpWriteTools
                 if (!(a.Has("enable") || a.Has("speed") || a.Has("preset") || a.Has("noclip")))
                     throw new McpToolError("Pass at least one of enable, speed, preset, noclip.");
                 if (a.Has("enable")) r["enable"] = a.Bool("enable", false);
-                if (a.Has("speed")) r["speed"] = a.ReqDouble("speed");
-                if (a.Has("preset")) r["preset"] = a.Int("preset", 0, 0, 2);
+                if (a.Has("speed"))
+                    r["speed"] = InRange(a.ReqDouble("speed"), "speed", Constants.McpFlySpeedMin,
+                        Constants.McpFlySpeedMax, "");
+                if (a.Has("preset")) r["preset"] = a.IntIn("preset", 0, 0, 2);
                 if (a.Has("noclip")) r["noclip"] = a.Bool("noclip", false);
             }, "fly_set", experimental: true, gameThreadCalls: 2, kind: McpGrantKind.Movement);   // fly OFF restores collision on the game thread
 
@@ -268,13 +286,15 @@ internal static class McpWriteTools
             + "turns that off. Turning it off is refused while the UI or Cheat Engine also has it on: an OFF would end "
             + "theirs too. Refused while the UI's experimental features are off.",
             McpSchema.Object(("enable", McpSchema.Bool("On or off.", false), true),
-                ("count", McpSchema.Int("Occluders to hide.", 1, 16), false), PidProp),
+                ("count", McpSchema.Int("Occluders to hide (turning on only).", 1, Constants.McpSeeThroughCountMax),
+                    false), PidProp),
             ReadOnly: false,
             async (a, ct) =>
             {
                 int? pid = a.OptInt("pid");
                 RequireExperimental(experimentalEnabled, "See-through");
                 bool enable = ReqBool(a, "enable");
+                int? count = enable && a.Has("count") ? a.IntIn("count", 1, 1, Constants.McpSeeThroughCountMax) : null;
                 var ptrs = await RequireWritableDllAsync(game, pid, ct);
                 var timeout = TimeSpan.FromSeconds(WriteSeconds);
                 if (!enable)
@@ -293,7 +313,7 @@ internal static class McpWriteTools
                 var request = new JsonObject { ["cmd"] = "seethrough_set", ["enable"] = enable };
                 // The count is a global setting seethrough_set applies before enable: an OFF carrying one would be no
                 // release, and nobody turning it off needs a new count.
-                if (enable && a.Has("count")) request["count"] = a.Int("count", 1, 1, 16);
+                if (count is int n) request["count"] = n;
                 var grant = Admit(grants, McpToolRole.GrantedWrite, McpGrantKind.Toggles, request, ptrs);
                 // Hiding or showing each occluder is a game-thread call, up to 16 in turn.
                 var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 16), ct, requireScan: true,
@@ -402,6 +422,18 @@ internal static class McpWriteTools
         }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedWrite, GrantKind: McpGrantKind.Movement);
 
     // ── Guards and replies ──────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>A value that must lie in the UI's own range: refused outside, never clamped, before anything is sent.
+    /// </summary>
+    private static double InRange(double v, string name, double min, double max, string which)
+    {
+        if (v >= min && v <= max) return v;
+        throw new McpToolError($"'{name}' must be from {Show(Math.Ceiling(min * 1000) / 1000)} to "
+                               + $"{Show(Math.Floor(max * 1000) / 1000)}{which} ({Show(v)} given).");
+    }
+
+    // The bounds are worded at three decimals, rounded inward, so the words never name a value the check refuses.
+    private static string Show(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>Admits one state-changing request for the game run in <paramref name="ptrs"/>, the get_pointers reply
     /// the DLL build check fetched, so the build refusal still comes first. A release needs no admission and gets
