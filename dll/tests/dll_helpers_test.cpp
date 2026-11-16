@@ -643,6 +643,18 @@ static void Test_Voll_HoldLedger() {
            == std::vector<std::string>({"force_field:A::x", "force_field:B::y"}));
     EXPECT("holds: a read changes none", changed(R"({"cmd":"get_protect_state"})").empty()
            && changed(R"({"cmd":"fly_get_state"})").empty());
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the UI's Console panel runs ToggleDebugCamera through invoke_function. Missed
+    // by the ledger, the camera it turned on stayed named for whoever held it before -- an AI session, whose end then
+    // turned the user's camera off -- or for CE after CE's OFF.
+    const std::vector<std::string> camera{"debug_camera"};
+    EXPECT("holds * : an invoke of the debug camera's own functions changes the camera, whatever the case",
+           changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera"})") == camera
+           && changed(R"({"cmd":"invoke_function","func_name":"enabledebugcamera"})") == camera
+           && changed(R"({"cmd":"invoke_function","func_name":"DisableDebugCamera"})") == camera);
+    EXPECT("holds: any other invoke changes none",
+           changed(R"({"cmd":"invoke_function","func_name":"Jump"})").empty()
+           && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCameraEx"})").empty()
+           && changed(R"({"cmd":"invoke_function"})").empty());
     EXPECT("holds: every toggle is covered",
            changed(R"({"cmd":"set_foreground_lock"})").size() == 1 && changed(R"({"cmd":"fly_set"})").size() == 1
            && changed(R"({"cmd":"set_debug_camera"})").size() == 1

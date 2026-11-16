@@ -648,6 +648,7 @@ public sealed class PipePerProcessSourceTests
                      "set_god_mode", "set_foreground_lock", "set_gravity_direction", "reset_gravity_direction",
                      "fly_set", "set_debug_camera", "set_movement_multiplier", "reset_movement", "set_time_dilation",
                      "reset_time_dilation", "force_field", "reset_field", "reset_all_fields",
+                     "invoke_function",   // the debug camera's own functions, which the Console panel runs
                  })
             Assert.Contains("\"" + cmd + "\"", body);
         // ...and each of those is a real command (Renge.h), so a rename cannot leave the ledger matching nothing.
