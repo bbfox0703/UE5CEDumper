@@ -405,9 +405,13 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 
 // ── What a background client may not invoke ─────────────────────────────────
 // [D2-3-INVOKE] The maintainer's list (2026-11-11) for the MCP server's invoke_function. Empty when the call may go
-// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag: a call that can leave the
-// machine. The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
+// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag (FUNC_Net marks replication RPCs
+// only). The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
 // a heuristic, and a game function that does the same under another name is not caught. The UI and CE are never asked.
+// [INVOKE-DENY-INDIRECTION] (2026-11-16) By name too: the families that reach a refused effect INDIRECTLY (a timer that
+// calls any function by name, a setter that writes any property by name, a Blueprint graph entered at a free entry
+// point), RemovePlayer, and the online-service writes that leave the machine without being RPCs (achievements,
+// leaderboards, in-app purchases; names from UE's OnlineSubsystemUtils). A per-function grant must never reach these.
 inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags) {
     constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
     if (functionFlags & kFuncNet)
@@ -451,9 +455,28 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
         {"savegametoslot", "writes a save slot, which can overwrite the user's save"},
         {"asyncsavegametoslot", "writes a save slot, which can overwrite the user's save"},
         {"deletegameinslot", "deletes a save slot, which cannot be undone"},
+        {"removeplayer", "removes a player, and with bDestroyPawn destroys its pawn"},
+        {"setcollisionprofilenameproperty", "writes a property by name"},
+        {"writeprogress", "writes achievement progress to the online service, outside the game"},
+        {"writeleaderboardinteger", "writes a leaderboard score to the online service, outside the game"},
+        {"createproxyobjectforflush", "flushes leaderboard writes to the online service, outside the game"},
     };
     for (const Rule& r : kRules)
         if (n == r.name) return r.why;
+    // Families: a name that starts with `prefix` and ends with `suffix` (either may be empty).
+    struct Family { const char* prefix; const char* suffix; const char* why; };
+    static constexpr Family kFamilies[] = {
+        {"k2_settimer", "", "schedules a call by name or event, which reaches functions this list refuses"},
+        {"set", "propertybyname", "writes any property by name, object pointers included"},
+        {"executeubergraph", "", "enters a Blueprint's event graph at whatever entry point it is given"},
+        {"createproxyobjectforinapppurchase", "", "talks to the platform's in-app purchase service, outside the game"},
+    };
+    for (const Family& f : kFamilies) {
+        const std::string_view p(f.prefix), s(f.suffix);
+        if (n.size() >= p.size() + s.size() && n.compare(0, p.size(), p) == 0
+            && n.compare(n.size() - s.size(), s.size(), s) == 0)
+            return f.why;
+    }
     return {};
 }
 

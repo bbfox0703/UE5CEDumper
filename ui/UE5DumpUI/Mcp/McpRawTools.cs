@@ -22,7 +22,9 @@ namespace UE5DumpUI.Mcp;
 /// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory). It
 /// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
 /// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
-/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera), never runs it
+/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera, and since
+/// [INVOKE-DENY-INDIRECTION] timers and property setters by name, ubergraph entries, RemovePlayer and the
+/// achievement / leaderboard / purchase calls), never runs it
 /// off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
 /// one of its own is still queued, so a -5 call is never sent again. It never sends direct_call or
 /// set_invoke_timeout.</para>
@@ -118,7 +120,9 @@ internal static class McpRawTools
         + "thread did not run in time is queued and runs later, unless this session ends first: never send it again; "
         + "read_holds lists it until it runs. Refused while the UE5DumpUI window, a Cheat Engine record or another AI "
         + "session has a call outstanding, and for network RPCs, console commands, quitting or travelling, destroying "
-        + "actors, writing or deleting save slots, functions taking an FText, and the debug camera (use "
+        + "actors or removing a player, writing or deleting save slots, timers and property setters that take a name "
+        + "(they reach any function or property), a Blueprint's event-graph entry (ExecuteUbergraph_*), achievement, "
+        + "leaderboard and in-app purchase calls, functions taking an FText, and the debug camera (use "
         + "write_debug_camera).",
         McpSchema.Object(
             ("instance_addr", McpSchema.Addr("The object to call it on."), true),
