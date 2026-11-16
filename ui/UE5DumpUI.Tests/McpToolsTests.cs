@@ -1706,6 +1706,26 @@ public sealed class McpToolsTests
         Assert.Contains("the UE5DumpUI window or another program (pid 4321)", payload!["error"]!.GetValue<string>());
     }
 
+    // Review round 2: the dispatcher refuses an if_free change to another's hold with ok:true and code -20, before the
+    // invoke handler; write_invoke read that as a call that failed with a made-up code -999.
+    [Fact]
+    public async Task WriteInvoke_AHoldAnotherHolds_IsNamed_NotAFailedCall()
+    {
+        var game = InvokeGame(Fn("ToggleDebugCamera"));
+        game.Answers["invoke_function"] = _ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = -20, ["hold"] = "debug_camera",
+            ["holder"] = new JsonObject { ["kind"] = "client", ["pid"] = 4321, ["background"] = false, ["you"] = false },
+        };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "ToggleDebugCamera" });
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("the UE5DumpUI window or another program (pid 4321)", error);
+        Assert.Contains("debug_camera", error);
+        Assert.DoesNotContain("-999", error);
+    }
+
     [Fact]
     public async Task WriteInvoke_Queued_SaysSo_AndNeverShowsTheInputAsOutput()
     {

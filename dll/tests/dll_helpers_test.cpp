@@ -651,6 +651,12 @@ static void Test_Voll_HoldLedger() {
            changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera"})") == camera
            && changed(R"({"cmd":"invoke_function","func_name":"enabledebugcamera"})") == camera
            && changed(R"({"cmd":"invoke_function","func_name":"DisableDebugCamera"})") == camera);
+    // Review round 2: a background client (the MCP server) is refused these before they run
+    // (InvokeRefusedForBackground, "use write_debug_camera"); as a hold change its if_free check answered first and
+    // the AI lost that pointer.
+    EXPECT("holds * : a background client's invoke of them names no hold: it never runs",
+           changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":true})").empty()
+           && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":false})") == camera);
     EXPECT("holds: any other invoke changes none",
            changed(R"({"cmd":"invoke_function","func_name":"Jump"})").empty()
            && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCameraEx"})").empty()
