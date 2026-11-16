@@ -686,6 +686,22 @@ public sealed class McpToolsTests
         Assert.True(r2.IsError);
         Assert.Contains("older than 3718", write!["error"]!.GetValue<string>());
         Assert.DoesNotContain("write_mem", game.Commands);
+        // This floor's own reason: a 3717 DLL keeps the AI's changes off the user's well enough.
+        Assert.Contains("template", write["error"]!.GetValue<string>());
+        Assert.DoesNotContain("off the user's", write["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_OnADllOlderThan3717_SaysThatFloorsReason()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        game.DllBuild = 3716;
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("older than 3717", error);
+        Assert.Contains("the function a grant names", error);
+        Assert.Contains("nothing is changed through it", error);   // the words every floor's refusal shares
     }
 
     [Fact]
