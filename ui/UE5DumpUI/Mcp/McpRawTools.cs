@@ -9,7 +9,8 @@ namespace UE5DumpUI.Mcp;
 
 /// <summary>
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D2-3: raw memory writes and UFunction invokes, to the maintainer's decisions of
-/// 2026-11-11. Both ask every time, as every write_* tool does, and both need the DLL from
+/// 2026-11-11. Wherever the host writes, both are asked about on every call, since no grant covers them
+/// (<see cref="McpGrants.PerCallCommands"/>), and both need the DLL from
 /// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself:
 ///
 /// <para><b>write_memory</b> writes data only. The DLL refuses code, read-only, guard and uncommitted pages for every
@@ -108,7 +109,7 @@ internal static class McpRawTools
                     ? "Read back differently: the game (or a hold) changed it again at once."
                     : null;
             return McpWriteTools.Combine(new McpToolResult(payload, Note: note), game.TakeNotice());
-        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+        }, Idempotent: true, Destructive: true, Role: McpToolRole.PerCallWrite);
 
     // ── write_invoke ────────────────────────────────────────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ internal static class McpRawTools
                 false),
             McpWriteTools.PidProp),
         ReadOnly: false, (a, ct) => RunInvokeAsync(game, a, ct), Idempotent: false, Destructive: true,
-        RequiresInteraction: true);
+        Role: McpToolRole.PerCallWrite);
 
     private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpArgs a, CancellationToken ct)
     {

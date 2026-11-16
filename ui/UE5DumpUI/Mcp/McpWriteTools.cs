@@ -13,8 +13,10 @@ namespace UE5DumpUI.Mcp;
 /// <c>reset_all_fields</c> or touches the marker slots, and a teleport keeps the user's undo point
 /// (<c>keep_undo</c>).</para>
 ///
-/// <para><b>Asked every time.</b> Every tool here is named <c>write_*</c> and carries
-/// <c>requiresUserInteraction</c>: Claude Code asks before each call in every permission mode.</para>
+/// <para><b>Who is asked</b> ([MCP-WRITE-GRANTS-2026-11-14]). Each tool here is named <c>write_*</c> and has a role
+/// and, for a granted write, the grant kind it needs; the host's decision does the rest (<see cref="McpGrants"/>).
+/// Under grants a covered write goes through on the user's grant for this game run, and an OFF or a reset needs none;
+/// on a host asked per call each one carries <c>requiresUserInteraction</c>, as before grants.</para>
 ///
 /// <para><b>Ends with the session.</b> The server marks its requests background, so the DLL releases what it holds when
 /// the server exits.</para>
@@ -67,7 +69,7 @@ internal static class McpWriteTools
             "Turns god mode on or off: forces the player pawn's bCanBeDamaged to false and holds it. Refused when the "
             + "UI, a Cheat Engine record or another session holds god mode.",
             [("enable", McpSchema.Bool("On or off.", false), true)],
-            (a, r) => r["enable"] = ReqBool(a, "enable"), "set_god_mode");
+            (a, r) => r["enable"] = ReqBool(a, "enable"), "set_god_mode", kind: McpGrantKind.Toggles);
 
         yield return Write(game, experimentalEnabled, "write_movement", "Movement knob",
             "Holds a movement knob of the player's movement component at its captured base times a multiplier "
@@ -89,7 +91,7 @@ internal static class McpWriteTools
                 double m = a.ReqDouble("multiplier");
                 if (m <= 0) throw new McpToolError("'multiplier' must be above 0.");
                 r["multiplier"] = m;
-            }, "set_movement_multiplier");
+            }, "set_movement_multiplier", kind: McpGrantKind.Movement);
 
         yield return Write(game, experimentalEnabled, "write_gravity_direction", "Gravity direction",
             "Holds the player's gravity direction (UE 5.3+) at a vector, or resets it. Refused when someone else holds "
@@ -108,7 +110,7 @@ internal static class McpWriteTools
                 r["x"] = a.ReqDouble("x");
                 r["y"] = a.ReqDouble("y");
                 r["z"] = a.ReqDouble("z");
-            }, "set_gravity_direction");
+            }, "set_gravity_direction", kind: McpGrantKind.Movement);
 
         yield return Write(game, experimentalEnabled, "write_time_dilation", "Time dilation",
             "Holds world time dilation (target global) or the player pawn's own (target pawn) at a value, or resets it "
@@ -129,7 +131,7 @@ internal static class McpWriteTools
                 double v = a.ReqDouble("value");
                 if (v <= 0) throw new McpToolError("'value' must be above 0.");
                 r["value"] = v;
-            }, "set_time_dilation");
+            }, "set_time_dilation", kind: McpGrantKind.Toggles);
 
         yield return DebugCamera(game);
 
@@ -138,7 +140,7 @@ internal static class McpWriteTools
             + "set back; nothing holds it.",
             [("show", McpSchema.Bool("Show or hide.", true), true)],
             (a, r) => r["show"] = ReqBool(a, "show"), "set_mouse_cursor", ifFree: false,
-            gameThreadCalls: 2);   // its input mode is set on the game thread, twice to show the cursor
+            gameThreadCalls: 2, kind: McpGrantKind.Toggles);   // its input mode is set on the game thread, twice to show the cursor
 
         yield return Write(game, experimentalEnabled, "write_fly", "Fly",
             "Experimental. Turns flying on or off and sets its speed, key preset (0 WASD, 1 numpad, 2 arrows) and "
@@ -155,14 +157,15 @@ internal static class McpWriteTools
                 if (a.Has("speed")) r["speed"] = a.ReqDouble("speed");
                 if (a.Has("preset")) r["preset"] = a.Int("preset", 0, 0, 2);
                 if (a.Has("noclip")) r["noclip"] = a.Bool("noclip", false);
-            }, "fly_set", experimental: true, gameThreadCalls: 2);   // fly OFF restores collision on the game thread
+            }, "fly_set", experimental: true, gameThreadCalls: 2, kind: McpGrantKind.Movement);   // fly OFF restores collision on the game thread
 
         yield return Write(game, experimentalEnabled, "write_foreground_lock", "Keep Foreground",
             "Experimental. Makes the game believe it is the foreground window, so it keeps running (and game-thread "
             + "work keeps answering) while another window has the focus. Refused when someone else holds it, or while "
             + "the UI's experimental features are off.",
             [("enable", McpSchema.Bool("On or off.", false), true)],
-            (a, r) => r["enable"] = ReqBool(a, "enable"), "set_foreground_lock", experimental: true);
+            (a, r) => r["enable"] = ReqBool(a, "enable"), "set_foreground_lock", experimental: true,
+            kind: McpGrantKind.Toggles);
 
         yield return SeeThrough(game, experimentalEnabled);
 
@@ -185,7 +188,7 @@ internal static class McpWriteTools
                 r["kind"] = kind;
                 if (kind == "bool") r["on"] = a.Bool("on", false);
                 else r["value"] = a.ReqDouble("value");
-            }, "force_field", experimental: true, timeoutSeconds: 90);
+            }, "force_field", experimental: true, timeoutSeconds: 90, role: McpToolRole.PerCallWrite);
 
         yield return Write(game, experimentalEnabled, "write_force_field_reset", "Release a forced field",
             "Experimental. Releases one force-field job this server holds, restoring the captured value. Refused for "
@@ -196,7 +199,7 @@ internal static class McpWriteTools
             {
                 r["class_name"] = a.ReqStr("class_name");
                 r["field_name"] = a.ReqStr("field_name");
-            }, "reset_field", experimental: true);
+            }, "reset_field", experimental: true, role: McpToolRole.Release);
 
         yield return Teleport(game, experimentalEnabled);
     }
@@ -229,7 +232,8 @@ internal static class McpWriteTools
     /// (a reset) by setting <c>cmd</c>.</summary>
     private static McpTool Write(IMcpGame game, Func<bool> experimentalEnabled, string name, string title,
         string description, (string, JsonObject, bool)[] props, Action<McpArgs, JsonObject> fill, string cmd,
-        bool experimental = false, bool ifFree = true, int timeoutSeconds = WriteSeconds, int gameThreadCalls = 0)
+        bool experimental = false, bool ifFree = true, int timeoutSeconds = WriteSeconds, int gameThreadCalls = 0,
+        McpGrantKind kind = McpGrantKind.None, McpToolRole role = McpToolRole.GrantedWrite)
     {
         var all = new List<(string, JsonObject, bool)>(props) { PidProp };
         return new McpTool(name, title, description, McpSchema.Object([.. all]), ReadOnly: false,
@@ -247,7 +251,7 @@ internal static class McpWriteTools
                     : TimeSpan.FromSeconds(timeoutSeconds);
                 var reply = await game.SendAsync(pid, request, timeout, ct, requireScan: true);
                 return Answer(reply, game.TakeNotice());
-            }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+            }, Idempotent: true, Destructive: true, Role: role, GrantKind: kind);
     }
 
     /// <summary>See-through has its own owner model (Stage C): each client that turned it on holds a claim, released when
@@ -294,7 +298,7 @@ internal static class McpWriteTools
                     else claimedBy.Remove(game.ConnectedPid);
                 }
                 return result;
-            }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+            }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedWrite, GrantKind: McpGrantKind.Toggles);
     }
 
     /// <summary>The guarded debug-camera command answers in <c>state</c>, not <c>code</c> (D2-3 found the generic
@@ -341,7 +345,7 @@ internal static class McpWriteTools
                     : "Queued: on UE 4.18-5.7 a queued OFF does not turn the camera off; send OFF again once the game "
                       + "responds."), game.TakeNotice());
             return Combine(new McpToolResult(reply), game.TakeNotice());
-        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+        }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedWrite, GrantKind: McpGrantKind.Toggles);
 
     /// <summary>Teleport to explicit coordinates only: never a marker slot (they are the user's), and with
     /// <c>keep_undo</c>, so the user's "Recall last" still returns where the user was. The pose before the jump comes
@@ -385,7 +389,7 @@ internal static class McpWriteTools
                 payload["from"] = pose;
             }
             return result;
-        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+        }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedWrite, GrantKind: McpGrantKind.Movement);
 
     // ── Guards and replies ──────────────────────────────────────────────────────────────────────────────
 

@@ -145,15 +145,29 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public void EveryWriteTool_AsksEveryTime_AndIsMarkedDestructive()
+    public void EveryWriteTool_HasAWriteRole_AndIsMarkedDestructive()
     {
-        // An allow rule does not keep a tool from running in auto mode (measured, register item 15): the marker does.
+        // Whether a write is asked about is the host's decision now ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
+        // what the catalogue fixes is each tool's role and the grant it needs.
         foreach (var t in Catalog())
         {
             bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
-            Assert.Equal(write, t.RequiresInteraction);
+            Assert.Equal(write,
+                t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.Release);
             Assert.Equal(write, t.Destructive);
+            Assert.Equal(t.EffectiveRole == McpToolRole.GrantedWrite, t.GrantKind != McpGrantKind.None);
         }
+        string[] Named(Func<McpTool, bool> which) =>
+            Catalog().Where(which).Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(["write_debug_camera", "write_foreground_lock", "write_god_mode", "write_mouse_cursor",
+                      "write_see_through", "write_time_dilation"],
+            Named(t => t.GrantKind == McpGrantKind.Toggles));
+        Assert.Equal(["write_fly", "write_gravity_direction", "write_movement", "write_teleport"],
+            Named(t => t.GrantKind == McpGrantKind.Movement));
+        Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
+            Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
+        Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
+        Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
     }
 
     [Fact]

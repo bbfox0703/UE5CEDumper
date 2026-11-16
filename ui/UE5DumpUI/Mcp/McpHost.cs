@@ -16,15 +16,48 @@ namespace UE5DumpUI.Mcp;
 /// </summary>
 internal static class McpHost
 {
-    // RED: the surface only.
+    /// <summary>Reads the command line: --mcp once, anywhere, and at most one --writes=any-host or --writes=off. Any
+    /// other argument stops the server before it serves, so a typo never serves under a policy the user did not write.
+    /// </summary>
     internal static bool TryParseArgs(string[] args, out McpWriteMode mode, out string? error)
     {
         mode = McpWriteMode.Default;
         error = null;
-        return true;
+        bool sawMcp = false, sawWrites = false;
+        foreach (string a in args)
+        {
+            if (a == Constants.McpSwitch && !sawMcp)
+            {
+                sawMcp = true;
+                continue;
+            }
+            if (a.StartsWith(Constants.McpWritesArgPrefix, StringComparison.Ordinal) && !sawWrites)
+            {
+                string value = a[Constants.McpWritesArgPrefix.Length..];
+                if (value == Constants.McpWritesAnyHost) mode = McpWriteMode.AnyHost;
+                else if (value == Constants.McpWritesOff) mode = McpWriteMode.Off;
+                else return Refuse("an unknown value in '" + a + "'", out mode, out error);
+                sawWrites = true;
+                continue;
+            }
+            return Refuse("unexpected argument '" + a + "'", out mode, out error);
+        }
+        return sawMcp || Refuse("no " + Constants.McpSwitch, out mode, out error);
     }
 
-    public static int Run()
+    private static bool Refuse(string what, out McpWriteMode mode, out string? error)
+    {
+        mode = McpWriteMode.Default;
+        error = Usage(what);
+        return false;
+    }
+
+    private static string Usage(string what)
+        => "UE5DumpUI " + Constants.McpSwitch + ": " + what + ". It takes " + Constants.McpSwitch + " once and at most "
+           + "one of " + Constants.McpWritesArgPrefix + Constants.McpWritesAnyHost + " or "
+           + Constants.McpWritesArgPrefix + Constants.McpWritesOff + ".";
+
+    public static int Run(string[] args)
     {
         // stdout carries JSON-RPC and nothing else. Anything that writes Console.Out by accident lands in stderr,
         // which the client keeps as a log and never parses.
@@ -35,16 +68,26 @@ internal static class McpHost
         using var platform = new WindowsPlatformService();
         using var log = new McpLog(platform.GetLogDirectoryPath());
         string version = typeof(McpHost).Assembly.GetName().Version?.ToString() ?? Constants.AppVersion;
-        log.Info(Constants.LogCatInit, $"[MCP] UE5DumpUI {version} serving MCP on stdio, pid {Environment.ProcessId}.");
+        if (!TryParseArgs(args, out var mode, out string? error))
+        {
+            // stderr is the client's log of this server; stdout stays empty, so no client mistakes this for a reply.
+            Console.Error.WriteLine(error);
+            log.Error(Constants.LogCatInit, "[MCP] " + error);
+            return 1;
+        }
+        log.Info(Constants.LogCatInit,
+            $"[MCP] UE5DumpUI {version} serving MCP on stdio, pid {Environment.ProcessId}, writes {mode}.");
         try
         {
             using var pipe = new PipeClient(log, "M");
-            // Undecided, this session sends reads and nothing else until the server shares its decision with the link.
-            using var game = new McpGameLink(pipe, platform, log, new McpGrants());
+            // One decision and one grant table for the server, which decides at initialize, and the link, whose
+            // gate checks every send against them.
+            var grants = new McpGrants(mode, log);
+            using var game = new McpGameLink(pipe, platform, log, grants);
             // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
             // once.
             var server = new McpServer(McpTools.Create(game, () => new ExperimentalGate(platform).IsEnabled), log,
-                stdout, version);
+                stdout, version, grants);
             int code = server.RunAsync(stdin).GetAwaiter().GetResult();
             try { pipe.DisconnectAsync().GetAwaiter().GetResult(); } catch (Exception) { /* exiting anyway */ }
             return code;

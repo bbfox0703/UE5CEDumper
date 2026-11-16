@@ -25,9 +25,10 @@ internal static class Program
 
         // [PIPE-PER-PROCESS-2026-11-06] Stage D: `--mcp` serves the Model Context Protocol on stdio for an AI client
         // instead of opening the window. Before the single-instance mutex, so a server runs beside the UI and beside
-        // other servers, and before Avalonia, which it never starts.
-        if (args.Length >= 1 && args[0] == Constants.McpSwitch)
-            return Mcp.McpHost.Run();
+        // other servers, and before Avalonia, which it never starts. Anywhere on the line: a registration may put
+        // --writes= first, and the window must never open under an MCP client.
+        if (Array.IndexOf(args, Constants.McpSwitch) >= 0)
+            return Mcp.McpHost.Run(args);
 
         // AOT publish gives gutted stack traces (no PDB lookup at runtime,
         // inlining opaque). A crash in the compositor thread would otherwise

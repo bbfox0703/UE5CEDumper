@@ -59,8 +59,8 @@ public static class Constants
     /// folder, aged out by the same <see cref="LogMaxAgeDays"/> sweep.</summary>
     public const string McpLogFilePrefix = "mcp-";
     /// <summary>The tool-definition <c>_meta</c> key Claude Code reads to ask before every call of a tool, in every
-    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Every write_* tool carries it.
-    /// </summary>
+    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Which tools carry it depends on
+    /// the host's decision (<see cref="Mcp.McpGrants.IsMarked"/>).</summary>
     public const string McpRequiresInteractionKey = "anthropic/requiresUserInteraction";
     /// <summary>The first DLL build the write tools may change a game through: build 3704 records who holds each hold
     /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
@@ -71,6 +71,13 @@ public static class Constants
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
     public const int McpMinDllBuildForRawWrites = 3706;
+    /// <summary>The <c>--writes=</c> switch after --mcp. Written into one host's own registration, it opens writes to
+    /// that host only ([MCP-WRITE-GRANTS-2026-11-14]); any other value stops the server before it serves.</summary>
+    public const string McpWritesArgPrefix = "--writes=";
+    /// <summary>Grants for a host other than Claude Code. On a host that never asks, the AI then grants itself.</summary>
+    public const string McpWritesAnyHost = "any-host";
+    /// <summary>No write and no grant tool on any host.</summary>
+    public const string McpWritesOff = "off";
     /// <summary>The <c>clientInfo.name</c> Claude Code sends in initialize, compared ordinally: the only host whose
     /// approval prompt this server knows how to rely on ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
     public const string McpClaudeCodeClientName = "claude-code";

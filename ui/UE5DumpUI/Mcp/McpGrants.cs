@@ -174,6 +174,26 @@ public sealed partial class McpGrants
         return mode == McpWriteMode.AnyHost ? McpHostDecision.Grants : McpHostDecision.ReadOnly;
     }
 
+    /// <summary>Whether a host lists a tool of this role. tools/list and tools/call both ask this, so a model that
+    /// remembers a write by name gets nothing from a host that does not list it.</summary>
+    public static bool IsListed(McpToolRole role, McpHostDecision decision) => role switch
+    {
+        McpToolRole.Read or McpToolRole.Scan => true,
+        McpToolRole.Grant or McpToolRole.GrantAdmin => decision == McpHostDecision.Grants,
+        _ => decision != McpHostDecision.ReadOnly,
+    };
+
+    /// <summary>Whether the host is asked before every call of a tool of this role (Claude Code's
+    /// requiresUserInteraction marker). Under grants a grant and the per-call writes ask, and the writes a grant covers
+    /// and the releases do not: the gate admits those. Asked per call, every write asks, as before grants.</summary>
+    public static bool IsMarked(McpToolRole role, McpHostDecision decision) => decision switch
+    {
+        McpHostDecision.Grants => role is McpToolRole.Grant or McpToolRole.PerCallWrite,
+        McpHostDecision.MarkedPerCall =>
+            role is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.Release,
+        _ => false,
+    };
+
     // Digits and dots only: Version.TryParse alone takes a sign or spaces inside a part.
     [GeneratedRegex("^[0-9]{1,9}(\\.[0-9]{1,9}){1,3}$", RegexOptions.CultureInvariant)]
     private static partial Regex VersionShape();

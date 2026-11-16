@@ -502,7 +502,7 @@ internal static class McpTools
             Strip(started);
             return Combine(new McpToolResult(started,
                 Note: "The scan runs in the background: poll read_status until scanned is true."), game.TakeNotice());
-        });
+        }, Role: McpToolRole.Scan);
 
     private static McpTool ValueScanBegin(IMcpGame game)
     {

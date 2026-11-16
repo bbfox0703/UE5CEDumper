@@ -8,10 +8,12 @@ namespace UE5DumpUI.Mcp;
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D. One MCP tool: what <c>tools/list</c> advertises and what <c>tools/call</c>
 /// runs. <paramref name="ReadOnly"/> becomes <c>readOnlyHint</c>, and the name's <c>read_</c> prefix is what lets one
 /// Claude Code allow rule (<c>mcp__&lt;server&gt;__read_*</c>) admit every read; McpToolsTests pins that the two agree.
-/// <para><paramref name="RequiresInteraction"/> (Stage D2, every <c>write_*</c> tool) becomes
-/// <c>_meta["anthropic/requiresUserInteraction"]</c>: Claude Code then asks before every call in every permission
-/// mode, an allow rule notwithstanding. An allow rule alone does not keep a tool from running in auto mode -- measured,
-/// verification-register item 15 -- so a tool that changes the game carries the marker, not just its name.</para>
+/// <para><paramref name="Role"/> ([MCP-WRITE-GRANTS-2026-11-14]) decides, with the host's decision, whether the
+/// server lists the tool and whether it carries <c>_meta["anthropic/requiresUserInteraction"]</c>, on which Claude Code
+/// asks before every call in every permission mode, an allow rule notwithstanding (an allow rule alone does not keep a
+/// tool from running in auto mode: measured, verification-register item 15). <see cref="McpGrants.IsListed"/> and
+/// <see cref="McpGrants.IsMarked"/> hold the rule; <paramref name="GrantKind"/> names the grant a granted write needs.
+/// </para>
 /// </summary>
 internal sealed record McpTool(
     string Name,
@@ -22,9 +24,13 @@ internal sealed record McpTool(
     Func<McpArgs, CancellationToken, Task<McpToolResult>> Run,
     bool Idempotent = true,
     bool Destructive = false,
-    bool RequiresInteraction = false,
     McpToolRole? Role = null,
-    McpGrantKind GrantKind = McpGrantKind.None);
+    McpGrantKind GrantKind = McpGrantKind.None)
+{
+    /// <summary>The role, defaulted from <see cref="ReadOnly"/> when the tool names none: a write that forgets its role
+    /// is then hidden where the host only reads, and asked about on every call where it grants.</summary>
+    public McpToolRole EffectiveRole => Role ?? (ReadOnly ? McpToolRole.Read : McpToolRole.PerCallWrite);
+}
 
 /// <summary>What a tool returns: a JSON payload for the model, whether it is an error the model can act on, and an
 /// optional note shown beside it (a reconnect, a cut reply).</summary>
