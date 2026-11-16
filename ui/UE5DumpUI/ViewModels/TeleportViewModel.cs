@@ -1092,7 +1092,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ExperimentalTeardown = TearDownAfterConnectPrimeAsync(ConnectPrime, gen);
             // [MCP-WRITE-GRANTS-2026-11-14] Who else holds each card's feature, once the engine state has said the DLL
             // answers get_holds (it may have come first).
-            _aiWriteBlock?.Reload();
+            _ = ReloadAiWriteBlockAsync();
             if (_holdsSupported) StartHoldsPoll();
         }
         else
@@ -3974,7 +3974,6 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // A card read owed and not yet made: the poll met a command, or the read failed. Carried until it is made, since
     // the read after a holder lets go is the only one that shows the card as it is now.
     private readonly HashSet<string> _rereadOwed = new(StringComparer.Ordinal);
-    private readonly HashSet<long> _exitedPids = new();
     private const string SeeThroughHoldKey = "see-through";   // a key of this class's own: See-through has no hold name
 
     private static readonly string[] MovementHolds =
@@ -4014,7 +4013,6 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _holdsFailureLogged = false;
         _foreignHolds.Clear();
         _rereadOwed.Clear();
-        _exitedPids.Clear();
         DebugCameraHolderText = "";
         GodModeHolderText = "";
         StealthHolderText = "";
@@ -4041,7 +4039,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal async Task PollHoldsOnceAsync()
     {
         // The switch can change in another window or by hand: the box must not show a tick the servers do not see.
-        _aiWriteBlock?.Reload();
+        await ReloadAiWriteBlockAsync();
         if (!IsConnected || !_holdsSupported || _holdsBusy) return;
         _holdsBusy = true;
         int gen = _holdsGen;
@@ -4060,7 +4058,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 if (gen != _holdsGen || !IsConnected) return;
             }
 
-            var foreign = ApplyHolders(report);
+            var exited = await ExitedHolderPidsAsync(report);
+            if (gen != _holdsGen || !IsConnected) return;
+
+            var foreign = ApplyHolders(report, exited);
             if (seeThrough is not null)
             {
                 SeeThroughHolderText = HolderText.ForSeeThrough(seeThrough);
@@ -4098,12 +4099,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Each card's label from the report; returns the holds someone other than this window holds.</summary>
-    private HashSet<string> ApplyHolders(HoldsReport report)
+    private HashSet<string> ApplyHolders(HoldsReport report, HashSet<long> exited)
     {
         var foreign = new HashSet<string>(StringComparer.Ordinal);
         string Label(string hold)
         {
-            string text = HolderText.For(report.Find(hold), HolderExited);
+            string text = HolderText.For(report.Find(hold), exited.Contains);
             if (text.Length > 0) foreign.Add(hold);
             return text;
         }
@@ -4230,18 +4231,52 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         return missed;
     }
 
-    /// <summary>Whether a holder pid no longer runs: typically this window's own holds from before a restart, which
-    /// outlive it under the old pid. Only "exited" is remembered for the connection; a running holder is asked again,
-    /// since it can exit while connected.</summary>
-    private bool HolderExited(long pid)
+    /// <summary>The holds a card shows, by the DLL's names.</summary>
+    private IEnumerable<string> CardHolds()
     {
-        if (pid <= 0 || pid > int.MaxValue) return false;
-        if (_exitedPids.Contains(pid)) return true;
-        bool exited;
-        try { exited = string.IsNullOrEmpty(_platform.DescribeProcess((int)pid).ImageName); }
-        catch (Exception) { exited = false; }
-        if (exited) _exitedPids.Add(pid);
-        return exited;
+        yield return Constants.HoldDebugCamera;
+        yield return Constants.HoldGodMode;
+        yield return Constants.HoldForegroundLock;
+        yield return Constants.HoldFly;
+        foreach (var hold in MovementHolds) yield return hold;
+        foreach (var hold in TimeHolds) yield return hold;
+        if (_stealthCandidate is { } c) yield return StealthJobHold(c);
+    }
+
+    /// <summary>Which pids holding a card's feature no longer run: typically this window's own holds from before a
+    /// restart, which outlive it under the old pid. Asked anew on every poll, once per pid, since a pid that exited can
+    /// be given to a new process; and off the UI thread, since each lookup lists every process and window.</summary>
+    private async Task<HashSet<long>> ExitedHolderPidsAsync(HoldsReport report)
+    {
+        var pids = new HashSet<long>();
+        foreach (var name in CardHolds())
+            if (report.Find(name) is { InForce: true, Holder: { You: false, Pid: long pid } holder }
+                && holder.Kind == Constants.HoldKindClient && pid > 0 && pid <= int.MaxValue)
+                pids.Add(pid);
+        if (pids.Count == 0) return pids;
+        return await Task.Run(() =>
+        {
+            var exited = new HashSet<long>();
+            foreach (var pid in pids)
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(_platform.DescribeProcess((int)pid).ImageName)) exited.Add(pid);
+                }
+                catch (Exception)
+                {
+                    // Unreadable is not exited: the holder is named as the DLL names it.
+                }
+            }
+            return exited;
+        });
+    }
+
+    private async Task ReloadAiWriteBlockAsync()
+    {
+        if (_aiWriteBlock == null) return;
+        try { await _aiWriteBlock.ReloadAsync(); }
+        catch (Exception ex) { _log.Error("Teleport: re-reading Block AI writes failed", ex); }
     }
 
     private void LogHoldsFailure(Exception ex)

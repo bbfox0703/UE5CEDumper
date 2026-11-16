@@ -111,17 +111,17 @@ public sealed class AiWriteBlockGateTests : IDisposable
     }
 
     [Fact]
-    public void Reload_PicksUpAChangeMadeElsewhere_AndSaysSo()
+    public async Task Reload_PicksUpAChangeMadeElsewhere_AndSaysSo()
     {
         var gate = new AiWriteBlockGate(_platform);
         int changed = 0;
         gate.Changed += (_, _) => changed++;
         WriteFile("{ \"blocked\": true, \"revokeStamp\": 3 }");
-        gate.Reload();
+        await gate.ReloadAsync();
         Assert.True(gate.IsBlocked);
         Assert.Equal(3, gate.RevokeStamp);
         Assert.Equal(1, changed);
-        gate.Reload();
+        await gate.ReloadAsync();
         Assert.Equal(1, changed);   // nothing new, nothing raised
     }
 }

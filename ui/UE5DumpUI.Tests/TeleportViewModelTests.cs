@@ -381,7 +381,6 @@ public class TeleportViewModelTests
         public bool IsBlocked { get; set; }
         public long RevokeStamp { get; set; }
         public bool SaveSucceeds { get; set; } = true;
-        public int Reloads { get; private set; }
         public int AsyncReloads { get; private set; }
         public event EventHandler? Changed;
 
@@ -394,7 +393,6 @@ public class TeleportViewModelTests
             return true;
         }
 
-        public void Reload() => Reloads++;
         public Task ReloadAsync()
         {
             AsyncReloads++;
@@ -929,8 +927,6 @@ public class TeleportViewModelTests
         await vm.PollHoldsOnceAsync();
         Assert.True(after >= 1);
         Assert.Equal(after + 1, gate.AsyncReloads);
-        // A file read every two seconds never blocks the UI thread.
-        Assert.Equal(0, gate.Reloads);
     }
 
     [Fact]

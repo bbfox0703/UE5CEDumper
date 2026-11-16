@@ -66,9 +66,9 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
         return true;
     }
 
-    public void Reload()
+    public async Task ReloadAsync()
     {
-        var state = ReadState(_filePath);
+        var state = await Task.Run(() => ReadState(_filePath));
         bool blocked = state.Unreadable || state.Blocked;
         long stamp = state.Unreadable ? _stamp : state.RevokeStamp;
         if (blocked == _blocked && stamp == _stamp) return;
