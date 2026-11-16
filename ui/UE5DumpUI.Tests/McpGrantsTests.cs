@@ -263,12 +263,24 @@ public sealed class McpGrantsTests
     }
 
     [Fact]
-    public void EveryAdmittedCall_IsCounted()
+    public void EveryCallTheGrantLetsThrough_IsCounted_AndNothingElse()
     {
+        // [MCP-GRANT-USES-RELEASES] Found live (build 3714): uses counted an OFF and a reset that needed no grant.
         var g = Decided();
         g.Grant(McpGrantKind.Movement, Ptrs(), out _);
-        for (int i = 0; i < 3; i++) g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Movement, Ptrs(), out _);
+        var fly = Req("""{"cmd":"fly_set","enable":true}""");
+        var flyOff = Req("""{"cmd":"fly_set","enable":false,"if_free":true}""");
+        for (int i = 0; i < 3; i++)
+        {
+            var cap = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Movement, Ptrs(), out _);
+            Assert.Null(g.Check(fly, cap, Pid, Run));
+        }
         g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);   // refused: not counted
+        // Admitted but never sent (the tool failed after admission): not counted either.
+        g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Movement, Ptrs(), out _);
+        // An OFF of the server's own hold goes through on that, not on the grant.
+        var own = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Movement, Ptrs(), out _);
+        Assert.Null(g.Check(flyOff, own, Pid, Run, Held("fly")));
         Assert.Equal(3, Assert.Single(g.List()).Uses);
     }
 
