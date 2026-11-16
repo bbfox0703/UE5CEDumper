@@ -25,6 +25,13 @@ public interface IAiWriteBlockGate
     /// by another window or by hand). Raises <see cref="Changed"/> when what it shows changes.</summary>
     void Reload();
 
+    /// <summary>Stub (red): as <see cref="Reload"/>.</summary>
+    Task ReloadAsync()
+    {
+        Reload();
+        return Task.CompletedTask;
+    }
+
     /// <summary>Raised when <see cref="IsBlocked"/> or <see cref="RevokeStamp"/> changes.</summary>
     event EventHandler? Changed;
 }

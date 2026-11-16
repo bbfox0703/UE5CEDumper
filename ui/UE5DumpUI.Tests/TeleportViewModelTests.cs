@@ -273,8 +273,14 @@ public class TeleportViewModelTests
         /// <summary>The processes that run, by pid: every other pid reads as exited, as DescribeProcess answers it.
         /// </summary>
         public Dictionary<int, string> Running { get; } = new();
+        /// <summary>Each DescribeProcess call's pid, and the synchronization context it ran under.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<(int Pid, SynchronizationContext? Context)> Described
+        { get; } = new();
         public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
-            => Running.TryGetValue(pid, out var image) ? (image, null) : ("", null);
+        {
+            Described.Enqueue((pid, SynchronizationContext.Current));
+            return Running.TryGetValue(pid, out var image) ? (image, null) : ("", null);
+        }
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
@@ -376,6 +382,7 @@ public class TeleportViewModelTests
         public long RevokeStamp { get; set; }
         public bool SaveSucceeds { get; set; } = true;
         public int Reloads { get; private set; }
+        public int AsyncReloads { get; private set; }
         public event EventHandler? Changed;
 
         public bool TrySetBlocked(bool blocked)
@@ -388,6 +395,11 @@ public class TeleportViewModelTests
         }
 
         public void Reload() => Reloads++;
+        public Task ReloadAsync()
+        {
+            AsyncReloads++;
+            return Task.CompletedTask;
+        }
         public void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -463,10 +475,11 @@ public class TeleportViewModelTests
     /// <summary>A window connected to a DLL that answers get_holds (unless <paramref name="dllBuild"/> says
     /// otherwise), with no connect prime: only the poll's own reads are counted.</summary>
     private static (TeleportViewModel Vm, FakeDumpService Dump) HoldsVm(int dllBuild = Constants.HoldsMinDllBuild,
-        bool experimental = false, IAiWriteBlockGate? gate = null, HoldsReport? first = null)
+        bool experimental = false, IAiWriteBlockGate? gate = null, HoldsReport? first = null,
+        FakePlatform? platform = null)
     {
         var dump = new FakeDumpService { NextHolds = first ?? Report() };
-        var platform = new FakePlatform();
+        platform ??= new FakePlatform();
         platform.Running[AiPid] = "UE5DumpUI.exe";
         platform.Running[OtherPid] = "Other.exe";
         var vm = new TeleportViewModel(dump, new NoopLogger(), platform,
@@ -516,6 +529,55 @@ public class TeleportViewModelTests
         var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode, pid: 99, background: false)));
         await vm.HoldsFirstPoll;
         Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: a pid Windows gives to a new process names that process, not the one that
+    // exited -- an AI session's MCP server among them.
+    [Fact]
+    public async Task AnExitedHoldersPid_ThatRunsAgain_IsNamedForWhatRunsNow()
+    {
+        var platform = new FakePlatform();
+        var (vm, dump) = HoldsVm(platform: platform,
+            first: Report(HeldBy(Constants.HoldGodMode, pid: 99, background: false)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
+
+        platform.Running[99] = "UE5DumpUI.exe";
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode, pid: 99));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 99)", vm.GodModeHolderText);
+    }
+
+    private sealed class MarkerContext : SynchronizationContext
+    {
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: a lookup lists every process and window; seven holds of one AI session
+    // made seven of them on the UI thread every two seconds.
+    [Fact]
+    public async Task EachHolderPid_IsLookedUpOncePerPoll_OffTheCallersThread()
+    {
+        var platform = new FakePlatform();
+        var (vm, dump) = HoldsVm(platform: platform);
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode), HeldBy(Constants.HoldMovementPrefix + "walk_speed"),
+            HeldBy(Constants.HoldTimePrefix + "global"), HeldBy(Constants.HoldGravityDirection),
+            HeldBy(Constants.HoldFly, pid: OtherPid, background: false));
+        platform.Described.Clear();
+
+        var marker = new MarkerContext();
+        var outer = SynchronizationContext.Current;
+        Task poll;
+        SynchronizationContext.SetSynchronizationContext(marker);
+        try { poll = vm.PollHoldsOnceAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(outer); }
+        await poll;
+
+        var calls = platform.Described.ToArray();
+        Assert.Equal(1, calls.Count(c => c.Pid == AiPid));
+        Assert.Equal(1, calls.Count(c => c.Pid == OtherPid));
+        Assert.DoesNotContain(calls, c => ReferenceEquals(c.Context, marker));
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
     }
 
     [Fact]
@@ -863,10 +925,12 @@ public class TeleportViewModelTests
         var gate = new FakeBlockGate();
         var (vm, _) = HoldsVm(gate: gate);
         await vm.HoldsFirstPoll;
-        int after = gate.Reloads;
+        int after = gate.AsyncReloads;
         await vm.PollHoldsOnceAsync();
         Assert.True(after >= 1);
-        Assert.Equal(after + 1, gate.Reloads);
+        Assert.Equal(after + 1, gate.AsyncReloads);
+        // A file read every two seconds never blocks the UI thread.
+        Assert.Equal(0, gate.Reloads);
     }
 
     [Fact]
