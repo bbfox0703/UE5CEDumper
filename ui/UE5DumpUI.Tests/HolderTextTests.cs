@@ -70,6 +70,24 @@ public sealed class HolderTextTests
         Assert.Equal(Res.Get(HolderText.KeyReleaseOwed), HolderText.For(owed, Running));
     }
 
+    // Review round 2: the DLL keeps the owed record until its next monitor tick, after someone else has taken the
+    // camera (its OFF is then abandoned): the holder is named, not an ended session.
+    [Theory]
+    [InlineData("ce", null, false, false, "Held by Cheat Engine")]
+    [InlineData("client", 77L, false, false, "Held by another program (pid 77)")]
+    // Another client's ON in flight, its owner not yet recorded: an ON on its way is not the camera turning off.
+    [InlineData("none", null, false, true, "Held by a program that recorded no owner")]
+    public void AnOwedRelease_SomeoneTookOver_NamesThem(string kind, long? pid, bool background, bool pendingOn,
+        string expected)
+    {
+        var hold = new HoldEntry
+        {
+            Hold = Constants.HoldDebugCamera, Active = !pendingOn, Pending = pendingOn, ReleaseOwed = true,
+            Holder = new HoldOwner { Kind = kind, Pid = pid, Background = background },
+        };
+        Assert.Equal(expected, HolderText.For(hold, Running));
+    }
+
     [Fact]
     public void TheWordsAreTheDictionarys()
     {
