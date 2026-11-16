@@ -485,6 +485,9 @@ public sealed class McpToolsTests
     [InlineData("Ints", HolderPath)]           // a static array (ArrayDim 3)
     [InlineData("NoSuchField", HolderPath)]
     [InlineData("HolderValue", "DumperTestHolder")]   // a short class name, not a path
+    // The DLL's path lookup answers another class (the fake's DumperTestDerivedHolder), which has the field too: only the
+    // check of the answer's own full name refuses it.
+    [InlineData("HolderValue", "//Script/DumperTest/DumperTestHolderX")]
     public async Task TheFieldGrant_RefusesWhatItCannotWriteOrFind(string field, string cls)
     {
         var game = FieldGame();
@@ -555,6 +558,27 @@ public sealed class McpToolsTests
         var (cdo, r2) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, inst: "0x2000"));
         Assert.True(r2.IsError);
         Assert.Contains("class default", cdo!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WhereTheObjectsWalkDisagreesWithItsClass_IsRefused_AndNothingWritten()
+    {
+        // The class layout puts HolderValue at 0x2A0; a walk that reports it elsewhere is another layout than the one the
+        // grant was checked against, so the address computed from the class is not trusted.
+        var game = FieldGame();
+        game.Answers["walk_instance"] = r => JsonNode.Parse(new JsonObject
+        {
+            ["addr"] = r["addr"]!.GetValue<string>(),
+            ["fields"] = new JsonArray(new JsonObject
+            {
+                ["name"] = "HolderValue", ["type"] = "IntProperty", ["offset"] = 0x2A8, ["size"] = 4, ["value"] = "41",
+            }),
+        }.ToJsonString())!.AsObject();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains("0x2A0", payload!["error"]!.GetValue<string>());
         Assert.DoesNotContain("write_mem", game.Commands);
     }
 
