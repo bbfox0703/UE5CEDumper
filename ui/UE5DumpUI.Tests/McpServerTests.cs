@@ -204,6 +204,9 @@ public sealed class McpServerTests
         // Phase 1b: the invoke grant and the tool that calls under it, so the model asks for it by name.
         Assert.Contains(Constants.McpGrantToolInvoke, instructions);
         Assert.Contains(Constants.McpInvokeGrantedTool, instructions);
+        // Phase 2: the field grant and its tool, by name too.
+        Assert.Contains(Constants.McpGrantToolField, instructions);
+        Assert.Contains(Constants.McpFieldGrantedTool, instructions);
         Assert.Contains("read_grants", instructions);
         Assert.Contains("revoke_grants", instructions);
         Assert.Contains("never in advance", instructions);
