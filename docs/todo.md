@@ -890,7 +890,8 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
   top-level object argument (strong, weak or soft) must be of the parameter's declared class or a subclass, by short
   name; a class parameter takes a class object (its class chain reaches Class); an interface parameter, an Object one,
   a struct's object field and an unread declared class are held to liveness only (a lazy one takes only 0). A chain
-  that cannot be read is refused without a claim about the object's kind. ~~Original:~~ (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
+  that cannot be read is refused without a claim about the object's kind. Shipped in build 3719 and checked live
+  (`mcp_client.py invokeparams` step C: GetPlayerControllerID given the pawn refused, given the PlayerController run). ~~Original:~~ (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
   `write_invoke` or `write_invoke_granted_function` is checked for being a live object, never against the parameter's
   declared class (walk_functions' `obj_class`), so a native function can be handed an object of another class and
   call through its vtable. The grant's sentence says "any arguments", and a scalar can crash a game as well, so this

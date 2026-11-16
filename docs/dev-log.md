@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3719) — An AI's UFunction call: an object argument must be of the class its parameter declares `[INVOKE-OBJECT-PARAM-CLASS]`
+
+The LOW hardening item from Phase 1b's review, for `write_invoke` and `write_invoke_granted_function` alike.
+- **What changes:** an object argument was checked for being a live object only, so a native function could be
+  handed an object of another class and call through its vtable, or read its fields, as if it were the declared one.
+  Now a top-level object argument (strong, weak or soft) must be of the parameter's declared class or a subclass,
+  matched by the class's short name; a class parameter (`UClass*`, `TSubclassOf`) takes a class object only. Refused
+  before anything is sent: "'Player' takes a PlayerController; 0x... is a ..., which does not derive from it." A
+  chain that cannot be read is refused without a claim about the object's kind. Held to liveness only, as before: an
+  interface parameter, one declared as any object (no class walk at all), a struct's object field and a parameter whose
+  declared class the DLL could not read.
+- **Review:** a fresh-context review with a verifier (2 LOW, 4 INFO, all confirmed), each fixed before the build: the
+  class parameters, the unread-chain wording, Object's free pass, the dead Lazy arm, the short-name note and the docs.
+  Mutation checks: 4 of 4 killed.
+- **Proven live** on the AOT exe and DLL 3719 (DumperTest Shipping, UE 5.4): `mcp_client.py invokeparams` 30/30 (+3/3
+  apart), its new step C: `GameplayStatics.GetPlayerControllerID` given the pawn refused by the server, no invoke line
+  in the pipe log, and given the live PlayerController run, returning 0. Regressions: `invokegrant` 22/22, `fieldgrant`
+  44/44, `probe` 29/29, `raw` 28/28, `writes --toggle-experimental` 39/39, `holdsmore` 78/78.
+- **Also in this build's docs (no code):** the verification register's Phase 2 rows 3 and 4 closed on 3718 -- a
+  Blueprint class's field (`ABP_Manny_C`'s `GroundSpeed`, written on the live `ABP_Quinn_C`) and a packed bool on a
+  live object (`Actor:bCanBeDamaged`, only its own bit) -- through `mcp_client.py fieldgrant`'s new steps 4c and 4d.
+- **Tests:** C# 8389 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 634c05dfe24ec4c3...); UE5Dumper.dll 3,794,432 bytes (sha256 84ba09fb89ade730...).
+
 ## 2026-11-17 (build 3718) — MCP field grants: one field of one class, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
 
 Phase 2 of docs/mcp-write-approval-eval.md (§4.5): the typed twin of the UI's field edit, approved once per game run.
