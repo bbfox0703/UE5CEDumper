@@ -334,6 +334,237 @@ public sealed class McpToolsTests
         Assert.Empty(refused);
     }
 
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+
+    private const string HolderPath = "//Script/DumperTest/DumperTestHolder";
+    private const string DerivedPath = "//Script/DumperTest/DumperTestDerivedHolder";
+    private const string HolderClass = "0x7FF600003000";
+    private const string DerivedClass = "0x7FF600004000";
+
+    private static JsonObject ClassField(string name, string type, int offset, int size, int arrayDim = 1,
+        int boolMask = 0, string structType = "", string enumName = "")
+    {
+        var f = new JsonObject
+        {
+            ["name"] = name, ["type"] = type, ["offset"] = offset, ["size"] = size, ["array_dim"] = arrayDim,
+        };
+        if (boolMask != 0) f["bool_mask"] = boolMask;
+        if (structType.Length > 0) f["struct_type"] = structType;
+        if (enumName.Length > 0) f["enum_name"] = enumName;
+        return f;
+    }
+
+    private static JsonArray HolderFields() => new(
+        ClassField("HolderValue", "IntProperty", 0x2A0, 4),
+        ClassField("bHolderFlag", "BoolProperty", 0x2A4, 1, boolMask: 4),
+        ClassField("Mode", "ByteProperty", 0x2A5, 1, enumName: "EHolderMode"),
+        ClassField("Where", "StructProperty", 0x2A8, 12, structType: "Vector"),
+        ClassField("Ints", "IntProperty", 0x2B4, 4, arrayDim: 3));
+
+    /// <summary>The live fields of the object at 0x1000 (a DumperTestDerivedHolder), as walk_instance sends them.
+    /// </summary>
+    private static JsonArray LiveFields() => new(
+        new JsonObject { ["name"] = "HolderValue", ["type"] = "IntProperty", ["offset"] = 0x2A0, ["size"] = 4, ["value"] = "41" },
+        new JsonObject
+        {
+            ["name"] = "bHolderFlag", ["type"] = "BoolProperty", ["offset"] = 0x2A4, ["size"] = 1, ["value"] = "false",
+            ["bool_mask"] = 4, ["bool_byte_offset"] = 0, ["bool_native"] = false,
+        },
+        new JsonObject
+        {
+            ["name"] = "Mode", ["type"] = "ByteProperty", ["offset"] = 0x2A5, ["size"] = 1, ["value"] = "0",
+            ["enum_entries"] = new JsonArray(new JsonObject { ["v"] = 0, ["n"] = "Idle" },
+                new JsonObject { ["v"] = 1, ["n"] = "Busy" }),
+        });
+
+    /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, and DumperTestHolder its
+    /// super, with an int, a packed bool, an enum byte, a struct and a static array; memory reads answer the live
+    /// bytes and a write_mem answers as the DLL does.</summary>
+    private static FakeGame FieldGame()
+    {
+        var game = new FakeGame();
+        var memory = new Dictionary<ulong, string> { [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00" };
+        game.Answers["find_object"] = r => new JsonObject
+        {
+            ["addr"] = r["path"]!.GetValue<string>() == HolderPath ? HolderClass : DerivedClass,
+        };
+        game.Answers["get_object"] = r => r["addr"]!.GetValue<string>() switch
+        {
+            HolderClass => new JsonObject { ["name"] = "DumperTestHolder", ["full_name"] = HolderPath },
+            DerivedClass => new JsonObject { ["name"] = "DumperTestDerivedHolder", ["full_name"] = DerivedPath },
+            "0x2000" => new JsonObject
+            {
+                ["name"] = "Default__DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
+                ["class"] = "DumperTestDerivedHolder",
+            },
+            _ => new JsonObject
+            {
+                ["name"] = "DumperTestDerivedHolder_0", ["class_addr"] = DerivedClass,
+                ["class"] = "DumperTestDerivedHolder",
+            },
+        };
+        game.Answers["walk_class"] = r => new JsonObject
+        {
+            ["class"] = r["addr"]!.GetValue<string>() == DerivedClass
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestDerivedHolder", ["full_path"] = DerivedPath, ["super_addr"] = HolderClass,
+                    ["fields"] = HolderFields(),
+                }
+                : new JsonObject
+                {
+                    ["name"] = "DumperTestHolder", ["full_path"] = HolderPath, ["super_addr"] = "0x0",
+                    ["fields"] = HolderFields(),
+                },
+        };
+        game.Answers["walk_instance"] = r => new JsonObject
+        {
+            ["addr"] = r["addr"]!.GetValue<string>(), ["class"] = "DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
+            ["fields"] = LiveFields(),
+        };
+        game.Answers["read_mem"] = r =>
+        {
+            McpArgs.TryParseHex(r["addr"]!.GetValue<string>(), out ulong a);
+            return new JsonObject { ["bytes"] = memory.TryGetValue(a, out var b) ? b : "00" };
+        };
+        game.Answers["write_mem"] = r =>
+        {
+            McpArgs.TryParseHex(r["addr"]!.GetValue<string>(), out ulong a);
+            string before = memory.TryGetValue(a, out var b) ? b : "00";
+            if (!string.Equals(before, r["expect"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase))
+                return new JsonObject { ["ok"] = false, ["code"] = -23, ["error"] = "changed", ["current"] = before };
+            memory[a] = r["bytes"]!.GetValue<string>();
+            return new JsonObject { ["before"] = before };
+        };
+        return game;
+    }
+
+    private static JsonObject FieldGrantArgs(string field = "HolderValue", string cls = HolderPath)
+        => new() { ["field"] = field, ["class"] = cls, ["scope_ack"] = Constants.McpGrantAckField };
+
+    private static JsonObject FieldWrite(string field, JsonNode value, string inst = "0x1000")
+        => new() { ["instance_addr"] = inst, ["field"] = field, ["value"] = value };
+
+    private static JsonObject SentWrite(FakeGame game) => game.Sent.Last(r => r["cmd"]!.GetValue<string>() == "write_mem");
+
+    [Fact]
+    public void TheFieldGrant_StatesItsScope_WithTheFieldFirst()
+    {
+        var tool = Tool(Constants.McpGrantToolField, new FakeGame());
+        var props = tool.InputSchema["properties"]!.AsObject().Select(p => p.Key).ToList();
+        Assert.True(props.IndexOf("field") >= 0 && props.IndexOf("field") < props.IndexOf("class")
+                    && props.IndexOf("class") < props.IndexOf("scope_ack"), string.Join(",", props));
+        Assert.Equal(Constants.McpGrantAckField,
+            tool.InputSchema["properties"]!["scope_ack"]!["enum"]![0]!.GetValue<string>());
+        Assert.Equal((McpToolRole.Grant, McpGrantKind.Field), (tool.EffectiveRole, tool.GrantKind));
+        var write = Tool(Constants.McpFieldGrantedTool, new FakeGame());
+        Assert.Equal((McpToolRole.GrantedField, McpGrantKind.Field), (write.EffectiveRole, write.GrantKind));
+    }
+
+    [Fact]
+    public async Task TheFieldGrant_GrantsAScalarFieldItsClassHas_AndReadGrantsNamesIt()
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HolderPath + ":HolderValue", payload!["field"]!.GetValue<string>());
+        Assert.Contains(Constants.McpFieldGrantedTool, payload["tools"]!.ToJsonString());
+        var (grants, _) = await Call(game, "read_grants");
+        Assert.Contains(grants!["grants"]!.AsArray(), g => g!["field"]?.GetValue<string>() == HolderPath + ":HolderValue");
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("Where", HolderPath)]          // a struct: not a scalar
+    [InlineData("Ints", HolderPath)]           // a static array (ArrayDim 3)
+    [InlineData("NoSuchField", HolderPath)]
+    [InlineData("HolderValue", "DumperTestHolder")]   // a short class name, not a path
+    public async Task TheFieldGrant_RefusesWhatItCannotWriteOrFind(string field, string cls)
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs(field, cls));
+        Assert.True(result.IsError, field);
+        Assert.Contains("write_memory", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
+    [Fact]
+    public async Task WriteField_WritesTheGrantedField_OnASubclassInstance_WithExpect_AndNoPrompt()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());   // on the base class
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        var sent = SentWrite(game);
+        Assert.Equal(("0x12A0", "2A000000", "29000000"),
+            (sent["addr"]!.GetValue<string>(), sent["bytes"]!.GetValue<string>(), sent["expect"]!.GetValue<string>()));
+        Assert.Equal(1, game.Grants.List().Single(g => g.Kind == McpGrantKind.Field).Uses);
+        Assert.False(McpGrants.IsMarked(Tool(Constants.McpFieldGrantedTool, game).EffectiveRole, McpHostDecision.Grants));
+    }
+
+    [Fact]
+    public async Task WriteField_APackedBool_IsWrittenThroughItsMask()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bHolderFlag", true));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(("0x12A4", "04", "00"), (SentWrite(game)["addr"]!.GetValue<string>(),
+            SentWrite(game)["bytes"]!.GetValue<string>(), SentWrite(game)["expect"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task WriteField_AnEnumValue_MustBeOneOfItsEntries()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 1))).Result.IsError);
+        Assert.Equal("01", SentWrite(game)["bytes"]!.GetValue<string>());
+        var (_, refused) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 7));
+        Assert.True(refused.IsError);
+    }
+
+    [Theory]
+    [InlineData("HolderValue", "99999999999")]   // past int32
+    [InlineData("HolderValue", "abc")]
+    public async Task WriteField_AValueItsTypeCannotHold_IsRefused_AndNothingWritten(string field, string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs(field));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite(field, value));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WithoutItsGrant_OrOnAClassDefault_IsRefused_AndNothingWritten()
+    {
+        var game = FieldGame();
+        var (before, r1) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(r1.IsError);
+        Assert.Contains(Constants.McpGrantToolField, before!["error"]!.GetValue<string>());
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));   // another field's grant
+        Assert.True((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42))).Result.IsError);
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (cdo, r2) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, inst: "0x2000"));
+        Assert.True(r2.IsError);
+        Assert.Contains("class default", cdo!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_EndsOneFieldsGrant()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "field", ["field"] = HolderPath + ":HolderValue" });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
     /// <summary>A game and a schema-valid call for one tool. An invoke grant and its call need a function the game
     /// declares, by full name, which no schema can say; revoke_grants' function goes with kind invoke.</summary>
     private static async Task<(FakeGame Game, JsonObject Args)> SchemaCall(McpTool t)
