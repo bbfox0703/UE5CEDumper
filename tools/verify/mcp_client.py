@@ -66,7 +66,7 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
     py tools/verify/mcp_client.py olddll --exe dist/UE5DumpUI.exe [--pid N]
         Register item 24, the old DLL: DumperTest Shipping freshly injected with out/stageA/copy3695/UE5Dumper.dll
         (build 3695: the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
-        3705; 3706 for write_memory, write_invoke, write_debug_camera) before anything is sent, and the 3695 pipe log
+        3705; 3706 for write_memory, write_invoke, write_debug_camera, write_field) before anything is sent, and the 3695 pipe log
         shows none of their commands since the start. Keep the UI closed: 3695 serves three connections.
     py tools/verify/mcp_client.py invokeparams --exe dist/UE5DumpUI.exe [--pid N]
         Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
@@ -81,6 +81,13 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         granted SetActorHiddenInGame refused on a class default and run on a live StaticMeshActor; the DLL's own grant
         checks driven through the pipe as a background client (another function -28, a FunctionName parameter -28, a
         latent call per call -24); one function's grant revoked while the other stands.
+    py tools/verify/mcp_client.py fieldgrant --exe dist/UE5DumpUI.exe [--pid N]
+        [MCP-WRITE-GRANTS-2026-11-14] Phase 2 on DumperTest Shipping (DLL 3706+): grants refused for a struct, a static
+        array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
+        write it unasked on a spawned Derived holder and put it back byte for byte, never on a Decoy (the same field name,
+        no derivation) nor on the class default, and refuses a float past its range; a native bool and a 4-byte enum
+        written and put back, the enum only to one of its entries; one field's grant revoked while the other stands.
+        The clean-up puts back anything still changed and destroys the spawned holders.
 
     Every mode that writes starts its server with --writes=any-host (this client is no Claude Code, so by default it
     only reads) and gives itself both grants, reading each scope_ack from tools/list, as a user approving both
@@ -299,9 +306,12 @@ WRITES_ANY_HOST = "--writes=any-host"
 MARKER = "anthropic/requiresUserInteraction"
 GRANT_TOGGLES = "grant_god_mode_camera_cursor_time_see_through_foreground"
 GRANT_MOVEMENT = "grant_movement_fly_teleport_may_kill_or_lose_pawn"
-# Phase 1b: an invoke grant names one function, so give_grants (the kind grants) never asks for it.
+# Phase 1b's invoke grant names one function and Phase 2's field grant one field of one class, so give_grants (the
+# kind grants) never asks for either.
 GRANT_INVOKE = "grant_invoke_one_function_any_object_and_args"
 INVOKE_GRANTED = "write_invoke_granted_function"
+GRANT_FIELD = "grant_write_field_one_property_every_instance"
+FIELD_GRANTED = "write_field"
 PER_CALL_WRITES = ("write_memory", "write_invoke", "write_force_field")
 
 
@@ -320,11 +330,11 @@ def grant_acks(client: "McpClient") -> dict[str, str]:
 
 
 def give_grants(client: "McpClient", base: dict) -> list[str]:
-    """Both kind grants for the game, as a user approving both prompts would; the errors, if any. The invoke grant
-    names a function, so it is never given here."""
+    """Both kind grants for the game, as a user approving both prompts would; the errors, if any. The invoke and field
+    grants name a function or a field, so neither is given here."""
     errors = []
     for name, ack in grant_acks(client).items():
-        if name == GRANT_INVOKE:
+        if name in (GRANT_INVOKE, GRANT_FIELD):
             continue
         r = client.call(name, {**base, "scope_ack": ack})
         if r.get("isError"):
@@ -450,13 +460,13 @@ def probe_hosts(exe: str, ck: "Checks") -> list["McpClient"]:
         label = f"{name} {version}{' ' + extra[0] if extra else ''}"
         wrong = [n for n in tools if n.startswith("write_") and marked(tools[n]) != (n in PER_CALL_WRITES)]
         grants = sorted(n for n in tools if n.startswith("grant_"))
-        ck.check(grants == sorted([GRANT_TOGGLES, GRANT_MOVEMENT, GRANT_INVOKE])
+        ck.check(grants == sorted([GRANT_TOGGLES, GRANT_MOVEMENT, GRANT_INVOKE, GRANT_FIELD])
                  and all(marked(tools[n]) for n in grants)
                  and not wrong and "read_grants" in tools and "revoke_grants" in tools
-                 and not marked(tools["revoke_grants"]) and INVOKE_GRANTED in tools,
+                 and not marked(tools["revoke_grants"]) and INVOKE_GRANTED in tools and FIELD_GRANTED in tools,
                  f"{label}: the grants and the per-call writes marked, the rest not", {"grants": grants, "wrong": wrong})
-        ck.check(GRANT_TOGGLES in text and GRANT_MOVEMENT in text and GRANT_INVOKE in text,
-                 f"{label}: instructions name the three grants")
+        ck.check(all(g in text for g in (GRANT_TOGGLES, GRANT_MOVEMENT, GRANT_INVOKE, GRANT_FIELD)),
+                 f"{label}: instructions name the four grants")
         c.close()
 
     if not SSH_HOST:
@@ -711,8 +721,8 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     ck.check(len(writes) >= 12 and not wrong,
              f"{len(writes)} write_* tools, destructive; only the per-call ones marked", wrong)
     grant_tools = [t for t in tools if t["name"].startswith("grant_")]
-    ck.check(len(grant_tools) == 3 and all(marked(t) and t["annotations"].get("destructiveHint") for t in grant_tools),
-             "the three grant tools, marked and destructive", [t["name"] for t in grant_tools])
+    ck.check(len(grant_tools) == 4 and all(marked(t) and t["annotations"].get("destructiveHint") for t in grant_tools),
+             "the four grant tools, marked and destructive", [t["name"] for t in grant_tools])
     r, d, _ = call("write_time_dilation", {"target": "global", "value": 1.0})
     ck.check(bool(r.get("isError")) and GRANT_TOGGLES in error_text(d),
              "a covered write before its grant: refused, naming the grant", d)
@@ -2273,7 +2283,7 @@ OLD_DLL_COMMAND_LINES = (
     r"reset_gravity_direction", r"reset_movement:", r"reset_time_dilation:", r"set_debug_camera:", r"fly_set:",
     r"seethrough_set:", r"reset_field:", r"teleport_recall_marker:",
 )
-OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera")   # need MCP_MIN_RAW_WRITES, not 3705
+OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera", FIELD_GRANTED)   # 3706, not 3705
 
 
 def run_invoke_grant(exe: str, pid: int | None) -> int:
@@ -2393,6 +2403,206 @@ def run_invoke_grant(exe: str, pid: int | None) -> int:
     return ck.done(c)
 
 
+# DumperTestActor's 4-byte enum (DumperTestTypes.h, L30) and the entry whose byte 2 is set, so a short write shows.
+WIDE_ENUM, WIDE_HIGH = "Probe_WideEnum", 0x007F0000
+
+
+def run_field_grant(exe: str, pid: int | None) -> int:
+    """[MCP-WRITE-GRANTS-2026-11-14] Phase 2 on a live game (DLL 3706+; DumperTest Shipping): a field grant names one
+    field of one class, and write_field writes it unasked on that class's instances and its subclasses' only. The
+    discriminating set (a Derived holder, a Decoy with the same field name) is spawned by a stand-in pipe client, as
+    holdsmore does; every value written is put back with write_field and read back byte for byte."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+    from ad4_contested import find_live_actor   # noqa: E402 -- the fixture's spawner actor, as solide_l3 finds it
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    c = McpClient(exe, [WRITES_ANY_HOST])
+    c.initialize()
+    ui = None
+    did: dict = {}   # what this run changed: the clean-up puts back exactly that
+
+    def call(tool, args=None):
+        r = c.call(tool, {**base, **(args or {})}, 180.0)
+        data, note = payload(r)
+        return r, (data if isinstance(data, dict) else {}), note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    def mem(addr: str, size: int) -> str:
+        r, d, _ = call("read_memory", {"addr": addr, "size": size})
+        return str(d.get("bytes", "")).upper()
+
+    def klass(addr: str) -> dict:
+        r, k, _ = call("read_class", {"addr": addr, "name_filter": _NO_FIELDS})
+        return k.get("class", {})
+
+    def live_of(cls: str) -> list[str]:
+        r, d, _ = call("read_find_instances", {"class_name": cls, "exact_match": True, "limit": 200})
+        return [i["addr"] for i in d.get("instances", [])
+                if i.get("class") == cls and not str(i.get("name", "")).startswith("Default__")]
+
+    def fixture_invoke(name: str, params_hex: str = "") -> dict:
+        addr, fns = did["spawner"]
+        f = fns.get(name)
+        if f is None:
+            return {"ok": False, "error": f"{name} is not on the spawner's class"}
+        return ui.request("invoke_function", func_name=name, instance_addr=addr,
+                          parms_size=f.get("parms_size", 0), params_hex=params_hex)
+
+    def write(inst: str, field: str, value: str) -> tuple[dict, dict]:
+        r, d, _ = call(FIELD_GRANTED, {"instance_addr": inst, "field": field, "value": value})
+        return r, d
+
+    def put_back(key: str, label: str, value_of) -> None:
+        """Writes back the bytes a write found there, with write_field itself, and checks them byte for byte."""
+        inst, field, addr, before = did[key]
+        r, d = write(inst, field, value_of(before))
+        ok = not r.get("isError") and d.get("after") == before and mem(addr, len(before) // 2) == before
+        ck.check(ok, f"{label} put back with write_field, byte for byte ({before})", d)
+        if ok:
+            del did[key]
+
+    def body() -> None:
+        nonlocal ui
+        tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
+        ck.check(marked(tools.get(GRANT_FIELD, {})) and not marked(tools.get(FIELD_GRANTED, {}))
+                 and tools.get(FIELD_GRANTED, {}).get("annotations", {}).get("destructiveHint") is True,
+                 "the field grant is marked; write_field is listed, destructive and not marked",
+                 {n: tools.get(n, {}).get("_meta") for n in (GRANT_FIELD, FIELD_GRANTED)})
+        r, st, _ = call("read_status")
+        build = int(st.get("build_number") or 0)
+        print(f"        UE {st.get('ue_version')}, DLL build {build}, server build {st.get('mcp_build')}")
+        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_RAW_WRITES,
+                        f"the game is scanned, DLL build {build} (write_field needs {MCP_MIN_RAW_WRITES}+)", st):
+            return
+        game = pid or st.get("pid")
+        ack = grant_acks(c)[GRANT_FIELD]
+
+        # S. The discriminating set, spawned by a stand-in: Derived holders and Decoys.
+        ui = PipeClient(pid=game, timeout=120)
+        ui.connect()
+        act = find_live_actor(ui)
+        fns = {f["name"]: f for f in ui.request("walk_functions", addr=act["class_addr"]).get("functions", [])}
+        did["spawner"] = (act["addr"], fns)
+        for name, params, what in (("Spawn_Holders", _i32(3) + "01", "3 Derived"),
+                                   ("Spawn_Decoys", _i32(2), "2 Decoys")):
+            r = fixture_invoke(name, params)
+            ck.check(bool(r.get("ok")) and r.get("result", 0) == 0, f"S: the stand-in spawns {what} ({name})", r)
+        derived, decoys = live_of(FIXTURE_DERIVED), live_of(FIXTURE_DECOY)
+        r, cdo, _ = call("read_find_object", {"path": "Default__" + FIXTURE_DERIVED})
+        dk = klass(call("read_object", {"addr": derived[0]})[1].get("class_addr", "0x0")) if derived else {}
+        holder_path = klass(dk.get("super_addr", "0x0")).get("full_path", "") if dk else ""
+        actor_path = klass(act["class_addr"]).get("full_path", "")
+        if not ck.check(bool(derived and decoys and cdo.get("addr") and holder_path.endswith("/" + FIXTURE_CLASS)
+                             and actor_path.endswith("/DumperTestActor")),
+                        f"S: a Derived holder, a Decoy, the Derived class default; {holder_path}, {actor_path}",
+                        {"derived": derived, "decoys": decoys, "cdo": cdo}):
+            return
+        inst = derived[0]
+        value_target = holder_path + ":" + FIXTURE_FIELD
+
+        # 1. Before its grant: refused, naming the grant to ask for.
+        r, d = write(inst, FIXTURE_FIELD, "1")
+        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d), "write_field before its grant: refused, "
+                 "naming the grant", d)
+
+        # 2. Grants refused before the user is asked.
+        for field, cls, why in (("HolderHealth", holder_path, "a struct"),
+                                ("FixedArr", actor_path, "a static array"),
+                                (FIXTURE_FIELD, FIXTURE_CLASS, "a short class name"),
+                                ("NoSuchField", holder_path, "no such field")):
+            r, d, _ = call(GRANT_FIELD, {"field": field, "class": cls, "scope_ack": ack})
+            ck.check(bool(r.get("isError")) and "write_memory" in error_text(d),
+                     f"the grant is refused for {field} ({why}), pointing at write_memory", d)
+        r, d, _ = call("read_grants")
+        ck.check(not [g for g in d.get("grants", []) if g.get("field")], "and no field was granted", d)
+
+        # 3. HolderValue, granted on the base class, written on a Derived holder unasked, and put back.
+        r, d, _ = call(GRANT_FIELD, {"field": FIXTURE_FIELD, "class": holder_path, "scope_ack": ack})
+        ck.check(not r.get("isError") and d.get("field") == value_target and FIELD_GRANTED in d.get("tools", []),
+                 f"{value_target} granted, naming write_field", d)
+        want = struct.pack("<f", 4321.5).hex().upper()
+        r, d = write(inst, FIXTURE_FIELD, "4321.5")
+        if not r.get("isError") and d.get("before"):
+            did["value"] = (inst, FIXTURE_FIELD, d.get("addr"), str(d["before"]).upper())
+        ck.check(not r.get("isError") and d.get("written") == want and d.get("after") == want
+                 and mem(d.get("addr", "0x0"), 4) == want,
+                 "write_field HolderValue = 4321.5 on a Derived holder, read back by read_memory", d)
+        r, g, _ = call("read_grants")
+        use = next((x for x in g.get("grants", []) if x.get("field") == value_target), {})
+        ck.check(use.get("tool") == GRANT_FIELD and use.get("uses") == 1, "read_grants names it, uses 1", g)
+        r, d = write(inst, FIXTURE_FIELD, "1e39")
+        ck.check(bool(r.get("isError")) and "value" in did and mem(did["value"][2], 4) == want,
+                 "a float past its range: refused, nothing written", d)
+        if "value" in did:
+            put_back("value", "HolderValue", lambda b: repr(struct.unpack("<f", bytes.fromhex(b))[0]))
+
+        # 4. Not covered: a Decoy's HolderValue (the same name, no derivation) and the class default.
+        r, d = write(decoys[0], FIXTURE_FIELD, "5")
+        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d),
+                 "a Decoy's HolderValue: refused, no grant covers its class", d)
+        r, d = write(cdo["addr"], FIXTURE_FIELD, "5")
+        ck.check(bool(r.get("isError")) and "class default" in error_text(d), "the class default: refused", d)
+
+        # 5. A native bool: granted, set, put back.
+        r, d, _ = call(GRANT_FIELD, {"field": FIXTURE_FLAG, "class": holder_path, "scope_ack": ack})
+        ck.check(not r.get("isError"), f"{FIXTURE_FLAG} granted", d)
+        r, d = write(inst, FIXTURE_FLAG, "true")
+        if not r.get("isError") and d.get("before"):
+            did["flag"] = (inst, FIXTURE_FLAG, d.get("addr"), str(d["before"]).upper())
+        ck.check(not r.get("isError") and d.get("after") == "01", "write_field bHolderFlag = true writes 01", d)
+        if "flag" in did:
+            put_back("flag", FIXTURE_FLAG, lambda b: "true" if int(b, 16) else "false")
+
+        # 6. A 4-byte enum on the spawner: only one of its own entries.
+        r, d, _ = call(GRANT_FIELD, {"field": WIDE_ENUM, "class": actor_path, "scope_ack": ack})
+        ck.check(not r.get("isError") and d.get("type") == "EnumProperty", f"{WIDE_ENUM} granted (an EnumProperty)", d)
+        r, d = write(act["addr"], WIDE_ENUM, "Wide_High")
+        if not r.get("isError") and d.get("before"):
+            did["wide"] = (act["addr"], WIDE_ENUM, d.get("addr"), str(d["before"]).upper())
+        ck.check(not r.get("isError") and d.get("after") == _i32(WIDE_HIGH).upper(),
+                 "write_field Probe_WideEnum = Wide_High writes 0x007F0000, all four bytes", d)
+        r, d = write(act["addr"], WIDE_ENUM, "5")
+        ck.check(bool(r.get("isError")) and "entries" in error_text(d), "5, no entry of it: refused", d)
+        if "wide" in did:
+            put_back("wide", WIDE_ENUM, lambda b: str(int.from_bytes(bytes.fromhex(b), "little", signed=True)))
+
+        # 7. One field's grant ends; the other stands.
+        r, d, _ = call("revoke_grants", {"kind": "field", "field": value_target})
+        ck.check(not r.get("isError") and d.get("revoked") == 1, "revoke_grants ends HolderValue's grant", d)
+        r, d = write(inst, FIXTURE_FIELD, "7")
+        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d), "its write is refused again", d)
+        r, d, _ = call("read_grants")
+        ck.check(sorted(g.get("field") for g in d.get("grants", []) if g.get("field"))
+                 == sorted([holder_path + ":" + FIXTURE_FLAG, actor_path + ":" + WIDE_ENUM]),
+                 "the bool's and the enum's grants stand", d)
+
+    def cleanup() -> None:
+        for key in ("value", "flag", "wide"):
+            if key in did:
+                inst, field, addr, before = did[key]
+                _attempt(f"{field}'s bytes back", lambda a=addr, b=before: ui.request(
+                    "write_mem", addr=a, bytes=b, expect=ui.request("read_mem", addr=a, size=len(b) // 2)["bytes"]))
+        if ui is not None:
+            if "spawner" in did:
+                def destroy_holders():
+                    r = fixture_invoke("Spawn_DestroyHolders")
+                    if not r.get("ok") or r.get("result", 0) != 0:
+                        raise McpError(f"Spawn_DestroyHolders answered {r}")
+                _attempt("Spawn_DestroyHolders", destroy_holders)
+            ui.close()
+        _attempt("closing the AI session", c.close)
+
+    try:
+        body()
+    finally:
+        cleanup()
+    return ck.done(c)
+
+
 def run_old_dll(exe: str, pid: int | None) -> int:
     """Register item 24, the refusal of an old DLL (see the module docstring). The arguments are no-ops for a DLL that
     ignores if_free and keep_undo -- OFF and reset forms, the current pose, the very bytes there, 1 + 1 -- so a refusal
@@ -2460,10 +2670,13 @@ def run_old_dll(exe: str, pid: int | None) -> int:
             fbytes = str(mem.get("bytes", "")).upper() or fbytes
 
         acks = grant_acks(c)
-        ck.check(len(acks) == 3, "the three grant tools listed", sorted(acks))
+        ck.check(len(acks) == 4, "the four grant tools listed", sorted(acks))
         for name, ack in acks.items():
-            need = MCP_MIN_INVOKE_GRANTS if name == GRANT_INVOKE else MCP_MIN_WRITES
-            extra = {"function": "Add_IntInt", "class": "//Script/Engine/KismetMathLibrary"} if name == GRANT_INVOKE else {}
+            need = (MCP_MIN_INVOKE_GRANTS if name == GRANT_INVOKE else MCP_MIN_RAW_WRITES if name == GRANT_FIELD
+                    else MCP_MIN_WRITES)
+            extra = ({"function": "Add_IntInt", "class": "//Script/Engine/KismetMathLibrary"} if name == GRANT_INVOKE
+                     else {"field": FIXTURE_FIELD, "class": "//Script/DumperTest/" + FIXTURE_CLASS}
+                     if name == GRANT_FIELD else {})
             r, d, _ = call(name, {"scope_ack": ack, **extra})
             ck.check(bool(r.get("isError")) and f"The game's DLL is build {build}, older than {need}"
                      in error_text(d), f"{name}: refused with the build text, nothing granted", d)
@@ -2488,6 +2701,7 @@ def run_old_dll(exe: str, pid: int | None) -> int:
                              "params": {"A": 1, "B": 1}},
             INVOKE_GRANTED: {"instance_addr": kml.get("addr", "0x0"), "function": "Add_IntInt",
                              "params": {"A": 1, "B": 1}},
+            FIELD_GRANTED: {"instance_addr": live.get("addr") or "0x1", "field": FIXTURE_FIELD, "value": "0"},
         }
         since = _fresh_stamp()
         for name, a in args.items():
@@ -2789,7 +3003,7 @@ def run_invoke_params(exe: str, pid: int | None) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold", "dbgcamstop",
-                                     "holdsmore", "olddll", "invokeparams", "invokegrant"])
+                                     "holdsmore", "olddll", "invokeparams", "invokegrant", "fieldgrant"])
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server",
                     help="dbgcamstop: the CE record that started the DLL (its untick runs UE5_Shutdown)")
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
@@ -2840,12 +3054,12 @@ def main() -> int:
             return run_dbgcam_stop(exe, a.pid, a.suspend_name, a.ce_desc)
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
-    if a.mode in ("holdsmore", "olddll", "invokeparams", "invokegrant"):
+    if a.mode in ("holdsmore", "olddll", "invokeparams", "invokegrant", "fieldgrant"):
         # A holder's pid is compared with the server's process here, and the stand-in reads this machine's DLL logs.
         if a.ssh:
             ap.error(f"{a.mode} runs the server on this machine, beside the game: --ssh does not apply")
         run = {"holdsmore": run_holds_more, "olddll": run_old_dll, "invokeparams": run_invoke_params,
-               "invokegrant": run_invoke_grant}[a.mode]
+               "invokegrant": run_invoke_grant, "fieldgrant": run_field_grant}[a.mode]
         return run(exe, a.pid)
     return run_live(exe, a.pid, a.suspend_name)
 
