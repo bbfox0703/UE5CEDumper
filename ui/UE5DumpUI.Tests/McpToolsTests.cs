@@ -793,6 +793,31 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("write_mem", game.Commands);
     }
 
+    [Theory]
+    [InlineData("field", "field", "HolderValue")]              // every other field argument is the bare name
+    [InlineData("invoke", "function", "SetActorHiddenInGame")]
+    public async Task RevokeGrants_ABareName_IsRefused_NamingTheFormItNeeds(string kind, string key, string name)
+    {
+        // A bare name matched no grant and returned revoked 0: the grant the user wanted ended stayed.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, "revoke_grants", new JsonObject { ["kind"] = kind, [key] = name });
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains("read_grants", payload!["error"]!.GetValue<string>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_AFullNameNoGrantHas_SaysSo()
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "field", ["field"] = HolderPath + ":bHolderFlag" });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(0, payload!["revoked"]!.GetValue<int>());
+        Assert.Contains("read_grants", result.Note ?? "");
+    }
+
     [Fact]
     public async Task RevokeGrants_EndsOneFieldsGrant()
     {
