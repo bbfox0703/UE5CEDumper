@@ -9,6 +9,10 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
 
     py tools/verify/mcp_client.py probe --exe dist/UE5DumpUI.exe
         handshake, tools/list, read_games, server/discover answered with an error, ping, EOF exit code. No game needed.
+        [MCP-WRITE-GRANTS-2026-11-14] Then the host decision, one server per host: this client and --writes=off see
+        reads only (a write called by name is an unknown tool), Claude Code 2.1.245 every write_* marked and no grant,
+        Claude Code 2.1.246 / 2.1.1000 and --writes=any-host the two grants and the per-call writes marked and the
+        rest not; --writes=bogus exits 1 with nothing on stdout.
     py tools/verify/mcp_client.py call --exe dist/UE5DumpUI.exe --tool read_status [--args '{"pid": 1234}']
         one tool call, its result printed.
     py tools/verify/mcp_client.py live --exe dist/UE5DumpUI.exe [--pid N]
@@ -70,6 +74,10 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         false on a rootless holder; (O) an object parameter given a field's address is refused by the server's liveness
         check, nothing sent; (S) SendToConsole is refused by name. The EchoSoftSpec struct-field pair is recorded apart
         from the exit code.
+
+    Every mode that writes starts its server with --writes=any-host (this client is no Claude Code, so by default it
+    only reads) and gives itself both grants, reading each scope_ack from tools/list, as a user approving both
+    prompts would; writes first checks a covered write is refused, naming its grant, before that.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -231,9 +239,9 @@ class McpClient:
             msg["params"] = params
         self.send(msg)
 
-    def initialize(self) -> dict:
+    def initialize(self, name: str = "mcp_client.py", version: str = "1") -> dict:
         r = self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
-                                        "clientInfo": {"name": "mcp_client.py", "version": "1"}})
+                                        "clientInfo": {"name": name, "version": version}})
         self.notify("notifications/initialized")
         return r
 
@@ -278,6 +286,47 @@ def payload(result: dict) -> tuple[object, str | None]:
     data = json.loads(content[0]["text"]) if content else None
     note = content[1]["text"] if len(content) > 1 else None
     return data, note
+
+
+WRITES_ANY_HOST = "--writes=any-host"
+MARKER = "anthropic/requiresUserInteraction"
+GRANT_TOGGLES = "grant_god_mode_camera_cursor_time_see_through_foreground"
+GRANT_MOVEMENT = "grant_movement_fly_teleport_may_kill_or_lose_pawn"
+PER_CALL_WRITES = ("write_memory", "write_invoke", "write_force_field")
+
+
+def marked(tool: dict) -> bool:
+    """Whether Claude Code asks before every call of the tool."""
+    return tool.get("_meta", {}).get(MARKER) is True
+
+
+def grant_acks(client: "McpClient") -> dict[str, str]:
+    """Each grant tool's one allowed scope_ack, read from tools/list rather than copied here."""
+    acks = {}
+    for t in client.request("tools/list").get("result", {}).get("tools", []):
+        if t["name"].startswith("grant_"):
+            acks[t["name"]] = t["inputSchema"]["properties"]["scope_ack"]["enum"][0]
+    return acks
+
+
+def give_grants(client: "McpClient", base: dict) -> list[str]:
+    """Both grants for the game, as a user approving both prompts would; the errors, if any."""
+    errors = []
+    for name, ack in grant_acks(client).items():
+        r = client.call(name, {**base, "scope_ack": ack})
+        if r.get("isError"):
+            errors.append(f"{name}: {payload(r)[0]}")
+    return errors
+
+
+def writer(exe: str, pid: int | None) -> "McpClient":
+    """A session on a host that writes, with both grants given."""
+    c = McpClient(exe, [WRITES_ANY_HOST])
+    c.initialize()
+    errors = give_grants(c, {"pid": pid} if pid else {})
+    if errors:
+        raise McpError("the grants were refused: " + "; ".join(errors))
+    return c
 
 
 class Checks:
@@ -348,7 +397,60 @@ def run_probe(exe: str) -> int:
     ck.check(code == 0, "exit code 0 after stdin closes", code)
     if c.stderr_lines:
         print("        stderr:", c.stderr_lines[:5])
-    return ck.done(c)
+    return ck.done([c, *probe_hosts(exe, ck)])
+
+
+def probe_hosts(exe: str, ck: "Checks") -> list["McpClient"]:
+    """[MCP-WRITE-GRANTS-2026-11-14] The host decision through real processes: who gets writes, grants or reads."""
+    print("        -- the host decision")
+    sessions = []
+
+    def listing(extra, name, version):
+        c = McpClient(exe, extra)
+        sessions.append(c)
+        init = c.initialize(name, version)
+        tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
+        return c, init.get("result", {}).get("instructions", ""), tools
+
+    def changing(tools):
+        return sorted(n for n in tools if n.startswith(("write_", "grant_", "revoke_")) or n == "read_grants")
+
+    for extra, name, version in ((None, "mcp_client.py", "1"), (["--writes=off"], "claude-code", "2.1.300")):
+        c, text, tools = listing(extra, name, version)
+        label = f"{name} {version}{' ' + extra[0] if extra else ''}"
+        ck.check(not changing(tools) and "scan_start" in tools, f"{label}: reads and scan_start only",
+                 changing(tools))
+        ck.check("write_" not in text and "grant" not in text, f"{label}: instructions name no write, no grant")
+        hidden = c.request("tools/call", {"name": "write_god_mode", "arguments": {"enable": True}})
+        ck.check(hidden.get("error", {}).get("code") == -32602, f"{label}: a write called by name is unknown", hidden)
+        c.close()
+
+    c, text, tools = listing(None, "claude-code", "2.1.245")
+    w = changing(tools)
+    ck.check(len(w) >= 14 and all(n.startswith("write_") and marked(tools[n]) for n in w),
+             "claude-code 2.1.245: every write_* marked, no grant tool", w)
+    c.close()
+
+    for extra, name, version in ((None, "claude-code", "2.1.246"), (None, "claude-code", "2.1.1000"),
+                                 ([WRITES_ANY_HOST], "mcp_client.py", "1")):
+        c, text, tools = listing(extra, name, version)
+        label = f"{name} {version}{' ' + extra[0] if extra else ''}"
+        wrong = [n for n in tools if n.startswith("write_") and marked(tools[n]) != (n in PER_CALL_WRITES)]
+        grants = sorted(n for n in tools if n.startswith("grant_"))
+        ck.check(grants == sorted([GRANT_TOGGLES, GRANT_MOVEMENT]) and all(marked(tools[n]) for n in grants)
+                 and not wrong and "read_grants" in tools and "revoke_grants" in tools
+                 and not marked(tools["revoke_grants"]),
+                 f"{label}: the grants and the per-call writes marked, the rest not", {"grants": grants, "wrong": wrong})
+        ck.check(GRANT_TOGGLES in text and GRANT_MOVEMENT in text, f"{label}: instructions name both grants")
+        c.close()
+
+    if not SSH_HOST:
+        bad = subprocess.run([exe, "--mcp", "--writes=bogus"], stdin=subprocess.DEVNULL, capture_output=True,
+                             timeout=60)
+        ck.check(bad.returncode == 1 and bad.stdout == b"" and b"--writes" in bad.stderr,
+                 "--writes=bogus: exit 1, nothing on stdout, the reason on stderr",
+                 (bad.returncode, bad.stdout[:80], bad.stderr[:200]))
+    return sessions
 
 
 def run_call(exe: str, tool: str, args: dict) -> int:
@@ -571,7 +673,7 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     ck = Checks()
     switch = _ExperimentalSwitch()
     experimental = switch.enabled()
-    c = McpClient(exe)
+    c = McpClient(exe, [WRITES_ANY_HOST])
     c.initialize()
     base = {"pid": pid} if pid else {}
 
@@ -583,15 +685,24 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     def error_text(data) -> str:
         return data.get("error", "") if isinstance(data, dict) else str(data)
 
-    # 1. The catalogue: every write tool asks every time.
+    # 1. The catalogue on a host that writes by grants: the grants and the per-call writes ask every call, the writes a
+    #    grant covers and the releases do not ([MCP-WRITE-GRANTS-2026-11-14]).
     tools = c.request("tools/list").get("result", {}).get("tools", [])
     writes = [t for t in tools if t["name"].startswith("write_")]
-    unmarked = [t["name"] for t in writes
-                if t.get("_meta", {}).get("anthropic/requiresUserInteraction") is not True
-                or t["annotations"].get("destructiveHint") is not True
-                or t["annotations"].get("readOnlyHint") is not False]
-    ck.check(len(writes) >= 12 and not unmarked,
-             f"{len(writes)} write_* tools, each marked requiresUserInteraction and destructive", unmarked)
+    wrong = [t["name"] for t in writes
+             if marked(t) != (t["name"] in PER_CALL_WRITES)
+             or t["annotations"].get("destructiveHint") is not True
+             or t["annotations"].get("readOnlyHint") is not False]
+    ck.check(len(writes) >= 12 and not wrong,
+             f"{len(writes)} write_* tools, destructive; only the per-call ones marked", wrong)
+    grant_tools = [t for t in tools if t["name"].startswith("grant_")]
+    ck.check(len(grant_tools) == 2 and all(marked(t) and t["annotations"].get("destructiveHint") for t in grant_tools),
+             "the two grant tools, marked and destructive", [t["name"] for t in grant_tools])
+    r, d, _ = call("write_time_dilation", {"target": "global", "value": 1.0})
+    ck.check(bool(r.get("isError")) and GRANT_TOGGLES in error_text(d),
+             "a covered write before its grant: refused, naming the grant", d)
+    refused = give_grants(c, base)
+    ck.check(not refused, "both grants given", refused)
 
     r, st, _ = call("read_status")
     if not st.get("scanned"):
@@ -891,8 +1002,7 @@ def run_raw(exe: str, pid: int | None, game_name: str) -> int:
     from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
 
     ck = Checks()
-    c = McpClient(exe)
-    c.initialize()
+    c = writer(exe, pid)
     base = {"pid": pid} if pid else {}
 
     def call(client, tool, args=None, timeout=180.0):
@@ -1082,8 +1192,7 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
     def error_text(data) -> str:
         return data.get("error", "") if isinstance(data, dict) else str(data)
 
-    ai = McpClient(exe)
-    ai.initialize()
+    ai = writer(exe, pid)
     sessions = [ai]
     r, st, _ = call(ai, "read_status")
     build = st.get("build_number") or 0
@@ -1146,8 +1255,7 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
         camera_off("A")
 
         # B. The UI's ON queued: the AI's is refused, naming the UI.
-        ai = McpClient(exe)
-        ai.initialize()
+        ai = writer(exe, pid)
         sessions.append(ai)
         with _FrozenGameThread(game_name):
             j = ui.request("set_debug_camera", enable=True)
@@ -1202,8 +1310,7 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
     sessions: list[McpClient] = []
 
     def session() -> McpClient:
-        c = McpClient(exe)
-        c.initialize()
+        c = writer(exe, pid)
         sessions.append(c)
         return c
 
@@ -1509,8 +1616,7 @@ def run_dbgcam_stop(exe: str, pid: int | None, game_name: str, ce_desc: str) -> 
     sessions: list[McpClient] = []
 
     def session() -> McpClient:
-        c = McpClient(exe)
-        c.initialize()
+        c = writer(exe, pid)
         sessions.append(c)
         return c
 
@@ -2040,15 +2146,14 @@ def run_holds_more(exe: str, pid: int | None) -> int:
     def body() -> None:
         nonlocal c, ui
         switch.set(True)   # Keep Foreground and the force field are experimental: the server refuses them otherwise
-        c = McpClient(exe)
-        c.initialize()
+        c = writer(exe, pid)
         sessions.append(c)
         tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
         need = ("write_gravity_direction", "write_god_mode", "write_foreground_lock", "write_force_field",
                 "write_force_field_reset", "write_mouse_cursor")
-        unmarked = [n for n in need if tools.get(n, {}).get("_meta", {}).get("anthropic/requiresUserInteraction")
-                    is not True or tools.get(n, {}).get("annotations", {}).get("destructiveHint") is not True]
-        ck.check(not unmarked, "tools/list: the six write tools, each asking every time, destructive", unmarked)
+        wrong = [n for n in need if marked(tools.get(n, {})) != (n in PER_CALL_WRITES)
+                 or tools.get(n, {}).get("annotations", {}).get("destructiveHint") is not True]
+        ck.check(not wrong, "tools/list: the six write tools, destructive; only write_force_field marked", wrong)
         r, st, _ = call("read_status")
         build = int(st.get("build_number") or 0)
         print(f"        UE {st.get('ue_version')}, {st.get('object_count')} objects, DLL build {build}, server build "
@@ -2174,7 +2279,7 @@ def run_old_dll(exe: str, pid: int | None) -> int:
         nonlocal c, ui
         # The experimental tools check the switch before the DLL's build: off, they would refuse for that instead.
         switch.set(True)
-        c = McpClient(exe)
+        c = McpClient(exe, [WRITES_ANY_HOST])
         c.initialize()
         sessions.append(c)
         listed = sorted(t["name"] for t in c.request("tools/list").get("result", {}).get("tools", [])
@@ -2212,6 +2317,13 @@ def run_old_dll(exe: str, pid: int | None) -> int:
             faddr = "0x%X" % (int(live["addr"], 16) + field["offset"])
             r, mem, _ = call("read_memory", {"addr": faddr, "size": 4})
             fbytes = str(mem.get("bytes", "")).upper() or fbytes
+
+        acks = grant_acks(c)
+        ck.check(len(acks) == 2, "both grant tools listed", sorted(acks))
+        for name, ack in acks.items():
+            r, d, _ = call(name, {"scope_ack": ack})
+            ck.check(bool(r.get("isError")) and f"The game's DLL is build {build}, older than {MCP_MIN_WRITES}"
+                     in error_text(d), f"{name}: refused with the build text, nothing granted", d)
 
         args = {
             "write_god_mode": {"enable": False},
@@ -2364,8 +2476,7 @@ def run_invoke_params(exe: str, pid: int | None) -> int:
 
     def body() -> None:
         nonlocal c, ui
-        c = McpClient(exe)
-        c.initialize()
+        c = writer(exe, pid)
         sessions.append(c)
         r, st, _ = call("read_status")
         build = int(st.get("build_number") or 0)
