@@ -856,12 +856,12 @@ public sealed class PipePerProcessSourceTests
 
         // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        // The definition, not the forward declaration HandleInvokeHeld needs.
-        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {",
-            "static void HandleSetDebugCamera()");
+        string ce = Between(mimic, "static void RecordCeChange(const std::string& hold) {", "\n}");
         int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
         int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
         Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
+        Assert.Contains("RecordCeChange(hold);", Between(mimic,
+            "static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {", "\n}"));
     }
 
     /// <summary>[DBGCAM-RELEASE-STALLED] An AI's camera release that timed out with the game thread stalled is owed,

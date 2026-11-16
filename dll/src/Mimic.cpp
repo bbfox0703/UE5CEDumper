@@ -112,7 +112,7 @@ static void HandleInvoke();
 static void HandleInvokeHeld();
 static void HandleInvokeByName();
 template <typename Change>
-static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change);
+static bool TryChangeHoldAsCe(const std::string& hold, Change&& change);
 static void HandleListFunctions();
 static void HandleListInstances();
 static void HandleSetDebugCamera();
@@ -870,16 +870,16 @@ static void HandleInvokeByName() {
 // [MCP-WRITE-GRANTS-2026-11-14] CMD_INVOKE and INVOKE_BY_NAME. A record that runs the debug camera's own functions (a
 // Console row baked into a CE record) changes the camera as CMD_SET_DEBUG_CAMERA does: under the hold's lock, and CE's
 // afterwards. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI session, whose end
-// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it.
+// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it. It never
+// waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this poller is the
+// mailbox's only one.
 static void HandleInvokeHeld() {
     char name[128] = {};
     const uintptr_t ufuncAddr = g_invokeMailbox.ufuncAddr;
     if (ufuncAddr && UE5_GetObjectName(ufuncAddr, name, static_cast<int32_t>(sizeof(name)))
         && Voll::IsDebugCameraFunction(name)) {
-        ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [] {
-            HandleInvoke();
-            return static_cast<int32_t>(g_invokeMailbox.result);
-        });
+        if (!TryChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [] { HandleInvoke(); }))
+            LOG_INFO("Mailbox: %s ran unrecorded -- another writer was changing the debug camera", name);
         return;
     }
     HandleInvoke();
@@ -1148,18 +1148,37 @@ static void HandleListInstances() {
 // controller-swap fallback.
 // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a hold CE changes is changed under the ledger lock the pipe's writers take
 // too, and is CE's afterwards (Voll::HoldLedger). An OFF leaves CE named on a hold that is off, which reads as free.
-template <typename Change>
-static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
-    std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
-    const int32_t rc = change();
+// Called with the hold's lock held.
+static void RecordCeChange(const std::string& hold) {
     // [D2-3-INVOKE] A debug-camera ON still pending is its sender's, as the pipe's hold recorder has it: CE's answer
     // that sent nothing (a toggle already pending, the other way) never takes another client's.
     uint64_t sender = 0;
     if (hold == Grimoire::HOLD_DEBUG_CAMERA && UE5_GetDebugCameraState() != 1
         && FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe)
-        return rc;
+        return;
     Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);
+}
+
+template <typename Change>
+static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
+    std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
+    const int32_t rc = change();
+    RecordCeChange(hold);
     return rc;
+}
+
+// As ChangeHoldAsCe, but never waits for the lock: busy, the change runs unrecorded, as a mailbox invoke always did
+// before build 3716. Returns whether it was recorded.
+template <typename Change>
+static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {
+    std::unique_lock<std::mutex> lock(Voll::Holds().LockFor(hold), std::try_to_lock);
+    if (!lock.owns_lock()) {
+        change();
+        return false;
+    }
+    change();
+    RecordCeChange(hold);
+    return true;
 }
 
 static void HandleSetDebugCamera() {
