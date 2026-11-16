@@ -37,9 +37,11 @@ public class TeleportViewModelTests
 
         public ProtectState NextProtectState { get; set; } = new();
         public int GetProtectStateCalls { get; private set; }
+        public bool ProtectStateFails { get; set; }
         public override Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default)
         {
             GetProtectStateCalls++;
+            if (ProtectStateFails) return Task.FromException<ProtectState>(new InvalidOperationException("DLL error: test"));
             return Task.FromResult(NextProtectState);
         }
 
@@ -187,8 +189,14 @@ public class TeleportViewModelTests
         public override Task<SeeThroughStatus> SeeThroughSetAsync(bool? enable, int? count, CancellationToken ct = default)
         { SeeThroughSetCalls++; LastSeeThroughEnable = enable; LastSeeThroughCount = count; return Task.FromResult(NextSeeThroughStatus); }
 
+        public bool SeeThroughGetStateFails { get; set; }
         public override Task<SeeThroughStatus> SeeThroughGetStateAsync(CancellationToken ct = default)
-        { SeeThroughGetStateCalls++; return Task.FromResult(NextSeeThroughStatus); }
+        {
+            SeeThroughGetStateCalls++;
+            if (SeeThroughGetStateFails)
+                return Task.FromException<SeeThroughStatus>(new InvalidOperationException("DLL error: test"));
+            return Task.FromResult(NextSeeThroughStatus);
+        }
 
         public override Task<TeleportPose> TeleportGetPoseAsync(CancellationToken ct = default)
         { GetPoseCalls++; return Task.FromResult(NextPose); }
@@ -583,6 +591,70 @@ public class TeleportViewModelTests
         await vm.PollHoldsOnceAsync();
         Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
         Assert.Equal(0, dump.GetProtectStateCalls);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the read a card is owed once its holder lets go is made, whatever the
+    // poll that saw the release met -- a command running, or a read that failed.
+    [Fact]
+    public async Task AHoldReleasedWhileACommandRuns_IsReadOnceTheCommandEnds()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);
+
+        vm.IsBusy = true;                // the AI lets go while a command of the window's runs
+        dump.NextHolds = Report();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);   // the command's own readout stands
+
+        vm.IsBusy = false;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);   // the read it was owed
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);   // and only that one
+    }
+
+    [Fact]
+    public async Task AReadThatFails_IsMadeAgainOnTheNextPoll()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+
+        dump.NextHolds = Report();       // released, and the read that follows fails
+        dump.ProtectStateFails = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);
+
+        dump.ProtectStateFails = false;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+    }
+
+    [Fact]
+    public async Task ASeeThroughReadThatFails_KeepsWhatTheLastPollKnew()
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        await vm.HoldsFirstPoll;
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = true, Claims = 1, You = false };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.SeeThroughState);
+
+        dump.SeeThroughGetStateFails = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by another program or AI session", vm.SeeThroughHolderText);   // as it was
+
+        // The other program lets go: the card is shown as it is now, though the poll before could not read it.
+        dump.SeeThroughGetStateFails = false;
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = false, Claims = 0, You = false };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.SeeThroughHolderText);
+        Assert.Equal("OFF", vm.SeeThroughState);
     }
 
     [Theory]
