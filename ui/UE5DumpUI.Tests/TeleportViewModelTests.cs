@@ -4422,6 +4422,48 @@ public class TeleportViewModelTests
         Assert.False(vm.PoseParentRelative);
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] No test renders the panel either: pin each card's holder chip in the markup.
+    [Theory]
+    [InlineData("DebugCamera")]
+    [InlineData("GodMode")]
+    [InlineData("Stealth")]
+    [InlineData("ForegroundLock")]
+    [InlineData("MoveSpeed")]
+    [InlineData("WorldTime")]
+    [InlineData("PawnTime")]
+    [InlineData("Gravity")]
+    [InlineData("SuperJump")]
+    [InlineData("Fly")]
+    [InlineData("SeeThrough")]
+    [InlineData("GravDir")]
+    public void EachGameplayCard_ShowsWhoElseHoldsIt_BesideItsBadge(string card)
+    {
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml")).Replace("\r\n", "\n");
+        string text = "Text=\"{Binding " + card + "HolderText}\"";
+        Assert.Contains("IsVisible=\"{Binding " + card + "HolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}\"",
+            axaml);
+        int badge = axaml.IndexOf("Text=\"{Binding " + card + "State}\"", StringComparison.Ordinal);
+        int chip = axaml.IndexOf(text, StringComparison.Ordinal);
+        Assert.True(badge > 0 && chip > badge, card + ": the chip follows the card's own badge");
+        // In the badge's header row: nothing but the badge's own closing tags between them, so the chip is not a
+        // top-level Border the jump menu would list, nor ahead of the card's title.
+        string between = axaml[badge..chip];
+        Assert.DoesNotContain("<StackPanel", between);
+        Assert.DoesNotContain("FontWeight=\"SemiBold\"", axaml[chip..axaml.IndexOf("/>", chip, StringComparison.Ordinal)]);
+    }
+
+    [Fact]
+    public void TheHolderChip_SaysHowToTakeTheFeatureBack()
+    {
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml"));
+        Assert.Equal(12, System.Text.RegularExpressions.Regex.Matches(axaml,
+            System.Text.RegularExpressions.Regex.Escape("{StaticResource str.Tip.TP.HolderChip}")).Count);
+        Assert.Contains("Block AI writes", Res.Get("str.Tip.TP.HolderChip"));
+        Assert.DoesNotContain("MouseCursorHolderText", axaml);   // the cursor holds nothing: no holder
+    }
+
     [Fact]
     public void The_Current_Pose_card_shows_the_parent_relative_state()
     {
