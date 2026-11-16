@@ -229,10 +229,12 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   Each write reads the bytes first and sends them along, so a value the game or you changed in between is not
   overwritten. An enum takes only one of its own entries, by its name (short or qualified) or its value, never its
   `_MAX` marker, and nothing when the game's enum names could not be read; a whole number written as `42.0` counts as
-  `42`; a packed bool changes only its own bit. A template is refused by the DLL's own check -- a class default object
-  (`Default__...`), one of its subobjects, a Blueprint component template -- since what it holds reaches every instance
-  spawned later; so is an instance of another class with a field of the same name. `write_memory` still asks every
-  call, for anything else, and is the one route the AI may offer after a field grant is refused.
+  `42`; a packed bool's byte is written back with its other bits as they were read (a neighbour the game flips in
+  that instant is lost, as with the UI's editor). The server refuses a template, by the DLL's own verdict on the
+  object -- a class default object (`Default__...`), one of its subobjects, a Blueprint component template -- since what
+  it holds reaches every instance spawned later; and an instance of another class with a field of the same name.
+  `write_memory` still asks every call, for anything else, and is the one route the AI may offer after the server
+  refuses a field grant (never after you decline one).
 - **No grant to end its own holds.** Turning off or resetting what the AI itself turned on needs no grant, so it can
   always clean up; the server checks whose hold it is right before sending. Turning off what the AI did not turn on (the
   game's own invulnerability, another program's change) is a change and needs the grant, as does an OFF that also
@@ -251,7 +253,7 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 - **Released when the AI session ends.** The features the AI holds are turned off when its server exits, and what you
   turned on stays. If the game is frozen at that moment (a long load, a debugger), the AI's debug camera is turned off
   once the game runs again, unless you take the camera first. Not undone: Fly's speed, preset and noclip settings, a
-  teleport, and whatever a `write_invoke`, `write_memory` or `write_field` changed.
+  teleport, and whatever a `write_invoke`, `write_invoke_granted_function`, `write_memory` or `write_field` changed.
 - **Your teleport markers are yours.** `write_teleport` goes only to coordinates it is given: it never reads, saves or
   clears a marker slot, and **Recall last** in the UI still returns you to where you were before your own last
   teleport.
