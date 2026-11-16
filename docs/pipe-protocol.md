@@ -45,7 +45,9 @@ Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
   the two time lanes, fly, the foreground lock, the debug camera and each force-field job are one
   process-wide state each. The DLL records who holds each (`Voll::HoldLedger`): a client process, CE's
   mailbox, or none. After a command that changes a hold, an active hold is the caller's and one that is
-  off is nobody's.
+  off is nobody's. An `invoke_function` of `ToggleDebugCamera`, `EnableDebugCamera` or
+  `DisableDebugCamera` (any case) changes the debug camera too (build 3716+), as the UI's Console panel
+  runs it; a toggle in the game's own console reaches no ledger.
   - **`"if_free": true`** (bool, optional, on any of those commands): refuse when the hold is active and
     anyone else holds it -- an active hold with no recorded owner counts as someone else's. The answer is
     `ok: true` with `"code": -20`, `"hold"` (its name) and `"holder"` (below); nothing changes. The check

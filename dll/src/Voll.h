@@ -350,6 +350,15 @@ constexpr OwedRelease OwedCameraReleaseSent(int32_t state) noexcept {
     return state == kOwedOffQueued ? OwedRelease::Wait : OwedRelease::Abandon;
 }
 
+// Whether a UFunction name is one of the debug camera's own, compared case-insensitively as the DLL's function lookup
+// falls back to.
+inline bool IsDebugCameraFunction(const std::string& funcName) {
+    std::string n;
+    n.reserve(funcName.size());
+    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    return n == "toggledebugcamera" || n == "enabledebugcamera" || n == "disabledebugcamera";
+}
+
 // The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.
 // `reset_all_fields` changes every force-field job, which the caller lists (`forceFieldJobs`, "<class>::<field>").
 inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlohmann::json& request,
@@ -363,6 +372,11 @@ inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlo
     if (cmd == "set_gravity_direction" || cmd == "reset_gravity_direction") return {Grimoire::HOLD_GRAVITY_DIRECTION};
     if (cmd == "fly_set") return {Grimoire::HOLD_FLY};
     if (cmd == "set_debug_camera") return {Grimoire::HOLD_DEBUG_CAMERA};
+    // [MCP-WRITE-GRANTS-2026-11-14] The UI's Console panel toggles the camera through invoke_function: the camera that
+    // call turns on is the caller's, as set_debug_camera's is, and a hold it turns off is nobody's. get_holds reports the
+    // camera's real state, so an owner left from before would be named for a camera someone else turned on. A toggle in
+    // the game's own console still reaches no ledger.
+    if (cmd == "invoke_function" && IsDebugCameraFunction(str("func_name"))) return {Grimoire::HOLD_DEBUG_CAMERA};
     // A knob or a lane the handler would refuse names no hold: a name made up by a request would grow the ledger.
     if (cmd == "set_movement_multiplier" || cmd == "reset_movement") {
         const std::string knob = str("knob");
