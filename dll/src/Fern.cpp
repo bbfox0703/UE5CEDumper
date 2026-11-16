@@ -7585,6 +7585,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a background client's call under an invoke grant, which its
+            // server sends with the resolved function's full name; checked below, for background clients only.
+            const bool underGrant = conn->background.load() && request.value("grant", false);
+            const std::string expectFull = request.value("expect_func_full", "");
+            auto refuseUnderGrant = [&](const std::string& why) {
+                auto e = Renge::MakeError(id, "Not invoked under the grant: " + funcName + " " + why);
+                e["code"] = Grimoire::INVOKE_REFUSED_UNDER_GRANT;
+                e["func_full"] = fi.fullName;
+                Sein::Info("PIPE:cmd", "invoke_function: %s refused under a grant", funcName.c_str());
+                return e.dump();
+            };
             // [D2-3-INVOKE] A background client (the MCP server) neither skips the game thread nor calls what the
             // maintainer's list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
             // could be an RPC. Decided before anything is allocated or queued; the UI and CE are never asked.
@@ -7598,18 +7609,47 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 else
                     why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags,
                                                            fi.fullName);
+                // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: what the parameters reach by name. A latent call is refused
+                // for every background client; the rest, and a layout that cannot be read whole, under a grant only.
+                Ubel::ParamLayout layout;
+                std::string layoutWhy;
+                const bool layoutRead = why.empty() && Ubel::CaptureParamLayout(ufuncAddr, layout, layoutWhy);
+                if (why.empty() && layoutRead)
+                    why = Voll::InvokeParamIndirection(layout.params, false);
                 if (!why.empty()) {
                     auto e = Renge::MakeError(id, "Not invoked: " + funcName + " " + why);
                     e["code"] = Grimoire::INVOKE_REFUSED_FOR_BACKGROUND;
                     Sein::Info("PIPE:cmd", "invoke_function: %s refused for a background client", funcName.c_str());
                     return e.dump();
                 }
+                if (underGrant) {
+                    // The grant names one function by its full name; the gate saw only func_name, so the function
+                    // resolved here must be that one, compared ordinally.
+                    if (expectFull.empty() || fi.fullName != expectFull)
+                        return refuseUnderGrant("is " + (fi.fullName.empty() ? std::string("unnamed") : fi.fullName)
+                                                + ", not the function the grant names (" + expectFull + ")");
+                    if (fi.functionFlags & Voll::FUNC_FLAG_UBERGRAPH)
+                        return refuseUnderGrant("is a Blueprint's event graph, entered at whatever entry point it is "
+                                                "given");
+                    if (!layoutRead && layoutWhy != "no parameters")
+                        return refuseUnderGrant("has parameters that could not be read (" + layoutWhy + ")");
+                    if (layoutRead && layout.truncated)
+                        return refuseUnderGrant("has parameters too deep to read whole");
+                    if (layoutRead) {
+                        const std::string param = Voll::InvokeParamIndirection(layout.params, true);
+                        if (!param.empty()) return refuseUnderGrant(param);
+                    }
+                }
             }
             // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
-            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
+            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused, except under
+            // an invoke grant: a call there can change the defaults of later spawns, and no prompt shows the object.
             const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
             const bool nonStaticOnTemplate =
                 Mimic::WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, resolved, fi.functionFlags);
+            if (underGrant && nonStaticOnTemplate)
+                return refuseUnderGrant("is not static, and the object is a class default or a template: a grant "
+                                        "never calls one there");
             const std::string tplOwnerName =
                 (tpl.kind == Aura::TemplateKind::Template && tpl.owner) ? Ubel::GetName(tpl.owner) : std::string();
             const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
@@ -7806,6 +7846,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (!tplOwnerName.empty()) data["template_owner_name"] = tplOwnerName;
             data["nonstatic_on_template"] = nonStaticOnTemplate;
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
+            data["func_full"]     = fi.fullName;   // [MCP-WRITE-GRANTS-2026-11-14] the function resolved, by full name
             data["parms_size"]    = (int)bufSize;
 
             // Return post-call buffer (may contain out-param values)

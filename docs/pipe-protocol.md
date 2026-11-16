@@ -2143,6 +2143,17 @@ request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing qu
   name (build 3717+). Voll.h's `InvokeRefusedForBackground`.
 - A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
   still waiting).
+- A background client's call of a latent function (a `LatentActionInfo` parameter, which names the function the engine
+  calls when it finishes) is refused with `code` `-24` (build 3717+).
+- **Under an invoke grant** (`[MCP-WRITE-GRANTS-2026-11-14]` Phase 1b, build 3717+): a background client sends
+  `"grant": true` and `"expect_func_full"`, the full name of the function the grant names (`walk_functions`' `full`,
+  e.g. `//Script/Engine/Actor.SetActorHiddenInGame`). Refused with `code` `-28` (`func_full` names the function
+  resolved) when the function resolved is another one, ordinally; when it is a Blueprint event graph
+  (`FUNC_UbergraphFunction`); when its parameters cannot be read whole; when a parameter reaches functions or
+  properties by name (a delegate, a property path, a UFunction, or a name or string parameter named for a function,
+  event, property, command, delegate or callback); and when the function is not static and the object is a class
+  default or a template (warned, never refused, otherwise). A client that is not background has `grant` ignored.
+- Every reply names the function resolved by full name (`func_full`, build 3717+).
 
 ### walk_instance_batch
 

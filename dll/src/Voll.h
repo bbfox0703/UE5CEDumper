@@ -535,6 +535,10 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
 //   a function, an event or a property: a delegate, a property path, a UFunction object, or a string or name whose
 //   parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
 //   pass, while a few harmless ones (an animation's TransitionEvent) are refused under a grant and stay per call.
+// FUNC_UbergraphFunction: a Blueprint's event graph, entered at any offset. Defined from 4.23; the bit is unused
+// before, so testing it is safe on every engine.
+inline constexpr uint32_t FUNC_FLAG_UBERGRAPH = 0x00008000;
+
 template <typename Field>
 inline std::string InvokeParamIndirection(const std::vector<Field>& params, bool underGrant) {
     static constexpr const char* kNameLike[] = {"func", "event", "property", "command", "delegate", "callback"};
