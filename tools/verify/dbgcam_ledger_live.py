@@ -32,6 +32,15 @@ the mailbox's INVOKE_BY_NAME of ToggleDebugCamera, sent while it waits, must not
 TryChangeHoldAsCe): it answers within ONE invoke timeout, not two, and the DLL's pipe log reads "ToggleDebugCamera
 ran unrecorded -- another writer was changing the debug camera". Resumed, the queued toggles run; the clean-up turns
 the camera off.
+
+    py tools/verify/dbgcam_ledger_live.py --ui-queued --suspend-name DumperTest58 [--seconds 40] [--pid N]
+
+The register's holder-labels row 5, with the UE5DumpUI window connected and its Teleport tab on the Debug Camera card:
+the game thread frozen, a background client's set_debug_camera ON answers -5 and get_holds reads it pending, held by
+that client (look at the card: Queued, "Held by an AI session (pid N)"); still frozen, the client exits and get_holds
+reads release_owed, kind none (the card: "Turning off: the AI session that held it has ended"); resumed, the camera
+turns off and the hold is nobody's. Each stage holds for --seconds, and the pipe log's get_debug_camera_state lines in
+each stage are counted (the window sends none while the toggle is pending).
 """
 
 from __future__ import annotations
@@ -162,14 +171,83 @@ def busy_lock(ui, game: int, name: str, ck: Checks) -> None:
         ck.check(off == 0, "clean-up: the camera is off", off)
 
 
+def debug_state_lines(since: str, until: str) -> int:
+    """How many get_debug_camera_state requests the DLL's pipe log names between two stamps, repeats included."""
+    from mcp_client import _log_line  # noqa: E402,F401 -- the same log root
+    from pipe_client import LOGROOT  # noqa: E402
+    import re
+    n = 0
+    for path in LOGROOT.glob("*/pipe-0.log"):
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.startswith("[") or not (since <= line[1:20] < until):
+                continue
+            if '"cmd":"get_debug_camera_state"' in line:
+                n += 1
+            m = re.search(r"repeated (\d+)x: get_debug_camera_state", line)
+            if m:
+                n += int(m.group(1)) - 1
+    return n
+
+
+def ui_queued(ui, game: int, name: str, seconds: float, ck: Checks) -> None:
+    """Row 5: a queued ON held by an AI session, then its owed release, while the window is looked at."""
+    from mcp_client import _camera_force_off, _fresh_stamp, _FrozenGameThread, _now  # noqa: E402
+
+    ai = Child(game, background=True)
+    print(f"  AI-session stand-in pid {ai.pid}")
+    left = False
+    try:
+        with _FrozenGameThread(name) as frozen:
+            print(f"        {frozen.suspend_line}")
+            r = ai.request("set_debug_camera", enable=True, if_free=True)
+            h = camera_hold(ui)
+            ck.check(r.get("state") == -5 and h.get("pending") and h.get("holder", {}).get("pid") == ai.pid
+                     and h["holder"].get("background"),
+                     "frozen: the AI's set_debug_camera ON answers -5 and get_holds reads it pending, the AI's", (r, h))
+            t0 = _fresh_stamp()
+            print(f"  QUEUED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+            time.sleep(seconds)
+            t1 = _now()
+            print(f"        the window's get_debug_camera_state requests while pending: {debug_state_lines(t0, t1)}")
+            code = ai.leave()
+            left = True
+            owed = {}
+            for _ in range(50):
+                owed = camera_hold(ui)
+                if owed.get("release_owed"):
+                    break
+                time.sleep(0.1)
+            ck.check(code == 0 and owed.get("release_owed") and owed.get("holder", {}).get("kind") == "none",
+                     "frozen: the AI session exits; get_holds reads release_owed, kind none", owed)
+            print(f"  OWED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+            time.sleep(seconds)
+        end = time.time() + 15
+        h, state = camera_hold(ui), camera_state(ui)
+        while time.time() < end and (state != 0 or h.get("release_owed") or h.get("pending")):
+            time.sleep(0.25)
+            h, state = camera_hold(ui), camera_state(ui)
+        ck.check(state == 0 and not h.get("release_owed") and not h.get("pending")
+                 and h.get("holder", {}).get("kind") == "none",
+                 "resumed: the camera turns off and the hold is nobody's", (state, h))
+        print(f"  RESUMED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+        time.sleep(seconds)
+    finally:
+        if not left:
+            ai.leave()
+        off = _camera_force_off(ui)
+        ck.check(off == 0, "clean-up: the camera is off", off)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pid", type=int)
     ap.add_argument("--busy-lock", action="store_true", help="run the busy-lock check (register row 6) alone")
-    ap.add_argument("--suspend-name", help="with --busy-lock: the game's image stem, for suspend.py (DumperTest58)")
+    ap.add_argument("--suspend-name", help="with --busy-lock or --ui-queued: the game's image stem (DumperTest58)")
+    ap.add_argument("--ui-queued", action="store_true", help="run the window's queued-camera check (register row 5)")
+    ap.add_argument("--seconds", type=float, default=40.0, help="with --ui-queued: how long each stage holds")
     a = ap.parse_args()
-    if a.busy_lock and not a.suspend_name:
-        ap.error("--busy-lock needs --suspend-name")
+    if (a.busy_lock or a.ui_queued) and not a.suspend_name:
+        ap.error("--busy-lock and --ui-queued need --suspend-name")
 
     ck = Checks()
     ui = PipeClient(pid=a.pid, timeout=60)
@@ -189,8 +267,11 @@ def main() -> int:
     if not ck.check(state == 0, "the camera reads OFF to start", state):
         print("  (state -1: no live CheatManager -- use DumperTest58 Development)")
         return 1
-    if a.busy_lock:
-        busy_lock(ui, game, a.suspend_name, ck)
+    if a.busy_lock or a.ui_queued:
+        if a.busy_lock:
+            busy_lock(ui, game, a.suspend_name, ck)
+        else:
+            ui_queued(ui, game, a.suspend_name, a.seconds, ck)
         ui.close()
         print(f"{ck.passed} passed, {len(ck.failures)} failed")
         print("PASS" if not ck.failures else "FAIL")
