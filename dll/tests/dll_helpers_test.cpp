@@ -567,6 +567,30 @@ static void Test_D23_InvokeOwnersAndDenyList() {
     EXPECT("a name only containing a listed one is allowed (whole names only)",
            InvokeRefusedForBackground("QuitGameMenuOpened", 0).empty()
            && InvokeRefusedForBackground("OnSaveGameToSlotDone", 0).empty());
+
+    // [INVOKE-DENY-INDIRECTION] Functions that reach the refused effects BY NAME, and online-service writes that
+    // FUNC_Net does not mark (names from UE's KismetSystemLibrary.h, GameplayStatics.h and OnlineSubsystemUtils).
+    for (const char* n : {"K2_SetTimer", "K2_SetTimerForNextTick", "K2_SetTimerDelegate", "K2_SetTimerForNextTickDelegate"})
+        EXPECT((std::string("a timer by name or event is refused: ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
+    for (const char* n : {"SetObjectPropertyByName", "SetIntPropertyByName", "SetStructurePropertyByName",
+                          "SetVector3fPropertyByName", "SetTextPropertyByName", "SetCollisionProfileNameProperty"})
+        EXPECT((std::string("a property setter by name is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
+    EXPECT("a Blueprint's ubergraph entry is refused (any suffix)",
+           !InvokeRefusedForBackground("ExecuteUbergraph_BP_PlayerCharacter", 0).empty()
+           && !InvokeRefusedForBackground("ExecuteUbergraph", 0).empty());
+    EXPECT("RemovePlayer is refused (bDestroyPawn destroys the pawn)", !InvokeRefusedForBackground("RemovePlayer", 0).empty());
+    for (const char* n : {"WriteProgress", "WriteLeaderboardInteger", "CreateProxyObjectForFlush",
+                          "CreateProxyObjectForInAppPurchase", "CreateProxyObjectForInAppPurchaseCheckout",
+                          "CreateProxyObjectForInAppPurchaseRestoreOwnedProducts"})
+        EXPECT((std::string("an online-service write is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
+    EXPECT("controls: reading a timer, an ordinary setter, a name merely containing a family are allowed",
+           InvokeRefusedForBackground("K2_GetTimerRemainingTime", 0).empty()
+           && InvokeRefusedForBackground("SetHealth", 0).empty()
+           && InvokeRefusedForBackground("OnTimerSet", 0).empty()
+           && InvokeRefusedForBackground("MyExecuteUbergraphHelper", 0).empty()
+           && InvokeRefusedForBackground("GetObjectPropertyByNameCount", 0).empty());
 }
 
 static void Test_Voll_HoldLedger() {
