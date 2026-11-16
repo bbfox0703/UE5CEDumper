@@ -118,8 +118,8 @@ internal static class McpFieldTools
                                            : "a template (a class default's subobject or a Blueprint component template)")
                                        + ": what it holds reaches every instance spawned later, and a field grant covers "
                                        + "live instances." + Instead);
-            var (target, meta) = await GrantedFieldAsync(game, grants, pid, McpJson.GetString(obj, "class_addr"), field,
-                timeout, ct);
+            var (target, meta) = await GrantedFieldAsync(game, grants.FieldTargets(ptrs), pid,
+                McpJson.GetString(obj, "class_addr"), field, timeout, ct);
 
             var walked = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_instance", ["addr"] = inst }, timeout,
                 ct, requireScan: true);
@@ -178,13 +178,11 @@ internal static class McpFieldTools
         }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedField, GrantKind: McpGrantKind.Field);
 
     /// <summary>The granted target this instance's field falls under: the instance's class, then each super in turn,
-    /// the first whose full path and this field a field grant names, with the field's layout from that class. Whether the
-    /// grant is this game run's is the admission's call.</summary>
-    private static async Task<(string Target, FieldInfoModel Field)> GrantedFieldAsync(IMcpGame game, McpGrants grants,
-        int? pid, string? classAddr, string field, TimeSpan timeout, CancellationToken ct)
+    /// the first whose full path and this field one of this run's field grants names (<paramref name="targets"/>), with
+    /// the field's layout from that class. The admission checks the grant again at the write.</summary>
+    private static async Task<(string Target, FieldInfoModel Field)> GrantedFieldAsync(IMcpGame game,
+        IReadOnlySet<string> targets, int? pid, string? classAddr, string field, TimeSpan timeout, CancellationToken ct)
     {
-        var targets = grants.List().Where(g => g.Kind == McpGrantKind.Field).Select(g => g.Target)
-            .ToHashSet(StringComparer.Ordinal);
         string? addr = classAddr;
         for (int hop = 0; targets.Count > 0 && hop < MaxSuperHops && IsAddress(addr); hop++)
         {

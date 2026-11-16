@@ -669,6 +669,19 @@ public sealed partial class McpGrants
         lock (_lock) return _grants.Select(e => e.Snapshot()).ToList();
     }
 
+    /// <summary>The fields this game run's field grants name, which write_field resolves an instance's class chain
+    /// against. A grant of another run (an earlier one of a reused pid, another game) would end the walk at a class whose
+    /// admission, keyed on this run, then fails.</summary>
+    public IReadOnlySet<string> FieldTargets(JsonObject ptrs)
+    {
+        LookAtBlock();
+        if (!TryRun(ptrs, out long pid, out string creationTime, out _)) return new HashSet<string>();
+        lock (_lock)
+            return _grants.Where(e => e.Kind == McpGrantKind.Field && e.Pid == pid
+                                      && string.Equals(e.CreationTime, creationTime, StringComparison.Ordinal))
+                .Select(e => e.Target).ToHashSet(StringComparer.Ordinal);
+    }
+
     /// <summary>Ends every grant: the seam for the user's switch that blocks AI writes.</summary>
     public int Clear() => Revoke();
 
