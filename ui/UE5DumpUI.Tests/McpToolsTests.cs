@@ -381,12 +381,13 @@ public sealed class McpToolsTests
                 new JsonObject { ["v"] = 1, ["n"] = "Busy" }),
         });
 
-    /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, and DumperTestHolder its
-    /// super, with an int, a packed bool, an enum byte, a struct and a static array; memory reads answer the live
-    /// bytes and a write_mem answers as the DLL does.</summary>
+    /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, 0x3000 an archetype of
+    /// it (a class default's subobject, as the DLL's TemplateOf names it), and DumperTestHolder its super, with an int, a
+    /// packed bool, an enum byte, a struct and a static array; memory reads answer the live bytes and a write_mem answers
+    /// as the DLL does. The DLL is 3718, the first whose get_object names a template.</summary>
     private static FakeGame FieldGame()
     {
-        var game = new FakeGame();
+        var game = new FakeGame { DllBuild = 3718 };
         var memory = new Dictionary<ulong, string> { [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00" };
         game.Answers["find_object"] = r => new JsonObject
         {
@@ -399,12 +400,18 @@ public sealed class McpToolsTests
             "0x2000" => new JsonObject
             {
                 ["name"] = "Default__DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
-                ["class"] = "DumperTestDerivedHolder",
+                ["class"] = "DumperTestDerivedHolder", ["template"] = "class_default",
+            },
+            // Named like any component: only the DLL's verdict tells it from a live object.
+            "0x3000" => new JsonObject
+            {
+                ["name"] = "HolderComp", ["class_addr"] = DerivedClass, ["class"] = "DumperTestDerivedHolder",
+                ["template"] = "template",
             },
             _ => new JsonObject
             {
                 ["name"] = "DumperTestDerivedHolder_0", ["class_addr"] = DerivedClass,
-                ["class"] = "DumperTestDerivedHolder",
+                ["class"] = "DumperTestDerivedHolder", ["template"] = "",
             },
         };
         game.Answers["walk_class"] = r => new JsonObject
@@ -579,6 +586,53 @@ public sealed class McpToolsTests
         var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
         Assert.True(result.IsError, payload?.ToJsonString());
         Assert.Contains("0x2A0", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("0x2000", "class default")]   // named Default__, and the DLL says so
+    [InlineData("0x3000", "template")]        // a template whose own name says nothing
+    public async Task WriteField_OnATemplateTheDllNames_IsRefused_AndNothingWritten(string inst, string why)
+    {
+        // What a class default or an archetype holds reaches every instance spawned later: more than "every live
+        // instance", which is what the user approved.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, inst));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains(why, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WhenGetObjectNamesNoTemplateVerdict_IsRefused()
+    {
+        // A reply without the key cannot tell a template from a live object, so it is not taken for a live one.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var inner = game.Answers["get_object"];
+        game.Answers["get_object"] = r =>
+        {
+            var o = inner(r);
+            o.Remove("template");
+            return o;
+        };
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task TheFieldGrantAndWriteField_RefuseADllOlderThan3718()
+    {
+        var game = FieldGame();
+        game.DllBuild = 3717;
+        var (grant, r1) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        Assert.True(r1.IsError);
+        Assert.Contains("older than 3718", grant!["error"]!.GetValue<string>());
+        var (write, r2) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(r2.IsError);
+        Assert.Contains("older than 3718", write!["error"]!.GetValue<string>());
         Assert.DoesNotContain("write_mem", game.Commands);
     }
 
