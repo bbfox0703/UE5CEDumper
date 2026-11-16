@@ -60,10 +60,11 @@ run for the gameplay toggles, once for movement and teleport (each through a too
 <code>grant_</code>), and before every memory write, function call and forced field. With a DLL of build 3717 or
 later you can also allow one game function for the game run: <code>grant_invoke_one_function_any_object_and_args</code>
 names it by function and class, and <code>write_invoke_granted_function</code> then calls only that one without asking
-again. Likewise one field of one class (a number, a bool or an enum):
+again. With a DLL of build 3718 or later you can also allow one field of one class (a number, a bool or an enum):
 <code>grant_write_field_one_property_every_instance</code> names the field and its class, and <code>write_field</code>
 then writes only that field, on every live instance of the class and its subclasses (other characters included),
-without asking again. Any other client only reads, unless you let it write (section 2).</blockquote>
+without asking again; what it wrote is not undone when the AI session ends. Any other client only reads, unless you let
+it write (section 2).</blockquote>
 
 <hr>
 
