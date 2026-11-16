@@ -322,6 +322,28 @@ Use the current 3709 dist in the desktop Code tab, and record the Claude Code ve
    quitting the app? How long does an idle session's server live?
 10. **M11 (only before any future elicitation route).** Does the Code tab render `elicitation/create`?
 
+### 6.1 Results so far (2026-11-16)
+
+Measured in the desktop app's Code tab, Claude Code 2.1.322 (the version this session reported earlier), with the build
+3713 server (`out\mcp\UE5DumpUI.exe`, pid 36620) and no game running. The prompt appears before a call reaches the
+server, so none needs a game; every probe was denied, and the server log shows no `write_*` call.
+
+| | Question | Result | What it decides |
+|---|---|---|---|
+| **M1** | Does a marked tool's prompt show its arguments in full? | **Yes.** Under "What Claude sent": `Instance addr`, `Function` (a 140-character name, wrapped, its end marker shown) and an expanded `Params` list (a 220-character string, wrapped, its end marker shown; a number). Nothing was cut at these lengths. | `grant_invoke` and `grant_field` (§4.4, §4.5) can ship: the human sees the whole target. A required `scope_ack` argument (§4.2) would be shown in full too. |
+| **M10** | Does the prompt show the tool's title or description? | **No: the tool's name only**, underscores turned into spaces, with the server's name: "Allow Claude to use write invoke (ue5cedumper)?". The title ("Invoke a UFunction") and the description are not shown. | The grant tools' NAMES must state their scope (§4.2); the argument display makes a `scope_ack` sentence a workable second channel. |
+| — | Which options does a marked prompt offer? | "Deny" and "Allow once" only. | Matches the docs: no "don't ask again" on a marked tool. |
+| **M6** | Do subagents and workflow agents share the session's server? | **Yes.** A background subagent's and a workflow agent's `read_games` ran on the same server process (pid 36620 logged both; no new server log appeared). | Grants are shared with every agent of the session. The PreToolUse hook that denies `write_*` and `grant_*` calls carrying `agent_id`, and the instruction that game text is data (§4.9), are required in Phase 1, not optional. |
+| **M6b** | Does a background subagent's marked prompt reach the main session? | **Yes, and it looks exactly like the main conversation's own prompt**: same title, same fields, nothing naming the subagent. | A human cannot tell a subagent's grant request from the main conversation's. This strengthens M6's conclusion. |
+| **M9** (part) | Does `/mcp` enable / reconnect end the server process? | **Yes.** Enabling the server started one process (pid 22408), which logged "stdin closed; server exiting" 11 s later, and a new one (pid 36620) took over. | A reconnect ends every grant, as §4.6 assumes. Idle lifetime, session close and app quit are still open. |
+
+Seen along the way (an app behaviour, not this server's): a user message sent while a permission prompt is open aborts
+the request ("Tool permission request aborted"), and the dialog can stay on screen afterwards, inert.
+
+**Still open:** M2-M5 need a permission-mode switch or an allow rule (the maintainer's settings); M7 needs Phase 1's
+version log line; M8's SDK half has no session to measure here; M9's idle lifetime; M11 only before an elicitation
+route.
+
 ## 7. Phases and what each touches
 
 - **Phase 1: kind grants, the gate, the host policy.** UE5DumpUI only: no DLL change, no mailbox contract bump.

@@ -854,8 +854,12 @@ implementation yet. The plan, the rejected routes, the measurements and the deci
 - **decided by the maintainer, 2026-11-14:** Phase 1 includes the UI half. The gameplay cards name who holds each
   feature (`get_holds`), and a new "Block AI writes" switch refuses every AI write and ends every grant when turned on.
   With the cards' existing OFF buttons, that is how the user stops an AI. No copy-text buttons (the eval's §4.10).
-Next: the Phase 0 measurements (§6 there; M1, M10 and M6 first, about an hour in the Code tab, no build), then the
-maintainer's decisions (§8 there). Side findings, each its own census row: `[MCP-INSTR-CLAIMS]`,
+Phase 0, 2026-11-16 (the eval's §6.1): **M1** a marked prompt shows every argument in full (140- and 220-character
+values, wrapped) -- invoke and field grants can ship; **M10** it shows the tool's name only, not its title or
+description -- grant names must state their scope; **M6 / M6b** subagents and workflow agents share the session's
+server, and a subagent's prompt is indistinguishable from the main conversation's -- the agent_id deny hook is
+required. Still open: M2-M5 (permission-mode switches), M7 (needs Phase 1's log line), M9's idle lifetime. Next: the
+maintainer's decisions (§8 there), then Phase 1. Side findings, all fixed in build 3713: `[MCP-INSTR-CLAIMS]`,
 `[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.
 
 ### Decisions (maintainer, 2026-11-06)
