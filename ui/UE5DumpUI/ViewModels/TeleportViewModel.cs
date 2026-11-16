@@ -3969,6 +3969,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _holdsBaseline;       // a start's first poll only records: the connect prime has just read every card
     private bool _holdsFailureLogged;  // a failing read is logged once per connection, not every two seconds
     private readonly HashSet<string> _foreignHolds = new(StringComparer.Ordinal);   // labelled by the last poll
+    // A card read owed and not yet made: the poll met a command, or the read failed. Carried until it is made, since
+    // the read after a holder lets go is the only one that shows the card as it is now.
+    private readonly HashSet<string> _rereadOwed = new(StringComparer.Ordinal);
     private readonly HashSet<long> _exitedPids = new();
     private const string SeeThroughHoldKey = "see-through";   // a key of this class's own: See-through has no hold name
 
@@ -4008,6 +4011,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _holdsGen++;
         _holdsFailureLogged = false;
         _foreignHolds.Clear();
+        _rereadOwed.Clear();
         _exitedPids.Clear();
         DebugCameraHolderText = "";
         GodModeHolderText = "";
@@ -4060,18 +4064,30 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 SeeThroughHolderText = HolderText.ForSeeThrough(seeThrough);
                 if (SeeThroughHolderText.Length > 0) foreign.Add(SeeThroughHoldKey);
             }
+            else if (ExperimentalEnabled && _foreignHolds.Contains(SeeThroughHoldKey))
+            {
+                foreign.Add(SeeThroughHoldKey);   // its read failed: the label and the hold stay as the last poll knew
+            }
 
             // Read again what someone else holds, or held until the last poll: a value changed inside a hold changes
             // neither its holder nor its state, and a release leaves the card showing theirs. Not on a start's first
-            // poll, and not while a command runs, whose own readout must stand.
+            // poll, and not while a command runs, whose own readout must stand: that read is owed to the next poll.
             var reread = new HashSet<string>(foreign, StringComparer.Ordinal);
             reread.UnionWith(_foreignHolds);
+            reread.UnionWith(_rereadOwed);
             _foreignHolds.Clear();
             _foreignHolds.UnionWith(foreign);
+            _rereadOwed.Clear();
             bool baseline = _holdsBaseline;
             _holdsBaseline = false;
-            if (baseline || IsBusy || reread.Count == 0) return;
-            await RereadHeldCardsAsync(reread, seeThrough, gen);
+            if (baseline || reread.Count == 0) return;
+            if (IsBusy)
+            {
+                _rereadOwed.UnionWith(reread);
+                return;
+            }
+            var missed = await RereadHeldCardsAsync(reread, seeThrough, gen);
+            if (gen == _holdsGen) _rereadOwed.UnionWith(missed);
         }
         finally
         {
@@ -4108,44 +4124,63 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>The card reads the connect prime makes, for the holds given, each dropped if a disconnect or a
-    /// command came in between. The Stealth card is not read again: its read searches the pawn's components.</summary>
-    private async Task RereadHeldCardsAsync(HashSet<string> holds, SeeThroughStatus? seeThrough, int gen)
+    /// command came in between. The Stealth card is not read again: its read searches the pawn's components. Returns
+    /// the holds whose read was not made, which the poll owes to the next one; a card hidden by the experimental switch
+    /// owes none.</summary>
+    private async Task<HashSet<string>> RereadHeldCardsAsync(HashSet<string> holds, SeeThroughStatus? seeThrough,
+        int gen)
     {
+        var missed = new HashSet<string>(StringComparer.Ordinal);
         bool Current() => gen == _holdsGen && IsConnected && !IsBusy;
-        async Task Read<T>(Func<Task<T>> fetch, Action<T> apply)
+        async Task Read<T>(string[] group, Func<Task<T>> fetch, Action<T> apply)
         {
-            if (!Current()) return;
-            try
+            if (!holds.Overlaps(group)) return;
+            bool made = false;
+            if (Current())
             {
-                var value = await fetch();
-                if (Current()) apply(value);
+                try
+                {
+                    var value = await fetch();
+                    if (Current())
+                    {
+                        apply(value);
+                        made = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogHoldsFailure(ex);
+                }
             }
-            catch (Exception ex)
-            {
-                LogHoldsFailure(ex);
-            }
+            if (!made)
+                foreach (var hold in group)
+                    if (holds.Contains(hold)) missed.Add(hold);
         }
 
-        if (holds.Contains(Constants.HoldGodMode))
-            await Read(() => _dump.GetProtectStateAsync(), ApplyProtectState);
-        if (holds.Contains(Constants.HoldDebugCamera))
-            await Read(() => _dump.GetDebugCameraStateAsync(), s => ApplyDebugCameraState(s));
-        if (holds.Overlaps(MovementHolds))
-            await Read(() => _dump.GetMovementParamsAsync(), mp =>
+        await Read(new[] { Constants.HoldGodMode }, () => _dump.GetProtectStateAsync(), ApplyProtectState);
+        await Read(new[] { Constants.HoldDebugCamera }, () => _dump.GetDebugCameraStateAsync(),
+            s => ApplyDebugCameraState(s));
+        await Read(MovementHolds, () => _dump.GetMovementParamsAsync(), mp =>
+        {
+            ApplyMoveSpeedReadout(mp);
+            ApplyGravityReadout(mp);
+            ApplySuperJumpReadout(mp);
+            ApplyGravDirReadout(mp);
+        });
+        // The readout, never the sliders.
+        await Read(TimeHolds, () => _dump.GetTimeStateAsync(), ApplyTimeDilationReadout);
+        if (ExperimentalEnabled)
+        {
+            await Read(new[] { Constants.HoldForegroundLock }, () => _dump.GetForegroundLockAsync(),
+                ApplyForegroundLockState);
+            await Read(new[] { Constants.HoldFly }, () => _dump.FlyGetStateAsync(), ApplyFlyReadout);
+            if (holds.Contains(SeeThroughHoldKey))
             {
-                ApplyMoveSpeedReadout(mp);
-                ApplyGravityReadout(mp);
-                ApplySuperJumpReadout(mp);
-                ApplyGravDirReadout(mp);
-            });
-        if (holds.Overlaps(TimeHolds))
-            await Read(() => _dump.GetTimeStateAsync(), ApplyTimeDilationReadout);   // the readout, never the sliders
-        if (ExperimentalEnabled && holds.Contains(Constants.HoldForegroundLock))
-            await Read(() => _dump.GetForegroundLockAsync(), ApplyForegroundLockState);
-        if (ExperimentalEnabled && holds.Contains(Constants.HoldFly))
-            await Read(() => _dump.FlyGetStateAsync(), ApplyFlyReadout);
-        if (seeThrough is not null && holds.Contains(SeeThroughHoldKey) && Current())
-            ApplySeeThroughReadout(seeThrough);
+                if (seeThrough is not null && Current()) ApplySeeThroughReadout(seeThrough);
+                else missed.Add(SeeThroughHoldKey);
+            }
+        }
+        return missed;
     }
 
     /// <summary>Whether a holder pid no longer runs: typically this window's own holds from before a restart, which
