@@ -24,7 +24,9 @@ namespace UE5DumpUI.Mcp;
 /// <para><b>write_invoke</b> calls a UFunction on the game thread, its parameters by name. The server reads the
 /// signature and builds the buffer by the Invoke dialog's rules (<see cref="ParamBufferBuilder"/>), stricter where the
 /// dialog relies on a human reading the box: a value that does not parse as its type is refused rather than written as
-/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory). It
+/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory) of
+/// the parameter's declared class or a subclass (a top-level object argument; a struct's object field is held to
+/// liveness only). It
 /// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
 /// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
 /// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera, and since
@@ -307,7 +309,8 @@ internal static class McpRawTools
     /// fields, a string sent as the DLL's descriptor, a container or delegate only empty, each scalar range-checked
     /// before it is written. Stricter than the dialog where it relies on a person reading the box: a function taking an
     /// FText is refused outright (a zeroed FText is a crash, not an empty one), a value that does not parse as its type is
-    /// refused rather than written as zero, and an object pointer must be a live object.</summary>
+    /// refused rather than written as zero, and an object pointer must be a live object -- at top level, of the
+    /// parameter's declared class or a subclass.</summary>
     internal static async Task<InvokeCall> BuildCallAsync(IMcpGame game, int? pid, FunctionInfoModel fn,
         JsonObject given, int ueVersion, TimeSpan timeout, CancellationToken ct)
     {
@@ -395,14 +398,49 @@ internal static class McpRawTools
             }
             if (node is null) continue;
             string scalar = StrictScalar(type, node, p.Name);
-            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0
-                && !await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
-                throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0)
+            {
+                if (!await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
+                    throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+                // [INVOKE-OBJECT-PARAM-CLASS] A native function handed an object of another class calls through its
+                // vtable as if it were the declared one.
+                if (HoldsAnInstanceOfItsClass(type) && p.ObjectClassName.Length > 0
+                    && await NotDerivedFromAsync(game, pid, scalar, p.ObjectClassName, timeout, ct) is { } other)
+                    throw new McpToolError($"'{p.Name}' takes a {p.ObjectClassName}; {scalar} is {other}, which does not "
+                                           + "derive from it.");
+            }
             if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, scalar, out string rangeErr))
                 throw new McpToolError($"'{p.Name}': {rangeErr}");
             ParamBufferBuilder.WriteParam(buf, p.Offset, type, p.Size, scalar);
         }
         return new InvokeCall(buf, size, strings);
+    }
+
+    /// <summary>The object kinds whose declared class (obj_class, the property's class) is the object's own class or a
+    /// super of it. A class parameter's property class is Class and an interface's is the interface: neither relation is
+    /// a class chain's, so neither is checked this way.</summary>
+    private static bool HoldsAnInstanceOfItsClass(string type)
+        => type is "ObjectProperty" or "WeakObjectProperty" or "SoftObjectProperty" or "LazyObjectProperty";
+
+    /// <summary>Null when the live object at <paramref name="addr"/> is a <paramref name="declared"/> (its class or a super
+    /// is so named; the DLL sends the declared class by its short name, as walk_class names each class); otherwise what
+    /// it is instead, for the refusal. A chain that cannot be read counts as not derived.</summary>
+    private static async Task<string?> NotDerivedFromAsync(IMcpGame game, int? pid, string addr, string declared,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = addr }, timeout, ct,
+            requireScan: true);
+        string? cls = McpJson.GetString(obj, "class_addr");
+        for (int hop = 0; hop < MaxSuperHops && cls is not null && McpArgs.TryParseHex(cls, out ulong c) && c != 0; hop++)
+        {
+            var cr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = cls }, timeout, ct,
+                requireScan: true);
+            if (!McpWriteTools.Truthy(cr, "ok") || cr["class"] is not JsonObject k) break;
+            if (string.Equals(McpJson.GetString(k, "name"), declared, StringComparison.Ordinal)) return null;
+            cls = McpJson.GetString(k, "super_addr");
+        }
+        string own = McpJson.GetString(obj, "class") ?? "";
+        return own.Length > 0 ? "a " + own : "an object whose class could not be read";
     }
 
     /// <summary>A struct parameter's fields as the dialog expands them: a trusted engine layout first (version-aware),
