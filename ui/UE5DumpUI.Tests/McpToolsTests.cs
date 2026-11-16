@@ -390,9 +390,11 @@ public sealed class McpToolsTests
         new JsonObject
         {
             ["name"] = "Mode", ["type"] = "ByteProperty", ["offset"] = 0x2A5, ["size"] = 1, ["value"] = "0",
+            // A real state named like a sentinel (Busy_MAX), then UHT's own sentinel, which is always last.
             ["enum_entries"] = new JsonArray(new JsonObject { ["v"] = 0, ["n"] = "EHolderMode::Idle" },
                 new JsonObject { ["v"] = 1, ["n"] = "EHolderMode::Busy" },
-                new JsonObject { ["v"] = 2, ["n"] = "EHolderMode::EHolderMode_MAX" }),
+                new JsonObject { ["v"] = 2, ["n"] = "EHolderMode::Busy_MAX" },
+                new JsonObject { ["v"] = 3, ["n"] = "EHolderMode::EHolderMode_MAX" }),
         });
 
     /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, 0x3000 an archetype of
@@ -748,6 +750,18 @@ public sealed class McpToolsTests
     }
 
     [Theory]
+    [InlineData("Busy_MAX", "02")]       // a real state whose name ends in _MAX: only the last entry is the sentinel
+    [InlineData("2", "02")]
+    public async Task WriteField_AnEnumStateNamedLikeASentinel_IsAnEntry(string value, string bytes)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(bytes, SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
     [InlineData("Busy")]                 // the short name, as a user says it
     [InlineData("EHolderMode::Busy")]    // the name as the DLL sends it
     [InlineData("busy")]
@@ -762,7 +776,7 @@ public sealed class McpToolsTests
     }
 
     [Theory]
-    [InlineData("2")]                    // UHT's _MAX sentinel: no state of the enum
+    [InlineData("3")]                    // UHT's _MAX sentinel: no state of the enum
     [InlineData("EHolderMode_MAX")]
     [InlineData("Idl")]
     public async Task WriteField_AnEnumsSentinelOrANonEntry_IsRefused(string value)
