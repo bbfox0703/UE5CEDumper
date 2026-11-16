@@ -155,8 +155,8 @@ marker. The write tools they cover lose it, and the server refuses any covered w
     verified at implementation.
 - **Under a grant, refuse a non-static function on a class default object.** Today the DLL only warns about that, and
   it can change the defaults of later spawns.
-- **No use cap in Phase 1** (§8): each call is still a model turn, so a runaway loop is slow and visible. Every
-  admitted call is counted, and the count shows in `read_grants` and the log.
+- **No use cap in Phase 1** (§8): each call is still a model turn, so a runaway loop is slow and visible. Every call
+  a grant lets through is counted (build 3716: at the gate, not at admission), and the count shows in `read_grants`.
 
 ### 4.5 `write_field` (Phase 2, after M1)
 

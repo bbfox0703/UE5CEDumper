@@ -483,7 +483,6 @@ public sealed partial class McpGrants
                 return null;
             }
             id = entry.Id;
-            entry.Uses++;
         }
         _log?.Info(Constants.LogCatPipe, $"[MCP] Grant {id} admitted a {kind} write to game {pid}.");
         refusal = null;
@@ -579,7 +578,11 @@ public sealed partial class McpGrants
         lock (_lock)
         {
             var entry = Find(kind, cap.Pid, cap.CreationTime);
-            return entry is not null && entry.Id == cap.GrantId ? null : "the grant for this was revoked.";
+            if (entry is null || entry.Id != cap.GrantId) return "the grant for this was revoked.";
+            // Counted here, where the grant is what lets the call through: an admission never sent, or an OFF of the
+            // server's own hold (passed above on that), is not the grant's doing.
+            entry.Uses++;
+            return null;
         }
     }
 }
