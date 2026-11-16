@@ -105,11 +105,12 @@ public sealed partial class McpGrants
         "reset_movement", "reset_gravity_direction", "reset_time_dilation", "reset_field",
     };
 
-    // The ON/OFF commands whose OFF ends only a hold. fly_set and seethrough_set also take global settings, applied
-    // before enable, which no release undoes; IsRelease therefore accepts their OFF only with nothing else in it.
+    // The ON/OFF commands whose OFF ends a hold. fly_set also takes global settings, applied before enable, which no
+    // release undoes, so IsRelease accepts an OFF only with nothing else in it. seethrough_set is not here: its explicit
+    // OFF drops every claim on See-through, the user's and CE's included.
     private static readonly HashSet<string> OffReleases = new(StringComparer.Ordinal)
     {
-        "set_god_mode", "set_foreground_lock", "set_debug_camera", "seethrough_set", "fly_set",
+        "set_god_mode", "set_foreground_lock", "set_debug_camera", "fly_set",
     };
 
     private static readonly HashSet<string> NoCommands = new(StringComparer.Ordinal);
@@ -228,13 +229,18 @@ public sealed partial class McpGrants
         return Movement.Contains(cmd) ? McpGrantKind.Movement : McpGrantKind.None;
     }
 
-    /// <summary>A release is classed from the request body, not from the tool that built it: one of the explicit
-    /// resets, or an ON/OFF command whose only state field is <c>enable</c> as a JSON false. The DLL reads a missing
-    /// enable as false, so absence is never taken for a release.</summary>
+    /// <summary>Whether a request has the shape of a release, classed from its body, not from the tool that built it:
+    /// one of the explicit resets, or an ON/OFF command whose only state field is <c>enable</c> as a JSON false, either
+    /// carrying <c>if_free</c> true, without which the DLL skips its holder check. The DLL reads a missing enable as
+    /// false, so absence is never taken for a release. The shape is not enough on its own: the gate passes it only while
+    /// this server holds what it ends (<see cref="ReleasedHold"/>, read from get_holds at the send), because god mode's
+    /// OFF writes the normal value to every protection bool, whoever made the pawn invulnerable, and a reset writes its
+    /// knob's base, whoever changed it.</summary>
     public static bool IsRelease(JsonObject request)
     {
         string? cmd = McpJson.GetString(request, "cmd");
         if (cmd is null) return false;
+        if (request["if_free"] is not JsonValue f || f.GetValueKind() != JsonValueKind.True) return false;
         if (Resets.Contains(cmd)) return true;
         if (!OffReleases.Contains(cmd)) return false;
         bool off = false;
@@ -249,6 +255,56 @@ public sealed partial class McpGrants
         }
         return off;
     }
+
+    /// <summary>The hold a release would end, named as get_holds names it (the DLL's own mapping of a command to the
+    /// holds it changes); null for a request that names none, such as a knob the DLL would refuse.</summary>
+    public static string? ReleasedHold(JsonObject request)
+    {
+        string? Str(string key) => McpJson.GetString(request, key);
+        switch (Str("cmd"))
+        {
+            case "set_god_mode": return "god_mode";
+            case "set_foreground_lock": return "foreground_lock";
+            case "set_debug_camera": return "debug_camera";
+            case "fly_set": return "fly";
+            case "reset_gravity_direction": return "gravity_direction";
+            case "reset_movement":
+                return Str("knob") is "walk_speed" or "gravity" or "jump" ? "movement:" + Str("knob") : null;
+            case "reset_time_dilation":
+                string? target = request.ContainsKey("target") ? Str("target") : "global";   // the DLL's default
+                return target is "global" or "pawn" ? "time:" + target : null;
+            case "reset_field":
+                string? cls = Str("class_name"), field = Str("field_name");
+                return string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(field) ? null : "force_field:" + cls + "::" + field;
+            default: return null;
+        }
+    }
+
+    /// <summary>Whether get_holds says this server holds what <paramref name="request"/> ends: in force, or an ON of its
+    /// own still on its way (the debug camera), with this client as the holder.</summary>
+    private static bool Owns(JsonObject request, JsonObject? holds)
+    {
+        string? hold = ReleasedHold(request);
+        if (hold is null || holds?["holds"] is not JsonArray arr) return false;
+        foreach (var node in arr)
+        {
+            if (node is not JsonObject h || McpJson.GetString(h, "hold") != hold) continue;
+            bool inForce = IsTrue(h["active"]) || IsTrue(h["pending"]);
+            return inForce && h["holder"] is JsonObject holder && IsTrue(holder["you"]);
+        }
+        return false;
+    }
+
+    private static bool IsTrue(JsonNode? node) => node is JsonValue v && v.GetValueKind() == JsonValueKind.True;
+
+    /// <summary>The grant kind a change needs, resets included: a reset of what this server does not hold changes the
+    /// game like a set.</summary>
+    private static McpGrantKind ChangeKind(string cmd) => cmd switch
+    {
+        "reset_movement" or "reset_gravity_direction" => McpGrantKind.Movement,
+        "reset_time_dilation" => McpGrantKind.Toggles,
+        _ => KindOf(cmd),
+    };
 
     // ── Grants ──────────────────────────────────────────────────────────────────────────────────────────
 
@@ -401,12 +457,10 @@ public sealed partial class McpGrants
     // ── The gate's check ────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>The gate's verdict on one request about to be sent to the connected game run: null to send it, or why
-    /// not. A read passes; on a host that writes, a release passes; anything else needs a capability for this run and
-    /// this command, whose grant is still in the table, so a revoke that lands before the send wins. A command in no
-    /// class is refused, so a future tool that forgets to ask for admission fails closed.</summary>
-    // RED: the surface only.
-    public static string? ReleasedHold(JsonObject request) => null;
-
+    /// not. A read passes; on a host that writes, a release of what this server holds (<paramref name="holds"/>, the
+    /// get_holds reply read right before) passes; anything else needs a capability for this run and this command, whose
+    /// grant is still in the table, so a revoke that lands before the send wins. A command in no class is refused, so a
+    /// future tool that forgets to ask for admission fails closed.</summary>
     public string? Check(JsonObject request, McpGrantCapability? cap, long connectedPid, string? connectedCreationTime,
         JsonObject? holds = null)
     {
@@ -415,12 +469,19 @@ public sealed partial class McpGrants
         if (Reads.Contains(cmd)) return null;
         var decision = Decision;
         if (decision == McpHostDecision.ReadOnly) return "this session only reads.";
-        if (IsRelease(request)) return null;
+        bool releaseShape = IsRelease(request);
+        if (releaseShape && Owns(request, holds)) return null;
 
-        var kind = KindOf(cmd);
+        var kind = ChangeKind(cmd);
         bool perCall = PerCall.Contains(cmd);
-        if (kind == McpGrantKind.None && !perCall) return cmd + " is not a command this server sends.";
-        if (cap is null) return cmd + " changes the game, and this call was not admitted.";
+        string notOurs = releaseShape
+            ? "this server does not hold " + (ReleasedHold(request) ?? cmd) + ", so ending it is no release: "
+            : "";
+        if (kind == McpGrantKind.None && !perCall)
+            return releaseShape ? notOurs + "it is never ended through this server." : cmd + " is not a command this server sends.";
+        if (cap is null)
+            return notOurs + cmd + " changes the game"
+                   + (kind != McpGrantKind.None ? " and needs " + GrantToolFor(kind) + "." : ", and this call was not admitted.");
         if (cap.Pid != connectedPid
             || !string.Equals(cap.CreationTime, connectedCreationTime, StringComparison.Ordinal))
             return "the connection now reaches another game run than the one this call was admitted for.";

@@ -44,8 +44,8 @@ internal static class McpGrantTools
         name, title,
         "Asks the user for one grant, for one game run: afterwards " + McpGrants.Covers(kind) + " change without "
         + "asking again. Call it only after the user asked for such a change, never in advance, and first say in chat "
-        + "what it covers and how long it lasts. scope_ack must be exactly the sentence its schema gives. Turning a "
-        + "hold off and a reset need no grant.",
+        + "what it covers and how long it lasts. scope_ack must be exactly the sentence its schema gives. Turning off "
+        + "and resetting the holds this server took need no grant.",
         McpSchema.Object(
             ("scope_ack", McpSchema.Enum("This exact sentence, which the user sees and approves.", ack), true),
             McpWriteTools.PidProp),

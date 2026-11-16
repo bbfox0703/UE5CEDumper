@@ -87,6 +87,7 @@ public sealed class McpToolsTests
             if (McpGrants.IsRelease(request) && Grants.Decision != McpHostDecision.ReadOnly)
             {
                 Sent.Add(new JsonObject { ["cmd"] = "get_holds" });
+                Timeouts.Add(TimeSpan.FromSeconds(15));   // the link reads it with its probe timeout
                 string? hold = McpGrants.ReleasedHold(request);
                 var arr = new JsonArray();
                 if (hold is not null && HoldsWhatItReleases)

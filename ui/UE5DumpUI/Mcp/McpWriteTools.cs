@@ -143,9 +143,10 @@ internal static class McpWriteTools
                     return;
                 }
                 double v = a.ReqDouble("value");
-                if (v <= 0) throw new McpToolError("'value' must be above 0.");
-                InRange(v, "value", 0, target == "global"
-                    ? Constants.McpWorldTimeDilationMax : Constants.McpPawnTimeDilationMax, " for " + target);
+                double max = target == "global" ? Constants.McpWorldTimeDilationMax : Constants.McpPawnTimeDilationMax;
+                if (v <= 0 || v > max)
+                    throw new McpToolError($"'value' must be above 0 and at most {Show(max)} for {target}, as the UI's "
+                                           + $"slider ({Show(v)} given).");
                 r["value"] = v;
             }, "set_time_dilation", kind: McpGrantKind.Toggles);
 
@@ -442,12 +443,17 @@ internal static class McpWriteTools
     internal static McpGrantCapability? Admit(McpGrants grants, McpToolRole role, McpGrantKind kind,
         JsonObject request, JsonObject ptrs)
     {
-        if (McpGrants.IsRelease(request)) return null;
+        // A release goes through without a grant only if this server holds what it ends, which the link reads at the
+        // send; the grant, when there is one, goes along for the case where it does not.
+        if (McpGrants.IsRelease(request)) return grants.Admit(role, kind, ptrs, out _);
         var grant = grants.Admit(role, kind, ptrs, out string? refusal);
         if (grant is not null) return grant;
+        if (McpJson.GetString(request, "cmd") == "seethrough_set" && request["enable"] is JsonValue s
+            && s.GetValueKind() == JsonValueKind.False)
+            refusal += " See-through's OFF ends every claim on it, the user's too, so it needs the grant.";
         // An OFF that also carries a global setting (Fly's speed, preset or noclip) is no release.
-        if (request["enable"] is JsonValue v && v.GetValueKind() == JsonValueKind.False)
-            refusal += " Only an OFF with nothing else in it needs no grant.";
+        else if (request["enable"] is JsonValue v && v.GetValueKind() == JsonValueKind.False)
+            refusal += " Only an OFF with nothing else in it needs no grant, and only for a hold this server took.";
         throw new McpToolError(refusal ?? "Not changed.");
     }
 

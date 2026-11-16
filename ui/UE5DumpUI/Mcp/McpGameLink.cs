@@ -240,7 +240,12 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         McpGrantCapability? grant = null)
     {
         string cmd = McpJson.GetString(request, "cmd") ?? "?";
-        string? refusal = _grants.Check(request, grant, _pid, _run);
+        // Whether a release ends this server's own hold is read here, on this connection under this lock, right before
+        // it: get_holds is a read, so this does not recurse.
+        JsonObject? holds = null;
+        if (McpGrants.IsRelease(request) && _grants.Decision != McpHostDecision.ReadOnly)
+            holds = await SendCoreAsync(new JsonObject { ["cmd"] = "get_holds" }, ProbeTimeout, ct);
+        string? refusal = _grants.Check(request, grant, _pid, _run, holds);
         if (refusal is not null)
         {
             _log.Warn(Constants.LogCatPipe, $"[MCP] Not sent to game {_pid}: {refusal}");
