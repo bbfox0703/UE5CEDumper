@@ -727,6 +727,41 @@ public class TeleportViewModelTests
         Assert.Equal(searches, dump.FindStealthCalls);         // the forced fields only: no search of the pawn
     }
 
+    // Review round 2: Solide keeps a job that matched no live instance (a menu, a level between); it holds nothing yet.
+    [Fact]
+    public async Task AStealthJobHoldingNoInstance_ReadsArmed_NotHolding()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        var armed = StealthJobAt(0);
+        dump.NextForcedFields = new List<ForcedFieldInfo>
+        {
+            new() { ClassName = armed.ClassName, FieldName = armed.FieldName, Kind = "numeric", Value = 0, Held = 0 },
+        };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Armed @0", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task TheCardsOwnArmedHold_IsNotTurnedIntoHolding_ByTheReadItIsOwed()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));                    // someone else's job on the meter
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+
+        dump.NextForce = new ForceFieldResult { Held = 0, Resolved = true };   // the window's Hold @0 takes it over,
+        await vm.HoldStealthCommand.ExecuteAsync(null);                     // with nothing live to hold yet
+        Assert.Equal("Armed @0", vm.StealthState);
+        dump.NextHolds = Report(HeldBy(StealthJob, you: true, background: false));
+        dump.NextForcedFields = new List<ForcedFieldInfo>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 0 },
+        };
+        await vm.PollHoldsOnceAsync();                                     // the read owed after the takeover
+        Assert.Equal("Armed @0", vm.StealthState);
+    }
+
     [Fact]
     public async Task SeeThrough_IsLabelledFromItsClaims_WhileItsCardShows()
     {
