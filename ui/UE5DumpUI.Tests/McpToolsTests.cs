@@ -576,7 +576,7 @@ public sealed class McpToolsTests
         var game = FieldGame();
         game.Answers["walk_instance"] = r => JsonNode.Parse(new JsonObject
         {
-            ["addr"] = r["addr"]!.GetValue<string>(),
+            ["addr"] = r["addr"]!.GetValue<string>(), ["class_addr"] = DerivedClass,
             ["fields"] = new JsonArray(new JsonObject
             {
                 ["name"] = "HolderValue", ["type"] = "IntProperty", ["offset"] = 0x2A8, ["size"] = 4, ["value"] = "41",

@@ -123,11 +123,16 @@ internal static class McpFieldTools
 
             var walked = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_instance", ["addr"] = inst }, timeout,
                 ct, requireScan: true);
-            var live = McpWriteTools.Truthy(walked, "ok")
-                ? DumpService.DeserializeInstanceWalk(walked).Fields.FirstOrDefault(f =>
-                    string.Equals(f.Name, field, StringComparison.Ordinal) && f.Offset == meta.Offset
-                    && f.TypeName == meta.TypeName)
-                : null;
+            var walk = McpWriteTools.Truthy(walked, "ok") ? DumpService.DeserializeInstanceWalk(walked) : null;
+            // The walk must be of the object whose class was resolved: freed between the two reads and its slot reused,
+            // the address could hold another class with a field of the same name at the same offset.
+            if (walk is null || walk.IsStale || walk.IsUnreadable || walk.IsNoHeader || walk.IsDefinition
+                || !SameAddress(walk.ClassAddr, McpJson.GetString(obj, "class_addr")))
+                throw new McpToolError("Not changed: " + inst + " no longer reads as the object whose class was resolved "
+                                       + "(freed, or another object now): find it again.");
+            var live = walk.Fields.FirstOrDefault(f =>
+                string.Equals(f.Name, field, StringComparison.Ordinal) && f.Offset == meta.Offset
+                && f.TypeName == meta.TypeName);
             if (live is null)
                 throw new McpToolError("Not changed: this object's walk shows no " + field + " at 0x"
                                        + meta.Offset.ToString("X", CultureInfo.InvariantCulture)
@@ -260,6 +265,9 @@ internal static class McpFieldTools
     }
 
     private static bool IsAddress(string? s) => s is not null && McpArgs.TryParseHex(s, out ulong v) && v != 0;
+
+    private static bool SameAddress(string? a, string? b)
+        => McpArgs.TryParseHex(a ?? "", out ulong x) && McpArgs.TryParseHex(b ?? "", out ulong y) && x != 0 && x == y;
 
     private static bool TryHex(string hex, out byte[] bytes)
     {
