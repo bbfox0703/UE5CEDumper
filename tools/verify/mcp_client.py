@@ -2067,7 +2067,10 @@ def run_holds_more(exe: str, pid: int | None) -> int:
         h = holds().get(FLAG_HOLD, {})
         ck.check(bool(job_listed(FIXTURE_FLAG)) and h.get("active") and h.get("holder", {}).get("you"),
                  "FF: and the stand-in's job stays, its own", h)
-        ck.check(_log_line("pipe", r'"cmd":"reset_field"', since) is None,
+        # The server's own JSON is compact and marked background; the stand-in's (pipe_client) is neither, and the AI's
+        # legitimate reset of its own HolderValue job can fall in the same second as `since`.
+        ck.check(_log_line("pipe", rf'"cmd":"reset_field","class_name":"{FIXTURE_CLASS}","field_name":"{FIXTURE_FLAG}"'
+                           r'.*"background":true', since) is None,
                  "FF: pipe log: the AI's reset_field of the stand-in's job never reached the DLL")
         u = ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG)
         ck.check(bool(u.get("ok")) and u.get("code") == 0, "FF: the stand-in ends its own job", u)
