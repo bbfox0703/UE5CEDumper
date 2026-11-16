@@ -168,6 +168,11 @@ goes on without it, so update the path when you move the exe.</p>
     call.</li>
 </ol>
 
+<p><strong>To stop an AI:</strong> tick <strong>Block AI writes</strong> at the top of the UE5DumpUI window's
+Teleport tab. Every AI session is then refused every change to the game (it can still turn off or reset what it
+holds) and every grant ends; then use a card's OFF or Reset to take back what an AI holds. The switch is per Windows
+user: a server started over SSH under another account does not see it.</p>
+
 <p><strong>Beside the UI.</strong> The server and <code>UE5DumpUI.exe</code> are separate processes and can run
 together; the AI's work never ends or slows down yours:</p>
 <ul>

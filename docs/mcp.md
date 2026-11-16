@@ -120,6 +120,11 @@ The server and the UI are separate processes and can run together. Each AI sessi
 - **Your holds stay yours.** A feature you turned on in the UI or in a Cheat Engine record is never replaced or
   turned off by the AI; see [Changing the game](#changing-the-game).
 - **The UI does not see the AI's work.** Results the AI reads appear only in its own conversation.
+- **Stop the AI from the window.** Tick **Block AI writes** at the top of the Teleport tab: every AI session is then
+  refused every change to the game (it can still turn off or reset what it holds), and every grant it was given ends.
+  Then use a card's OFF or Reset to take back what an AI holds; your own changes always win over the AI's. The switch
+  is per Windows user (`%LOCALAPPDATA%\UE5CEDumper\ai-writes.json`): a server started over SSH under another account
+  does not see it. If that file cannot be read, the servers refuse every change too.
 
 ## The tools
 
