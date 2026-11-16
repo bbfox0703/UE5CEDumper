@@ -27,6 +27,42 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3717) — MCP invoke grants: one game function, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Phase 1b of docs/mcp-write-approval-eval.md (§4.4): CE's point for invoke, without unmarking arbitrary calls.
+- **What changes for a user of an AI client:** `grant_invoke_one_function_any_object_and_args` asks once, for one game
+  run, to let the AI call ONE UFunction, named by its function and its class's full path as `read_functions` shows it
+  (e.g. `SetActorHiddenInGame` and `//Script/Engine/Actor`); the prompt shows the function first. `write_invoke_granted_function` then calls that function on any object, with any
+  arguments, without asking again. `read_grants` names the function and counts its calls; `revoke_grants` ends one
+  function's grant. `write_invoke` still asks every call, for anything else.
+- **What no invoke grant can name** (refused when asked for, and by the DLL at every call): the DLL's deny list, a
+  network RPC, a Blueprint event graph, and a function whose arguments reach other functions or properties by name --
+  a delegate, a property path, a UFunction, a latent call, or a name, string or struct parameter named for a function,
+  event, property, command, delegate or callback (`K2_ClearTimer`'s FunctionName, `SendGameplayEventToActor`'s
+  EventTag). Under a grant the DLL also refuses a non-static function on a class default or a template, and checks
+  that the function it resolves is the granted one by full name (`grant`, `expect_func_full`; code -28).
+- **The AI's invoke deny list (every AI call, per call too)** gains what a scan of the UE 4.18-5.8 sources found: UE4's
+  achievement write (`WriteAchievementProgress`), an async action's `Activate` (the online-service and save actions),
+  latent calls, `RemoteEvent`, `SetBind`, the timeline's `AddInterp*`, `EditTextPropertySourceString`, the save slot's
+  local-player twins, and every streaming-level and level-instance load and unload.
+- **Reviews:** a fresh-context review with a refuter per finding (10 LOW confirmed, 1 refuted), each fixed or covered by
+  a test: Blueprint function names with a space, '?' or '*' are grantable; a struct parameter named for an event is
+  refused under a grant; the other level-loading functions are refused; the text that overstated when the grant's
+  lookup runs and which replies carry `func_full` is corrected.
+- **Proven live** on the AOT exe and DLL 3717 (DumperTest Shipping, UE 5.4): `mcp_client.py invokegrant` 22/22 -- a
+  grant on `KismetMathLibrary.Add_IntInt` and its unasked call returning 42; six grants refused (a deny-list name, a
+  timer by name, a latent call, a FunctionName parameter, a missing class, a short class name); a granted
+  `SetActorHiddenInGame` refused by the DLL on a class default and run on a live StaticMeshActor; the DLL's own checks
+  driven as a background client through the pipe (another function -28, a FunctionName parameter -28, a latent call
+  -24 per call); one function's grant revoked while the other stands. Regressions: `probe` 29/29, `raw` 28/28,
+  `invokeparams` 26/26 (+3/3 apart), `writes --toggle-experimental` 39/39, `holdsmore` 78/78.
+- **Not seen live:** Claude Code's prompt for the invoke grant (this session's server is an older build); the argument
+  order it shows is pinned by `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst`, and Phase 0 (M1)
+  measured that the prompt shows each argument whole.
+- **Tests:** C# 8311 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,601,216 bytes (sha256 9ef40a357cd0dbb5...); UE5Dumper.dll 3,793,920 bytes (sha256 7dcde89886bcf970...).
+
 ## 2026-11-16 (build 3716) — each gameplay card says who else holds it `[MCP-WRITE-GRANTS-2026-11-14]`
 
 The rest of Phase 1's UI half (docs/mcp-write-approval-eval.md §4.10): once grants took the per-call prompt away, this
