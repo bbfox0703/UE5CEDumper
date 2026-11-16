@@ -133,7 +133,8 @@ public sealed partial class McpGrants
         public McpGrantRecord Snapshot() => new(Id, Kind, Pid, CreationTime, GrantedAtUtc, Uses);
     }
 
-    public McpGrants(McpWriteMode mode = McpWriteMode.Default, ILoggingService? log = null)
+    public McpGrants(McpWriteMode mode = McpWriteMode.Default, ILoggingService? log = null,
+        Func<Models.AiWriteBlockState>? blockState = null)
     {
         Mode = mode;
         _log = log;

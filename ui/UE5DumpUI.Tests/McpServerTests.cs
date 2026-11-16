@@ -186,6 +186,8 @@ public sealed class McpServerTests
         Assert.Contains("other MCP hosts decide for themselves", instructions);
         Assert.Contains("Fly's speed, preset and noclip stay", instructions);
         Assert.Contains("what write_invoke or write_memory did stays", instructions);
+        // The user's stop control: a refusal under it means stop.
+        Assert.Contains("Block AI writes", instructions);
     }
 
     [Fact]

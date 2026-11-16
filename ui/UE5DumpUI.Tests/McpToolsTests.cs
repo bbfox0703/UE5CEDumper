@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using UE5DumpUI.Mcp;
+using UE5DumpUI.Models;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -33,16 +34,21 @@ public sealed class McpToolsTests
         /// <summary>The session's grants, on the game rather than the catalogue: Tool() builds a new catalogue for every
         /// call, and a grant must outlive one call. A grants host, with both kinds granted for this game's run, unless a
         /// test revokes them; the fake's send runs the same gate check as the link.</summary>
-        public McpGrants Grants { get; } = Granted();
+        public McpGrants Grants { get; }
+        /// <summary>The UI's "Block AI writes" file as the server reads it on every call: off unless a test says so.
+        /// </summary>
+        public AiWriteBlockState Block { get; set; }
+
+        public FakeGame() => Grants = Granted(() => Block);
 
         public static JsonObject Pointers() => new() { ["pid"] = 4242, ["process_creation_time"] = Run };
         /// <summary>Whether get_holds names this server as holding what an OFF or a reset ends: yes unless a test
         /// says the hold is someone else's or nobody's.</summary>
         public bool HoldsWhatItReleases { get; set; } = true;
 
-        private static McpGrants Granted()
+        private static McpGrants Granted(Func<AiWriteBlockState> block)
         {
-            var g = new McpGrants();
+            var g = new McpGrants(McpWriteMode.Default, null, block);
             g.Decide(Constants.McpClaudeCodeClientName, "2.1.246");
             g.Grant(McpGrantKind.Toggles, Pointers(), out _);
             g.Grant(McpGrantKind.Movement, Pointers(), out _);
@@ -509,6 +515,56 @@ public sealed class McpToolsTests
         Assert.Contains(Constants.McpGrantToolMovement, ErrorOf(payload));
         Assert.Contains("Only an OFF with nothing else in it needs no grant", ErrorOf(payload));
         Assert.DoesNotContain("fly_set", game.Commands);
+    }
+
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ───────────────────────────────────────────
+
+    [Fact]
+    public async Task WhileTheUserBlocksAiWrites_EveryChangeIsRefused_AndNothingChangingIsSent()
+    {
+        var calls = new List<(string Tool, JsonObject Args)>
+        {
+            ("write_god_mode", new JsonObject { ["enable"] = true }),
+            ("write_teleport", new JsonObject { ["x"] = 1, ["y"] = 2, ["z"] = 3 }),
+            ("write_fly", new JsonObject { ["enable"] = false, ["noclip"] = true }),   // an OFF that sets: no release
+            (Constants.McpGrantToolToggles, new JsonObject { ["scope_ack"] = Constants.McpGrantAckToggles }),
+        };
+        foreach (var name in new[] { "write_memory", "write_invoke", "write_force_field" })
+            calls.Add((name, ArgsFromSchema(Tool(name, new FakeGame()).InputSchema)));
+        foreach (var (tool, args) in calls)
+        {
+            var game = new FakeGame { Block = new AiWriteBlockState(true, 0, false) };
+            var (payload, result) = await Call(game, tool, args);
+            Assert.True(result.IsError, tool);
+            Assert.Contains("Block AI writes", ErrorOf(payload));
+            Assert.All(game.Commands, c => Assert.True(McpGrants.ReadCommands.Contains(c), $"{tool} sent {c}"));
+        }
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
+    [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
+    [InlineData("write_force_field_reset", """{"class_name":"Pawn","field_name":"bCanBeDamaged"}""", "reset_field")]
+    public async Task WhileTheUserBlocksAiWrites_TheAiCanStillEndItsOwnHolds(string tool, string args, string cmd)
+    {
+        var game = new FakeGame { Block = new AiWriteBlockState(true, 0, false) };
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Contains(cmd, game.Commands);
+    }
+
+    [Fact]
+    public async Task TurningTheBlockOnAndOff_EndsTheGrants()
+    {
+        var game = new FakeGame();   // the block file never written: stamp 0
+        var (_, before) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.False(before.IsError);
+        game.Block = new AiWriteBlockState(false, 1, false);   // turned on and off again between two calls
+        var (payload, after) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.True(after.IsError);
+        Assert.Contains(Constants.McpGrantToolToggles, ErrorOf(payload));
+        var (listed, _) = await Call(game, "read_grants");
+        Assert.Empty(listed!["grants"]!.AsArray());
     }
 
     // ── Bounds ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────────────

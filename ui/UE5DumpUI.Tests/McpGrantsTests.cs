@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using UE5DumpUI.Mcp;
+using UE5DumpUI.Models;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -482,6 +483,94 @@ public sealed class McpGrantsTests
         // A new grant is a new grant: the capability admitted under the revoked one stays dead.
         g.Grant(McpGrantKind.Movement, Ptrs(), out _);
         Assert.NotNull(g.Check(Req("""{"cmd":"fly_set","enable":true}"""), cap, Pid, Run));
+    }
+
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ───────────────────────────────────────────
+
+    /// <summary>The block file as the server reads it on every call, changed by the test between calls.</summary>
+    private sealed class BlockFile
+    {
+        public AiWriteBlockState State;
+    }
+
+    private static (McpGrants Grants, BlockFile File) Blockable(long stamp = 0)
+    {
+        var file = new BlockFile { State = new AiWriteBlockState(false, stamp, false) };
+        var g = new McpGrants(McpWriteMode.Default, null, () => file.State);
+        g.Decide("claude-code", "2.1.246");
+        return (g, file);
+    }
+
+    private static readonly JsonObject GodOn = Req("""{"cmd":"set_god_mode","enable":true,"if_free":true}""");
+    private static readonly JsonObject GodOff = Req("""{"cmd":"set_god_mode","enable":false,"if_free":true}""");
+    private static readonly JsonObject WriteMem = Req("""{"cmd":"write_mem","addr":"0x1","bytes":"00","expect":"00"}""");
+
+    [Fact]
+    public void WhileBlocked_EveryChangeIsRefused_ButReadsAndReleasesPass()
+    {
+        var (g, file) = Blockable();
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        var perCall = g.Admit(McpToolRole.PerCallWrite, McpGrantKind.None, Ptrs(), out _);
+        file.State = new AiWriteBlockState(true, 0, false);
+
+        // Admitted before the switch went on, refused at the send: the still-marked per-call writes too.
+        Assert.Contains("Block AI writes", g.Check(GodOn, toggles, Pid, Run));
+        Assert.Contains("Block AI writes", g.Check(WriteMem, perCall, Pid, Run));
+        // An AI can still clean up, and still read; scan_start stays a read.
+        Assert.Null(g.Check(GodOff, null, Pid, Run, Held("god_mode")));
+        Assert.Null(g.Check(Req("""{"cmd":"get_pointers"}"""), null, Pid, Run));
+        Assert.Null(g.Check(Req("""{"cmd":"trigger_scan"}"""), null, Pid, Run));
+
+        Assert.Null(g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out var granted));
+        Assert.Contains("Block AI writes", granted);
+        Assert.Null(g.Admit(McpToolRole.PerCallWrite, McpGrantKind.None, Ptrs(), out var asked));
+        Assert.Contains("Block AI writes", asked);
+        Assert.Null(g.Grant(McpGrantKind.Movement, Ptrs(), out var grant));
+        Assert.Contains("Block AI writes", grant);
+    }
+
+    [Fact]
+    public void AnUnreadableBlockFile_RefusesLikeABlock_InItsOwnWords()
+    {
+        // Fail closed, but never claim the user turned the switch on over a file that could not be read.
+        var (g, file) = Blockable();
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        var cap = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        file.State = new AiWriteBlockState(false, 0, true);
+        string? refusal = g.Check(GodOn, cap, Pid, Run);
+        Assert.Contains("could not be read", refusal);
+        Assert.DoesNotContain("turned on", refusal);
+        Assert.Null(g.Check(GodOff, null, Pid, Run, Held("god_mode")));
+    }
+
+    [Fact]
+    public void TurningTheBlockOn_EndsEveryGrant_EvenWhenItIsOffAgainByTheNextCall()
+    {
+        var (g, file) = Blockable(stamp: 3);
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        g.Grant(McpGrantKind.Movement, Ptrs(), out _);
+        var cap = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        Assert.NotNull(cap);   // the first look at the stamp revokes nothing
+
+        file.State = new AiWriteBlockState(false, 4, false);   // on, then off again, between two calls
+        Assert.NotNull(g.Check(GodOn, cap, Pid, Run));
+        Assert.Empty(g.List());
+        Assert.Null(g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _));
+
+        // The user asked again: a new grant works.
+        Assert.NotNull(g.Grant(McpGrantKind.Toggles, Ptrs(), out _));
+        Assert.NotNull(g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _));
+    }
+
+    [Fact]
+    public void AStampThatGoesDown_StillRevokes()
+    {
+        // A deleted file restarts the counter: a "newer" check would never revoke again.
+        var (g, file) = Blockable(stamp: 5);
+        g.Grant(McpGrantKind.Movement, Ptrs(), out _);
+        file.State = new AiWriteBlockState(false, 0, false);
+        Assert.Empty(g.List());
     }
 
     [Fact]
