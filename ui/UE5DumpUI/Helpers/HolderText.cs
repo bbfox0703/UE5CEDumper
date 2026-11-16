@@ -33,8 +33,9 @@ internal static class HolderText
     {
         if (hold is null || !hold.InForce || hold.Holder.You) return "";
         // An ended AI session's debug camera whose OFF waits for the game thread: the DLL dropped its owner, and no
-        // program holds it any more.
-        if (hold.ReleaseOwed)
+        // program holds it any more. The DLL clears the record only on a later tick, so one beside a holder (someone
+        // took the camera, and the OFF is abandoned) or an ON on its way names that instead.
+        if (hold.ReleaseOwed && hold.Holder.Kind == Constants.HoldKindNone && !hold.Pending)
             return AobMakerStatus.Say(KeyReleaseOwed, "Turning off: the AI session that held it has ended");
         var h = hold.Holder;
         if (h.Kind == Constants.HoldKindCe) return AobMakerStatus.Say(KeyCe, "Held by Cheat Engine");

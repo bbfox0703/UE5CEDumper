@@ -39,6 +39,7 @@ public static class Constants
     /// <summary>The holder kinds get_holds names.</summary>
     public const string HoldKindCe = "ce";
     public const string HoldKindClient = "client";
+    public const string HoldKindNone = "none";
     /// <summary>The first DLL build that answers get_holds (build 3704 recorded who holds each hold).</summary>
     public const int HoldsMinDllBuild = 3704;
 
