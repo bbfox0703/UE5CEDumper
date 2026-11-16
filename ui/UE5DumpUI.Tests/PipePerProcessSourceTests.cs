@@ -132,6 +132,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::PIPE_HOLDERS_TOKEN", branch);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] The hold names the window labels its cards by, and the server judges
+    /// releases by, are the DLL's (Grimoire.h): a name that drifts matches nothing, silently.</summary>
+    [Theory]
+    [InlineData("HOLD_GOD_MODE", Constants.HoldGodMode)]
+    [InlineData("HOLD_FOREGROUND_LOCK", Constants.HoldForegroundLock)]
+    [InlineData("HOLD_GRAVITY_DIRECTION", Constants.HoldGravityDirection)]
+    [InlineData("HOLD_FLY", Constants.HoldFly)]
+    [InlineData("HOLD_DEBUG_CAMERA", Constants.HoldDebugCamera)]
+    [InlineData("HOLD_MOVEMENT_PREFIX", Constants.HoldMovementPrefix)]
+    [InlineData("HOLD_TIME_PREFIX", Constants.HoldTimePrefix)]
+    [InlineData("HOLD_FORCE_FIELD_PREFIX", Constants.HoldForceFieldPrefix)]
+    public void TheHoldNamesAreTheDlls(string grimoire, string ui)
+    {
+        var dll = Regex.Match(DllSrc("Grimoire.h"), $@"\b{grimoire}\s*=\s*""([^""]*)""");
+        Assert.True(dll.Success, $"Grimoire.h: {grimoire} not found");
+        Assert.Equal(dll.Groups[1].Value, ui);
+    }
+
     /// <summary>The words of the at-capacity line exist three times -- the DLL that writes them (Grimoire.h), the UI
     /// and pipe_client.py that read them -- and a reader that drifts from the writer finds nothing, silently.</summary>
     [Theory]

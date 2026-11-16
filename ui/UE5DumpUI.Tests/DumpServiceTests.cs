@@ -1792,6 +1792,85 @@ public class DumpServiceTests
         Assert.False(p.ParentRelative);
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] get_holds and See-through's claims: the cards' holder labels.
+    [Fact]
+    public async Task GetHoldsAsync_ParsesEachHold_AndItsHolder()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["holds"] = new JsonArray(
+                new JsonObject
+                {
+                    ["hold"] = "god_mode", ["active"] = true,
+                    // A uint32 pid past int.MaxValue must not throw.
+                    ["holder"] = new JsonObject
+                    {
+                        ["kind"] = "client", ["pid"] = 4294967295L, ["background"] = true, ["you"] = false,
+                    },
+                },
+                new JsonObject
+                {
+                    ["hold"] = "debug_camera", ["active"] = false, ["pending"] = true, ["release_owed"] = true,
+                    // No pid: the DLL keyed this owner by its connection.
+                    ["holder"] = new JsonObject { ["kind"] = "client", ["background"] = false, ["you"] = true },
+                },
+                new JsonObject
+                {
+                    ["hold"] = "fly", ["active"] = false,
+                    ["holder"] = new JsonObject { ["kind"] = "none", ["you"] = false },
+                }),
+            ["invokes"] = new JsonArray(),
+        });
+
+        var r = await CreateService().GetHoldsAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, r.Holds.Count);
+        var god = r.Find("god_mode")!;
+        Assert.True(god.InForce);
+        Assert.Equal("client", god.Holder.Kind);
+        Assert.Equal(4294967295L, god.Holder.Pid);
+        Assert.True(god.Holder.Background);
+        Assert.False(god.Holder.You);
+        var cam = r.Find("debug_camera")!;
+        Assert.True(cam.Pending);
+        Assert.True(cam.ReleaseOwed);
+        Assert.True(cam.InForce);
+        Assert.Null(cam.Holder.Pid);
+        Assert.True(cam.Holder.You);
+        var fly = r.Find("fly")!;
+        Assert.False(fly.InForce);
+        Assert.Equal("none", fly.Holder.Kind);
+        Assert.Null(r.Find("time:global"));
+    }
+
+    [Fact]
+    public async Task GetHoldsAsync_ThrowsOnAnOlderDllsUnknownCommand()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = "Unknown command: get_holds" });
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            CreateService().GetHoldsAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(true)]    // DLL 3714+: you
+    [InlineData(false)]   // 3698-3713: claims and ce_claimed only
+    public async Task SeeThroughGetStateAsync_ParsesTheClaims(bool sendsYou)
+    {
+        var reply = new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["active"] = true, ["claims"] = 2, ["ce_claimed"] = true,
+        };
+        if (sendsYou) reply["you"] = true;
+        _pipe.SetHandler(_ => reply);
+
+        var st = await CreateService().SeeThroughGetStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, st.Claims);
+        Assert.True(st.CeClaimed);
+        Assert.Equal(sendsYou ? true : null, st.You);
+    }
+
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]

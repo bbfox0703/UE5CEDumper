@@ -21,6 +21,27 @@ public static class Constants
     public const string PipeHoldersMoreToken = " more=";
     public const string PipeSlotFreedText = "slot freed";
 
+    // ── Hold names: the DLL's own words for what get_holds lists (Grimoire.h), matched whole and ordinally ──
+    // ⛔ DO NOT LOCALIZE. [MCP-WRITE-GRANTS-2026-11-14] PipePerProcessSourceTests pins each to Grimoire.h.
+    public const string HoldGodMode = "god_mode";
+    public const string HoldForegroundLock = "foreground_lock";
+    public const string HoldGravityDirection = "gravity_direction";
+    public const string HoldFly = "fly";
+    public const string HoldDebugCamera = "debug_camera";
+    /// <summary>A movement knob's hold is this plus the knob (walk_speed, gravity, jump).</summary>
+    public const string HoldMovementPrefix = "movement:";
+    /// <summary>A time-dilation lane's hold is this plus the lane (global, pawn).</summary>
+    public const string HoldTimePrefix = "time:";
+    /// <summary>A force-field job's hold is this plus the class and field as the client sent them, joined by
+    /// <see cref="HoldForceFieldSeparator"/>.</summary>
+    public const string HoldForceFieldPrefix = "force_field:";
+    public const string HoldForceFieldSeparator = "::";
+    /// <summary>The holder kinds get_holds names.</summary>
+    public const string HoldKindCe = "ce";
+    public const string HoldKindClient = "client";
+    /// <summary>The first DLL build that answers get_holds (build 3704 recorded who holds each hold).</summary>
+    public const int HoldsMinDllBuild = 3704;
+
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
     // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5
     // A branch below tells another program's reply apart by its text, because that reply carries no code. The words

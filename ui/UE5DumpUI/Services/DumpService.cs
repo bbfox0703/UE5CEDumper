@@ -4166,6 +4166,9 @@ public sealed class DumpService : IDumpService
         return res["code"]?.GetValue<int>() ?? 0;
     }
 
+    // RED: the surface only.
+    public Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default) => Task.FromResult(new HoldsReport());
+
     public async Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "get_forced_fields" };
