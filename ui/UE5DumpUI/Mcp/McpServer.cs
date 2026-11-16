@@ -97,7 +97,8 @@ internal sealed class McpServer
         + "never in advance, and first say in chat what it covers and that it lasts until the game run or this "
         + "session ends. A write that needs a grant is refused, naming it. Turning off and resetting the holds this "
         + "server took need no grant, and See-through's OFF ends only this server's claim. write_memory, write_invoke "
-        + "and write_force_field take no grant and are asked about on every call. "
+        + "and write_force_field take no grant and are asked about on every call; " + Constants.McpGrantToolInvoke
+        + " lets " + Constants.McpInvokeGrantedTool + " call one UFunction, named by function and class path, unasked. "
         + "Claude Code asks the user before each grant and each of those three; other MCP hosts decide for themselves "
         + "whether to ask, so do not tell the user that every host asks. read_grants lists this session's grants; "
         + "revoke_grants ends them and releases no hold. A dropped pipe connection releases the holds but keeps the "
