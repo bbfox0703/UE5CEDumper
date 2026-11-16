@@ -83,7 +83,9 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         name, a timer by name, a latent call, a FunctionName parameter, a missing class and a short class name; a
         granted SetActorHiddenInGame refused on a class default and run on a live StaticMeshActor; the DLL's own grant
         checks driven through the pipe as a background client (another function -28, a FunctionName parameter -28, a
-        latent call per call -24); one function's grant revoked while the other stands.
+        latent call per call -24); one function's grant revoked while the other stands; (7) ABP_Manny_C's
+        BlueprintUpdateAnimation granted by its //Game path and run on the live ABP_Quinn_C, and under a grant on the
+        native AnimInstance declaration alone refused by the server and by the DLL (-28, naming the override).
     py tools/verify/mcp_client.py fieldgrant --exe dist/UE5DumpUI.exe [--pid N]
         [MCP-WRITE-GRANTS-2026-11-14] Phase 2 on DumperTest Shipping (DLL 3718+): grants refused for a struct, a static
         array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
@@ -2405,6 +2407,51 @@ def run_invoke_grant(exe: str, pid: int | None) -> int:
         r, d, _ = call("read_grants")
         ck.check([x.get("function") for x in d.get("grants", [])] == ["//Script/Engine/Actor.SetActorHiddenInGame"],
                  "SetActorHiddenInGame's grant stands", d)
+
+        # 7. A Blueprint function: ABP_Manny_C's BlueprintUpdateAnimation, its override of AnimInstance's native event
+        #    (the engine calls it every tick, so a call is harmless). Granted by its //Game path, it runs on the live
+        #    ABP_Quinn_C, a Blueprint subclass; granted by the native declaration's full name only, the server refuses
+        #    the call, and the DLL, asked directly, refuses it -28, naming the override it resolved.
+        r, li, _ = call("read_find_instances", {"class_name": "ABP_Quinn_C", "exact_match": True, "limit": 20})
+        quinn = next((i for i in li.get("instances", []) if not str(i.get("name", "")).startswith("Default__")), None)
+        q_class = call("read_class", {"addr": quinn["class_addr"], "name_filter": _NO_FIELDS})[1].get("class", {}) \
+            if quinn else {}
+        bp_path = call("read_class", {"addr": q_class.get("super_addr", "0x0"),
+                                      "name_filter": _NO_FIELDS})[1].get("class", {}).get("full_path", "") \
+            if q_class else ""
+        bp_fn, native_path = "BlueprintUpdateAnimation", "//Script/Engine/AnimInstance"
+        bp_full, native_full = bp_path + "." + bp_fn, native_path + "." + bp_fn
+        if ck.check(bool(quinn and bp_path.startswith("//Game/") and bp_path.endswith("/ABP_Manny_C")),
+                    f"7: a live ABP_Quinn_C, its Blueprint super {bp_path}", li):
+            tick = {"instance_addr": quinn["addr"], "function": bp_fn, "params": {"DeltaTimeX": 0.0}}
+            r, d, _ = call(GRANT_INVOKE, {"function": bp_fn, "class": bp_path, "scope_ack": ack})
+            ck.check(not r.get("isError") and d.get("function") == bp_full,
+                     f"7: the Blueprint function granted by its //Game full name ({bp_full})", d)
+            r, d, _ = call(INVOKE_GRANTED, tick)
+            ck.check(not r.get("isError") and d.get("result") == 0,
+                     "7: write_invoke_granted_function runs it on the live ABP_Quinn_C, a Blueprint subclass", d)
+            r, d, _ = call("revoke_grants", {"kind": "invoke", "function": bp_full})
+            r, d, _ = call(GRANT_INVOKE, {"function": bp_fn, "class": native_path, "scope_ack": ack})
+            ck.check(not r.get("isError") and d.get("function") == native_full,
+                     f"7: the native declaration granted ({native_full})", d)
+            r, d, _ = call(INVOKE_GRANTED, tick)
+            ck.check(bool(r.get("isError")) and bp_full in error_text(d),
+                     "7: under the native grant only, the server refuses the call, naming the Blueprint override", d)
+            fns = call("read_functions", {"addr": q_class.get("super_addr", "0x0")})[1].get("functions", [])
+            parms = next((int(f.get("parms_size") or 4) for f in fns if f.get("name") == bp_fn), 4)
+            bg = PipeClient(pid=game, timeout=60)
+            bg.connect()
+            try:
+                r = bg.request("invoke_function", background=True, grant=True, func_name=bp_fn,
+                               instance_addr=quinn["addr"], expect_func_full=native_full, parms_size=parms,
+                               params_hex="00" * parms)
+                ck.check(not r.get("ok") and r.get("code") == -28 and r.get("func_full") == bp_full,
+                         "7: DLL: a call under the native grant resolves the Blueprint override and is refused (-28), "
+                         "naming it", r)
+            finally:
+                bg.close()
+            r, d, _ = call("revoke_grants", {"kind": "invoke", "function": native_full})
+            ck.check(not r.get("isError") and d.get("revoked") == 1, "7: the native grant revoked", d)
     finally:
         c.close()
     return ck.done(c)
