@@ -1047,13 +1047,20 @@ One field of one class per grant: `grant_write_field_one_property_every_instance
     mode, `write_memory` elsewhere still asks, and the server's log has one `Grant N: Field ... : <class path>:<field>`
     line. Covered meanwhile by `McpToolsTests.TheFieldGrant_StatesItsScope_WithTheFieldFirst` (the order) and Phase 0's
     M1 (whole arguments).
-3. ⬜ **A Blueprint class's field under a grant.** Acceptance: on a fixture with a Blueprint variable (its class under
-    `//Game/...`, a `_C` class), the grant takes the variable and the BP class path, `write_field` writes it on a live
-    instance and reads it back, and the same variable name on a sibling Blueprint class is refused.
-4. ⬜ **A packed bool written on a live object.** Acceptance: a grant on a bitfield bool of a class (an engine
-    `uint8 bFoo:1`, e.g. `Actor:bHidden` on a live actor whose hidden state is safe to flip), `write_field` true then
-    false, each read back by its own bit, the byte's other bits unchanged, put back. The fixture's own flag is a native
-    bool, so the packed path is pinned only by `McpToolsTests.WriteField_APackedBool_KeepsItsSiblings_AndClearsOnlyItsOwnBit`.
+3. ✅ **CLOSED 2026-11-17, narrower than written** (DLL 3718, DumperTest Shipping pid 12168; `mcp_client.py
+    fieldgrant` 44/44, log `out/mcp_fieldgrant_3718b.log`, step 4d). `GroundSpeed`, a DoubleProperty of the anim
+    Blueprint `//Game/Characters/Mannequins/Animations/ABP_Manny/ABP_Manny_C`, was granted by that path and written
+    (12345.0, read back `00000000801CC840`) on the live `ABP_Quinn_C`, a Blueprint subclass of it (an
+    AnimBlueprintGeneratedClass, which the grant's class check takes); written back 0.0, and its grant revoked.
+    **Not reached:** the same variable name on a SIBLING Blueprint class -- the fixture has none with one; the
+    refusal of a same-named field outside the grant's derivation was seen live on native classes only (the Decoy,
+    row 1) and is pinned by `McpToolsTests.WriteField_ASameNamedFieldOnAClassOutsideTheGrant_IsRefused_AndNothingWritten`.
+    *Was:* "...and the same variable name on a sibling Blueprint class is refused." 
+4. ✅ **CLOSED 2026-11-17** (same run, step 4c). `//Script/Engine/Actor:bCanBeDamaged` (a `uint8 :1`, mask 0x04 at
+    offset 0x5A) granted and written on the spawned `DumperTestDerivedHolder`: false (byte `24` -> `20`) then true
+    (`20` -> `24`), each read back by its own bit with the byte's other set bit (0x20) unchanged; put back byte for
+    byte, and its grant revoked. *Was:* the acceptance named `Actor:bHidden`; `bCanBeDamaged` is the same shape on an
+    object nothing renders.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

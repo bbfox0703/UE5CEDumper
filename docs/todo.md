@@ -883,8 +883,8 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
 - ~~**Phase 2's `write_field`**~~ ✅ shipped in build 3718 (dev-log 3718): one field of one class per grant, written
   on that class's live instances and its subclasses'; `get_object` names the DLL's template verdict, which the server
   refuses a class default and an archetype by. Two review rounds (26 and 22 rows) fixed; proven live
-  (verification-register.md, "MCP field grants, Phase 2": item 1 closed; the Claude Code prompt, a Blueprint class's
-  field and a packed bool on a live object open).
+  (verification-register.md, "MCP field grants, Phase 2": items 1, 3 and 4 closed -- a Blueprint class's field and a
+  packed bool on a live object included; the Claude Code prompt open).
 - **Phase 3 (optional)**: an "AI sessions" card (the eval's §7). Only with the maintainer's go-ahead.
 - `[INVOKE-OBJECT-PARAM-CLASS]` (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
   `write_invoke` or `write_invoke_granted_function` is checked for being a live object, never against the parameter's
