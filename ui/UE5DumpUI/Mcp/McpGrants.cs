@@ -120,6 +120,21 @@ public sealed partial class McpGrants
     private readonly List<Entry> _grants = new();
     private long _nextId;
     private int _decision = -1;
+    private readonly Func<Models.AiWriteBlockState>? _blockState;
+    private long? _seenStamp;   // the block file's revoke stamp at the last look, under _lock
+
+    /// <summary>Why a change is refused while the user blocks AI writes in the UE5DumpUI window. English, as every word
+    /// the server sends: the --mcp process has no Avalonia application to look a translation up in.</summary>
+    public const string BlockedReason =
+        "the user turned on \"Block AI writes\" in the UE5DumpUI window, so no AI session may change the game until "
+        + "they turn it off. Turning off or resetting what this server holds still works. This means stop: tell the "
+        + "user, and do not try another route.";
+
+    /// <summary>Why a change is refused while that switch's file cannot be read: blocked, but never claiming the user
+    /// turned it on.</summary>
+    public const string UnreadableReason =
+        "the UE5DumpUI window's \"Block AI writes\" setting could not be read, so no change is allowed until it can be. "
+        + "Turning off or resetting what this server holds still works.";
 
     private sealed class Entry
     {
@@ -138,6 +153,40 @@ public sealed partial class McpGrants
     {
         Mode = mode;
         _log = log;
+        _blockState = blockState;
+    }
+
+    /// <summary>Reads the user's "Block AI writes" switch: null while changes are allowed, else why not. A revoke stamp
+    /// other than the one seen last ends every grant, so a turn-on revokes even when the switch is off again by the next
+    /// call; the first look revokes nothing, since no grant can be older than it.</summary>
+    private string? LookAtBlock()
+    {
+        if (_blockState is null) return null;
+        Models.AiWriteBlockState state;
+        try
+        {
+            state = _blockState();
+        }
+        catch (Exception)
+        {
+            state = new Models.AiWriteBlockState(false, 0, true);   // a reader that failed blocks, as an unreadable file
+        }
+        int revoked = 0;
+        if (!state.Unreadable)
+        {
+            lock (_lock)
+            {
+                if (_seenStamp is long seen && seen != state.RevokeStamp)
+                {
+                    revoked = _grants.Count;
+                    _grants.Clear();
+                }
+                _seenStamp = state.RevokeStamp;
+            }
+        }
+        if (revoked > 0)
+            _log?.Info(Constants.LogCatPipe, $"[MCP] Block AI writes was turned on: {revoked} grant(s) revoked.");
+        return state.Unreadable ? UnreadableReason : state.Blocked ? BlockedReason : null;
     }
 
     public McpWriteMode Mode { get; }
@@ -342,6 +391,11 @@ public sealed partial class McpGrants
             refusal = "Not granted: no such grant.";
             return null;
         }
+        if (LookAtBlock() is { } blocked)
+        {
+            refusal = "Not granted: " + blocked;
+            return null;
+        }
         if (!TryRun(ptrs, out long pid, out string creationTime, out refusal)) return null;
         if (creationTime == "0")
         {
@@ -386,6 +440,11 @@ public sealed partial class McpGrants
             refusal = "Not changed: this session only reads.";
             return null;
         }
+        if (LookAtBlock() is { } blocked)
+        {
+            refusal = "Not changed: " + blocked;
+            return null;
+        }
         if (!TryRun(ptrs, out long pid, out string creationTime, out refusal)) return null;
         if (role == McpToolRole.PerCallWrite) return new McpGrantCapability(0, McpGrantKind.None, pid, creationTime);
         if (kind == McpGrantKind.None)
@@ -428,6 +487,7 @@ public sealed partial class McpGrants
 
     public IReadOnlyList<McpGrantRecord> List()
     {
+        LookAtBlock();   // a turn-on since the last look ends the grants before they are listed
         lock (_lock) return _grants.Select(e => e.Snapshot()).ToList();
     }
 
@@ -470,8 +530,11 @@ public sealed partial class McpGrants
         if (Reads.Contains(cmd)) return null;
         var decision = Decision;
         if (decision == McpHostDecision.ReadOnly) return "this session only reads.";
+        string? blocked = LookAtBlock();
         bool releaseShape = IsRelease(request);
         if (releaseShape && Owns(request, holds)) return null;
+        // An AI can still clean up what it holds; anything else waits for the user to lift the block.
+        if (blocked is not null) return blocked;
 
         var kind = ChangeKind(cmd);
         bool perCall = PerCall.Contains(cmd);

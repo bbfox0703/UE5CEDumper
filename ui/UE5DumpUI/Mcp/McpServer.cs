@@ -112,7 +112,9 @@ internal sealed class McpServer
         + "(expect). write_invoke calls a UFunction on the game thread with its parameters by name; a queued one "
         + "(-5) runs later, so never send it again. Teleport takes explicit "
         + "coordinates (read_pose first) and leaves the user's markers and undo point alone. Fly, see-through, Keep "
-        + "Foreground and forced fields follow the UI's experimental switch. ";
+        + "Foreground and forced fields follow the UI's experimental switch. The user can turn on \"Block AI "
+        + "writes\" in the UE5DumpUI window: every change is then refused, turning off or resetting what this server "
+        + "holds still works, and every grant ends; such a refusal means stop. ";
 
     private const string Declined =
         "A declined prompt or a refused grant means no: never try another route to the same change.\n";

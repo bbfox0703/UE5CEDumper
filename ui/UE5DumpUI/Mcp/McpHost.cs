@@ -98,7 +98,10 @@ internal static class McpHost
             using var pipe = new PipeClient(log, "M");
             // One decision and one grant table for the server, which decides at initialize, and the link, whose
             // gate checks every send against them.
-            var grants = new McpGrants(mode, log);
+            // The window's "Block AI writes" switch, read on every call that would change the game (the server never
+            // writes it).
+            string blockFile = AiWriteBlockGate.PathFor(platform);
+            var grants = new McpGrants(mode, log, () => AiWriteBlockGate.ReadState(blockFile));
             using var game = new McpGameLink(pipe, platform, log, grants);
             // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
             // once.

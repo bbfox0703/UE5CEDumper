@@ -333,6 +333,10 @@ public static class Constants
     // System-tab credit checkbox). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string ExperimentalSettingsFile = "experimental.json";
 
+    // [MCP-WRITE-GRANTS-2026-11-14] The "Block AI writes" switch and its revoke stamp (Models.AiWriteBlockSettings).
+    // Written by the window, read by every MCP server on every call that would change the game.
+    public const string AiWriteBlockFile = "ai-writes.json";
+
     // Global panel/Live-Walker OPTIONS (stable user preferences — export toggles,
     // scan/search behaviour, formats, limits). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string UiOptionsFile = "ui-options.json";
@@ -376,7 +380,7 @@ public static class Constants
     // Both families used to sit at the folder ROOT. They are the only files there whose
     // count grows without bound — one set per game, and a new PE hash on every game
     // patch — so they buried the handful of app-wide files (dll-path.txt,
-    // experimental.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
+    // experimental.json, ai-writes.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
     // UE5CEDumper.{COMPUTERNAME}.json — the per-machine hint cache, see
     // dll/src/Grimoire.h) that someone actually has to find by hand.
     //
