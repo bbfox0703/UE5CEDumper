@@ -532,8 +532,8 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
 //   it finishes (LatentActionManager: FindFunction(ExecutionFunction), then ProcessEvent): any function, refused ones
 //   included, behind numbers a prompt cannot show.
 // - Under a grant (`underGrant`), whose prompt shows no later call's arguments, also any parameter that hands the engine
-//   a function, an event or a property: a delegate, a property path, a UFunction object, or a string or name whose
-//   parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
+//   a function, an event or a property: a delegate, a property path, a UFunction object, or a string, a name or a
+//   struct (an FGameplayTag wraps a name) whose parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
 //   pass, while a few harmless ones (an animation's TransitionEvent) are refused under a grant and stay per call.
 // FUNC_UbergraphFunction: a Blueprint's event graph, entered at any offset. Defined from 4.23; the bit is unused
 // before, so testing it is safe on every engine.
@@ -556,7 +556,7 @@ inline std::string InvokeParamIndirection(const std::vector<Field>& params, bool
             if (f.objClass == "Function")
                 return "takes a UFunction (" + f.name + "), which it can call";
             if (t == "NameProperty" || t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty"
-                || t == "TextProperty") {
+                || t == "TextProperty" || t == "StructProperty") {
                 std::string n;
                 n.reserve(f.name.size());
                 for (char c : f.name) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));

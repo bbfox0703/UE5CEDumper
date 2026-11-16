@@ -92,7 +92,8 @@ internal static class McpInvokeRules
         if (DelegateTypes.Contains(type)) return "takes a delegate (" + name + "), which calls whatever it is bound to";
         if (type == "FieldPathProperty") return "takes a property path (" + name + ")";
         if (objClass == "Function") return "takes a UFunction (" + name + ")";
-        if (StringTypes.Contains(type))
+        // A struct named for one too: an FGameplayTag EventTag wraps the event's name.
+        if (StringTypes.Contains(type) || type == "StructProperty")
         {
             string n = name.ToLowerInvariant();
             if (NameLikeTokens.Any(t => n.Contains(t, StringComparison.Ordinal)))
