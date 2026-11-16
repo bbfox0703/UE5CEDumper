@@ -8946,6 +8946,16 @@ static_assert(std::is_same_v<decltype(DynOff::FARRAYPROP_INNER), DynOff::Runtime
 static_assert(std::is_same_v<decltype(DynOff::FBOOLPROP_FIELDSIZE), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FBYTEPROP_ENUM), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FENUMPROP_ENUM), DynOff::RuntimeOffset>);
+// The other offsets measured lazily, by whichever walk first meets the evidence, while other threads read them: the
+// persistent-pointer envelopes (latched from an ElementSize), UEnum::Names' layout and UFunction's Func / flags.
+static_assert(std::is_same_v<decltype(DynOff::SOFTPTR_PATH), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::LAZYPTR_GUID), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_NAMES), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_VALUE_SIZE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_PAIR_STRIDE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_FUNC), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_FLAGS), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_TAIL_EXTRA), DynOff::RuntimeOffset>);
 // The proof that the family lock is held cannot be copied out of the scope that took the lock.
 static_assert(!std::is_copy_constructible_v<DynOff::FamilyWriteLock>);
 
