@@ -1636,6 +1636,20 @@
     <sys:String x:Key="str.TP.BlockAi">Block AI writes</sys:String>
     <sys:String x:Key="str.Tip.TP.BlockAi">While ticked, every AI session using UE5DumpUI's MCP server (UE5DumpUI.exe --mcp) is refused every change to the game, and each tick ends every grant an AI was given. An AI can still turn off or reset what it holds. To take back what an AI holds, tick this first, then use the card's OFF or Reset.</sys:String>
     <sys:String x:Key="str.TP.BlockAiOnNote">AI writes are blocked: AI sessions can read and clean up, but change nothing until you untick this.</sys:String>
+    <!-- [MCP-WRITE-GRANTS-2026-11-14] A gameplay card's holder label: who other than this window holds the
+         feature (get_holds). {0} = the holder's process id. -->
+    <sys:String x:Key="str.TP.HolderAi">Held by an AI session (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderAiNoPid">Held by an AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderCe">Held by Cheat Engine</sys:String>
+    <sys:String x:Key="str.TP.HolderOther">Held by another program (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderOtherNoPid">Held by another program</sys:String>
+    <sys:String x:Key="str.TP.HolderExited">Held by a program that has exited (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderUnrecorded">Held by a program that recorded no owner</sys:String>
+    <!-- See-through's claims name nobody. {0} = how many claims besides this window's and Cheat Engine's. -->
+    <sys:String x:Key="str.TP.HolderStOne">Held by another program or AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderStMany">Held by {0} other programs or AI sessions</sys:String>
+    <sys:String x:Key="str.TP.HolderStCeOne">Held by Cheat Engine and another program or AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderStCeMany">Held by Cheat Engine and {0} other programs or AI sessions</sys:String>
     <sys:String x:Key="str.TP.BlockAiSaveFailed">Block AI writes could not be saved, so AI sessions do not see the change and the box shows the switch as it was. Try again.</sys:String>
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
     <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort: the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
