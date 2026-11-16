@@ -110,6 +110,30 @@ public sealed class AiWriteBlockGateTests : IDisposable
         Assert.False(AiWriteBlockGate.ReadState(FilePath).Blocked);
     }
 
+    // Review round 2: the read runs off the UI thread, so the user's click can land between the read and its apply,
+    // which then put the box back to what the file said before the click -- a state no server sees.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AReloadThatReadBeforeAClick_DoesNotUndoTheClick(bool click)
+    {
+        var gate = new AiWriteBlockGate(_platform);
+        Assert.True(gate.TrySetBlocked(!click));
+        gate.Reader = path =>
+        {
+            var before = AiWriteBlockGate.ReadState(path);
+            Assert.True(gate.TrySetBlocked(click));   // the click lands while the file is read
+            return before;
+        };
+        await gate.ReloadAsync();
+        Assert.Equal(click, gate.IsBlocked);
+        Assert.Equal(click, AiWriteBlockGate.ReadState(FilePath).Blocked);
+
+        gate.Reader = AiWriteBlockGate.ReadState;   // the next reload reads what the click saved
+        await gate.ReloadAsync();
+        Assert.Equal(click, gate.IsBlocked);
+    }
+
     [Fact]
     public async Task Reload_PicksUpAChangeMadeElsewhere_AndSaysSo()
     {

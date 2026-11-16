@@ -47,6 +47,9 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
     public bool IsBlocked => _blocked;
     public long RevokeStamp => _stamp;
 
+    /// <summary>How <see cref="ReloadAsync"/> reads the file (tests: a click landing during the read).</summary>
+    internal Func<string, AiWriteBlockState> Reader { get; set; } = ReadState;
+
     public bool TrySetBlocked(bool blocked)
     {
         // A turn-on revokes: the stamp goes past both what this window wrote and what the file holds now (another
@@ -68,7 +71,8 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
 
     public async Task ReloadAsync()
     {
-        var state = await Task.Run(() => ReadState(_filePath));
+        var read = Reader;
+        var state = await Task.Run(() => read(_filePath));
         bool blocked = state.Unreadable || state.Blocked;
         long stamp = state.Unreadable ? _stamp : state.RevokeStamp;
         if (blocked == _blocked && stamp == _stamp) return;
