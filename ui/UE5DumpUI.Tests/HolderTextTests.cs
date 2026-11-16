@@ -56,6 +56,20 @@ public sealed class HolderTextTests
         Assert.Equal("Held by another program (pid 78)", HolderText.For(Hold("client", 78), pid => pid == 77));
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the DLL drops an ended AI session's ownership of the debug camera when its
+    // OFF has to wait for a stalled game thread, and says the release is owed (DLL 3707+). Nobody holds it: the camera
+    // is on its way off.
+    [Fact]
+    public void AnEndedAiSessionsCamera_ThatTheDllIsTurningOff_SaysSo()
+    {
+        var owed = new HoldEntry
+        {
+            Hold = Constants.HoldDebugCamera, Active = true, ReleaseOwed = true, Holder = new HoldOwner { Kind = "none" },
+        };
+        Assert.Equal("Turning off: the AI session that held it has ended", HolderText.For(owed, Running));
+        Assert.Equal(Res.Get(HolderText.KeyReleaseOwed), HolderText.For(owed, Running));
+    }
+
     [Fact]
     public void TheWordsAreTheDictionarys()
     {

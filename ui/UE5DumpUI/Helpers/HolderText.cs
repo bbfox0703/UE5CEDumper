@@ -21,6 +21,7 @@ internal static class HolderText
     internal const string KeyOtherNoPid = "str.TP.HolderOtherNoPid";
     internal const string KeyExited = "str.TP.HolderExited";
     internal const string KeyUnrecorded = "str.TP.HolderUnrecorded";
+    internal const string KeyReleaseOwed = "str.TP.HolderReleaseOwed";
     internal const string KeyStOne = "str.TP.HolderStOne";
     internal const string KeyStMany = "str.TP.HolderStMany";
     internal const string KeyStCeOne = "str.TP.HolderStCeOne";

@@ -1646,6 +1646,8 @@
     <sys:String x:Key="str.TP.HolderOtherNoPid">Held by another program</sys:String>
     <sys:String x:Key="str.TP.HolderExited">Held by a program that has exited (pid {0})</sys:String>
     <sys:String x:Key="str.TP.HolderUnrecorded">Held by a program that recorded no owner</sys:String>
+    <!-- An ended AI session's debug camera, whose OFF waits for the game thread: nobody holds it any more. -->
+    <sys:String x:Key="str.TP.HolderReleaseOwed">Turning off: the AI session that held it has ended</sys:String>
     <!-- See-through's claims name nobody. {0} = how many claims besides this window's and Cheat Engine's. -->
     <sys:String x:Key="str.TP.HolderStOne">Held by another program or AI session</sys:String>
     <sys:String x:Key="str.TP.HolderStMany">Held by {0} other programs or AI sessions</sys:String>

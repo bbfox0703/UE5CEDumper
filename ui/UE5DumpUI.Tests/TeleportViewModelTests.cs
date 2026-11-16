@@ -765,6 +765,28 @@ public class TeleportViewModelTests
         Assert.Equal(1, dump.GetDebugCameraCalls);   // read once it ran, then the window's own: read on use
     }
 
+    [Fact]
+    public async Task ADebugCameraTheDllOwesAnOff_IsLabelled_AndFollowedUntilItIsOff()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 1;
+        dump.NextHolds = Report(new HoldEntry
+        {
+            Hold = Constants.HoldDebugCamera, Active = true, ReleaseOwed = true, Holder = new HoldOwner { Kind = "none" },
+        });
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Turning off: the AI session that held it has ended", vm.DebugCameraHolderText);
+        Assert.Equal("ON", vm.DebugCameraState);
+
+        dump.NextDebugCameraState = 0;   // the owed OFF ran
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, kind: "none", pid: null, background: false,
+            active: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.DebugCameraHolderText);
+        Assert.Equal("OFF", vm.DebugCameraState);
+    }
+
     [Theory]
     [InlineData(0, false)]                                // an engine state that names no build
     [InlineData(Constants.HoldsMinDllBuild - 1, false)]   // a DLL that answers get_holds with an error
