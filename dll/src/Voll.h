@@ -429,7 +429,9 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 // calls any function by name, a setter that writes any property by name, a Blueprint graph entered at a free entry
 // point), RemovePlayer, and the online-service writes that leave the machine without being RPCs (achievements,
 // leaderboards, in-app purchases; names from UE's OnlineSubsystemUtils). A per-function grant must never reach these.
-inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags) {
+inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags,
+                                              const std::string& fullName = {}) {
+    (void)fullName;   // stub (red)
     constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
     if (functionFlags & kFuncNet)
         return "is a network RPC: it can reach a server outside this machine";

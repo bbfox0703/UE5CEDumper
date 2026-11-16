@@ -585,6 +585,24 @@ static void Test_D23_InvokeOwnersAndDenyList() {
                           "CreateProxyObjectForInAppPurchaseRestoreOwnedProducts"})
         EXPECT((std::string("an online-service write is refused: ") + n).c_str(),
                !InvokeRefusedForBackground(n, 0).empty());
+    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's engine scan (UE 4.18-5.8 sources): names the list missed. UE4 and
+    // 5.0-5.6 write achievements through WriteAchievementProgress (WriteProgress is 5.5+); the save slot's
+    // local-player twins; RemoteEvent calls any function by name on the level scripts; SetBind binds a key to any
+    // console command; EditTextPropertySourceString and the timeline's AddInterp* write a property by name; a
+    // streaming level's load or unload invalidates addresses as a level change does.
+    for (const char* n : {"WriteAchievementProgress", "SaveGameToSlotForLocalPlayer",
+                          "AsyncSaveGameToSlotForLocalPlayer", "RemoteEvent", "SetBind", "EditTextPropertySourceString",
+                          "AddInterpFloat", "AddInterpVector", "AddInterpLinearColor", "LoadStreamLevel",
+                          "LoadStreamLevelBySoftObjectPtr", "UnloadStreamLevel", "UnloadStreamLevelBySoftObjectPtr"})
+        EXPECT((std::string("phase 1b's scan: refused ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
+    // An async action's Activate does the online-service write, the session join or the save its factory set up.
+    // Refused by the resolved full name: UActorComponent::Activate is an everyday function of the same name.
+    EXPECT("an async action's Activate is refused by its full name",
+           !InvokeRefusedForBackground("Activate", 0, "//Script/Engine/BlueprintAsyncActionBase.Activate").empty()
+           && !InvokeRefusedForBackground("Activate", 0, "//Script/Engine/OnlineBlueprintCallProxyBase.Activate").empty());
+    EXPECT("control: a component's Activate, or one with no full name read, is allowed",
+           InvokeRefusedForBackground("Activate", 0, "//Script/Engine/ActorComponent.Activate").empty()
+           && InvokeRefusedForBackground("Activate", 0).empty());
     EXPECT("controls: reading a timer, an ordinary setter, a name merely containing a family are allowed",
            InvokeRefusedForBackground("K2_GetTimerRemainingTime", 0).empty()
            && InvokeRefusedForBackground("SetHealth", 0).empty()
