@@ -17,12 +17,15 @@ public enum McpHostDecision { ReadOnly, MarkedPerCall, Grants }
 /// <summary>A kind of grant. Two gameplay kinds and not one, so that "annoying" (god mode stays on, the game runs fast)
 /// never quietly implies "may kill or lose the pawn". <see cref="Invoke"/> (Phase 1b) names one UFunction, its
 /// grant's <see cref="McpGrantRecord.Target"/>.</summary>
-public enum McpGrantKind { None, Toggles, Movement, Invoke }
+public enum McpGrantKind { None, Toggles, Movement, Invoke, Field }
 
 /// <summary>What a tool is to the grant gate: which hosts list it, whether the host is asked before each call, and
 /// whether a call must be admitted. <see cref="GrantedInvoke"/> calls only a function an invoke grant names, so only a
 /// grants host lists it.</summary>
-public enum McpToolRole { Read, Scan, GrantedWrite, PerCallWrite, Release, Grant, GrantAdmin, GrantedInvoke }
+public enum McpToolRole
+{
+    Read, Scan, GrantedWrite, PerCallWrite, Release, Grant, GrantAdmin, GrantedInvoke, GrantedField,
+}
 
 /// <summary>A grant as the session sees it: the game run it is for, how many calls it has let through, and for an
 /// invoke grant the one function it names, by full name ("" for a kind grant).</summary>
@@ -50,6 +53,7 @@ public sealed class McpGrantCapability
     public string CreationTime { get; }
     /// <summary>The function an invoke grant admitted the call for, by full name; "" otherwise.</summary>
     public string Target { get; }
+    public string Detail { get; } = "";   // stub (red)
 }
 
 /// <summary>
@@ -490,7 +494,7 @@ public sealed partial class McpGrants
     /// passes the capability to the send, where the gate checks it again. Never read the link's connected pid here
     /// instead: the link may reconnect between that reply and the send, and the gate is what catches it.</summary>
     public McpGrantCapability? Admit(McpToolRole role, McpGrantKind kind, JsonObject ptrs, out string? refusal,
-        string target = "")
+        string target = "", string detail = "")
     {
         if (role is not (McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.GrantedInvoke))
         {

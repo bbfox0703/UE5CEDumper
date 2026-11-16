@@ -127,6 +127,10 @@ public static class Constants
     public const string McpGrantToolInvoke = "grant_invoke_one_function_any_object_and_args";
     /// <summary>The tool that calls a function an invoke grant names, without a prompt per call.</summary>
     public const string McpInvokeGrantedTool = "write_invoke_granted_function";
+    /// <summary>Phase 2's grant: one field of one class, on every instance of it and its subclasses.</summary>
+    public const string McpGrantToolField = "grant_write_field_one_property_every_instance";
+    /// <summary>The tool that writes a field a field grant names, without a prompt per call.</summary>
+    public const string McpFieldGrantedTool = "write_field";
     // The ranges an AI's gameplay values must lie in: the UI's own, refused outside rather than clamped, because the
     // DLL clamps several silently and allows more than the UI for two (time dilation, jump).
     /// <summary>The world time-dilation slider's ceiling (TeleportPanel); the DLL's TIME_DILATION_MAX is 100.</summary>
@@ -155,6 +159,10 @@ public static class Constants
     public const string McpGrantAckMovement =
         "The user asked for this. Until this game run or this session ends, the AI may change movement, gravity "
         + "direction and Fly, and teleport the player. This may kill or lose the pawn; a teleport is not undone.";
+    public const string McpGrantAckField =
+        "The user asked for this. Until this game run or this session ends, the AI may write the one field named here "
+        + "on every instance of this class and its subclasses (NPCs included), with any value its type allows, without "
+        + "asking again. A value can still crash the game.";
     public const string McpGrantAckInvoke =
         "The user asked for this. Until this game run or this session ends, the AI may call the one UFunction named "
         + "here, on any object (NPCs included), with any arguments, without asking again.";

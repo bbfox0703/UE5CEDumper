@@ -435,6 +435,76 @@ public sealed class McpGrantsTests
         Assert.Null(marked.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden));
     }
 
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+
+    // A class's full path (walk_class' full_path), a colon, the field.
+    private const string HolderValue = "//Script/DumperTest/DumperTestHolder:HolderValue";
+
+    private static JsonObject FieldWrite(string addr = "0x1000", string bytes = "2A000000", string expect = "29000000")
+        => new() { ["cmd"] = "write_mem", ["addr"] = addr, ["bytes"] = bytes, ["expect"] = expect };
+
+    [Fact]
+    public void AFieldGrant_IsKeyedOnOneClassField_AndAdmitsOneAddress()
+    {
+        var g = Decided();
+        Assert.Null(g.Admit(McpToolRole.GrantedField, McpGrantKind.Field, Ptrs(), out var before, HolderValue,
+            "0x1000:4"));
+        Assert.Contains(Constants.McpGrantToolField, before);
+        Assert.Contains("write_memory", before);   // the per-call route
+        var record = g.Grant(McpGrantKind.Field, Ptrs(), out _, HolderValue);
+        Assert.Equal(HolderValue, record!.Target);
+        var cap = g.Admit(McpToolRole.GrantedField, McpGrantKind.Field, Ptrs(), out _, HolderValue, "0x1000:4");
+        Assert.Equal((HolderValue, "0x1000:4"), (cap!.Target, cap.Detail));
+        Assert.Null(g.Admit(McpToolRole.GrantedField, McpGrantKind.Field, Ptrs(), out _,
+            "//Script/DumperTest/DumperTestHolder:bHolderFlag", "0x1004:1"));
+        Assert.Null(g.Admit(McpToolRole.GrantedField, McpGrantKind.Field, Ptrs(), out _, HolderValue, ""));   // no address
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("HolderValue")]
+    [InlineData("//Script/DumperTest/DumperTestHolder")]
+    [InlineData("//Script/DumperTest/DumperTestHolder:")]
+    [InlineData("DumperTestHolder:HolderValue")]   // a short class name, not a path
+    [InlineData("//Script/DumperTest/DumperTestHolder:HolderValue,bHolderFlag")]
+    public void AFieldGrant_NamesExactlyOneClassField(string target)
+    {
+        var g = Decided();
+        Assert.Null(g.Grant(McpGrantKind.Field, Ptrs(), out var refusal, target));
+        Assert.NotNull(refusal);
+        Assert.Empty(g.List());
+    }
+
+    [Fact]
+    public void TheGate_PassesAFieldWrite_OnlyAtItsAddress_AndItsSize()
+    {
+        var g = Decided();
+        g.Grant(McpGrantKind.Field, Ptrs(), out _, HolderValue);
+        var cap = g.Admit(McpToolRole.GrantedField, McpGrantKind.Field, Ptrs(), out _, HolderValue, "0x1000:4");
+        Assert.Null(g.Check(FieldWrite(), cap, Pid, Run));
+        Assert.NotNull(g.Check(FieldWrite(addr: "0x1004"), cap, Pid, Run));
+        Assert.NotNull(g.Check(FieldWrite(bytes: "2A00000000000000", expect: "2900000000000000"), cap, Pid, Run));
+        Assert.NotNull(g.Check(InvokeReq(), cap, Pid, Run));
+        Assert.NotNull(g.Check(Req("{\"cmd\":\"set_god_mode\",\"enable\":true}"), cap, Pid, Run));
+        Assert.Equal(1, Assert.Single(g.List()).Uses);
+        g.Revoke(McpGrantKind.Field, target: HolderValue);
+        Assert.NotNull(g.Check(FieldWrite(), cap, Pid, Run));
+    }
+
+    [Fact]
+    public void TheFieldTool_IsListedUnmarked_OnlyWhereGrantsAre_AndAPerCallWriteIsUnchanged()
+    {
+        Assert.True(McpGrants.IsListed(McpToolRole.GrantedField, McpHostDecision.Grants));
+        Assert.False(McpGrants.IsMarked(McpToolRole.GrantedField, McpHostDecision.Grants));
+        Assert.False(McpGrants.IsListed(McpToolRole.GrantedField, McpHostDecision.MarkedPerCall));
+        Assert.False(McpGrants.IsListed(McpToolRole.GrantedField, McpHostDecision.ReadOnly));
+        var marked = Decided(version: "2.1.100");
+        Assert.Null(marked.Grant(McpGrantKind.Field, Ptrs(), out _, HolderValue));
+        var g = Decided();
+        var perCall = g.Admit(McpToolRole.PerCallWrite, McpGrantKind.None, Ptrs(), out _);
+        Assert.Null(g.Check(FieldWrite(addr: "0x9999"), perCall, Pid, Run));   // write_memory, asked every call
+    }
+
     [Fact]
     public void RevokeOnlyNarrows()
     {
