@@ -23,6 +23,15 @@ Checks (each printed ok / FAIL; exit 0 only when all pass):
      again: it is the foreground client's, and the AI's leaving does NOT turn it off (the failure fix (6) closed);
   5. the mailbox's INVOKE_BY_NAME of ToggleDebugCamera names CE, off and on (review 2, E);
   6. clean-up: the foreground client's set_debug_camera OFF leaves the camera off and nobody's.
+
+    py tools/verify/dbgcam_ledger_live.py --busy-lock --suspend-name DumperTest58 [--pid N]
+
+The verification register's "cards' holder labels" row 6, alone: with the game thread frozen (suspend.py, per
+thread), a second foreground client's set_debug_camera ON holds the camera's lock through its own game-thread wait;
+the mailbox's INVOKE_BY_NAME of ToggleDebugCamera, sent while it waits, must not wait for that lock (Mimic's
+TryChangeHoldAsCe): it answers within ONE invoke timeout, not two, and the DLL's pipe log reads "ToggleDebugCamera
+ran unrecorded -- another writer was changing the debug camera". Resumed, the queued toggles run; the clean-up turns
+the camera off.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ import os
 import pathlib
 import struct
 import sys
+import threading
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -110,10 +120,56 @@ def mailbox_toggle(m: Mem, base: int, timeout: float = 15.0) -> tuple[int, str]:
     raise SystemExit(f"dbgcam_ledger_live: mailbox TIMEOUT after {timeout}s, status={m.i32(base + OFF_STATUS):#x}")
 
 
+def busy_lock(ui, game: int, name: str, ck: Checks) -> None:
+    """Row 6: a CE invoke of the camera's function behind a pipe writer that holds the camera's lock."""
+    from mcp_client import _camera_force_off, _fresh_stamp, _FrozenGameThread, _log_line  # noqa: E402
+
+    t = int(ui.request("get_pointers").get("invoke_timeout_ms") or 5000) / 1000.0
+    base = mailbox_addr(str(game))
+    m = Mem(game)
+    if not ck.check(m.i32(base + OFF_INITSTATE) == INIT_READY, f"the mailbox is ready; invoke timeout {t:.0f}s"):
+        return
+    writer = PipeClient(pid=game, timeout=t * 4 + 30)   # the pipe writer: a second foreground connection
+    writer.connect()
+    answer: dict = {}
+    since = _fresh_stamp()
+    try:
+        with _FrozenGameThread(name) as frozen:
+            print(f"        {frozen.suspend_line}")
+            th = threading.Thread(target=lambda: answer.update(r=writer.request("set_debug_camera", enable=True)),
+                                  daemon=True)
+            th.start()
+            time.sleep(min(1.0, t / 4))   # inside its game-thread wait now, holding the camera's lock
+            ck.check(th.is_alive(), "the pipe writer's set_debug_camera ON is waiting on the frozen game thread")
+            t0 = time.time()
+            res, err = mailbox_toggle(m, base, timeout=t * 3 + 10)
+            took = time.time() - t0
+            ck.check(took < t * 1.5,
+                     f"the mailbox's INVOKE_BY_NAME answered in {took:.1f}s: one invoke timeout ({t:.0f}s), not two",
+                     (res, err))
+            th.join(t * 3 + 10)
+            ck.check("r" in answer, "the pipe writer's set_debug_camera answered", answer)
+        print(f"        resumed; the writer answered {answer.get('r')}; the mailbox answered {res}, {err!r}")
+        line = _log_line("pipe", r"Mailbox: ToggleDebugCamera ran unrecorded -- another writer was changing the debug "
+                                 r"camera", since)
+        ck.check(line is not None,
+                 "the DLL's pipe log: ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera",
+                 line)
+    finally:
+        writer.close()
+        time.sleep(2.0)   # the queued toggles run once the game thread is back
+        off = _camera_force_off(ui)
+        ck.check(off == 0, "clean-up: the camera is off", off)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pid", type=int)
+    ap.add_argument("--busy-lock", action="store_true", help="run the busy-lock check (register row 6) alone")
+    ap.add_argument("--suspend-name", help="with --busy-lock: the game's image stem, for suspend.py (DumperTest58)")
     a = ap.parse_args()
+    if a.busy_lock and not a.suspend_name:
+        ap.error("--busy-lock needs --suspend-name")
 
     ck = Checks()
     ui = PipeClient(pid=a.pid, timeout=60)
@@ -133,6 +189,12 @@ def main() -> int:
     if not ck.check(state == 0, "the camera reads OFF to start", state):
         print("  (state -1: no live CheatManager -- use DumperTest58 Development)")
         return 1
+    if a.busy_lock:
+        busy_lock(ui, game, a.suspend_name, ck)
+        ui.close()
+        print(f"{ck.passed} passed, {len(ck.failures)} failed")
+        print("PASS" if not ck.failures else "FAIL")
+        return 0 if not ck.failures else 1
 
     ai = Child(game, background=True)
     print(f"  AI-session stand-in pid {ai.pid}")
