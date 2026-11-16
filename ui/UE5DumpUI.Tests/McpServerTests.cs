@@ -187,7 +187,7 @@ public sealed class McpServerTests
         Assert.Contains("Fly's speed, preset and noclip stay", instructions);
         // write_field is listed on a grants host only.
         Assert.Contains(clientVersion == RecentClaudeCode
-            ? "what write_invoke, write_memory or write_field did stays"
+            ? "what write_invoke, write_invoke_granted_function, write_memory or write_field did stays"
             : "what write_invoke or write_memory did stays", instructions);
         // The user's stop control: a refusal under it means stop.
         Assert.Contains("Block AI writes", instructions);
@@ -211,9 +211,10 @@ public sealed class McpServerTests
         Assert.Contains(Constants.McpGrantToolField, instructions);
         Assert.Contains(Constants.McpFieldGrantedTool, instructions);
         // Each per-call exception goes with its own refused grant, and none follows the user's block.
-        Assert.Contains("write_invoke after a refused invoke grant", instructions);
-        Assert.Contains("write_memory after a refused field grant", instructions);
-        Assert.Contains("never after a Block AI writes refusal", instructions);
+        // The server's refusal of a grant, not the user's: a declined grant prompt is the user's no.
+        Assert.Contains("write_invoke after the server refuses an invoke grant", instructions);
+        Assert.Contains("write_memory after it refuses a field grant", instructions);
+        Assert.Contains("never after a declined prompt or a Block AI writes refusal", instructions);
         Assert.Contains("read_grants", instructions);
         Assert.Contains("revoke_grants", instructions);
         Assert.Contains("never in advance", instructions);
