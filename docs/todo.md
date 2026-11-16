@@ -17,7 +17,8 @@ Open work only. **Read this when deciding what to do next.**
 > next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
 > Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 and was proven live in 3715 (2026-11-16); the
 > cards' holder labels shipped and were proven live in 3716; Phase 1b (invoke grants) shipped and was proven live in
-> 3717 (2026-11-17); Phase 2's `write_field` is next** --
+> 3717, and Phase 2 (field grants, `write_field`) in 3718 (2026-11-17); Phase 3, the optional "AI sessions" card,
+> waits for the maintainer's go-ahead** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -416,7 +417,7 @@ Open work only. **Read this when deciding what to do next.**
   no-code proof of concept on DumperTest; then grants plus an `FInputActionValue` layout for held stick directions:
   [mcp-player2-eval.md](mcp-player2-eval.md).
 - `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
-  (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
+  (Stage D3: Phases 1, 1b and 2 shipped in builds 3714-3718; Phase 3 optional): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
 - `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns, ✅
   race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
   open follow-ups: `[[nodiscard]]` batch 2, the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
@@ -840,7 +841,8 @@ What D2 must not take from the UI: the global holds (force field, teleport marke
 
 The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
 
-**D3, evaluated 2026-11-14, not started: grants instead of a prompt on every write `[MCP-WRITE-GRANTS-2026-11-14]`.**
+**D3, evaluated 2026-11-14; Phases 1, 1b and 2 shipped in builds 3714-3718: grants instead of a prompt on every write
+`[MCP-WRITE-GRANTS-2026-11-14]`.**
 The maintainer found God mode needing Allow on every call impractical, and doubted that `write_memory` /
 `write_invoke` should ask every time when a CE user is never asked; they asked for an evaluation written down, no
 implementation yet. The plan, the rejected routes, the measurements and the decisions are in
@@ -878,7 +880,12 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
 - ~~**Phase 1b, invoke grants**~~ ✅ shipped in build 3717 (dev-log 3717): one UFunction per grant, the AI's invoke
   deny list from a scan of the UE 4.18-5.8 sources; proven live (verification-register.md, "MCP invoke grants, Phase
   1b": item 1 closed, the Claude Code prompt and a Blueprint function open).
-- **Phase 2's `write_field`** (§4.5), next.
+- ~~**Phase 2's `write_field`**~~ ✅ shipped in build 3718 (dev-log 3718): one field of one class per grant, written
+  on that class's live instances and its subclasses'; `get_object` names the DLL's template verdict, which the server
+  refuses a class default and an archetype by. Two review rounds (26 and 22 rows) fixed; proven live
+  (verification-register.md, "MCP field grants, Phase 2": item 1 closed; the Claude Code prompt, a Blueprint class's
+  field and a packed bool on a live object open).
+- **Phase 3 (optional)**: an "AI sessions" card (the eval's §7). Only with the maintainer's go-ahead.
 - `[INVOKE-OBJECT-PARAM-CLASS]` (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
   `write_invoke` or `write_invoke_granted_function` is checked for being a live object, never against the parameter's
   declared class (walk_functions' `obj_class`), so a native function can be handed an object of another class and

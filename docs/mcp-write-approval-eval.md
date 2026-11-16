@@ -1,6 +1,11 @@
-# MCP write approval: grants instead of a prompt on every call — EVALUATED 2026-11-14, NOT STARTED
+# MCP write approval: grants instead of a prompt on every call — EVALUATED 2026-11-14; PHASES 1, 1b AND 2 SHIPPED
 
-> **Status.** The maintainer asked for this evaluation first, written down, with no implementation yet (2026-11-14).
+> **Status (2026-11-17).** Phase 0 measured (§6.1). Phase 1 shipped in build 3714 and was proven live in 3715, the
+> cards' holder labels in 3716, Phase 1b (invoke grants, §4.4) in 3717, Phase 2 (`write_field`, §4.5) in 3718, each
+> proven live (verification-register.md). Phase 3 (§7, optional) waits for the maintainer. What follows is the
+> evaluation as written, with each phase's shipped notes.
+>
+> **As first written.** The maintainer asked for this evaluation first, written down, with no implementation yet (2026-11-14).
 > Next step: the Phase 0 measurements in §6, which need no build. Then the maintainer decides the open points in §8,
 > and Phase 1 can start. Tracked in [todo.md](todo.md) under `[PIPE-PER-PROCESS-2026-11-06]` Stage D as
 > `[MCP-WRITE-GRANTS-2026-11-14]`.
@@ -176,6 +181,13 @@ A typed twin of the UI's field edit: `write_field {instance_addr, field_name, va
   AI chooses values within the type's range: an index or a state value can still crash a game.
 - **Raw `write_memory` stays per call.** Its CE equivalent is a human typing each address. A raw-range grant would ask a
   human to approve a hex range, which nobody can read meaningfully.
+- **Shipped in build 3718** (dev-log 3718). The names follow the invoke grant's: `write_field {instance_addr, field,
+  value}` under `grant_write_field_one_property_every_instance {field, class}`, the field first in the prompt. Two
+  review rounds added what this section did not foresee: a template is refused by the DLL's own verdict, which
+  `get_object` now sends (so DLL 3718+), since a class default's subobject is named like any component; the grant
+  names a class only, never a struct's or a function's member; the walk must be of the object whose class was
+  resolved; an enum takes its short or qualified name, never its trailing `_MAX`, and nothing when its names were not
+  read; and the chain walk sees this game run's grants only.
 
 ### 4.6 Lifetime
 
@@ -380,7 +392,8 @@ route.
 - **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions. **Shipped in build 3717** (dev-log 3717): the grant
   tool and `write_invoke_granted_function`, the DLL's grant mode (`grant`, `expect_func_full`, code -28), and the
   exclusions checked both when the grant is asked for and at every call.
-- **Phase 2: `write_field`**, after M1. About one session.
+- **Phase 2: `write_field`**, after M1. **Shipped in build 3718** (dev-log 3718): the grant tool, `write_field`, the
+  gate's hold on one address and size, `get_object`'s template verdict in the DLL, and two review rounds.
 - **Phase 3 (optional): an "AI sessions" card.** Per-session status files listing each session's grants, with a
   per-session revoke. The holder labels and the "Block AI writes" switch moved into Phase 1 (§4.10).
 
