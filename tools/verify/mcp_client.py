@@ -22,7 +22,8 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         pawn by a few metres and back: run it on a fixture, never on a real game.
     py tools/verify/mcp_client.py raw --exe dist/UE5DumpUI.exe --suspend-name DumperTest-Win64-Shipping [--pid N]
         Stage D2-3: write_memory on the fixture's own int field (written, a changed-since refusal, put back), refused on
-        a vtable (read-only) and on code; write_invoke of Add_IntInt (40 + 2), the deny list (ToggleDebugCamera), the
+        a vtable (read-only) and on code; write_invoke of Add_IntInt (40 + 2), the deny list (ToggleDebugCamera, and
+        on DLL 3713+ K2_SetTimer: a call by name), write_memory into the DLL's own CE mailbox (3713+: -25), the
         UI's queued invoke refusing the AI's, and the AI's own queued invoke never resent and dropped when its session
         ends. It FREEZES the game thread for a few seconds at a time (suspend.py suspend-tid; always resumed): a
         fixture only.
@@ -983,6 +984,29 @@ def run_raw(exe: str, pid: int | None, game_name: str) -> int:
         r, d, _ = call(c, "write_invoke", {"instance_addr": cm.get("addr"), "function": "ToggleDebugCamera"})
         ck.check(r.get("isError") and "write_debug_camera" in error_text(d),
                  "write_invoke ToggleDebugCamera is refused, pointing to write_debug_camera", d)
+
+        # 3b. [INVOKE-DENY-INDIRECTION] (DLL 3713+) A timer by function name reaches any function, so it is refused by
+        # name. Its arguments name nothing that exists and pass no object, so even a DLL without the rule does nothing.
+        if build >= 3713:
+            r, ksl, _ = call(c, "read_find_object", {"path": "Default__KismetSystemLibrary"})
+            r, d, _ = call(c, "write_invoke", {"instance_addr": ksl.get("addr"), "function": "K2_SetTimer",
+                                              "params": {"FunctionName": "NoSuchFunction_McpRigProbe", "Time": 1.0}})
+            ck.check(r.get("isError") and "by name or event" in error_text(d),
+                     "write_invoke K2_SetTimer is refused (a call by name)", d)
+
+        # 3c. [WRITEMEM-OWN-IMAGE] (DLL 3713+) The DLL's own image -- its CE mailbox -- is refused to an AI client (-25).
+        # Written with the very bytes it holds, so even a DLL without the rule changes nothing.
+        if build >= 3713:
+            mbr = subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("mailbox_addr.py")), game_name],
+                                 capture_output=True, text=True, errors="replace")
+            line = next((ln for ln in mbr.stdout.splitlines() if "g_invokeMailbox" in ln), "")
+            if ck.check(bool(line), "the DLL's g_invokeMailbox resolved (mailbox_addr.py)", mbr.stdout + mbr.stderr):
+                mb = "0x%X" % int(line.split("=")[1].strip(), 16)
+                r, mbmem, _ = call(c, "read_memory", {"addr": mb, "size": 8})
+                held = mbmem.get("bytes", "").replace(" ", "").upper()
+                r, d, _ = call(c, "write_memory", {"addr": mb, "bytes": held, "expect": held})
+                ck.check(r.get("isError") and isinstance(d, dict) and d.get("code") == -25,
+                         "write_memory into the DLL's own image (its CE mailbox) is refused, code -25", d)
 
         # 4. write_debug_camera ON on a Shipping fixture with no live CheatManager: an error now, not a success.
         r, d, note = call(c, "write_debug_camera", {"enable": True})
