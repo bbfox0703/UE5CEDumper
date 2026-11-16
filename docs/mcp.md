@@ -139,15 +139,17 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `write_memory` | Writes up to 4 KB of data at an address, if it still holds the bytes the AI read; returns before and after. |
 | `write_invoke` | Calls a UFunction on a live object on the game thread, parameters by name; returns its return value and out parameters. |
 
-- **Asked every time.** Every `write_*` tool asks you before each call, in every permission mode, and an allow rule
-  does not skip it (Claude Code 2.1.246 or later).
+- **Asked every time, in Claude Code.** Every `write_*` tool asks you before each call, in every permission mode, and
+  an allow rule does not skip it (Claude Code 2.1.246 or later). Only Claude Code reads that marker: another MCP host
+  asks or not by its own settings, and many have an always-allow or auto-approve mode.
 - **Never over you.** When the UI, a Cheat Engine record or another AI session holds a feature, the AI's change is
   refused and the reply names the holder. The DLL decides this under the feature's own lock, so a change you make at
   the same moment cannot be overwritten. The AI never releases every forced field at once, and See-through stays on
   while you also have it on.
-- **Released when the AI session ends.** What the AI turned on is turned off when its server exits, and what you turned
-  on stays. If the game is frozen at that moment (a long load, a debugger), the AI's debug camera is turned off once
-  the game runs again, unless you take the camera first.
+- **Released when the AI session ends.** The features the AI holds are turned off when its server exits, and what you
+  turned on stays. If the game is frozen at that moment (a long load, a debugger), the AI's debug camera is turned off
+  once the game runs again, unless you take the camera first. Not undone: Fly's speed, preset and noclip settings, a
+  teleport, and whatever a `write_invoke` or `write_memory` changed.
 - **Your teleport markers are yours.** `write_teleport` goes only to coordinates it is given: it never reads, saves or
   clears a marker slot, and **Recall last** in the UI still returns you to where you were before your own last
   teleport.
