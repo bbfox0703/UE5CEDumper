@@ -16,7 +16,7 @@ Open work only. **Read this when deciding what to do next.**
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
 > next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
 > Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 and was proven live in 3715 (2026-11-16); the
-> cards' holder labels and Phase 1b (invoke grants) are next** --
+> cards' holder labels shipped and were proven live in 3716; Phase 1b (invoke grants) is next** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -99,7 +99,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **13 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **14 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -871,10 +871,9 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
 - ~~**Live checks**~~ ✅ all five closed 2026-11-16 (build 3715; verification-register.md, "MCP write grants, Phase
   1"). The default (Manual) permission mode stays with Phase 0's M2-M5: the maintainer runs auto mode.
 - ~~`[MCP-GRANT-USES-RELEASES]`~~ ✅ fixed 2026-11-16 (the uses count no longer counts releases).
-- **The cards' holder labels** (§4.10, the rest of Phase 1's UI half): each gameplay card names who holds it from a
-  2-second `get_holds` poll, and See-through from its claims (`you` now says whether the window holds one). The
-  implementation map, with its traps (a restarted UI's own holds, the badge-prime gate, quiet polling), was written
-  2026-11-16 and is to be redone from the code when this starts.
+- ~~**The cards' holder labels**~~ ✅ shipped in build 3716 (dev-log 3716), after three review rounds; proven live
+  (verification-register.md, "The cards' holder labels": items 1-2 closed, the edge states 3-6 open, each with its
+  acceptance test). The DLL now records who toggles the debug camera through an invoke of its own functions.
 - **Phase 1b, invoke grants** (§4.4), then Phase 2's `write_field` (§4.5).
 
 ### Decisions (maintainer, 2026-11-06)

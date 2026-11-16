@@ -937,6 +937,57 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     the DLL logs "own claim released", and the occluders stay hidden; with only the AI's claim, its OFF turns
     See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
 
+### ⬜ The cards' holder labels (build 3716) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Each gameplay card on the Teleport tab names who other than the window holds its feature, from `get_holds` every 2 s,
+and follows that holder's value -- dev-log 3716, docs/mcp-write-approval-eval.md §4.10. Three review rounds; unit
+tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGateTests`) and source pins
+(`PipePerProcessSourceTests`) for the DLL's debug-camera ownership.
+
+1. ✅ **CLOSED 2026-11-16** (AOT exe and DLL 3716, DumperTest Shipping pid 35288, the window connected;
+    `tools/verify/holder_chips_live.py --seconds 120`, PASS; log `out/holder_chips_live_3716.log`).
+    - **DLL side** (the rig's `get_holds`): `god_mode`, `time:global`, `movement:walk_speed` active, holder client
+      pid 30864 background; `movement:jump` active, holder client pid 34140 not background.
+    - **UI side** (screenshots): God Mode, Move Speed and Whole world read "Held by an AI session (pid 30864)" with
+      the badges ON, Move Speed's readout 750 cm/s (base 500 x 1.5) and Whole world's "0.5x (held; natural 1x)" while
+      its slider stayed at 100%; Super Jump read "Held by another program (pid 34140)" at 840 cm/s; Gravity, Stealth,
+      Keep Foreground and Player pawn had no chip. The chip's tooltip read as en.axaml words it.
+    - **The card's Reset takes over:** Super Jump's Reset turned it OFF (700 cm/s), the chip went, and the rig then
+      read the jump inactive and nobody's.
+    - **The holder leaves:** the background client's exit released its three holds (DLL side: inactive, kind none);
+      the window's chips went and the God Mode, Move Speed and Whole world badges read OFF (500 cm/s, 1x).
+
+    *Was:* Acceptance: with the window connected, holds taken by a background client and by another foreground
+    process show their labels on the matching cards, the badges follow their values, the card's Reset ends the hold,
+    and the labels go once the holders let go -- read on both sides (`get_holds` and the screen).
+2. ✅ **CLOSED 2026-11-16, DLL side** (DLL 3716, DumperTest58 Development, UE 5.8, 35,860 objects;
+    `tools/verify/dbgcam_ledger_live.py` 13/13; log `out/dbgcam_ledger_live_3716.log`). The AI's invoke of
+    ToggleDebugCamera was refused by name, pointing at `write_debug_camera`; the window stand-in's invokes named it on
+    and off; after the AI's `write_debug_camera` ON, the window's invokes off and on made the camera the window's, and
+    the AI's exit left it on; the mailbox's INVOKE_BY_NAME (written with WriteProcessMemory, no CE) named CE, off and
+    on. The UI side is item 1's path (`get_holds` to the chip). **Not run:** a negative control on a pre-3716 DLL
+    (none kept); each fix's red step is a unit test or a source pin.
+3. ⬜ **The experimental cards' chips: See-through, Fly, Keep Foreground.** Acceptance: with the experimental switch
+    on and the window connected, a background client turns See-through on (`seethrough_set`), takes Fly and Keep
+    Foreground (if_free): `seethrough_get_state` reads `claims` with the client's claim and `get_holds` names the
+    client for `fly` and `foreground_lock`; the See-through card reads "Held by another program or AI session", the
+    other two "Held by an AI session (pid N)"; with the switch off, the window sends no `seethrough_get_state` per
+    poll (DLL pipe log). Fixture: DumperTest Shipping; `holder_chips_live.py` takes the holds once given a
+    `--experimental` set.
+4. ⬜ **A restarted window's own old hold reads "exited".** Acceptance: the window turns god mode on, is closed and
+    started again; `get_holds` names the old window's pid (a foreground client's holds outlive it) and the new
+    window's God Mode card reads "Held by a program that has exited (pid <old>)"; its Force OFF clears the chip.
+5. ⬜ **A queued debug-camera ON and an owed release.** Acceptance (DumperTest58 Development, the game thread frozen
+    with `tools/verify/suspend.py`): a background client's `set_debug_camera` ON answers -5; `get_holds` reads
+    `pending: true` with that client; the window's Debug Camera card reads Queued with "Held by an AI session (pid N)"
+    and sends no `get_debug_camera_state` while pending (DLL pipe log). Then, still frozen, the client exits:
+    `get_holds` reads `release_owed: true`, kind none, and the card reads "Turning off: the AI session that held it
+    has ended"; after the resume the camera turns off and the chip goes.
+6. ⬜ **A CE invoke behind a busy camera lock runs unrecorded.** Acceptance: with the game thread frozen, a pipe
+    client's `set_debug_camera` holds the camera's lock through its wait while a mailbox INVOKE_BY_NAME of
+    ToggleDebugCamera arrives: the mailbox answers within its own invoke timeout (not two), and the DLL log reads
+    "ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera".
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1093,7 +1144,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
