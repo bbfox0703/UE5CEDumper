@@ -1026,6 +1026,10 @@ public sealed class PipePerProcessSourceTests
             "the preset is applied before speed, noclip and enable");
         int error = body.IndexOf("Renge::MakeError(", preset, StringComparison.Ordinal);
         Assert.True(error > preset && error < speed, "a refused preset answers an error before speed is set");
+        // "Nothing was changed" holds for the ledger too: the hold recorder reads `holds` as the command returns, and
+        // would name the refused caller as Fly's holder.
+        int clear = body.IndexOf("holds.clear();", preset, StringComparison.Ordinal);
+        Assert.True(clear > preset && clear < error, "the refused preset clears the holds it would record");
     }
 
     /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 2. get_object names the DLL's template verdict, which write_field
