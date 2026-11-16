@@ -339,7 +339,8 @@ public sealed class McpToolsTests
             args[name] = type switch
             {
                 "integer" => name == "session_id" ? 7 : p["minimum"]?.GetValue<int>() ?? 1,
-                "number" => 1.5,
+                // A bounded number's own floor (Fly's speed starts at 50); 1.5 fits every other one.
+                "number" => p["minimum"]?.GetValue<double>() ?? 1.5,
                 "boolean" => false,
                 "array" => new JsonArray(),
                 "object" => new JsonObject(),
@@ -453,6 +454,82 @@ public sealed class McpToolsTests
         Assert.Contains(Constants.McpGrantToolMovement, ErrorOf(payload));
         Assert.Contains("Only an OFF with nothing else in it needs no grant", ErrorOf(payload));
         Assert.DoesNotContain("fly_set", game.Commands);
+    }
+
+    // ── Bounds ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────────────
+
+    /// <summary>The UI's own ranges, at and past each edge. The DLL clamps several of these silently and allows more
+    /// than the UI for two (time dilation to 100, jump past 30x height), so a value outside is refused, not clamped.
+    /// </summary>
+    public static TheoryData<string, string, bool> Bounds => new()
+    {
+        { "write_time_dilation", """{"target":"global","value":3}""", true },
+        { "write_time_dilation", """{"target":"global","value":3.0001}""", false },
+        { "write_time_dilation", """{"target":"pawn","value":10}""", true },
+        { "write_time_dilation", """{"target":"pawn","value":10.0001}""", false },
+        { "write_time_dilation", """{"target":"global","value":0}""", false },
+        { "write_movement", """{"knob":"walk_speed","multiplier":0.1}""", true },
+        { "write_movement", """{"knob":"walk_speed","multiplier":10}""", true },
+        { "write_movement", """{"knob":"walk_speed","multiplier":0.0999}""", false },
+        { "write_movement", """{"knob":"gravity","multiplier":10.0001}""", false },
+        // The jump slider is height, 10% to 30x; the DLL's multiplier is velocity, its square root. 5.48 is the
+        // eval's rounding of the square root of 30 and lies past it.
+        { "write_movement", """{"knob":"jump","multiplier":5.48}""", false },
+        { "write_movement", """{"knob":"jump","multiplier":5.477}""", true },
+        { "write_movement", """{"knob":"jump","multiplier":0.3}""", false },
+        { "write_movement", """{"knob":"jump","multiplier":0.1}""", false },
+        { "write_fly", """{"speed":50}""", true },
+        { "write_fly", """{"speed":20000}""", true },
+        { "write_fly", """{"speed":49.9}""", false },
+        { "write_fly", """{"speed":20001}""", false },
+        { "write_fly", """{"preset":2}""", true },
+        { "write_fly", """{"preset":3}""", false },
+        { "write_fly", """{"preset":-1}""", false },
+        // The DLL's own pierce ceiling is 10 (Schlacht), as is the UI's box.
+        { "write_see_through", """{"enable":true,"count":10}""", true },
+        { "write_see_through", """{"enable":true,"count":11}""", false },
+        { "write_see_through", """{"enable":true,"count":0}""", false },
+        // A zero vector is the DLL's own OFF, which a set would carry past the gate as no release.
+        { "write_gravity_direction", """{"x":0,"y":0,"z":0}""", false },
+        { "write_gravity_direction", """{"x":0,"y":0,"z":-1}""", true },
+    };
+
+    [Theory]
+    [MemberData(nameof(Bounds))]
+    public async Task AValueOutsideTheUisOwnRange_IsRefused_BeforeAnythingIsSent(string tool, string args, bool ok)
+    {
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.Equal(!ok, result.IsError);
+        if (!ok)
+        {
+            Assert.Empty(game.Sent);
+            Assert.False(string.IsNullOrWhiteSpace(ErrorOf(payload)));
+        }
+    }
+
+    [Fact]
+    public async Task TheJumpEdges_AreTheExactSquareRoots()
+    {
+        foreach (double v in new[] { Math.Sqrt(0.1), Math.Sqrt(30.0) })
+        {
+            var (payload, result) = await Call(new FakeGame(), "write_movement",
+                new JsonObject { ["knob"] = "jump", ["multiplier"] = v });
+            Assert.False(result.IsError, ErrorOf(payload));
+        }
+    }
+
+    [Fact]
+    public void TheBoundedValues_AdvertiseTheirRange()
+    {
+        JsonObject Prop(string tool, string name) => Tool(tool, new FakeGame()).InputSchema["properties"]![name]!.AsObject();
+        Assert.Equal(50, Prop("write_fly", "speed")["minimum"]!.GetValue<double>());
+        Assert.Equal(20000, Prop("write_fly", "speed")["maximum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_see_through", "count")["maximum"]!.GetValue<int>());
+        Assert.Equal(0.1, Prop("write_movement", "multiplier")["minimum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_movement", "multiplier")["maximum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_time_dilation", "value")["maximum"]!.GetValue<double>());
+        Assert.Equal(0, Prop("write_time_dilation", "value")["exclusiveMinimum"]!.GetValue<double>());
     }
 
     // ── The grant tools ─────────────────────────────────────────────────────────────────────────────────
