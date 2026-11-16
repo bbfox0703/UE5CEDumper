@@ -1359,6 +1359,216 @@ public sealed class McpToolsTests
         return game;
     }
 
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+
+    private const string ActorPath = "//Script/Engine/Actor";
+    private const string HiddenFull = ActorPath + ".SetActorHiddenInGame";
+
+    /// <summary>A function as walk_functions sends it, with its full name and flags (BlueprintCallable, Native,
+    /// Public by default).</summary>
+    private static JsonObject FnFull(string name, long flags = 0x04020401, params JsonObject[] parms)
+    {
+        var f = Fn(name, parms);
+        f["full"] = ActorPath + "." + name;
+        f["flags"] = flags;
+        return f;
+    }
+
+    private static JsonObject TypedParm(string name, string type, string structType = "", string objClass = "")
+    {
+        var p = Parm(name, type, 8, 0);
+        if (structType.Length > 0) p["struct_type"] = structType;
+        if (objClass.Length > 0) p["obj_class"] = objClass;
+        return p;
+    }
+
+    /// <summary>A game whose DLL takes invoke grants, where //Script/Engine/Actor is the class of every object and has
+    /// the given functions.</summary>
+    private static FakeGame InvokeGrantGame(params JsonObject[] functions)
+    {
+        var game = InvokeGame(functions);
+        game.DllBuild = Constants.McpMinDllBuildForInvokeGrants;
+        game.Answers["find_object"] = _ => new JsonObject { ["addr"] = "0x7FF600002000", ["name"] = "Actor" };
+        game.Answers["get_object"] = r => new JsonObject
+        {
+            ["class_addr"] = "0x7FF600002000", ["class"] = "Actor",
+            ["full_name"] = r["addr"]!.GetValue<string>() == "0x7FF600002000" ? ActorPath : "//Game/Map/Actor_1",
+        };
+        return game;
+    }
+
+    private static JsonObject GrantArgs(string function = "SetActorHiddenInGame", string cls = ActorPath)
+        => new() { ["function"] = function, ["class"] = cls, ["scope_ack"] = Constants.McpGrantAckInvoke };
+
+    private static JsonObject HiddenCall() => new()
+    {
+        ["instance_addr"] = "0x1000", ["function"] = "SetActorHiddenInGame",
+        ["params"] = new JsonObject { ["bNewHidden"] = true },
+    };
+
+    private static JsonObject HiddenFn() => FnFull("SetActorHiddenInGame", parms: Parm("bNewHidden", "BoolProperty", 1, 0));
+
+    [Fact]
+    public void TheInvokeGrant_StatesItsScope_WithTheFunctionFirst()
+    {
+        // The prompt shows the name and the arguments in order (Phase 0, M1 / M10): the function before its class.
+        var tool = Tool(Constants.McpGrantToolInvoke, new FakeGame());
+        var props = tool.InputSchema["properties"]!.AsObject().Select(p => p.Key).ToList();
+        Assert.True(props.IndexOf("function") >= 0 && props.IndexOf("function") < props.IndexOf("class")
+                    && props.IndexOf("class") < props.IndexOf("scope_ack"), string.Join(",", props));
+        Assert.Equal(Constants.McpGrantAckInvoke,
+            tool.InputSchema["properties"]!["scope_ack"]!["enum"]![0]!.GetValue<string>());
+        Assert.Equal(McpToolRole.Grant, tool.EffectiveRole);
+        Assert.Equal(McpGrantKind.Invoke, tool.GrantKind);
+        var granted = Tool(Constants.McpInvokeGrantedTool, new FakeGame());
+        Assert.Equal(McpToolRole.GrantedInvoke, granted.EffectiveRole);
+        Assert.Equal(McpGrantKind.Invoke, granted.GrantKind);
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_GrantsAFunctionItsClassHas_AndReadGrantsNamesIt()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HiddenFull, payload!["function"]!.GetValue<string>());
+        Assert.Contains(Constants.McpInvokeGrantedTool, payload["tools"]!.ToJsonString());
+        Assert.Contains(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke && g.Target == HiddenFull);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+
+        var (grants, _) = await Call(game, "read_grants");
+        Assert.Contains(grants!["grants"]!.AsArray(),
+            g => g!["function"]?.GetValue<string>() == HiddenFull
+                 && g["tool"]!.GetValue<string>() == Constants.McpGrantToolInvoke);
+    }
+
+    [Theory]
+    [InlineData("SetActorHiddenInGame", "//Script/Engine/Pawn")]   // another class's path than the one found
+    [InlineData("SetActorHidden", ActorPath)]                       // its class has no such function
+    [InlineData("SetActorHiddenInGame", "Actor")]                    // a short name, not a path
+    public async Task TheInvokeGrant_RefusesAFunctionItCannotFindExactly(string function, string cls)
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        var (_, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs(function, cls));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_RefusesAnOlderDll_AndAWrongAck()
+    {
+        var old = InvokeGrantGame(HiddenFn());
+        old.DllBuild = Constants.McpMinDllBuildForInvokeGrants - 1;
+        Assert.True((await Call(old, Constants.McpGrantToolInvoke, GrantArgs())).Result.IsError);
+        var game = InvokeGrantGame(HiddenFn());
+        var args = GrantArgs();
+        args["scope_ack"] = "yes";
+        Assert.True((await Call(game, Constants.McpGrantToolInvoke, args)).Result.IsError);
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    public static TheoryData<string, string> NotGrantable => new()
+    {
+        { "K2_DestroyActor", "{}" },                                                      // on the DLL's deny list
+        { "ExecuteUbergraph_BP_Hero", "{}" },                                             // a family
+        { "ServerFire", "{\"flags\":64}" },                                             // a network RPC
+        { "OnGraph", "{\"flags\":32768}" },                                             // an event graph
+        { "K2_ClearTimer", "{\"param\":[\"FunctionName\",\"StrProperty\"]}" },          // names a function
+        { "BindDone", "{\"param\":[\"Done\",\"DelegateProperty\"]}" },                  // a delegate
+        { "Delay", "{\"param\":[\"LatentInfo\",\"StructProperty\",\"LatentActionInfo\"]}" },   // latent
+        { "SetLabel", "{\"param\":[\"Label\",\"TextProperty\"]}" },                     // an FText
+    };
+
+    [Theory]
+    [MemberData(nameof(NotGrantable))]
+    public async Task TheInvokeGrant_RefusesWhatTheAiMayNotCallOrCannotSee(string function, string shape)
+    {
+        var spec = JsonNode.Parse(shape)!.AsObject();
+        long flags = spec["flags"] is { } f ? f.GetValue<long>() : 0x04020401;
+        var parms = new List<JsonObject>();
+        if (spec["param"] is JsonArray p)
+            parms.Add(TypedParm(p[0]!.GetValue<string>(), p[1]!.GetValue<string>(),
+                p.Count > 2 ? p[2]!.GetValue<string>() : ""));
+        var game = InvokeGrantGame(FnFull(function, flags, parms.ToArray()));
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs(function));
+        Assert.True(result.IsError, function);
+        Assert.Contains("write_invoke", payload!["error"]!.GetValue<string>());   // the per-call route stays
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_CallsTheGrantedFunction_InTheDllsGrantMode_WithoutAPrompt()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        var sent = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "invoke_function");
+        Assert.True(sent["grant"]!.GetValue<bool>());
+        Assert.Equal(HiddenFull, sent["expect_func_full"]!.GetValue<string>());
+        Assert.Equal("SetActorHiddenInGame", sent["func_name"]!.GetValue<string>());
+        Assert.Equal(1, game.Grants.List().Single(g => g.Kind == McpGrantKind.Invoke).Uses);
+        Assert.False(McpGrants.IsMarked(Tool(Constants.McpInvokeGrantedTool, game).EffectiveRole,
+            McpHostDecision.Grants));
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_WithoutItsGrant_IsRefused_AndNoCallIsSent()
+    {
+        var game = InvokeGrantGame(HiddenFn(), FnFull("SetActorScale3D"));
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        var call = HiddenCall();
+        call["function"] = "SetActorScale3D";
+        call.Remove("params");
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, call);
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantToolInvoke, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_OnADllOlderThanTheGrantMode_IsRefused()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        game.DllBuild = Constants.McpMinDllBuildForInvokeGrants - 1;
+        var (_, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_TheDllsRefusalUnderTheGrant_SaysWhy()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        game.Answers["invoke_function"] = _ => new JsonObject
+        {
+            ["ok"] = false, ["code"] = -28, ["func_full"] = HiddenFull,
+            ["error"] = "Not invoked under the grant: SetActorHiddenInGame is not static, and the object is a class "
+                        + "default or a template: a grant never calls one there",
+        };
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("class default or a template", error);
+        Assert.Contains("write_invoke", error);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_EndsOneFunctionsGrant()
+    {
+        var game = InvokeGrantGame(HiddenFn(), FnFull("SetActorScale3D"));
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs("SetActorScale3D"));
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "invoke", ["function"] = HiddenFull });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+        Assert.Equal(2, game.Grants.List().Count(g => g.Kind != McpGrantKind.Invoke));   // the kind grants stand
+    }
+
     [Fact]
     public async Task WriteInvoke_BuildsTheBufferByName_IfFree_OnTheObjectsClass_NeverDirect()
     {
