@@ -36,11 +36,13 @@ the camera off.
     py tools/verify/dbgcam_ledger_live.py --ui-queued --suspend-name DumperTest58 [--seconds 40] [--pid N]
 
 The register's holder-labels row 5, with the UE5DumpUI window connected and its Teleport tab on the Debug Camera card:
-the game thread frozen, a background client's set_debug_camera ON answers -5 and get_holds reads it pending, held by
-that client (look at the card: Queued, "Held by an AI session (pid N)"); still frozen, the client exits and get_holds
-reads release_owed, kind none (the card: "Turning off: the AI session that held it has ended"); resumed, the camera
-turns off and the hold is nobody's. Each stage holds for --seconds, and the pipe log's get_debug_camera_state lines in
-each stage are counted (the window sends none while the toggle is pending).
+A, the game thread frozen, a background client's set_debug_camera ON answers -5 and get_holds reads it pending, held
+by that client (the card: Queued, "Held by an AI session (pid N)"; the window sends no get_debug_camera_state while it
+is pending, counted from the pipe log), and it runs once the thread is back; B, frozen again with the camera on, the
+client exits and get_holds reads release_owed, kind none (the card: "Turning off: the AI session that held it has
+ended"), and resumed, the owed OFF turns the camera off; C, a second client's queued ON is dropped when it exits (the
+DLL drops a departed background client's queued invokes), so nothing is owed and the camera never turns on. Each
+stage the card is looked at holds for --seconds.
 """
 
 from __future__ import annotations
@@ -190,47 +192,79 @@ def debug_state_lines(since: str, until: str) -> int:
 
 
 def ui_queued(ui, game: int, name: str, seconds: float, ck: Checks) -> None:
-    """Row 5: a queued ON held by an AI session, then its owed release, while the window is looked at."""
+    """Row 5, in three stages while the window is looked at: A, a queued ON held by an AI session (the card: Queued, the
+    AI's chip), run once the game thread is back; B, that session leaving while the camera is ON and the game thread is
+    frozen, so its OFF is owed (the card: Turning off); C, a second session's queued ON dropped when it leaves (the DLL
+    drops a departed background client's queued invokes first), so nothing is owed and the camera never turns on."""
     from mcp_client import _camera_force_off, _fresh_stamp, _FrozenGameThread, _now  # noqa: E402
+
+    def wait_hold(pred, seconds_: float = 15.0) -> dict:
+        end_ = time.time() + seconds_
+        h_ = camera_hold(ui)
+        while time.time() < end_ and not pred(h_):
+            time.sleep(0.25)
+            h_ = camera_hold(ui)
+        return h_
 
     ai = Child(game, background=True)
     print(f"  AI-session stand-in pid {ai.pid}")
     left = False
     try:
+        # A. Queued, then run.
         with _FrozenGameThread(name) as frozen:
             print(f"        {frozen.suspend_line}")
             r = ai.request("set_debug_camera", enable=True, if_free=True)
             h = camera_hold(ui)
             ck.check(r.get("state") == -5 and h.get("pending") and h.get("holder", {}).get("pid") == ai.pid
                      and h["holder"].get("background"),
-                     "frozen: the AI's set_debug_camera ON answers -5 and get_holds reads it pending, the AI's", (r, h))
+                     "A: frozen, the AI's set_debug_camera ON answers -5 and get_holds reads it pending, the AI's",
+                     (r, h))
             t0 = _fresh_stamp()
-            print(f"  QUEUED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+            print(f"  A QUEUED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
             time.sleep(seconds)
-            t1 = _now()
-            print(f"        the window's get_debug_camera_state requests while pending: {debug_state_lines(t0, t1)}")
+            n = debug_state_lines(t0, _now())
+            ck.check(n == 0, f"A: the window sent no get_debug_camera_state while the toggle was pending ({n})", n)
+        h = wait_hold(lambda x: x.get("active") and not x.get("pending"))
+        ck.check(h.get("active") and not h.get("pending") and h.get("holder", {}).get("pid") == ai.pid
+                 and camera_state(ui) == 1,
+                 "A: resumed, the queued ON runs: the camera is on, held by the AI session", h)
+
+        # B. The session leaves while the camera is on and the game thread is frozen: its OFF is owed.
+        with _FrozenGameThread(name) as frozen:
+            print(f"        {frozen.suspend_line}")
             code = ai.leave()
             left = True
-            owed = {}
-            for _ in range(50):
-                owed = camera_hold(ui)
-                if owed.get("release_owed"):
-                    break
-                time.sleep(0.1)
+            owed = wait_hold(lambda x: bool(x.get("release_owed")))
             ck.check(code == 0 and owed.get("release_owed") and owed.get("holder", {}).get("kind") == "none",
-                     "frozen: the AI session exits; get_holds reads release_owed, kind none", owed)
-            print(f"  OWED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+                     "B: frozen, the AI session exits; get_holds reads release_owed, kind none", owed)
+            print(f"  B OWED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
             time.sleep(seconds)
-        end = time.time() + 15
+        end_ = time.time() + 20
         h, state = camera_hold(ui), camera_state(ui)
-        while time.time() < end and (state != 0 or h.get("release_owed") or h.get("pending")):
+        while time.time() < end_ and (state != 0 or h.get("release_owed")):
             time.sleep(0.25)
             h, state = camera_hold(ui), camera_state(ui)
-        ck.check(state == 0 and not h.get("release_owed") and not h.get("pending")
-                 and h.get("holder", {}).get("kind") == "none",
-                 "resumed: the camera turns off and the hold is nobody's", (state, h))
-        print(f"  RESUMED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
+        ck.check(state == 0 and not h.get("release_owed") and h.get("holder", {}).get("kind") == "none",
+                 "B: resumed, the owed OFF is sent: the camera is off and the hold nobody's", (state, h))
+        print(f"  B RESUMED stage: look at the Debug Camera card for {seconds:.0f} s", flush=True)
         time.sleep(seconds)
+
+        # C. A queued ON whose session leaves is dropped, never run: nothing is owed and the camera stays off.
+        ai2 = Child(game, background=True)
+        print(f"  second AI-session stand-in pid {ai2.pid}")
+        with _FrozenGameThread(name):
+            r = ai2.request("set_debug_camera", enable=True, if_free=True)
+            pend = camera_hold(ui)
+            code = ai2.leave()
+            free = wait_hold(lambda x: not x.get("pending") and x.get("holder", {}).get("kind") == "none", 5.0)
+            ck.check(r.get("state") == -5 and pend.get("pending") and code == 0 and not free.get("pending")
+                     and not free.get("release_owed") and free.get("holder", {}).get("kind") == "none",
+                     "C: frozen, a second session's queued ON, then it exits: the hold is nobody's, nothing owed",
+                     (r, pend, free))
+        time.sleep(4.0)
+        h, state = camera_hold(ui), camera_state(ui)
+        ck.check(state == 0 and not h.get("active"),
+                 "C: resumed, the dropped ON never ran: the camera stays off", (state, h))
     finally:
         if not left:
             ai.leave()
