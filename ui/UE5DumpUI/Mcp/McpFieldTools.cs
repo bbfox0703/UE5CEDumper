@@ -144,7 +144,7 @@ internal static class McpFieldTools
                                        + meta.Offset.ToString("X", CultureInfo.InvariantCulture)
                                        + ", where its class puts it.");
 
-            var (at, size, encode) = Plan(meta, live, text, instAddr + (ulong)meta.Offset);
+            var (at, size, encode, holds) = Plan(meta, live, text, instAddr + (ulong)meta.Offset);
             string atHex = "0x" + at.ToString("X", CultureInfo.InvariantCulture);
             var read = await game.SendAsync(pid, new JsonObject { ["cmd"] = "read_mem", ["addr"] = atHex, ["size"] = size },
                 timeout, ct);
@@ -181,8 +181,9 @@ internal static class McpFieldTools
                 ["written"] = bytes,
                 ["after"] = after ?? "",
             };
-            string? note = after is null ? "The write was made, but reading it back failed."
-                : !string.Equals(after, bytes, StringComparison.OrdinalIgnoreCase)
+            string? note = after is null || !TryHex(after, out byte[] afterBytes) || afterBytes.Length != size
+                ? "The write was made, but reading it back failed."
+                : !holds(afterBytes)
                     ? "Read back differently: the game (or a hold) changed it again at once."
                     : null;
             return McpWriteTools.Combine(new McpToolResult(payload, Note: note), game.TakeNotice());
@@ -217,11 +218,12 @@ internal static class McpFieldTools
                                + "has asked for it, or use write_memory, asked every call.");
     }
 
-    /// <summary>Where and what to write: a bool through its plan (a packed one read-modify-written from the byte read
-    /// just before), anything else converted as the Live Walker's editor converts it, to exactly the field's size.
+    /// <summary>Where and what to write, and how a read-back shows the value: a bool through its plan (a packed one
+    /// read-modify-written from the byte read just before, and judged by its own bit, since the game may change a
+    /// sibling's at once), anything else converted as the Live Walker's editor converts it, to exactly the field's size.
     /// </summary>
-    private static (ulong Addr, int Size, Func<byte[], byte[]> Encode) Plan(FieldInfoModel meta, LiveFieldValue live,
-        string text, ulong fieldAddr)
+    private static (ulong Addr, int Size, Func<byte[], byte[]> Encode, Func<byte[], bool> Holds) Plan(
+        FieldInfoModel meta, LiveFieldValue live, string text, ulong fieldAddr)
     {
         if (meta.TypeName == "BoolProperty")
         {
@@ -234,8 +236,9 @@ internal static class McpFieldTools
             ulong at = fieldAddr + (ulong)live.BoolByteOffset;
             int mask = live.BoolFieldMask;
             return mode == FieldValueConverter.BoolWriteMode.NativeByte
-                ? (at, 1, _ => [on ? (byte)1 : (byte)0])
-                : (at, 1, current => [FieldValueConverter.ApplyBoolMask(current[0], mask, on)]);
+                ? (at, 1, _ => [on ? (byte)1 : (byte)0], back => back[0] != 0 == on)
+                : (at, 1, current => [FieldValueConverter.ApplyBoolMask(current[0], mask, on)],
+                    back => (back[0] & mask) != 0 == on);
         }
         var entries = live.EnumEntries;
         if (entries is { Count: > 0 } && !IsEntry(entries, text))
@@ -247,7 +250,7 @@ internal static class McpFieldTools
             throw new McpToolError("Not changed: " + meta.Name + " is "
                                    + meta.Size.ToString(CultureInfo.InvariantCulture) + " bytes, and the value converts to "
                                    + data.Length.ToString(CultureInfo.InvariantCulture) + ".");
-        return (fieldAddr, data.Length, _ => data);
+        return (fieldAddr, data.Length, _ => data, back => back.AsSpan().SequenceEqual(data));
     }
 
     private static bool IsEntry(IReadOnlyList<EnumEntryValue> entries, string text)
