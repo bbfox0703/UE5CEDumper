@@ -21,6 +21,14 @@ What it does, printing get_holds after each step (exit 0 when every step answere
 A step the window took over in the meantime (its OFF or Reset) is reported, not failed: that is the chip's promise.
 
 Needs a game running a DLL of build 3704 or later (get_holds); DumperTest Shipping is the fixture.
+
+    py tools/verify/holder_chips_live.py --experimental [--pid N] [--seconds 60]
+
+The verification register's holder-labels row 3: the experimental cards. With the UI's experimental switch on, the
+background client turns See-through on (seethrough_set) and takes Fly and Keep Foreground (if_free); seethrough_get_state
+must name its claim ("you") and get_holds must name it for fly and foreground_lock. Look at the Teleport tab while they
+hold: See-through reads "Held by another program or AI session" (its state names no pid), Fly and Keep Foreground "Held
+by an AI session (pid N)". It then leaves, and the DLL releases all three.
 """
 
 from __future__ import annotations
@@ -38,6 +46,7 @@ from pipe_client import PipeClient  # noqa: E402
 
 BACKGROUND_HOLDS = ("god_mode", "time:global", "movement:walk_speed")
 FOREGROUND_HOLDS = ("movement:jump",)
+EXPERIMENTAL_HOLDS = ("fly", "foreground_lock")
 
 
 def run_child(pid: int | None, background: bool) -> int:
@@ -98,14 +107,90 @@ def show(title: str, holds: dict, names) -> None:
               f" pid={who.get('pid')} background={who.get('background')}")
 
 
+def see_through(client) -> dict:
+    r = client.request("seethrough_get_state")
+    return {k: r.get(k) for k in ("active", "claims", "you", "ce_claimed")}
+
+
+def run_experimental(pid: int | None, seconds: float) -> int:
+    """Row 3: the background client holds the three experimental features while the window is looked at."""
+    ok = True
+    probe = PipeClient(pid=pid, timeout=60)
+    probe.connect()
+    ptrs = probe.request("get_pointers")
+    game = ptrs.get("pid")
+    probe.close()
+    print(f"game pid {game}, DLL build {ptrs.get('build_number')}; rig pid {os.getpid()}")
+    ai = Child(game, background=True)
+    print(f"  AI-session stand-in pid {ai.pid}")
+    try:
+        took = {
+            "see-through": ai.request("seethrough_set", enable=True),
+            "fly": ai.request("fly_set", enable=True, if_free=True),
+            "foreground_lock": ai.request("set_foreground_lock", enable=True, if_free=True),
+        }
+        for name, reply in took.items():
+            print(f"  took {name}: {reply}")
+            if not reply.get("ok") or (reply.get("code") or 0) < 0:
+                ok = False
+                print(f"  FAIL  {name}: {reply}")
+        st = see_through(ai)
+        print(f"  seethrough_get_state: {st}")
+        if not (st.get("active") and st.get("you") and (st.get("claims") or 0) >= 1):
+            ok = False
+            print("  FAIL  See-through is not on with the background client's claim")
+        holds = holds_of(ai)
+        show("taken:", holds, EXPERIMENTAL_HOLDS)
+        for name in EXPERIMENTAL_HOLDS:
+            h = holds.get(name, {})
+            if not (h.get("active") and h.get("holder", {}).get("you") and h["holder"].get("background")):
+                ok = False
+                print(f"  FAIL  {name} is not the background client's")
+        print(f"  holding for {seconds:.0f} s: look at the Teleport tab now", flush=True)
+        time.sleep(seconds)
+        show("before letting go:", holds_of(ai), EXPERIMENTAL_HOLDS)
+        print(f"  seethrough_get_state: {see_through(ai)}")
+    finally:
+        code = ai.leave()
+        print(f"  the background client left (exit {code})")
+    probe = PipeClient(pid=game, timeout=60)
+    probe.connect()
+    try:
+        holds, st = {}, {}
+        for _ in range(50):
+            holds, st = holds_of(probe), see_through(probe)
+            if not any(holds.get(n, {}).get("active") and holds[n].get("holder", {}).get("pid") == ai.pid
+                       for n in EXPERIMENTAL_HOLDS) and not st.get("active"):
+                break
+            time.sleep(0.1)
+        show("after the background client left:", holds, EXPERIMENTAL_HOLDS)
+        print(f"  seethrough_get_state: {st}")
+        for name in EXPERIMENTAL_HOLDS:
+            h = holds.get(name, {})
+            if h.get("active") and h.get("holder", {}).get("pid") == ai.pid:
+                ok = False
+                print(f"  FAIL  {name} still held by the background client after it left")
+        if st.get("active") and not st.get("ce_claimed") and (st.get("claims") or 0) == 0:
+            ok = False
+            print("  FAIL  See-through stayed on with no claim left")
+    finally:
+        probe.close()
+    print("PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pid", type=int)
     ap.add_argument("--seconds", type=float, default=60.0, help="how long both hold (default 60)")
     ap.add_argument("--child", choices=("background", "foreground"), help=argparse.SUPPRESS)
+    ap.add_argument("--experimental", action="store_true",
+                    help="hold See-through, Fly and Keep Foreground instead (register row 3)")
     a = ap.parse_args()
     if a.child:
         return run_child(a.pid, a.child == "background")
+    if a.experimental:
+        return run_experimental(a.pid, a.seconds)
 
     ok = True
     probe = PipeClient(pid=a.pid, timeout=60)
