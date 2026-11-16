@@ -15,8 +15,8 @@ Open work only. **Read this when deciding what to do next.**
 > `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
 > next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
-> Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 (2026-11-16), its live checks open** in
-> verification-register.md; the cards' holder labels and Phase 1b (invoke grants) are next** --
+> Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 and was proven live in 3715 (2026-11-16); the
+> cards' holder labels and Phase 1b (invoke grants) are next** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -868,9 +868,9 @@ findings, all fixed in build 3713: `[MCP-INSTR-CLAIMS]`, `[INVOKE-DENY-INDIRECTI
 `--mcp-agent-guard` hook, and See-through's own-claim OFF in the DLL. A fresh-context review's two MED and two LOW were
 fixed before the build (an OFF of what the server does not hold is no release; See-through's OFF ends only the AI's
 claim; a release needs `if_free`; the time-dilation wording). Open, in order:
-- **Live checks:** verification-register.md, "MCP write grants, Phase 1" (the grant prompt in Claude Code, the write
-  rigs, the switch, the guard hook, See-through's own claim). The guard hook and the prompt need the maintainer: the
-  hook goes into the user-level settings, and Claude Code reads hooks and the server at session start.
+- ~~**Live checks**~~ ✅ all five closed 2026-11-16 (build 3715; verification-register.md, "MCP write grants, Phase
+  1"). The default (Manual) permission mode stays with Phase 0's M2-M5: the maintainer runs auto mode.
+- `[MCP-GRANT-USES-RELEASES]` (LOW, found live): the uses count counts releases.
 - **The cards' holder labels** (§4.10, the rest of Phase 1's UI half): each gameplay card names who holds it from a
   2-second `get_holds` poll, and See-through from its claims (`you` now says whether the window holds one). The
   implementation map, with its traps (a restarted UI's own holds, the badge-prime gate, quiet polling), was written

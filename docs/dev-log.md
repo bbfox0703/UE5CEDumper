@@ -27,6 +27,32 @@ builds ≤696 in
 
 -----
 
+## 2026-11-16 (build 3715) — MCP write grants, Phase 1 proven live; an AI's OFF of another's hold names the holder `[MCP-WRITE-GRANTS-2026-11-14]`
+
+The live pass of build 3714's Phase 1, with the maintainer at the prompts (verification-register.md, "MCP write grants,
+Phase 1": all five closed).
+- **What changes for a user of an AI client:** when an AI tries to turn off or reset something the UI, a Cheat Engine
+  record or another session holds, the refusal says who holds it again ("... is held by the UE5DumpUI window or
+  another program (pid N)"). In 3714 the server refused it before the DLL could, but without naming the holder, and
+  asked for a grant the DLL would have refused past anyway.
+- **Proven live, in Claude Code 2.1.325 (the maintainer's default mode is auto):**
+  - the grant prompt shows the tool's name and the whole `scope_ack` sentence, Deny / Allow once; a covered write
+    before its grant is refused naming it and reaches nothing; after Allow the covered writes run without prompts,
+    while `write_memory` still asks every call;
+  - the server logs `initialize from claude-code 2.1.325 ... writes: Grants` (Phase 0's M7);
+  - Block AI writes, ticked in the window, revokes the live grant at the AI's next call, refuses new changes and lets
+    the AI's OFF of its own hold through; unticking does not bring the grant back;
+  - the `--mcp-agent-guard` hook denies a subagent's and a workflow agent's write before it runs (a workflow agent's
+    hook input carries `agent_id` too, which the hooks reference does not say);
+  - See-through's own-claim OFF ends only the AI's claim (DLL `own claim released (1)` beside the UI's claim, `(2)`
+    alone).
+- **Rigs on the AOT exe and DLL 3715** (DumperTest Shipping): holdsmore 78/78, writes 39/39, raw 28/28, invokeparams
+  26/26, olddll 37/37.
+- **Found and left open:** `[MCP-GRANT-USES-RELEASES]` (LOW): `read_grants`' uses count counts an OFF or a reset that
+  needed no grant.
+- **Tests:** C# 8182 passed, 1 skipped; headless 71/71; C++ self-tests passed.
+- AOT UI 62,439,424 bytes (sha256 06c2e4c4ec525591...); UE5Dumper.dll 3,777,536 bytes (sha256 c286ca5b75167b34...).
+
 ## 2026-11-16 (build 3714) — MCP write grants, Phase 1: one grant per game run instead of a prompt per write, and a switch to stop every AI session `[MCP-WRITE-GRANTS-2026-11-14]`
 
 Claude Code's prompt for a write tool offers only "Deny" and "Allow once", so every repeat of a write asked again. The
