@@ -73,7 +73,9 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
         (K) K2_SetActorLocation moves the pawn 100 uu along its facing through a Vector struct and back, and returns
         false on a rootless holder; (O) an object parameter given a field's address is refused by the server's liveness
-        check, nothing sent; (S) SendToConsole is refused by name. The EchoSoftSpec struct-field pair is recorded apart
+        check, nothing sent; (S) SendToConsole is refused by name; (C) GetPlayerControllerID given the pawn is refused by
+        the server's class check ([INVOKE-OBJECT-PARAM-CLASS]), nothing sent, and given the live PlayerController
+        returns 0. The EchoSoftSpec struct-field pair is recorded apart
         from the exit code.
     py tools/verify/mcp_client.py invokegrant --exe dist/UE5DumpUI.exe [--pid N]
         [MCP-WRITE-GRANTS-2026-11-14] Phase 1b on DumperTest Shipping (DLL 3717+): an invoke grant on
@@ -3085,6 +3087,23 @@ def run_invoke_params(exe: str, pid: int | None) -> int:
                      is not None, "S: pipe log: SendToConsole refused for a background client")
             line = _log_line("pipe", r"invoke_function: \S*::SendToConsole inst=", since)
             ck.check(line is None, "S: pipe log: no invoke line for it", line)
+
+        # C. [INVOKE-OBJECT-PARAM-CLASS] An object argument of another class than its parameter declares is refused by
+        #    the server, nothing sent: GameplayStatics.GetPlayerControllerID takes a PlayerController, and the pawn is
+        #    none. The live PlayerController itself runs (player one's id, 0).
+        r, gs, _ = call("read_find_object", {"path": "Default__GameplayStatics"})
+        if ck.check(bool(gs.get("addr")) and pc.get("pick") == "live" and bool(pc.get("addr")),
+                    "C: GameplayStatics' class default and a live PlayerController", gs):
+            since = _fresh_stamp()
+            r, d, _ = invoke(gs["addr"], "GetPlayerControllerID", {"Player": pawn})
+            ck.check(bool(r.get("isError")) and "takes a PlayerController" in error_text(d)
+                     and "does not derive" in error_text(d),
+                     "C: GetPlayerControllerID(Player = the pawn) is refused: the pawn is no PlayerController", d)
+            line = _log_line("pipe", r"invoke_function: \S*::GetPlayerControllerID inst=", since)
+            ck.check(line is None, "C: pipe log: no invoke line for it (refused before anything is sent)", line)
+            r, d, note = invoke(gs["addr"], "GetPlayerControllerID", {"Player": pc["addr"]})
+            ck.check(not r.get("isError") and d.get("result") == 0 and str(d.get("return")) == "0",
+                     "C control: GetPlayerControllerID(the live PlayerController) runs and returns 0", (d, note))
 
         code = c.close()
         did["closed"] = True
