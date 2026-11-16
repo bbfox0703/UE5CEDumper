@@ -396,6 +396,26 @@ public sealed class McpGrantsTests
     public void ARequestNamingNoHold_ReleasesNothing(string request)
         => Assert.Null(McpGrants.ReleasedHold(Req(request)));
 
+    [Theory]
+    [InlineData("""{"cmd":"set_god_mode","enable":false,"if_free":true}""", "god_mode")]
+    [InlineData("""{"cmd":"reset_field","class_name":"Pawn","field_name":"X","if_free":true}""", "force_field:Pawn::X")]
+    public void AnOffOfWhatSomeoneElseHolds_IsRefusedNamingTheHolder_GrantOrNot(string request, string hold)
+    {
+        // Found live (build 3714, mcp_client.py holdsmore): the refusal stopped naming the holder once the server, not
+        // the DLL's if_free, refused it. The DLL would refuse it anyway, so no grant is asked for.
+        var g = Decided();
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        var held = Held(hold, you: false);
+        held["holds"]![0]!["holder"]!["pid"] = 77;
+        foreach (var cap in new[] { null, toggles })
+        {
+            string? refusal = g.Check(Req(request), cap, Pid, Run, held);
+            Assert.Contains(hold + " is held by the UE5DumpUI window or another program (pid 77)", refusal);
+            Assert.DoesNotContain("grant_", refusal);
+        }
+    }
+
     [Fact]
     public void ADebugCameraOnStillOnItsWay_IsTheServersToTakeBack()
         => Assert.Null(Decided().Check(Req("""{"cmd":"set_debug_camera","enable":false,"if_free":true}"""), null,

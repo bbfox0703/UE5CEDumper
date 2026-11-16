@@ -2054,7 +2054,8 @@ def run_holds_more(exe: str, pid: int | None) -> int:
         back = misses({a: ai_value(a) for a in held_set + decoys}, baseline)
         ck.check(not back, "FF: every instance is back at its OWN baseline value", back)
 
-        # A job the stand-in holds: the AI's reset is refused, naming it, and the job stays.
+        # A job the stand-in holds: the AI's reset is refused, naming it, and the job stays. Since build 3714 the
+        # server refuses it from get_holds before sending ([MCP-WRITE-GRANTS-2026-11-14]): the DLL never sees it.
         since = _now()
         u = ui.request("force_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG, kind="bool", on=True)
         ck.check(bool(u.get("ok")) and u.get("held", 0) > 0, f"FF: the stand-in's own job on {FIXTURE_FLAG} (held > 0)",
@@ -2066,8 +2067,8 @@ def run_holds_more(exe: str, pid: int | None) -> int:
         h = holds().get(FLAG_HOLD, {})
         ck.check(bool(job_listed(FIXTURE_FLAG)) and h.get("active") and h.get("holder", {}).get("you"),
                  "FF: and the stand-in's job stays, its own", h)
-        ck.check(_log_line("pipe", rf"reset_field refused \(if_free\): {re.escape(FLAG_HOLD)} is held by another",
-                           since) is not None, "FF: pipe log: reset_field refused (if_free) for the stand-in's job")
+        ck.check(_log_line("pipe", r'"cmd":"reset_field"', since) is None,
+                 "FF: pipe log: the AI's reset_field of the stand-in's job never reached the DLL")
         u = ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG)
         ck.check(bool(u.get("ok")) and u.get("code") == 0, "FF: the stand-in ends its own job", u)
 
