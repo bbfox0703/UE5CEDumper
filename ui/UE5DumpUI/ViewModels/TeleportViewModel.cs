@@ -4147,15 +4147,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 break;
             }
         }
+        // [STEALTH-RESET-STALE-HELD] The readout follows the badge: the meter's name, and the value only while a job
+        // holds one.
         if (job is null)
         {
             // No job on the meter: nothing for Reset to release, and nothing of the card's own still armed.
             _stealthNoneHeld = true;
             _stealthArmed = false;
             ApplyStealthState(0);
+            StealthFieldText = $"{c.ClassName}::{c.FieldName}";
             return;
         }
         _stealthNoneHeld = false;
+        StealthFieldText = job.Kind == "numeric"
+            ? FormattableString.Invariant($"{c.ClassName}::{c.FieldName} = {job.Value:0.###} (held)")
+            : $"{c.ClassName}::{c.FieldName} (held)";
         // Held at 0 is what this card's Hold does; any other value is a hold this card would not show as its own. A
         // job with no live instance yet is armed, as the card's own Hold says it: Solide applies it once one spawns.
         if (job.Kind != "numeric" || job.Value != 0) ApplyStealthState(-1);
