@@ -11858,6 +11858,20 @@ static void Test_Lager_ClassifyWriteRegion() {
            WorseWriteTarget(WriteTarget::Writable, WriteTarget::NotWritable) == WriteTarget::NotWritable);
     EXPECT("read-only + unmapped is unmapped", WorseWriteTarget(WriteTarget::NotWritable, WriteTarget::Unmapped) == WriteTarget::Unmapped);
     EXPECT("writable + writable is writable", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Writable) == WriteTarget::Writable);
+
+    // [WRITEMEM-OWN-IMAGE] A background client's write_mem never lands in the DLL's own image.
+    constexpr uintptr_t kImg = 0x7FF600000000ull;
+    constexpr size_t kImgSize = 0x400000;
+    EXPECT("own image: a write inside it overlaps", RangeOverlapsImage(kImg + 0x1000, 8, kImg, kImgSize));
+    EXPECT("own image: a write straddling its start overlaps", RangeOverlapsImage(kImg - 4, 8, kImg, kImgSize));
+    EXPECT("own image: a write straddling its end overlaps", RangeOverlapsImage(kImg + kImgSize - 4, 8, kImg, kImgSize));
+    EXPECT("own image: a write covering all of it overlaps", RangeOverlapsImage(kImg - 0x10, kImgSize + 0x20, kImg, kImgSize));
+    EXPECT("own image: a write ending exactly at its start does not", !RangeOverlapsImage(kImg - 8, 8, kImg, kImgSize));
+    EXPECT("own image: a write starting exactly at its end does not", !RangeOverlapsImage(kImg + kImgSize, 8, kImg, kImgSize));
+    EXPECT("own image: an empty write overlaps nothing", !RangeOverlapsImage(kImg + 0x1000, 0, kImg, kImgSize));
+    EXPECT("own image: an empty image is overlapped by nothing", !RangeOverlapsImage(kImg, 8, kImg, 0));
+    EXPECT("own image: a range wrapping past the top still reaches an image above its start",
+           RangeOverlapsImage(kImg - 0x10, ~static_cast<size_t>(0), kImg, kImgSize));
 }
 
 static void Test_Lager_HolderCandidateReadable() {

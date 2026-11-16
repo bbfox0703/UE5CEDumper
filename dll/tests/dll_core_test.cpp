@@ -284,6 +284,19 @@ int main() {
               Macht::ReadSafe(reinterpret_cast<uintptr_t>(heapFixture.data()) + 0x3C, straddle));
     }
 
+    // [WRITEMEM-OWN-IMAGE] Here the "own image" is this test exe, which compiles Macht.cpp: a global of it is inside, a
+    // heap block is not. In the DLL the same function answers for UE5Dumper.dll, whose globals hold the CE mailbox.
+    {   blk("WRITEMEM-OWN-IMAGE - RangeInOwnImage on this process's own image");
+        static uint64_t ownGlobal = 0;
+        std::vector<uint8_t> heapBlock(64);
+        check("a global of the image holding Macht's code is inside it",
+              Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&ownGlobal), sizeof(ownGlobal)));
+        check("...and so is the code itself (a function of it)",
+              Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&Macht::RangeInOwnImage), 1));
+        check("a heap block is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(heapBlock.data()), 64));
+        check("an empty range is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&ownGlobal), 0));
+    }
+
     // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
     // tells apart, ranges across two pages, and a refused write that must leave the page's protection alone.
     {   blk("D2-3-WRITEMEM - ClassifyWriteRange and WriteDataBytes on real pages");

@@ -75,6 +75,11 @@ static_assert(Lager::kPageNoAccess == PAGE_NOACCESS && Lager::kPageReadOnly == P
               Lager::kPageGuard == PAGE_GUARD && Lager::kMemCommit == MEM_COMMIT,
               "Lager's page values must be the SDK's");
 
+bool RangeInOwnImage(uintptr_t addr, size_t size) {
+    static_cast<void>(addr); static_cast<void>(size);
+    return false;   // RED: dll_core_test's OWNIMAGE checks fail until this is written
+}
+
 Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {
     using Lager::WriteTarget;
     if (!addr || size == 0 || !Grimoire::IsUserspacePointer(addr)) return WriteTarget::Unmapped;
