@@ -913,6 +913,34 @@ public class TeleportViewModelTests
         Assert.Equal("", vm.GodModeHolderText);
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the case the generation check is for. The test above drops its reply through
+    // IsConnected alone; here the window is connected again, perhaps to another game, when the old reply lands.
+    [Fact]
+    public async Task AReplyFromBeforeAReconnect_IsDropped_AndLeavesTheNewStartItsBaseline()
+    {
+        var oldReply = new TaskCompletionSource<HoldsReport>();
+        var dump = new FakeDumpService { HoldsGate = oldReply };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        var stale = vm.HoldsFirstPoll;
+
+        vm.SetConnected(false);
+        vm.IsConnected = true;   // connected again (without the connect prime, whose reads would be counted)
+        dump.HoldsGate = null;
+        dump.NextHolds = Report();
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        oldReply.SetResult(Report(HeldBy(Constants.HoldGodMode)));
+        await stale;
+        Assert.Equal("", vm.GodModeHolderText);
+
+        // The new start's first poll still only records: the connect prime has just read every card.
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.NotEqual("", vm.GodModeHolderText);
+        Assert.Equal(0, dump.GetProtectStateCalls);
+    }
+
     [Fact]
     public async Task AFailedRead_LeavesTheLabelsAsTheyWere()
     {
