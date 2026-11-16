@@ -347,6 +347,9 @@ public sealed class McpToolsTests
     // A UScriptStruct: walk_class answers for any UStruct, so only get_object's class tells it from a UClass.
     private const string StructPath = "//Script/DumperTest/DumperTestAttribute";
     private const string StructAddr = "0x7FF600006000";
+    // DumperTest's Decoy: not derived from DumperTestHolder, with a HolderValue of its own at the same offset.
+    private const string DecoyPath = "//Script/DumperTest/DumperTestHolderDecoy";
+    private const string DecoyClass = "0x7FF600005000";
 
     private static JsonObject ClassField(string name, string type, int offset, int size, int arrayDim = 1,
         int boolMask = 0, string structType = "", string enumName = "")
@@ -366,7 +369,9 @@ public sealed class McpToolsTests
         ClassField("bHolderFlag", "BoolProperty", 0x2A4, 1, boolMask: 4),
         ClassField("Mode", "ByteProperty", 0x2A5, 1, enumName: "EHolderMode"),
         ClassField("Where", "StructProperty", 0x2A8, 12, structType: "Vector"),
-        ClassField("Ints", "IntProperty", 0x2B4, 4, arrayDim: 3));
+        ClassField("Ints", "IntProperty", 0x2B4, 4, arrayDim: 3),
+        // A bitfield bool whose storage word starts at 0x2C0, its bit in that word's third byte.
+        ClassField("bDeep", "BoolProperty", 0x2C0, 4, boolMask: 0x10));
 
     /// <summary>The live fields of the object at 0x1000 (a DumperTestDerivedHolder), as walk_instance sends them.
     /// </summary>
@@ -376,6 +381,11 @@ public sealed class McpToolsTests
         {
             ["name"] = "bHolderFlag", ["type"] = "BoolProperty", ["offset"] = 0x2A4, ["size"] = 1, ["value"] = "false",
             ["bool_mask"] = 4, ["bool_byte_offset"] = 0, ["bool_native"] = false,
+        },
+        new JsonObject
+        {
+            ["name"] = "bDeep", ["type"] = "BoolProperty", ["offset"] = 0x2C0, ["size"] = 4, ["value"] = "false",
+            ["bool_mask"] = 0x10, ["bool_byte_offset"] = 2, ["bool_native"] = false,
         },
         new JsonObject
         {
@@ -392,7 +402,11 @@ public sealed class McpToolsTests
     private static FakeGame FieldGame()
     {
         var game = new FakeGame { DllBuild = 3718 };
-        var memory = new Dictionary<ulong, string> { [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00" };
+        // 0x12C2: bDeep's byte, a sibling bit (0x01) and another (0x20) already set.
+        var memory = new Dictionary<ulong, string>
+        {
+            [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00", [0x12C2] = "21", [0x52A0] = "07000000",
+        };
         game.Answers["find_object"] = r => new JsonObject
         {
             ["addr"] = r["path"]!.GetValue<string>() switch
@@ -413,6 +427,12 @@ public sealed class McpToolsTests
             {
                 ["name"] = "DumperTestAttribute", ["full_name"] = StructPath, ["class"] = "ScriptStruct",
             },
+            DecoyClass => new JsonObject { ["name"] = "DumperTestHolderDecoy", ["full_name"] = DecoyPath, ["class"] = "Class" },
+            "0x5000" => new JsonObject
+            {
+                ["name"] = "DumperTestHolderDecoy_0", ["class_addr"] = DecoyClass, ["class"] = "DumperTestHolderDecoy",
+                ["template"] = "",
+            },
             "0x2000" => new JsonObject
             {
                 ["name"] = "Default__DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
@@ -432,7 +452,13 @@ public sealed class McpToolsTests
         };
         game.Answers["walk_class"] = r => new JsonObject
         {
-            ["class"] = r["addr"]!.GetValue<string>() == StructAddr
+            ["class"] = r["addr"]!.GetValue<string>() == DecoyClass
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestHolderDecoy", ["full_path"] = DecoyPath, ["super_addr"] = "0x0",
+                    ["fields"] = new JsonArray(ClassField("HolderValue", "IntProperty", 0x2A0, 4)),
+                }
+                : r["addr"]!.GetValue<string>() == StructAddr
                 ? new JsonObject
                 {
                     ["name"] = "DumperTestAttribute", ["full_path"] = StructPath, ["super_addr"] = "0x0",
@@ -816,6 +842,32 @@ public sealed class McpToolsTests
         Assert.False(result.IsError, payload?.ToJsonString());
         Assert.Equal(0, payload!["revoked"]!.GetValue<int>());
         Assert.Contains("read_grants", result.Note ?? "");
+    }
+
+    [Fact]
+    public async Task WriteField_APackedBool_KeepsItsSiblings_AndClearsOnlyItsOwnBit()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bDeep"));
+        // Its byte is the storage word's third (bool_byte_offset 2), and holds two other bools' bits.
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bDeep", true))).Result.IsError);
+        Assert.Equal(("0x12C2", "31", "21"), (SentWrite(game)["addr"]!.GetValue<string>(),
+            SentWrite(game)["bytes"]!.GetValue<string>(), SentWrite(game)["expect"]!.GetValue<string>()));
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bDeep", false))).Result.IsError);
+        Assert.Equal(("21", "31"), (SentWrite(game)["bytes"]!.GetValue<string>(),
+            SentWrite(game)["expect"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task WriteField_ASameNamedFieldOnAClassOutsideTheGrant_IsRefused_AndNothingWritten()
+    {
+        // The Decoy's HolderValue sits at the same offset, but the Decoy does not derive from the granted class.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, "0x5000"));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains(Constants.McpGrantToolField, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
     }
 
     [Fact]
