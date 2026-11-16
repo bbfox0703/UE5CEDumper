@@ -3,8 +3,9 @@
 `UE5DumpUI.exe --mcp` turns the UI's exe into a [Model Context Protocol](https://modelcontextprotocol.io) server. An
 AI client such as Claude Code or Claude Desktop starts it and talks to it over stdin / stdout. The AI can then look
 through the game the way you do in the UI: find objects, read their fields, follow pointers, and run value scans. It
-can also turn the gameplay features on and off, teleport the player, write memory and call a game function, and each of
-those asks you first.
+can also turn the gameplay features on and off, teleport the player, write memory and call a game function. Claude Code
+asks you first: once per game run for the gameplay toggles and once for movement, and before every memory write,
+function call and forced field. Any other AI client only reads, unless you let it write.
 
 Started with `--mcp`, the exe opens no window. The AI client starts it and closes it.
 
@@ -46,14 +47,41 @@ claude mcp add --scope user ue5cedumper -- "C:\Tools\UE5CEDumper\UE5DumpUI.exe" 
 }
 ```
 
+**Other AI clients only read, unless you say so.** The server lists its write tools only to Claude Code 2.1.246 or
+later, whose prompt is how you approve a grant. Claude Desktop and every other client get the `read_*` tools and
+`scan_start`. To let one of them write, add `--writes=any-host` to that client's own registration:
+
+```json
+"args": ["--mcp", "--writes=any-host"]
+```
+
+> ⚠️ **On a client that never asks, or that you set to always allow, the AI then grants itself.** The grant tools and
+> every write run with no prompt. Use `--writes=any-host` only with a client that asks before each tool call.
+
+`--writes=off` turns every write off, for Claude Code too. Any other `--writes=` value, or any other argument, stops
+the server at once, and the client reports that it failed to start. An application built on the Claude Agent SDK can
+introduce itself as Claude Code and approve tools in code: treat one as a client that never asks.
+
 **Skip the prompts for reads (optional).** Every tool that only reads has a name that starts with `read_`. In Claude
 Code, one allow rule in `settings.json` admits all of them. In the default permission mode anything else still asks
-first. Auto mode decides on its own and may run `scan_start` without asking (measured). The `write_*` tools ask
-every time in every mode, whatever the allow rules say.
+first. Auto mode decides on its own and may run `scan_start` without asking (measured).
 
 ```json
 { "permissions": { "allow": ["mcp__ue5cedumper__read_*"] } }
 ```
+
+**Skip the prompts for granted writes (optional, default permission mode only).** In the default mode Claude Code also
+asks before each write a grant already covers, because it asks before any tool it has no rule for. This rule stops
+that. The server still refuses every write no grant covers, and the grant tools, `write_memory`, `write_invoke` and
+`write_force_field` keep asking, since an allow rule never skips their prompt.
+
+```json
+{ "permissions": { "allow": ["mcp__ue5cedumper__read_*", "mcp__ue5cedumper__write_*",
+  "mcp__ue5cedumper__revoke_grants"] } }
+```
+
+Leave it out in auto mode for now: there, auto mode's own check of each write against what you asked for is one more
+look. To be asked before every write again, in every mode, add `"ask": ["mcp__ue5cedumper__write_*"]`.
 
 ## Using it beside the UI
 
@@ -143,9 +171,24 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `read_grants` | This session's grants: the game each covers and how many writes each let through. |
 | `revoke_grants` | Ends the AI's grants, one kind or all. It releases no hold. |
 
-- **Asked every time, in Claude Code.** Every `write_*` tool asks you before each call, in every permission mode, and
-  an allow rule does not skip it (Claude Code 2.1.246 or later). Only Claude Code reads that marker: another MCP host
-  asks or not by its own settings, and many have an always-allow or auto-approve mode.
+- **Asked once per grant, in Claude Code.** The gameplay toggles (god mode, debug camera, mouse cursor, time dilation,
+  See-through, Keep Foreground) need the toggles grant, `grant_god_mode_camera_cursor_time_see_through_foreground`.
+  Movement, gravity direction, Fly and teleport need the movement grant,
+  `grant_movement_fly_teleport_may_kill_or_lose_pawn`. Claude Code asks you before each grant, in every permission
+  mode, and shows the grant's fixed sentence: what it covers and how long it lasts. The AI is told to ask for one only
+  after you asked for such a change.
+- **What ends a grant.** The game exiting or restarting, the AI session ending or its server reconnecting (`/mcp`), or
+  `revoke_grants`. A dropped pipe connection to the same game keeps it: the AI's holds are released then, and it may
+  take them again without asking. `read_grants` shows the grants and how many writes each let through.
+- **Asked every call.** `write_memory`, `write_invoke` and `write_force_field` take no grant and ask before each call.
+- **No grant to turn off.** Turning a feature off and a reset need no grant, so the AI can always clean up. An OFF that
+  also changes a setting (Fly's speed, preset or noclip) is a change, and needs the grant.
+- **The server refuses what no grant covers**, naming the grant to ask for, so a write nobody approved never reaches
+  the game. It also refuses a value outside the UI's own range rather than letting the DLL clamp it: time dilation up
+  to 3 (world) and 10 (pawn), walk speed and gravity 0.1 to 10 times, jump 10% to 30 times the height, Fly 50 to
+  20000, See-through 1 to 10.
+- **Only Claude Code reads the prompt marker.** Another client only reads unless its registration adds
+  `--writes=any-host`, and it then asks or not by its own settings (see [Register it](#register-it)).
 - **Never over you.** When the UI, a Cheat Engine record or another AI session holds a feature, the AI's change is
   refused and the reply names the holder. The DLL decides this under the feature's own lock, so a change you make at
   the same moment cannot be overwritten. The AI never releases every forced field at once, and See-through stays on
@@ -195,6 +238,10 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "Windows refused the connection to game N: the game runs as administrator" | Start the AI client elevated too, or start the game normally. A server started over SSH runs elevated for an administrator account. |
 | "Windows refused the connection to game N although this server runs elevated" | Another process probably created that game's pipe name first. Close it, or restart the game. |
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |
+| "Not changed: no grant covers this for this game. Call grant_..." | The AI asks you for that grant first; Claude Code shows you what it covers. |
+| "Not sent: the connection now reaches another game run ..." | The game restarted between the AI's check and its write; a grant for the old run does not carry over. |
+| "'...' must be from X to Y" | The value is outside the UI's own range for it. |
+| The AI has no `write_*` tools | Its client is not Claude Code 2.1.246 or later. Update Claude Code, or add `--writes=any-host` to that client's registration (read the warning there first). |
 | "Not changed: ... is held by ..." | You (or the named program) hold that feature. Release it where it was set if you want the AI to take it. |
 | "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |
 | "The game's DLL is build N, older than 3705" (or 3706) | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
@@ -213,6 +260,10 @@ server; files older than 21 days are deleted.
 - ⚠ **Register a copy, not `dist\UE5DumpUI.exe`, on a machine that builds this repository.** Claude Code keeps
   every registered server running for the whole session, and a running exe in `dist\` makes the next publish fail
   to replace it. In `--mcp` mode the exe needs none of the DLLs beside it, so copying the exe alone is enough.
-- `py tools/verify/mcp_client.py probe --exe dist/UE5DumpUI.exe` checks the protocol with no game running. Add
-  `live --pid N --suspend-name DumperTest` to call every tool against a running fixture.
+- `py tools/verify/mcp_client.py probe --exe dist/UE5DumpUI.exe` checks the protocol and which client gets writes,
+  with no game running. Add `live --pid N --suspend-name DumperTest` to call every tool against a running fixture.
+- **The write grants** ([MCP-WRITE-GRANTS-2026-11-14]): `McpGrants.cs` decides at `initialize` which client writes,
+  classes every DLL command and keeps the grants, keyed on the game run (pid and process start time). Every send
+  passes its check inside `McpGameLink`, so a tool that forgets to ask for admission fails closed. The design, the
+  measurements behind it and what was rejected are in [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
 - The design decisions, and what comes next, are in [todo.md](todo.md) under `[PIPE-PER-PROCESS-2026-11-06]` Stage D.

@@ -170,7 +170,10 @@ UE5CEDumper/
 │       ├── Mcp/                    ← `UE5DumpUI.exe --mcp`: a stdio MCP server for an AI client, one more
 │       │                              client of the game's pipe, no window (docs/mcp.md). McpHost (entry,
 │       │                              branched in Program.Main before the single-instance mutex), McpServer
-│       │                              (JSON-RPC), McpTools (the read_* tools), McpGameLink (the connection)
+│       │                              (JSON-RPC), McpTools (the read_* tools), McpWriteTools / McpRawTools
+│       │                              (the write_* tools), McpGrants (which client writes, the grants, the
+│       │                              gate every send passes) and McpGrantTools (grant_*, read_grants,
+│       │                              revoke_grants), McpGameLink (the connection)
 │       ├── Converters/             ← Avalonia value converters
 │       ├── Assets/
 │       └── Resources/
