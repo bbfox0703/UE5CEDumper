@@ -259,7 +259,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   Blueprint's event-graph entry (`ExecuteUbergraph_*`), and achievement, leaderboard and in-app purchase calls. Build
   3717 adds what a scan of the UE 4.18-5.8 sources found: UE4's `WriteAchievementProgress`, an async action's
   `Activate` (the online and save actions), `RemoteEvent`, `SetBind`, the timeline's `AddInterp*`,
-  `EditTextPropertySourceString`, a streaming level's load and unload, and the save slot's local-player twins.
+  `EditTextPropertySourceString`, a streaming level's or level instance's load and unload (and the cheat manager's
+  `StreamLevelIn` / `StreamLevelOut` / `OnlyLoadLevel`), and the save slot's local-player twins.
   The list goes by name; a game function that does the same under another name is not caught, and the prompt is then
   your check. The server itself refuses a function taking an FText, a value that does not parse as its parameter's
   type, and an object parameter that is not a live object.

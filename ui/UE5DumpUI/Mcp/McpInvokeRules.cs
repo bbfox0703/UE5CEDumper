@@ -26,7 +26,9 @@ internal static class McpInvokeRules
         "asyncsavegametoslot", "savegametoslotforlocalplayer", "asyncsavegametoslotforlocalplayer", "deletegameinslot",
         "removeplayer", "setcollisionprofilenameproperty", "edittextpropertysourcestring", "addinterpfloat",
         "addinterpvector", "addinterplinearcolor", "remoteevent", "setbind", "loadstreamlevel",
-        "loadstreamlevelbysoftobjectptr", "unloadstreamlevel", "unloadstreamlevelbysoftobjectptr", "writeprogress",
+        "loadstreamlevelbysoftobjectptr", "unloadstreamlevel", "unloadstreamlevelbysoftobjectptr", "streamlevelin",
+        "streamlevelout", "onlyloadlevel", "setshouldbeloaded", "setisrequestingunloadandremoval", "loadlevelinstance",
+        "loadlevelinstancebysoftobjectptr", "unloadlevelinstance", "writeprogress",
         "writeachievementprogress", "writeleaderboardinteger", "createproxyobjectforflush",
     ];
 
