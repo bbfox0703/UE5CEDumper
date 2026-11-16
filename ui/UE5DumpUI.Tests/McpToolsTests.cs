@@ -344,6 +344,9 @@ public sealed class McpToolsTests
     private const string DerivedPath = "//Script/DumperTest/DumperTestDerivedHolder";
     private const string HolderClass = "0x7FF600003000";
     private const string DerivedClass = "0x7FF600004000";
+    // A UScriptStruct: walk_class answers for any UStruct, so only get_object's class tells it from a UClass.
+    private const string StructPath = "//Script/DumperTest/DumperTestAttribute";
+    private const string StructAddr = "0x7FF600006000";
 
     private static JsonObject ClassField(string name, string type, int offset, int size, int arrayDim = 1,
         int boolMask = 0, string structType = "", string enumName = "")
@@ -391,12 +394,24 @@ public sealed class McpToolsTests
         var memory = new Dictionary<ulong, string> { [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00" };
         game.Answers["find_object"] = r => new JsonObject
         {
-            ["addr"] = r["path"]!.GetValue<string>() == HolderPath ? HolderClass : DerivedClass,
+            ["addr"] = r["path"]!.GetValue<string>() switch
+            {
+                HolderPath => HolderClass,
+                StructPath => StructAddr,
+                _ => DerivedClass,
+            },
         };
         game.Answers["get_object"] = r => r["addr"]!.GetValue<string>() switch
         {
-            HolderClass => new JsonObject { ["name"] = "DumperTestHolder", ["full_name"] = HolderPath },
-            DerivedClass => new JsonObject { ["name"] = "DumperTestDerivedHolder", ["full_name"] = DerivedPath },
+            HolderClass => new JsonObject { ["name"] = "DumperTestHolder", ["full_name"] = HolderPath, ["class"] = "Class" },
+            DerivedClass => new JsonObject
+            {
+                ["name"] = "DumperTestDerivedHolder", ["full_name"] = DerivedPath, ["class"] = "BlueprintGeneratedClass",
+            },
+            StructAddr => new JsonObject
+            {
+                ["name"] = "DumperTestAttribute", ["full_name"] = StructPath, ["class"] = "ScriptStruct",
+            },
             "0x2000" => new JsonObject
             {
                 ["name"] = "Default__DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
@@ -416,7 +431,13 @@ public sealed class McpToolsTests
         };
         game.Answers["walk_class"] = r => new JsonObject
         {
-            ["class"] = r["addr"]!.GetValue<string>() == DerivedClass
+            ["class"] = r["addr"]!.GetValue<string>() == StructAddr
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestAttribute", ["full_path"] = StructPath, ["super_addr"] = "0x0",
+                    ["fields"] = new JsonArray(ClassField("CurrentValue", "FloatProperty", 0, 4)),
+                }
+                : r["addr"]!.GetValue<string>() == DerivedClass
                 ? new JsonObject
                 {
                     ["name"] = "DumperTestDerivedHolder", ["full_path"] = DerivedPath, ["super_addr"] = HolderClass,
@@ -495,6 +516,8 @@ public sealed class McpToolsTests
     // The DLL's path lookup answers another class (the fake's DumperTestDerivedHolder), which has the field too: only the
     // check of the answer's own full name refuses it.
     [InlineData("HolderValue", "//Script/DumperTest/DumperTestHolderX")]
+    // A struct's float: walk_class lists it as it would a class's, and no instance's class chain ever holds a struct.
+    [InlineData("CurrentValue", StructPath)]
     public async Task TheFieldGrant_RefusesWhatItCannotWriteOrFind(string field, string cls)
     {
         var game = FieldGame();
