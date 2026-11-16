@@ -201,6 +201,9 @@ public sealed class McpServerTests
         string instructions = await InstructionsFor(ClaudeCode, RecentClaudeCode);
         Assert.Contains(Constants.McpGrantToolToggles, instructions);
         Assert.Contains(Constants.McpGrantToolMovement, instructions);
+        // Phase 1b: the invoke grant and the tool that calls under it, so the model asks for it by name.
+        Assert.Contains(Constants.McpGrantToolInvoke, instructions);
+        Assert.Contains(Constants.McpInvokeGrantedTool, instructions);
         Assert.Contains("read_grants", instructions);
         Assert.Contains("revoke_grants", instructions);
         Assert.Contains("never in advance", instructions);
