@@ -876,9 +876,20 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     in the default mode once the documented `write_*` allow rule is in place (and with one Allow each without it);
     `write_memory` still asks every call; `read_grants` shows one grant with its uses. The server's log has the
     `initialize from claude-code <version>: ... writes: Grants` line (Phase 0 M7) and one `Grant` line.
-2. ⬜ **The write rigs against the 3714 DLL.** Acceptance: on DumperTest Shipping with the published DLL and AOT exe,
-    `mcp_client.py writes`, `raw`, `holdsmore` and `invokeparams` pass with their grant steps (a covered write before
-    its grant refused naming it), and `olddll` against `copy3695` refuses both grants with the build text.
+2. ✅ **CLOSED 2026-11-16** on the published AOT exe and DLL 3715 (DumperTest Shipping, a fresh launch per DLL):
+    `holdsmore` 78/78, `writes --toggle-experimental` 39/39, `raw` 28/28, `invokeparams` 26/26 (+3/3 recorded apart),
+    and `olddll` 37/37 against `copy3695` (both grants refused with the build text, nothing granted). Each write mode
+    gave itself both grants under `--writes=any-host`; `writes` first saw a covered write refused naming its grant.
+    - **Found on the first pass (3714), fixed in 3715:** the AI's reset of the stand-in's force-field job was refused
+      by the server from get_holds (no longer reaching the DLL) but stopped naming the holder; it now says "<hold> is
+      held by the UE5DumpUI window or another program (pid N)", grant or not. Two rig expectations were also moved to
+      the new behaviour: that reset never reaches the DLL (a check first written too loose, matching the AI's own
+      reset logged in the same second), and See-through's OFF ending only the server's claim (item 5).
+    - The first passes ran on a local non-AOT build of the fix; the counts above are the AOT re-run.
+
+    *Was:* Acceptance: on DumperTest Shipping with the published DLL and AOT exe, `mcp_client.py writes`, `raw`,
+    `holdsmore` and `invokeparams` pass with their grant steps (a covered write before its grant refused naming it),
+    and `olddll` against `copy3695` refuses both grants with the build text.
 3. ✅ **CLOSED 2026-11-16** (the maintainer ticking the switch in the AOT window 3714; Claude Code 2.1.325; DumperTest
     Shipping pid 4640). From the window's log, the server's log and the DLL's pipe log:
     - 19:07:26 ticked (`ai-writes.json` blocked, stamp 1); at the AI's next call (19:08:02) the server logged "Block AI
