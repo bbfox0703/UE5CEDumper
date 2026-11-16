@@ -109,7 +109,10 @@ static int s_compoundDepth = 0;
 static void HandleFindInstance();
 static void HandleFindFunction();
 static void HandleInvoke();
+static void HandleInvokeHeld();
 static void HandleInvokeByName();
+template <typename Change>
+static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change);
 static void HandleListFunctions();
 static void HandleListInstances();
 static void HandleSetDebugCamera();
@@ -397,7 +400,7 @@ static void PollingThreadBody() {
                 HandleFindFunction();
                 break;
             case CMD_INVOKE:
-                HandleInvoke();
+                HandleInvokeHeld();
                 break;
             case CMD_INVOKE_BY_NAME:
                 HandleInvokeByName();
@@ -859,9 +862,27 @@ static void HandleInvokeByName() {
     HandleFindFunction();
     if (g_invokeMailbox.result != 0) return;
 
-    HandleInvoke();
+    HandleInvokeHeld();
 
     LOG_INFO("Mailbox: INVOKE_BY_NAME complete, result=%d", g_invokeMailbox.result);
+}
+
+// [MCP-WRITE-GRANTS-2026-11-14] CMD_INVOKE and INVOKE_BY_NAME. A record that runs the debug camera's own functions (a
+// Console row baked into a CE record) changes the camera as CMD_SET_DEBUG_CAMERA does: under the hold's lock, and CE's
+// afterwards. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI session, whose end
+// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it.
+static void HandleInvokeHeld() {
+    char name[128] = {};
+    const uintptr_t ufuncAddr = g_invokeMailbox.ufuncAddr;
+    if (ufuncAddr && UE5_GetObjectName(ufuncAddr, name, static_cast<int32_t>(sizeof(name)))
+        && Voll::IsDebugCameraFunction(name)) {
+        ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [] {
+            HandleInvoke();
+            return static_cast<int32_t>(g_invokeMailbox.result);
+        });
+        return;
+    }
+    HandleInvoke();
 }
 
 static void HandleListFunctions() {

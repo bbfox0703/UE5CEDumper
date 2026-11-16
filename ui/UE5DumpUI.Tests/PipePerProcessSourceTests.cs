@@ -838,7 +838,9 @@ public sealed class PipePerProcessSourceTests
 
         // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(", "static void HandleSetDebugCamera()");
+        // The definition, not the forward declaration HandleInvokeHeld needs.
+        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {",
+            "static void HandleSetDebugCamera()");
         int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
         int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
         Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
