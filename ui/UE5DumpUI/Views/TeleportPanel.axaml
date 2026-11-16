@@ -758,6 +758,12 @@
                          Foreground="{Binding DebugCameraBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding DebugCameraHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding DebugCameraHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.DcHint}"
                      Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
@@ -791,6 +797,12 @@
               <TextBlock Text="{Binding GodModeState}"
                          Foreground="{Binding GodModeBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding GodModeHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding GodModeHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.GmHint}"
@@ -833,6 +845,12 @@
                          Foreground="{Binding StealthBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding StealthHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding StealthHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.StHint}"
                      Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
@@ -872,6 +890,12 @@
                          Foreground="{Binding ForegroundLockBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding ForegroundLockHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding ForegroundLockHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.FgHint}"
                      Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
@@ -909,6 +933,12 @@
               <TextBlock Text="{Binding MoveSpeedState}"
                          Foreground="{Binding MoveSpeedBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding MoveSpeedHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding MoveSpeedHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.MsHint}"
@@ -973,6 +1003,12 @@
                            Foreground="{Binding WorldTimeBadgeColor}"
                            FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
               </Border>
+              <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                      IsVisible="{Binding WorldTimeHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                      ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+                <TextBlock Text="{Binding WorldTimeHolderText}" Foreground="#E8B04E"
+                           FontSize="11" VerticalAlignment="Center"/>
+              </Border>
             </StackPanel>
             <TextBlock Text="{Binding WorldTimeCurrentText}"
                        Foreground="#BBBBBB" FontSize="12"/>
@@ -1026,6 +1062,12 @@
                 <TextBlock Text="{Binding PawnTimeState}"
                            Foreground="{Binding PawnTimeBadgeColor}"
                            FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              </Border>
+              <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                      IsVisible="{Binding PawnTimeHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                      ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+                <TextBlock Text="{Binding PawnTimeHolderText}" Foreground="#E8B04E"
+                           FontSize="11" VerticalAlignment="Center"/>
               </Border>
             </StackPanel>
             <TextBlock Text="{Binding PawnTimeCurrentText}"
@@ -1093,6 +1135,12 @@
                          Foreground="{Binding GravityBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding GravityHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding GravityHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.GrHint}"
                      Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
@@ -1140,6 +1188,12 @@
               <TextBlock Text="{Binding SuperJumpState}"
                          Foreground="{Binding SuperJumpBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding SuperJumpHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding SuperJumpHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.SjHint}"
@@ -1198,6 +1252,12 @@
               <TextBlock Text="{Binding FlyState}"
                          Foreground="{Binding FlyBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding FlyHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding FlyHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.FlyHint}"
@@ -1262,6 +1322,12 @@
                          Foreground="{Binding SeeThroughBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding SeeThroughHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding SeeThroughHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.SeeThroughHint}"
                      Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
@@ -1311,6 +1377,12 @@
               <TextBlock Text="{Binding GravDirState}"
                          Foreground="{Binding GravDirBadgeColor}"
                          FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </Border>
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding GravDirHolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.HolderChip}">
+              <TextBlock Text="{Binding GravDirHolderText}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
           <TextBlock Text="{StaticResource str.TP.GdHint}"

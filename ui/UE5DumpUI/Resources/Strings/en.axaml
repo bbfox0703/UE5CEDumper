@@ -1638,6 +1638,7 @@
     <sys:String x:Key="str.TP.BlockAiOnNote">AI writes are blocked: AI sessions can read and clean up, but change nothing until you untick this.</sys:String>
     <!-- [MCP-WRITE-GRANTS-2026-11-14] A gameplay card's holder label: who other than this window holds the
          feature (get_holds). {0} = the holder's process id. -->
+    <sys:String x:Key="str.Tip.TP.HolderChip">Someone other than this window holds this feature. This card's OFF or Reset takes it over and ends it. To keep an AI session from turning it back on, tick Block AI writes at the top of this tab first.</sys:String>
     <sys:String x:Key="str.TP.HolderAi">Held by an AI session (pid {0})</sys:String>
     <sys:String x:Key="str.TP.HolderAiNoPid">Held by an AI session</sys:String>
     <sys:String x:Key="str.TP.HolderCe">Held by Cheat Engine</sys:String>
