@@ -18,10 +18,13 @@ namespace UE5DumpUI.Mcp;
 /// there. The write is admitted for exactly that address and size (<see cref="McpGrants.FieldDetail"/>), and the gate
 /// passes a write_mem nowhere else, so the capability cannot carry another write.</para>
 ///
-/// <para><b>Values are checked as the Live Walker's editor checks them, and stricter.</b> A number must fit its type
-/// (<see cref="FieldValueConverter.TryConvert"/>); an enum takes only one of its own entries (never its _MAX
-/// sentinel, and nothing when its entries could not be read), where the editor also takes any number that fits; a
-/// packed bool is written through its single-bit mask, and an unresolved bit is refused
+/// <para><b>Values are converted as the Live Walker's editor converts them</b>
+/// (<see cref="FieldValueConverter.TryConvert"/>: a number must fit its type), after two readings a model's input needs
+/// and a person's typing does not: a whole number written as a decimal or an exponent (42.0, 1e3) reads as its digits,
+/// and an enum entry's name, short or qualified, as its value. Stricter than the editor where it matters: an enum takes
+/// only one of its own entries (never its trailing _MAX sentinel, and nothing when its entries could not be read),
+/// where the editor also takes any number that fits; a packed bool is written through its single-bit mask, and an
+/// unresolved bit is refused
 /// (<see cref="FieldValueConverter.PlanBoolWrite"/>). The write carries the bytes read just before it (expect), so a
 /// value the game or the user changed in between is not overwritten. The DLL compares and then writes, not atomically:
 /// a sibling bit the game flips in the instant between the two is lost by a packed bool's byte write, as by the Live
@@ -64,7 +67,9 @@ internal static partial class McpFieldTools
             throw new McpToolError("Not granted: no class " + cls + " (the object found there is "
                                    + (McpJson.GetString(obj, "full_name") ?? "unnamed") + ")." + Instead);
         // walk_class answers for any UStruct, and no instance's class chain holds a struct or a function, so a grant on
-        // one could never be used. Every class's own class is a UClass type: Class, BlueprintGeneratedClass, ...
+        // one could never be used. Every class's own class is a UClass type: Class, BlueprintGeneratedClass, ... A name
+        // test, so an asset whose type merely ends in Class (a SoundClass) passes it: walk_class finds no field there,
+        // and if it did, the grant would only be one no instance's chain reaches.
         if (!(McpJson.GetString(obj, "class") ?? "").EndsWith("Class", StringComparison.Ordinal))
             throw new McpToolError("Not granted: " + cls + " is not a class (its type is "
                                    + (McpJson.GetString(obj, "class") ?? "unknown") + "), and a field grant names a "
@@ -226,7 +231,8 @@ internal static partial class McpFieldTools
 
     /// <summary>Where and what to write, and how a read-back shows the value: a bool through its plan (a packed one
     /// read-modify-written from the byte read just before, and judged by its own bit, since the game may change a
-    /// sibling's at once), anything else converted as the Live Walker's editor converts it, to exactly the field's size.
+    /// sibling's at once), anything else read as its integer or its enum entry where it is one, then converted as the
+    /// Live Walker's editor converts it, to exactly the field's size.
     /// </summary>
     private static (ulong Addr, int Size, Func<byte[], byte[]> Encode, Func<byte[], bool> Holds) Plan(
         FieldInfoModel meta, LiveFieldValue live, string text, ulong fieldAddr)

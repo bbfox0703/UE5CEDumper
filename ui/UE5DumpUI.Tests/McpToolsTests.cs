@@ -22,7 +22,9 @@ public sealed class McpToolsTests
         public List<JsonObject> Sent { get; } = new();
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
         public McpScanState State { get; set; } = McpScanState.Ready;
-        /// <summary>The DLL build get_pointers reports: one every write tool accepts unless a test says otherwise.</summary>
+        /// <summary>The DLL build get_pointers reports: one the gameplay and raw write tools accept unless a test says
+        /// otherwise. The invoke and field grants have later floors (Constants.McpMinDllBuildFor*), which their games
+        /// set.</summary>
         public int DllBuild { get; set; } = 3714;
         /// <summary>The timeout each request was sent with, in order.</summary>
         public List<TimeSpan> Timeouts { get; } = new();
