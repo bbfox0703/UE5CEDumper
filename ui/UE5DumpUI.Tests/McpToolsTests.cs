@@ -637,6 +637,21 @@ public sealed class McpToolsTests
     }
 
     [Fact]
+    public async Task WriteField_AnotherRunsGrantOnTheSubclass_DoesNotHideThisRunsGrantOnTheSuper()
+    {
+        // An earlier run of the same pid granted the subclass's field; this run granted the base class's. The chain walk
+        // starts at the subclass, so a target set taken from every run stopped there, and the admission (keyed on this
+        // run) then refused a write this run's grant covers.
+        var game = FieldGame();
+        var earlier = new JsonObject { ["pid"] = 4242, ["process_creation_time"] = "1DB5F0A2C3E4D49" };
+        Assert.NotNull(game.Grants.Grant(McpGrantKind.Field, earlier, out _, DerivedPath + ":HolderValue"));
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HolderPath + ":HolderValue", payload!["field"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task RevokeGrants_EndsOneFieldsGrant()
     {
         var game = FieldGame();
