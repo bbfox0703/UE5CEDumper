@@ -87,7 +87,9 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
         write it unasked on a spawned Derived holder and put it back byte for byte, never on a Decoy (the same field name,
         no derivation), nor on the class default, nor on an archetype (Default__Character's movement component), and
-        refuses a float past its range; a native bool set and cleared, a 4-byte enum set by its short name and only to
+        refuses a float past its range; a packed bool on a live object (Actor's bCanBeDamaged on the holder) cleared and
+        set by its own bit; a Blueprint class's field (ABP_Manny_C's GroundSpeed, by its //Game path) written on the
+        live ABP_Quinn_C, its subclass; a native bool set and cleared, a 4-byte enum set by its short name and only to
         one of its entries, each put back; one field's grant revoked while the others stand. Every write expected
         refused has its bytes recorded first; the clean-up puts back anything still changed, newest first, checks each
         restore's reply, and destroys the spawned holders.
@@ -2410,6 +2412,10 @@ def run_invoke_grant(exe: str, pid: int | None) -> int:
 WIDE_ENUM, WIDE_HIGH = "Probe_WideEnum", 0x007F0000
 # An archetype every UE game has: Default__Character's movement component, and a float field of it.
 ARCHETYPE_CLASS, ARCHETYPE_FIELD = "CharacterMovementComponent", "MaxWalkSpeed"
+# A packed bool every actor has (AActor's uint8 bCanBeDamaged:1), written on the fixture's own holder.
+PACKED_FIELD = "bCanBeDamaged"
+# The third-person template's anim Blueprints: ABP_Quinn_C derives from ABP_Manny_C, whose own variable this is.
+BP_CLASS, BP_SUBCLASS, BP_FIELD = "ABP_Manny_C", "ABP_Quinn_C", "GroundSpeed"
 
 
 def run_field_grant(exe: str, pid: int | None) -> int:
@@ -2602,6 +2608,60 @@ def run_field_grant(exe: str, pid: int | None) -> int:
                     f"{arche['name']} under a class default: refused by the DLL's template verdict, nothing written")
             r, d, _ = call("revoke_grants", {"kind": "field", "field": arche_target})
             ck.check(not r.get("isError") and d.get("revoked") == 1, f"{arche_target}'s grant revoked", d)
+
+        # 4c. A packed bool on a live object: Actor's bCanBeDamaged (uint8 :1) on the Derived holder, cleared and set by
+        #     its own bit, every other bit of its byte as it was.
+        actor = call("read_find_object", {"path": "//Script/Engine/Actor"})[1]
+        bit = next((f for f in klass(actor.get("addr", "0x0"), PACKED_FIELD).get("fields", [])
+                    if f.get("name") == PACKED_FIELD), {})
+        mask = int(bit.get("bool_mask") or 0)
+        if ck.check(mask and mask & (mask - 1) == 0, f"Actor's {PACKED_FIELD} is a packed bool (mask 0x{mask:02X})", bit):
+            packed_target = "//Script/Engine/Actor:" + PACKED_FIELD
+            r, d, _ = call(GRANT_FIELD, {"field": PACKED_FIELD, "class": "//Script/Engine/Actor", "scope_ack": ack})
+            ck.check(not r.get("isError"), f"{packed_target} granted", d)
+            for value in ("false", "true"):
+                r, d = write(inst, PACKED_FIELD, value)
+                wrote("packed", inst, PACKED_FIELD, r, d)
+                before_b = int(str(d.get("before") or "00"), 16)
+                after_b = int(str(d.get("after") or "00"), 16)
+                ck.check(not r.get("isError") and bool(after_b & mask) == (value == "true")
+                         and (after_b & ~mask & 0xFF) == (before_b & ~mask & 0xFF),
+                         f"write_field {PACKED_FIELD} = {value}: its bit only (byte {d.get('before')} -> "
+                         f"{d.get('after')})", d)
+            if "packed" in changed:
+                put_back("packed", PACKED_FIELD,
+                         lambda b, m=mask: "true" if int(b, 16) & m else "false")
+            r, d, _ = call("revoke_grants", {"kind": "field", "field": packed_target})
+            ck.check(not r.get("isError") and d.get("revoked") == 1, f"{packed_target}'s grant revoked", d)
+
+        # 4d. A Blueprint class's field: ABP_Manny_C's GroundSpeed (a double), granted on the Blueprint class by its
+        #     //Game path and written on the live ABP_Quinn_C, its subclass. The anim graph sets it again every tick,
+        #     so the write must land and a read-back the game changed at once must say so.
+        r, d, _ = call("read_find_instances", {"class_name": BP_SUBCLASS, "exact_match": True, "limit": 20})
+        bp = next((i for i in d.get("instances", []) if not str(i.get("name", "")).startswith("Default__")), None)
+        bp_class = klass(bp["class_addr"]) if bp else {}
+        bp_path = klass(bp_class.get("super_addr", "0x0")).get("full_path", "") if bp_class else ""
+        if ck.check(bool(bp and bp_path.startswith("//Game/") and bp_path.endswith("/" + BP_CLASS)),
+                    f"a live {BP_SUBCLASS}, its Blueprint super {bp_path}", d):
+            bp_target = bp_path + ":" + BP_FIELD
+            r, d, _ = call(GRANT_FIELD, {"field": BP_FIELD, "class": bp_path, "scope_ack": ack})
+            ck.check(not r.get("isError") and d.get("type") == "DoubleProperty",
+                     f"{bp_target} granted (a DoubleProperty)", d)
+            want = struct.pack("<d", 12345.0).hex().upper()
+            r, d, note = call(FIELD_GRANTED, {"instance_addr": bp["addr"], "field": BP_FIELD, "value": "12345"})
+            wrote("bp", bp["addr"], BP_FIELD, r, d)
+            ck.check(not r.get("isError") and d.get("written") == want
+                     and (d.get("after") == want or "changed it again" in str(note or "")),
+                     f"write_field {BP_FIELD} = 12345 on the live {BP_SUBCLASS} (after {d.get('after')}, note: {note})",
+                     d)
+            if "bp" in changed:
+                inst_bp, _, addr_bp, before_bp = changed.pop("bp")
+                r, d, _ = call(FIELD_GRANTED, {"instance_addr": inst_bp, "field": BP_FIELD,
+                                               "value": repr(struct.unpack("<d", bytes.fromhex(before_bp))[0])})
+                ck.check(not r.get("isError") and d.get("written") == before_bp,
+                         f"{BP_FIELD} written back ({before_bp}); the anim graph owns it from the next tick", d)
+            r, d, _ = call("revoke_grants", {"kind": "field", "field": bp_target})
+            ck.check(not r.get("isError") and d.get("revoked") == 1, f"{bp_target}'s grant revoked", d)
 
         # 5. A native bool: granted, set and cleared (so neither write can pass as a no-op), put back.
         r, d, _ = call(GRANT_FIELD, {"field": FIXTURE_FLAG, "class": holder_path, "scope_ack": ack})
