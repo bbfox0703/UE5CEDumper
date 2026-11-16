@@ -22,7 +22,9 @@ namespace UE5DumpUI.Mcp;
 /// sentinel, and nothing when its entries could not be read), where the editor also takes any number that fits; a
 /// packed bool is written through its single-bit mask, and an unresolved bit is refused
 /// (<see cref="FieldValueConverter.PlanBoolWrite"/>). The write carries the bytes read just before it (expect), so a
-/// value the game or the user changed in between is not overwritten. A template is refused, by the DLL's own verdict
+/// value the game or the user changed in between is not overwritten. The DLL compares and then writes, not atomically:
+/// a sibling bit the game flips in the instant between the two is lost by a packed bool's byte write, as by the Live
+/// Walker's editor. A template is refused, by the DLL's own verdict
 /// (get_object's template, DLL 3718+): a class default, a class default's subobject or a Blueprint component template
 /// holds what every instance spawned later starts with, which is more than the grant's "every live instance".</para>
 /// </summary>
