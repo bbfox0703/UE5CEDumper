@@ -86,8 +86,9 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
         write it unasked on a spawned Derived holder and put it back byte for byte, never on a Decoy (the same field name,
         no derivation) nor on the class default, and refuses a float past its range; a native bool and a 4-byte enum
-        written and put back, the enum only to one of its entries; one field's grant revoked while the other stands.
-        The clean-up puts back anything still changed and destroys the spawned holders.
+        set and cleared and put back, the enum only to one of its entries (by its short name too); one field's grant
+        revoked while the others stand. Every write expected refused has its bytes recorded first; the clean-up puts
+        back anything still changed, checks each restore's reply, and destroys the spawned holders.
 
     Every mode that writes starts its server with --writes=any-host (this client is no Claude Code, so by default it
     only reads) and gives itself both grants, reading each scope_ack from tools/list, as a user approving both
@@ -2411,7 +2412,8 @@ def run_field_grant(exe: str, pid: int | None) -> int:
     """[MCP-WRITE-GRANTS-2026-11-14] Phase 2 on a live game (DLL 3718+; DumperTest Shipping): a field grant names one
     field of one class, and write_field writes it unasked on that class's instances and its subclasses' only. The
     discriminating set (a Derived holder, a Decoy with the same field name) is spawned by a stand-in pipe client, as
-    holdsmore does; every value written is put back with write_field and read back byte for byte."""
+    holdsmore does; every value written is put back with write_field and read back byte for byte, and every write the
+    rig expects refused has its field's bytes recorded first, so one that lands anyway is put back too."""
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
     from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
     from ad4_contested import find_live_actor   # noqa: E402 -- the fixture's spawner actor, as solide_l3 finds it
@@ -2421,7 +2423,8 @@ def run_field_grant(exe: str, pid: int | None) -> int:
     c = McpClient(exe, [WRITES_ANY_HOST])
     c.initialize()
     ui = None
-    did: dict = {}   # what this run changed: the clean-up puts back exactly that
+    did: dict = {}       # the stand-in's spawner, for the clean-up's destroy
+    changed: dict = {}   # key -> (inst, field, addr, the bytes there before): what the clean-up puts back
 
     def call(tool, args=None):
         r = c.call(tool, {**base, **(args or {})}, 180.0)
@@ -2435,9 +2438,17 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         r, d, _ = call("read_memory", {"addr": addr, "size": size})
         return str(d.get("bytes", "")).upper()
 
-    def klass(addr: str) -> dict:
-        r, k, _ = call("read_class", {"addr": addr, "name_filter": _NO_FIELDS})
+    def klass(addr: str, name_filter: str = _NO_FIELDS) -> dict:
+        r, k, _ = call("read_class", {"addr": addr, "name_filter": name_filter})
         return k.get("class", {})
+
+    def field_at(inst: str, field: str) -> tuple[str, int]:
+        """The field's address on this object and its size, from the object's own class layout; ("", 0) if unread."""
+        cls = call("read_object", {"addr": inst})[1].get("class_addr", "0x0")
+        f = next((x for x in klass(cls, field).get("fields", []) if x.get("name") == field), None)
+        if f is None:
+            return "", 0
+        return "0x%X" % (int(inst, 16) + int(f.get("offset", 0))), int(f.get("size", 0))
 
     def live_of(cls: str) -> list[str]:
         r, d, _ = call("read_find_instances", {"class_name": cls, "exact_match": True, "limit": 200})
@@ -2456,14 +2467,34 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         r, d, _ = call(FIELD_GRANTED, {"instance_addr": inst, "field": field, "value": value})
         return r, d
 
+    def wrote(key: str, inst: str, field: str, r: dict, d: dict) -> None:
+        """Records what a write found there, the first time this run changes that field."""
+        if not r.get("isError") and d.get("before") and key not in changed:
+            changed[key] = (inst, field, d.get("addr"), str(d["before"]).upper())
+
     def put_back(key: str, label: str, value_of) -> None:
         """Writes back the bytes a write found there, with write_field itself, and checks them byte for byte."""
-        inst, field, addr, before = did[key]
+        inst, field, addr, before = changed[key]
         r, d = write(inst, field, value_of(before))
         ok = not r.get("isError") and d.get("after") == before and mem(addr, len(before) // 2) == before
         ck.check(ok, f"{label} put back with write_field, byte for byte ({before})", d)
         if ok:
-            del did[key]
+            del changed[key]
+
+    def refused(key: str, inst: str, field: str, value: str, needle: str, label: str) -> None:
+        """A write the rig expects refused: the field's bytes are recorded first (unless this run already holds its
+        original), so a write that lands after all is reported and put back."""
+        addr, size = field_at(inst, field)
+        before = mem(addr, size) if addr and size else ""
+        fresh = bool(before) and not any(v[2] == addr for v in changed.values())
+        if fresh:
+            changed[key] = (inst, field, addr, before)
+        r, d = write(inst, field, value)
+        unchanged = not before or mem(addr, size) == before
+        ok = bool(r.get("isError")) and needle in error_text(d) and unchanged
+        ck.check(ok, label, {"reply": d, "bytes_unchanged": unchanged})
+        if ok and fresh:
+            del changed[key]
 
     def body() -> None:
         nonlocal ui
@@ -2484,7 +2515,11 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         # S. The discriminating set, spawned by a stand-in: Derived holders and Decoys.
         ui = PipeClient(pid=game, timeout=120)
         ui.connect()
-        act = find_live_actor(ui)
+        try:
+            act = find_live_actor(ui)
+        except (SystemExit, Exception) as e:  # noqa: BLE001 -- it exits when the level never started
+            ck.check(False, "S: a live DumperTestActor to spawn from", e)
+            return
         fns = {f["name"]: f for f in ui.request("walk_functions", addr=act["class_addr"]).get("functions", [])}
         did["spawner"] = (act["addr"], fns)
         for name, params, what in (("Spawn_Holders", _i32(3) + "01", "3 Derived"),
@@ -2505,9 +2540,8 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         value_target = holder_path + ":" + FIXTURE_FIELD
 
         # 1. Before its grant: refused, naming the grant to ask for.
-        r, d = write(inst, FIXTURE_FIELD, "1")
-        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d), "write_field before its grant: refused, "
-                 "naming the grant", d)
+        refused("before_grant", inst, FIXTURE_FIELD, "1", GRANT_FIELD,
+                "write_field before its grant: refused, naming the grant, nothing written")
 
         # 2. Grants refused before the user is asked.
         for field, cls, why in (("HolderHealth", holder_path, "a struct"),
@@ -2526,67 +2560,65 @@ def run_field_grant(exe: str, pid: int | None) -> int:
                  f"{value_target} granted, naming write_field", d)
         want = struct.pack("<f", 4321.5).hex().upper()
         r, d = write(inst, FIXTURE_FIELD, "4321.5")
-        if not r.get("isError") and d.get("before"):
-            did["value"] = (inst, FIXTURE_FIELD, d.get("addr"), str(d["before"]).upper())
+        wrote("value", inst, FIXTURE_FIELD, r, d)
         ck.check(not r.get("isError") and d.get("written") == want and d.get("after") == want
                  and mem(d.get("addr", "0x0"), 4) == want,
                  "write_field HolderValue = 4321.5 on a Derived holder, read back by read_memory", d)
         r, g, _ = call("read_grants")
         use = next((x for x in g.get("grants", []) if x.get("field") == value_target), {})
         ck.check(use.get("tool") == GRANT_FIELD and use.get("uses") == 1, "read_grants names it, uses 1", g)
-        r, d = write(inst, FIXTURE_FIELD, "1e39")
-        ck.check(bool(r.get("isError")) and "value" in did and mem(did["value"][2], 4) == want,
-                 "a float past its range: refused, nothing written", d)
-        if "value" in did:
+        refused("past_range", inst, FIXTURE_FIELD, "1e39", "cannot hold",
+                "a float past its range: refused, nothing written")
+        if "value" in changed:
             put_back("value", "HolderValue", lambda b: repr(struct.unpack("<f", bytes.fromhex(b))[0]))
 
         # 4. Not covered: a Decoy's HolderValue (the same name, no derivation) and the class default.
-        r, d = write(decoys[0], FIXTURE_FIELD, "5")
-        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d),
-                 "a Decoy's HolderValue: refused, no grant covers its class", d)
-        r, d = write(cdo["addr"], FIXTURE_FIELD, "5")
-        ck.check(bool(r.get("isError")) and "class default" in error_text(d), "the class default: refused", d)
+        refused("decoy", decoys[0], FIXTURE_FIELD, "5", GRANT_FIELD,
+                "a Decoy's HolderValue: refused, no grant covers its class, nothing written")
+        refused("cdo", cdo["addr"], FIXTURE_FIELD, "5", "class default",
+                "the class default: refused by the DLL's template verdict, nothing written")
 
-        # 5. A native bool: granted, set, put back.
+        # 5. A native bool: granted, set and cleared (so neither write can pass as a no-op), put back.
         r, d, _ = call(GRANT_FIELD, {"field": FIXTURE_FLAG, "class": holder_path, "scope_ack": ack})
         ck.check(not r.get("isError"), f"{FIXTURE_FLAG} granted", d)
-        r, d = write(inst, FIXTURE_FLAG, "true")
-        if not r.get("isError") and d.get("before"):
-            did["flag"] = (inst, FIXTURE_FLAG, d.get("addr"), str(d["before"]).upper())
-        ck.check(not r.get("isError") and d.get("after") == "01", "write_field bHolderFlag = true writes 01", d)
-        if "flag" in did:
+        for value, byte in (("true", "01"), ("false", "00")):
+            r, d = write(inst, FIXTURE_FLAG, value)
+            wrote("flag", inst, FIXTURE_FLAG, r, d)
+            ck.check(not r.get("isError") and d.get("after") == byte and mem(d.get("addr", "0x0"), 1) == byte,
+                     f"write_field bHolderFlag = {value} reads back {byte}", d)
+        if "flag" in changed:
             put_back("flag", FIXTURE_FLAG, lambda b: "true" if int(b, 16) else "false")
 
-        # 6. A 4-byte enum on the spawner: only one of its own entries.
+        # 6. A 4-byte enum on the spawner: only one of its own entries, by its short name too.
         r, d, _ = call(GRANT_FIELD, {"field": WIDE_ENUM, "class": actor_path, "scope_ack": ack})
         ck.check(not r.get("isError") and d.get("type") == "EnumProperty", f"{WIDE_ENUM} granted (an EnumProperty)", d)
         r, d = write(act["addr"], WIDE_ENUM, "Wide_High")
-        if not r.get("isError") and d.get("before"):
-            did["wide"] = (act["addr"], WIDE_ENUM, d.get("addr"), str(d["before"]).upper())
+        wrote("wide", act["addr"], WIDE_ENUM, r, d)
         ck.check(not r.get("isError") and d.get("after") == _i32(WIDE_HIGH).upper(),
-                 "write_field Probe_WideEnum = Wide_High writes 0x007F0000, all four bytes", d)
-        r, d = write(act["addr"], WIDE_ENUM, "5")
-        ck.check(bool(r.get("isError")) and "entries" in error_text(d), "5, no entry of it: refused", d)
-        if "wide" in did:
+                 "write_field Probe_WideEnum = Wide_High (its short name) writes 0x007F0000, all four bytes", d)
+        refused("wide_5", act["addr"], WIDE_ENUM, "5", "entries", "5, no entry of it: refused, nothing written")
+        if "wide" in changed:
             put_back("wide", WIDE_ENUM, lambda b: str(int.from_bytes(bytes.fromhex(b), "little", signed=True)))
 
         # 7. One field's grant ends; the other stands.
         r, d, _ = call("revoke_grants", {"kind": "field", "field": value_target})
         ck.check(not r.get("isError") and d.get("revoked") == 1, "revoke_grants ends HolderValue's grant", d)
-        r, d = write(inst, FIXTURE_FIELD, "7")
-        ck.check(bool(r.get("isError")) and GRANT_FIELD in error_text(d), "its write is refused again", d)
+        refused("after_revoke", inst, FIXTURE_FIELD, "7", GRANT_FIELD, "its write is refused again, nothing written")
         r, d, _ = call("read_grants")
         ck.check(sorted(g.get("field") for g in d.get("grants", []) if g.get("field"))
                  == sorted([holder_path + ":" + FIXTURE_FLAG, actor_path + ":" + WIDE_ENUM]),
                  "the bool's and the enum's grants stand", d)
 
     def cleanup() -> None:
-        for key in ("value", "flag", "wide"):
-            if key in did:
-                inst, field, addr, before = did[key]
-                _attempt(f"{field}'s bytes back", lambda a=addr, b=before: ui.request(
-                    "write_mem", addr=a, bytes=b, expect=ui.request("read_mem", addr=a, size=len(b) // 2)["bytes"]))
+        def restore(addr: str, before: str) -> None:
+            now = ui.request("read_mem", addr=addr, size=len(before) // 2)
+            r = ui.request("write_mem", addr=addr, bytes=before, expect=now.get("bytes", ""))
+            if not r.get("ok"):
+                raise McpError(f"write_mem answered {r}")
+
         if ui is not None:
+            for key, (_, field, addr, before) in list(changed.items()):
+                _attempt(f"{field}'s bytes back ({key})", lambda a=addr, b=before: restore(a, b))
             if "spawner" in did:
                 def destroy_holders():
                     r = fixture_invoke("Spawn_DestroyHolders")
