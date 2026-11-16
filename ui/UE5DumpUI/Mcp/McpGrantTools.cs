@@ -4,7 +4,8 @@ using System.Text.Json.Nodes;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1. The tools that give, list and end the session's write grants.
+/// [MCP-WRITE-GRANTS-2026-11-14] Phases 1 and 1b. The tools that give, list and end the session's write grants: the two
+/// kind grants, and an invoke grant naming one UFunction.
 ///
 /// <para><b>A grant tool is where the user is asked.</b> Claude Code's prompt shows a tool's name and its arguments,
 /// nothing else (Phase 0, M1 and M10), so each grant's name states what it unlocks, and its one required argument,
@@ -22,8 +23,9 @@ namespace UE5DumpUI.Mcp;
 /// </summary>
 internal static class McpGrantTools
 {
-    /// <summary>The four tools. <paramref name="catalogue"/> is read when a grant is given, so the tools a grant covers
-    /// are the catalogue's own, by role and kind, never a second list kept here.</summary>
+    /// <summary>The grant tools, read_grants and revoke_grants. <paramref name="catalogue"/> is read when a grant is
+    /// given, so the tools a grant covers are the catalogue's own, by role and kind, never a second list kept here.
+    /// </summary>
     public static IEnumerable<McpTool> Create(IMcpGame game, McpGrants grants, IReadOnlyList<McpTool> catalogue)
     {
         yield return GrantTool(game, grants, catalogue, McpGrantKind.Toggles, Constants.McpGrantToolToggles,
