@@ -60,8 +60,10 @@ internal sealed class McpServer
     /// </summary>
     internal static string InstructionsFor(McpHostDecision decision) => decision switch
     {
-        McpHostDecision.Grants => Head + Reads + GrantWrites + Holds + Declined + Tail,
-        McpHostDecision.MarkedPerCall => Head + Reads + MarkedWrites + Holds + Declined + Tail,
+        McpHostDecision.Grants
+            => Head + Reads + GrantWrites + Holds(GrantStays, ", and every grant ends") + GrantDeclined + Tail,
+        McpHostDecision.MarkedPerCall
+            => Head + Reads + MarkedWrites + Holds(MarkedStays, "") + MarkedDeclined + Tail,
         _ => Head + Reads + Tail,
     };
 
@@ -106,22 +108,31 @@ internal sealed class McpServer
         + "revoke_grants ends them and releases no hold. A dropped pipe connection releases the holds but keeps the "
         + "grants; a new game run ends them. ";
 
-    private const string Holds =
+    // What stays after the session, by the tools the host lists: write_field is a grants host's only.
+    private const string GrantStays = "write_invoke, write_memory or write_field";
+    private const string MarkedStays = "write_invoke or write_memory";
+
+    private static string Holds(string stays, string grantsEnd) =>
         "Writes never replace or end what the user, a "
         + "Cheat Engine record or another session holds: such a call is refused, naming the holder (read_holds shows "
         + "who holds what). The rule binds this server only: the user's UE5DumpUI window and Cheat Engine records can "
         + "change or end anything this server holds at any time, and it is then theirs. The holds this server takes "
-        + "are released when the session ends; Fly's speed, preset and noclip stay, and what write_invoke, "
-        + "write_memory or write_field did stays. write_memory writes data only and needs the bytes read there first "
+        + "are released when the session ends; Fly's speed, preset and noclip stay, and what " + stays + " did "
+        + "stays. write_memory writes data only and needs the bytes read there first "
         + "(expect). write_invoke calls a UFunction on the game thread with its parameters by name; a queued one "
         + "(-5) runs later, so never send it again. The user can turn on \"Block AI "
         + "writes\" in the UE5DumpUI window: every change is then refused, turning off or resetting what this server "
-        + "holds still works, and every grant ends; such a refusal means stop. ";
+        + "holds still works" + grantsEnd + "; such a refusal means stop. ";
 
-    private const string Declined =
-        "A declined prompt or a refused grant means no: never try another route to the same change. The exceptions: "
-        + "when the server refuses an invoke or a field grant, write_invoke or write_memory, asked every call, may "
-        + "still be offered.\n";
+    // Each per-call route goes with its own refused grant only, and none follows the user's block: that refusal means
+    // stop.
+    private const string GrantDeclined =
+        "A declined prompt or a refused grant means no: never try another route to the same change. The exceptions, "
+        + "each asked every call: write_invoke after a refused invoke grant, write_memory after a refused field grant; "
+        + "never after a Block AI writes refusal.\n";
+
+    private const string MarkedDeclined =
+        "A declined prompt means no: never try another route to the same change.\n";
 
     private const string Tail =
         "Calls run one at a time on this server's own pipe connection; a UE5DumpUI window has its own connections and "
