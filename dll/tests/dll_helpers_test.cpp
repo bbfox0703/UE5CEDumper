@@ -611,6 +611,64 @@ static void Test_D23_InvokeOwnersAndDenyList() {
            && InvokeRefusedForBackground("GetObjectPropertyByNameCount", 0).empty());
 }
 
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a parameter that hands the engine a function, an event or a property to reach
+// by name. Fields in Ubel::ParamField's shape, as CaptureParamLayout reads them.
+static Ubel::ParamField PF(const char* name, const char* type, const char* structType = "", const char* objClass = "",
+                           std::vector<Ubel::ParamField> sub = {}) {
+    Ubel::ParamField f;
+    f.name = name;
+    f.typeName = type;
+    f.structType = structType;
+    f.objClass = objClass;
+    f.sub = std::move(sub);
+    return f;
+}
+
+static void Test_Voll_InvokeParamIndirection() {
+    using Voll::InvokeParamIndirection;
+    // A latent function's LatentActionInfo names the function the engine calls on CallbackTarget when it finishes: any
+    // function, refused ones included. Refused for every background invoke, a grant or not.
+    const std::vector<Ubel::ParamField> delay = {
+        PF("WorldContextObject", "ObjectProperty", "", "Object"), PF("Duration", "FloatProperty"),
+        PF("LatentInfo", "StructProperty", "LatentActionInfo", "",
+           {PF("Linkage", "IntProperty"), PF("UUID", "IntProperty"), PF("ExecutionFunction", "NameProperty"),
+            PF("CallbackTarget", "ObjectProperty", "", "Object")})};
+    EXPECT("params * : a latent function is refused, per call", !InvokeParamIndirection(delay, false).empty());
+    EXPECT("params * : and under a grant", !InvokeParamIndirection(delay, true).empty());
+
+    // Under a grant only: the per-call prompt shows every argument, a grant's prompt none of the later ones.
+    const std::vector<Ubel::ParamField> clearTimer = {PF("Object", "ObjectProperty", "", "Object"),
+                                                      PF("FunctionName", "StrProperty")};
+    EXPECT("params * : a string naming a function is refused under a grant",
+           !InvokeParamIndirection(clearTimer, true).empty());
+    EXPECT("params: and allowed per call (K2_GetTimerRemainingTime's shape is a read)",
+           InvokeParamIndirection(clearTimer, false).empty());
+    for (const char* type : {"DelegateProperty", "MulticastDelegateProperty", "MulticastInlineDelegateProperty",
+                             "MulticastSparseDelegateProperty", "FieldPathProperty"})
+        EXPECT((std::string("params * : under a grant, refused: ") + type).c_str(),
+               !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF("Target", type)}, true).empty());
+    EXPECT("params * : a UFunction object parameter is refused under a grant",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF("Func", "ObjectProperty", "", "Function")}, true)
+                .empty());
+    for (const char* name : {"EventName", "PropertyName", "InFunctionName", "Command", "DelegateName", "CallbackName",
+                             "FuncToCall"})
+        EXPECT((std::string("params * : under a grant, a name-like parameter is refused: ") + name).c_str(),
+               !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF(name, "NameProperty")}, true).empty());
+    EXPECT("params * : a struct member naming an event is refused under a grant (the members are walked)",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("Info", "StructProperty", "MyInfo", "", {PF("Inner", "StructProperty", "MyInner", "",
+                                                                {PF("EventName", "StrProperty")})})}, true).empty());
+    // Controls: the everyday names (a socket, a bone, a level, a tag) and non-string types pass, granted or not.
+    const std::vector<Ubel::ParamField> everyday = {
+        PF("SocketName", "NameProperty"), PF("BoneName", "NameProperty"), PF("LevelName", "NameProperty"),
+        PF("Tag", "NameProperty"), PF("Description", "StrProperty"), PF("Health", "FloatProperty"),
+        PF("FunctionCount", "IntProperty"), PF("Target", "ObjectProperty", "", "Actor"),
+        PF("Where", "StructProperty", "Vector", "", {PF("X", "DoubleProperty")})};
+    EXPECT("params: everyday parameters pass under a grant", InvokeParamIndirection(everyday, true).empty());
+    EXPECT("params: and per call", InvokeParamIndirection(everyday, false).empty());
+    EXPECT("params: no parameters pass", InvokeParamIndirection(std::vector<Ubel::ParamField>{}, true).empty());
+}
+
 static void Test_Voll_HoldLedger() {
     // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: who holds each gameplay hold, so an AI working through the MCP server
     // never replaces or ends the UI's.
@@ -12854,6 +12912,7 @@ int main() {
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_Holders);
+    RUN(Test_Voll_InvokeParamIndirection);
     RUN(Test_Voll_HoldLedger);
     RUN(Test_D23_InvokeOwnersAndDenyList);
     RUN(Test_Voll_OwedCameraRelease);

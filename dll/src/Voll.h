@@ -525,6 +525,14 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
     return {};
 }
 
+// Stub (red).
+template <typename Field>
+inline std::string InvokeParamIndirection(const std::vector<Field>& params, bool underGrant) {
+    (void)params;
+    (void)underGrant;
+    return {};
+}
+
 // ── Who should own the pipe at startup ──────────────────────────────────────
 // [RELAUNCHPIPE-2026-08-19]
 //
