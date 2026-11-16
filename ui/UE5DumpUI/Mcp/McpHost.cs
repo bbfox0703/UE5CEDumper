@@ -31,7 +31,8 @@ internal static class McpHost
         try
         {
             using var pipe = new PipeClient(log, "M");
-            using var game = new McpGameLink(pipe, platform, log);
+            // RED: the gate is not wired yet; Phase 1 gives the server its decision and this link the same object.
+            using var game = new McpGameLink(pipe, platform, log, new McpGrants());
             // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
             // once.
             var server = new McpServer(McpTools.Create(game, () => new ExperimentalGate(platform).IsEnabled), log,

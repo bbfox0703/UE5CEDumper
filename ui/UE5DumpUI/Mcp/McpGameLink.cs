@@ -40,7 +40,7 @@ internal interface IMcpGame
     /// <see cref="McpToolError"/> when there is no game to send to, the pipe is full or gone, or no reply came in time.
     /// </summary>
     Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-        bool requireScan = false);
+        bool requireScan = false, McpGrantCapability? grant = null);
 
     /// <summary>The game's scan state, read now.</summary>
     Task<McpScanReport> ScanStateAsync(int? pid, CancellationToken ct);
@@ -85,6 +85,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     private readonly IPipeClient _pipe;
     private readonly IPlatformService _platform;
     private readonly ILoggingService _log;
+    private readonly McpGrants _grants;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private int _pid;          // the connected game, 0 when none
@@ -92,11 +93,12 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     private bool _ready;       // the connected game's scan is done and found objects
     private string? _notice;   // owed to the model with the next reply
 
-    public McpGameLink(IPipeClient pipe, IPlatformService platform, ILoggingService log)
+    public McpGameLink(IPipeClient pipe, IPlatformService platform, ILoggingService log, McpGrants grants)
     {
         _pipe = pipe;
         _platform = platform;
         _log = log;
+        _grants = grants;
     }
 
     public int ConnectedPid => _pipe.IsConnected ? _pid : 0;
@@ -116,7 +118,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     }
 
     public async Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-        bool requireScan = false)
+        bool requireScan = false, McpGrantCapability? grant = null)
     {
         await _gate.WaitAsync(ct);
         try

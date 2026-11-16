@@ -53,7 +53,7 @@ public sealed class McpToolsTests
         }
 
         public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-            bool requireScan = false)
+            bool requireScan = false, McpGrantCapability? grant = null)
         {
             if (requireScan)
             {

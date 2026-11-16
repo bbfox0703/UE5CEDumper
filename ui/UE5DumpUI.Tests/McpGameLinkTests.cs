@@ -58,6 +58,9 @@ public sealed class McpGameLinkTests
         public HashSet<string> Elevated { get; } = new();
         /// <summary>The pid get_pointers reports, per pipe name; default: the name's own pid.</summary>
         public Dictionary<string, int> ReportedPid { get; } = new();
+        /// <summary>The process start time get_pointers reports, per pipe name; default: <see cref="RunA"/>. A new
+        /// value under the same name is the game restarted under the same pid.</summary>
+        public Dictionary<string, string> CreationTime { get; } = new();
         public Func<JsonObject, CancellationToken, Task<JsonObject>>? Handler { get; set; }
 
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
@@ -100,6 +103,7 @@ public sealed class McpGameLinkTests
                 {
                     ["ok"] = true, ["pid"] = pid, ["object_count"] = ObjectCount,
                     ["gobjects_method"] = ObjectCount > 0 ? "aob" : "not_found",
+                    ["process_creation_time"] = CreationTime.TryGetValue(ConnectedTo!, out var run) ? run : RunA,
                 };
             }
             if (cmd == "scan_status")
@@ -120,11 +124,14 @@ public sealed class McpGameLinkTests
         public Platform Platform { get; } = new();
         public Pipe Pipe { get; } = new();
         public McpGameLink Link { get; }
-        public Rig(params int[] games)
+        public McpGrants Grants { get; }
+        public Rig(params int[] games) : this(Granting(), games) { }
+        public Rig(McpGrants grants, params int[] games)
         {
+            Grants = grants;
             Platform.Pipes = games.Select(PipeTargets.NameFor).ToList();
             foreach (int g in games) Platform.Processes[g] = ($"Game{g}.exe", $"Title {g}");
-            Link = new McpGameLink(Pipe, Platform, new McpServerTests.NullLog());
+            Link = new McpGameLink(Pipe, Platform, new McpServerTests.NullLog(), grants);
         }
 
         public Task<JsonObject> Send(int? pid = null, string cmd = "get_object", int timeoutMs = 5000)
@@ -140,6 +147,117 @@ public sealed class McpGameLinkTests
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private const string RunA = "1DB5F0A2C3E4D50";
+    private const string RunB = "1DB5F0A2C3E4D99";
+
+    /// <summary>A session whose host takes grants, as a recent Claude Code's does.</summary>
+    private static McpGrants Granting()
+    {
+        var g = new McpGrants();
+        g.Decide(Constants.McpClaudeCodeClientName, "2.1.246");
+        return g;
+    }
+
+    // ── The write gate ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────
+
+    /// <summary>A capability admitted for a game run, as a write tool gets one from the get_pointers reply it fetched
+    /// before its send.</summary>
+    private static McpGrantCapability Admitted(McpGrants grants, int pid, string run)
+    {
+        var ptrs = new JsonObject { ["ok"] = true, ["pid"] = pid, ["process_creation_time"] = run };
+        Assert.NotNull(grants.Grant(McpGrantKind.Toggles, ptrs, out _));
+        return grants.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, ptrs, out _)!;
+    }
+
+    private static Task<JsonObject> Write(Rig rig, JsonObject request, McpGrantCapability? cap)
+        => rig.Link.SendAsync(null, request, TimeSpan.FromSeconds(5), Ct, grant: cap);
+
+    private static JsonObject GodOn() => new() { ["cmd"] = "set_god_mode", ["enable"] = true, ["if_free"] = true };
+
+    [Fact]
+    public async Task AWriteAdmittedForTheConnectedRun_IsSent()
+    {
+        var rig = new Rig(4242);
+        await Write(rig, GodOn(), Admitted(rig.Grants, 4242, RunA));
+        Assert.Equal(["get_pointers", "set_god_mode"], rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task AWriteNobodyAdmitted_IsRefusedAtTheSend_AndNothingIsSent()
+    {
+        // The choke point: a tool that forgets to ask for admission, or a tool added later, fails closed here.
+        var rig = new Rig(4242);
+        var e = await Assert.ThrowsAsync<McpToolError>(() => Write(rig, GodOn(), null));
+        Assert.Contains("set_god_mode", e.Message);
+        Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task AReleaseAndAReadNeedNoAdmission()
+    {
+        var rig = new Rig(4242);
+        await Write(rig, new JsonObject { ["cmd"] = "set_god_mode", ["enable"] = false, ["if_free"] = true }, null);
+        await rig.Send(cmd: "get_holds");
+        Assert.Equal(["get_pointers", "set_god_mode", "get_holds"], rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task AWriteAdmittedForOneRun_NeverReachesTheNextRunOfTheSamePid()
+    {
+        // The game restarted under the same pid after the tool's get_pointers; the link reconnects to whatever
+        // answers, so the run it reached is checked again under the lock.
+        var rig = new Rig(4242);
+        await rig.Send();
+        var cap = Admitted(rig.Grants, 4242, RunA);
+        rig.Pipe.Die();
+        rig.Pipe.CreationTime["UE5DumpBfx_4242"] = RunB;
+        var e = await Assert.ThrowsAsync<McpToolError>(() => Write(rig, GodOn(), cap));
+        Assert.Contains("another game run", e.Message);
+        Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task AWriteAdmittedForOneGame_NeverReachesAnother()
+    {
+        var rig = new Rig(100);
+        var cap = Admitted(rig.Grants, 4242, RunA);   // a game that has gone; game 100 is the only one now
+        await Assert.ThrowsAsync<McpToolError>(() => Write(rig, GodOn(), cap));
+        Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task ARevokeThatLandsBeforeTheSend_Wins()
+    {
+        var rig = new Rig(4242);
+        var cap = Admitted(rig.Grants, 4242, RunA);
+        rig.Grants.Revoke();
+        var e = await Assert.ThrowsAsync<McpToolError>(() => Write(rig, GodOn(), cap));
+        Assert.Contains("revoked", e.Message);
+        Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task ADroppedConnectionToTheSameRun_KeepsTheAdmission()
+    {
+        // The DLL drops the holds with the connection; the grant stays, and the AI may take them again.
+        var rig = new Rig(4242);
+        await rig.Send();
+        var cap = Admitted(rig.Grants, 4242, RunA);
+        rig.Pipe.Die();
+        await Write(rig, GodOn(), cap);
+        Assert.Equal(["get_pointers", "get_object", "get_pointers", "set_god_mode"], rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task OnAReadOnlyHost_OnlyReadsAreSent()
+    {
+        var rig = new Rig(new McpGrants(), 4242);
+        await rig.Send(cmd: "get_holds");
+        await Assert.ThrowsAsync<McpToolError>(() =>
+            Write(rig, new JsonObject { ["cmd"] = "reset_movement", ["knob"] = "jump", ["if_free"] = true }, null));
+        Assert.Equal(["get_pointers", "get_holds"], rig.Pipe.Sent);
+    }
 
     // ── Choosing the game ───────────────────────────────────────────────────────────────────────────────
 
@@ -371,7 +489,7 @@ public sealed class McpGameLinkTests
         int calls = 0;
         // Listed for the resolve, gone by the re-list after the timeout.
         var link = new McpGameLink(rig.Pipe, new GoneAfterFirstList(rig.Platform, () => ++calls),
-            new McpServerTests.NullLog());
+            new McpServerTests.NullLog(), rig.Grants);
         var e = await Assert.ThrowsAsync<McpToolError>(() =>
             link.SendAsync(null, new JsonObject { ["cmd"] = "get_object" }, TimeSpan.FromSeconds(5), Ct));
         Assert.Contains("gone", e.Message);

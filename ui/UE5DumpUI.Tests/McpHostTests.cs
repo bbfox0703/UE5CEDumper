@@ -110,7 +110,7 @@ public sealed class McpHostTests
         public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames() => ([], false);
         public int ConnectedPid => 0;
         public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-            bool requireScan = false) => throw new NotSupportedException();
+            bool requireScan = false, McpGrantCapability? grant = null) => throw new NotSupportedException();
         public Task<McpScanReport> ScanStateAsync(int? pid, CancellationToken ct) => throw new NotSupportedException();
         public Task<(McpScanReport Before, JsonObject? Started)> StartScanAsync(int? pid, CancellationToken ct)
             => throw new NotSupportedException();
