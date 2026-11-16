@@ -138,6 +138,10 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `write_teleport` | Moves the player to explicit coordinates and returns the pose it left. |
 | `write_memory` | Writes up to 4 KB of data at an address, if it still holds the bytes the AI read; returns before and after. |
 | `write_invoke` | Calls a UFunction on a live object on the game thread, parameters by name; returns its return value and out parameters. |
+| `grant_god_mode_camera_cursor_time_see_through_foreground` | Asks you once per game run to let the AI turn god mode, the debug camera, the mouse cursor, time dilation, See-through and Keep Foreground on and off. |
+| `grant_movement_fly_teleport_may_kill_or_lose_pawn` | Asks you once per game run to let the AI change movement, gravity direction and Fly, and teleport the player. This may kill or lose the pawn. |
+| `read_grants` | This session's grants: the game each covers and how many writes each let through. |
+| `revoke_grants` | Ends the AI's grants, one kind or all. It releases no hold. |
 
 - **Asked every time, in Claude Code.** Every `write_*` tool asks you before each call, in every permission mode, and
   an allow rule does not skip it (Claude Code 2.1.246 or later). Only Claude Code reads that marker: another MCP host

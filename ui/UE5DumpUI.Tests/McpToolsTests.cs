@@ -193,9 +193,9 @@ public sealed class McpToolsTests
             Catalog().Where(which).Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(["write_debug_camera", "write_foreground_lock", "write_god_mode", "write_mouse_cursor",
                       "write_see_through", "write_time_dilation"],
-            Named(t => t.GrantKind == McpGrantKind.Toggles));
+            Named(t => t.EffectiveRole == McpToolRole.GrantedWrite && t.GrantKind == McpGrantKind.Toggles));
         Assert.Equal(["write_fly", "write_gravity_direction", "write_movement", "write_teleport"],
-            Named(t => t.GrantKind == McpGrantKind.Movement));
+            Named(t => t.EffectiveRole == McpToolRole.GrantedWrite && t.GrantKind == McpGrantKind.Movement));
         Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
             Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
         Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
