@@ -8311,6 +8311,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds it on. Additive keys.
             data["claims"]     = st.claims;       // owners that turned it on and have neither left nor turned it off
             data["ce_claimed"] = st.ceClaimed;    // CE's mailbox record is one of them
+            data["you"]        = st.callerClaimed;   // [MCP-WRITE-GRANTS-2026-11-14] the asking client is one too
             // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
             // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
             data["restore_pending"]   = st.restorePending;
@@ -8318,6 +8319,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return data;
         };
         if (cmd == Renge::CMD_SEE_THROUGH_SET) {
+            // [MCP-WRITE-GRANTS-2026-11-14] An OFF with own_claim drops only the caller's claim, as its leaving would,
+            // and turns See-through off only with the last claim: an AI session's OFF then never ends the user's or
+            // CE's. Without it an OFF still means off, whoever else turned it on.
+            if (request.value("own_claim", false) && request.contains("enable") && !request.value("enable", true)) {
+                const auto r = Schlacht::Release(conn->ownerKey, nullptr);
+                Sein::Info("PIPE:cmd", "seethrough_set: own claim released (%d)", static_cast<int>(r));
+                Schlacht::SeeThroughStatus st{};
+                Schlacht::GetStatus(st, conn->ownerKey);
+                json data = seeThroughStatusJson(st);
+                data["state"]    = st.active ? 1 : 0;
+                data["released"] = r == Schlacht::OwnerRelease::NotHeld ? "not_held"
+                                 : r == Schlacht::OwnerRelease::TurnOff ? "off" : "still_held";
+                return Renge::MakeResponse(id, data).dump();
+            }
             if (request.contains("count"))
                 Schlacht::SetPierceCount(request.value("count", 1));
             int32_t state = -1;
@@ -8328,14 +8343,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                        haveEnable ? (request.value("enable", false) ? "1" : "0") : "-",
                        request.contains("count") ? request.value("count", 1) : -1);
             Schlacht::SeeThroughStatus st{};
-            Schlacht::GetStatus(st);
+            Schlacht::GetStatus(st, conn->ownerKey);
             json data = seeThroughStatusJson(st);
             data["state"] = haveEnable ? state : (st.active ? 1 : 0);
             return Renge::MakeResponse(id, data).dump();
         }
         if (cmd == Renge::CMD_SEE_THROUGH_GET_STATE) {
             Schlacht::SeeThroughStatus st{};
-            Schlacht::GetStatus(st);
+            Schlacht::GetStatus(st, conn->ownerKey);
             return Renge::MakeResponse(id, seeThroughStatusJson(st)).dump();
         }
 

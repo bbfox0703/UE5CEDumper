@@ -100,6 +100,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     private int _pid;          // the connected game, 0 when none
     private int _lastPid;      // the game last connected, kept across a dropped connection
     private string? _run;      // the connected game's process start time, from get_pointers at connect
+    private long _build;       // the connected game's DLL build, from the same reply
     private bool _ready;       // the connected game's scan is done and found objects
     private string? _notice;   // owed to the model with the next reply
 
@@ -243,7 +244,16 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         // Whether a release ends this server's own hold is read here, on this connection under this lock, right before
         // it: get_holds is a read, so this does not recurse.
         JsonObject? holds = null;
-        if (McpGrants.IsRelease(request) && _grants.Decision != McpHostDecision.ReadOnly)
+        if (McpGrants.IsOwnClaimRelease(request) && _build < Constants.McpMinDllBuildForOwnClaim)
+        {
+            // An older DLL ignores own_claim and runs an explicit OFF, which ends everyone's See-through.
+            throw new McpToolError("Not sent: the game's DLL is build "
+                                   + _build.ToString(CultureInfo.InvariantCulture) + ", older than "
+                                   + Constants.McpMinDllBuildForOwnClaim.ToString(CultureInfo.InvariantCulture)
+                                   + ", where an OFF of this server's See-through claim would end every claim.");
+        }
+        if (McpGrants.IsRelease(request) && !McpGrants.IsOwnClaimRelease(request)
+            && _grants.Decision != McpHostDecision.ReadOnly)
             holds = await SendCoreAsync(new JsonObject { ["cmd"] = "get_holds" }, ProbeTimeout, ct);
         string? refusal = _grants.Check(request, grant, _pid, _run, holds);
         if (refusal is not null)
@@ -307,6 +317,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
 
         _pid = 0;
         _run = null;
+        _build = 0;
         _ready = false;
         string name = PipeTargets.NameFor(target);
         try
@@ -369,6 +380,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         _pid = target;
         _lastPid = target;
         _run = McpJson.GetString(ptrs, "process_creation_time");
+        _build = McpJson.TryGetLong(ptrs["build_number"], out long build) ? build : 0;
         _log.Info(Constants.LogCatInit, $"[MCP] Connected to {name}.");
     }
 
@@ -442,6 +454,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         catch (Exception e) { _log.Warn(Constants.LogCatPipe, $"[MCP] Disconnect failed: {e.Message}"); }
         _pid = 0;
         _run = null;
+        _build = 0;
         _ready = false;
         if (why is not null && was != 0)
         {

@@ -280,12 +280,10 @@ internal static class McpWriteTools
     /// it leaves, but an explicit OFF drops every claim. So this server turns it off only when its own claim is the only
     /// one; otherwise its claim simply ends with the session.</summary>
     private static McpTool SeeThrough(IMcpGame game, Func<bool> experimentalEnabled, McpGrants grants)
-    {
-        var claimedBy = new HashSet<int>();   // the games where this server turned it on
-        return new McpTool("write_see_through", "See-through",
+        => new("write_see_through", "See-through",
             "Experimental. Hides the occluders between the camera and the player pawn (count: how many nearest), or "
-            + "turns that off. Turning it off is refused while the UI or Cheat Engine also has it on: an OFF would end "
-            + "theirs too. Refused while the UI's experimental features are off.",
+            + "ends this server's own claim on it: See-through stays on while the UI or Cheat Engine also has it on. "
+            + "Refused while the UI's experimental features are off.",
             McpSchema.Object(("enable", McpSchema.Bool("On or off.", false), true),
                 ("count", McpSchema.Int("Occluders to hide (turning on only).", 1, Constants.McpSeeThroughCountMax),
                     false), PidProp),
@@ -297,37 +295,39 @@ internal static class McpWriteTools
                 bool enable = ReqBool(a, "enable");
                 int? count = enable && a.Has("count") ? a.IntIn("count", 1, 1, Constants.McpSeeThroughCountMax) : null;
                 var ptrs = await RequireWritableDllAsync(game, pid, ct);
-                var timeout = TimeSpan.FromSeconds(WriteSeconds);
-                if (!enable)
-                {
-                    var state = await game.SendAsync(pid, new JsonObject { ["cmd"] = "seethrough_get_state" }, timeout,
-                        ct, requireScan: true);
-                    bool active = Truthy(state, "active");
-                    long claims = McpJson.TryGetLong(state["claims"], out long c) ? c : 0;
-                    bool ours = claimedBy.Contains(game.ConnectedPid);
-                    if (active && (!ours || claims > 1 || Truthy(state, "ce_claimed")))
-                        return Combine(McpToolResult.Fail(
-                            "Not changed: See-through is also on for the UE5DumpUI window or a Cheat Engine record "
-                            + "(" + claims.ToString(CultureInfo.InvariantCulture) + " claim(s)), and an OFF would end "
-                            + "theirs too. This server's own claim ends with the session."), game.TakeNotice());
-                }
-                var request = new JsonObject { ["cmd"] = "seethrough_set", ["enable"] = enable };
-                // The count is a global setting seethrough_set applies before enable: an OFF carrying one would be no
-                // release, and nobody turning it off needs a new count.
+                long build = McpJson.TryGetLong(ptrs["build_number"], out long b) ? b : 0;
+                if (!enable && build < Constants.McpMinDllBuildForOwnClaim)
+                    throw new McpToolError("Not changed: the game's DLL is build "
+                        + build.ToString(CultureInfo.InvariantCulture) + ", older than "
+                        + Constants.McpMinDllBuildForOwnClaim.ToString(CultureInfo.InvariantCulture) + ", which cannot "
+                        + "end only this server's claim on See-through: an OFF there would end the user's and Cheat "
+                        + "Engine's too. This server's claim ends with the session; an updated DLL lets it end sooner.");
+                // An OFF ends only this server's claim (the DLL turns See-through off with the last one), so it is a
+                // release; the count is a global setting, applied before enable, that nobody turning it off needs.
+                var request = enable
+                    ? new JsonObject { ["cmd"] = "seethrough_set", ["enable"] = true }
+                    : new JsonObject
+                    {
+                        ["cmd"] = "seethrough_set", ["enable"] = false, ["own_claim"] = true, ["if_free"] = true,
+                    };
                 if (count is int n) request["count"] = n;
                 var grant = Admit(grants, McpToolRole.GrantedWrite, McpGrantKind.Toggles, request, ptrs);
                 // Hiding or showing each occluder is a game-thread call, up to 16 in turn.
                 var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 16), ct, requireScan: true,
                     grant: grant);
                 var result = Answer(reply, game.TakeNotice());
-                if (!result.IsError)
+                if (enable || result.IsError) return result;
+                string? stayed = McpJson.GetString(reply, "released") switch
                 {
-                    if (enable) claimedBy.Add(game.ConnectedPid);
-                    else claimedBy.Remove(game.ConnectedPid);
-                }
-                return result;
+                    "still_held" => "See-through stays on: the UE5DumpUI window or a Cheat Engine record also has it "
+                                    + "on. This server's claim is gone.",
+                    "not_held" => "This server held no claim on See-through, so nothing changed.",
+                    _ => null,
+                };
+                return stayed is null ? result : result with { Note = Join(stayed, result.Note) };
             }, Idempotent: true, Destructive: true, Role: McpToolRole.GrantedWrite, GrantKind: McpGrantKind.Toggles);
-    }
+
+    private static string Join(string first, string? second) => second is null ? first : first + " " + second;
 
     /// <summary>The guarded debug-camera command answers in <c>state</c>, not <c>code</c> (D2-3 found the generic
     /// reply reading every refusal as success), and its toggle is a game-thread call, so it waits as long as the DLL
@@ -448,11 +448,8 @@ internal static class McpWriteTools
         if (McpGrants.IsRelease(request)) return grants.Admit(role, kind, ptrs, out _);
         var grant = grants.Admit(role, kind, ptrs, out string? refusal);
         if (grant is not null) return grant;
-        if (McpJson.GetString(request, "cmd") == "seethrough_set" && request["enable"] is JsonValue s
-            && s.GetValueKind() == JsonValueKind.False)
-            refusal += " See-through's OFF ends every claim on it, the user's too, so it needs the grant.";
         // An OFF that also carries a global setting (Fly's speed, preset or noclip) is no release.
-        else if (request["enable"] is JsonValue v && v.GetValueKind() == JsonValueKind.False)
+        if (request["enable"] is JsonValue v && v.GetValueKind() == JsonValueKind.False)
             refusal += " Only an OFF with nothing else in it needs no grant, and only for a hold this server took.";
         throw new McpToolError(refusal ?? "Not changed.");
     }

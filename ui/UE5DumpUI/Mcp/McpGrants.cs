@@ -106,11 +106,11 @@ public sealed partial class McpGrants
     };
 
     // The ON/OFF commands whose OFF ends a hold. fly_set also takes global settings, applied before enable, which no
-    // release undoes, so IsRelease accepts an OFF only with nothing else in it. seethrough_set is not here: its explicit
-    // OFF drops every claim on See-through, the user's and CE's included.
+    // release undoes, so IsRelease accepts an OFF only with nothing else in it. seethrough_set's OFF is one only with
+    // own_claim: its explicit OFF drops every claim on See-through, the user's and CE's included.
     private static readonly HashSet<string> OffReleases = new(StringComparer.Ordinal)
     {
-        "set_god_mode", "set_foreground_lock", "set_debug_camera", "fly_set",
+        "set_god_mode", "set_foreground_lock", "set_debug_camera", "fly_set", "seethrough_set",
     };
 
     private static readonly HashSet<string> NoCommands = new(StringComparer.Ordinal);
@@ -293,7 +293,8 @@ public sealed partial class McpGrants
         if (request["if_free"] is not JsonValue f || f.GetValueKind() != JsonValueKind.True) return false;
         if (Resets.Contains(cmd)) return true;
         if (!OffReleases.Contains(cmd)) return false;
-        bool off = false;
+        bool seeThrough = cmd == "seethrough_set";
+        bool off = false, ownClaim = false;
         foreach (var (key, value) in request)
         {
             if (key == "enable")
@@ -301,9 +302,14 @@ public sealed partial class McpGrants
                 if (value is not JsonValue v || v.GetValueKind() != JsonValueKind.False) return false;
                 off = true;
             }
+            else if (key == "own_claim" && seeThrough)
+            {
+                if (value is not JsonValue o || o.GetValueKind() != JsonValueKind.True) return false;
+                ownClaim = true;
+            }
             else if (!EnvelopeKeys.Contains(key)) return false;
         }
-        return off;
+        return off && (ownClaim || !seeThrough);
     }
 
     /// <summary>The hold a release would end, named as get_holds names it (the DLL's own mapping of a command to the
@@ -329,6 +335,12 @@ public sealed partial class McpGrants
             default: return null;
         }
     }
+
+    /// <summary>A release that touches only what this server holds by its very shape: See-through's own-claim OFF, which
+    /// the DLL turns into dropping the caller's claim (nothing at all when it holds none). It needs no holds read.
+    /// </summary>
+    public static bool IsOwnClaimRelease(JsonObject request)
+        => IsRelease(request) && McpJson.GetString(request, "cmd") == "seethrough_set";
 
     /// <summary>Whether get_holds says this server holds what <paramref name="request"/> ends: in force, or an ON of its
     /// own still on its way (the debug camera), with this client as the holder.</summary>
@@ -532,7 +544,7 @@ public sealed partial class McpGrants
         if (decision == McpHostDecision.ReadOnly) return "this session only reads.";
         string? blocked = LookAtBlock();
         bool releaseShape = IsRelease(request);
-        if (releaseShape && Owns(request, holds)) return null;
+        if (releaseShape && (IsOwnClaimRelease(request) || Owns(request, holds))) return null;
         // An AI can still clean up what it holds; anything else waits for the user to lift the block.
         if (blocked is not null) return blocked;
 

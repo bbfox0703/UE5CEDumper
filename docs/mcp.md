@@ -204,8 +204,9 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 - **Asked every call.** `write_memory`, `write_invoke` and `write_force_field` take no grant and ask before each call.
 - **No grant to end its own holds.** Turning off or resetting what the AI itself turned on needs no grant, so it can
   always clean up; the server checks whose hold it is right before sending. Turning off what the AI did not turn on (the
-  game's own invulnerability, another program's change) is a change and needs the grant. So does See-through's OFF,
-  which ends everyone's claims on it, and an OFF that also changes a setting (Fly's speed, preset or noclip).
+  game's own invulnerability, another program's change) is a change and needs the grant, as does an OFF that also
+  changes a setting (Fly's speed, preset or noclip). The AI's See-through OFF ends only its own claim, so See-through
+  stays on while you or a Cheat Engine record also have it on (DLL 3714 or later; an older DLL refuses it).
 - **The server refuses what no grant covers**, naming the grant to ask for, so a write nobody approved never reaches
   the game. It also refuses a value outside the UI's own range rather than letting the DLL clamp it: time dilation up
   to 3 (world) and 10 (pawn), walk speed and gravity 0.1 to 10 times, jump 10% to 30 times the height, Fly 50 to

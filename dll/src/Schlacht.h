@@ -16,6 +16,7 @@
 // Offsets resolved by FName (DynOff), UE4/UE5-agnostic; pawn re-resolved per tick.
 // ============================================================
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -49,8 +50,10 @@ inline void ClaimOwner(std::vector<uint64_t>& owners, uint64_t owner) {
     owners.push_back(owner);
 }
 
-// RED: the surface only.
-inline bool HasOwner(const std::vector<uint64_t>& owners, uint64_t owner) { (void)owners; (void)owner; return false; }
+// Whether `owner` holds a claim. kOwnerNone is nobody's claim.
+inline bool HasOwner(const std::vector<uint64_t>& owners, uint64_t owner) {
+    return owner != kOwnerNone && std::find(owners.begin(), owners.end(), owner) != owners.end();
+}
 
 // A departing owner's release. `stillLive` = another connection of the same client process is still registered, and
 // then its claim is kept.
@@ -147,6 +150,9 @@ struct SeeThroughStatus {
     // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C): how many owners, and whether CE's record is one.
     int32_t claims    = 0;
     bool    ceClaimed = false;
+    // [MCP-WRITE-GRANTS-2026-11-14] Whether the client that asked holds one of those claims, so a client can tell its
+    // own claim from another's without remembering what it did (a UI OFF then ON in between would fool that memory).
+    bool    callerClaimed = false;
 };
 
 // Enable / disable the see-through worker. Idempotent. enable=true records `owner`'s claim when it turns on or was
@@ -166,7 +172,8 @@ OwnerRelease Release(uint64_t owner, const std::function<bool(uint64_t)>& stillL
 void SetPierceCount(int32_t count);
 
 // Poll the live status (safe to call from the pipe thread).
-int32_t GetStatus(SeeThroughStatus& out);
+// Poll the live status (safe to call from the pipe thread). `caller` fills callerClaimed.
+int32_t GetStatus(SeeThroughStatus& out, uint64_t caller = kOwnerNone);
 
 // True while the worker is engaged.
 bool IsActive();
