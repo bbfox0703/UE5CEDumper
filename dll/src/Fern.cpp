@@ -8291,7 +8291,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // ── fly_set / fly_get_state (Dunste) — no-gravity 3D flight ──
         // fly_set applies whichever of the fields read below are present, then
-        // returns the live status. Input (WASD/numpad/arrows) is sampled DLL-side
+        // returns the live status; a preset Dunste refuses answers an error and
+        // applies none of them. Input (WASD/numpad/arrows) is sampled DLL-side
         // by the fly worker (GetAsyncKeyState) — the pipe only toggles + configs,
         // so there is no per-frame IPC.
         auto flyStatusJson = [](const Dunste::FlyStatus& st) {
@@ -8312,9 +8313,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         if (cmd == Renge::CMD_FLY_SET) {
             // [CPP-HARDENING-2026-11-14] The preset first, the one setting Dunste can refuse: a refused one answers an
             // error with nothing else changed, where it used to be dropped and the reply read as applied.
-            if (request.contains("preset") && Dunste::SetPreset(request.value("preset", 0)) < 0)
+            // Nothing changed, so nothing is recorded either: the hold recorder reads `holds` as this returns, and
+            // would name the refused caller as Fly's holder.
+            if (request.contains("preset") && Dunste::SetPreset(request.value("preset", 0)) < 0) {
+                holds.clear();
                 return Renge::MakeError(id, "fly_set: preset must be 0 (WASD), 1 (numpad) or 2 (arrows); nothing was "
                                             "changed").dump();
+            }
             if (request.contains("speed"))
                 Dunste::SetSpeed(request.value("speed", 0.0));
             if (request.contains("noclip"))

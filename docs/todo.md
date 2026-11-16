@@ -459,12 +459,13 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
    DLL, the four proxies and the test targets that compile DLL sources; `tools/verify/nodiscard_probe.py` proves the
    flags and the behaviour. Found on the way: `build_dll.py` printed only a 4000-character tail, which hid 2 of the
    21 warnings; it now lists every diagnostic (`6242afab`). ✅ **Batch 2 DONE 2026-11-17** (red `9efcefe1`, green
-   `49bdcde1`): 27 more declarations -- the public gameplay setters (Solitar, Laufen, Hemmung, Dunste, Schlacht,
+   `49bdcde1`): 28 more declarations -- the public gameplay setters (Solitar, Laufen, Hemmung, Dunste, Schlacht,
    Wirbel's teleport API, Grausam, Solide) and Stark's `EnqueueInvoke` / `InstallHook` / `CallOriginalSEH` /
    `CallAddressAsOwnSEH`. The five discards it found: `fly_set` dropped a refused preset and replied as if applied
-   (now the preset goes first and a refused one answers an error, nothing changed; a source pin holds the order);
-   Dunste's `SetSpeed` / `SetNoclip` always return FR_OK, so they stay unannotated, saying why; `UE5_Shutdown`'s
-   See-through and Keep Foreground OFFs log a failure. Wirbel's file-local teleport helpers were tried and left
+   (now the preset goes first and a refused one answers an error, nothing changed and no holder recorded; a source
+   pin holds the order); Dunste's `SetSpeed` / `SetNoclip` always return FR_OK, so they stay unannotated, saying why;
+   `UE5_Shutdown`'s See-through and Keep Foreground OFFs return 0 by contract, so they are `std::ignore` with that
+   reason (See-through reports what it could not un-hide itself). Wirbel's file-local teleport helpers were tried and left
    unannotated: all 9 of their discards are by design, since every teleport measures where the pawn ended up
    afterwards and the cursor's input mode is best effort. Not planned: `Macht::ReadSafe` (173 read-or-zero
    discards; it would need a read-or-zero API first) and the out-param getters, whose code is designed to be
