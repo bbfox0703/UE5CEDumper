@@ -2334,6 +2334,10 @@ public sealed class McpToolsTests
             ["0x1000"] = ("0x7FF600002000", "C"),
             ["0x3000"] = ("0x7FF600007000", "Widget"),
             ["0x4000"] = ("0x7FF600008000", "BP_Enemy_C"),
+            // A class object: BP_Enemy_C's own class is a BlueprintGeneratedClass, which derives from Class.
+            ["0x7FF600008000"] = ("0x7FF60000B000", "BlueprintGeneratedClass"),
+            // An object whose class's walk the DLL refuses (an empty layout): its chain cannot be read.
+            ["0x5000"] = ("0x7FF60000D000", "Unwalkable"),
         };
         var supers = new Dictionary<string, (string Name, string Super)>
         {
@@ -2342,6 +2346,9 @@ public sealed class McpToolsTests
             ["0x7FF600008000"] = ("BP_Enemy_C", "0x7FF600009000"),
             ["0x7FF600009000"] = ("Character", "0x7FF60000A000"),
             ["0x7FF60000A000"] = ("Actor", "0x0"),
+            ["0x7FF60000B000"] = ("BlueprintGeneratedClass", "0x7FF60000C000"),
+            ["0x7FF60000C000"] = ("Class", "0x0"),
+            ["0x7FF60000D000"] = ("", "0x0"),
         };
         game.Answers["get_object"] = r => classOf.TryGetValue(r["addr"]!.GetValue<string>(), out var c)
             ? new JsonObject { ["class_addr"] = c.Addr, ["class"] = c.Name }
@@ -2352,11 +2359,56 @@ public sealed class McpToolsTests
         return game;
     }
 
-    private static JsonObject ActorParm(string type = "ObjectProperty")
+    private static JsonObject ActorParm(string type = "ObjectProperty", string objClass = "Actor")
     {
         var p = Parm("Target", type, 8, 0);
-        p["obj_class"] = "Actor";
+        p["obj_class"] = objClass;
         return p;
+    }
+
+    private static JsonObject TargetCall(string target) => new()
+    {
+        ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = target },
+    };
+
+    [Theory]
+    [InlineData("ClassProperty", "0x4000", false)]           // an actor where a class is declared: refused
+    [InlineData("ClassProperty", "0x7FF600008000", true)]    // a Blueprint class object: its own class derives from Class
+    [InlineData("SoftClassProperty", "0x4000", false)]
+    public async Task WriteInvoke_AClassParameter_TakesAClassObjectOnly(string type, string target, bool runs)
+    {
+        // A class parameter's declared class (its PropertyClass) is Class, which every class object's own class derives
+        // from: an instance or a class default there would be read at UClass offsets.
+        var game = ClassedGame(Fn("SetTarget", ActorParm(type, "Class")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall(target));
+        Assert.Equal(!runs, result.IsError);
+        Assert.Equal(runs, game.Commands.Contains("invoke_function"));
+        if (!runs) Assert.Contains("does not derive", payload!["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectWhoseClassChainCannotBeRead_IsRefused_WithoutClaimingItsKind()
+    {
+        // The chain stopping at an unwalkable class is no verdict: the refusal must not tell the AI its object is of the
+        // wrong kind.
+        var game = ClassedGame(Fn("SetTarget", ActorParm()));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x5000"));
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("could not be read", error);
+        Assert.DoesNotContain("does not derive", error);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectParameterDeclaredAsObject_TakesAnyLiveObject_WithoutWalkingItsClass()
+    {
+        // Every live GObjects entry is a UObject: a WorldContextObject needs no class walk.
+        var game = ClassedGame(Fn("SetTarget", ActorParm("ObjectProperty", "Object")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x3000"));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.DoesNotContain("walk_class", game.Commands);
+        Assert.Contains("invoke_function", game.Commands);
     }
 
     [Theory]
@@ -2392,17 +2444,14 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public async Task WriteInvoke_AClassOrInterfaceParameter_IsNotHeldToItsPropertyClass()
+    public async Task WriteInvoke_AnInterfaceParameter_IsNotHeldToItsPropertyClass()
     {
-        // A class parameter's property class is Class and an interface's is the interface: neither names the object's own
-        // class, so neither is checked this way.
-        var p = ActorParm("InterfaceProperty");
-        var game = ClassedGame(Fn("SetTarget", p));
-        var (payload, result) = await Call(game, "write_invoke", new JsonObject
-        {
-            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x3000" },
-        });
-        Assert.DoesNotContain("does not derive", payload?.ToJsonString() ?? "");
+        // An interface parameter's property class is the interface, which an object implements rather than derives from:
+        // it is held to liveness only.
+        var game = ClassedGame(Fn("SetTarget", ActorParm("InterfaceProperty")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x3000"));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Contains("invoke_function", game.Commands);
     }
 
     private static JsonObject StructParm(string name, int size, params (string Name, string Type, int Offset, int Size)[] fields)
