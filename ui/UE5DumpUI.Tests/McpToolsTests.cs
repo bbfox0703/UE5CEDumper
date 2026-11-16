@@ -697,6 +697,29 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("write_mem", game.Commands);
     }
 
+    [Theory]
+    [InlineData("06", false)]   // the game set a sibling bit at once: this bool still reads true
+    [InlineData("02", true)]    // the game cleared this bool's own bit: it did not stay
+    public async Task WriteField_APackedBoolsReadBack_IsJudgedByItsOwnBit(string readBack, bool noted)
+    {
+        var game = FieldGame();
+        var inner = game.Answers["read_mem"];
+        bool written = false;
+        var write = game.Answers["write_mem"];
+        game.Answers["write_mem"] = r =>
+        {
+            written = true;
+            return write(r);
+        };
+        game.Answers["read_mem"] = r => written && r["addr"]!.GetValue<string>() == "0x12A4"
+            ? new JsonObject { ["bytes"] = readBack }
+            : inner(r);
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bHolderFlag", true));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(noted, result.Note is not null);
+    }
+
     [Fact]
     public async Task RevokeGrants_EndsOneFieldsGrant()
     {
