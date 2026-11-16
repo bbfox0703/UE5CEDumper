@@ -335,6 +335,83 @@ public class TeleportViewModelTests
         public event EventHandler? Changed;
     }
 
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ───────────────────────────────────────────
+
+    private sealed class FakeBlockGate : IAiWriteBlockGate
+    {
+        public bool IsBlocked { get; set; }
+        public long RevokeStamp { get; set; }
+        public bool SaveSucceeds { get; set; } = true;
+        public int Reloads { get; private set; }
+        public event EventHandler? Changed;
+
+        public bool TrySetBlocked(bool blocked)
+        {
+            if (!SaveSucceeds) return false;
+            IsBlocked = blocked;
+            if (blocked) RevokeStamp++;
+            Changed?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
+
+        public void Reload() => Reloads++;
+        public void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static TeleportViewModel CreateBlockVm(FakeBlockGate gate)
+        => new(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aiWriteBlock: gate);
+
+    [Fact]
+    public void BlockAiWrites_ShowsTheSwitch_AndTicksThroughToIt()
+    {
+        var gate = new FakeBlockGate { IsBlocked = true };
+        var vm = CreateBlockVm(gate);
+        Assert.True(vm.HasAiWriteBlock);
+        Assert.True(vm.BlockAiWrites);
+        vm.BlockAiWrites = false;
+        Assert.False(gate.IsBlocked);
+        vm.BlockAiWrites = true;
+        Assert.True(gate.IsBlocked);
+        Assert.Equal(1, gate.RevokeStamp);
+    }
+
+    [Fact]
+    public void BlockAiWrites_ASaveThatFails_UnticksTheBox_AndSaysSo()
+    {
+        // A stop control that looks on while nothing reached the servers stops nothing.
+        var gate = new FakeBlockGate { SaveSucceeds = false };
+        var vm = CreateBlockVm(gate);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.BlockAiWrites = true;
+        Assert.False(vm.BlockAiWrites);
+        Assert.Contains(nameof(TeleportViewModel.BlockAiWrites), raised);
+        Assert.False(string.IsNullOrWhiteSpace(TeleportViewModel.BlockAiSaveFailedText));
+        Assert.Equal(TeleportViewModel.BlockAiSaveFailedText, vm.StatusText);
+    }
+
+    [Fact]
+    public void BlockAiWrites_FollowsAChangeMadeElsewhere()
+    {
+        var gate = new FakeBlockGate();
+        var vm = CreateBlockVm(gate);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        gate.IsBlocked = true;
+        gate.RaiseChanged();
+        Assert.True(vm.BlockAiWrites);
+        Assert.Contains(nameof(TeleportViewModel.BlockAiWrites), raised);
+    }
+
+    [Fact]
+    public void BlockAiWrites_SaysWhatItDoes_InTheDictionary()
+    {
+        foreach (var key in new[] { "str.TP.BlockAi", "str.Tip.TP.BlockAi", "str.TP.BlockAiOnNote",
+                                    TeleportViewModel.KeyBlockAiSaveFailed })
+            Assert.False(string.IsNullOrWhiteSpace(Res.Get(key)), key);
+        Assert.Equal(Res.Get(TeleportViewModel.KeyBlockAiSaveFailed), TeleportViewModel.BlockAiSaveFailedText);
+    }
+
     private static TeleportViewModel CreateVm(FakeDumpService fake, out FakePlatform platform,
         IGlobalHotkeyService? hotkeys = null, IExperimentalGate? experimentalGate = null)
     {

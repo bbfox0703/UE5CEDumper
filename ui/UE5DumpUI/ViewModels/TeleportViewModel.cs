@@ -71,7 +71,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public TeleportViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,
         IAobMakerBridge? aobMaker = null, IGlobalHotkeyService? globalHotkeys = null,
         IExperimentalGate? experimentalGate = null,
-        CoordinateLibraryStore? coordStore = null)
+        CoordinateLibraryStore? coordStore = null,
+        IAiWriteBlockGate? aiWriteBlock = null)
     {
         _dump = dump;
         _log = log;
@@ -3902,6 +3903,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <c>CompositionRootWiringTests</c>; not used by the UI.
     /// </summary>
     internal bool HasCoordStore => _coordStore != null;
+
+    // RED: the surface only.
+    public bool BlockAiWrites { get => false; set { } }
+    public bool HasAiWriteBlock => false;
+    internal const string KeyBlockAiSaveFailed = "str.TP.BlockAiSaveFailed";
+    internal static string BlockAiSaveFailedText => "";
 
     private string _activeCoordKey = "";
 

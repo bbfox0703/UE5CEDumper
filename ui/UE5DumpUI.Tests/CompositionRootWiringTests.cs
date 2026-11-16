@@ -64,6 +64,7 @@ public class CompositionRootWiringTests : IDisposable
     private MainWindowViewModel BuildVmAsAppDoes(IAobMakerUiClient? aobMakerUi = null)
     {
         var platform = new MockPlatformService(_dir);
+        // As App builds it: the window's own gate over this test's folder.
         return AppComposition.BuildMainWindowViewModel(
             new NoopPipeClient(),
             new StubDumpService(),
@@ -78,8 +79,23 @@ public class CompositionRootWiringTests : IDisposable
             bookmarks: null,
             coordLibrary: new CoordinateLibraryStore(platform),
             logCompression: null,
-            aobMakerUi: aobMakerUi);
+            aobMakerUi: aobMakerUi,
+            aiWriteBlock: new AiWriteBlockGate(platform));
     }
+
+    [Fact]
+    public void Teleport_ReceivesTheAiWriteBlockGate_AppBuilt()
+    {
+        // [MCP-WRITE-GRANTS-2026-11-14] A gate not passed leaves the "Block AI writes" switch hidden, and the user with no
+        // way to stop an AI session from the window: B27's class.
+        Assert.True(BuildVmAsAppDoes().Teleport.HasAiWriteBlock);
+    }
+
+    [Fact]
+    public void OmittingTheAiWriteBlockGate_HidesTheSwitch()
+        => Assert.False(new MainWindowViewModel(
+            new NoopPipeClient(), new StubDumpService(), new NoopLog(), new MockPlatformService(_dir)).Teleport
+            .HasAiWriteBlock);
 
     [Fact]
     public void Teleport_ReceivesTheCoordinateLibraryStore_AppBuilt()

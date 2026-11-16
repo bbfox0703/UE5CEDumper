@@ -10,8 +10,16 @@ namespace UE5DumpUI.Services;
 /// reads: the switch can narrow what an AI may do and never widen it, so a forged or edited file can at most block or
 /// revoke.
 /// </summary>
-public static class AiWriteBlockGate
+public sealed class AiWriteBlockGate : IAiWriteBlockGate
 {
+    // RED: the instance surface only.
+    public AiWriteBlockGate(IPlatformService platform, ILoggingService? log = null) { }
+    public bool IsBlocked => false;
+    public long RevokeStamp => 0;
+    public bool TrySetBlocked(bool blocked) => false;
+    public void Reload() { }
+    public event EventHandler? Changed { add { } remove { } }
+
     private static readonly AiWriteBlockJsonContext s_json = AiWriteBlockJsonContext.Default;
 
     /// <summary>Where the window keeps the switch: beside experimental.json, one file per Windows user.</summary>

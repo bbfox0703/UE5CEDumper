@@ -500,7 +500,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         BookmarkStore? bookmarks = null,
         CoordinateLibraryStore? coordLibrary = null,
         ILogCompressionService? logCompression = null,
-        IAobMakerUiClient? aobMakerUi = null)
+        IAobMakerUiClient? aobMakerUi = null,
+        IAiWriteBlockGate? aiWriteBlock = null)
     {
         _pipeClient = pipeClient;
         _dump = dump;
@@ -558,7 +559,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // signal is opt-in and no-ops (with a note) when it's null.
         DetectStats = new DetectStatsViewModel(dump, log, snapshotStore, experimentalGate);
         Console = new ConsoleViewModel(dump, log);
-        Teleport = new TeleportViewModel(dump, log, platform, aobMaker, globalHotkeys, experimentalGate, coordLibrary);
+        Teleport = new TeleportViewModel(dump, log, platform, aobMaker, globalHotkeys, experimentalGate, coordLibrary,
+            aiWriteBlock);
         if (snapshotStore != null)
         {
             Snapshot = new SnapshotViewModel(dump, snapshotStore, log, experimentalGate, platform, AobMakerShared);
