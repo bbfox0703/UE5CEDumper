@@ -338,7 +338,9 @@ server, so none needs a game; every probe was denied, and the server log shows n
 | **M9** (part) | Does `/mcp` enable / reconnect end the server process? | **Yes.** Enabling the server started one process (pid 22408), which logged "stdin closed; server exiting" 11 s later, and a new one (pid 36620) took over. | A reconnect ends every grant, as §4.6 assumes. Idle lifetime, session close and app quit are still open. |
 
 Seen along the way (an app behaviour, not this server's): a user message sent while a permission prompt is open aborts
-the request ("Tool permission request aborted"), and the dialog can stay on screen afterwards, inert.
+the request ("Tool permission request aborted"), and the dialog then stays on screen, inert (the maintainer pasted a
+screenshot while the M1 prompt was open). With no message sent, Deny works normally: the M6b subagent's prompt was
+denied and the agent went on.
 
 **Still open:** M2-M5 need a permission-mode switch or an allow rule (the maintainer's settings); M7 needs Phase 1's
 version log line; M8's SDK half has no session to measure here; M9's idle lifetime; M11 only before an elicitation
