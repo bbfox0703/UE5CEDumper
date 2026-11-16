@@ -83,6 +83,27 @@ that. The server still refuses every write no grant covers, and the grant tools,
 Leave it out in auto mode for now: there, auto mode's own check of each write against what you asked for is one more
 look. To be asked before every write again, in every mode, add `"ask": ["mcp__ue5cedumper__write_*"]`.
 
+**Keep subagents from changing the game (recommended in Claude Code).** A subagent or workflow agent the AI starts
+calls the same server and holds the grants you gave the main conversation, and its grant prompt looks just like the
+main one's. This hook in your user-level `~/.claude/settings.json` refuses their writes and grants, and leaves their
+reads alone; the exe itself is the hook (`--mcp-agent-guard`), so nothing else needs installing. Use your own path:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__ue5cedumper__(write|grant)_.*$",
+        "hooks": [{ "type": "command", "command": "\"C:/Tools/UE5CEDumper/UE5DumpUI.exe\" --mcp-agent-guard" }]
+      }
+    ]
+  }
+}
+```
+
+Claude Code reads hooks when a session starts. If the exe is not at that path, the hook fails to run and the call goes
+on without it, so update the path when you move the exe.
+
 ## Using it beside the UI
 
 The server and the UI are separate processes and can run together. Each AI session starts its own server.

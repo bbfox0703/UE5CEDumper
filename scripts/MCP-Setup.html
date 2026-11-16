@@ -137,6 +137,27 @@ the write tools too; the server still refuses every write no grant covers. Leave
 <pre><code>{ "permissions": { "allow": ["mcp__ue5cedumper__read_*", "mcp__ue5cedumper__write_*",
   "mcp__ue5cedumper__revoke_grants"] } }</code></pre>
 
+<h3>Keep subagents from changing the game (recommended)</h3>
+
+<p>A subagent or workflow agent the AI starts calls the same server and holds the grants you gave the main
+conversation, and its grant prompt looks just like the main one's. This hook in your user-level
+<code>~/.claude/settings.json</code> refuses their writes and grants and leaves their reads alone. The exe itself is
+the hook, so nothing else needs installing; use your own path:</p>
+
+<pre><code>{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__ue5cedumper__(write|grant)_.*$",
+        "hooks": [{ "type": "command", "command": "\"C:/Tools/UE5CEDumper/UE5DumpUI.exe\" --mcp-agent-guard" }]
+      }
+    ]
+  }
+}</code></pre>
+
+<p>Claude Code reads hooks when a session starts. If the exe is not at that path, the hook fails to run and the call
+goes on without it, so update the path when you move the exe.</p>
+
 <h2>4. Using it</h2>
 
 <ol>
