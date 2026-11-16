@@ -967,13 +967,19 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
     the AI's exit left it on; the mailbox's INVOKE_BY_NAME (written with WriteProcessMemory, no CE) named CE, off and
     on. The UI side is item 1's path (`get_holds` to the chip). **Not run:** a negative control on a pre-3716 DLL
     (none kept); each fix's red step is a unit test or a source pin.
-3. ⬜ **The experimental cards' chips: See-through, Fly, Keep Foreground.** Acceptance: with the experimental switch
-    on and the window connected, a background client turns See-through on (`seethrough_set`), takes Fly and Keep
-    Foreground (if_free): `seethrough_get_state` reads `claims` with the client's claim and `get_holds` names the
-    client for `fly` and `foreground_lock`; the See-through card reads "Held by another program or AI session", the
-    other two "Held by an AI session (pid N)"; with the switch off, the window sends no `seethrough_get_state` per
-    poll (DLL pipe log). Fixture: DumperTest Shipping; `holder_chips_live.py` takes the holds once given a
-    `--experimental` set.
+3. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 30528, the window connected;
+    `tools/verify/holder_chips_live.py --experimental --seconds 90` PASS, log `out/holder_chips_exp_3719.log`).
+    - **DLL side:** the background client (pid 4784) turned See-through on (`claims` 1, `you` true) and took Fly and
+      Keep Foreground (if_free): `get_holds` named it, background, for `fly` and `foreground_lock`; after it left,
+      both read inactive and nobody's and See-through off with 0 claims.
+    - **UI side** (screenshots, switch on): Keep Foreground and Fly read State ON, "Held by an AI session (pid 4784)";
+      See-through read State ON, "Held by another program or AI session"; after the client left, the chips were gone
+      and the cards read OFF.
+    - **Switch off** (experimental.json `enabled` false, its exact bytes restored after): the window, restarted and
+      connected, polled `get_holds` alone -- the pipe log's repeat counter read "repeated 49x: get_holds" from
+      03:59:19 to 04:00:58, about one per 2 s, with nothing between; switched on, each poll had read get_holds,
+      seethrough_get_state, get_foreground_lock, fly_get_state. Two `seethrough_get_state` came in the connect's
+      first refresh (03:59:17), before the poll began: once, not per poll.
 4. ⬜ **A restarted window's own old hold reads "exited".** Acceptance: the window turns god mode on, is closed and
     started again; `get_holds` names the old window's pid (a foreground client's holds outlive it) and the new
     window's God Mode card reads "Held by a program that has exited (pid <old>)"; its Force OFF clears the chip.
