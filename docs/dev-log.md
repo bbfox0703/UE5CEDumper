@@ -27,6 +27,51 @@ builds ≤696 in
 
 -----
 
+## 2026-11-16 (build 3716) — each gameplay card says who else holds it `[MCP-WRITE-GRANTS-2026-11-14]`
+
+The rest of Phase 1's UI half (docs/mcp-write-approval-eval.md §4.10): once grants took the per-call prompt away, this
+is how the user sees what an AI session holds.
+- **What changes on the Teleport tab:** every gameplay card with a hold (Debug Camera, God Mode, Stealth Meter, Keep
+  Foreground, Move Speed, both time lanes, Gravity, Super Jump, Fly, See-through, Gravity Direction) shows an amber
+  chip beside its state badge while someone other than this window holds the feature: "Held by an AI session
+  (pid N)", "Held by Cheat Engine", "Held by another program (pid N)", "Held by a program that has exited (pid N)"
+  (typically this window's own holds from before a restart), "Held by a program that recorded no owner", or "Turning
+  off: the AI session that held it has ended". See-through counts the claims that are neither this window's nor
+  CE's. The chip's tooltip says the card's OFF or Reset takes the feature over and ends it, and to tick Block AI
+  writes first to keep an AI session from turning it back on.
+- **The card follows the holder:** the window reads `get_holds` every 2 s (DLL 3704 or later), quietly. A card
+  someone else holds is read again on each poll, so its badge and readout show their value (the time lanes' readout,
+  never the sliders), and once more after they let go. A read the poll could not make (a command running, a failed
+  read) is made on the next poll. A debug-camera ON still queued shows Queued rather than the OFF a read would give.
+- **Stealth card:** its Reset now ends a job someone else holds on its meter (it used to send nothing once it had
+  seen no hold), and its badge and readout follow that job from the forced-field list alone: Holding @0, Armed @0
+  (nothing live to hold yet), Unknown (another value), Off.
+- **Block AI writes:** the window re-reads the switch file off the UI thread on every poll, and a click that lands
+  during that read is no longer undone.
+- **Debug camera ownership (DLL):** the UI's Console panel Run of `ToggleDebugCamera` / `EnableDebugCamera` /
+  `DisableDebugCamera` and a CE record's invoke of them (INVOKE_BY_NAME, CMD_INVOKE) now record who toggled the camera,
+  so an AI session's end no longer turns off a camera the user turned on that way, and the chip names the right
+  holder. A CE invoke never waits for the camera's lock (busy, it runs unrecorded, as before). An AI's `write_invoke`
+  of those functions keeps its "use write_debug_camera" refusal, and `write_invoke` names the holder of a hold
+  refusal instead of reporting "code -999". docs/pipe-protocol.md says which invokes name whom.
+- **`[MCP-GRANT-USES-RELEASES]` fixed:** `read_grants`' uses count counts only what a grant let through, not an OFF
+  or a reset that needed none.
+- **Reviews:** three fresh-context review rounds over the change, each finding checked by a refuter (round 1: 2 MED,
+  8 LOW; round 2: 8 LOW; round 3: 2 LOW, 1 refuted); every confirmed one fixed red then green or covered by a new test.
+- **Proven live** on the AOT exe and DLL 3716:
+  - `tools/verify/holder_chips_live.py` (DumperTest Shipping, the window connected): a background client's god mode,
+    world time 0.5 and walk speed x1.5 read "Held by an AI session (pid 30864)", with the badges ON, the readout
+    "0.5x (held; natural 1x)" and the world slider left at 100%; a foreground client's jump x1.2 read "Held by another
+    program (pid 34140)"; the card's Reset took the jump over (chip gone, 700 cm/s); when the background client left,
+    every chip went and the badges read OFF. PASS.
+  - `tools/verify/dbgcam_ledger_live.py` 13/13 (DumperTest58 Development, UE 5.8): the AI's invoke refused by name;
+    the window's invokes name the window on and off and take the camera over from the AI, whose end then left it on;
+    the mailbox's INVOKE_BY_NAME names CE. No pre-3716 DLL was at hand for a live negative control; each fix had its
+    red step in a unit test or a source pin.
+- **Tests:** C# 8274 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4104, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,557,696 bytes (sha256 afbf6c4c086ff538...); UE5Dumper.dll 3,779,584 bytes (sha256 0c0a7cdf62d3ad10...).
+
 ## 2026-11-16 (build 3715) — MCP write grants, Phase 1 proven live; an AI's OFF of another's hold names the holder `[MCP-WRITE-GRANTS-2026-11-14]`
 
 The live pass of build 3714's Phase 1, with the maintainer at the prompts (verification-register.md, "MCP write grants,
