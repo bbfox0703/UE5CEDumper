@@ -139,7 +139,10 @@ marker. The write tools they cover lose it, and the server refuses any covered w
 - **Key.** The exact resolved FullName, ordinal compare. Its real format is `Ubel::GetFullName`'s
   `//Script/Engine/Actor.SetActorHiddenInGame`: the function comes **last**, so a prompt that cuts long strings hides
   exactly the function. The grant therefore takes the short function name first and the declaring class second, and the
-  server compares both with the resolved FullName. A subclass override has its own FullName and needs its own grant.
+  server compares both with the resolved FullName. A Blueprint override has its own FullName and needs its own grant;
+  a native override has no UFunction of its own (UHT refuses a UFUNCTION on one), so a grant on the parent's function
+  covers it -- a grant on `BlueprintAsyncActionBase.Activate` would have covered every async action, which is why that
+  Activate is on the deny list (build 3717).
 - **Free arguments and instance**, like CE's runtime invoke form. One function per grant, no lists, no wildcards.
 - **Refused for grants** (the per-call marked route stays):
   - **Indirection functions.** These turn one name into every function or property: `K2_SetTimer` and its family
@@ -374,7 +377,9 @@ route.
     register's new live rows, working-lessons §6, architecture.md.
   - One AOT `-Mode Publish` build.
   - Estimate: about 450 lines of C# and 300 of tests for the server, plus the UI half; 2–3 sessions.
-- **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions.
+- **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions. **Shipped in build 3717** (dev-log 3717): the grant
+  tool and `write_invoke_granted_function`, the DLL's grant mode (`grant`, `expect_func_full`, code -28), and the
+  exclusions checked both when the grant is asked for and at every call.
 - **Phase 2: `write_field`**, after M1. About one session.
 - **Phase 3 (optional): an "AI sessions" card.** Per-session status files listing each session's grants, with a
   per-session revoke. The holder labels and the "Block AI writes" switch moved into Phase 1 (§4.10).
