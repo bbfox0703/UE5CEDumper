@@ -278,7 +278,15 @@ internal static class McpGrantTools
             string? field = a.Str("field")?.Trim();
             if (field is not null && kind != McpGrantKind.Field)
                 throw new McpToolError("'field' goes with kind field.");
-            int revoked = grants.Revoke(kind, target: function ?? field);
+            // A grant is named whole, as read_grants shows it; a bare name would match nothing and end nothing.
+            if (function is not null && !McpGrants.IsFunctionFullName(function))
+                throw new McpToolError("'function' is the full name read_grants shows (e.g. "
+                                       + "//Script/Engine/Actor.SetActorHiddenInGame), not the bare name.");
+            if (field is not null && !McpGrants.IsFieldTarget(field))
+                throw new McpToolError("'field' is the class path and field read_grants shows (e.g. "
+                                       + "//Script/Engine/Character:Health), not the bare name.");
+            string? target = function ?? field;
+            int revoked = grants.Revoke(kind, target: target);
             var left = new JsonArray();
             foreach (var g in grants.List())
                 McpJson.Append(left, McpGrants.GrantToolFor(g.Kind) + (g.Target.Length > 0 ? " " + g.Target : ""));
@@ -289,7 +297,10 @@ internal static class McpGrantTools
                 ["note"] = "The holds the AI took stay until it turns them off or the session ends, and a write already "
                            + "sent is not stopped.",
             };
-            return Task.FromResult(new McpToolResult(payload));
+            string? none = target is not null && revoked == 0
+                ? "No grant names " + target + "; read_grants lists each grant's function or field as it must be given."
+                : null;
+            return Task.FromResult(new McpToolResult(payload, Note: none));
         }, Idempotent: true, Destructive: false, Role: McpToolRole.GrantAdmin);
 
     private static JsonArray CoveredTools(IReadOnlyList<McpTool> catalogue, McpGrantKind kind)
