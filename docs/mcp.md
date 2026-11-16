@@ -220,6 +220,15 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   named for a function, an event or a property), one taking an FText, a network RPC and a Blueprint event graph; the
   DLL checks the same at every call, and refuses a call under a grant of a non-static function on a class default or a
   template. `write_invoke` still asks every call, for anything else.
+- **One field, asked once.** `grant_write_field_one_property_every_instance` names one field by its name and its
+  class's full path, as `read_class` shows them (`HolderValue` and `//Script/DumperTest/DumperTestHolder`). After you
+  approve it, `write_field` writes that field on any live instance of the class or a subclass (other characters too),
+  with any value its type allows, until the game run or the session ends. Only a number, a bool or an enum field, one
+  element: the server refuses the grant for a struct, a string, an object reference, a container or a static array.
+  Each write reads the bytes first and sends them along, so a value the game or you changed in between is not
+  overwritten; an enum takes only one of its own entries, and a packed bool changes only its own bit. A class default
+  object (`Default__...`) is refused, since what it holds reaches every instance spawned later, and an instance of
+  another class with a field of the same name is not covered. `write_memory` still asks every call, for anything else.
 - **No grant to end its own holds.** Turning off or resetting what the AI itself turned on needs no grant, so it can
   always clean up; the server checks whose hold it is right before sending. Turning off what the AI did not turn on (the
   game's own invulnerability, another program's change) is a change and needs the grant, as does an OFF that also
