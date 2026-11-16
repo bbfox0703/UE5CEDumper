@@ -3987,6 +3987,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// </summary>
     internal bool HoldsPollRunning => _holdsTimer?.IsEnabled ?? false;
 
+    /// <summary>The poll timer's interval, null before the first start (tests).</summary>
+    internal TimeSpan? HoldsTimerInterval => _holdsTimer?.Interval;
+
     /// <summary>The poll a start makes at once, for tests to await rather than sleep (the ConnectPrime pattern).</summary>
     internal Task HoldsFirstPoll { get; private set; } = Task.CompletedTask;
 

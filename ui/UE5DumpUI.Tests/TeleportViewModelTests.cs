@@ -71,6 +71,15 @@ public class TeleportViewModelTests
         public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
         { GetDebugCameraCalls++; return Task.FromResult(NextDebugCameraState); }
 
+        // Opt-in: null keeps the base stub's NotImplementedException, which the connect tests rely on.
+        public int? NextForegroundLock { get; set; }
+        public int GetForegroundLockCalls { get; private set; }
+        public override Task<int> GetForegroundLockAsync(CancellationToken ct = default)
+        {
+            GetForegroundLockCalls++;
+            return NextForegroundLock is { } state ? Task.FromResult(state) : throw new NotImplementedException();
+        }
+
         public int NextGodModeState { get; set; } = -1;
         public int SetGodModeCalls { get; private set; }
         public int GetGodModeCalls { get; private set; }
@@ -489,7 +498,62 @@ public class TeleportViewModelTests
 
     [Fact]
     public void TheHoldsPoll_RunsEveryTwoSeconds()
-        => Assert.Equal(TimeSpan.FromSeconds(2), TeleportViewModel.HoldsPollInterval);
+    {
+        Assert.Equal(TimeSpan.FromSeconds(2), TeleportViewModel.HoldsPollInterval);
+        var (vm, _) = HoldsVm();
+        Assert.Equal(TeleportViewModel.HoldsPollInterval, vm.HoldsTimerInterval);   // the timer is built with it
+    }
+
+    private static Dictionary<string, int> CardReads(FakeDumpService d) => new()
+    {
+        ["god"] = d.GetProtectStateCalls, ["camera"] = d.GetDebugCameraCalls, ["movement"] = d.GetMovementParamsCalls,
+        ["time"] = d.GetTimeStateCalls, ["foreground"] = d.GetForegroundLockCalls, ["fly"] = d.FlyGetStateCalls,
+    };
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: only God Mode's re-read was tested. Each card someone else holds is read
+    // again by its own read and by no other card's.
+    [Theory]
+    [InlineData(Constants.HoldGodMode, "god")]
+    [InlineData(Constants.HoldDebugCamera, "camera")]
+    [InlineData(Constants.HoldMovementPrefix + "walk_speed", "movement")]
+    [InlineData(Constants.HoldMovementPrefix + "gravity", "movement")]
+    [InlineData(Constants.HoldMovementPrefix + "jump", "movement")]
+    [InlineData(Constants.HoldGravityDirection, "movement")]
+    [InlineData(Constants.HoldTimePrefix + "global", "time")]
+    [InlineData(Constants.HoldTimePrefix + "pawn", "time")]
+    [InlineData(Constants.HoldForegroundLock, "foreground")]
+    [InlineData(Constants.HoldFly, "fly")]
+    public async Task EachCardSomeoneElseHolds_IsReadAgain_ByItsOwnRead(string hold, string read)
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        dump.NextForegroundLock = 1;
+        await vm.HoldsFirstPoll;
+        var before = CardReads(dump);
+        dump.NextHolds = Report(HeldBy(hold));
+        await vm.PollHoldsOnceAsync();
+        var after = CardReads(dump);
+        foreach (var (key, count) in after)
+            Assert.True(count == before[key] + (key == read ? 1 : 0), $"{hold}: {key} read {count - before[key]} time(s)");
+    }
+
+    [Fact]
+    public async Task TheTimeReRead_FillsTheReadout_AndLeavesTheSliders()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.WorldTimeDilation = 0.5;   // the user's own slider, not yet applied
+        vm.PawnTimeDilation = 0.25;
+        dump.NextTimeState = new TimeState
+        {
+            Global = new TimeDilationKnob { Resolved = true, Active = true, Current = 2, Value = 2 },
+            Pawn = new TimeDilationKnob { Resolved = true, Active = true, Current = 3, Value = 3 },
+        };
+        dump.NextHolds = Report(HeldBy(Constants.HoldTimePrefix + "global"), HeldBy(Constants.HoldTimePrefix + "pawn"));
+        await vm.PollHoldsOnceAsync();
+        Assert.Contains("2", vm.WorldTimeCurrentText);
+        Assert.Contains("3", vm.PawnTimeCurrentText);
+        Assert.Equal((0.5, 0.25), (vm.WorldTimeDilation, vm.PawnTimeDilation));
+    }
 
     [Fact]
     public async Task EachCard_NamesWhoElseHoldsIt()
@@ -680,10 +744,18 @@ public class TeleportViewModelTests
     [Fact]
     public async Task ThePoll_IsQuiet()
     {
-        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
+        var (vm, dump) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
         string status = vm.StatusText;
         await vm.HoldsFirstPoll;
+        // A poll that reads a card again never touches the busy flag (every CanOperate button would flicker every two
+        // seconds), nor the status line, even for a moment.
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
         await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);   // it did read the card
+        foreach (var name in new[] { nameof(TeleportViewModel.IsBusy), nameof(TeleportViewModel.StatusText),
+                                     nameof(TeleportViewModel.CanOperate) })
+            Assert.DoesNotContain(name, raised);
         Assert.Equal(status, vm.StatusText);
         Assert.False(vm.IsBusy);
     }
