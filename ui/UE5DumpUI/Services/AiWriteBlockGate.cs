@@ -24,6 +24,7 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
     private readonly ILoggingService? _log;
     private bool _blocked;
     private long _stamp;
+    private long _changes;   // the window's own changes: a reload whose read began before one is older than it
 
     public event EventHandler? Changed;
 
@@ -64,6 +65,7 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
         bool changed = _blocked != blocked || _stamp != stamp;
         _blocked = blocked;
         _stamp = stamp;
+        _changes++;
         _log?.Info(Constants.LogCatInit, $"Block AI writes: {(blocked ? "on" : "off")} (revoke stamp {stamp}).");
         if (changed) Changed?.Invoke(this, EventArgs.Empty);
         return true;
@@ -71,8 +73,11 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
 
     public async Task ReloadAsync()
     {
+        long changes = _changes;
         var read = Reader;
         var state = await Task.Run(() => read(_filePath));
+        // A click saved while the file was read: what was read is older than what the window just wrote.
+        if (changes != _changes) return;
         bool blocked = state.Unreadable || state.Blocked;
         long stamp = state.Unreadable ? _stamp : state.RevokeStamp;
         if (blocked == _blocked && stamp == _stamp) return;
