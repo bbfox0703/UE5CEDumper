@@ -852,13 +852,30 @@ See-through's own-claim OFF) -- dev-log 3714, docs/mcp-write-approval-eval.md. U
 29/29 (the host decision through real server processes); nothing below has run against a game or a real Claude Code
 session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
 
-1. ⬜ **The grant prompt, in Claude Code.** Acceptance: with the server registered from the 3714 exe and DumperTest
-    running, asking for god mode makes the AI call `grant_god_mode_camera_cursor_time_see_through_foreground` first;
-    the prompt shows that name and the `scope_ack` sentence; after Allow, `write_god_mode` ON and OFF and
-    `write_time_dilation` run with no further prompt in the default mode once the documented `write_*` allow rule is
-    in place (and with one Allow each without it); `write_memory` still asks every call; `read_grants` shows one grant
-    with its uses. The server's log has the `initialize from claude-code <version>: ... writes: Grants` line (Phase 0
-    M7) and one `Grant` line.
+1. ✅ **CLOSED 2026-11-16, in AUTO mode** (the maintainer's user-level `defaultMode` is `auto`, with no
+    ue5cedumper allow rule; Claude Code 2.1.325 desktop Code tab, exe and DLL 3714, DumperTest Shipping pid 4640).
+    - **The server's log:** `initialize from claude-code 2.1.325: ... writes: Grants (Default)` (Phase 0 M7 answered),
+      then `Grant 1: Toggles for game 4640 (run 1DD75B9F3296ACD)`.
+    - **Before the grant,** `write_god_mode` ON was refused naming `grant_god_mode_camera_cursor_time_see_through_foreground`;
+      the DLL's pipe log has no `set_god_mode` for it.
+    - **The prompt** (the maintainer's screenshot, twice): "Allow Claude to use grant god mode camera cursor time see
+      through foreground (ue5cedumper)?", then "What Claude sent / Scope ack" with the whole sentence, Deny /
+      Allow once. M10's rule held: the name, not the title, is what the user reads.
+    - **After Allow,** `write_god_mode` ON and OFF and `write_time_dilation` 0.5 and its reset ran with no prompt
+      (auto mode's classifier let them through; there is no allow rule), each reaching the DLL once.
+    - **`write_memory` still asks** (screenshot: Addr / Bytes / Expect shown in full); Denied, it reached neither the
+      server's log nor the DLL.
+    - **`read_grants`** showed the one grant with `uses: 4`, which counts the OFF and the reset too, though they
+      needed no grant: `[MCP-GRANT-USES-RELEASES]` in todo.md.
+    - **Not measured here:** the default (Manual) mode with and without the documented `write_*` allow rule; that is
+      Phase 0's M2-M5, still open in docs/mcp-write-approval-eval.md §6.
+
+    *Was:* Acceptance: with the server registered from the 3714 exe and DumperTest running, asking for god mode makes
+    the AI call `grant_god_mode_camera_cursor_time_see_through_foreground` first; the prompt shows that name and the
+    `scope_ack` sentence; after Allow, `write_god_mode` ON and OFF and `write_time_dilation` run with no further prompt
+    in the default mode once the documented `write_*` allow rule is in place (and with one Allow each without it);
+    `write_memory` still asks every call; `read_grants` shows one grant with its uses. The server's log has the
+    `initialize from claude-code <version>: ... writes: Grants` line (Phase 0 M7) and one `Grant` line.
 2. ⬜ **The write rigs against the 3714 DLL.** Acceptance: on DumperTest Shipping with the published DLL and AOT exe,
     `mcp_client.py writes`, `raw`, `holdsmore` and `invokeparams` pass with their grant steps (a covered write before
     its grant refused naming it), and `olddll` against `copy3695` refuses both grants with the build text.
