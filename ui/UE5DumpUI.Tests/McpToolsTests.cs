@@ -651,6 +651,29 @@ public sealed class McpToolsTests
         Assert.Equal(HolderPath + ":HolderValue", payload!["field"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData("class_addr", "0x7FF600009000")]   // the address now holds an object of another class
+    [InlineData("stale", true)]
+    [InlineData("unreadable", true)]
+    [InlineData("no_header", true)]
+    public async Task WriteField_AWalkOfAnotherObjectThanGetObjectSaw_IsRefused_AndNothingWritten(string key, object value)
+    {
+        // Between get_object and the walk the object can be freed and its slot reused by another class whose field of
+        // the same name sits at the same offset: the walk must still be of the object whose class was resolved.
+        var game = FieldGame();
+        var inner = game.Answers["walk_instance"];
+        game.Answers["walk_instance"] = r =>
+        {
+            var o = inner(r);
+            o[key] = value is bool b ? JsonValue.Create(b) : JsonValue.Create((string)value);
+            return o;
+        };
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
     [Fact]
     public async Task RevokeGrants_EndsOneFieldsGrant()
     {
