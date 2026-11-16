@@ -866,10 +866,21 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     switch in the window makes the AI's `write_god_mode` ON refused with the switch's text while its OFF of its own
     hold goes through; unticking does not bring the grant back (the next ON is refused naming the grant); the server's
     log has the "grant(s) revoked" line; the card's OFF in the window ends the AI's hold at any time.
-4. ⬜ **The agent guard, in a real session.** Acceptance: with the documented PreToolUse entry in the user-level
-    settings, a subagent asked to call `write_god_mode` is denied with the guard's reason and nothing reaches the
-    pipe (no `set_god_mode` in the DLL's pipe log), while the main conversation's call goes on to the usual prompt.
-    Also record whether a workflow agent's call carries `agent_id` (the hooks reference does not say).
+4. ✅ **CLOSED 2026-11-16** (Claude Code 2.1.325 desktop Code tab, AOT exe and DLL 3714, DumperTest Shipping pid 4640).
+    The user-level entry `^mcp__ue5cedumper__(write|grant)_.*$` -> `"<path>/UE5DumpUI.exe" --mcp-agent-guard`, the
+    string-command form docs/mcp.md gives, ran on Windows as written.
+    - **A subagent** (general-purpose, background) calling `write_god_mode {enable:true}` got `PreToolUse:...
+      hook error: UE5CEDumper: a subagent or workflow agent may not change the game. ...`, denied before running.
+    - **A workflow agent** got the same denial: its hook input carries `agent_id` too, which the hooks reference
+      does not say.
+    - **Nothing reached anything:** the server's log has no `write_god_mode` after the main conversation's last
+      (19:05:47), and the DLL's pipe log still holds the same four `set_god_mode` lines.
+    - **The main conversation's** calls went through the hook unchanged (item 1).
+
+    *Was:* Acceptance: with the documented PreToolUse entry in the user-level settings, a subagent asked to call
+    `write_god_mode` is denied with the guard's reason and nothing reaches the pipe (no `set_god_mode` in the DLL's
+    pipe log), while the main conversation's call goes on to the usual prompt. Also record whether a workflow agent's
+    call carries `agent_id` (the hooks reference does not say).
 5. ⬜ **See-through's own-claim OFF.** Acceptance: the UI's card turns See-through on, the AI turns it on and then off:
     the reply says it stays on, the DLL logs "own claim released", and the occluders stay hidden; with only the AI's
     claim, its OFF turns See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
