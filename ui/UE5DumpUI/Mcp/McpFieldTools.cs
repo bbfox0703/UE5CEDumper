@@ -241,6 +241,8 @@ internal static class McpFieldTools
                 : (at, 1, current => [FieldValueConverter.ApplyBoolMask(current[0], mask, on)],
                     back => (back[0] & mask) != 0 == on);
         }
+        // A model's JSON number for an integer (42.0, 1e3) reads as that integer; the converters take digits only.
+        if (meta.TypeName is not ("FloatProperty" or "DoubleProperty")) text = IntegralText(text);
         var entries = live.EnumEntries;
         if (meta.TypeName == "EnumProperty" || meta.EnumName.Length > 0 || entries is { Count: > 0 })
         {
@@ -273,6 +275,17 @@ internal static class McpFieldTools
                ?? (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
                    ? real.FirstOrDefault(e => e.Value == value)
                    : null);
+    }
+
+    /// <summary>A decimal or exponent form of an integer as its digits, while a double holds it exactly (below 2^53);
+    /// anything else, a name included, as given, for the converters to take or refuse.</summary>
+    private static string IntegralText(string text)
+    {
+        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)) return text;
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
+               && d == Math.Floor(d) && Math.Abs(d) < 9007199254740992.0
+            ? ((long)d).ToString(CultureInfo.InvariantCulture)
+            : text;
     }
 
     private static string ShortName(string name)
