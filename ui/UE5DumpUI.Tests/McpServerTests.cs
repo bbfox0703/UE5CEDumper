@@ -121,6 +121,23 @@ public sealed class McpServerTests
     }
 
     [Fact]
+    public async Task Instructions_DoNotOverstateTheApprovalOrTheRelease()
+    {
+        // [MCP-INSTR-CLAIMS] A model repeats these to the user as reassurance. Only Claude Code reads the
+        // requiresUserInteraction marker, so "the user is asked before each one" was false on every other host; and
+        // "Everything this server turns on is released" left out what stays: Fly's speed / preset / noclip (global
+        // settings fly_set applies before enable) and whatever write_invoke or write_memory did.
+        var r = (await new Rig().Request("initialize", Init("2025-11-25")))["result"]!;
+        string instructions = r["instructions"]!.GetValue<string>();
+        Assert.DoesNotContain("the user is asked before each one", instructions);
+        Assert.DoesNotContain("Everything this server turns on is released", instructions);
+        Assert.Contains("Claude Code asks the user before each one", instructions);
+        Assert.Contains("other MCP hosts decide for themselves", instructions);
+        Assert.Contains("Fly's speed, preset and noclip stay", instructions);
+        Assert.Contains("what write_invoke or write_memory did stays", instructions);
+    }
+
+    [Fact]
     public async Task ServerDiscover_IsMethodNotFound_AndTheServerKeepsServing()
     {
         // 2026-07-28 clients probe with server/discover; Claude Code falls back to the handshake on an error, and a
