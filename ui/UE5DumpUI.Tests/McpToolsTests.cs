@@ -380,8 +380,9 @@ public sealed class McpToolsTests
         new JsonObject
         {
             ["name"] = "Mode", ["type"] = "ByteProperty", ["offset"] = 0x2A5, ["size"] = 1, ["value"] = "0",
-            ["enum_entries"] = new JsonArray(new JsonObject { ["v"] = 0, ["n"] = "Idle" },
-                new JsonObject { ["v"] = 1, ["n"] = "Busy" }),
+            ["enum_entries"] = new JsonArray(new JsonObject { ["v"] = 0, ["n"] = "EHolderMode::Idle" },
+                new JsonObject { ["v"] = 1, ["n"] = "EHolderMode::Busy" },
+                new JsonObject { ["v"] = 2, ["n"] = "EHolderMode::EHolderMode_MAX" }),
         });
 
     /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, 0x3000 an archetype of
@@ -718,6 +719,52 @@ public sealed class McpToolsTests
         var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bHolderFlag", true));
         Assert.False(result.IsError, payload?.ToJsonString());
         Assert.Equal(noted, result.Note is not null);
+    }
+
+    [Theory]
+    [InlineData("Busy")]                 // the short name, as a user says it
+    [InlineData("EHolderMode::Busy")]    // the name as the DLL sends it
+    [InlineData("busy")]
+    [InlineData("1")]
+    public async Task WriteField_AnEnumEntry_ByItsNameOrValue_IsWritten(string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal("01", SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("2")]                    // UHT's _MAX sentinel: no state of the enum
+    [InlineData("EHolderMode_MAX")]
+    [InlineData("Idl")]
+    public async Task WriteField_AnEnumsSentinelOrANonEntry_IsRefused(string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_AnEnumWhoseEntriesCouldNotBeRead_IsRefused()
+    {
+        // With UEnum::Names never located the walk sends no entries, and any number that fits would otherwise pass.
+        var game = FieldGame();
+        var inner = game.Answers["walk_instance"];
+        game.Answers["walk_instance"] = r =>
+        {
+            var o = inner(r);
+            foreach (var f in o["fields"]!.AsArray()) f!.AsObject().Remove("enum_entries");
+            o["enum_names_failed"] = true;
+            return o;
+        };
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 1));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
     }
 
     [Fact]
