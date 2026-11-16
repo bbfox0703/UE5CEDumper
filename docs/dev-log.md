@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3721) — The remaining lazily measured offsets are race-free reads `[CPP-HARDENING-2026-11-14]`
+
+The last code follow-up of the maintainer's C++ hardening item 2 (race-free reads of calibrated offsets). No visible
+change.
+- **What changes:** eight more DLL offsets -- the soft and lazy pointers' payload envelopes, UEnum::Names' layout
+  (offset, value size, pair stride) and UFunction's Func, flags and tail -- are measured by whichever walk first meets
+  the evidence while the scan workers and other pipe connections read them. As plain ints that was a formal data race,
+  as the property family's was before build 3712; they are now `DynOff::RuntimeOffset` (relaxed atomics),
+  pinned by eight `static_assert`s in dll_helpers_test. The compiler found every site that needed more than the
+  implicit int (the envelope latch, four log arguments, one saved test value).
+- **Proven live** on DLL 3721 (DumperTest Shipping, UE 5.4): the DLL log shows the measurements still land through the
+  new type (TSoftObjectPtr and TLazyObjectPtr envelopes +0x08, FunctionFlags +0xB0 at 64/64 votes); `mcp_client.py
+  fieldgrant` 44/44 (an enum written by its entry), `invokeparams` 30/30 (+3/3 apart, soft-pointer struct fields),
+  `invokegrant` 29/29, `raw` 28/28, `holdsmore` 78/78.
+- **Open in the item:** an AddressSanitizer CI job; and the hardening analysis's LOW rows `[DYNOFF-LATCH-STALE]`,
+  `[PIPE-WALK-DURING-INIT]` (which needs a decision on which commands count as walking) and
+  `[VND584-03-FLOOR-HIGH-HEAP]`, left for a session with someone to review a calibration change.
+- **Tests:** C# 8390 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 410efce4173dc2a6...); UE5Dumper.dll 3,795,456 bytes (sha256 db0680bfa8fed215...).
+
 ## 2026-11-17 (build 3720) — `[[nodiscard]]` batch 2: a refused Fly preset is an error, not a silent no-op `[CPP-HARDENING-2026-11-14]`
 
 The second batch of the maintainer's C++ hardening item 1 (2026-11-14: cheap hardening instead of a Rust rewrite).
