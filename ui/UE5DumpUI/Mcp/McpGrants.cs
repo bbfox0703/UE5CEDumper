@@ -394,17 +394,24 @@ public sealed partial class McpGrants
     };
 
     /// <summary>Whether a target names exactly one function in Ubel::GetFullName's form, as walk_functions sends it
-    /// (<c>//Script/Engine/Actor.SetActorHiddenInGame</c>): a path from the root, a dot, then the function. Nothing that
-    /// could stand for several functions: no wildcard, list separator or space.</summary>
+    /// (<c>//Script/Engine/Actor.SetActorHiddenInGame</c>): a path from the root, a dot, then the function. The DLL
+    /// compares full names ordinally, so no character is a wildcard; a Blueprint function may hold a space, '?' or '*'
+    /// ("Open Door"), which Blueprint names allow. Refused: a control character, and the characters no Blueprint name
+    /// may hold that read as a list (',', ';', '|', a backslash); and a function part with no letter, digit or
+    /// underscore, or
+    /// with blanks around it.</summary>
     public static bool IsFunctionFullName(string? target)
     {
         if (string.IsNullOrEmpty(target) || target[0] != '/') return false;
         int dot = target.LastIndexOf('.');
         if (dot <= 1 || dot == target.Length - 1) return false;
         foreach (char c in target)
-            if (char.IsWhiteSpace(c) || char.IsControl(c) || c is '*' or '?' or ',' or ';' or '|' or '\\')
+            if (char.IsControl(c) || c is ',' or ';' or '|' or '\\')
                 return false;
-        return target.IndexOf('/', dot) < 0;
+        string function = target[(dot + 1)..];
+        if (function.Trim().Length != function.Length || !function.Any(c => char.IsLetterOrDigit(c) || c == '_'))
+            return false;
+        return target.IndexOf('/', dot) < 0 && !target[..dot].Any(char.IsWhiteSpace);
     }
 
     /// <summary>The function's own name: what follows the last dot of its full name.</summary>
