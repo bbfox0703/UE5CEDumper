@@ -3929,6 +3929,24 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// </summary>
     public bool HasAiWriteBlock => _aiWriteBlock != null;
 
+    // RED: the holders poll's surface only.
+    [ObservableProperty] private string _debugCameraHolderText = "";
+    [ObservableProperty] private string _godModeHolderText = "";
+    [ObservableProperty] private string _stealthHolderText = "";
+    [ObservableProperty] private string _foregroundLockHolderText = "";
+    [ObservableProperty] private string _moveSpeedHolderText = "";
+    [ObservableProperty] private string _worldTimeHolderText = "";
+    [ObservableProperty] private string _pawnTimeHolderText = "";
+    [ObservableProperty] private string _gravityHolderText = "";
+    [ObservableProperty] private string _superJumpHolderText = "";
+    [ObservableProperty] private string _flyHolderText = "";
+    [ObservableProperty] private string _seeThroughHolderText = "";
+    [ObservableProperty] private string _gravDirHolderText = "";
+    internal static readonly TimeSpan HoldsPollInterval = TimeSpan.Zero;
+    internal bool HoldsPollRunning => false;
+    internal Task HoldsFirstPoll => Task.CompletedTask;
+    internal Task PollHoldsOnceAsync() => Task.CompletedTask;
+
     internal const string KeyBlockAiSaveFailed = "str.TP.BlockAiSaveFailed";
     internal static string BlockAiSaveFailedText => AobMakerStatus.Say(KeyBlockAiSaveFailed,
         "Block AI writes could not be saved, so AI sessions do not see the change and the box shows the switch as it was. Try again.");

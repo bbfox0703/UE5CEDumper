@@ -21,6 +21,20 @@ public class TeleportViewModelTests
         public TeleportPov NextPov { get; set; } = new() { Code = 0 };
         public int GetPovCalls { get; private set; }
 
+        // ── get_holds ([MCP-WRITE-GRANTS-2026-11-14]) ──
+        public HoldsReport? NextHolds { get; set; }
+        public int GetHoldsCalls { get; private set; }
+        public bool HoldsFail { get; set; }
+        /// <summary>When set, get_holds waits for it: a reply that lands later (after a disconnect, say).</summary>
+        public TaskCompletionSource<HoldsReport>? HoldsGate { get; set; }
+        public override Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default)
+        {
+            GetHoldsCalls++;
+            if (HoldsFail) return Task.FromException<HoldsReport>(new InvalidOperationException("DLL error: test"));
+            if (HoldsGate is { } gate) return gate.Task;
+            return NextHolds is { } r ? Task.FromResult(r) : throw new NotImplementedException();
+        }
+
         public ProtectState NextProtectState { get; set; } = new();
         public int GetProtectStateCalls { get; private set; }
         public override Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default)
@@ -104,8 +118,9 @@ public class TeleportViewModelTests
         public string? LastMovementKnob { get; private set; }
         public double LastMovementMultiplier { get; private set; }
 
+        public int GetMovementParamsCalls { get; private set; }
         public override Task<MovementParams> GetMovementParamsAsync(CancellationToken ct = default)
-            => Task.FromResult(NextMovementParams);
+        { GetMovementParamsCalls++; return Task.FromResult(NextMovementParams); }
 
         public override Task<MovementSetResult> SetMovementMultiplierAsync(string knob, double multiplier, CancellationToken ct = default)
         { SetMovementCalls++; LastMovementKnob = knob; LastMovementMultiplier = multiplier; return Task.FromResult(NextMovementSet); }
@@ -121,8 +136,9 @@ public class TeleportViewModelTests
         public string? LastTimeTarget { get; private set; }
         public double LastTimeValue { get; private set; }
 
+        public int GetTimeStateCalls { get; private set; }
         public override Task<TimeState> GetTimeStateAsync(CancellationToken ct = default)
-            => Task.FromResult(NextTimeState);
+        { GetTimeStateCalls++; return Task.FromResult(NextTimeState); }
 
         public override Task<TimeDilationSetResult> SetTimeDilationAsync(string target, double value, CancellationToken ct = default)
         { SetTimeCalls++; LastTimeTarget = target; LastTimeValue = value; return Task.FromResult(NextTimeSet); }
@@ -242,6 +258,11 @@ public class TeleportViewModelTests
         public string? LastClipboard { get; private set; }
         /// <summary>Answer every copy with "did nothing" (a clipboard another application holds), the copy still recorded.</summary>
         public bool RefuseClipboard { get; set; }
+        /// <summary>The processes that run, by pid: every other pid reads as exited, as DescribeProcess answers it.
+        /// </summary>
+        public Dictionary<int, string> Running { get; } = new();
+        public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
+            => Running.TryGetValue(pid, out var image) ? (image, null) : ("", null);
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
@@ -410,6 +431,249 @@ public class TeleportViewModelTests
                                     TeleportViewModel.KeyBlockAiSaveFailed })
             Assert.False(string.IsNullOrWhiteSpace(Res.Get(key)), key);
         Assert.Equal(Res.Get(TeleportViewModel.KeyBlockAiSaveFailed), TeleportViewModel.BlockAiSaveFailedText);
+    }
+
+    // ── The cards' holder labels ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──────────────────────────────────
+
+    private const int AiPid = 8048;
+    private const int OtherPid = 77;
+
+    private static HoldEntry HeldBy(string hold, string kind = "client", long? pid = AiPid, bool background = true,
+        bool you = false, bool active = true, bool pending = false)
+        => new()
+        {
+            Hold = hold, Active = active, Pending = pending,
+            Holder = new HoldOwner { Kind = kind, Pid = pid, Background = background, You = you },
+        };
+
+    private static HoldsReport Report(params HoldEntry[] holds) => new() { Holds = holds };
+
+    /// <summary>A window connected to a DLL that answers get_holds (unless <paramref name="dllBuild"/> says
+    /// otherwise), with no connect prime: only the poll's own reads are counted.</summary>
+    private static (TeleportViewModel Vm, FakeDumpService Dump) HoldsVm(int dllBuild = Constants.HoldsMinDllBuild,
+        bool experimental = false, IAiWriteBlockGate? gate = null, HoldsReport? first = null)
+    {
+        var dump = new FakeDumpService { NextHolds = first ?? Report() };
+        var platform = new FakePlatform();
+        platform.Running[AiPid] = "UE5DumpUI.exe";
+        platform.Running[OtherPid] = "Other.exe";
+        var vm = new TeleportViewModel(dump, new NoopLogger(), platform,
+            experimentalGate: experimental ? new FakeExperimentalGate(true) : null, aiWriteBlock: gate);
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = dllBuild });
+        return (vm, dump);
+    }
+
+    [Fact]
+    public void TheHoldsPoll_RunsEveryTwoSeconds()
+        => Assert.Equal(TimeSpan.FromSeconds(2), TeleportViewModel.HoldsPollInterval);
+
+    [Fact]
+    public async Task EachCard_NamesWhoElseHoldsIt()
+    {
+        var (vm, _) = HoldsVm(first: Report(
+            HeldBy(Constants.HoldGodMode),
+            HeldBy(Constants.HoldForegroundLock, kind: "ce", pid: null, background: false),
+            HeldBy(Constants.HoldFly, pid: OtherPid, background: false),
+            HeldBy(Constants.HoldMovementPrefix + "walk_speed"),
+            HeldBy(Constants.HoldMovementPrefix + "gravity", you: true, background: false),
+            HeldBy(Constants.HoldMovementPrefix + "jump", active: false),
+            HeldBy(Constants.HoldTimePrefix + "global", kind: "ce", pid: null, background: false),
+            HeldBy(Constants.HoldTimePrefix + "pawn", kind: "none", pid: null, background: false),
+            HeldBy(Constants.HoldGravityDirection, pid: null),
+            HeldBy(Constants.HoldDebugCamera, active: false, pending: true)));
+        await vm.HoldsFirstPoll;
+
+        Assert.True(vm.HoldsPollRunning);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+        Assert.Equal("Held by Cheat Engine", vm.ForegroundLockHolderText);
+        Assert.Equal("Held by another program (pid 77)", vm.FlyHolderText);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.MoveSpeedHolderText);
+        Assert.Equal("", vm.GravityHolderText);       // this window's own
+        Assert.Equal("", vm.SuperJumpHolderText);     // no longer in force
+        Assert.Equal("Held by Cheat Engine", vm.WorldTimeHolderText);
+        Assert.Equal("Held by a program that recorded no owner", vm.PawnTimeHolderText);
+        Assert.Equal("Held by an AI session", vm.GravDirHolderText);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.DebugCameraHolderText);   // an ON on its way
+        Assert.Equal("", vm.StealthHolderText);       // no meter detected: no job is this card's
+    }
+
+    [Fact]
+    public async Task AHolderWhosePidNoLongerRuns_IsSaidToHaveExited()
+    {
+        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode, pid: 99, background: false)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
+    }
+
+    [Fact]
+    public async Task TheStealthCard_IsLabelledFromItsOwnMetersJob()
+    {
+        var (vm, dump) = HoldsVm();
+        dump.NextStealthCandidates = new List<StealthCandidate>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
+        };
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        dump.NextHolds = Report(
+            HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator + "Visibility"),
+            HeldBy(Constants.HoldForceFieldPrefix + "bp_player_c" + Constants.HoldForceFieldSeparator + "Visibility",
+                kind: "ce", pid: null, background: false));
+        await vm.PollHoldsOnceAsync();
+        // Matched whole and ordinally: a job on another spelling is another job, which this card's Reset does not end.
+        Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+    }
+
+    [Fact]
+    public async Task SeeThrough_IsLabelledFromItsClaims_WhileItsCardShows()
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = true, Claims = 2, You = true };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by another program or AI session", vm.SeeThroughHolderText);
+
+        var (hidden, hiddenDump) = HoldsVm(experimental: false);
+        await hidden.HoldsFirstPoll;
+        Assert.Equal(0, hiddenDump.SeeThroughGetStateCalls);   // its card is hidden: no read every two seconds
+        Assert.Equal("", hidden.SeeThroughHolderText);
+    }
+
+    [Fact]
+    public async Task ThePoll_IsQuiet()
+    {
+        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
+        string status = vm.StatusText;
+        await vm.HoldsFirstPoll;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(status, vm.StatusText);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task ACardHeldBySomeoneElse_IsReadAgain_AndNoOtherCard()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        Assert.Equal((0, 0, 0), (dump.GetProtectStateCalls, dump.GetTimeStateCalls, dump.GetMovementParamsCalls));
+
+        // An AI takes god mode: its card is read again, and again on each poll while it holds it (a value changed
+        // inside the hold changes neither its holder nor its state).
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode),
+            HeldBy(Constants.HoldTimePrefix + "global", you: true, background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);
+        Assert.Equal((0, 0), (dump.GetTimeStateCalls, dump.GetMovementParamsCalls));   // this window's own: read on use
+
+        // It lets go: read once more, to show the card as it is now, then left alone.
+        dump.NextHolds = Report();
+        await vm.PollHoldsOnceAsync();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+    }
+
+    [Fact]
+    public async Task WhileACommandRuns_TheCardsAreNotReadAgain_ButTheLabelsMove()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.IsBusy = true;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+        Assert.Equal(0, dump.GetProtectStateCalls);
+    }
+
+    [Theory]
+    [InlineData(0, false)]                                // an engine state that names no build
+    [InlineData(Constants.HoldsMinDllBuild - 1, false)]   // a DLL that answers get_holds with an error
+    [InlineData(Constants.HoldsMinDllBuild, true)]
+    public async Task ThePoll_RunsOnlyAgainstADllThatAnswersGetHolds(int build, bool runs)
+    {
+        var (vm, dump) = HoldsVm(dllBuild: build);
+        await vm.HoldsFirstPoll;
+        Assert.Equal(runs, vm.HoldsPollRunning);
+        Assert.Equal(runs ? 1 : 0, dump.GetHoldsCalls);
+    }
+
+    [Fact]
+    public async Task ThePoll_StartsWhicheverComesFirst_TheConnectOrTheEngineState_AndOnce()
+    {
+        var dump = new FakeDumpService { NextHolds = Report() };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        Assert.False(vm.HoldsPollRunning);   // not connected yet
+        vm.SetConnected(true);
+        vm.SetConnected(true);               // a connect reports itself twice
+        await vm.HoldsFirstPoll;
+        Assert.True(vm.HoldsPollRunning);
+        Assert.Equal(1, dump.GetHoldsCalls);
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });   // a rescan
+        await vm.HoldsFirstPoll;
+        Assert.Equal(1, dump.GetHoldsCalls);
+    }
+
+    [Fact]
+    public async Task ADisconnect_StopsThePoll_AndClearsEveryLabel()
+    {
+        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode), HeldBy(Constants.HoldFly)));
+        await vm.HoldsFirstPoll;
+        Assert.NotEqual("", vm.GodModeHolderText);
+
+        vm.SetConnected(false);
+
+        Assert.False(vm.HoldsPollRunning);
+        Assert.Equal("", vm.GodModeHolderText);
+        Assert.Equal("", vm.FlyHolderText);
+        // A reconnect to an older DLL starts nothing until its engine state says it can.
+        vm.SetConnected(true);
+        Assert.False(vm.HoldsPollRunning);
+    }
+
+    [Fact]
+    public async Task AReplyThatLandsAfterADisconnect_IsDropped()
+    {
+        var dump = new FakeDumpService { HoldsGate = new TaskCompletionSource<HoldsReport>() };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        vm.SetConnected(false);
+        dump.HoldsGate.SetResult(Report(HeldBy(Constants.HoldGodMode)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("", vm.GodModeHolderText);
+    }
+
+    [Fact]
+    public async Task AFailedRead_LeavesTheLabelsAsTheyWere()
+    {
+        var (vm, dump) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
+        await vm.HoldsFirstPoll;
+        dump.HoldsFail = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+    }
+
+    [Fact]
+    public async Task ThePoll_ReadsTheBlockAiWritesSwitchAgain()
+    {
+        // The switch can change in another window or by hand: the box must not show a tick the servers do not see.
+        var gate = new FakeBlockGate();
+        var (vm, _) = HoldsVm(gate: gate);
+        await vm.HoldsFirstPoll;
+        int after = gate.Reloads;
+        await vm.PollHoldsOnceAsync();
+        Assert.True(after >= 1);
+        Assert.Equal(after + 1, gate.Reloads);
+    }
+
+    [Fact]
+    public async Task Dispose_StopsThePoll()
+    {
+        var (vm, _) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.Dispose();
+        Assert.False(vm.HoldsPollRunning);
     }
 
     private static TeleportViewModel CreateVm(FakeDumpService fake, out FakePlatform platform,
