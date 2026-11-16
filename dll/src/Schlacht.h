@@ -49,6 +49,9 @@ inline void ClaimOwner(std::vector<uint64_t>& owners, uint64_t owner) {
     owners.push_back(owner);
 }
 
+// RED: the surface only.
+inline bool HasOwner(const std::vector<uint64_t>& owners, uint64_t owner) { (void)owners; (void)owner; return false; }
+
 // A departing owner's release. `stillLive` = another connection of the same client process is still registered, and
 // then its claim is kept.
 inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, bool stillLive) {

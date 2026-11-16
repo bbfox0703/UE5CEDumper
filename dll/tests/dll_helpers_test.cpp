@@ -696,6 +696,15 @@ static void Test_Schlacht_Owners() {
     using R = Schlacht::OwnerRelease;
     const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
     {
+        // [MCP-WRITE-GRANTS-2026-11-14] seethrough_get_state's `you`: whether the asking client holds a claim.
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("a client that claimed holds a claim", Schlacht::HasOwner(o, ui) && Schlacht::HasOwner(o, ce));
+        EXPECT("a client that never claimed holds none", !Schlacht::HasOwner(o, rig));
+        EXPECT("no owner is never anyone's claim", !Schlacht::HasOwner(o, Schlacht::kOwnerNone));
+    }
+    {
         std::vector<uint64_t> o;
         Schlacht::ClaimOwner(o, ce);
         Schlacht::ClaimOwner(o, ui);

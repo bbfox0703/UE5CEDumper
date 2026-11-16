@@ -23,7 +23,7 @@ public sealed class McpToolsTests
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
         public McpScanState State { get; set; } = McpScanState.Ready;
         /// <summary>The DLL build get_pointers reports: one every write tool accepts unless a test says otherwise.</summary>
-        public int DllBuild { get; set; } = Constants.McpMinDllBuildForRawWrites;
+        public int DllBuild { get; set; } = 3714;
         /// <summary>The timeout each request was sent with, in order.</summary>
         public List<TimeSpan> Timeouts { get; } = new();
         public string? PendingNotice { get; set; }
@@ -467,14 +467,41 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public async Task SeeThroughOff_NeedsTheTogglesGrant()
+    public async Task SeeThroughOff_DropsOnlyThisServersClaim_AndNeedsNoGrant()
     {
-        // An explicit See-through OFF drops every claim, the user's and CE's too: it is no release.
+        // An explicit OFF drops every claim, the user's and CE's too; own_claim drops only this server's, and the DLL
+        // turns See-through off only with the last claim.
         var game = new FakeGame();
         game.Grants.Revoke();
         var (payload, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.False(result.IsError, ErrorOf(payload));
+        var off = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "seethrough_set");
+        Assert.True(off["own_claim"]!.GetValue<bool>());
+        Assert.False(off["enable"]!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("still_held", "stays on")]
+    [InlineData("not_held", "no claim")]
+    public async Task SeeThroughOff_SaysWhatStayed(string released, string words)
+    {
+        var game = new FakeGame();
+        game.Answers["seethrough_set"] = _ => new JsonObject
+        {
+            ["code"] = 0, ["active"] = released == "still_held", ["released"] = released, ["state"] = 1,
+        };
+        var (_, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.False(result.IsError);
+        Assert.Contains(words, result.Note);
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_OnAnOlderDll_IsRefused_AndNothingIsSent()
+    {
+        var game = new FakeGame { DllBuild = 3713 };
+        var (payload, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
         Assert.True(result.IsError);
-        Assert.Contains(Constants.McpGrantToolToggles, ErrorOf(payload));
+        Assert.Contains("3714", ErrorOf(payload));
         Assert.DoesNotContain("seethrough_set", game.Commands);
     }
 
@@ -1229,38 +1256,6 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("force_field", game.Commands);
     }
 
-    [Theory]
-    [InlineData(2, false, true)]    // the UI also holds a claim
-    [InlineData(1, true, true)]     // CE's record holds it
-    [InlineData(1, false, false)]   // only this server's claim: may turn it off
-    public async Task SeeThroughOff_IsRefused_WhileAnotherClaimWouldEndWithIt(int claims, bool ce, bool refused)
-    {
-        // An explicit OFF drops every claim (Stage C), so this server turns it off only over its own claim alone.
-        var game = new FakeGame();
-        var tool = Tool("write_see_through", game);
-        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = true };
-        await tool.Run(new McpArgs(new JsonObject { ["enable"] = true }), CancellationToken.None);
-        game.Answers["seethrough_get_state"] = _ => new JsonObject
-        {
-            ["active"] = true, ["claims"] = claims, ["ce_claimed"] = ce,
-        };
-        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = false };
-        McpToolResult result;
-        try { result = await tool.Run(new McpArgs(new JsonObject { ["enable"] = false }), CancellationToken.None); }
-        catch (McpToolError e) { result = McpToolResult.Fail(e.Message); }
-        Assert.Equal(refused, result.IsError);
-        Assert.Equal(refused ? 1 : 2, game.Commands.Count(c => c == "seethrough_set"));
-    }
-
-    [Fact]
-    public async Task SeeThroughOff_IsRefused_WhenThisServerNeverTurnedItOn()
-    {
-        var game = new FakeGame();
-        game.Answers["seethrough_get_state"] = _ => new JsonObject { ["active"] = true, ["claims"] = 1 };
-        var (_, r) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
-        Assert.True(r.IsError);
-        Assert.DoesNotContain("seethrough_set", game.Commands);
-    }
 
     [Fact]
     public async Task WriteMovement_Reset_SendsTheReset_NotAMultiplier()

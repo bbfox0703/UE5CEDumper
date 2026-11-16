@@ -167,6 +167,11 @@ public sealed class McpGrantsTests
         { """{"cmd":"set_debug_camera","enable":false,"if_free":true}""", true },
         // An explicit See-through OFF drops every claim, the user's and CE's included.
         { """{"cmd":"seethrough_set","enable":false,"if_free":true}""", false },
+        // ...but its own_claim OFF drops only the caller's claim (DLL 3714): a release whoever else holds one.
+        { """{"cmd":"seethrough_set","enable":false,"own_claim":true,"if_free":true}""", true },
+        { """{"cmd":"seethrough_set","enable":false,"own_claim":true,"if_free":true,"count":3}""", false },
+        { """{"cmd":"seethrough_set","enable":false,"own_claim":false,"if_free":true}""", false },
+        { """{"cmd":"set_god_mode","enable":false,"own_claim":true,"if_free":true}""", false },
         { """{"cmd":"fly_set","enable":false,"if_free":true}""", true },
         // A reset_ prefix is not enough: these two end what other clients hold, or reach the whole process.
         { """{"cmd":"reset_all_fields"}""", false },
@@ -419,6 +424,11 @@ public sealed class McpGrantsTests
         Assert.NotNull(g.Check(fieldReset, perCall, Pid, Run, nobody));
         Assert.NotNull(g.Check(fieldReset, toggles, Pid, Run, nobody));
     }
+
+    [Fact]
+    public void SeeThroughsOwnClaimOff_NeedsNoAdmission_AndNoHoldsRead()
+        => Assert.Null(Decided().Check(
+            Req("""{"cmd":"seethrough_set","enable":false,"own_claim":true,"if_free":true}"""), null, Pid, Run));
 
     [Fact]
     public void SeeThroughOff_NeedsTheTogglesGrant()

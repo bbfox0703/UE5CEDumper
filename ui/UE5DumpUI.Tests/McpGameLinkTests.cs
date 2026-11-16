@@ -49,6 +49,8 @@ public sealed class McpGameLinkTests
         public JsonObject ScanStatus { get; set; } = new() { ["running"] = false, ["phase"] = 7 };
         /// <summary>The object count get_pointers reports.</summary>
         public long ObjectCount { get; set; } = 100;
+        /// <summary>The DLL build get_pointers reports.</summary>
+        public int BuildNumber { get; set; } = 3714;
         public int Disconnects { get; private set; }
         public bool IsConnected { get; private set; }
         public string? ConnectedTo { get; private set; }
@@ -101,7 +103,7 @@ public sealed class McpGameLinkTests
                     : int.Parse(ConnectedTo!["UE5DumpBfx_".Length..]);
                 return new JsonObject
                 {
-                    ["ok"] = true, ["pid"] = pid, ["object_count"] = ObjectCount,
+                    ["ok"] = true, ["pid"] = pid, ["object_count"] = ObjectCount, ["build_number"] = BuildNumber,
                     ["gobjects_method"] = ObjectCount > 0 ? "aob" : "not_found",
                     ["process_creation_time"] = CreationTime.TryGetValue(ConnectedTo!, out var run) ? run : RunA,
                 };
@@ -213,6 +215,31 @@ public sealed class McpGameLinkTests
             Write(rig, new JsonObject { ["cmd"] = "set_god_mode", ["enable"] = false, ["if_free"] = true }, null));
         Assert.Contains(Constants.McpGrantToolToggles, e.Message);
         Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    [Theory]
+    [InlineData(3713, false)]
+    [InlineData(3714, true)]
+    public async Task AnOwnClaimOff_GoesOnlyToADllThatKnowsIt(int build, bool sent)
+    {
+        // An older DLL ignores own_claim and runs an explicit OFF, which drops every claim on See-through.
+        var rig = new Rig(4242);
+        rig.Pipe.BuildNumber = build;
+        var off = new JsonObject
+        {
+            ["cmd"] = "seethrough_set", ["enable"] = false, ["own_claim"] = true, ["if_free"] = true,
+        };
+        if (sent)
+        {
+            await Write(rig, off, null);
+            Assert.Contains("seethrough_set", rig.Pipe.Sent);
+        }
+        else
+        {
+            var e = await Assert.ThrowsAsync<McpToolError>(() => Write(rig, off, null));
+            Assert.Contains("3714", e.Message);
+            Assert.DoesNotContain("seethrough_set", rig.Pipe.Sent);
+        }
     }
 
     /// <summary>get_holds naming god mode as held by this client or by Cheat Engine; any other command echoed.</summary>
