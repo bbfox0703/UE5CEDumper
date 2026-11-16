@@ -269,11 +269,12 @@ internal static class McpFieldTools
     }
 
     /// <summary>The entry a value names: by the name the DLL sends (an enum class's is qualified,
-    /// <c>EGrade::Wide_High</c>), by its short name, or by its value; never UHT's sentinel (<c>EGrade_MAX</c>, or a
-    /// <c>MAX</c> the enum declares), which is no state of the enum.</summary>
+    /// <c>EGrade::Wide_High</c>), by its short name, or by its value; never UHT's sentinel, which is no state of the
+    /// enum. UHT appends it last (<c>EGrade_MAX</c>, or a <c>MAX</c> the enum declares last), so only a last entry so
+    /// named is it: a state named <c>HP_MAX</c> in the middle is an entry like any other.</summary>
     private static EnumEntryValue? EntryFor(IReadOnlyList<EnumEntryValue> entries, string text)
     {
-        var real = entries.Where(e => !IsSentinel(ShortName(e.Name))).ToList();
+        var real = entries.Where((e, i) => i < entries.Count - 1 || !IsSentinel(ShortName(e.Name))).ToList();
         return real.FirstOrDefault(e => string.Equals(e.Name, text, StringComparison.OrdinalIgnoreCase))
                ?? real.FirstOrDefault(e => string.Equals(ShortName(e.Name), text, StringComparison.OrdinalIgnoreCase))
                ?? (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
