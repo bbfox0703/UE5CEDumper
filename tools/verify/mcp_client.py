@@ -74,6 +74,13 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         false on a rootless holder; (O) an object parameter given a field's address is refused by the server's liveness
         check, nothing sent; (S) SendToConsole is refused by name. The EchoSoftSpec struct-field pair is recorded apart
         from the exit code.
+    py tools/verify/mcp_client.py invokegrant --exe dist/UE5DumpUI.exe [--pid N]
+        [MCP-WRITE-GRANTS-2026-11-14] Phase 1b on DumperTest Shipping (DLL 3717+): an invoke grant on
+        KismetMathLibrary.Add_IntInt lets write_invoke_granted_function return 42 unasked; grants refused for a deny-list
+        name, a timer by name, a latent call, a FunctionName parameter, a missing class and a short class name; a
+        granted SetActorHiddenInGame refused on a class default and run on a live StaticMeshActor; the DLL's own grant
+        checks driven through the pipe as a background client (another function -28, a FunctionName parameter -28, a
+        latent call per call -24); one function's grant revoked while the other stands.
 
     Every mode that writes starts its server with --writes=any-host (this client is no Claude Code, so by default it
     only reads) and gives itself both grants, reading each scope_ack from tools/list, as a user approving both
@@ -292,6 +299,9 @@ WRITES_ANY_HOST = "--writes=any-host"
 MARKER = "anthropic/requiresUserInteraction"
 GRANT_TOGGLES = "grant_god_mode_camera_cursor_time_see_through_foreground"
 GRANT_MOVEMENT = "grant_movement_fly_teleport_may_kill_or_lose_pawn"
+# Phase 1b: an invoke grant names one function, so give_grants (the kind grants) never asks for it.
+GRANT_INVOKE = "grant_invoke_one_function_any_object_and_args"
+INVOKE_GRANTED = "write_invoke_granted_function"
 PER_CALL_WRITES = ("write_memory", "write_invoke", "write_force_field")
 
 
@@ -310,9 +320,12 @@ def grant_acks(client: "McpClient") -> dict[str, str]:
 
 
 def give_grants(client: "McpClient", base: dict) -> list[str]:
-    """Both grants for the game, as a user approving both prompts would; the errors, if any."""
+    """Both kind grants for the game, as a user approving both prompts would; the errors, if any. The invoke grant
+    names a function, so it is never given here."""
     errors = []
     for name, ack in grant_acks(client).items():
+        if name == GRANT_INVOKE:
+            continue
         r = client.call(name, {**base, "scope_ack": ack})
         if r.get("isError"):
             errors.append(f"{name}: {payload(r)[0]}")
@@ -437,11 +450,13 @@ def probe_hosts(exe: str, ck: "Checks") -> list["McpClient"]:
         label = f"{name} {version}{' ' + extra[0] if extra else ''}"
         wrong = [n for n in tools if n.startswith("write_") and marked(tools[n]) != (n in PER_CALL_WRITES)]
         grants = sorted(n for n in tools if n.startswith("grant_"))
-        ck.check(grants == sorted([GRANT_TOGGLES, GRANT_MOVEMENT]) and all(marked(tools[n]) for n in grants)
+        ck.check(grants == sorted([GRANT_TOGGLES, GRANT_MOVEMENT, GRANT_INVOKE])
+                 and all(marked(tools[n]) for n in grants)
                  and not wrong and "read_grants" in tools and "revoke_grants" in tools
-                 and not marked(tools["revoke_grants"]),
+                 and not marked(tools["revoke_grants"]) and INVOKE_GRANTED in tools,
                  f"{label}: the grants and the per-call writes marked, the rest not", {"grants": grants, "wrong": wrong})
-        ck.check(GRANT_TOGGLES in text and GRANT_MOVEMENT in text, f"{label}: instructions name both grants")
+        ck.check(GRANT_TOGGLES in text and GRANT_MOVEMENT in text and GRANT_INVOKE in text,
+                 f"{label}: instructions name the three grants")
         c.close()
 
     if not SSH_HOST:
@@ -696,8 +711,8 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     ck.check(len(writes) >= 12 and not wrong,
              f"{len(writes)} write_* tools, destructive; only the per-call ones marked", wrong)
     grant_tools = [t for t in tools if t["name"].startswith("grant_")]
-    ck.check(len(grant_tools) == 2 and all(marked(t) and t["annotations"].get("destructiveHint") for t in grant_tools),
-             "the two grant tools, marked and destructive", [t["name"] for t in grant_tools])
+    ck.check(len(grant_tools) == 3 and all(marked(t) and t["annotations"].get("destructiveHint") for t in grant_tools),
+             "the three grant tools, marked and destructive", [t["name"] for t in grant_tools])
     r, d, _ = call("write_time_dilation", {"target": "global", "value": 1.0})
     ck.check(bool(r.get("isError")) and GRANT_TOGGLES in error_text(d),
              "a covered write before its grant: refused, naming the grant", d)
@@ -1768,8 +1783,9 @@ def run_dbgcam_stop(exe: str, pid: int | None, game_name: str, ce_desc: str) -> 
     return ck.done(sessions)
 
 
-# Constants.McpMinDllBuildForWrites / McpMinDllBuildForRawWrites: the DLL builds the server's write tools need.
-MCP_MIN_WRITES, MCP_MIN_RAW_WRITES = 3705, 3706
+# Constants.McpMinDllBuildForWrites / McpMinDllBuildForRawWrites / McpMinDllBuildForInvokeGrants: the DLL builds the
+# server's write tools need.
+MCP_MIN_WRITES, MCP_MIN_RAW_WRITES, MCP_MIN_INVOKE_GRANTS = 3705, 3706, 3717
 FIXTURE_DERIVED, FIXTURE_DECOY = "DumperTestDerivedHolder", "DumperTestHolderDecoy"   # solide_l3's derivation pair
 FIXTURE_FLAG = "bHolderFlag"
 FLAG_HOLD = f"force_field:{FIXTURE_CLASS}::{FIXTURE_FLAG}"
@@ -2260,6 +2276,123 @@ OLD_DLL_COMMAND_LINES = (
 OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera")   # need MCP_MIN_RAW_WRITES, not 3705
 
 
+def run_invoke_grant(exe: str, pid: int | None) -> int:
+    """[MCP-WRITE-GRANTS-2026-11-14] Phase 1b on a live game (DLL 3717+; DumperTest Shipping): an invoke grant names
+    one UFunction, write_invoke_granted_function calls it unasked, and both the server and the DLL keep it to that one.
+    The DLL's own checks are driven straight through the pipe as a background client too, so a server check cannot
+    hide a missing DLL one."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    c = McpClient(exe, [WRITES_ANY_HOST])
+    c.initialize()
+    kml_path = "//Script/Engine/KismetMathLibrary"
+    add_full = kml_path + ".Add_IntInt"
+
+    def call(tool, args=None):
+        r = c.call(tool, {**base, **(args or {})}, 180.0)
+        data, note = payload(r)
+        return r, (data if isinstance(data, dict) else {}), note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    try:
+        tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
+        ck.check(marked(tools.get(GRANT_INVOKE, {})) and not marked(tools.get(INVOKE_GRANTED, {}))
+                 and tools.get(INVOKE_GRANTED, {}).get("annotations", {}).get("destructiveHint") is True,
+                 "the invoke grant is marked; the granted invoke is listed, destructive and not marked",
+                 {n: tools.get(n, {}).get("_meta") for n in (GRANT_INVOKE, INVOKE_GRANTED)})
+        r, st, _ = call("read_status")
+        build = int(st.get("build_number") or 0)
+        print(f"        UE {st.get('ue_version')}, DLL build {build}, server build {st.get('mcp_build')}")
+        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_INVOKE_GRANTS,
+                        f"the game is scanned, DLL build {build} (invoke grants need {MCP_MIN_INVOKE_GRANTS}+)", st):
+            return ck.done(c)
+        game = pid or st.get("pid")
+        ack = grant_acks(c)[GRANT_INVOKE]
+        r, kml, _ = call("read_find_object", {"path": "Default__KismetMathLibrary"})
+        cdo = kml.get("addr")
+        add = {"instance_addr": cdo, "function": "Add_IntInt", "params": {"A": 40, "B": 2}}
+
+        # 1. No grant yet: refused, naming the grant to ask for; nothing sent.
+        r, d, _ = call(INVOKE_GRANTED, add)
+        ck.check(bool(r.get("isError")) and GRANT_INVOKE in error_text(d),
+                 "a granted invoke before its grant: refused, naming the grant", d)
+
+        # 2. The grant, then the call.
+        r, d, _ = call(GRANT_INVOKE, {"function": "Add_IntInt", "class": kml_path, "scope_ack": ack})
+        ck.check(not r.get("isError") and d.get("function") == add_full, "Add_IntInt granted, by full name", d)
+        r, d, _ = call(INVOKE_GRANTED, add)
+        ck.check(not r.get("isError") and d.get("return") == "42",
+                 "write_invoke_granted_function Add_IntInt(40, 2) returns 42 (a static function on a class default)", d)
+        r, d, _ = call("read_grants")
+        g = next((x for x in d.get("grants", []) if x.get("function") == add_full), {})
+        ck.check(g.get("tool") == GRANT_INVOKE and g.get("uses") == 1, "read_grants names it, uses 1", d)
+
+        # 3. Grants refused before the user is asked.
+        for function, cls, why in (("K2_DestroyActor", "//Script/Engine/Actor", "the DLL's deny list"),
+                                   ("K2_SetTimer", "//Script/Engine/KismetSystemLibrary", "a timer by name"),
+                                   ("Delay", "//Script/Engine/KismetSystemLibrary", "a latent call"),
+                                   ("K2_ClearTimer", "//Script/Engine/KismetSystemLibrary", "a FunctionName parameter"),
+                                   ("Add_IntInt", "//Script/Engine/NoSuchClass", "no such class"),
+                                   ("Add_IntInt", "KismetMathLibrary", "a short class name")):
+            r, d, _ = call(GRANT_INVOKE, {"function": function, "class": cls, "scope_ack": ack})
+            ck.check(bool(r.get("isError")), f"the grant is refused for {function} ({why})", d)
+        r, d, _ = call("read_grants")
+        ck.check([x.get("function") for x in d.get("grants", [])] == [add_full], "and nothing else was granted", d)
+
+        # 4. A non-static function: refused on a class default, called on a live actor.
+        r, d, _ = call(GRANT_INVOKE, {"function": "SetActorHiddenInGame", "class": "//Script/Engine/Actor",
+                                      "scope_ack": ack})
+        ck.check(not r.get("isError"), "SetActorHiddenInGame granted", d)
+        r, sma, _ = call("read_find_object", {"path": "Default__StaticMeshActor"})
+        r, d, _ = call(INVOKE_GRANTED, {"instance_addr": sma.get("addr"), "function": "SetActorHiddenInGame",
+                                        "params": {"bNewHidden": False}})
+        ck.check(bool(r.get("isError")) and "class default or a template" in error_text(d),
+                 "the DLL refuses it on a class default under the grant", d)
+        r, live, _ = call("read_find_live_instance", {"class_name": "StaticMeshActor"})
+        r, d, _ = call(INVOKE_GRANTED, {"instance_addr": live.get("addr"), "function": "SetActorHiddenInGame",
+                                        "params": {"bNewHidden": False}})
+        ck.check(not r.get("isError") and d.get("result") == 0,
+                 "and runs it on a live StaticMeshActor (bNewHidden false: it stays visible)", d)
+
+        # 5. The DLL's checks on their own, as a background client straight through the pipe.
+        bg = PipeClient(pid=game, timeout=60)
+        bg.connect()
+        try:
+            r = bg.request("invoke_function", background=True, grant=True, func_name="Add_IntInt",
+                           instance_addr=cdo, expect_func_full="//Script/Engine/Actor.K2_DestroyActor",
+                           parms_size=12, params_hex="280000000200000000000000")
+            ck.check(not r.get("ok") and r.get("code") == -28 and r.get("func_full") == add_full,
+                     "DLL: a call under a grant to another function than expect_func_full is refused (-28)", r)
+            r, ksl, _ = call("read_find_object", {"path": "Default__KismetSystemLibrary"})
+            r = bg.request("invoke_function", background=True, grant=True, func_name="K2_ClearTimer",
+                           instance_addr=ksl.get("addr"),
+                           expect_func_full="//Script/Engine/KismetSystemLibrary.K2_ClearTimer")
+            ck.check(not r.get("ok") and r.get("code") == -28 and "FunctionName" in r.get("error", ""),
+                     "DLL: under a grant, a parameter naming a function is refused (-28)", r)
+            r = bg.request("invoke_function", background=True, func_name="Delay", instance_addr=ksl.get("addr"))
+            ck.check(not r.get("ok") and r.get("code") == -24 and "latent" in r.get("error", ""),
+                     "DLL: a background client's latent call is refused per call too (-24)", r)
+        finally:
+            bg.close()
+
+        # 6. One function's grant ends; the other stands.
+        r, d, _ = call("revoke_grants", {"kind": "invoke", "function": add_full})
+        ck.check(not r.get("isError") and d.get("revoked") == 1, "revoke_grants ends Add_IntInt's grant", d)
+        r, d, _ = call(INVOKE_GRANTED, add)
+        ck.check(bool(r.get("isError")) and GRANT_INVOKE in error_text(d), "its call is refused again", d)
+        r, d, _ = call("read_grants")
+        ck.check([x.get("function") for x in d.get("grants", [])] == ["//Script/Engine/Actor.SetActorHiddenInGame"],
+                 "SetActorHiddenInGame's grant stands", d)
+    finally:
+        c.close()
+    return ck.done(c)
+
+
 def run_old_dll(exe: str, pid: int | None) -> int:
     """Register item 24, the refusal of an old DLL (see the module docstring). The arguments are no-ops for a DLL that
     ignores if_free and keep_undo -- OFF and reset forms, the current pose, the very bytes there, 1 + 1 -- so a refusal
@@ -2327,10 +2460,12 @@ def run_old_dll(exe: str, pid: int | None) -> int:
             fbytes = str(mem.get("bytes", "")).upper() or fbytes
 
         acks = grant_acks(c)
-        ck.check(len(acks) == 2, "both grant tools listed", sorted(acks))
+        ck.check(len(acks) == 3, "the three grant tools listed", sorted(acks))
         for name, ack in acks.items():
-            r, d, _ = call(name, {"scope_ack": ack})
-            ck.check(bool(r.get("isError")) and f"The game's DLL is build {build}, older than {MCP_MIN_WRITES}"
+            need = MCP_MIN_INVOKE_GRANTS if name == GRANT_INVOKE else MCP_MIN_WRITES
+            extra = {"function": "Add_IntInt", "class": "//Script/Engine/KismetMathLibrary"} if name == GRANT_INVOKE else {}
+            r, d, _ = call(name, {"scope_ack": ack, **extra})
+            ck.check(bool(r.get("isError")) and f"The game's DLL is build {build}, older than {need}"
                      in error_text(d), f"{name}: refused with the build text, nothing granted", d)
 
         args = {
@@ -2351,6 +2486,8 @@ def run_old_dll(exe: str, pid: int | None) -> int:
             "write_memory": {"addr": faddr, "bytes": fbytes, "expect": fbytes},
             "write_invoke": {"instance_addr": kml.get("addr", "0x0"), "function": "Add_IntInt",
                              "params": {"A": 1, "B": 1}},
+            INVOKE_GRANTED: {"instance_addr": kml.get("addr", "0x0"), "function": "Add_IntInt",
+                             "params": {"A": 1, "B": 1}},
         }
         since = _fresh_stamp()
         for name, a in args.items():
@@ -2358,7 +2495,8 @@ def run_old_dll(exe: str, pid: int | None) -> int:
                 ck.check(False, f"{name}: listed by tools/list", listed)
                 continue
             r, d, _ = call(name, a)
-            need = MCP_MIN_RAW_WRITES if name in OLD_DLL_RAW_TOOLS else MCP_MIN_WRITES
+            need = (MCP_MIN_INVOKE_GRANTS if name == INVOKE_GRANTED
+                    else MCP_MIN_RAW_WRITES if name in OLD_DLL_RAW_TOOLS else MCP_MIN_WRITES)
             text = error_text(d)
             if not r.get("isError") and name in ("write_force_field", "write_mouse_cursor"):
                 did[name] = True
@@ -2651,7 +2789,7 @@ def run_invoke_params(exe: str, pid: int | None) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold", "dbgcamstop",
-                                     "holdsmore", "olddll", "invokeparams"])
+                                     "holdsmore", "olddll", "invokeparams", "invokegrant"])
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server",
                     help="dbgcamstop: the CE record that started the DLL (its untick runs UE5_Shutdown)")
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
@@ -2702,11 +2840,12 @@ def main() -> int:
             return run_dbgcam_stop(exe, a.pid, a.suspend_name, a.ce_desc)
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
-    if a.mode in ("holdsmore", "olddll", "invokeparams"):
+    if a.mode in ("holdsmore", "olddll", "invokeparams", "invokegrant"):
         # A holder's pid is compared with the server's process here, and the stand-in reads this machine's DLL logs.
         if a.ssh:
             ap.error(f"{a.mode} runs the server on this machine, beside the game: --ssh does not apply")
-        run = {"holdsmore": run_holds_more, "olddll": run_old_dll, "invokeparams": run_invoke_params}[a.mode]
+        run = {"holdsmore": run_holds_more, "olddll": run_old_dll, "invokeparams": run_invoke_params,
+               "invokegrant": run_invoke_grant}[a.mode]
         return run(exe, a.pid)
     return run_live(exe, a.pid, a.suspend_name)
 
