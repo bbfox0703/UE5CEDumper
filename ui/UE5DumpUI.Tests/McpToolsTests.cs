@@ -2324,6 +2324,87 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("invoke_function", game.Commands);
     }
 
+    /// <summary>A game whose objects have classes: 0x3000 a Widget (no super), 0x4000 a BP_Enemy_C, which derives from
+    /// Character and then Actor; get_object and walk_class answer as Fern does.</summary>
+    private static FakeGame ClassedGame(JsonObject fn)
+    {
+        var game = InvokeGame(fn);
+        var classOf = new Dictionary<string, (string Addr, string Name)>
+        {
+            ["0x1000"] = ("0x7FF600002000", "C"),
+            ["0x3000"] = ("0x7FF600007000", "Widget"),
+            ["0x4000"] = ("0x7FF600008000", "BP_Enemy_C"),
+        };
+        var supers = new Dictionary<string, (string Name, string Super)>
+        {
+            ["0x7FF600002000"] = ("C", "0x0"),
+            ["0x7FF600007000"] = ("Widget", "0x0"),
+            ["0x7FF600008000"] = ("BP_Enemy_C", "0x7FF600009000"),
+            ["0x7FF600009000"] = ("Character", "0x7FF60000A000"),
+            ["0x7FF60000A000"] = ("Actor", "0x0"),
+        };
+        game.Answers["get_object"] = r => classOf.TryGetValue(r["addr"]!.GetValue<string>(), out var c)
+            ? new JsonObject { ["class_addr"] = c.Addr, ["class"] = c.Name }
+            : new JsonObject { ["class_addr"] = "0x0" };
+        game.Answers["walk_class"] = r => supers.TryGetValue(r["addr"]!.GetValue<string>(), out var k)
+            ? new JsonObject { ["class"] = new JsonObject { ["name"] = k.Name, ["super_addr"] = k.Super } }
+            : new JsonObject();
+        return game;
+    }
+
+    private static JsonObject ActorParm(string type = "ObjectProperty")
+    {
+        var p = Parm("Target", type, 8, 0);
+        p["obj_class"] = "Actor";
+        return p;
+    }
+
+    [Theory]
+    [InlineData("ObjectProperty")]
+    [InlineData("WeakObjectProperty")]
+    [InlineData("SoftObjectProperty")]
+    public async Task WriteInvoke_AnObjectOfAnotherClassThanDeclared_IsRefused(string type)
+    {
+        // [INVOKE-OBJECT-PARAM-CLASS] A native function handed an object of another class calls through its vtable as if
+        // it were the declared one.
+        var game = ClassedGame(Fn("SetTarget", ActorParm(type)));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x3000" },
+        });
+        Assert.True(result.IsError, payload?.ToJsonString());
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("Widget", error);
+        Assert.Contains("Actor", error);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectOfASubclassOfTheDeclaredClass_IsPassed()
+    {
+        var game = ClassedGame(Fn("SetTarget", ActorParm()));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x4000" },
+        });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Contains("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AClassOrInterfaceParameter_IsNotHeldToItsPropertyClass()
+    {
+        // A class parameter's property class is Class and an interface's is the interface: neither names the object's own
+        // class, so neither is checked this way.
+        var p = ActorParm("InterfaceProperty");
+        var game = ClassedGame(Fn("SetTarget", p));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x3000" },
+        });
+        Assert.DoesNotContain("does not derive", payload?.ToJsonString() ?? "");
+    }
+
     private static JsonObject StructParm(string name, int size, params (string Name, string Type, int Offset, int Size)[] fields)
     {
         var p = Parm(name, "StructProperty", size, 0);
