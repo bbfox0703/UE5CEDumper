@@ -16,15 +16,15 @@ public enum McpHostDecision { ReadOnly, MarkedPerCall, Grants }
 
 /// <summary>A kind of grant. Two kinds and not one, so that "annoying" (god mode stays on, the game runs fast) never
 /// quietly implies "may kill or lose the pawn".</summary>
-public enum McpGrantKind { None, Toggles, Movement }
+public enum McpGrantKind { None, Toggles, Movement, Invoke }
 
 /// <summary>What a tool is to the grant gate: which hosts list it, whether the host is asked before each call, and
 /// whether a call must be admitted.</summary>
-public enum McpToolRole { Read, Scan, GrantedWrite, PerCallWrite, Release, Grant, GrantAdmin }
+public enum McpToolRole { Read, Scan, GrantedWrite, PerCallWrite, Release, Grant, GrantAdmin, GrantedInvoke }
 
 /// <summary>A grant as the session sees it: the game run it is for and how many calls it has admitted.</summary>
 public sealed record McpGrantRecord(long Id, McpGrantKind Kind, long Pid, string CreationTime, DateTime GrantedAtUtc,
-    long Uses);
+    long Uses, string Target = "");
 
 /// <summary>Proof that one call was admitted, for one game run. Only <see cref="McpGrants"/> makes one, and the gate
 /// re-checks it at the send, so a capability cannot reach another game run or outlive a revoke.</summary>
@@ -44,6 +44,7 @@ public sealed class McpGrantCapability
     public McpGrantKind Kind { get; }
     public long Pid { get; }
     public string CreationTime { get; }
+    public string Target { get; } = "";   // stub (red)
 }
 
 /// <summary>
@@ -398,7 +399,7 @@ public sealed partial class McpGrants
     /// <summary>Records a grant for the game run named in a get_pointers reply. A run with no real start time is
     /// refused: get_pointers sends "0" when GetProcessTimes failed, and a key of (pid, "0") would match every later
     /// run of a reused pid.</summary>
-    public McpGrantRecord? Grant(McpGrantKind kind, JsonObject ptrs, out string? refusal)
+    public McpGrantRecord? Grant(McpGrantKind kind, JsonObject ptrs, out string? refusal, string target = "")
     {
         if (Decision != McpHostDecision.Grants)
         {
@@ -446,7 +447,8 @@ public sealed partial class McpGrants
     /// <summary>Admits one write for the game run named in the get_pointers reply the tool already fetched; the tool
     /// passes the capability to the send, where the gate checks it again. Never read the link's connected pid here
     /// instead: the link may reconnect between that reply and the send, and the gate is what catches it.</summary>
-    public McpGrantCapability? Admit(McpToolRole role, McpGrantKind kind, JsonObject ptrs, out string? refusal)
+    public McpGrantCapability? Admit(McpToolRole role, McpGrantKind kind, JsonObject ptrs, out string? refusal,
+        string target = "")
     {
         if (role is not (McpToolRole.GrantedWrite or McpToolRole.PerCallWrite))
         {
@@ -492,7 +494,7 @@ public sealed partial class McpGrants
     }
 
     /// <summary>Ends grants; a null kind or pid matches every one. It only narrows, and it never touches a hold.</summary>
-    public int Revoke(McpGrantKind? kind = null, long? pid = null)
+    public int Revoke(McpGrantKind? kind = null, long? pid = null, string? target = null)
     {
         int removed;
         lock (_lock)

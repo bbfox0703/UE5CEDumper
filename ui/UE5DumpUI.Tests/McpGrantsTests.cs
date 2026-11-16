@@ -322,6 +322,105 @@ public sealed class McpGrantsTests
         Assert.Null(g.Admit(role, McpGrantKind.Toggles, Ptrs(), out _));
     }
 
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+
+    // Ubel::GetFullName's form, as walk_functions sends it in `full`: the function comes last.
+    private const string SetHidden = "//Script/Engine/Actor.SetActorHiddenInGame";
+    private const string Destroy = "//Script/Engine/Actor.K2_DestroyActor";
+
+    private static JsonObject InvokeReq(string func = "SetActorHiddenInGame", string? full = SetHidden,
+        bool grant = true)
+    {
+        var o = new JsonObject
+        {
+            ["cmd"] = "invoke_function", ["func_name"] = func, ["instance_addr"] = "0x1000", ["if_free"] = true,
+        };
+        if (grant) o["grant"] = true;
+        if (full is not null) o["expect_func_full"] = full;
+        return o;
+    }
+
+    [Fact]
+    public void AnInvokeGrant_IsKeyedOnOneFunctionsFullName_ForOneRun()
+    {
+        var g = Decided();
+        Assert.Null(g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out var before, SetHidden));
+        Assert.Contains(Constants.McpGrantToolInvoke, before);   // the refusal names the grant to ask for
+        Assert.Contains("write_invoke", before);                 // and the per-call route
+
+        var record = g.Grant(McpGrantKind.Invoke, Ptrs(), out _, SetHidden);
+        Assert.Equal(SetHidden, record!.Target);
+        var cap = g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden);
+        Assert.Equal(SetHidden, cap!.Target);
+        Assert.Null(g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, Destroy));
+        Assert.Null(g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _,
+            "//script/engine/actor.setactorhiddeningame"));                       // ordinal, as the DLL compares
+        Assert.Null(g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(creationTime: OtherRun), out _,
+            SetHidden));
+        // Each function is its own grant; the same one again is the same grant.
+        g.Grant(McpGrantKind.Invoke, Ptrs(), out _, "//Script/Engine/Actor.SetActorScale3D");
+        g.Grant(McpGrantKind.Invoke, Ptrs(), out _, SetHidden);
+        Assert.Equal(2, g.List().Count);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("SetActorHiddenInGame")]   // no class: not a full name
+    [InlineData("//Script/Engine/Actor.*")]
+    [InlineData("//Script/Engine/Actor.SetActorHiddenInGame,K2_DestroyActor")]
+    public void AnInvokeGrant_NamesExactlyOneFunction(string target)
+    {
+        var g = Decided();
+        Assert.Null(g.Grant(McpGrantKind.Invoke, Ptrs(), out var refusal, target));
+        Assert.NotNull(refusal);
+        Assert.Empty(g.List());
+    }
+
+    [Fact]
+    public void TheGate_PassesAGrantedInvoke_OnlyForTheFunctionItsGrantNames()
+    {
+        var g = Decided();
+        g.Grant(McpGrantKind.Invoke, Ptrs(), out _, SetHidden);
+        var cap = g.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden);
+        Assert.Null(g.Check(InvokeReq(), cap, Pid, Run));
+        Assert.NotNull(g.Check(InvokeReq(full: Destroy), cap, Pid, Run));
+        Assert.NotNull(g.Check(InvokeReq(func: "K2_DestroyActor"), cap, Pid, Run));
+        Assert.NotNull(g.Check(InvokeReq(grant: false), cap, Pid, Run));   // the DLL must check it again
+        Assert.NotNull(g.Check(InvokeReq(full: null), cap, Pid, Run));
+        Assert.NotNull(g.Check(Req("{\"cmd\":\"write_mem\",\"addr\":\"0x1000\",\"bytes\":\"00\",\"expect\":\"01\"}"),
+            cap, Pid, Run));
+        Assert.NotNull(g.Check(Req("{\"cmd\":\"set_god_mode\",\"enable\":true}"), cap, Pid, Run));
+        Assert.Equal(1, Assert.Single(g.List()).Uses);
+
+        g.Revoke(McpGrantKind.Invoke, target: Destroy);   // another function's: this one stands
+        Assert.Null(g.Check(InvokeReq(), cap, Pid, Run));
+        g.Revoke(McpGrantKind.Invoke, target: SetHidden);
+        Assert.NotNull(g.Check(InvokeReq(), cap, Pid, Run));
+    }
+
+    [Fact]
+    public void APerCallInvoke_IsUnchanged_AndAKindGrantNeverCoversAnInvoke()
+    {
+        var g = Decided();
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        var perCall = g.Admit(McpToolRole.PerCallWrite, McpGrantKind.None, Ptrs(), out _);
+        Assert.Null(g.Check(InvokeReq(grant: false, full: null), perCall, Pid, Run));
+        var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        Assert.NotNull(g.Check(InvokeReq(), toggles, Pid, Run));
+    }
+
+    [Fact]
+    public void TheGrantedInvokeTool_IsListedUnmarked_OnlyWhereGrantsAre()
+    {
+        Assert.True(McpGrants.IsListed(McpToolRole.GrantedInvoke, McpHostDecision.Grants));
+        Assert.False(McpGrants.IsMarked(McpToolRole.GrantedInvoke, McpHostDecision.Grants));
+        Assert.False(McpGrants.IsListed(McpToolRole.GrantedInvoke, McpHostDecision.MarkedPerCall));
+        Assert.False(McpGrants.IsListed(McpToolRole.GrantedInvoke, McpHostDecision.ReadOnly));
+        var marked = Decided(version: "2.1.100");
+        Assert.Null(marked.Grant(McpGrantKind.Invoke, Ptrs(), out _, SetHidden));
+        Assert.Null(marked.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden));
+    }
+
     [Fact]
     public void RevokeOnlyNarrows()
     {

@@ -97,6 +97,10 @@ public static class Constants
     /// ([MCP-WRITE-GRANTS-2026-11-14]). An older DLL ignores the key and runs an explicit OFF, which drops every claim,
     /// the user's and CE's too, so the AI's See-through OFF is refused there.</summary>
     public const int McpMinDllBuildForOwnClaim = 3714;
+    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b): its
+    /// invoke_function checks a call under a grant (grant, expect_func_full) against the function the grant names, its
+    /// parameters and a template. An older DLL ignores both keys and would run whatever function it resolves.</summary>
+    public const int McpMinDllBuildForInvokeGrants = 3717;
     /// <summary>The switch that runs the exe as a Claude Code PreToolUse hook instead: it reads the hook's input on stdin
     /// and refuses a subagent's or workflow agent's write or grant ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
     public const string McpAgentGuardSwitch = "--mcp-agent-guard";
@@ -118,6 +122,11 @@ public static class Constants
     /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
     public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
     public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
+    /// <summary>Phase 1b's grant: one UFunction, named by its function and class arguments, which the prompt shows.
+    /// </summary>
+    public const string McpGrantToolInvoke = "grant_invoke_one_function_any_object_and_args";
+    /// <summary>The tool that calls a function an invoke grant names, without a prompt per call.</summary>
+    public const string McpInvokeGrantedTool = "write_invoke_granted_function";
     // The ranges an AI's gameplay values must lie in: the UI's own, refused outside rather than clamped, because the
     // DLL clamps several silently and allows more than the UI for two (time dilation, jump).
     /// <summary>The world time-dilation slider's ceiling (TeleportPanel); the DLL's TIME_DILATION_MAX is 100.</summary>
@@ -146,6 +155,9 @@ public static class Constants
     public const string McpGrantAckMovement =
         "The user asked for this. Until this game run or this session ends, the AI may change movement, gravity "
         + "direction and Fly, and teleport the player. This may kill or lose the pawn; a teleport is not undone.";
+    public const string McpGrantAckInvoke =
+        "The user asked for this. Until this game run or this session ends, the AI may call the one UFunction named "
+        + "here, on any object (NPCs included), with any arguments, without asking again.";
 
     // Application
     public const string AppName = "UE5DumpUI";
