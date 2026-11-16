@@ -36,8 +36,10 @@ internal interface IMcpGame
 
     /// <summary>Sends <paramref name="request"/> to the game <paramref name="pid"/> names, or to the only one running;
     /// connects first when needed. With <paramref name="requireScan"/>, refuses (<see cref="McpToolError"/>) unless that
-    /// game's scan is done and found objects, checked on the same connection under the same lock as the send. Throws
-    /// <see cref="McpToolError"/> when there is no game to send to, the pipe is full or gone, or no reply came in time.
+    /// game's scan is done and found objects, checked on the same connection under the same lock as the send. A request
+    /// that changes the game is sent only with a <paramref name="grant"/> admitted for the game run the connection
+    /// reaches (<see cref="McpGrants.Check"/>). Throws <see cref="McpToolError"/> when there is no game to send to, the
+    /// gate refuses, the pipe is full or gone, or no reply came in time.
     /// </summary>
     Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
         bool requireScan = false, McpGrantCapability? grant = null);
@@ -74,6 +76,13 @@ internal interface IMcpGame
 /// a recovered one, so a pool alone is not yet a scanned game. Only Ready is kept for the connection; every other state
 /// is read again.</para>
 ///
+/// <para><b>The write gate</b> ([MCP-WRITE-GRANTS-2026-11-14]). Every request passes <see cref="McpGrants.Check"/> at
+/// the send, under the lock and after the connect: a read always, a release on a host that writes, anything else only
+/// with a capability admitted for the game run this connection reaches, whose grant is still live. The run is read
+/// from get_pointers at each connect, because the link reconnects silently to whichever game answers, and a write
+/// admitted for one run must not reach the next run of the same pid. Being the one path to the pipe, it is where a
+/// tool that forgets to ask for admission fails closed.</para>
+///
 /// <para><b>Cancelling.</b> The DLL has no cancel command: it stops a connection's command when the connection
 /// breaks (checked every 200 ms). So a call that overruns its time, or that the client cancels, closes the
 /// connection, and the next call opens a new one. Its scan sessions go with it, and the next reply says so.</para>
@@ -90,6 +99,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
 
     private int _pid;          // the connected game, 0 when none
     private int _lastPid;      // the game last connected, kept across a dropped connection
+    private string? _run;      // the connected game's process start time, from get_pointers at connect
     private bool _ready;       // the connected game's scan is done and found objects
     private string? _notice;   // owed to the model with the next reply
 
@@ -129,7 +139,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
                 var report = await ProbeAsync(ct);
                 if (report.State != McpScanState.Ready) throw new McpToolError(Explain(report));
             }
-            return await SendCoreAsync(request, timeout, ct);
+            return await SendCoreAsync(request, timeout, ct, grant);
         }
         finally
         {
@@ -224,11 +234,18 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         return count > 0 && McpJson.GetString(pointers, "gobjects_method") != "not_found";
     }
 
-    /// <summary>One request on the connection, marked background, with a time limit. Overrun and client cancel both
-    /// close the connection, which is the DLL's cancel.</summary>
-    private async Task<JsonObject> SendCoreAsync(JsonObject request, TimeSpan timeout, CancellationToken ct)
+    /// <summary>One request on the connection, marked background, with a time limit, once the write gate passed it.
+    /// Overrun and client cancel both close the connection, which is the DLL's cancel.</summary>
+    private async Task<JsonObject> SendCoreAsync(JsonObject request, TimeSpan timeout, CancellationToken ct,
+        McpGrantCapability? grant = null)
     {
         string cmd = McpJson.GetString(request, "cmd") ?? "?";
+        string? refusal = _grants.Check(request, grant, _pid, _run);
+        if (refusal is not null)
+        {
+            _log.Warn(Constants.LogCatPipe, $"[MCP] Not sent to game {_pid}: {refusal}");
+            throw new McpToolError("Not sent: " + refusal);
+        }
         request["background"] = true;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -284,6 +301,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         }
 
         _pid = 0;
+        _run = null;
         _ready = false;
         string name = PipeTargets.NameFor(target);
         try
@@ -345,6 +363,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
 
         _pid = target;
         _lastPid = target;
+        _run = McpJson.GetString(ptrs, "process_creation_time");
         _log.Info(Constants.LogCatInit, $"[MCP] Connected to {name}.");
     }
 
@@ -417,6 +436,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         try { await _pipe.DisconnectAsync(); }
         catch (Exception e) { _log.Warn(Constants.LogCatPipe, $"[MCP] Disconnect failed: {e.Message}"); }
         _pid = 0;
+        _run = null;
         _ready = false;
         if (why is not null && was != 0)
         {

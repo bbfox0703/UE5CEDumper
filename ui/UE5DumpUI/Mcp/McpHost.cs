@@ -31,7 +31,7 @@ internal static class McpHost
         try
         {
             using var pipe = new PipeClient(log, "M");
-            // RED: the gate is not wired yet; Phase 1 gives the server its decision and this link the same object.
+            // Undecided, this session sends reads and nothing else until the server shares its decision with the link.
             using var game = new McpGameLink(pipe, platform, log, new McpGrants());
             // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
             // once.
