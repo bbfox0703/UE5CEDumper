@@ -59,6 +59,12 @@ internal static class McpFieldTools
         if (!string.Equals(McpJson.GetString(obj, "full_name"), cls, StringComparison.Ordinal))
             throw new McpToolError("Not granted: no class " + cls + " (the object found there is "
                                    + (McpJson.GetString(obj, "full_name") ?? "unnamed") + ")." + Instead);
+        // walk_class answers for any UStruct, and no instance's class chain holds a struct or a function, so a grant on
+        // one could never be used. Every class's own class is a UClass type: Class, BlueprintGeneratedClass, ...
+        if (!(McpJson.GetString(obj, "class") ?? "").EndsWith("Class", StringComparison.Ordinal))
+            throw new McpToolError("Not granted: " + cls + " is not a class (its type is "
+                                   + (McpJson.GetString(obj, "class") ?? "unknown") + "), and a field grant names a "
+                                   + "class's field." + Instead);
         var walked = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = addr }, lookup, ct,
             requireScan: true);
         if (!McpWriteTools.Truthy(walked, "ok") || walked["class"] is not JsonObject c)
