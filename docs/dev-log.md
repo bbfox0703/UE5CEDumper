@@ -27,6 +27,29 @@ builds ≤696 in
 
 -----
 
+## 2026-11-16 (build 3713) — The AI's calls: three gaps closed before any grant ships `[INVOKE-DENY-INDIRECTION]` `[WRITEMEM-OWN-IMAGE]` `[MCP-INSTR-CLAIMS]`
+
+The maintainer chose these three from the MCP write-approval plan (docs/mcp-write-approval-eval.md) because they need
+no measurement and must be closed before a per-function grant could let an AI repeat a call unasked.
+- **What changes for a user of an AI client** (the UI and Cheat Engine are not affected):
+  - `write_invoke` also refuses the calls that reach a refused effect by name: timers by function name or event
+    (`K2_SetTimer*`), property setters by name (`Set*PropertyByName`, `SetCollisionProfileNameProperty`) and a
+    Blueprint's event-graph entry (`ExecuteUbergraph_*`); and `RemovePlayer`, whose `bDestroyPawn` destroys the pawn;
+    and the achievement, leaderboard and in-app purchase calls, which leave the machine without being network RPCs.
+    Every name was checked against Unreal Engine's source.
+  - `write_memory` refuses a range inside UE5Dumper's own image (code -25): its globals include the Cheat Engine
+    mailbox, and a write there would have handed an invoke to the CE-owned poller, past the deny list.
+  - The server's instructions no longer tell the model that "the user is asked before each one" (only Claude Code
+    asks; another host decides for itself) or that "everything this server turns on is released" (Fly's speed, preset
+    and noclip stay, and so does what a `write_invoke` or `write_memory` did). docs/mcp.md says the same.
+- **Tests:** red, then green, for each. dll_helpers_test +19 deny-list checks with controls (reading a timer, an
+  ordinary setter, a name merely containing a family stay allowed) and the image-overlap edges; dll_core_test checks the
+  own-image test on its exe's global, code and a heap block; `McpServerTests.Instructions_DoNotOverstateTheApprovalOrTheRelease`.
+- **Publish:** C++ 287 + 4098 + 22 + 30 + 1574 checks; C# 7937 passed, 1 skipped; headless 71/71.
+- **Live, 3713,** DumperTest Shipping: `mcp_client.py raw` 28/28, its two new checks included -- `write_invoke
+  K2_SetTimer` refused as a call by name, `write_memory` into the DLL's own `g_invokeMailbox` answered -25.
+- AOT UI 62,289,920 bytes (sha256 81c45bdae2913830...); UE5Dumper.dll 3,774,976 bytes (sha256 bd6c75610c353373...).
+
 ## 2026-11-15 (build 3712) — C++ hardening instead of a Rust rewrite: unhandled status results, a data race in the property offsets, AddressSanitizer on the self-tests `[CPP-HARDENING-2026-11-14]`
 
 The maintainer decided against rewriting any part of the DLL in Rust (docs/rust-rewrite-eval.md: about 2-4% of the
