@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using UE5DumpUI.Mcp;
@@ -168,7 +169,8 @@ public sealed class McpToolsTests
         var tools = Catalog();
         Assert.All(tools, t => Assert.Equal(t.Name.StartsWith("read_", StringComparison.Ordinal), t.ReadOnly));
         Assert.All(tools.Where(t => !t.ReadOnly), t =>
-            Assert.True(t.Name == "scan_start" || t.Name.StartsWith("write_", StringComparison.Ordinal), t.Name));
+            Assert.True(t.Name is "scan_start" or "revoke_grants" || t.Name.StartsWith("write_", StringComparison.Ordinal)
+                        || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Name));
         Assert.Contains(tools, t => t.Name.StartsWith("write_", StringComparison.Ordinal));
     }
 
@@ -182,8 +184,10 @@ public sealed class McpToolsTests
             bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
             Assert.Equal(write,
                 t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.Release);
-            Assert.Equal(write, t.Destructive);
-            Assert.Equal(t.EffectiveRole == McpToolRole.GrantedWrite, t.GrantKind != McpGrantKind.None);
+            // A grant unlocks destructive tools: a host that auto-runs non-destructive ones must not auto-approve it.
+            Assert.Equal(write || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Destructive);
+            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant,
+                t.GrantKind != McpGrantKind.None);
         }
         string[] Named(Func<McpTool, bool> which) =>
             Catalog().Where(which).Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
@@ -231,7 +235,7 @@ public sealed class McpToolsTests
         foreach (var t in Catalog())
         {
             bool hasPid = t.InputSchema["properties"]!.AsObject().ContainsKey("pid");
-            Assert.Equal(t.Name != "read_games", hasPid);
+            Assert.Equal(t.Name is not ("read_games" or "read_grants" or "revoke_grants"), hasPid);
         }
     }
 
@@ -449,6 +453,125 @@ public sealed class McpToolsTests
         Assert.Contains(Constants.McpGrantToolMovement, ErrorOf(payload));
         Assert.Contains("Only an OFF with nothing else in it needs no grant", ErrorOf(payload));
         Assert.DoesNotContain("fly_set", game.Commands);
+    }
+
+    // ── The grant tools ─────────────────────────────────────────────────────────────────────────────────
+
+    private static readonly (McpGrantKind Kind, string Tool, string Ack)[] GrantTools =
+    [
+        (McpGrantKind.Toggles, Constants.McpGrantToolToggles, Constants.McpGrantAckToggles),
+        (McpGrantKind.Movement, Constants.McpGrantToolMovement, Constants.McpGrantAckMovement),
+    ];
+
+    private static JsonObject Ack(McpGrantKind kind)
+        => new() { ["scope_ack"] = GrantTools.Single(g => g.Kind == kind).Ack };
+
+    [Fact]
+    public void TheGrantTools_StateTheirScopeInTheName_AndAskForTheFixedSentence()
+    {
+        foreach (var (kind, name, ack) in GrantTools)
+        {
+            var t = Tool(name, new FakeGame());
+            Assert.Equal(McpToolRole.Grant, t.EffectiveRole);
+            Assert.Equal(kind, t.GrantKind);
+            Assert.False(t.ReadOnly);
+            var schema = t.InputSchema;
+            Assert.Contains("scope_ack", schema["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+            Assert.Equal([ack], schema["properties"]!["scope_ack"]!["enum"]!.AsArray().Select(n => n!.GetValue<string>()));
+        }
+        var read = Tool("read_grants", new FakeGame());
+        Assert.Equal(McpToolRole.GrantAdmin, read.EffectiveRole);
+        Assert.True(read.ReadOnly);
+        var revoke = Tool("revoke_grants", new FakeGame());
+        Assert.Equal(McpToolRole.GrantAdmin, revoke.EffectiveRole);
+        Assert.False(revoke.ReadOnly);
+        Assert.False(revoke.Destructive);   // it only narrows
+    }
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("")]
+    [InlineData("The user asked for this.")]
+    public async Task AGrantTool_RefusesAnyOtherScopeAck_AndGrantsNothing(string ack)
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, Constants.McpGrantToolToggles, new JsonObject { ["scope_ack"] = ack });
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantAckToggles, ErrorOf(payload));
+        Assert.Empty(game.Grants.List());
+    }
+
+    [Fact]
+    public async Task AGrantTool_RefusesAnOldDll_AndGrantsNothing()
+    {
+        var game = new FakeGame { DllBuild = Constants.McpMinDllBuildForWrites - 1 };
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, Constants.McpGrantToolMovement, Ack(McpGrantKind.Movement));
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpMinDllBuildForWrites.ToString(CultureInfo.InvariantCulture), ErrorOf(payload));
+        Assert.Empty(game.Grants.List());
+    }
+
+    [Fact]
+    public async Task AGrantTool_GrantsItsKindForThisGameRun_AndSaysWhatItCoversAndWhatEndsIt()
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke(McpGrantKind.Toggles);   // movement stays, and the reply lists it among the others
+        var (payload, result) = await Call(game, Constants.McpGrantToolToggles, Ack(McpGrantKind.Toggles));
+        Assert.False(result.IsError, ErrorOf(payload));
+        var p = payload!.AsObject();
+        var tools = p["tools"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        Assert.Contains("write_god_mode", tools);
+        Assert.Contains("write_see_through", tools);
+        Assert.DoesNotContain("write_fly", tools);
+        Assert.DoesNotContain("write_memory", tools);
+        Assert.Equal(4242, p["game"]!["pid"]!.GetValue<int>());
+        Assert.Equal("Game-Win64-Shipping.exe", p["game"]!["exe"]!.GetValue<string>());
+        // A window title is the game's own text, and the game's text is data: only the OS's exe name is echoed.
+        Assert.Null(p["game"]!["window_title"]);
+        Assert.Contains("revoke_grants", p["ends"]!.GetValue<string>());
+        Assert.Contains(Constants.McpGrantToolMovement, p["other_grants"]!.ToJsonString());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Toggles);
+
+        var (_, write) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.False(write.IsError);
+    }
+
+    [Fact]
+    public async Task ReadGrants_ListsEachGrant_AndSendsNothing()
+    {
+        var game = new FakeGame();
+        await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        int before = game.Sent.Count;
+        var (payload, result) = await Call(game, "read_grants");
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Equal(before, game.Sent.Count);
+        Assert.Equal("Grants", payload!["decision"]!.GetValue<string>());
+        var grants = payload["grants"]!.AsArray();
+        Assert.Equal(2, grants.Count);
+        var toggles = grants.Single(g => g!["tool"]!.GetValue<string>() == Constants.McpGrantToolToggles)!;
+        Assert.Equal(1, toggles["uses"]!.GetValue<long>());
+        Assert.Equal(4242, toggles["pid"]!.GetValue<long>());
+        Assert.Equal("Game-Win64-Shipping.exe", toggles["exe"]!.GetValue<string>());
+        Assert.True(toggles["game_running"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task RevokeGrants_OnlyNarrows_SendsNothing_AndSaysTheHoldsStay()
+    {
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, "revoke_grants", new JsonObject { ["kind"] = "movement" });
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Empty(game.Sent);
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Equal(McpGrantKind.Toggles, Assert.Single(game.Grants.List()).Kind);
+        Assert.Contains("hold", payload["note"]!.GetValue<string>());
+
+        var (all, _) = await Call(game, "revoke_grants");
+        Assert.Equal(1, all!["revoked"]!.GetValue<int>());
+        Assert.Empty(game.Grants.List());
+        Assert.Empty(game.Sent);
     }
 
     // ── What the tools send ─────────────────────────────────────────────────────────────────────────────

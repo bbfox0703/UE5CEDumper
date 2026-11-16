@@ -89,6 +89,15 @@ public static class Constants
     /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
     public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
     public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
+    /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
+    /// prompt shows a call's arguments in full (Phase 0, M1), so the user approves these words, not the model's own.
+    /// </summary>
+    public const string McpGrantAckToggles =
+        "The user asked for this. Until this game run or this session ends, the AI may turn on and off: god mode, "
+        + "the debug camera, the mouse cursor, time dilation, See-through, Keep Foreground.";
+    public const string McpGrantAckMovement =
+        "The user asked for this. Until this game run or this session ends, the AI may change movement, gravity "
+        + "direction and Fly, and teleport the player. This may kill or lose the pawn; a teleport is not undone.";
 
     // Application
     public const string AppName = "UE5DumpUI";
