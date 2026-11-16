@@ -983,10 +983,14 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
     and sends no `get_debug_camera_state` while pending (DLL pipe log). Then, still frozen, the client exits:
     `get_holds` reads `release_owed: true`, kind none, and the card reads "Turning off: the AI session that held it
     has ended"; after the resume the camera turns off and the chip goes.
-6. ⬜ **A CE invoke behind a busy camera lock runs unrecorded.** Acceptance: with the game thread frozen, a pipe
-    client's `set_debug_camera` holds the camera's lock through its wait while a mailbox INVOKE_BY_NAME of
-    ToggleDebugCamera arrives: the mailbox answers within its own invoke timeout (not two), and the DLL log reads
-    "ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera".
+6. ✅ **CLOSED 2026-11-17** (DLL 3719, DumperTest58 Development pid 13776, UE 5.8, 35,859 objects;
+    `tools/verify/dbgcam_ledger_live.py --busy-lock --suspend-name DumperTest58` 7/7, log
+    `out/dbgcam_busylock_3719.log`). The game thread (tid 33700) suspended; a second foreground client's
+    `set_debug_camera` ON waiting on it, holding the camera's lock; the mailbox's INVOKE_BY_NAME of ToggleDebugCamera,
+    written with WriteProcessMemory (no CE), answered in **5.0 s with a 5 s invoke timeout** (one timeout; waiting for
+    the lock would have taken about 9.75 s) with -5 "ProcessEvent returned -5"; the writer answered -5 (queued); the
+    pipe log read "Mailbox: ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera"; resumed,
+    the clean-up left the camera off. *Was:* ⬜ with this acceptance test.
 
 ### ⬜ MCP invoke grants, Phase 1b (build 3717) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
 
