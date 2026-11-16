@@ -1018,6 +1018,43 @@ One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `
     class, and a native function the Blueprint overrides is refused under a grant on the parent's full name (the DLL's
     -28 names the override's `func_full`).
 
+### ⬜ MCP field grants, Phase 2 (build 3718) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+
+One field of one class per grant: `grant_write_field_one_property_every_instance`, then `write_field` unasked -- dev-log
+3718, docs/mcp-write-approval-eval.md §4.5. Unit tests (`McpGrantsTests`, `McpToolsTests` with the `FieldGame` fake,
+`McpServerTests`, `McpHostTests`) and a source pin (`PipePerProcessSourceTests.GetObject_NamesTheTemplateVerdict`).
+
+1. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3718, DumperTest Shipping pid 13204, UE 5.4; `mcp_client.py fieldgrant`
+    33/33, log `out/mcp_fieldgrant_3718.log`).
+    - The grant marked, `write_field` listed unmarked and destructive; before the grant, a write refused naming it,
+      nothing written; grants refused for `HolderHealth` (a struct), `FixedArr` (a static array of 8), a short class
+      name and a missing field, each pointing at `write_memory`, nothing granted.
+    - `//Script/DumperTest/DumperTestHolder:HolderValue` granted; written unasked on a spawned
+      `DumperTestDerivedHolder` (4321.5, read back by `read_memory`), `read_grants` uses 1; `1e39` refused, nothing
+      written; put back with `write_field` byte for byte (`00807A44`, 1002.0).
+    - Refused, nothing written: a `DumperTestHolderDecoy`'s `HolderValue` (the same name, no derivation), the
+      `Default__DumperTestDerivedHolder` class default, and `CharMoveComp` under `Default__Character` (an archetype,
+      `//Script/Engine/CharacterMovementComponent:MaxWalkSpeed` granted for the check and revoked).
+    - `bHolderFlag` (a native bool, `01` before) written true then false, each read back, put back; `Probe_WideEnum`
+      written `Wide_High` by its short name (`00007F00`, all four bytes), `5` refused as no entry, put back.
+    - `HolderValue`'s grant revoked: its write refused again; the bool's and the enum's grants stand.
+    - Regressions on the same build: `probe` 29/29, `invokegrant` 22/22, `raw` 28/28, `invokeparams` 26/26,
+      `writes --toggle-experimental` 39/39, `holdsmore` 78/78; `olddll` 41/41 on a fresh 3695 DLL (pid 24960): the
+      field grant and `write_field` refused "older than 3718", nothing sent.
+2. ⬜ **Claude Code's prompt for a field grant.** Acceptance: with the server registered from a 3718 exe, the AI asked to
+    change one field repeatedly calls `grant_write_field_one_property_every_instance`; the prompt shows that name, then
+    Field, then Class, then the scope_ack sentence, each whole; after Allow, `write_field` runs without a prompt in auto
+    mode, `write_memory` elsewhere still asks, and the server's log has one `Grant N: Field ... : <class path>:<field>`
+    line. Covered meanwhile by `McpToolsTests.TheFieldGrant_StatesItsScope_WithTheFieldFirst` (the order) and Phase 0's
+    M1 (whole arguments).
+3. ⬜ **A Blueprint class's field under a grant.** Acceptance: on a fixture with a Blueprint variable (its class under
+    `//Game/...`, a `_C` class), the grant takes the variable and the BP class path, `write_field` writes it on a live
+    instance and reads it back, and the same variable name on a sibling Blueprint class is refused.
+4. ⬜ **A packed bool written on a live object.** Acceptance: a grant on a bitfield bool of a class (an engine
+    `uint8 bFoo:1`, e.g. `Actor:bHidden` on a live actor whose hidden state is safe to flip), `write_field` true then
+    false, each read back by its own bit, the byte's other bits unchanged, put back. The fixture's own flag is a native
+    bool, so the packed path is pinned only by `McpToolsTests.WriteField_APackedBool_KeepsItsSiblings_AndClearsOnlyItsOwnBit`.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1174,7 +1211,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`16` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
