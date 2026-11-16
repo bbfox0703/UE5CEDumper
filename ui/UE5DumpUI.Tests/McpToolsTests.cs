@@ -811,6 +811,9 @@ public sealed class McpToolsTests
     [InlineData("42.0", "2A000000")]    // a model's JSON number, parsed as the server receives it
     [InlineData("1e3", "E8030000")]
     [InlineData("\"42.0\"", "2A000000")]
+    [InlineData("-7.000", "F9FFFFFF")]
+    [InlineData("4.2E1", "2A000000")]
+    [InlineData("4200e-2", "2A000000")]
     public async Task WriteField_AnIntegralNumberWrittenAsADecimal_ReachesAnIntegerField(string json, string bytes)
     {
         var game = FieldGame();
@@ -824,6 +827,10 @@ public sealed class McpToolsTests
     [Theory]
     [InlineData("42.5")]
     [InlineData("1e300")]
+    // Each rounds to an integer as a double, though its text is none: judged from the text, never the rounded double.
+    [InlineData("0.99999999999999999")]
+    [InlineData("42.0000000000000001")]
+    [InlineData("1e-400")]
     public async Task WriteField_ANumberNoIntegerFieldHolds_IsStillRefused(string json)
     {
         var game = FieldGame();
