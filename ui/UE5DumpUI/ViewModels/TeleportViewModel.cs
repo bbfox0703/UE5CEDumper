@@ -4088,7 +4088,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 _rereadOwed.UnionWith(reread);
                 return;
             }
-            var missed = await RereadHeldCardsAsync(reread, seeThrough, gen);
+            var missed = await RereadHeldCardsAsync(reread, report, seeThrough, gen);
             if (gen == _holdsGen) _rereadOwed.UnionWith(missed);
         }
         finally
@@ -4160,8 +4160,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// command came in between; the Stealth card's from the forced fields alone (<see cref="ApplyStealthJob"/>). Returns
     /// the holds whose read was not made, which the poll owes to the next one; a card hidden by the experimental switch
     /// owes none.</summary>
-    private async Task<HashSet<string>> RereadHeldCardsAsync(HashSet<string> holds, SeeThroughStatus? seeThrough,
-        int gen)
+    private async Task<HashSet<string>> RereadHeldCardsAsync(HashSet<string> holds, HoldsReport report,
+        SeeThroughStatus? seeThrough, int gen)
     {
         var missed = new HashSet<string>(StringComparer.Ordinal);
         bool Current() => gen == _holdsGen && IsConnected && !IsBusy;
@@ -4191,8 +4191,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
 
         await Read(new[] { Constants.HoldGodMode }, () => _dump.GetProtectStateAsync(), ApplyProtectState);
-        await Read(new[] { Constants.HoldDebugCamera }, () => _dump.GetDebugCameraStateAsync(),
-            s => ApplyDebugCameraState(s));
+        if (holds.Contains(Constants.HoldDebugCamera) && report.Find(Constants.HoldDebugCamera) is
+            { Pending: true, Active: false })
+        {
+            // [W3-DEBUGCAM-QUEUED] An ON still on its way reads OFF until its toggle runs: shown queued, whoever sent or
+            // joined it, and read once it has run.
+            if (Current()) ApplyDebugCameraState(Constants.DebugCameraToggleQueuedResult);
+            missed.Add(Constants.HoldDebugCamera);
+        }
+        else
+        {
+            await Read(new[] { Constants.HoldDebugCamera }, () => _dump.GetDebugCameraStateAsync(),
+                s => ApplyDebugCameraState(s));
+        }
         await Read(MovementHolds, () => _dump.GetMovementParamsAsync(), mp =>
         {
             ApplyMoveSpeedReadout(mp);
