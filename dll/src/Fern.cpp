@@ -7596,7 +7596,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 else if (!resolved)
                     why = "has flags that could not be read, so it could be a network RPC";
                 else
-                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags);
+                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags,
+                                                           fi.fullName);
                 if (!why.empty()) {
                     auto e = Renge::MakeError(id, "Not invoked: " + funcName + " " + why);
                     e["code"] = Grimoire::INVOKE_REFUSED_FOR_BACKGROUND;

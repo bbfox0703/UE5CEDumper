@@ -429,15 +429,27 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 // calls any function by name, a setter that writes any property by name, a Blueprint graph entered at a free entry
 // point), RemovePlayer, and the online-service writes that leave the machine without being RPCs (achievements,
 // leaderboards, in-app purchases; names from UE's OnlineSubsystemUtils). A per-function grant must never reach these.
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's scan of every UFUNCTION in the UE 4.18-5.8 sources added the names the list
+// missed, and an async action's Activate by its resolved `fullName` (Ubel::GetFullName's form): it does the
+// online-service write, session join or save its factory set up, while UActorComponent::Activate shares its name.
 inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags,
                                               const std::string& fullName = {}) {
-    (void)fullName;   // stub (red)
     constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
     if (functionFlags & kFuncNet)
         return "is a network RPC: it can reach a server outside this machine";
-    std::string n;
-    n.reserve(funcName.size());
-    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    auto lower = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+        return out;
+    };
+    const std::string full = lower(fullName);
+    // 4.27+ derives every online proxy and the async save from BlueprintAsyncActionBase; 4.18-4.23's online proxies
+    // declare their own Activate. A native override has no UFunction of its own, so these are the only two.
+    if (full == "//script/engine/blueprintasyncactionbase.activate"
+        || full == "//script/engine/onlineblueprintcallproxybase.activate")
+        return "starts an async action, which can write to the online service, join a session or write a save slot";
+    const std::string n = lower(funcName);
     struct Rule { const char* name; const char* why; };
     static constexpr Rule kRules[] = {
         {"toggledebugcamera", "toggles the debug camera: use write_debug_camera, which reads the state first and "
@@ -473,10 +485,24 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
         {"destroyallpawnsexcepttarget", "destroys pawns, which cannot be undone"},
         {"savegametoslot", "writes a save slot, which can overwrite the user's save"},
         {"asyncsavegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"savegametoslotforlocalplayer", "writes a save slot, which can overwrite the user's save"},
+        {"asyncsavegametoslotforlocalplayer", "writes a save slot, which can overwrite the user's save"},
         {"deletegameinslot", "deletes a save slot, which cannot be undone"},
         {"removeplayer", "removes a player, and with bDestroyPawn destroys its pawn"},
         {"setcollisionprofilenameproperty", "writes a property by name"},
+        {"edittextpropertysourcestring", "writes a property by name"},
+        {"addinterpfloat", "writes a property by name on every tick of a timeline"},
+        {"addinterpvector", "writes a property by name on every tick of a timeline"},
+        {"addinterplinearcolor", "writes a property by name on every tick of a timeline"},
+        {"remoteevent", "calls any function by name on the level's scripts, which reaches functions this list refuses"},
+        {"setbind", "binds a key to a console command, which can run anything"},
+        {"loadstreamlevel", "loads a level, which can invalidate every address the user is looking at"},
+        {"loadstreamlevelbysoftobjectptr", "loads a level, which can invalidate every address the user is looking at"},
+        {"unloadstreamlevel", "unloads a level, which can invalidate every address the user is looking at"},
+        {"unloadstreamlevelbysoftobjectptr",
+         "unloads a level, which can invalidate every address the user is looking at"},
         {"writeprogress", "writes achievement progress to the online service, outside the game"},
+        {"writeachievementprogress", "writes achievement progress to the online service, outside the game"},
         {"writeleaderboardinteger", "writes a leaderboard score to the online service, outside the game"},
         {"createproxyobjectforflush", "flushes leaderboard writes to the online service, outside the game"},
     };

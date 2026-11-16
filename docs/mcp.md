@@ -245,7 +245,10 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   level, destroying actors or removing a player, writing or deleting save slots, the debug camera (it goes through
   `write_debug_camera`), and since 2026-11-16 the calls that reach those effects by name or leave the machine without
   being network RPCs: timers and property setters that take a name (`K2_SetTimer*`, `Set*PropertyByName`), a
-  Blueprint's event-graph entry (`ExecuteUbergraph_*`), and achievement, leaderboard and in-app purchase calls.
+  Blueprint's event-graph entry (`ExecuteUbergraph_*`), and achievement, leaderboard and in-app purchase calls. Build
+  3717 adds what a scan of the UE 4.18-5.8 sources found: UE4's `WriteAchievementProgress`, an async action's
+  `Activate` (the online and save actions), `RemoteEvent`, `SetBind`, the timeline's `AddInterp*`,
+  `EditTextPropertySourceString`, a streaming level's load and unload, and the save slot's local-player twins.
   The list goes by name; a game function that does the same under another name is not caught, and the prompt is then
   your check. The server itself refuses a function taking an FText, a value that does not parse as its parameter's
   type, and an object parameter that is not a live object.

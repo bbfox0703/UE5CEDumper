@@ -2136,9 +2136,11 @@ request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing qu
   Camera" -- and a pending ON counts as the debug camera held by the client that sent it.
 - `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
 - From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
-  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
-  restart, actor destruction, save-slot write / delete, the debug-camera toggles -- see `set_debug_camera`). Voll.h's
-  `InvokeRefusedForBackground`.
+  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands and key binds, quit /
+  level travel / streaming-level load and unload / restart, actor destruction, save-slot write / delete, timers,
+  property setters and events that take a name, `ExecuteUbergraph_*`, achievement / leaderboard / in-app purchase
+  writes, the debug-camera toggles -- see `set_debug_camera`), or an async action's `Activate` by its resolved full
+  name (build 3717+). Voll.h's `InvokeRefusedForBackground`.
 - A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
   still waiting).
 
