@@ -11,9 +11,11 @@ namespace UE5DumpUI.Mcp;
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D2-3: raw memory writes and UFunction invokes, to the maintainer's decisions of
 /// 2026-11-11. Wherever the host writes, both are asked about on every call, since no grant covers them
 /// (<see cref="McpGrants.PerCallCommands"/>), and both need the DLL from
-/// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself. The exception,
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: <c>write_invoke_granted_function</c> runs write_invoke's call, unasked, for
-/// the one function an invoke grant names, in the DLL's grant mode (DLL 3717+), which checks that function again:
+/// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself. The exceptions,
+/// [MCP-WRITE-GRANTS-2026-11-14], run unasked what a grant names: Phase 1b's <c>write_invoke_granted_function</c> runs
+/// write_invoke's call for the one function an invoke grant names, in the DLL's grant mode (DLL 3717+), which checks that
+/// function again, and Phase 2's <c>write_field</c> (<see cref="McpFieldTools"/>) sends this write_mem for the one field
+/// a field grant names, at the one address the gate then holds it to:
 ///
 /// <para><b>write_memory</b> writes data only. The DLL refuses code, read-only, guard and uncommitted pages for every
 /// client and never changes page protection; this tool also sends the bytes the AI read (<c>expect</c>), so memory the

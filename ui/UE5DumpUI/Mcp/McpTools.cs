@@ -412,6 +412,8 @@ internal static class McpTools
         // ones refuse.
         tools.AddRange(McpWriteTools.Create(game, experimentalEnabled ?? (() => false), grants));
         tools.AddRange(McpRawTools.Create(game, grants));
+        // Before the grant tools, which name the tools each grant covers from this list.
+        tools.AddRange(McpFieldTools.Create(game, grants));
         tools.AddRange(McpGrantTools.Create(game, grants, tools));
         return tools;
     }

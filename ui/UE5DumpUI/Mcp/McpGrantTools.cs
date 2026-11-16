@@ -4,8 +4,8 @@ using System.Text.Json.Nodes;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phases 1 and 1b. The tools that give, list and end the session's write grants: the two
-/// kind grants, and an invoke grant naming one UFunction.
+/// [MCP-WRITE-GRANTS-2026-11-14] Phases 1, 1b and 2. The tools that give, list and end the session's write grants: the
+/// two kind grants, an invoke grant naming one UFunction, and a field grant naming one field of one class.
 ///
 /// <para><b>A grant tool is where the user is asked.</b> Claude Code's prompt shows a tool's name and its arguments,
 /// nothing else (Phase 0, M1 and M10), so each grant's name states what it unlocks, and its one required argument,
@@ -33,6 +33,7 @@ internal static class McpGrantTools
         yield return GrantTool(game, grants, catalogue, McpGrantKind.Movement, Constants.McpGrantToolMovement,
             "Grant: movement and teleport", Constants.McpGrantAckMovement);
         yield return InvokeGrantTool(game, grants, catalogue);
+        yield return FieldGrantTool(game, grants, catalogue);
         yield return ReadGrants(game, grants);
         yield return RevokeGrants(grants);
     }
@@ -167,6 +168,65 @@ internal static class McpGrantTools
                                             + McpGrants.FunctionNameOf(target) + " (read_functions lists them).");
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] Phase 2 (docs/mcp-write-approval-eval.md §4.5). One field of one class, named by the
+    // field and the class's full path, in that order, as the invoke grant names its function. The class bounds the
+    // instances (its own and its subclasses'); the field must be a type write_field writes, so a grant that could never
+    // be used is refused here instead of recorded.
+    private static McpTool FieldGrantTool(IMcpGame game, McpGrants grants, IReadOnlyList<McpTool> catalogue) => new(
+        Constants.McpGrantToolField, "Grant: one field of one class",
+        "Asks the user for one grant, for one game run: afterwards " + Constants.McpFieldGrantedTool + " writes this "
+        + "one field on every live instance of this class and its subclasses (NPCs included), with any value its type "
+        + "allows, without asking again. field and class name it as read_class shows them: the field's name, and the "
+        + "class's full_path, e.g. //Script/Engine/Character. Only a number, a bool or an enum field, one element. Call it "
+        + "only after the user asked for changes of this field, never in advance, and first say in chat what it allows "
+        + "and how long it lasts. scope_ack must be exactly the sentence its schema gives. write_memory asks every call "
+        + "instead, for anything else.",
+        McpSchema.Object(
+            ("field", McpSchema.Str("The field's name, as read_class lists it, e.g. \"Health\"."), true),
+            ("class", McpSchema.Str("The class's full path, read_class' full_path, e.g. \"//Script/Engine/Character\"."),
+                true),
+            ("scope_ack", McpSchema.Enum("This exact sentence, which the user sees and approves.",
+                Constants.McpGrantAckField), true),
+            McpWriteTools.PidProp),
+        ReadOnly: false,
+        async (a, ct) =>
+        {
+            int? pid = a.OptInt("pid");
+            string field = a.ReqStr("field").Trim();
+            string cls = a.ReqStr("class").Trim();
+            string given = (a.Str("scope_ack") ?? "").Trim();
+            if (!string.Equals(given, Constants.McpGrantAckField, StringComparison.Ordinal))
+                throw new McpToolError("Not granted: scope_ack must be exactly this sentence: \""
+                                       + Constants.McpGrantAckField + "\"");
+            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+            string target = cls + ":" + field;
+            if (!McpGrants.IsFieldTarget(target))
+                throw new McpToolError("Not granted: name one field and its class's full path, as read_class shows them "
+                                       + "(e.g. Health and //Script/Engine/Character). write_memory asks every call "
+                                       + "instead.");
+            var f = await McpFieldTools.FindGrantableFieldAsync(game, pid, cls, field, ct);
+            var record = grants.Grant(McpGrantKind.Field, ptrs, out string? refusal, target)
+                ?? throw new McpToolError(refusal ?? "Not granted.");
+
+            var others = new JsonArray();
+            foreach (var g in grants.List())
+                if (g.Id != record.Id)
+                    McpJson.Append(others, Describe(g, game));
+            var payload = new JsonObject
+            {
+                ["granted"] = Constants.McpGrantToolField,
+                ["field"] = target,
+                ["type"] = f.TypeName,
+                ["covers"] = "writes of " + target + " on every live instance of the class and its subclasses, any value "
+                             + "its type allows",
+                ["tools"] = CoveredTools(catalogue, McpGrantKind.Field),
+                ["game"] = Game(game, record.Pid),
+                ["ends"] = Ends,
+                ["other_grants"] = others,
+            };
+            return McpWriteTools.Combine(new McpToolResult(payload), game.TakeNotice());
+        }, Idempotent: true, Destructive: true, Role: McpToolRole.Grant, GrantKind: McpGrantKind.Field);
+
     private static McpTool ReadGrants(IMcpGame game, McpGrants grants) => new(
         "read_grants", "Write grants",
         "This session's write grants: which grant, the game (pid, exe), when it was given, how many writes it has "
@@ -182,6 +242,7 @@ internal static class McpGrantTools
                 ["grants"] = arr,
                 ["per_call"] = "write_memory, write_invoke and write_force_field take no grant and are asked about on "
                                + "every call; " + Constants.McpInvokeGrantedTool + " calls only a function an invoke "
+                               + "grant names, and " + Constants.McpFieldGrantedTool + " writes only a field a field "
                                + "grant names.",
             };
             return Task.FromResult(new McpToolResult(payload));
@@ -189,13 +250,16 @@ internal static class McpGrantTools
 
     private static McpTool RevokeGrants(McpGrants grants) => new(
         "revoke_grants", "End write grants",
-        "Ends this session's write grants: one kind (toggles, movement, or invoke -- every invoke grant, or the one "
-        + "whose function is given), or every one when kind is left out. It only narrows what the AI may do, and it "
-        + "releases no hold: turn each hold off with its write_* tool.",
+        "Ends this session's write grants: one kind (toggles, movement, invoke or field -- every invoke or field "
+        + "grant, or the one whose function or field is given), or every one when kind is left out. It only narrows what "
+        + "the AI may do, and it releases no hold: turn each hold off with its write_* tool.",
         McpSchema.Object(
-            ("kind", McpSchema.Enum("Which grant; leave out for every one.", "toggles", "movement", "invoke"), false),
+            ("kind", McpSchema.Enum("Which grant; leave out for every one.", "toggles", "movement", "invoke", "field"),
+                false),
             ("function", McpSchema.Str("With kind invoke: the full name of the one function whose grant ends."),
-                false)),
+                false),
+            ("field", McpSchema.Str("With kind field: the one field whose grant ends, as read_grants shows it (its "
+                                    + "class's full path, a colon, the field)."), false)),
         ReadOnly: false,
         (a, _) =>
         {
@@ -205,12 +269,16 @@ internal static class McpGrantTools
                 "toggles" => McpGrantKind.Toggles,
                 "movement" => McpGrantKind.Movement,
                 "invoke" => McpGrantKind.Invoke,
-                _ => throw new McpToolError("'kind' must be toggles, movement or invoke."),
+                "field" => McpGrantKind.Field,
+                _ => throw new McpToolError("'kind' must be toggles, movement, invoke or field."),
             };
             string? function = a.Str("function")?.Trim();
             if (function is not null && kind != McpGrantKind.Invoke)
                 throw new McpToolError("'function' goes with kind invoke.");
-            int revoked = grants.Revoke(kind, target: function);
+            string? field = a.Str("field")?.Trim();
+            if (field is not null && kind != McpGrantKind.Field)
+                throw new McpToolError("'field' goes with kind field.");
+            int revoked = grants.Revoke(kind, target: function ?? field);
             var left = new JsonArray();
             foreach (var g in grants.List())
                 McpJson.Append(left, McpGrants.GrantToolFor(g.Kind) + (g.Target.Length > 0 ? " " + g.Target : ""));
@@ -228,7 +296,8 @@ internal static class McpGrantTools
     {
         var arr = new JsonArray();
         foreach (var t in catalogue)
-            if (t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.GrantedInvoke && t.GrantKind == kind)
+            if (t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.GrantedInvoke or McpToolRole.GrantedField
+                && t.GrantKind == kind)
                 McpJson.Append(arr, t.Name);
         return arr;
     }
@@ -248,7 +317,7 @@ internal static class McpGrantTools
             // The same pid listed may be a later run, which the grant does not cover; the gate tells them apart.
             ["game_running"] = info is not null,
         };
-        if (g.Target.Length > 0) o["function"] = g.Target;
+        if (g.Target.Length > 0) o[g.Kind == McpGrantKind.Field ? "field" : "function"] = g.Target;
         return o;
     }
 

@@ -278,7 +278,8 @@ public sealed partial class McpGrants
     public static IReadOnlySet<string> ReadCommands => Reads;
     /// <summary>The resets that end only what this server holds.</summary>
     public static IReadOnlySet<string> ReleaseCommands => Resets;
-    /// <summary>The writes no grant covers, asked before every call.</summary>
+    /// <summary>The writes no kind grant covers, asked before every call unless an invoke or field grant names the one
+    /// function or field (<see cref="Check"/>).</summary>
     public static IReadOnlySet<string> PerCallCommands => PerCall;
 
     public static IReadOnlySet<string> CommandsOf(McpGrantKind kind) => kind switch

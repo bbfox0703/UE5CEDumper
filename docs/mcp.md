@@ -193,11 +193,13 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `write_memory` | Writes up to 4 KB of data at an address, if it still holds the bytes the AI read; returns before and after. |
 | `write_invoke` | Calls a UFunction on a live object on the game thread, parameters by name; returns its return value and out parameters. |
 | `write_invoke_granted_function` | Calls a UFunction an invoke grant names, as `write_invoke` does, without asking again (build 3717+). |
+| `write_field` | Writes the one field a field grant names on a live instance of its class or a subclass, without asking again; checks the bytes it read first. |
 | `grant_god_mode_camera_cursor_time_see_through_foreground` | Asks you once per game run to let the AI turn god mode, the debug camera, the mouse cursor, time dilation, See-through and Keep Foreground on and off. |
 | `grant_movement_fly_teleport_may_kill_or_lose_pawn` | Asks you once per game run to let the AI change movement, gravity direction and Fly, and teleport the player. This may kill or lose the pawn. |
 | `grant_invoke_one_function_any_object_and_args` | Asks you once per game run to let the AI call one UFunction, named by its function and class, on any object with any arguments (build 3717+). |
-| `read_grants` | This session's grants: the game each covers, the function an invoke grant names, and how many writes each let through. |
-| `revoke_grants` | Ends the AI's grants: one kind, one function's invoke grant, or all. It releases no hold. |
+| `grant_write_field_one_property_every_instance` | Asks you once per game run to let the AI write one number, bool or enum field of one class, on every live instance of it and its subclasses (NPCs included), with any value its type allows. |
+| `read_grants` | This session's grants: the game each covers, the function or field a grant names, and how many writes each let through. |
+| `revoke_grants` | Ends the AI's grants: one kind, one function's or one field's grant, or all. It releases no hold. |
 
 - **Asked once per grant, in Claude Code.** The gameplay toggles (god mode, debug camera, mouse cursor, time dilation,
   See-through, Keep Foreground) need the toggles grant, `grant_god_mode_camera_cursor_time_see_through_foreground`.

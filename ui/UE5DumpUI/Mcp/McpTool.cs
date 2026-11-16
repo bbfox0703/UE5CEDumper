@@ -54,6 +54,10 @@ internal sealed class McpArgs(JsonObject? args)
 
     public bool Has(string name) => _args[name] is not null;
 
+    /// <summary>An argument as given, for one whose type the tool reads itself (a value that is a number, a bool or a
+    /// name); null when absent.</summary>
+    public JsonNode? Node(string name) => _args[name];
+
     public string? Str(string name)
     {
         var node = _args[name];

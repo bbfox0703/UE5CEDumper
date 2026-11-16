@@ -430,7 +430,7 @@ public sealed class DumpService : IDumpService
     /// cannot drift from the single path because they parse with the
     /// same code.
     /// </summary>
-    private static ClassInfoModel DeserializeClassInfo(JsonObject classObj)
+    internal static ClassInfoModel DeserializeClassInfo(JsonObject classObj)
     {
         var model = new ClassInfoModel
         {

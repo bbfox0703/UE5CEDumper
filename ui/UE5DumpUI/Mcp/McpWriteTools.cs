@@ -441,12 +441,12 @@ internal static class McpWriteTools
     /// null; a refusal throws, naming the grant to ask for. The link's gate checks the capability again at the send.
     /// </summary>
     internal static McpGrantCapability? Admit(McpGrants grants, McpToolRole role, McpGrantKind kind,
-        JsonObject request, JsonObject ptrs, string target = "")
+        JsonObject request, JsonObject ptrs, string target = "", string detail = "")
     {
         // A release goes through without a grant only if this server holds what it ends, which the link reads at the
         // send; the grant, when there is one, goes along for the case where it does not.
-        if (McpGrants.IsRelease(request)) return grants.Admit(role, kind, ptrs, out _, target);
-        var grant = grants.Admit(role, kind, ptrs, out string? refusal, target);
+        if (McpGrants.IsRelease(request)) return grants.Admit(role, kind, ptrs, out _, target, detail);
+        var grant = grants.Admit(role, kind, ptrs, out string? refusal, target, detail);
         if (grant is not null) return grant;
         // An OFF that also carries a global setting (Fly's speed, preset or noclip) is no release.
         if (request["enable"] is JsonValue v && v.GetValueKind() == JsonValueKind.False)

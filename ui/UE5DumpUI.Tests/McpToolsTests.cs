@@ -32,8 +32,8 @@ public sealed class McpToolsTests
         /// <summary>The game run get_pointers reports, which a grant and an admission are keyed on.</summary>
         public const string Run = "1DB5F0A2C3E4D50";
         /// <summary>The session's grants, on the game rather than the catalogue: Tool() builds a new catalogue for every
-        /// call, and a grant must outlive one call. A grants host, with both kinds granted for this game's run, unless a
-        /// test revokes them; the fake's send runs the same gate check as the link.</summary>
+        /// call, and a grant must outlive one call. A grants host, with the toggles and movement grants given for this
+        /// game's run unless a test revokes them; the fake's send runs the same gate check as the link.</summary>
         public McpGrants Grants { get; }
         /// <summary>The UI's "Block AI writes" file as the server reads it on every call: off unless a test says so.
         /// </summary>
@@ -208,10 +208,11 @@ public sealed class McpToolsTests
         {
             bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
             Assert.Equal(write, t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite
-                or McpToolRole.Release or McpToolRole.GrantedInvoke);
+                or McpToolRole.Release or McpToolRole.GrantedInvoke or McpToolRole.GrantedField);
             // A grant unlocks destructive tools: a host that auto-runs non-destructive ones must not auto-approve it.
             Assert.Equal(write || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Destructive);
-            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant or McpToolRole.GrantedInvoke,
+            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant or McpToolRole.GrantedInvoke
+                    or McpToolRole.GrantedField,
                 t.GrantKind != McpGrantKind.None);
         }
         string[] Named(Func<McpTool, bool> which) =>
@@ -227,6 +228,9 @@ public sealed class McpToolsTests
         // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: the one tool an invoke grant covers.
         Assert.Equal([Constants.McpInvokeGrantedTool],
             Named(t => t.EffectiveRole == McpToolRole.GrantedInvoke && t.GrantKind == McpGrantKind.Invoke));
+        // Phase 2: the one tool a field grant covers.
+        Assert.Equal([Constants.McpFieldGrantedTool],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedField && t.GrantKind == McpGrantKind.Field));
         Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
     }
 
@@ -417,11 +421,13 @@ public sealed class McpToolsTests
                     ["fields"] = HolderFields(),
                 },
         };
-        game.Answers["walk_instance"] = r => new JsonObject
+        // Through its text, as the pipe delivers it: a number built in memory is a JsonValue<int>, which the parsers'
+        // GetValue<long> refuses, and a parsed one is not.
+        game.Answers["walk_instance"] = r => JsonNode.Parse(new JsonObject
         {
             ["addr"] = r["addr"]!.GetValue<string>(), ["class"] = "DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
             ["fields"] = LiveFields(),
-        };
+        }.ToJsonString())!.AsObject();
         game.Answers["read_mem"] = r =>
         {
             McpArgs.TryParseHex(r["addr"]!.GetValue<string>(), out ulong a);
@@ -578,7 +584,19 @@ public sealed class McpToolsTests
             game.Sent.Clear();
             return (game, HiddenCall());
         }
-        if (t.Name == "revoke_grants") args.Remove("function");
+        if (t.Name == Constants.McpGrantToolField) return (FieldGame(), FieldGrantArgs());
+        if (t.Name == Constants.McpFieldGrantedTool)
+        {
+            var game = FieldGame();
+            await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+            game.Sent.Clear();
+            return (game, FieldWrite("HolderValue", 42));
+        }
+        if (t.Name == "revoke_grants")
+        {
+            args.Remove("function");
+            args.Remove("field");
+        }
         return (new FakeGame(), args);
     }
 
