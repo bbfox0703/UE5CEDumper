@@ -15,13 +15,13 @@ public enum McpWriteMode { Default, AnyHost, Off }
 public enum McpHostDecision { ReadOnly, MarkedPerCall, Grants }
 
 /// <summary>A kind of grant. Two gameplay kinds and not one, so that "annoying" (god mode stays on, the game runs fast)
-/// never quietly implies "may kill or lose the pawn". <see cref="Invoke"/> (Phase 1b) names one UFunction, its
-/// grant's <see cref="McpGrantRecord.Target"/>.</summary>
+/// never quietly implies "may kill or lose the pawn". <see cref="Invoke"/> (Phase 1b) names one UFunction and
+/// <see cref="Field"/> (Phase 2) one field of one class, each its grant's <see cref="McpGrantRecord.Target"/>.</summary>
 public enum McpGrantKind { None, Toggles, Movement, Invoke, Field }
 
 /// <summary>What a tool is to the grant gate: which hosts list it, whether the host is asked before each call, and
-/// whether a call must be admitted. <see cref="GrantedInvoke"/> calls only a function an invoke grant names, so only a
-/// grants host lists it.</summary>
+/// whether a call must be admitted. <see cref="GrantedInvoke"/> calls only a function an invoke grant names and
+/// <see cref="GrantedField"/> writes only a field a field grant names, so only a grants host lists them.</summary>
 public enum McpToolRole
 {
     Read, Scan, GrantedWrite, PerCallWrite, Release, Grant, GrantAdmin, GrantedInvoke, GrantedField,
@@ -36,13 +36,15 @@ public sealed record McpGrantRecord(long Id, McpGrantKind Kind, long Pid, string
 /// re-checks it at the send, so a capability cannot reach another game run or outlive a revoke.</summary>
 public sealed class McpGrantCapability
 {
-    internal McpGrantCapability(long grantId, McpGrantKind kind, long pid, string creationTime, string target = "")
+    internal McpGrantCapability(long grantId, McpGrantKind kind, long pid, string creationTime, string target = "",
+        string detail = "")
     {
         GrantId = grantId;
         Kind = kind;
         Pid = pid;
         CreationTime = creationTime;
         Target = target;
+        Detail = detail;
     }
 
     /// <summary>The grant that admitted the call, or 0 for a call the host asked about on its own.</summary>
@@ -53,7 +55,9 @@ public sealed class McpGrantCapability
     public string CreationTime { get; }
     /// <summary>The function an invoke grant admitted the call for, by full name; "" otherwise.</summary>
     public string Target { get; }
-    public string Detail { get; } = "";   // stub (red)
+    /// <summary>A field write's address and size, "0x...:N", which the gate holds the write_mem to; "" otherwise.
+    /// </summary>
+    public string Detail { get; }
 }
 
 /// <summary>
@@ -241,7 +245,8 @@ public sealed partial class McpGrants
     public static bool IsListed(McpToolRole role, McpHostDecision decision) => role switch
     {
         McpToolRole.Read or McpToolRole.Scan => true,
-        McpToolRole.Grant or McpToolRole.GrantAdmin or McpToolRole.GrantedInvoke => decision == McpHostDecision.Grants,
+        McpToolRole.Grant or McpToolRole.GrantAdmin or McpToolRole.GrantedInvoke or McpToolRole.GrantedField
+            => decision == McpHostDecision.Grants,
         _ => decision != McpHostDecision.ReadOnly,
     };
 
@@ -394,8 +399,40 @@ public sealed partial class McpGrants
         McpGrantKind.Toggles => Constants.McpGrantToolToggles,
         McpGrantKind.Movement => Constants.McpGrantToolMovement,
         McpGrantKind.Invoke => Constants.McpGrantToolInvoke,
+        McpGrantKind.Field => Constants.McpGrantToolField,
         _ => "",
     };
+
+    /// <summary>Whether a target names exactly one field of one class: the class's full path (walk_class' full_path,
+    /// from the root, no colon), one colon, then the field's name, with what <see cref="IsFunctionFullName"/> refuses
+    /// refused here too.</summary>
+    public static bool IsFieldTarget(string? target)
+    {
+        if (string.IsNullOrEmpty(target) || target[0] != '/') return false;
+        int colon = target.IndexOf(':');
+        if (colon <= 1 || colon != target.LastIndexOf(':') || colon == target.Length - 1) return false;
+        foreach (char c in target)
+            if (char.IsControl(c) || c is ',' or ';' or '|' or '\\')
+                return false;
+        string field = target[(colon + 1)..];
+        if (field.Trim().Length != field.Length || !field.Any(c => char.IsLetterOrDigit(c) || c == '_')) return false;
+        return !target[..colon].Any(char.IsWhiteSpace);
+    }
+
+    /// <summary>A field write's capability detail: its address and size.</summary>
+    public static string FieldDetail(ulong address, int size)
+        => "0x" + address.ToString("X", System.Globalization.CultureInfo.InvariantCulture) + ":"
+           + size.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static bool TryParseDetail(string detail, out ulong address, out int size)
+    {
+        address = 0;
+        size = 0;
+        int colon = detail.LastIndexOf(':');
+        return colon > 0 && McpArgs.TryParseHex(detail[..colon], out address) && address != 0
+               && int.TryParse(detail[(colon + 1)..], System.Globalization.NumberStyles.None,
+                   System.Globalization.CultureInfo.InvariantCulture, out size) && size > 0;
+    }
 
     /// <summary>Whether a target names exactly one function in Ubel::GetFullName's form, as walk_functions sends it
     /// (<c>//Script/Engine/Actor.SetActorHiddenInGame</c>): a path from the root, a dot, then the function. The DLL
@@ -429,6 +466,7 @@ public sealed partial class McpGrants
         McpGrantKind.Movement =>
             "the movement knobs, gravity direction, Fly and teleport, which may kill or lose the player's pawn",
         McpGrantKind.Invoke => "one UFunction, on any object, with any arguments",
+        McpGrantKind.Field => "one field of one class, on every instance of it and its subclasses",
         _ => "",
     };
 
@@ -447,12 +485,22 @@ public sealed partial class McpGrants
             refusal = "Not granted: no such grant.";
             return null;
         }
-        // An invoke grant names exactly one function; a kind grant names none.
-        if (kind == McpGrantKind.Invoke ? !IsFunctionFullName(target) : target.Length > 0)
+        // An invoke grant names exactly one function, a field grant one class field; a kind grant names none.
+        bool targetOk = kind switch
         {
-            refusal = kind == McpGrantKind.Invoke
-                ? "Not granted: name exactly one function by its full name, as read_functions shows it in 'full'."
-                : "Not granted: this grant names no function.";
+            McpGrantKind.Invoke => IsFunctionFullName(target),
+            McpGrantKind.Field => IsFieldTarget(target),
+            _ => target.Length == 0,
+        };
+        if (!targetOk)
+        {
+            refusal = kind switch
+            {
+                McpGrantKind.Invoke =>
+                    "Not granted: name exactly one function by its full name, as read_functions shows it in 'full'.",
+                McpGrantKind.Field => "Not granted: name exactly one field and its class's full path.",
+                _ => "Not granted: this grant names no function or field.",
+            };
             return null;
         }
         if (LookAtBlock() is { } blocked)
@@ -496,7 +544,8 @@ public sealed partial class McpGrants
     public McpGrantCapability? Admit(McpToolRole role, McpGrantKind kind, JsonObject ptrs, out string? refusal,
         string target = "", string detail = "")
     {
-        if (role is not (McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.GrantedInvoke))
+        if (role is not (McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.GrantedInvoke
+            or McpToolRole.GrantedField))
         {
             refusal = "Not changed: this tool does not write.";
             return null;
@@ -515,7 +564,9 @@ public sealed partial class McpGrants
         if (!TryRun(ptrs, out long pid, out string creationTime, out refusal)) return null;
         if (role == McpToolRole.PerCallWrite) return new McpGrantCapability(0, McpGrantKind.None, pid, creationTime);
         if (role == McpToolRole.GrantedInvoke) return AdmitInvoke(decision, kind, pid, creationTime, target, out refusal);
-        if (kind is McpGrantKind.None or McpGrantKind.Invoke)
+        if (role == McpToolRole.GrantedField)
+            return AdmitField(decision, kind, pid, creationTime, target, detail, out refusal);
+        if (kind is McpGrantKind.None or McpGrantKind.Invoke or McpGrantKind.Field)
         {
             refusal = "Not changed: this write has no grant kind.";
             return null;
@@ -566,6 +617,35 @@ public sealed partial class McpGrants
         _log?.Info(Constants.LogCatPipe, $"[MCP] Grant {id} admitted a call of {target} in game {pid}.");
         refusal = null;
         return new McpGrantCapability(id, McpGrantKind.Invoke, pid, creationTime, target);
+    }
+
+    // Only under grants, only for a field grant on the very class field the write resolved, and only with the address
+    // and size it computed, which the gate holds the write_mem to.
+    private McpGrantCapability? AdmitField(McpHostDecision decision, McpGrantKind kind, long pid, string creationTime,
+        string target, string detail, out string? refusal)
+    {
+        if (decision != McpHostDecision.Grants || kind != McpGrantKind.Field || !IsFieldTarget(target)
+            || !TryParseDetail(detail, out _, out _))
+        {
+            refusal = "Not changed: this write needs a field grant; write_memory asks the user every call instead.";
+            return null;
+        }
+        long id;
+        lock (_lock)
+        {
+            var entry = Find(McpGrantKind.Field, pid, creationTime, target);
+            if (entry is null)
+            {
+                refusal = "Not changed: no grant covers " + target + " for this game. Call " + Constants.McpGrantToolField
+                    + " with this field and its class once the user has asked for it, or use write_memory, asked every "
+                    + "call.";
+                return null;
+            }
+            id = entry.Id;
+        }
+        _log?.Info(Constants.LogCatPipe, $"[MCP] Grant {id} admitted a write of {target} at {detail} in game {pid}.");
+        refusal = null;
+        return new McpGrantCapability(id, McpGrantKind.Field, pid, creationTime, target, detail);
     }
 
     /// <summary>Ends grants; a null kind, pid or target matches every one. It only narrows, and it never touches a hold.
@@ -657,6 +737,8 @@ public sealed partial class McpGrants
         {
             if (cmd == "invoke_function" && cap.Kind == McpGrantKind.Invoke && !cap.PerCall)
                 return CheckGrantedInvoke(request, cap, decision);
+            if (cmd == "write_mem" && cap.Kind == McpGrantKind.Field && !cap.PerCall)
+                return CheckGrantedField(request, cap, decision);
             return cap.PerCall && cap.Kind == McpGrantKind.None ? null : notCovered;
         }
         if (cap.Kind != kind) return notCovered;
@@ -668,6 +750,24 @@ public sealed partial class McpGrants
             if (entry is null || entry.Id != cap.GrantId) return "the grant for this was revoked.";
             // Counted here, where the grant is what lets the call through: an admission never sent, or an OFF of the
             // server's own hold (passed above on that), is not the grant's doing.
+            entry.Uses++;
+            return null;
+        }
+    }
+
+    /// <summary>A write under a field grant: write_mem at exactly the address and size the tool computed for the
+    /// granted field, so the capability cannot carry another write.</summary>
+    private string? CheckGrantedField(JsonObject request, McpGrantCapability cap, McpHostDecision decision)
+    {
+        if (decision != McpHostDecision.Grants) return "this session does not use grants.";
+        if (!TryParseDetail(cap.Detail, out ulong address, out int size)
+            || !McpArgs.TryParseHex(McpJson.GetString(request, "addr"), out ulong addr) || addr != address
+            || (McpJson.GetString(request, "bytes") ?? "").Length != size * 2)
+            return "this write is not to " + cap.Target + " where its admission placed it.";
+        lock (_lock)
+        {
+            var entry = Find(McpGrantKind.Field, cap.Pid, cap.CreationTime, cap.Target);
+            if (entry is null || entry.Id != cap.GrantId) return "the grant for this was revoked.";
             entry.Uses++;
             return null;
         }
