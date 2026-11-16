@@ -403,11 +403,10 @@ internal static class McpRawTools
                 if (!await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
                     throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
                 // [INVOKE-OBJECT-PARAM-CLASS] A native function handed an object of another class calls through its
-                // vtable as if it were the declared one.
-                if (HoldsAnInstanceOfItsClass(type) && p.ObjectClassName.Length > 0
-                    && await NotDerivedFromAsync(game, pid, scalar, p.ObjectClassName, timeout, ct) is { } other)
-                    throw new McpToolError($"'{p.Name}' takes a {p.ObjectClassName}; {scalar} is {other}, which does not "
-                                           + "derive from it.");
+                // vtable, or reads its fields, as if it were the declared one.
+                if (DeclaredClassOf(type, p.ObjectClassName) is { } declared
+                    && await NotDerivedFromAsync(game, pid, scalar, declared, timeout, ct) is { } why)
+                    throw new McpToolError($"'{p.Name}' takes a {declared}; {scalar} {why}.");
             }
             if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, scalar, out string rangeErr))
                 throw new McpToolError($"'{p.Name}': {rangeErr}");
@@ -416,31 +415,48 @@ internal static class McpRawTools
         return new InvokeCall(buf, size, strings);
     }
 
-    /// <summary>The object kinds whose declared class (obj_class, the property's class) is the object's own class or a
-    /// super of it. A class parameter's property class is Class and an interface's is the interface: neither relation is
-    /// a class chain's, so neither is checked this way.</summary>
-    private static bool HoldsAnInstanceOfItsClass(string type)
-        => type is "ObjectProperty" or "WeakObjectProperty" or "SoftObjectProperty" or "LazyObjectProperty";
+    /// <summary>The class an object argument's own class chain must reach, or null for none to check. An object
+    /// parameter (strong, weak or soft) declares its PropertyClass (obj_class); a class parameter's PropertyClass is
+    /// Class or a subclass of it, and the argument is a class object, whose own class derives from Class -- which is
+    /// asked for literally, so a metaclass read for the property class cannot narrow it. An interface parameter declares
+    /// the interface, which an object implements rather than derives from: liveness only. So is a parameter whose
+    /// declared class the DLL could not read, and Object, which every live GObjects entry is.</summary>
+    private static string? DeclaredClassOf(string type, string objClass) => type switch
+    {
+        "ClassProperty" or "SoftClassProperty" => "Class",
+        "ObjectProperty" or "WeakObjectProperty" or "SoftObjectProperty"
+            when objClass.Length > 0 && objClass != "Object" => objClass,
+        _ => null,
+    };
 
-    /// <summary>Null when the live object at <paramref name="addr"/> is a <paramref name="declared"/> (its class or a super
-    /// is so named; the DLL sends the declared class by its short name, as walk_class names each class); otherwise what
-    /// it is instead, for the refusal. A chain that cannot be read counts as not derived.</summary>
+    /// <summary>Null when the live object at <paramref name="addr"/> is a <paramref name="declared"/>: its class, or a
+    /// super of it, has that name. The match is by short name, the only one walk_functions sends for the declared class,
+    /// so an unrelated class of the same short name in another package passes. Otherwise the reason, for the refusal:
+    /// "is a X, which does not derive from it" only when the chain was read to its root through named classes; a chain
+    /// that could not be read (a class whose walk the DLL refuses, an unmeasured super offset) is refused without a
+    /// claim about what the object is.</summary>
     private static async Task<string?> NotDerivedFromAsync(IMcpGame game, int? pid, string addr, string declared,
         TimeSpan timeout, CancellationToken ct)
     {
         var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = addr }, timeout, ct,
             requireScan: true);
+        string own = McpJson.GetString(obj, "class") ?? "";
+        if (string.Equals(own, declared, StringComparison.Ordinal)) return null;
         string? cls = McpJson.GetString(obj, "class_addr");
         for (int hop = 0; hop < MaxSuperHops && cls is not null && McpArgs.TryParseHex(cls, out ulong c) && c != 0; hop++)
         {
             var cr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = cls }, timeout, ct,
                 requireScan: true);
-            if (!McpWriteTools.Truthy(cr, "ok") || cr["class"] is not JsonObject k) break;
-            if (string.Equals(McpJson.GetString(k, "name"), declared, StringComparison.Ordinal)) return null;
-            cls = McpJson.GetString(k, "super_addr");
+            string name = (McpWriteTools.Truthy(cr, "ok") && cr["class"] is JsonObject k
+                ? McpJson.GetString(k, "name") : null) ?? "";
+            if (name.Length == 0) break;   // unread: no verdict
+            if (string.Equals(name, declared, StringComparison.Ordinal)) return null;
+            string? super = McpJson.GetString((JsonObject)cr["class"]!, "super_addr");
+            if (super is null || !McpArgs.TryParseHex(super, out ulong s) || s == 0)
+                return (own.Length > 0 ? "is a " + own : "is an object") + ", which does not derive from it";
+            cls = super;
         }
-        string own = McpJson.GetString(obj, "class") ?? "";
-        return own.Length > 0 ? "a " + own : "an object whose class could not be read";
+        return "has a class chain that could not be read, so it was not passed";
     }
 
     /// <summary>A struct parameter's fields as the dialog expands them: a trusted engine layout first (version-aware),
