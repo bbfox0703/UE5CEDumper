@@ -600,6 +600,28 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", head);
     }
 
+    private static string HoldRecorderBody()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int start = fern.IndexOf("struct HoldRecorder {", StringComparison.Ordinal);
+        Assert.True(start > 0, "Fern.cpp has a HoldRecorder");
+        int end = fern.IndexOf("} holdRecorder{", start, StringComparison.Ordinal);
+        Assert.True(end > start, "the HoldRecorder is constructed after its declaration");
+        int close = fern.IndexOf(';', end);
+        return fern[start..(close + 1)];
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a join belongs to set_debug_camera's own toggle. An
+    /// invoke of the camera's functions sends none, and consuming another's would hand the camera it turned on to an
+    /// old joiner (a CE record that joined the window's queued Force ON).</summary>
+    [Fact]
+    public void TheHoldRecorder_HandsTheCameraToAJoiner_OnlyForSetDebugCamerasOwnToggle()
+    {
+        string recorder = HoldRecorderBody();
+        Assert.Matches(@"holdRecorder\{[^;]*cmd == Renge::CMD_INVOKE_FUNCTION", recorder);   // it knows an invoke
+        Assert.Matches(@"!invoke\s*&&[^;]*FrierenDebugCamera::ConsumeJoin\(", recorder);
+    }
+
     /// <summary>What a background client turned on ends with it; a foreground client's holds outlive it.</summary>
     [Fact]
     public void ABackgroundClientsHolds_AreReleasedWhenItsProcessLeaves()
