@@ -198,7 +198,7 @@ internal static class McpGrantTools
             if (!string.Equals(given, Constants.McpGrantAckField, StringComparison.Ordinal))
                 throw new McpToolError("Not granted: scope_ack must be exactly this sentence: \""
                                        + Constants.McpGrantAckField + "\"");
-            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForFieldWrites, ct);
             string target = cls + ":" + field;
             if (!McpGrants.IsFieldTarget(target))
                 throw new McpToolError("Not granted: name one field and its class's full path, as read_class shows them "

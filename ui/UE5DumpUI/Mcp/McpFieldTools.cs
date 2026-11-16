@@ -21,8 +21,9 @@ namespace UE5DumpUI.Mcp;
 /// (<see cref="FieldValueConverter.TryConvert"/>); an enum takes only one of its own entries, where the editor also
 /// takes any number that fits; a packed bool is written through its single-bit mask, and an unresolved bit is refused
 /// (<see cref="FieldValueConverter.PlanBoolWrite"/>). The write carries the bytes read just before it (expect), so a
-/// value the game or the user changed in between is not overwritten. A class default object is refused: what it holds
-/// reaches every instance spawned later, which is more than the grant's words say.</para>
+/// value the game or the user changed in between is not overwritten. A template is refused, by the DLL's own verdict
+/// (get_object's template, DLL 3718+): a class default, a class default's subobject or a Blueprint component template
+/// holds what every instance spawned later starts with, which is more than the grant's "every live instance".</para>
 /// </summary>
 internal static class McpFieldTools
 {
@@ -83,9 +84,10 @@ internal static class McpFieldTools
         "Writes the one field a field grant (" + Constants.McpGrantToolField + ") names, on a live instance of its "
         + "class or a subclass, without asking again. value as read_instance shows it: a number, true or false, or one of "
         + "an enum's entries by name or value. The bytes there are read just before the write and sent with it, so a "
-        + "value the game or the user changed in between is not overwritten. Returns the bytes before and after. A class "
-        + "default object (Default__) is refused, and so is a field no grant names: write_memory asks every call. A field "
-        + "a gameplay hold keeps (god mode, a forced field) is put back by it.",
+        + "value the game or the user changed in between is not overwritten. Returns the bytes before and after. A "
+        + "template (a class default object, its subobjects, a Blueprint component template) is refused, and so is a "
+        + "field no grant names: write_memory asks every call. A field a gameplay hold keeps (god mode, a forced field) "
+        + "is put back by it.",
         McpSchema.Object(
             ("instance_addr", McpSchema.Addr("The live object's address, e.g. from read_find_instances."), true),
             ("field", McpSchema.Str("The field's name, as the grant names it, e.g. \"Health\"."), true),
@@ -99,7 +101,7 @@ internal static class McpFieldTools
             string inst = a.Addr("instance_addr");
             string field = a.ReqStr("field").Trim();
             string text = ValueText(a.Node("value"));
-            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForFieldWrites, ct);
             var timeout = TimeSpan.FromSeconds(LookupSeconds);
             if (!McpArgs.TryParseHex(inst, out ulong instAddr) || instAddr == 0
                 || !await McpRawTools.IsLiveObjectAsync(game, pid, inst, timeout, ct))
@@ -107,9 +109,15 @@ internal static class McpFieldTools
                                        + "(read_find_instances gives one).");
             var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = inst }, timeout, ct,
                 requireScan: true);
-            if ((McpJson.GetString(obj, "name") ?? "").StartsWith("Default__", StringComparison.Ordinal))
-                throw new McpToolError("Not changed: " + inst + " is a class default object: what it holds reaches every "
-                                       + "instance spawned later, and a field grant covers live instances." + Instead);
+            // The DLL's verdict, never the name: an archetype is named like any component.
+            string template = McpJson.GetString(obj, "template")
+                ?? throw new McpToolError("Not changed: the game's DLL did not say whether " + inst + " is a template.");
+            if (template.Length > 0)
+                throw new McpToolError("Not changed: " + inst + " is "
+                                       + (template == "class_default" ? "a class default object"
+                                           : "a template (a class default's subobject or a Blueprint component template)")
+                                       + ": what it holds reaches every instance spawned later, and a field grant covers "
+                                       + "live instances." + Instead);
             var (target, meta) = await GrantedFieldAsync(game, grants, pid, McpJson.GetString(obj, "class_addr"), field,
                 timeout, ct);
 

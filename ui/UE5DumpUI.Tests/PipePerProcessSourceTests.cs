@@ -1011,6 +1011,15 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 2. get_object names the DLL's template verdict, which write_field
+    /// refuses a class default and an archetype by (Constants.McpMinDllBuildForFieldWrites).</summary>
+    [Fact]
+    public void GetObject_NamesTheTemplateVerdict()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_OBJECT) {", "if (cmd == Renge::CMD_");
+        Assert.Contains("data[\"template\"]   = Aura::TemplateKindWire(Aura::TemplateOf(addr).kind);", body);
+    }
+
     /// <summary>A background client's refusals come before anything is allocated or queued, and the queue's conflict
     /// answers as a hold refusal does.</summary>
     [Fact]

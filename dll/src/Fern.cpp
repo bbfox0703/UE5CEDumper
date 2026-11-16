@@ -3094,6 +3094,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uintptr_t outer = Ubel::GetOuter(addr);
             data["outer"]      = outer ? Ubel::GetName(outer) : "";
             data["outer_addr"] = Renge::AddrToStr(outer);
+            // [MCP-WRITE-GRANTS-2026-11-14] Phase 2: whether this is a template ("" for a world object), so a client
+            // that writes what a grant covers can refuse a class default and an archetype -- a class default's
+            // subobject or a Blueprint component template is named like any component, and what it holds reaches
+            // every instance spawned later. TemplateOf reads safely, as get_object answers for any address.
+            data["template"]   = Aura::TemplateKindWire(Aura::TemplateOf(addr).kind);
 
             return Renge::MakeResponse(id, data).dump();
         }

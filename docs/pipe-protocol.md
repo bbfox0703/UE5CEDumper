@@ -89,7 +89,9 @@ Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
 // Paginated object list — advance by "scanned", not objects.length
 { "id": 5, "cmd": "get_object_list", "offset": 0, "limit": 200 }
 
-// Single object detail
+// Single object detail: name, full_name, class, class_addr, outer, outer_addr, and (build 3718+) template --
+// "" for a world object, "class_default" or "template" (a class default's subobject, a Blueprint component template),
+// Aura::TemplateOf's verdict, which write_field's grant refuses both by.
 { "id": 6, "cmd": "get_object", "addr": "7FF123456789" }
 
 // Find object by full path

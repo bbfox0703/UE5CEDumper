@@ -236,7 +236,7 @@ TemplateInfo TemplateOf(uintptr_t obj);
 using TemplateOuterMemo = std::unordered_map<uintptr_t, uintptr_t>;
 TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo);
 
-// The template kind's name on the pipe (invoke_function's instance_template): "" for a live object.
+// The template kind's name on the pipe: "" for a live object.
 constexpr const char* TemplateKindWire(TemplateKind k) {
     switch (k) {
         case TemplateKind::ClassDefault: return "class_default";

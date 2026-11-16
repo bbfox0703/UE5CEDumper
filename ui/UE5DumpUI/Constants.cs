@@ -101,6 +101,10 @@ public static class Constants
     /// invoke_function checks a call under a grant (grant, expect_func_full) against the function the grant names, its
     /// parameters and a template. An older DLL ignores both keys and would run whatever function it resolves.</summary>
     public const int McpMinDllBuildForInvokeGrants = 3717;
+    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14] Phase 2): its
+    /// get_object names the template verdict (template), so write_field can refuse a class default and an archetype. An
+    /// older DLL sends no verdict, and an archetype is named like any component.</summary>
+    public const int McpMinDllBuildForFieldWrites = 3718;
     /// <summary>The switch that runs the exe as a Claude Code PreToolUse hook instead: it reads the hook's input on stdin
     /// and refuses a subagent's or workflow agent's write or grant ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
     public const string McpAgentGuardSwitch = "--mcp-agent-guard";

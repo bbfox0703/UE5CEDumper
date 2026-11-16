@@ -66,7 +66,7 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
     py tools/verify/mcp_client.py olddll --exe dist/UE5DumpUI.exe [--pid N]
         Register item 24, the old DLL: DumperTest Shipping freshly injected with out/stageA/copy3695/UE5Dumper.dll
         (build 3695: the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
-        3705; 3706 for write_memory, write_invoke, write_debug_camera, write_field) before anything is sent, and the 3695 pipe log
+        3705; 3706 for write_memory, write_invoke, write_debug_camera; 3718 for write_field) before anything is sent, and the 3695 pipe log
         shows none of their commands since the start. Keep the UI closed: 3695 serves three connections.
     py tools/verify/mcp_client.py invokeparams --exe dist/UE5DumpUI.exe [--pid N]
         Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
@@ -82,7 +82,7 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         checks driven through the pipe as a background client (another function -28, a FunctionName parameter -28, a
         latent call per call -24); one function's grant revoked while the other stands.
     py tools/verify/mcp_client.py fieldgrant --exe dist/UE5DumpUI.exe [--pid N]
-        [MCP-WRITE-GRANTS-2026-11-14] Phase 2 on DumperTest Shipping (DLL 3706+): grants refused for a struct, a static
+        [MCP-WRITE-GRANTS-2026-11-14] Phase 2 on DumperTest Shipping (DLL 3718+): grants refused for a struct, a static
         array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
         write it unasked on a spawned Derived holder and put it back byte for byte, never on a Decoy (the same field name,
         no derivation) nor on the class default, and refuses a float past its range; a native bool and a 4-byte enum
@@ -1793,9 +1793,9 @@ def run_dbgcam_stop(exe: str, pid: int | None, game_name: str, ce_desc: str) -> 
     return ck.done(sessions)
 
 
-# Constants.McpMinDllBuildForWrites / McpMinDllBuildForRawWrites / McpMinDllBuildForInvokeGrants: the DLL builds the
-# server's write tools need.
-MCP_MIN_WRITES, MCP_MIN_RAW_WRITES, MCP_MIN_INVOKE_GRANTS = 3705, 3706, 3717
+# Constants.McpMinDllBuildForWrites / McpMinDllBuildForRawWrites / McpMinDllBuildForInvokeGrants /
+# McpMinDllBuildForFieldWrites: the DLL builds the server's write tools need.
+MCP_MIN_WRITES, MCP_MIN_RAW_WRITES, MCP_MIN_INVOKE_GRANTS, MCP_MIN_FIELD_WRITES = 3705, 3706, 3717, 3718
 FIXTURE_DERIVED, FIXTURE_DECOY = "DumperTestDerivedHolder", "DumperTestHolderDecoy"   # solide_l3's derivation pair
 FIXTURE_FLAG = "bHolderFlag"
 FLAG_HOLD = f"force_field:{FIXTURE_CLASS}::{FIXTURE_FLAG}"
@@ -2283,7 +2283,7 @@ OLD_DLL_COMMAND_LINES = (
     r"reset_gravity_direction", r"reset_movement:", r"reset_time_dilation:", r"set_debug_camera:", r"fly_set:",
     r"seethrough_set:", r"reset_field:", r"teleport_recall_marker:",
 )
-OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera", FIELD_GRANTED)   # 3706, not 3705
+OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera")   # need MCP_MIN_RAW_WRITES, not 3705
 
 
 def run_invoke_grant(exe: str, pid: int | None) -> int:
@@ -2408,7 +2408,7 @@ WIDE_ENUM, WIDE_HIGH = "Probe_WideEnum", 0x007F0000
 
 
 def run_field_grant(exe: str, pid: int | None) -> int:
-    """[MCP-WRITE-GRANTS-2026-11-14] Phase 2 on a live game (DLL 3706+; DumperTest Shipping): a field grant names one
+    """[MCP-WRITE-GRANTS-2026-11-14] Phase 2 on a live game (DLL 3718+; DumperTest Shipping): a field grant names one
     field of one class, and write_field writes it unasked on that class's instances and its subclasses' only. The
     discriminating set (a Derived holder, a Decoy with the same field name) is spawned by a stand-in pipe client, as
     holdsmore does; every value written is put back with write_field and read back byte for byte."""
@@ -2475,8 +2475,8 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         r, st, _ = call("read_status")
         build = int(st.get("build_number") or 0)
         print(f"        UE {st.get('ue_version')}, DLL build {build}, server build {st.get('mcp_build')}")
-        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_RAW_WRITES,
-                        f"the game is scanned, DLL build {build} (write_field needs {MCP_MIN_RAW_WRITES}+)", st):
+        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_FIELD_WRITES,
+                        f"the game is scanned, DLL build {build} (write_field needs {MCP_MIN_FIELD_WRITES}+)", st):
             return
         game = pid or st.get("pid")
         ack = grant_acks(c)[GRANT_FIELD]
@@ -2672,7 +2672,7 @@ def run_old_dll(exe: str, pid: int | None) -> int:
         acks = grant_acks(c)
         ck.check(len(acks) == 4, "the four grant tools listed", sorted(acks))
         for name, ack in acks.items():
-            need = (MCP_MIN_INVOKE_GRANTS if name == GRANT_INVOKE else MCP_MIN_RAW_WRITES if name == GRANT_FIELD
+            need = (MCP_MIN_INVOKE_GRANTS if name == GRANT_INVOKE else MCP_MIN_FIELD_WRITES if name == GRANT_FIELD
                     else MCP_MIN_WRITES)
             extra = ({"function": "Add_IntInt", "class": "//Script/Engine/KismetMathLibrary"} if name == GRANT_INVOKE
                      else {"field": FIXTURE_FIELD, "class": "//Script/DumperTest/" + FIXTURE_CLASS}
@@ -2709,7 +2709,7 @@ def run_old_dll(exe: str, pid: int | None) -> int:
                 ck.check(False, f"{name}: listed by tools/list", listed)
                 continue
             r, d, _ = call(name, a)
-            need = (MCP_MIN_INVOKE_GRANTS if name == INVOKE_GRANTED
+            need = (MCP_MIN_INVOKE_GRANTS if name == INVOKE_GRANTED else MCP_MIN_FIELD_WRITES if name == FIELD_GRANTED
                     else MCP_MIN_RAW_WRITES if name in OLD_DLL_RAW_TOOLS else MCP_MIN_WRITES)
             text = error_text(d)
             if not r.get("isError") and name in ("write_force_field", "write_mouse_cursor"):
