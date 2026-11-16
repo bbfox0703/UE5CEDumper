@@ -1063,6 +1063,22 @@ PE-VERSIONINFO hit never reaches the memory string scan that 0.35 s describes. B
 real and neither generalises — a version-stripped title still pays the scan. Quote the conditions
 or do not quote the number (§1.6).
 
+### 1.14 A mutation check's revert must leave the source NEWER than the mutated build
+
+2026-11-16, the holder-labels review's test commits. A scratch script mutated `TeleportViewModel.cs`, ran the
+tests, and restored the file from a backup with Python's `shutil.copy2`, which also restores the **old mtime**. That
+mtime is older than the object built from the mutation, so the next incremental `dotnet test` saw nothing to rebuild
+and ran the **mutated** binary: the full suite failed on the last mutation (a re-read removed) over source that was
+correct. Each mutation's own run was valid (writing a mutation gives the file a new mtime); only the runs AFTER a
+revert measured the wrong code. The same commit was made unconditionally after the suite and carried a pass count
+typed before the run, so the failure was committed under a number nobody measured.
+- **Restore with a plain copy and touch the file** (`shutil.copyfile`, then `os.utime(path, None)`), or rebuild
+  explicitly after the last revert. `git checkout -- <file>` is safe here: it writes the file anew.
+- **Chain the commit on the test's exit code** (`dotnet test ... && git commit`), and write the counts into the
+  message from the run's own summary, never ahead of it (§1.5).
+- This is CLAUDE.md's stale-binary rule from the other side: there a failed build leaves the old binary; here a
+  successful revert does.
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
