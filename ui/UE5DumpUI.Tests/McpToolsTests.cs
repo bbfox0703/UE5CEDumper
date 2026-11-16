@@ -207,11 +207,11 @@ public sealed class McpToolsTests
         foreach (var t in Catalog())
         {
             bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
-            Assert.Equal(write,
-                t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite or McpToolRole.Release);
+            Assert.Equal(write, t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite
+                or McpToolRole.Release or McpToolRole.GrantedInvoke);
             // A grant unlocks destructive tools: a host that auto-runs non-destructive ones must not auto-approve it.
             Assert.Equal(write || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Destructive);
-            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant,
+            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant or McpToolRole.GrantedInvoke,
                 t.GrantKind != McpGrantKind.None);
         }
         string[] Named(Func<McpTool, bool> which) =>
@@ -224,6 +224,9 @@ public sealed class McpToolsTests
         Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
             Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
         Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
+        // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: the one tool an invoke grant covers.
+        Assert.Equal([Constants.McpInvokeGrantedTool],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedInvoke && t.GrantKind == McpGrantKind.Invoke));
         Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
     }
 
@@ -314,8 +317,9 @@ public sealed class McpToolsTests
         {
             foreach (bool scanned in new[] { true, false })
             {
-                var game = new FakeGame { State = scanned ? McpScanState.Ready : McpScanState.NotStarted };
-                var (payload, result) = await Call(game, t.Name, ArgsFromSchema(t.InputSchema));
+                var (game, args) = await SchemaCall(t);
+                game.State = scanned ? McpScanState.Ready : McpScanState.NotStarted;
+                var (payload, result) = await Call(game, t.Name, args);
                 if (scanned && result.IsError) refused.Add($"{t.Name}: {payload!["error"]}");
                 foreach (var cmd in game.Commands)
                 {
@@ -328,6 +332,23 @@ public sealed class McpToolsTests
         }
         // Every tool's schema-valid call succeeded on a scanned game, so its main path was walked.
         Assert.Empty(refused);
+    }
+
+    /// <summary>A game and a schema-valid call for one tool. An invoke grant and its call need a function the game
+    /// declares, by full name, which no schema can say; revoke_grants' function goes with kind invoke.</summary>
+    private static async Task<(FakeGame Game, JsonObject Args)> SchemaCall(McpTool t)
+    {
+        var args = ArgsFromSchema(t.InputSchema);
+        if (t.Name == Constants.McpGrantToolInvoke) return (InvokeGrantGame(HiddenFn()), GrantArgs());
+        if (t.Name == Constants.McpInvokeGrantedTool)
+        {
+            var game = InvokeGrantGame(HiddenFn());
+            await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+            game.Sent.Clear();
+            return (game, HiddenCall());
+        }
+        if (t.Name == "revoke_grants") args.Remove("function");
+        return (new FakeGame(), args);
     }
 
     [Fact]
@@ -1370,7 +1391,7 @@ public sealed class McpToolsTests
     {
         var f = Fn(name, parms);
         f["full"] = ActorPath + "." + name;
-        f["flags"] = flags;
+        f["flags"] = (uint)flags;   // as ParseFunctions reads it; a reply parsed from text converts either way
         return f;
     }
 

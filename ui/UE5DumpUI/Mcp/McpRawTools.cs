@@ -41,6 +41,7 @@ internal static class McpRawTools
     private const long WriteMemChanged = -23;
     private const long InvokeQueued = -5;
     private const long InvokeFaulted = -4;
+    private const long InvokeRefusedUnderGrant = -28;
 
     private static readonly HashSet<string> IntegerTypes =
     [
@@ -52,6 +53,7 @@ internal static class McpRawTools
     {
         yield return WriteMemory(game, grants);
         yield return Invoke(game, grants);
+        yield return InvokeGranted(game, grants);
     }
 
     // ── write_memory ────────────────────────────────────────────────────────────────────────────────────
@@ -135,17 +137,36 @@ internal static class McpRawTools
                                             + "an object of its fields. One left out is zero."),
                 false),
             McpWriteTools.PidProp),
-        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct), Idempotent: false, Destructive: true,
-        Role: McpToolRole.PerCallWrite);
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct, granted: false), Idempotent: false,
+        Destructive: true, Role: McpToolRole.PerCallWrite);
+
+    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: write_invoke's twin for a function an invoke grant names. Never marked:
+    // the grant's prompt was the user's check, and the gate and the DLL both hold the call to that one function.
+    private static McpTool InvokeGranted(IMcpGame game, McpGrants grants) => new(
+        Constants.McpInvokeGrantedTool, "Invoke a granted UFunction",
+        "Calls a UFunction that one of this session's invoke grants names (" + Constants.McpGrantToolInvoke + "), "
+        + "without asking the user again: as write_invoke, on any live object, with any arguments. The function is "
+        + "resolved on the object's class as write_invoke resolves it and must be the granted one, by full name; a "
+        + "Blueprint override or another class's function of the same name needs its own grant. The DLL refuses a "
+        + "non-static function on a class default or template under a grant. Anything else goes through write_invoke, "
+        + "asked every call.",
+        McpSchema.Object(
+            ("instance_addr", McpSchema.Addr("The object to call it on."), true),
+            ("function", McpSchema.Str("The granted UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),
+            ("params", McpSchema.FreeObject("Parameters by name, as write_invoke takes them."), false),
+            McpWriteTools.PidProp),
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct, granted: true), Idempotent: false,
+        Destructive: true, Role: McpToolRole.GrantedInvoke, GrantKind: McpGrantKind.Invoke);
 
     private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpGrants grants, McpArgs a,
-        CancellationToken ct)
+        CancellationToken ct, bool granted)
     {
         int? pid = a.OptInt("pid");
         string inst = a.Addr("instance_addr");
         string funcName = a.ReqStr("function").Trim();
         JsonObject given = a.Obj("params") ?? new JsonObject();
-        var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+        var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid,
+            granted ? Constants.McpMinDllBuildForInvokeGrants : Constants.McpMinDllBuildForRawWrites, ct);
         int ueVersion = McpJson.TryGetLong(ptrs["ue_version"], out long ue) ? (int)ue : 0;
         var lookup = TimeSpan.FromSeconds(LookupSeconds);
 
@@ -170,6 +191,17 @@ internal static class McpRawTools
                  ?? throw new McpToolError($"{McpJson.GetString(obj, "class") ?? "Its class"} has no UFunction "
                                            + $"'{funcName}' (read_functions lists them; include_interfaces for an "
                                            + "interface's).");
+        // Under a grant, admitted before the call is built: the grant names the function resolved here, by full name.
+        McpGrantCapability? grantedCap = null;
+        if (granted)
+        {
+            if (!McpGrants.IsFunctionFullName(fn.FullName)
+                || !string.Equals(McpGrants.FunctionNameOf(fn.FullName), fn.Name, StringComparison.Ordinal))
+                throw new McpToolError("Not invoked: " + fn.Name + "'s full name could not be read whole, so no grant "
+                                       + "can cover it; write_invoke asks the user every call instead.");
+            grantedCap = grants.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, ptrs, out string? refusal,
+                fn.FullName) ?? throw new McpToolError(refusal ?? "Not invoked.");
+        }
 
         var call = await BuildCallAsync(game, pid, fn, given, ueVersion, lookup, ct);
         var request = new JsonObject
@@ -180,6 +212,11 @@ internal static class McpRawTools
             ["expect_class_addr"] = classAddr,
             ["if_free"] = true,
         };
+        if (granted)
+        {
+            request["grant"] = true;
+            request["expect_func_full"] = fn.FullName;
+        }
         if (call.Size > 0)
         {
             request["parms_size"] = call.Size;
@@ -197,7 +234,8 @@ internal static class McpRawTools
         // game-thread call the DLL may wait on.
         int calls = 1 + fn.InputParams.Sum(p => IsConvertedSlot(p.TypeName) ? 1
             : StructFields(p, ueVersion)?.Count(f => IsConvertedSlot(f.TypeName)) ?? 0);
-        var grant = McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
+        var grant = grantedCap
+                    ?? McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
         var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true,
             grant: grant);
         return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
@@ -484,6 +522,9 @@ internal static class McpRawTools
                 return McpToolResult.Fail("Not invoked: " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
                                           + " has a game-thread call still queued or running, and this server never "
                                           + "queues beside it. Try again once it has run (read_holds lists it).");
+            if (code == InvokeRefusedUnderGrant)
+                return McpToolResult.Fail((McpJson.GetString(reply, "error") ?? "Not invoked under the grant.")
+                                          + ". Nothing ran. write_invoke asks the user about each call instead.");
             return McpToolResult.Fail(McpJson.GetString(reply, "error") ?? "Not invoked.");
         }
         if (reply["result"] is null && McpJson.TryGetLong(reply["code"], out long held) && held == HeldByOther)

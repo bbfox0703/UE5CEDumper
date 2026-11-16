@@ -252,6 +252,15 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
                                    + Constants.McpMinDllBuildForOwnClaim.ToString(CultureInfo.InvariantCulture)
                                    + ", where an OFF of this server's See-through claim would end every claim.");
         }
+        if (request["grant"] is JsonValue g && g.TryGetValue<bool>(out bool underGrant) && underGrant
+            && _build < Constants.McpMinDllBuildForInvokeGrants)
+        {
+            // An older DLL ignores grant and expect_func_full, and would run whatever function it resolves.
+            throw new McpToolError("Not sent: the game's DLL is build "
+                                   + _build.ToString(CultureInfo.InvariantCulture) + ", older than "
+                                   + Constants.McpMinDllBuildForInvokeGrants.ToString(CultureInfo.InvariantCulture)
+                                   + ", which cannot check a call under an invoke grant.");
+        }
         if (McpGrants.IsRelease(request) && !McpGrants.IsOwnClaimRelease(request)
             && _grants.Decision != McpHostDecision.ReadOnly)
             holds = await SendCoreAsync(new JsonObject { ["cmd"] = "get_holds" }, ProbeTimeout, ct);

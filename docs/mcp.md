@@ -192,10 +192,12 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `write_teleport` | Moves the player to explicit coordinates and returns the pose it left. |
 | `write_memory` | Writes up to 4 KB of data at an address, if it still holds the bytes the AI read; returns before and after. |
 | `write_invoke` | Calls a UFunction on a live object on the game thread, parameters by name; returns its return value and out parameters. |
+| `write_invoke_granted_function` | Calls a UFunction an invoke grant names, as `write_invoke` does, without asking again (build 3717+). |
 | `grant_god_mode_camera_cursor_time_see_through_foreground` | Asks you once per game run to let the AI turn god mode, the debug camera, the mouse cursor, time dilation, See-through and Keep Foreground on and off. |
 | `grant_movement_fly_teleport_may_kill_or_lose_pawn` | Asks you once per game run to let the AI change movement, gravity direction and Fly, and teleport the player. This may kill or lose the pawn. |
-| `read_grants` | This session's grants: the game each covers and how many writes each let through. |
-| `revoke_grants` | Ends the AI's grants, one kind or all. It releases no hold. |
+| `grant_invoke_one_function_any_object_and_args` | Asks you once per game run to let the AI call one UFunction, named by its function and class, on any object with any arguments (build 3717+). |
+| `read_grants` | This session's grants: the game each covers, the function an invoke grant names, and how many writes each let through. |
+| `revoke_grants` | Ends the AI's grants: one kind, one function's invoke grant, or all. It releases no hold. |
 
 - **Asked once per grant, in Claude Code.** The gameplay toggles (god mode, debug camera, mouse cursor, time dilation,
   See-through, Keep Foreground) need the toggles grant, `grant_god_mode_camera_cursor_time_see_through_foreground`.
@@ -207,6 +209,15 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   `revoke_grants`. A dropped pipe connection to the same game keeps it: the AI's holds are released then, and it may
   take them again without asking. `read_grants` shows the grants and how many writes each let through.
 - **Asked every call.** `write_memory`, `write_invoke` and `write_force_field` take no grant and ask before each call.
+- **One function, asked once** (build 3717+). `grant_invoke_one_function_any_object_and_args` names one UFunction by its
+  function and its class's full path, as `read_functions` shows it in `full` (`//Script/Engine/Actor` and
+  `SetActorHiddenInGame`). After you approve it, `write_invoke_granted_function` calls that function on any object, with
+  any arguments, until the game run or the session ends. A Blueprint override or another class's function of the same
+  name needs its own grant. The server refuses the grant for a function the DLL refuses the AI (the list below), one
+  whose arguments reach other functions or properties by name (a timer by name, a delegate, a latent call, a parameter
+  named for a function, an event or a property), one taking an FText, a network RPC and a Blueprint event graph; the
+  DLL checks the same at every call, and refuses a call under a grant of a non-static function on a class default or a
+  template. `write_invoke` still asks every call, for anything else.
 - **No grant to end its own holds.** Turning off or resetting what the AI itself turned on needs no grant, so it can
   always clean up; the server checks whose hold it is right before sending. Turning off what the AI did not turn on (the
   game's own invulnerability, another program's change) is a change and needs the grant, as does an OFF that also
