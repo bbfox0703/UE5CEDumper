@@ -622,6 +622,17 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"!invoke\s*&&[^;]*FrierenDebugCamera::ConsumeJoin\(", recorder);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: an invoke's toggle queued behind a stalled game thread
+    /// leaves the camera off for now, and FrierenDebugCamera's pending state tracks set_debug_camera's toggles only. Named
+    /// nobody's, the camera it turns on later read as held by "a program that recorded no owner" -- the window's own.
+    /// An off hold reads as free whoever is named.</summary>
+    [Fact]
+    public void AnInvokesToggleThatLeavesTheCameraOff_NamesItsCaller()
+    {
+        string recorder = HoldRecorderBody();
+        Assert.Matches(@"SetOwner\(h,\s*invoke\s*\?\s*caller\s*:\s*Voll::kHoldOwnerNone\)", recorder);
+    }
+
     /// <summary>What a background client turned on ends with it; a foreground client's holds outlive it.</summary>
     [Fact]
     public void ABackgroundClientsHolds_AreReleasedWhenItsProcessLeaves()
