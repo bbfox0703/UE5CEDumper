@@ -27,6 +27,24 @@ public sealed class McpToolsTests
         public string? PendingNotice { get; set; }
         public int ScanChecks { get; private set; }
 
+        /// <summary>The game run get_pointers reports, which a grant and an admission are keyed on.</summary>
+        public const string Run = "1DB5F0A2C3E4D50";
+        /// <summary>The session's grants, on the game rather than the catalogue: Tool() builds a new catalogue for every
+        /// call, and a grant must outlive one call. A grants host, with both kinds granted for this game's run, unless a
+        /// test revokes them; the fake's send runs the same gate check as the link.</summary>
+        public McpGrants Grants { get; } = Granted();
+
+        public static JsonObject Pointers() => new() { ["pid"] = 4242, ["process_creation_time"] = Run };
+
+        private static McpGrants Granted()
+        {
+            var g = new McpGrants();
+            g.Decide(Constants.McpClaudeCodeClientName, "2.1.246");
+            g.Grant(McpGrantKind.Toggles, Pointers(), out _);
+            g.Grant(McpGrantKind.Movement, Pointers(), out _);
+            return g;
+        }
+
         public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames()
             => ([new McpGameInfo(4242, "Game-Win64-Shipping.exe", "Game", true)], false);
 
@@ -60,6 +78,8 @@ public sealed class McpToolsTests
                 var report = Report();
                 if (report.State != McpScanState.Ready) throw new McpToolError(McpGameLink.Explain(report));
             }
+            string? refusal = Grants.Check(request, grant, ConnectedPid, Run);
+            if (refusal is not null) throw new McpToolError("Not sent: " + refusal);
             Sent.Add((JsonObject)request.DeepClone());
             Timeouts.Add(timeout);
             string cmd = request["cmd"]!.GetValue<string>();
@@ -79,6 +99,11 @@ public sealed class McpToolsTests
                     ["found"] = true, ["match_kind"] = "exact", ["addr"] = request["addr"]!.GetValue<string>(),
                 }
                 : new JsonObject();
+            if (cmd == "get_pointers")
+            {
+                reply["pid"] ??= 4242;
+                reply["process_creation_time"] ??= Run;
+            }
             reply["id"] = 1;
             reply["ok"] ??= true;
             reply["_t_read_ms"] = 3;
@@ -103,7 +128,10 @@ public sealed class McpToolsTests
 
     /// <summary>The catalogue, with the UI's experimental switch read as <paramref name="experimental"/>.</summary>
     private static IReadOnlyList<McpTool> Catalog(FakeGame? game = null, bool experimental = true)
-        => McpTools.Create(game ?? new FakeGame(), () => experimental);
+    {
+        game ??= new FakeGame();
+        return McpTools.Create(game, game.Grants, () => experimental);
+    }
 
     private static McpTool Tool(string name, FakeGame game, bool experimental = true)
         => Catalog(game, experimental).Single(t => t.Name == name);
@@ -317,6 +345,108 @@ public sealed class McpToolsTests
             };
         }
         return args;
+    }
+
+    // ── Grants ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────────────
+
+    /// <summary>A call of each write a grant covers that turns something on, so it is no release.</summary>
+    private static readonly (string Tool, McpGrantKind Kind, string Args, string Cmd)[] CoveredOn =
+    [
+        ("write_god_mode", McpGrantKind.Toggles, """{"enable":true}""", "set_god_mode"),
+        ("write_debug_camera", McpGrantKind.Toggles, """{"enable":true}""", "set_debug_camera"),
+        ("write_mouse_cursor", McpGrantKind.Toggles, """{"show":true}""", "set_mouse_cursor"),
+        ("write_time_dilation", McpGrantKind.Toggles, """{"target":"global","value":0.5}""", "set_time_dilation"),
+        ("write_see_through", McpGrantKind.Toggles, """{"enable":true,"count":3}""", "seethrough_set"),
+        ("write_foreground_lock", McpGrantKind.Toggles, """{"enable":true}""", "set_foreground_lock"),
+        ("write_movement", McpGrantKind.Movement, """{"knob":"walk_speed","multiplier":1.5}""",
+         "set_movement_multiplier"),
+        ("write_gravity_direction", McpGrantKind.Movement, """{"x":0,"y":0,"z":-1}""", "set_gravity_direction"),
+        ("write_fly", McpGrantKind.Movement, """{"enable":true}""", "fly_set"),
+        ("write_teleport", McpGrantKind.Movement, """{"x":1,"y":2,"z":3}""", "teleport_recall_marker"),
+    ];
+
+    private static string ErrorOf(JsonNode? payload) => payload?["error"]?.GetValue<string>() ?? "";
+
+    [Fact]
+    public async Task WithoutItsGrant_EveryCoveredWrite_IsRefusedNamingTheGrant_AndChangesNothing()
+    {
+        Assert.Equal(
+            Catalog().Where(t => t.EffectiveRole == McpToolRole.GrantedWrite).Select(t => t.Name)
+                .Order(StringComparer.Ordinal),
+            CoveredOn.Select(c => c.Tool).Order(StringComparer.Ordinal));
+        foreach (var (tool, kind, args, cmd) in CoveredOn)
+        {
+            var game = new FakeGame();
+            game.Grants.Revoke(kind);   // the other kind's grant stays, and does not stand in for this one
+            var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+            Assert.True(result.IsError, tool);
+            // Refused by the tool, naming the exact grant, before the send: the fake's gate never saw a write.
+            Assert.Contains(McpGrants.GrantToolFor(kind), ErrorOf(payload));
+            Assert.DoesNotContain("Not sent", ErrorOf(payload));
+            Assert.All(game.Commands, c => Assert.True(McpGrants.ReadCommands.Contains(c), $"{tool} sent {c}"));
+
+            Assert.NotNull(game.Grants.Grant(kind, FakeGame.Pointers(), out _));
+            var (after, granted) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+            Assert.False(granted.IsError, $"{tool}: {ErrorOf(after)}");
+            Assert.Contains(cmd, game.Commands);
+        }
+    }
+
+    [Fact]
+    public async Task UnderGrants_ThePerCallWrites_NeedNoGrant()
+    {
+        foreach (var name in new[] { "write_memory", "write_invoke", "write_force_field" })
+        {
+            var game = new FakeGame();
+            game.Grants.Revoke();
+            var (payload, result) = await Call(game, name, ArgsFromSchema(Tool(name, game).InputSchema));
+            Assert.False(result.IsError, $"{name}: {ErrorOf(payload)}");
+        }
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
+    [InlineData("write_foreground_lock", """{"enable":false}""", "set_foreground_lock")]
+    [InlineData("write_debug_camera", """{"enable":false}""", "set_debug_camera")]
+    [InlineData("write_see_through", """{"enable":false}""", "seethrough_set")]
+    [InlineData("write_fly", """{"enable":false}""", "fly_set")]
+    [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
+    [InlineData("write_gravity_direction", """{"reset":true}""", "reset_gravity_direction")]
+    [InlineData("write_time_dilation", """{"target":"pawn","reset":true}""", "reset_time_dilation")]
+    [InlineData("write_force_field_reset", """{"class_name":"Pawn","field_name":"bCanBeDamaged"}""",
+        "reset_field")]
+    public async Task AnOffOrAReset_NeedsNoGrant(string tool, string args, string cmd)
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Contains(cmd, game.Commands);
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_LeavesTheCountAlone_SoItStaysARelease()
+    {
+        // seethrough_set applies its global count before enable: an OFF carrying one would need the toggles grant.
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, "write_see_through",
+            new JsonObject { ["enable"] = false, ["count"] = 5 });
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.False(game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "seethrough_set").ContainsKey("count"));
+    }
+
+    [Fact]
+    public async Task FlyOffWithASetting_NeedsTheMovementGrant_AndSaysWhy()
+    {
+        // fly_set applies speed, preset and noclip before enable, as global settings no release undoes.
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, "write_fly", new JsonObject { ["enable"] = false, ["speed"] = 600 });
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantToolMovement, ErrorOf(payload));
+        Assert.Contains("Only an OFF with nothing else in it needs no grant", ErrorOf(payload));
+        Assert.DoesNotContain("fly_set", game.Commands);
     }
 
     // ── What the tools send ─────────────────────────────────────────────────────────────────────────────

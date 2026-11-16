@@ -48,7 +48,7 @@ internal static class McpRawTools
         "Int64Property", "UInt64Property", "EnumProperty",
     ];
 
-    public static IEnumerable<McpTool> Create(IMcpGame game)
+    public static IEnumerable<McpTool> Create(IMcpGame game, McpGrants grants)
     {
         yield return WriteMemory(game);
         yield return Invoke(game);

@@ -37,7 +37,7 @@ internal static class McpTools
         ("name_filter", McpSchema.Str("Keep only entries whose name contains every space-separated word "
                                       + "(case-insensitive)."), false);
 
-    public static IReadOnlyList<McpTool> Create(IMcpGame game, Func<bool>? experimentalEnabled = null)
+    public static IReadOnlyList<McpTool> Create(IMcpGame game, McpGrants grants, Func<bool>? experimentalEnabled = null)
     {
         var tools = new List<McpTool>
         {
@@ -410,8 +410,8 @@ internal static class McpTools
         };
         // Stage D2-2: the tools that change the game. Without a reading of the UI's experimental switch, the experimental
         // ones refuse.
-        tools.AddRange(McpWriteTools.Create(game, experimentalEnabled ?? (() => false)));
-        tools.AddRange(McpRawTools.Create(game));
+        tools.AddRange(McpWriteTools.Create(game, experimentalEnabled ?? (() => false), grants));
+        tools.AddRange(McpRawTools.Create(game, grants));
         return tools;
     }
 

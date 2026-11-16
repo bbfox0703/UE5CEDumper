@@ -36,7 +36,7 @@ internal static class McpWriteTools
         ("pid", McpSchema.Int("Game process id. Needed only when several games run the dumper (read_games lists "
                               + "them); otherwise the only game is used.", 1, int.MaxValue), false);
 
-    public static IEnumerable<McpTool> Create(IMcpGame game, Func<bool> experimentalEnabled)
+    public static IEnumerable<McpTool> Create(IMcpGame game, Func<bool> experimentalEnabled, McpGrants grants)
     {
         // ── Reads around the writes ─────────────────────────────────────────────────────────────────────
 

@@ -130,7 +130,7 @@ public sealed class McpHostTests
         Assert.Contains("claude mcp add --scope user " + Constants.McpServerName + " --", guide);
         Assert.Contains("\"mcp__" + Constants.McpServerName + "__read_*\"", guide);
         // Every tool it names is one the server offers.
-        var catalog = McpTools.Create(new NoGame()).Select(t => t.Name).ToHashSet();
+        var catalog = McpTools.Create(new NoGame(), new McpGrants()).Select(t => t.Name).ToHashSet();
         var named = Regex.Matches(guide, "<code>((?:read|scan)_[a-z_]+)</code>").Select(m => m.Groups[1].Value)
             .Distinct().ToList();
         Assert.NotEmpty(named);
