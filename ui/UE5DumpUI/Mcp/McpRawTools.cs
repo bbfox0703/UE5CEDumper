@@ -473,8 +473,9 @@ internal static class McpRawTools
     };
 
     /// <summary>An invoke's reply: a refusal (ok:false, nothing ran), another client's outstanding call (code -20), a
-    /// call that ran (its return value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose
-    /// buffer is the INPUT, never shown as output), or one that did not run.</summary>
+    /// hold another holds (ok:true, code -20, from the DLL's dispatcher before the invoke), a call that ran (its return
+    /// value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose buffer is the INPUT,
+    /// never shown as output), or one that did not run.</summary>
     internal static McpToolResult Answer(JsonObject reply, FunctionInfoModel fn, int ueVersion)
     {
         if (!McpWriteTools.Truthy(reply, "ok"))
@@ -485,6 +486,11 @@ internal static class McpRawTools
                                           + "queues beside it. Try again once it has run (read_holds lists it).");
             return McpToolResult.Fail(McpJson.GetString(reply, "error") ?? "Not invoked.");
         }
+        if (reply["result"] is null && McpJson.TryGetLong(reply["code"], out long held) && held == HeldByOther)
+            return McpToolResult.Fail("Not invoked: " + (McpJson.GetString(reply, "hold") ?? "a hold it changes")
+                                      + " is held by " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
+                                      + ". This server never replaces or ends what someone else holds; the user can "
+                                      + "release it where it was set.");
         long result = McpJson.TryGetLong(reply["result"], out long r) ? r : -999;
         var payload = new JsonObject
         {

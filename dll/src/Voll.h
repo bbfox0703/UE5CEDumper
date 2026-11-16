@@ -373,10 +373,13 @@ inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlo
     if (cmd == "fly_set") return {Grimoire::HOLD_FLY};
     if (cmd == "set_debug_camera") return {Grimoire::HOLD_DEBUG_CAMERA};
     // [MCP-WRITE-GRANTS-2026-11-14] The UI's Console panel toggles the camera through invoke_function: the camera that
-    // call turns on is the caller's, as set_debug_camera's is, and a hold it turns off is nobody's. get_holds reports the
-    // camera's real state, so an owner left from before would be named for a camera someone else turned on. A toggle in
-    // the game's own console still reaches no ledger.
-    if (cmd == "invoke_function" && IsDebugCameraFunction(str("func_name"))) return {Grimoire::HOLD_DEBUG_CAMERA};
+    // call turns on is the caller's, as set_debug_camera's is. get_holds reports the camera's real state, so an owner
+    // left from before would be named for a camera someone else turned on. A toggle in the game's own console still
+    // reaches no ledger. A background client's invoke of these never runs (InvokeRefusedForBackground) and names no
+    // hold: as a hold change, its if_free check would answer first, without that refusal's pointer to
+    // write_debug_camera.
+    if (cmd == "invoke_function" && !request.value("background", false) && IsDebugCameraFunction(str("func_name")))
+        return {Grimoire::HOLD_DEBUG_CAMERA};
     // A knob or a lane the handler would refuse names no hold: a name made up by a request would grow the ledger.
     if (cmd == "set_movement_multiplier" || cmd == "reset_movement") {
         const std::string knob = str("knob");
