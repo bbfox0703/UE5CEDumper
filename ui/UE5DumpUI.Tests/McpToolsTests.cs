@@ -36,6 +36,9 @@ public sealed class McpToolsTests
         public McpGrants Grants { get; } = Granted();
 
         public static JsonObject Pointers() => new() { ["pid"] = 4242, ["process_creation_time"] = Run };
+        /// <summary>Whether get_holds names this server as holding what an OFF or a reset ends: yes unless a test
+        /// says the hold is someone else's or nobody's.</summary>
+        public bool HoldsWhatItReleases { get; set; } = true;
 
         private static McpGrants Granted()
         {
@@ -79,7 +82,22 @@ public sealed class McpToolsTests
                 var report = Report();
                 if (report.State != McpScanState.Ready) throw new McpToolError(McpGameLink.Explain(report));
             }
-            string? refusal = Grants.Check(request, grant, ConnectedPid, Run);
+            // As the link does: whose hold a release ends is read on the connection right before it.
+            JsonObject? holds = null;
+            if (McpGrants.IsRelease(request) && Grants.Decision != McpHostDecision.ReadOnly)
+            {
+                Sent.Add(new JsonObject { ["cmd"] = "get_holds" });
+                string? hold = McpGrants.ReleasedHold(request);
+                var arr = new JsonArray();
+                if (hold is not null && HoldsWhatItReleases)
+                    arr.Add(new JsonObject
+                    {
+                        ["hold"] = hold, ["active"] = true,
+                        ["holder"] = new JsonObject { ["kind"] = "client", ["background"] = true, ["you"] = true },
+                    });
+                holds = new JsonObject { ["ok"] = true, ["holds"] = arr };
+            }
+            string? refusal = Grants.Check(request, grant, ConnectedPid, Run, holds);
             if (refusal is not null) throw new McpToolError("Not sent: " + refusal);
             Sent.Add((JsonObject)request.DeepClone());
             Timeouts.Add(timeout);
@@ -415,7 +433,6 @@ public sealed class McpToolsTests
     [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
     [InlineData("write_foreground_lock", """{"enable":false}""", "set_foreground_lock")]
     [InlineData("write_debug_camera", """{"enable":false}""", "set_debug_camera")]
-    [InlineData("write_see_through", """{"enable":false}""", "seethrough_set")]
     [InlineData("write_fly", """{"enable":false}""", "fly_set")]
     [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
     [InlineData("write_gravity_direction", """{"reset":true}""", "reset_gravity_direction")]
@@ -432,15 +449,52 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public async Task SeeThroughOff_LeavesTheCountAlone_SoItStaysARelease()
+    public async Task SeeThroughOff_LeavesTheCountAlone()
     {
-        // seethrough_set applies its global count before enable: an OFF carrying one would need the toggles grant.
+        // seethrough_set applies its global count before enable, and nobody turning it off needs a new count.
         var game = new FakeGame();
-        game.Grants.Revoke();
         var (payload, result) = await Call(game, "write_see_through",
             new JsonObject { ["enable"] = false, ["count"] = 5 });
         Assert.False(result.IsError, ErrorOf(payload));
         Assert.False(game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "seethrough_set").ContainsKey("count"));
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_NeedsTheTogglesGrant()
+    {
+        // An explicit See-through OFF drops every claim, the user's and CE's too: it is no release.
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantToolToggles, ErrorOf(payload));
+        Assert.DoesNotContain("seethrough_set", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", "{\"enable\":false}", "set_god_mode")]
+    [InlineData("write_movement", "{\"knob\":\"jump\",\"reset\":true}", "reset_movement")]
+    [InlineData("write_force_field_reset", "{\"class_name\":\"Pawn\",\"field_name\":\"bCanBeDamaged\"}",
+        "reset_field")]
+    public async Task AnOffOfWhatThisServerDoesNotHold_IsNoRelease(string tool, string args, string cmd)
+    {
+        // God mode's OFF writes the normal value to every protection bool whoever made the pawn invulnerable; a reset
+        // writes the knob's base whoever changed it.
+        var game = new FakeGame { HoldsWhatItReleases = false };
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.True(result.IsError, tool);
+        Assert.DoesNotContain(cmd, game.Commands);
+        Assert.False(string.IsNullOrWhiteSpace(ErrorOf(payload)));
+    }
+
+    [Fact]
+    public async Task TheTimeDilationRefusal_NeverNamesARefusedValue()
+    {
+        var (payload, _) = await Call(new FakeGame(), "write_time_dilation",
+            new JsonObject { ["target"] = "global", ["value"] = 3.5 });
+        Assert.Contains("above 0 and at most 3", ErrorOf(payload));
+        Assert.DoesNotContain("from 0", ErrorOf(payload));
     }
 
     [Fact]

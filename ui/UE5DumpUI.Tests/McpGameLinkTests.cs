@@ -194,13 +194,40 @@ public sealed class McpGameLinkTests
     }
 
     [Fact]
-    public async Task AReleaseAndAReadNeedNoAdmission()
+    public async Task AReleaseOfItsOwnHoldAndAReadNeedNoAdmission()
     {
         var rig = new Rig(4242);
+        rig.Pipe.Handler = (r, _) => Task.FromResult(HoldsReply(r, you: true));
         await Write(rig, new JsonObject { ["cmd"] = "set_god_mode", ["enable"] = false, ["if_free"] = true }, null);
-        await rig.Send(cmd: "get_holds");
-        Assert.Equal(["get_pointers", "set_god_mode", "get_holds"], rig.Pipe.Sent);
+        await rig.Send(cmd: "read_mem");
+        // Whose hold it is was read on the connection, under the lock, right before the OFF.
+        Assert.Equal(["get_pointers", "get_holds", "set_god_mode", "read_mem"], rig.Pipe.Sent);
     }
+
+    [Fact]
+    public async Task AnOffOfWhatThisServerDoesNotHold_IsRefusedWithoutItsGrant()
+    {
+        var rig = new Rig(4242);
+        rig.Pipe.Handler = (r, _) => Task.FromResult(HoldsReply(r, you: false));
+        var e = await Assert.ThrowsAsync<McpToolError>(() =>
+            Write(rig, new JsonObject { ["cmd"] = "set_god_mode", ["enable"] = false, ["if_free"] = true }, null));
+        Assert.Contains(Constants.McpGrantToolToggles, e.Message);
+        Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
+    }
+
+    /// <summary>get_holds naming god mode as held by this client or by Cheat Engine; any other command echoed.</summary>
+    private static JsonObject HoldsReply(JsonObject request, bool you)
+        => request["cmd"]!.GetValue<string>() != "get_holds"
+            ? new JsonObject { ["ok"] = true }
+            : new JsonObject
+            {
+                ["ok"] = true,
+                ["holds"] = new JsonArray(new JsonObject
+                {
+                    ["hold"] = "god_mode", ["active"] = true,
+                    ["holder"] = new JsonObject { ["kind"] = you ? "client" : "ce", ["you"] = you },
+                }),
+            };
 
     [Fact]
     public async Task AWriteAdmittedForOneRun_NeverReachesTheNextRunOfTheSamePid()

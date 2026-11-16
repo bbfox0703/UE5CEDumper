@@ -157,11 +157,15 @@ public sealed class McpGrantsTests
         { """{"cmd":"reset_gravity_direction","if_free":true}""", true },
         { """{"cmd":"reset_time_dilation","target":"pawn","if_free":true}""", true },
         { """{"cmd":"reset_field","class_name":"Pawn","field_name":"bCanBeDamaged","if_free":true}""", true },
-        { """{"cmd":"set_god_mode","enable":false}""", true },
+        // Without if_free the DLL skips its holder check, and the OFF would end another's hold.
+        { """{"cmd":"set_god_mode","enable":false}""", false },
+        { """{"cmd":"set_god_mode","enable":false,"if_free":false}""", false },
+        { """{"cmd":"reset_movement","knob":"jump"}""", false },
         { """{"cmd":"set_god_mode","enable":false,"if_free":true,"background":true,"id":7}""", true },
         { """{"cmd":"set_foreground_lock","enable":false,"if_free":true}""", true },
         { """{"cmd":"set_debug_camera","enable":false,"if_free":true}""", true },
-        { """{"cmd":"seethrough_set","enable":false}""", true },
+        // An explicit See-through OFF drops every claim, the user's and CE's included.
+        { """{"cmd":"seethrough_set","enable":false,"if_free":true}""", false },
         { """{"cmd":"fly_set","enable":false,"if_free":true}""", true },
         // A reset_ prefix is not enough: these two end what other clients hold, or reach the whole process.
         { """{"cmd":"reset_all_fields"}""", false },
@@ -334,10 +338,95 @@ public sealed class McpGrantsTests
     public void TheGate_PassesAReleaseWithNoCapability_ButNotOnAReadOnlyHost()
     {
         var off = Req("""{"cmd":"set_god_mode","enable":false,"if_free":true}""");
-        Assert.Null(Decided().Check(off, null, Pid, Run));
-        Assert.Null(Decided(version: "2.1.100").Check(off, null, Pid, Run));
-        Assert.NotNull(Decided("claude-ai").Check(off, null, Pid, Run));
-        Assert.NotNull(new McpGrants().Check(off, null, Pid, Run));
+        Assert.Null(Decided().Check(off, null, Pid, Run, Held("god_mode")));
+        Assert.Null(Decided(version: "2.1.100").Check(off, null, Pid, Run, Held("god_mode")));
+        Assert.NotNull(Decided("claude-ai").Check(off, null, Pid, Run, Held("god_mode")));
+        Assert.NotNull(new McpGrants().Check(off, null, Pid, Run, Held("god_mode")));
+    }
+
+    /// <summary>A get_holds reply naming one hold.</summary>
+    private static JsonObject Held(string hold, bool you = true, bool active = true, bool pending = false,
+        string kind = "client")
+    {
+        var entry = new JsonObject
+        {
+            ["hold"] = hold, ["active"] = active,
+            ["holder"] = new JsonObject { ["kind"] = kind, ["you"] = you },
+        };
+        if (pending) entry["pending"] = true;
+        return new JsonObject { ["ok"] = true, ["holds"] = new JsonArray(entry) };
+    }
+
+    [Theory]
+    [InlineData("""{"cmd":"set_god_mode","enable":false,"if_free":true}""", "god_mode")]
+    [InlineData("""{"cmd":"set_foreground_lock","enable":false,"if_free":true}""", "foreground_lock")]
+    [InlineData("""{"cmd":"set_debug_camera","enable":false,"if_free":true}""", "debug_camera")]
+    [InlineData("""{"cmd":"fly_set","enable":false,"if_free":true}""", "fly")]
+    [InlineData("""{"cmd":"reset_movement","knob":"jump","if_free":true}""", "movement:jump")]
+    [InlineData("""{"cmd":"reset_gravity_direction","if_free":true}""", "gravity_direction")]
+    [InlineData("""{"cmd":"reset_time_dilation","target":"pawn","if_free":true}""", "time:pawn")]
+    [InlineData("""{"cmd":"reset_time_dilation","if_free":true}""", "time:global")]
+    [InlineData("""{"cmd":"reset_field","class_name":"Pawn","field_name":"bCanBeDamaged","if_free":true}""",
+        "force_field:Pawn::bCanBeDamaged")]
+    public void AReleaseNeedsNoAdmission_OnlyWhileThisServerHoldsWhatItEnds(string request, string hold)
+    {
+        var g = Decided();
+        var r = Req(request);
+        Assert.Equal(hold, McpGrants.ReleasedHold(r));
+        Assert.Null(g.Check(r, null, Pid, Run, Held(hold)));
+        // Someone else's, nobody's, or not known: ending it changes the game -- god mode's OFF writes the normal value
+        // to every protection bool, whoever made the pawn invulnerable -- so it is no release.
+        Assert.NotNull(g.Check(r, null, Pid, Run, Held(hold, you: false, kind: "ce")));
+        Assert.NotNull(g.Check(r, null, Pid, Run, Held(hold, active: false)));
+        Assert.NotNull(g.Check(r, null, Pid, Run, Held(hold + "_other")));
+        Assert.NotNull(g.Check(r, null, Pid, Run, null));
+        Assert.NotNull(g.Check(r, null, Pid, Run, new JsonObject { ["ok"] = false }));
+    }
+
+    [Theory]
+    [InlineData("""{"cmd":"reset_movement","knob":"run","if_free":true}""")]
+    [InlineData("""{"cmd":"reset_time_dilation","target":"world","if_free":true}""")]
+    [InlineData("""{"cmd":"reset_field","class_name":"Pawn","if_free":true}""")]
+    public void ARequestNamingNoHold_ReleasesNothing(string request)
+        => Assert.Null(McpGrants.ReleasedHold(Req(request)));
+
+    [Fact]
+    public void ADebugCameraOnStillOnItsWay_IsTheServersToTakeBack()
+        => Assert.Null(Decided().Check(Req("""{"cmd":"set_debug_camera","enable":false,"if_free":true}"""), null,
+            Pid, Run, Held("debug_camera", active: false, pending: true)));
+
+    [Fact]
+    public void AnOffOfWhatTheServerDoesNotHold_GoesThroughOnlyOnTheGrantOfItsKind()
+    {
+        var g = Decided();
+        var godOff = Req("""{"cmd":"set_god_mode","enable":false,"if_free":true}""");
+        var jumpReset = Req("""{"cmd":"reset_movement","knob":"jump","if_free":true}""");
+        var fieldReset = Req("""{"cmd":"reset_field","class_name":"Pawn","field_name":"X","if_free":true}""");
+        var nobody = new JsonObject { ["ok"] = true, ["holds"] = new JsonArray() };
+        Assert.Contains(Constants.McpGrantToolToggles, g.Check(godOff, null, Pid, Run, nobody));
+        Assert.Contains(Constants.McpGrantToolMovement, g.Check(jumpReset, null, Pid, Run, nobody));
+
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        g.Grant(McpGrantKind.Movement, Ptrs(), out _);
+        var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);
+        var movement = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Movement, Ptrs(), out _);
+        var perCall = g.Admit(McpToolRole.PerCallWrite, McpGrantKind.None, Ptrs(), out _);
+        Assert.Null(g.Check(godOff, toggles, Pid, Run, nobody));
+        Assert.Null(g.Check(jumpReset, movement, Pid, Run, nobody));
+        Assert.NotNull(g.Check(jumpReset, toggles, Pid, Run, nobody));
+        // A forced-field job this server does not hold is never ended through it, on any admission.
+        Assert.NotNull(g.Check(fieldReset, perCall, Pid, Run, nobody));
+        Assert.NotNull(g.Check(fieldReset, toggles, Pid, Run, nobody));
+    }
+
+    [Fact]
+    public void SeeThroughOff_NeedsTheTogglesGrant()
+    {
+        var g = Decided();
+        var off = Req("""{"cmd":"seethrough_set","enable":false,"if_free":true}""");
+        Assert.Contains(Constants.McpGrantToolToggles, g.Check(off, null, Pid, Run, Held("god_mode")));
+        g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
+        Assert.Null(g.Check(off, g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _), Pid, Run));
     }
 
     [Theory]

@@ -404,7 +404,11 @@ public sealed partial class McpGrants
     /// not. A read passes; on a host that writes, a release passes; anything else needs a capability for this run and
     /// this command, whose grant is still in the table, so a revoke that lands before the send wins. A command in no
     /// class is refused, so a future tool that forgets to ask for admission fails closed.</summary>
-    public string? Check(JsonObject request, McpGrantCapability? cap, long connectedPid, string? connectedCreationTime)
+    // RED: the surface only.
+    public static string? ReleasedHold(JsonObject request) => null;
+
+    public string? Check(JsonObject request, McpGrantCapability? cap, long connectedPid, string? connectedCreationTime,
+        JsonObject? holds = null)
     {
         string? cmd = McpJson.GetString(request, "cmd");
         if (cmd is null) return "the request names no command.";
