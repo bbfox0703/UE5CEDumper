@@ -239,7 +239,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         : AobMakerUnavailable.Text(_aobMaker) + ".";   // [W1-PIPEBUSY-STATUS] busy ≠ "start Cheat Engine"
 
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
-    public void SetEngineState(Models.EngineState state) => _engineState = state;
+    public void SetEngineState(Models.EngineState state)
+    {
+        _engineState = state;
+        // [MCP-WRITE-GRANTS-2026-11-14] The holders poll needs a DLL that answers get_holds. The engine state is where
+        // its build is first known, and it comes after the connect, or again on a rescan.
+        _holdsSupported = state.DllBuildNumber >= Constants.HoldsMinDllBuild;
+        if (!_holdsSupported) _holdsTimer?.Stop();
+        else if (IsConnected) StartHoldsPoll();
+    }
 
     /// <summary>[R7-S12] Publish what a probe or a push on the shared bridge learned -- this panel's own, or the toolbar
     /// ⟳'s: set the flag and repaint the note even when the flag is unchanged, since the reason behind "not reachable"
@@ -1082,11 +1090,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             int gen = ++_connectTeardownGen;
             if (_experimentalGate is { IsEnabled: false, TeardownOwed: true })
                 ExperimentalTeardown = TearDownAfterConnectPrimeAsync(ConnectPrime, gen);
+            // [MCP-WRITE-GRANTS-2026-11-14] Who else holds each card's feature, once the engine state has said the DLL
+            // answers get_holds (it may have come first).
+            _aiWriteBlock?.Reload();
+            if (_holdsSupported) StartHoldsPoll();
         }
         else
         {
             StatusText = "Not connected";
             AutoRefresh = false;
+            EndHoldsPoll();
             ApplyDebugCameraState(-1);   // badge back to Unknown
             ApplyGodModeState(-1);       // godmode badge back to Unknown
             ApplyForegroundLockState(-1);// foreground-lock badge back to Unknown
@@ -3929,7 +3942,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// </summary>
     public bool HasAiWriteBlock => _aiWriteBlock != null;
 
-    // RED: the holders poll's surface only.
+    // ── Who else holds each card's feature ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──
+    // Once grants took the per-call prompt away, the window must show what an AI session holds, as a ticked CE record
+    // shows in CE. get_holds (DLL 3704+) names each hold's holder; every HoldsPollInterval while connected to such a DLL,
+    // each card's *HolderText says who other than this window holds its feature (HolderText's words), and a card
+    // someone else holds is read again, so its badge follows what they do. The card's OFF or Reset still takes it over:
+    // the window's requests carry no if_free. Quiet like the connect prime: no StatusText, no IsBusy, no slider, and a
+    // failed read changes nothing.
     [ObservableProperty] private string _debugCameraHolderText = "";
     [ObservableProperty] private string _godModeHolderText = "";
     [ObservableProperty] private string _stealthHolderText = "";
@@ -3942,10 +3961,213 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _flyHolderText = "";
     [ObservableProperty] private string _seeThroughHolderText = "";
     [ObservableProperty] private string _gravDirHolderText = "";
-    internal static readonly TimeSpan HoldsPollInterval = TimeSpan.Zero;
-    internal bool HoldsPollRunning => false;
-    internal Task HoldsFirstPoll => Task.CompletedTask;
-    internal Task PollHoldsOnceAsync() => Task.CompletedTask;
+    internal static readonly TimeSpan HoldsPollInterval = TimeSpan.FromSeconds(2);
+    private Avalonia.Threading.DispatcherTimer? _holdsTimer;
+    private bool _holdsSupported;      // the connected DLL answers get_holds: set from its engine state, cleared on disconnect
+    private bool _holdsBusy;           // one poll at a time: back-to-back polls would pile up behind a slow pipe
+    private int _holdsGen;             // bumped on disconnect, so a reply from before it is dropped
+    private bool _holdsBaseline;       // a start's first poll only records: the connect prime has just read every card
+    private bool _holdsFailureLogged;  // a failing read is logged once per connection, not every two seconds
+    private readonly HashSet<string> _foreignHolds = new(StringComparer.Ordinal);   // labelled by the last poll
+    private readonly HashSet<long> _exitedPids = new();
+    private const string SeeThroughHoldKey = "see-through";   // a key of this class's own: See-through has no hold name
+
+    private static readonly string[] MovementHolds =
+    {
+        Constants.HoldMovementPrefix + "walk_speed", Constants.HoldMovementPrefix + "gravity",
+        Constants.HoldMovementPrefix + "jump", Constants.HoldGravityDirection,
+    };
+    private static readonly string[] TimeHolds = { Constants.HoldTimePrefix + "global", Constants.HoldTimePrefix + "pawn" };
+
+    /// <summary>Whether the poll's timer runs (tests: no dispatcher loop runs in a unit test, so it never ticks).
+    /// </summary>
+    internal bool HoldsPollRunning => _holdsTimer?.IsEnabled ?? false;
+
+    /// <summary>The poll a start makes at once, for tests to await rather than sleep (the ConnectPrime pattern).</summary>
+    internal Task HoldsFirstPoll { get; private set; } = Task.CompletedTask;
+
+    private void StartHoldsPoll()
+    {
+        if (_disposed) return;
+        if (_holdsTimer == null)
+        {
+            _holdsTimer = new Avalonia.Threading.DispatcherTimer { Interval = HoldsPollInterval };
+            _holdsTimer.Tick += HoldsTick;
+        }
+        if (_holdsTimer.IsEnabled) return;   // a connect reports itself twice, and a rescan sets the engine state again
+        _holdsBaseline = true;
+        _holdsTimer.Start();
+        HoldsFirstPoll = PollHoldsOnceAsync();
+    }
+
+    /// <summary>On disconnect nothing is known about who holds what: the poll stops and every label clears.</summary>
+    private void EndHoldsPoll()
+    {
+        _holdsTimer?.Stop();
+        _holdsSupported = false;
+        _holdsGen++;
+        _holdsFailureLogged = false;
+        _foreignHolds.Clear();
+        _exitedPids.Clear();
+        DebugCameraHolderText = "";
+        GodModeHolderText = "";
+        StealthHolderText = "";
+        ForegroundLockHolderText = "";
+        MoveSpeedHolderText = "";
+        WorldTimeHolderText = "";
+        PawnTimeHolderText = "";
+        GravityHolderText = "";
+        SuperJumpHolderText = "";
+        FlyHolderText = "";
+        SeeThroughHolderText = "";
+        GravDirHolderText = "";
+    }
+
+    private async void HoldsTick(object? sender, EventArgs e)
+    {
+        try { await PollHoldsOnceAsync(); }
+        catch (Exception ex) { _log.Error("Teleport holders poll failed", ex); }
+    }
+
+    /// <summary>One poll: get_holds (and See-through's claims while its card shows), the labels, then a read of each
+    /// card someone else holds or held until now. Internal: the test seam, as the timer never ticks in a unit test.
+    /// </summary>
+    internal async Task PollHoldsOnceAsync()
+    {
+        // The switch can change in another window or by hand: the box must not show a tick the servers do not see.
+        _aiWriteBlock?.Reload();
+        if (!IsConnected || !_holdsSupported || _holdsBusy) return;
+        _holdsBusy = true;
+        int gen = _holdsGen;
+        try
+        {
+            HoldsReport? report;
+            try { report = await _dump.GetHoldsAsync(); }
+            catch (Exception ex) { LogHoldsFailure(ex); return; }
+            if (report is null || gen != _holdsGen || !IsConnected) return;
+
+            SeeThroughStatus? seeThrough = null;
+            if (ExperimentalEnabled)
+            {
+                try { seeThrough = await _dump.SeeThroughGetStateAsync(); }
+                catch (Exception ex) { LogHoldsFailure(ex); }
+                if (gen != _holdsGen || !IsConnected) return;
+            }
+
+            var foreign = ApplyHolders(report);
+            if (seeThrough is not null)
+            {
+                SeeThroughHolderText = HolderText.ForSeeThrough(seeThrough);
+                if (SeeThroughHolderText.Length > 0) foreign.Add(SeeThroughHoldKey);
+            }
+
+            // Read again what someone else holds, or held until the last poll: a value changed inside a hold changes
+            // neither its holder nor its state, and a release leaves the card showing theirs. Not on a start's first
+            // poll, and not while a command runs, whose own readout must stand.
+            var reread = new HashSet<string>(foreign, StringComparer.Ordinal);
+            reread.UnionWith(_foreignHolds);
+            _foreignHolds.Clear();
+            _foreignHolds.UnionWith(foreign);
+            bool baseline = _holdsBaseline;
+            _holdsBaseline = false;
+            if (baseline || IsBusy || reread.Count == 0) return;
+            await RereadHeldCardsAsync(reread, seeThrough, gen);
+        }
+        finally
+        {
+            _holdsBusy = false;
+        }
+    }
+
+    /// <summary>Each card's label from the report; returns the holds someone other than this window holds.</summary>
+    private HashSet<string> ApplyHolders(HoldsReport report)
+    {
+        var foreign = new HashSet<string>(StringComparer.Ordinal);
+        string Label(string hold)
+        {
+            string text = HolderText.For(report.Find(hold), HolderExited);
+            if (text.Length > 0) foreign.Add(hold);
+            return text;
+        }
+        DebugCameraHolderText = Label(Constants.HoldDebugCamera);
+        GodModeHolderText = Label(Constants.HoldGodMode);
+        ForegroundLockHolderText = Label(Constants.HoldForegroundLock);
+        FlyHolderText = Label(Constants.HoldFly);
+        GravDirHolderText = Label(Constants.HoldGravityDirection);
+        MoveSpeedHolderText = Label(MovementHolds[0]);
+        GravityHolderText = Label(MovementHolds[1]);
+        SuperJumpHolderText = Label(MovementHolds[2]);
+        WorldTimeHolderText = Label(TimeHolds[0]);
+        PawnTimeHolderText = Label(TimeHolds[1]);
+        // The DLL names a job by the class and field exactly as sent: a job on another spelling is another job, which
+        // this card's Reset would not end.
+        StealthHolderText = _stealthCandidate is { } c
+            ? Label(Constants.HoldForceFieldPrefix + c.ClassName + Constants.HoldForceFieldSeparator + c.FieldName)
+            : "";
+        return foreign;
+    }
+
+    /// <summary>The card reads the connect prime makes, for the holds given, each dropped if a disconnect or a
+    /// command came in between. The Stealth card is not read again: its read searches the pawn's components.</summary>
+    private async Task RereadHeldCardsAsync(HashSet<string> holds, SeeThroughStatus? seeThrough, int gen)
+    {
+        bool Current() => gen == _holdsGen && IsConnected && !IsBusy;
+        async Task Read<T>(Func<Task<T>> fetch, Action<T> apply)
+        {
+            if (!Current()) return;
+            try
+            {
+                var value = await fetch();
+                if (Current()) apply(value);
+            }
+            catch (Exception ex)
+            {
+                LogHoldsFailure(ex);
+            }
+        }
+
+        if (holds.Contains(Constants.HoldGodMode))
+            await Read(() => _dump.GetProtectStateAsync(), ApplyProtectState);
+        if (holds.Contains(Constants.HoldDebugCamera))
+            await Read(() => _dump.GetDebugCameraStateAsync(), s => ApplyDebugCameraState(s));
+        if (holds.Overlaps(MovementHolds))
+            await Read(() => _dump.GetMovementParamsAsync(), mp =>
+            {
+                ApplyMoveSpeedReadout(mp);
+                ApplyGravityReadout(mp);
+                ApplySuperJumpReadout(mp);
+                ApplyGravDirReadout(mp);
+            });
+        if (holds.Overlaps(TimeHolds))
+            await Read(() => _dump.GetTimeStateAsync(), ApplyTimeDilationReadout);   // the readout, never the sliders
+        if (ExperimentalEnabled && holds.Contains(Constants.HoldForegroundLock))
+            await Read(() => _dump.GetForegroundLockAsync(), ApplyForegroundLockState);
+        if (ExperimentalEnabled && holds.Contains(Constants.HoldFly))
+            await Read(() => _dump.FlyGetStateAsync(), ApplyFlyReadout);
+        if (seeThrough is not null && holds.Contains(SeeThroughHoldKey) && Current())
+            ApplySeeThroughReadout(seeThrough);
+    }
+
+    /// <summary>Whether a holder pid no longer runs: typically this window's own holds from before a restart, which
+    /// outlive it under the old pid. Only "exited" is remembered for the connection; a running holder is asked again,
+    /// since it can exit while connected.</summary>
+    private bool HolderExited(long pid)
+    {
+        if (pid <= 0 || pid > int.MaxValue) return false;
+        if (_exitedPids.Contains(pid)) return true;
+        bool exited;
+        try { exited = string.IsNullOrEmpty(_platform.DescribeProcess((int)pid).ImageName); }
+        catch (Exception) { exited = false; }
+        if (exited) _exitedPids.Add(pid);
+        return exited;
+    }
+
+    private void LogHoldsFailure(Exception ex)
+    {
+        if (_holdsFailureLogged) return;
+        _holdsFailureLogged = true;
+        _log.Warn($"Teleport holders poll: a read failed ({ex.Message}); the labels keep what they last showed.");
+    }
 
     internal const string KeyBlockAiSaveFailed = "str.TP.BlockAiSaveFailed";
     internal static string BlockAiSaveFailedText => AobMakerStatus.Say(KeyBlockAiSaveFailed,
@@ -5965,6 +6187,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _experimentalGate.Changed -= OnExperimentalGateChanged;
         if (_aiWriteBlock != null)
             _aiWriteBlock.Changed -= OnAiWriteBlockChanged;
+        if (_holdsTimer != null)
+        {
+            _holdsTimer.Stop();
+            _holdsTimer.Tick -= HoldsTick;
+            _holdsTimer = null;
+        }
         _cursorHotkey?.Dispose();
         _cursorHotkey = null;
         foreach (var live in _markerHotkeys.Values) live.Registration.Dispose();
