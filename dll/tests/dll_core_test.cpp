@@ -6479,8 +6479,8 @@ int main() {
         resetVote();
         g_cachedUEVersion = 505;
         const int votedD = Ubel::FunctionFlagsOffset();
-        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", votedD, DynOff::UFUNCTION_TAIL_EXTRA,
-                 DynOff::UFUNCTION_TAIL_MEASURED.load());
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", votedD,
+                 static_cast<int>(DynOff::UFUNCTION_TAIL_EXTRA), DynOff::UFUNCTION_TAIL_MEASURED.load());
         check("OVERRIDETAIL setup: the vote decides FunctionFlags +0x88 with the +4 extra, measured +0x8C",
               votedD == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 4 && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
         auto c505 = verdictOf(505);
@@ -6591,8 +6591,8 @@ int main() {
         g_cachedUEVersion = 417;
         check("OVERRIDEEXTRA setup: a persisted 4.17 on a +4 tail is published as contradicted",
               Ubel::OverrideInForceContradicted(417, true));
-        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", DynOff::UFUNCTION_FLAGS,
-                 DynOff::UFUNCTION_TAIL_EXTRA, DynOff::UFUNCTION_TAIL_MEASURED.load());
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", static_cast<int>(DynOff::UFUNCTION_FLAGS),
+                 static_cast<int>(DynOff::UFUNCTION_TAIL_EXTRA), DynOff::UFUNCTION_TAIL_MEASURED.load());
         check("OVERRIDEEXTRA setup: ...its vote kept the primary +0x88 with extra 0; the measurement found +0x8C",
               DynOff::UFUNCTION_FLAGS == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 0
                   && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
@@ -8398,7 +8398,7 @@ int main() {
         const auto svSuper = DynOff::USTRUCT_SUPER;
         const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
         const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
-        const auto svCpn = DynOff::bCasePreservingName;   const auto svSoft = DynOff::SOFTPTR_PATH;
+        const auto svCpn = DynOff::bCasePreservingName;   const int svSoft = DynOff::SOFTPTR_PATH;
         const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
                                                DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
         const uint32_t svVer = g_cachedUEVersion;

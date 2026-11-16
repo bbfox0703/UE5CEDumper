@@ -523,7 +523,7 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
 // are trying to stop trusting.
 // ============================================================
 static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
-                                       int taggedEnvelope, int& latched,
+                                       int taggedEnvelope, DynOff::RuntimeOffset& latched,
                                        const char* what) {
     const int envelope = DynOff::PersistentPtrEnvelopeFor(
         elemSize, payloadSize, taggedEnvelope, latched, g_cachedUEVersion);

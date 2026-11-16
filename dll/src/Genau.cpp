@@ -6050,7 +6050,8 @@ bool DetectUEnumNames(bool latchFailure) {
                     "(%s, verified with '%s', count=%d, %d name matches, value %d B, pair stride %d)",
                     off, DynOff::bEnumNamesNewContainer ? "UE5.7+ FNameData"
                                                         : "legacy TArray",
-                    cand.name, layout.count, verified, DynOff::UENUM_VALUE_SIZE, DynOff::UENUM_PAIR_STRIDE);
+                    cand.name, layout.count, verified, static_cast<int>(DynOff::UENUM_VALUE_SIZE),
+                    static_cast<int>(DynOff::UENUM_PAIR_STRIDE));
                 return true;
             }
         }

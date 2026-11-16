@@ -238,6 +238,28 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 
 namespace DynOff {
 
+// [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
+// sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
+// CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
+// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
+// Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
+// family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
+// The other offsets measured the same way -- the persistent-pointer envelopes latched from an ElementSize, UEnum::Names'
+// layout, UFunction's Func and flags -- are RuntimeOffset for the same reason.
+// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
+class RuntimeOffset {
+public:
+    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
+    // `cond ? DynOff::X : 0` ambiguous (C2445).
+    constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
+    RuntimeOffset(const RuntimeOffset&) = delete;
+    RuntimeOffset& operator=(const RuntimeOffset&) = delete;
+    operator int() const noexcept { return v_.load(std::memory_order_relaxed); }
+    RuntimeOffset& operator=(int v) noexcept { v_.store(v, std::memory_order_relaxed); return *this; }
+private:
+    std::atomic<int> v_;
+};
+
 // === UObject — runtime-detected ===
 // Most are stable, but Outer shifts when CasePreservingName enlarges FName.
 inline int UOBJECT_OUTER      = 0x20;  // OuterPrivate: 0x20 (standard), 0x28 (CPN)
@@ -296,7 +318,7 @@ inline void ApplyUStructHead(const UStructHead& h) {
 // offset that holds an in-module code pointer across several sampled native
 // UFunctions. 0 = not found → Path 2 native analysis disabled (the Path 1
 // bytecode path is unaffected).
-inline int UFUNCTION_FUNC     = 0;
+inline RuntimeOffset UFUNCTION_FUNC     {0};
 // Latched once detection has run (success or failure), to avoid re-sampling.
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
@@ -366,25 +388,6 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
     return -1;
 }
 
-// [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
-// sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
-// CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
-// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
-// Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
-// family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
-// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
-class RuntimeOffset {
-public:
-    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
-    // `cond ? DynOff::X : 0` ambiguous (C2445).
-    constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
-    RuntimeOffset(const RuntimeOffset&) = delete;
-    RuntimeOffset& operator=(const RuntimeOffset&) = delete;
-    operator int() const noexcept { return v_.load(std::memory_order_relaxed); }
-    RuntimeOffset& operator=(int v) noexcept { v_.store(v, std::memory_order_relaxed); return *this; }
-private:
-    std::atomic<int> v_;
-};
 
 // Every writer of the family holds this, so two corrections cannot interleave into a split family. Genau's writers
 // take it while they hold the init mutex, so it must never be held while taking that one.
@@ -451,8 +454,8 @@ inline int UBOOLPROP_FIELDSIZE = 0x70;
 // misdetected version is precisely the case where a hardcoded offset does the most harm.
 // -1 = not yet measured; Ubel falls back to a version-derived value until a real
 // property is seen. See PersistentObjectPtrEnvelope() in Ubel.cpp.
-inline int SOFTPTR_PATH  = -1;   // FSoftObjectPath offset inside TSoftObjectPtr
-inline int LAZYPTR_GUID  = -1;   // FGuid           offset inside TLazyObjectPtr
+inline RuntimeOffset SOFTPTR_PATH  {-1};   // FSoftObjectPath offset inside TSoftObjectPtr
+inline RuntimeOffset LAZYPTR_GUID  {-1};   // FGuid           offset inside TLazyObjectPtr
 
 // The pure-arithmetic half of that decision, in the header so the test target can
 // pin it — the tests link headers, not Ubel.cpp, so a rule left in the .cpp is a
@@ -703,8 +706,8 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // the offsets probe). UFUNCTION_FLAGS 0 = undecided -> the readers keep the primary + sweep.
 // UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
-inline int UFUNCTION_FLAGS      = 0;
-inline int UFUNCTION_TAIL_EXTRA = 0;
+inline RuntimeOffset UFUNCTION_FLAGS      {0};
+inline RuntimeOffset UFUNCTION_TAIL_EXTRA {0};
 // The extras a game's tail can carry: none, or Split Fiction's +4. The vote weighs exactly these, and a version is
 // judged against them (CheckTailForVersion), so the two cannot disagree about what a tail may look like.
 inline constexpr int UFUNCTION_TAIL_EXTRAS[] = { 0, 4 };
@@ -1483,13 +1486,13 @@ inline void SetArrayInner(int off) {
 }
 
 // === UEnum — detected by DetectUEnumNames(), on first use or by the version ladder at init ===
-inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
+inline RuntimeOffset UENUM_NAMES          {0x40};  // UEnum::Names (Neu::EnumNamesLayout region offset)
 // [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
 // (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).
 // Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer. (This
 // replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
-inline int UENUM_VALUE_SIZE     = 8;
-inline int UENUM_PAIR_STRIDE    = 0;
+inline RuntimeOffset UENUM_VALUE_SIZE     {8};
+inline RuntimeOffset UENUM_PAIR_STRIDE    {0};
 // UE5.7+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
 // FNameData struct-of-arrays {tagged FName*, tagged int64*, int32 NumValues}. Set by
 // DetectUEnumNames (try-both); the enum reader (Ubel) branches on it. Written before the
