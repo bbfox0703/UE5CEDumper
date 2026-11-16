@@ -207,13 +207,13 @@ public sealed class McpGameLinkTests
     }
 
     [Fact]
-    public async Task AnOffOfWhatThisServerDoesNotHold_IsRefusedWithoutItsGrant()
+    public async Task AnOffOfWhatSomeoneElseHolds_IsRefusedNamingTheHolder_AndNotSent()
     {
         var rig = new Rig(4242);
         rig.Pipe.Handler = (r, _) => Task.FromResult(HoldsReply(r, you: false));
         var e = await Assert.ThrowsAsync<McpToolError>(() =>
             Write(rig, new JsonObject { ["cmd"] = "set_god_mode", ["enable"] = false, ["if_free"] = true }, null));
-        Assert.Contains(Constants.McpGrantToolToggles, e.Message);
+        Assert.Contains("god_mode is held by a Cheat Engine record", e.Message);
         Assert.DoesNotContain("set_god_mode", rig.Pipe.Sent);
     }
 

@@ -345,16 +345,21 @@ public sealed partial class McpGrants
     /// <summary>Whether get_holds says this server holds what <paramref name="request"/> ends: in force, or an ON of its
     /// own still on its way (the debug camera), with this client as the holder.</summary>
     private static bool Owns(JsonObject request, JsonObject? holds)
+        => HolderOf(request, holds) is JsonObject holder && IsTrue(holder["you"]);
+
+    /// <summary>Who holds what <paramref name="request"/> ends, when it is in force (or an ON is on its way); null when
+    /// nobody does or get_holds does not say.</summary>
+    private static JsonObject? HolderOf(JsonObject request, JsonObject? holds)
     {
         string? hold = ReleasedHold(request);
-        if (hold is null || holds?["holds"] is not JsonArray arr) return false;
+        if (hold is null || holds?["holds"] is not JsonArray arr) return null;
         foreach (var node in arr)
         {
             if (node is not JsonObject h || McpJson.GetString(h, "hold") != hold) continue;
             bool inForce = IsTrue(h["active"]) || IsTrue(h["pending"]);
-            return inForce && h["holder"] is JsonObject holder && IsTrue(holder["you"]);
+            return inForce ? h["holder"] as JsonObject ?? new JsonObject() : null;
         }
-        return false;
+        return null;
     }
 
     private static bool IsTrue(JsonNode? node) => node is JsonValue v && v.GetValueKind() == JsonValueKind.True;
@@ -547,6 +552,11 @@ public sealed partial class McpGrants
         if (releaseShape && (IsOwnClaimRelease(request) || Owns(request, holds))) return null;
         // An AI can still clean up what it holds; anything else waits for the user to lift the block.
         if (blocked is not null) return blocked;
+        // Someone else's hold: the DLL's if_free would refuse it whatever the admission, so say whose it is, as that
+        // refusal does, instead of asking for a grant.
+        if (releaseShape && HolderOf(request, holds) is JsonObject other)
+            return ReleasedHold(request) + " is held by " + McpWriteTools.DescribeHolder(other) + ". This server never "
+                   + "replaces or ends what someone else holds; the user can release it where it was set.";
 
         var kind = ChangeKind(cmd);
         bool perCall = PerCall.Contains(cmd);
