@@ -109,6 +109,57 @@ public sealed class McpHostTests
         Assert.Matches(@"new McpServer\([^;]*\bgrants\)", host);
     }
 
+    // ── The agent guard ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────
+
+    private static JsonObject? Guard(string input)
+        => McpAgentGuard.Decide(input) is { } output ? JsonNode.Parse(output)!.AsObject() : null;
+
+    [Theory]
+    [InlineData("mcp__ue5cedumper__write_god_mode")]
+    [InlineData("mcp__ue5cedumper__write_memory")]
+    [InlineData("mcp__ue5cedumper__grant_movement_fly_teleport_may_kill_or_lose_pawn")]
+    public void TheGuard_RefusesASubagentsWriteOrGrant(string tool)
+    {
+        // Subagents and workflow agents share the session's server and its grants (Phase 0, M6), and a subagent's
+        // prompt looks like the main conversation's (M6b): only the main conversation may change the game.
+        var output = Guard(new JsonObject { ["tool_name"] = tool, ["agent_id"] = "a1b2", ["agent_type"] = "x" }
+            .ToJsonString());
+        Assert.NotNull(output);
+        var decision = output!["hookSpecificOutput"]!.AsObject();
+        Assert.Equal("PreToolUse", decision["hookEventName"]!.GetValue<string>());
+        Assert.Equal("deny", decision["permissionDecision"]!.GetValue<string>());
+        string reason = decision["permissionDecisionReason"]!.GetValue<string>();
+        Assert.Contains("main conversation", reason);
+        Assert.DoesNotContain(".py", reason);   // naming a way around the server would advertise it
+    }
+
+    [Theory]
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__write_god_mode"}""")]                  // the main conversation
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__write_god_mode","agent_id":""}""")]
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__read_status","agent_id":"a1"}""")]     // a subagent may read
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__revoke_grants","agent_id":"a1"}""")]   // and narrow
+    public void TheGuard_LeavesEverythingElseToTheUsualRules(string input) => Assert.Null(Guard(input));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{not json")]
+    [InlineData("[1,2]")]
+    [InlineData("""{"agent_id":"a1"}""")]
+    public void TheGuard_RefusesWhatItCannotRead(string input)
+        => Assert.Equal("deny", Guard(input)?["hookSpecificOutput"]?["permissionDecision"]?.GetValue<string>());
+
+    [Fact]
+    public void TheGuardSwitch_ComesBeforeTheMutexAndTheServer_AndWritesOnlyThroughTheHost()
+    {
+        string main = Code(Source("ui/UE5DumpUI/Program.cs"));
+        int guard = main.IndexOf("Constants.McpAgentGuardSwitch", StringComparison.Ordinal);
+        Assert.True(guard > 0, "Program.Main has no --mcp-agent-guard branch");
+        Assert.True(guard < main.IndexOf("TryAcquireSingleInstance", StringComparison.Ordinal));
+        Assert.True(guard < main.IndexOf("Constants.McpSwitch", StringComparison.Ordinal));
+        Assert.Contains("return Mcp.McpHost.RunAgentGuard();", main);
+        Assert.Equal("--mcp-agent-guard", Constants.McpAgentGuardSwitch);
+    }
+
     // ── The shipped setup guide ─────────────────────────────────────────────────────────────────────────
 
     [Fact]

@@ -71,6 +71,9 @@ public static class Constants
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
     public const int McpMinDllBuildForRawWrites = 3706;
+    /// <summary>The switch that runs the exe as a Claude Code PreToolUse hook instead: it reads the hook's input on stdin
+    /// and refuses a subagent's or workflow agent's write or grant ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
+    public const string McpAgentGuardSwitch = "--mcp-agent-guard";
     /// <summary>The <c>--writes=</c> switch after --mcp. Written into one host's own registration, it opens writes to
     /// that host only ([MCP-WRITE-GRANTS-2026-11-14]); any other value stops the server before it serves.</summary>
     public const string McpWritesArgPrefix = "--writes=";
