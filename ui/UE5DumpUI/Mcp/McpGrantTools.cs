@@ -83,8 +83,9 @@ internal static class McpGrantTools
 
     // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b (docs/mcp-write-approval-eval.md §4.4). One UFunction, named by its function
     // and its class's full path, shown to the user in that order (the prompt shows a long string whole, Phase 0 M1).
-    // The function is looked up before the user is asked, so a grant that could never be used -- one the DLL refuses
-    // an AI's call of, or one whose arguments reach other functions or properties by name -- is refused here instead.
+    // The prompt comes first (Claude Code asks before the tool runs); the tool then looks the function up, so a grant
+    // that could never be used -- one the DLL refuses an AI's call of, or one whose arguments reach other functions or
+    // properties by name, as far as walk_functions shows them -- is refused here instead of recorded.
     private static McpTool InvokeGrantTool(IMcpGame game, McpGrants grants, IReadOnlyList<McpTool> catalogue) => new(
         Constants.McpGrantToolInvoke, "Grant: one UFunction",
         "Asks the user for one grant, for one game run: afterwards " + Constants.McpInvokeGrantedTool + " calls this "

@@ -2144,7 +2144,8 @@ request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing qu
 - A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
   still waiting).
 - A background client's call of a latent function (a `LatentActionInfo` parameter, which names the function the engine
-  calls when it finishes) is refused with `code` `-24` (build 3717+).
+  calls when it finishes) is refused with `code` `-24` (build 3717+), when its parameters can be read; one whose
+  parameters cannot be read is not refused for this outside a grant.
 - **Under an invoke grant** (`[MCP-WRITE-GRANTS-2026-11-14]` Phase 1b, build 3717+): a background client sends
   `"grant": true` and `"expect_func_full"`, the full name of the function the grant names (`walk_functions`' `full`,
   e.g. `//Script/Engine/Actor.SetActorHiddenInGame`). Refused with `code` `-28` (`func_full` names the function
@@ -2153,7 +2154,8 @@ request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing qu
   properties by name (a delegate, a property path, a UFunction, or a name or string parameter named for a function,
   event, property, command, delegate or callback); and when the function is not static and the object is a class
   default or a template (warned, never refused, otherwise). A client that is not background has `grant` ignored.
-- Every reply names the function resolved by full name (`func_full`, build 3717+).
+- The reply of a call that ran or was queued, and a `-28` refusal, name the function resolved by full name
+  (`func_full`, build 3717+); the other refusals do not.
 
 ### walk_instance_batch
 

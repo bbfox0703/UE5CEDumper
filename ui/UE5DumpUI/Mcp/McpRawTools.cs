@@ -128,9 +128,10 @@ internal static class McpRawTools
         + "read_holds lists it until it runs. Refused while the UE5DumpUI window, a Cheat Engine record or another AI "
         + "session has a call outstanding, and for network RPCs, console commands and key binds, quitting, travelling "
         + "or loading a streaming level, destroying actors or removing a player, writing or deleting save slots, "
-        + "timers, property setters and events that take a name (they reach any function or property), a Blueprint's "
-        + "event-graph entry (ExecuteUbergraph_*), an async action's Activate, achievement, leaderboard and in-app "
-        + "purchase calls, functions taking an FText, and the debug camera (use write_debug_camera).",
+        + "timers, property setters and events that take a name (they reach any function or property), latent calls "
+        + "(a LatentActionInfo names what runs when they finish), a Blueprint's event-graph entry (ExecuteUbergraph_*), "
+        + "an async action's Activate, achievement, leaderboard and in-app purchase calls, functions taking an FText, "
+        + "and the debug camera (use write_debug_camera).",
         McpSchema.Object(
             ("instance_addr", McpSchema.Addr("The object to call it on."), true),
             ("function", McpSchema.Str("The UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),

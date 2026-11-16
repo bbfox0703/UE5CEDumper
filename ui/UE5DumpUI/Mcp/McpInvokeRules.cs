@@ -4,9 +4,10 @@ namespace UE5DumpUI.Mcp;
 
 /// <summary>
 /// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. The DLL's rules for an AI's invoke, mirrored so that an invoke grant that
-/// could never be used is refused when it is asked for, not at its first call: the user is never asked to approve a
-/// grant on <c>K2_DestroyActor</c>. The DLL still decides at every call (Voll::InvokeRefusedForBackground and, under a
-/// grant, Voll::InvokeParamIndirection); <c>McpInvokeRulesTests</c> reads Voll.h and pins the lists here to it.
+/// could never be used is refused when it is asked for, not at its first call: a grant on <c>K2_DestroyActor</c> is
+/// never recorded (the host's prompt comes before the tool runs, so the user may still see one asked for). The DLL
+/// still decides at every call (Voll::InvokeRefusedForBackground and, under a grant, Voll::InvokeParamIndirection);
+/// <c>McpInvokeRulesTests</c> reads Voll.h and pins the lists here to it.
 ///
 /// Stricter than the DLL in one way: a function taking an FText is refused too, as write_invoke's call builder refuses
 /// one (a zeroed FText is a crash, not an empty text). Weaker in one way: walk_functions sends a struct's members one

@@ -119,7 +119,8 @@ internal sealed class McpServer
         + "holds still works, and every grant ends; such a refusal means stop. ";
 
     private const string Declined =
-        "A declined prompt or a refused grant means no: never try another route to the same change.\n";
+        "A declined prompt or a refused grant means no: never try another route to the same change. The one exception: "
+        + "when the server refuses an invoke grant, write_invoke, asked every call, may still be offered.\n";
 
     private const string Tail =
         "Calls run one at a time on this server's own pipe connection; a UE5DumpUI window has its own connections and "

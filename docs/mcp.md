@@ -257,7 +257,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   `write_debug_camera`), and since 2026-11-16 the calls that reach those effects by name or leave the machine without
   being network RPCs: timers and property setters that take a name (`K2_SetTimer*`, `Set*PropertyByName`), a
   Blueprint's event-graph entry (`ExecuteUbergraph_*`), and achievement, leaderboard and in-app purchase calls. Build
-  3717 adds what a scan of the UE 4.18-5.8 sources found: UE4's `WriteAchievementProgress`, an async action's
+  3717 refuses a latent call too (a `LatentActionInfo` parameter names the function the engine calls when it finishes;
+  `Delay`, `MoveComponentTo`, `LoadAsset`), and adds what a scan of the UE 4.18-5.8 sources found: UE4's `WriteAchievementProgress`, an async action's
   `Activate` (the online and save actions), `RemoteEvent`, `SetBind`, the timeline's `AddInterp*`,
   `EditTextPropertySourceString`, a streaming level's or level instance's load and unload (and the cheat manager's
   `StreamLevelIn` / `StreamLevelOut` / `OnlyLoadLevel`), and the save slot's local-player twins.

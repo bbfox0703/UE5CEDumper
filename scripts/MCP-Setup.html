@@ -132,8 +132,9 @@ own and may run <code>scan_start</code> without asking.</p>
 <p>The grant tools, and <code>write_memory</code>, <code>write_invoke</code> and <code>write_force_field</code>, ask
 every time, in every permission mode, and an allow rule does not skip them (Claude Code 2.1.246 or later). A grant
 covers one game run: the game exiting or restarting, the AI session ending, or <code>revoke_grants</code> ends it.
-An invoke grant covers one function only, on any object and with any arguments; the AI cannot be given one for a
-function the DLL refuses it, or for one whose arguments reach other functions or properties by name.</p>
+An invoke grant covers one function only, on any object and with any arguments. The server refuses one for a
+function the DLL refuses the AI, and for one whose arguments it can see reach other functions or properties by name;
+the DLL refuses every call under a grant that does, however deep the argument.</p>
 
 <p>In the default permission mode Claude Code also asks before each write a grant already covers. To stop that, allow
 the write tools too; the server still refuses every write no grant covers. Leave this out in auto mode for now:</p>
