@@ -1475,6 +1475,23 @@ public sealed class McpToolsTests
         Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
     }
 
+    // Review: the case above with another class's path is refused by the later full-name match too, so it never pinned
+    // the class check. Here the path lookup lands on a class that does declare the function, by its own name, and only
+    // the check of the object found refuses it.
+    [Fact]
+    public async Task TheInvokeGrant_ChecksTheClassItFound_ByItsOwnFullName()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        game.Answers["get_object"] = _ => new JsonObject
+        {
+            ["class_addr"] = "0x7FF600002000", ["class"] = "Pawn", ["full_name"] = "//Script/Engine/Pawn",
+        };
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.True(result.IsError);
+        Assert.Contains("the object found there is //Script/Engine/Pawn", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("walk_functions", game.Commands);
+    }
+
     [Fact]
     public async Task TheInvokeGrant_RefusesAnOlderDll_AndAWrongAck()
     {
