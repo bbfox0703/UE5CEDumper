@@ -668,6 +668,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::" + hold, body);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a CE record that runs the debug camera's own functions
+    /// (a Console row baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as
+    /// CMD_SET_DEBUG_CAMERA does. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI
+    /// session, whose end then turned it off.</summary>
+    [Fact]
+    public void TheMailboxsInvokes_OfTheCamerasFunctions_ChangeItsHoldAsCe()
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        Assert.Matches(@"case CMD_INVOKE:\s*HandleInvokeHeld\(\);", mimic);
+        string byName = Between(mimic, "static void HandleInvokeByName() {", "\nstatic void ");
+        Assert.Contains("HandleInvokeHeld();", byName);
+        Assert.DoesNotContain("HandleInvoke();", byName);
+        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
+        Assert.Contains("Voll::IsDebugCameraFunction(", held);
+        Assert.Contains("ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
+        Assert.Contains("HandleInvoke();", held);
+    }
+
     /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
     /// would let an if_free request through and never be released.</summary>
     [Fact]
