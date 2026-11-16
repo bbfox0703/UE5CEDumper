@@ -980,9 +980,12 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
       03:59:19 to 04:00:58, about one per 2 s, with nothing between; switched on, each poll had read get_holds,
       seethrough_get_state, get_foreground_lock, fly_get_state. Two `seethrough_get_state` came in the connect's
       first refresh (03:59:17), before the poll began: once, not per poll.
-4. ⬜ **A restarted window's own old hold reads "exited".** Acceptance: the window turns god mode on, is closed and
-    started again; `get_holds` names the old window's pid (a foreground client's holds outlive it) and the new
-    window's God Mode card reads "Held by a program that has exited (pid <old>)"; its Force OFF clears the chip.
+4. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 25912; driven through the window with
+    computer-use, `get_holds` read with a pipe client). The window (pid 1264) turned god mode on with Force ON and was
+    closed (WM_CLOSE); `get_holds` still read `god_mode` active, holder client pid 1264, not background (godmode 1).
+    The window started again (pid 10044) and connected: its God Mode card read State ON, "Held by a program that has
+    exited (pid 1264)". Its Force OFF turned it off and cleared the chip; `get_holds` then read inactive, holder none
+    (godmode 0).
 5. ⬜ **A queued debug-camera ON and an owed release.** Acceptance (DumperTest58 Development, the game thread frozen
     with `tools/verify/suspend.py`): a background client's `set_debug_camera` ON answers -5; `get_holds` reads
     `pending: true` with that client; the window's Debug Camera card reads Queued with "Held by an AI session (pid N)"
