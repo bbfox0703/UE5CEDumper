@@ -2051,9 +2051,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// story, so a teardown may pay its debt. A later Hold does not restore it -- Detect may have moved the candidate
     /// off a lost one's field -- the next connect's prime does.</summary>
     private bool _stealthKnown;
-    /// <summary>[STEALTH-RESET-STALE-HELD] The DLL said no stealth hold exists: the prime read no forced field at all,
-    /// or a release was answered. Narrower than <see cref="_stealthKnown"/>, which a prime that saw a forced field it
-    /// could not match also sets, over a hold Solide may still run. Detect does not change it: it only reads.</summary>
+    /// <summary>[STEALTH-RESET-STALE-HELD] The DLL said no stealth hold exists, so Reset sends nothing: from a read of
+    /// its forced fields or an answered release, and cleared again whenever a hold may exist (the holders poll seeing
+    /// one on the meter among them). Narrower than <see cref="_stealthKnown"/>, which a prime that saw a forced field
+    /// it could not match also sets, over a hold Solide may still run. Detect does not change it: it only reads.
+    /// </summary>
     private bool _stealthNoneHeld;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
@@ -4117,14 +4119,45 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PawnTimeHolderText = Label(TimeHolds[1]);
         // The DLL names a job by the class and field exactly as sent: a job on another spelling is another job, which
         // this card's Reset would not end.
-        StealthHolderText = _stealthCandidate is { } c
-            ? Label(Constants.HoldForceFieldPrefix + c.ClassName + Constants.HoldForceFieldSeparator + c.FieldName)
-            : "";
+        StealthHolderText = _stealthCandidate is { } c ? Label(StealthJobHold(c)) : "";
+        // A job on the card's meter exists now, whoever holds it: the chip says Reset ends it, so Reset must send.
+        if (StealthHolderText.Length > 0) _stealthNoneHeld = false;
         return foreign;
     }
 
+    private static string StealthJobHold(UE5DumpUI.Models.StealthCandidate c)
+        => Constants.HoldForceFieldPrefix + c.ClassName + Constants.HoldForceFieldSeparator + c.FieldName;
+
+    /// <summary>The Stealth card's badge from the DLL's forced fields, for a job on its meter that someone else holds
+    /// or held: the connect prime's read searches the pawn's components, which a poll every two seconds must not.
+    /// Matched whole and ordinally, as the DLL names the job.</summary>
+    private void ApplyStealthJob(IReadOnlyList<ForcedFieldInfo> forced, UE5DumpUI.Models.StealthCandidate c)
+    {
+        ForcedFieldInfo? job = null;
+        foreach (var f in forced)
+        {
+            if (string.Equals(f.ClassName, c.ClassName, StringComparison.Ordinal)
+                && string.Equals(f.FieldName, c.FieldName, StringComparison.Ordinal))
+            {
+                job = f;
+                break;
+            }
+        }
+        if (job is null)
+        {
+            // No job on the meter: nothing for Reset to release, and nothing of the card's own still armed.
+            _stealthNoneHeld = true;
+            _stealthArmed = false;
+            ApplyStealthState(0);
+            return;
+        }
+        _stealthNoneHeld = false;
+        // Held at 0 is what this card's Hold does; any other value is a hold this card would not show as its own.
+        ApplyStealthState(job.Kind == "numeric" && job.Value == 0 ? 1 : -1);
+    }
+
     /// <summary>The card reads the connect prime makes, for the holds given, each dropped if a disconnect or a
-    /// command came in between. The Stealth card is not read again: its read searches the pawn's components. Returns
+    /// command came in between; the Stealth card's from the forced fields alone (<see cref="ApplyStealthJob"/>). Returns
     /// the holds whose read was not made, which the poll owes to the next one; a card hidden by the experimental switch
     /// owes none.</summary>
     private async Task<HashSet<string>> RereadHeldCardsAsync(HashSet<string> holds, SeeThroughStatus? seeThrough,
@@ -4169,6 +4202,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         });
         // The readout, never the sliders.
         await Read(TimeHolds, () => _dump.GetTimeStateAsync(), ApplyTimeDilationReadout);
+        if (_stealthCandidate is { } meter)
+            await Read(new[] { StealthJobHold(meter) }, () => _dump.GetForcedFieldsAsync(),
+                forced => ApplyStealthJob(forced, meter));
         if (ExperimentalEnabled)
         {
             await Read(new[] { Constants.HoldForegroundLock }, () => _dump.GetForegroundLockAsync(),
