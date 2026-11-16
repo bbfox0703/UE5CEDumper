@@ -34,7 +34,7 @@ public sealed class McpHostTests
         int avalonia = main.IndexOf("BuildAvaloniaApp()", StringComparison.Ordinal);
         Assert.True(branch > 0, "Program.Main has no --mcp branch");
         Assert.True(branch < mutex && branch < avalonia, "the --mcp branch must come first");
-        Assert.Contains("return Mcp.McpHost.Run();", main);
+        Assert.Contains("return Mcp.McpHost.Run(args);", main);
         Assert.Equal("--mcp", Constants.McpSwitch);
     }
 
@@ -62,6 +62,51 @@ public sealed class McpHostTests
         Assert.Contains("OpenStandardError", host[setOut..host.IndexOf(';', setOut)]);
         Assert.True(setOut < host.IndexOf("new McpServer(", StringComparison.Ordinal));
         Assert.True(setOut < host.IndexOf("new McpLog(", StringComparison.Ordinal));
+    }
+
+    // ── --writes ([MCP-WRITE-GRANTS-2026-11-14]) ───────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(new[] { "--mcp" }, McpWriteMode.Default)]
+    [InlineData(new[] { "--mcp", "--writes=any-host" }, McpWriteMode.AnyHost)]
+    [InlineData(new[] { "--mcp", "--writes=off" }, McpWriteMode.Off)]
+    [InlineData(new[] { "--writes=off", "--mcp" }, McpWriteMode.Off)]   // a registration may put the flag first
+    public void TheWritesFlag_Parses(string[] args, McpWriteMode want)
+    {
+        Assert.True(McpHost.TryParseArgs(args, out var mode, out var error), error);
+        Assert.Equal(want, mode);
+        Assert.Null(error);
+    }
+
+    [Theory]
+    [InlineData("--mcp --writes=bogus")]
+    [InlineData("--mcp --writes=")]
+    [InlineData("--mcp --writes")]
+    [InlineData("--mcp --writes=OFF")]
+    [InlineData("--mcp --WRITES=off")]
+    [InlineData("--mcp --writes=off --writes=off")]
+    [InlineData("--mcp --writes=off --writes=any-host")]
+    [InlineData("--mcp --verbose")]
+    [InlineData("--mcp --mcp")]
+    public void AnyOtherArgument_StopsTheServerBeforeItServes(string commandLine)
+    {
+        // A typo must not quietly serve with a policy the user did not write.
+        Assert.False(McpHost.TryParseArgs(commandLine.Split(' '), out _, out var error));
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
+
+    [Fact]
+    public void TheHost_RefusesABadArgument_OnStderrWithExitCode1_BeforeServing()
+    {
+        string host = Code(Source("ui/UE5DumpUI/Mcp/McpHost.cs"));
+        int parse = host.IndexOf("TryParseArgs(args,", StringComparison.Ordinal);
+        Assert.True(parse > 0);
+        string refusal = host[parse..host.IndexOf("return 1;", parse, StringComparison.Ordinal)];
+        Assert.Contains("Console.Error.WriteLine(", refusal);
+        Assert.True(parse < host.IndexOf("new McpServer(", StringComparison.Ordinal));
+        // One decision object for the server and the link, or the link's gate would never see it.
+        Assert.Matches(@"new McpGameLink\([^;]*\bgrants\)", host);
+        Assert.Matches(@"new McpServer\([^;]*\bgrants\)", host);
     }
 
     // ── The shipped setup guide ─────────────────────────────────────────────────────────────────────────

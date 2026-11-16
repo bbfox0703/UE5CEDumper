@@ -34,7 +34,8 @@ internal sealed class McpServer
     private readonly ConcurrentDictionary<Task, byte> _running = new();
     private readonly string _version;
 
-    public McpServer(IReadOnlyList<McpTool> tools, ILoggingService log, Stream output, string version)
+    public McpServer(IReadOnlyList<McpTool> tools, ILoggingService log, Stream output, string version,
+        McpGrants? grants = null)
     {
         _tools = tools;
         _byName = tools.ToDictionary(t => t.Name, StringComparer.Ordinal);

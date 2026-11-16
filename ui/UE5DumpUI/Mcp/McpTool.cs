@@ -22,7 +22,9 @@ internal sealed record McpTool(
     Func<McpArgs, CancellationToken, Task<McpToolResult>> Run,
     bool Idempotent = true,
     bool Destructive = false,
-    bool RequiresInteraction = false);
+    bool RequiresInteraction = false,
+    McpToolRole? Role = null,
+    McpGrantKind GrantKind = McpGrantKind.None);
 
 /// <summary>What a tool returns: a JSON payload for the model, whether it is an error the model can act on, and an
 /// optional note shown beside it (a reconnect, a cut reply).</summary>

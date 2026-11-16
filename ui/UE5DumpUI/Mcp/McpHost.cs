@@ -16,6 +16,14 @@ namespace UE5DumpUI.Mcp;
 /// </summary>
 internal static class McpHost
 {
+    // RED: the surface only.
+    internal static bool TryParseArgs(string[] args, out McpWriteMode mode, out string? error)
+    {
+        mode = McpWriteMode.Default;
+        error = null;
+        return true;
+    }
+
     public static int Run()
     {
         // stdout carries JSON-RPC and nothing else. Anything that writes Console.Out by accident lands in stderr,
