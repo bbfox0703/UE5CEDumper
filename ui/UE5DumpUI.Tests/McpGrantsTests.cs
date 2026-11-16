@@ -376,6 +376,20 @@ public sealed class McpGrantsTests
         Assert.Empty(g.List());
     }
 
+    // Review: a Blueprint function or custom event may be named with a space, '?' or '*' (UE's Blueprint name rules
+    // allow them), and the DLL compares full names ordinally, so none of them can stand for several functions.
+    [Theory]
+    [InlineData("//Game/Door/BP_Door/BP_Door_C.Open Door")]
+    [InlineData("//Game/Door/BP_Door/BP_Door_C.Is Locked?")]
+    [InlineData("//Game/Door/BP_Door/BP_Door_C.Rate*Spin")]
+    public void AnInvokeGrant_TakesABlueprintFunctionNamedAsBlueprintsAllow(string target)
+    {
+        var g = Decided();
+        Assert.NotNull(g.Grant(McpGrantKind.Invoke, Ptrs(), out var refusal, target));
+        Assert.Null(refusal);
+        Assert.False(McpGrants.IsFunctionFullName("//Game/Door/BP_Door/BP_Door_C.Open" + (char)10 + "Door"));   // control
+    }
+
     [Fact]
     public void TheGate_PassesAGrantedInvoke_OnlyForTheFunctionItsGrantNames()
     {
