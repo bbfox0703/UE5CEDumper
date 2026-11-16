@@ -377,6 +377,8 @@ public sealed class McpToolsTests
         foreach (var (tool, kind, args, cmd) in CoveredOn)
         {
             var game = new FakeGame();
+            // The guarded camera answers with the state it reached; the default 0 would read as a toggle that failed.
+            game.Answers["set_debug_camera"] = r => new JsonObject { ["state"] = r["enable"]!.GetValue<bool>() ? 1 : 0 };
             game.Grants.Revoke(kind);   // the other kind's grant stays, and does not stand in for this one
             var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
             Assert.True(result.IsError, tool);

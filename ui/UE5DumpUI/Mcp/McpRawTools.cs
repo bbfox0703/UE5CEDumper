@@ -50,13 +50,13 @@ internal static class McpRawTools
 
     public static IEnumerable<McpTool> Create(IMcpGame game, McpGrants grants)
     {
-        yield return WriteMemory(game);
-        yield return Invoke(game);
+        yield return WriteMemory(game, grants);
+        yield return Invoke(game, grants);
     }
 
     // ── write_memory ────────────────────────────────────────────────────────────────────────────────────
 
-    private static McpTool WriteMemory(IMcpGame game) => new(
+    private static McpTool WriteMemory(IMcpGame game, McpGrants grants) => new(
         "write_memory", "Write memory",
         "Writes bytes at an address. Data only: the DLL refuses code, read-only, guard and uncommitted pages, and never "
         + "changes page protection. Pass the bytes there now as expect (read them with read_memory first): if the user, "
@@ -80,13 +80,15 @@ internal static class McpRawTools
                 throw new McpToolError($"Up to {MaxWriteBytes} bytes per write ({count} given).");
             if (expect.Length != bytes.Length)
                 throw new McpToolError("'expect' must be as many bytes as 'bytes'.");
-            await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
 
             var timeout = TimeSpan.FromSeconds(LookupSeconds);
-            var reply = await game.SendAsync(pid, new JsonObject
+            var request = new JsonObject
             {
                 ["cmd"] = "write_mem", ["addr"] = addr, ["bytes"] = bytes, ["expect"] = expect,
-            }, timeout, ct);
+            };
+            var grant = McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
+            var reply = await game.SendAsync(pid, request, timeout, ct, grant: grant);
             if (!McpWriteTools.Truthy(reply, "ok"))
             {
                 var fail = new JsonObject { ["error"] = McpJson.GetString(reply, "error") ?? "Not written." };
@@ -113,7 +115,7 @@ internal static class McpRawTools
 
     // ── write_invoke ────────────────────────────────────────────────────────────────────────────────────
 
-    private static McpTool Invoke(IMcpGame game) => new(
+    private static McpTool Invoke(IMcpGame game, McpGrants grants) => new(
         "write_invoke", "Invoke a UFunction",
         "Calls a UFunction on a live object, on the game thread, with its parameters by name: the server reads the "
         + "signature (read_functions shows it, include_interfaces for an interface's) and builds the call. instance_addr "
@@ -133,10 +135,11 @@ internal static class McpRawTools
                                             + "an object of its fields. One left out is zero."),
                 false),
             McpWriteTools.PidProp),
-        ReadOnly: false, (a, ct) => RunInvokeAsync(game, a, ct), Idempotent: false, Destructive: true,
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct), Idempotent: false, Destructive: true,
         Role: McpToolRole.PerCallWrite);
 
-    private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpArgs a, CancellationToken ct)
+    private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpGrants grants, McpArgs a,
+        CancellationToken ct)
     {
         int? pid = a.OptInt("pid");
         string inst = a.Addr("instance_addr");
@@ -194,7 +197,9 @@ internal static class McpRawTools
         // game-thread call the DLL may wait on.
         int calls = 1 + fn.InputParams.Sum(p => IsConvertedSlot(p.TypeName) ? 1
             : StructFields(p, ueVersion)?.Count(f => IsConvertedSlot(f.TypeName)) ?? 0);
-        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true);
+        var grant = McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
+        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true,
+            grant: grant);
         return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
     }
 
