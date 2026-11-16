@@ -886,9 +886,11 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
   (verification-register.md, "MCP field grants, Phase 2": items 1, 3 and 4 closed -- a Blueprint class's field and a
   packed bool on a live object included; the Claude Code prompt open).
 - **Phase 3 (optional)**: an "AI sessions" card (the eval's §7). Only with the maintainer's go-ahead.
-- ~~`[INVOKE-OBJECT-PARAM-CLASS]`~~ ✅ fixed 2026-11-17 (red, then green): a top-level Object / Weak / Soft / Lazy
-  object argument's class chain must reach the parameter's declared class; a class or an interface parameter and a
-  struct's object field are held to liveness only. ~~Original:~~ (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
+- ~~`[INVOKE-OBJECT-PARAM-CLASS]`~~ ✅ fixed 2026-11-17 (red, then green; its review's 2 LOW and 4 INFO fixed): a
+  top-level object argument (strong, weak or soft) must be of the parameter's declared class or a subclass, by short
+  name; a class parameter takes a class object (its class chain reaches Class); an interface parameter, an Object one,
+  a struct's object field and an unread declared class are held to liveness only (a lazy one takes only 0). A chain
+  that cannot be read is refused without a claim about the object's kind. ~~Original:~~ (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
   `write_invoke` or `write_invoke_granted_function` is checked for being a live object, never against the parameter's
   declared class (walk_functions' `obj_class`), so a native function can be handed an object of another class and
   call through its vtable. The grant's sentence says "any arguments", and a scalar can crash a game as well, so this

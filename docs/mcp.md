@@ -282,7 +282,9 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   The list goes by name; a game function that does the same under another name is not caught, and the prompt is then
   your check. The server itself refuses a function taking an FText, a value that does not parse as its parameter's
   type, an object parameter that is not a live object, and one whose class is not the parameter's declared class or
-  a subclass of it (a class or an interface parameter is checked for liveness only).
+  a subclass of it, matched by the class's short name (a class parameter takes a class object; an interface parameter,
+  a parameter declared as any object, a struct's object field and a parameter whose declared class could not be read
+  are checked for liveness only).
 - **The DLL must be build 3705 or later** for the gameplay tools, and **3706 or later** for `write_memory`,
   `write_invoke` and `write_debug_camera`. An older DLL cannot keep the AI's change off yours, so the tool refuses it and
   says to update the DLL.

@@ -25,8 +25,8 @@ namespace UE5DumpUI.Mcp;
 /// signature and builds the buffer by the Invoke dialog's rules (<see cref="ParamBufferBuilder"/>), stricter where the
 /// dialog relies on a human reading the box: a value that does not parse as its type is refused rather than written as
 /// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory) of
-/// the parameter's declared class or a subclass (a top-level object argument; a struct's object field is held to
-/// liveness only). It
+/// the parameter's declared class or a subclass, by short name (a top-level argument; a class parameter takes a class
+/// object, and an interface parameter and a struct's object field are held to liveness only). It
 /// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
 /// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
 /// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera, and since
