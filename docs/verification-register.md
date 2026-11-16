@@ -988,6 +988,36 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
     ToggleDebugCamera arrives: the mailbox answers within its own invoke timeout (not two), and the DLL log reads
     "ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera".
 
+### ⬜ MCP invoke grants, Phase 1b (build 3717) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+
+One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `write_invoke_granted_function` unasked
+-- dev-log 3717, docs/mcp-write-approval-eval.md §4.4. Unit tests (`McpGrantsTests`, `McpToolsTests`,
+`McpInvokeRulesTests`, `dll_helpers_test` Test_Voll_InvokeParamIndirection / Test_D23) and source pins
+(`PipePerProcessSourceTests` for Fern's grant mode).
+
+1. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3717, DumperTest Shipping pid 31104, UE 5.4; `mcp_client.py invokegrant`
+    22/22, log `out/mcp_invokegrant_3717.log`).
+    - **MCP side:** the grant marked, the granted invoke listed unmarked and destructive; before the grant, refused naming
+      it; `Add_IntInt` granted by full name and called unasked, returning 42, `read_grants` uses 1; grants refused for
+      K2_DestroyActor, K2_SetTimer, Delay, K2_ClearTimer, a missing class and a short class name, nothing else granted;
+      a granted SetActorHiddenInGame refused on Default__StaticMeshActor ("class default or a template") and run on a
+      live StaticMeshActor; one function's grant revoked, its call refused again, the other grant standing.
+    - **DLL side** (a background pipe client, no server between): `grant` with another `expect_func_full` refused -28
+      with `func_full` naming Add_IntInt; K2_ClearTimer under a grant refused -28 naming FunctionName; Delay per call
+      refused -24 "latent".
+    - Regressions on the same run: `probe` 29/29, `raw` 28/28, `invokeparams` 26/26, `writes --toggle-experimental`
+      39/39, `holdsmore` 78/78.
+2. ⬜ **Claude Code's prompt for an invoke grant.** Acceptance: with the server registered from a 3717 exe, the AI asked
+    to call one function repeatedly calls `grant_invoke_one_function_any_object_and_args`; the prompt shows that name,
+    then Function, then Class, then the scope_ack sentence, each whole; after Allow, `write_invoke_granted_function`
+    runs without a prompt in auto mode, `write_invoke` of another function still asks, and the server's log has one
+    `Grant N: Invoke ... : <full name>` line. Covered meanwhile by
+    `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst` (the order) and Phase 0's M1 (whole arguments).
+3. ⬜ **A Blueprint function under a grant.** Acceptance: on a fixture with a Blueprint-defined function (its full name
+    under `//Game/...`), the grant takes the function and its BP class path, the call runs on a live instance of that
+    class, and a native function the Blueprint overrides is refused under a grant on the parent's full name (the DLL's
+    -28 names the override's `func_full`).
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1144,7 +1174,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

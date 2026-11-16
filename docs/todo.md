@@ -16,7 +16,8 @@ Open work only. **Read this when deciding what to do next.**
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
 > next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
 > Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 and was proven live in 3715 (2026-11-16); the
-> cards' holder labels shipped and were proven live in 3716; Phase 1b (invoke grants) is next** --
+> cards' holder labels shipped and were proven live in 3716; Phase 1b (invoke grants) shipped and was proven live in
+> 3717 (2026-11-17); Phase 2's `write_field` is next** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -99,7 +100,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **14 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **15 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -874,7 +875,15 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
 - ~~**The cards' holder labels**~~ ✅ shipped in build 3716 (dev-log 3716), after three review rounds; proven live
   (verification-register.md, "The cards' holder labels": items 1-2 closed, the edge states 3-6 open, each with its
   acceptance test). The DLL now records who toggles the debug camera through an invoke of its own functions.
-- **Phase 1b, invoke grants** (§4.4), then Phase 2's `write_field` (§4.5).
+- ~~**Phase 1b, invoke grants**~~ ✅ shipped in build 3717 (dev-log 3717): one UFunction per grant, the AI's invoke
+  deny list from a scan of the UE 4.18-5.8 sources; proven live (verification-register.md, "MCP invoke grants, Phase
+  1b": item 1 closed, the Claude Code prompt and a Blueprint function open).
+- **Phase 2's `write_field`** (§4.5), next.
+- `[INVOKE-OBJECT-PARAM-CLASS]` (LOW, hardening, from Phase 1b's review; refuted as a defect): an object argument of
+  `write_invoke` or `write_invoke_granted_function` is checked for being a live object, never against the parameter's
+  declared class (walk_functions' `obj_class`), so a native function can be handed an object of another class and
+  call through its vtable. The grant's sentence says "any arguments", and a scalar can crash a game as well, so this
+  narrows one route only; worth doing for both invoke routes when the call builder is next touched.
 
 ### Decisions (maintainer, 2026-11-06)
 
