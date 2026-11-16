@@ -66,7 +66,8 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
     py tools/verify/mcp_client.py olddll --exe dist/UE5DumpUI.exe [--pid N]
         Register item 24, the old DLL: DumperTest Shipping freshly injected with out/stageA/copy3695/UE5Dumper.dll
         (build 3695: the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
-        3705; 3706 for write_memory, write_invoke, write_debug_camera; 3718 for write_field) before anything is sent, and the 3695 pipe log
+        3705; 3706 for write_memory, write_invoke, write_debug_camera; 3717 for write_invoke_granted_function; 3718 for
+        write_field) before anything is sent, and the 3695 pipe log
         shows none of their commands since the start. Keep the UI closed: 3695 serves three connections.
     py tools/verify/mcp_client.py invokeparams --exe dist/UE5DumpUI.exe [--pid N]
         Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
@@ -85,10 +86,11 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         [MCP-WRITE-GRANTS-2026-11-14] Phase 2 on DumperTest Shipping (DLL 3718+): grants refused for a struct, a static
         array, a short class name and a missing field; a field grant on DumperTestHolder.HolderValue lets write_field
         write it unasked on a spawned Derived holder and put it back byte for byte, never on a Decoy (the same field name,
-        no derivation) nor on the class default, and refuses a float past its range; a native bool and a 4-byte enum
-        set and cleared and put back, the enum only to one of its entries (by its short name too); one field's grant
-        revoked while the others stand. Every write expected refused has its bytes recorded first; the clean-up puts
-        back anything still changed, checks each restore's reply, and destroys the spawned holders.
+        no derivation), nor on the class default, nor on an archetype (Default__Character's movement component), and
+        refuses a float past its range; a native bool set and cleared, a 4-byte enum set by its short name and only to
+        one of its entries, each put back; one field's grant revoked while the others stand. Every write expected
+        refused has its bytes recorded first; the clean-up puts back anything still changed, newest first, checks each
+        restore's reply, and destroys the spawned holders.
 
     Every mode that writes starts its server with --writes=any-host (this client is no Claude Code, so by default it
     only reads) and gives itself both grants, reading each scope_ack from tools/list, as a user approving both
@@ -2406,6 +2408,8 @@ def run_invoke_grant(exe: str, pid: int | None) -> int:
 
 # DumperTestActor's 4-byte enum (DumperTestTypes.h, L30) and the entry whose byte 2 is set, so a short write shows.
 WIDE_ENUM, WIDE_HIGH = "Probe_WideEnum", 0x007F0000
+# An archetype every UE game has: Default__Character's movement component, and a float field of it.
+ARCHETYPE_CLASS, ARCHETYPE_FIELD = "CharacterMovementComponent", "MaxWalkSpeed"
 
 
 def run_field_grant(exe: str, pid: int | None) -> int:
@@ -2468,8 +2472,10 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         return r, d
 
     def wrote(key: str, inst: str, field: str, r: dict, d: dict) -> None:
-        """Records what a write found there, the first time this run changes that field."""
-        if not r.get("isError") and d.get("before") and key not in changed:
+        """Records what a write found there, the first time this run changes that field: an address already recorded
+        (by a refusal that landed after all) keeps its original, not what that write left."""
+        if not r.get("isError") and d.get("before") and key not in changed \
+                and not any(v[2] == d.get("addr") for v in changed.values()):
             changed[key] = (inst, field, d.get("addr"), str(d["before"]).upper())
 
     def put_back(key: str, label: str, value_of) -> None:
@@ -2486,11 +2492,15 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         original), so a write that lands after all is reported and put back."""
         addr, size = field_at(inst, field)
         before = mem(addr, size) if addr and size else ""
-        fresh = bool(before) and not any(v[2] == addr for v in changed.values())
+        if not before:
+            # Unrecorded, a write that landed could be neither seen nor put back: no check passes on the text alone.
+            ck.check(False, label, f"{field}'s bytes on {inst} could not be read first")
+            return
+        fresh = not any(v[2] == addr for v in changed.values())
         if fresh:
             changed[key] = (inst, field, addr, before)
         r, d = write(inst, field, value)
-        unchanged = not before or mem(addr, size) == before
+        unchanged = mem(addr, size) == before
         ok = bool(r.get("isError")) and needle in error_text(d) and unchanged
         ck.check(ok, label, {"reply": d, "bytes_unchanged": unchanged})
         if ok and fresh:
@@ -2578,6 +2588,21 @@ def run_field_grant(exe: str, pid: int | None) -> int:
         refused("cdo", cdo["addr"], FIXTURE_FIELD, "5", "class default",
                 "the class default: refused by the DLL's template verdict, nothing written")
 
+        # 4b. An archetype, named like any component: Default__Character's movement component (every UE game has it).
+        r, d, _ = call("read_find_instances", {"class_name": ARCHETYPE_CLASS, "exact_match": True, "limit": 200})
+        arche = next((i for i in d.get("instances", [])
+                      if str(call("read_object", {"addr": i.get("outer", "0x0")})[1].get("name", ""))
+                      .startswith("Default__")), None)
+        arche_path = klass(arche["class_addr"]).get("full_path", "") if arche else ""
+        if ck.check(bool(arche and arche_path), f"a {ARCHETYPE_CLASS} subobject of a class default ({arche_path})", d):
+            arche_target = arche_path + ":" + ARCHETYPE_FIELD
+            r, d, _ = call(GRANT_FIELD, {"field": ARCHETYPE_FIELD, "class": arche_path, "scope_ack": ack})
+            ck.check(not r.get("isError"), f"{arche_target} granted", d)
+            refused("archetype", arche["addr"], ARCHETYPE_FIELD, "1234", "a template",
+                    f"{arche['name']} under a class default: refused by the DLL's template verdict, nothing written")
+            r, d, _ = call("revoke_grants", {"kind": "field", "field": arche_target})
+            ck.check(not r.get("isError") and d.get("revoked") == 1, f"{arche_target}'s grant revoked", d)
+
         # 5. A native bool: granted, set and cleared (so neither write can pass as a no-op), put back.
         r, d, _ = call(GRANT_FIELD, {"field": FIXTURE_FLAG, "class": holder_path, "scope_ack": ack})
         ck.check(not r.get("isError"), f"{FIXTURE_FLAG} granted", d)
@@ -2617,7 +2642,8 @@ def run_field_grant(exe: str, pid: int | None) -> int:
                 raise McpError(f"write_mem answered {r}")
 
         if ui is not None:
-            for key, (_, field, addr, before) in list(changed.items()):
+            # Newest first, so the first-recorded original of an address is the last thing written there.
+            for key, (_, field, addr, before) in reversed(list(changed.items())):
                 _attempt(f"{field}'s bytes back ({key})", lambda a=addr, b=before: restore(a, b))
             if "spawner" in did:
                 def destroy_holders():
