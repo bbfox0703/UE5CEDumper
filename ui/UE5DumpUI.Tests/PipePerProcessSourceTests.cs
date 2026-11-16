@@ -982,6 +982,35 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 1b. An invoke under a grant (`grant`, background clients only)
+    /// is checked against the function the grant names (`expect_func_full`, the resolved full name), its parameters
+    /// (Voll::InvokeParamIndirection under a grant, failing closed on a layout it cannot read) and a template, all
+    /// before anything is allocated or queued; every background invoke's parameters are checked for a latent call.
+    /// </summary>
+    [Fact]
+    public void InvokeFunction_UnderAGrant_ChecksTheFunctionItsParametersAndTheTemplate_BeforeAllocating()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_INVOKE_FUNCTION) {",
+            "if (cmd == Renge::CMD_");
+        int deny = body.IndexOf("Voll::InvokeRefusedForBackground(", StringComparison.Ordinal);
+        int capture = body.IndexOf("Ubel::CaptureParamLayout(ufuncAddr", StringComparison.Ordinal);
+        int rule = body.IndexOf("Voll::InvokeParamIndirection(", StringComparison.Ordinal);
+        int template_ = body.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
+        int blocker = body.IndexOf("Stark::IfFreeBlocker(conn->ownerKey)", StringComparison.Ordinal);
+        int alloc = body.IndexOf("strAllocs", StringComparison.Ordinal);
+        Assert.True(deny > 0 && capture > deny && rule > capture && template_ > rule && blocker > template_
+                    && alloc > blocker, "the deny list, the parameters, the template, then the conflict and the strings");
+        Assert.Contains("request.value(\"grant\", false)", body);
+        Assert.Contains("request.value(\"expect_func_full\"", body);
+        Assert.Matches(@"fi\.fullName\s*!=\s*expectFull", body[..blocker]);           // the grant's function, ordinally
+        Assert.Matches(@"underGrant\s*&&\s*nonStaticOnTemplate", body[..blocker]);     // refused, not warned, under one
+        Assert.Contains("FUNC_FLAG_UBERGRAPH", body[..blocker]);
+        Assert.Contains("layout.truncated", body[..blocker]);
+        Assert.Contains("Grimoire::INVOKE_REFUSED_UNDER_GRANT", body[..blocker]);
+        Assert.Contains("data[\"func_full\"]", body);
+        Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
+    }
+
     /// <summary>A background client's refusals come before anything is allocated or queued, and the queue's conflict
     /// answers as a hold refusal does.</summary>
     [Fact]
