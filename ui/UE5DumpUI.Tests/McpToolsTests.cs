@@ -200,7 +200,7 @@ public sealed class McpToolsTests
     /// UI walks, reset_diagnostics and the version / timeout / packed overrides are process-wide (an AI must not lengthen
     /// the invoke timeout to dodge -5), reset_all_fields ends everyone's holds, and the marker slots and the undo point
     /// are the user's.</summary>
-    private static readonly HashSet<string> AllowedCommands =
+    internal static readonly HashSet<string> AllowedCommands =
     [
         "get_pointers", "scan_status", "trigger_scan", "search_objects", "find_object", "find_instances",
         "find_live_instance", "get_object", "find_by_address", "list_classes", "walk_class", "walk_functions",
@@ -221,7 +221,7 @@ public sealed class McpToolsTests
     ];
 
     /// <summary>Commands the server must never send, whatever a later edit allows.</summary>
-    private static readonly HashSet<string> NeverSent =
+    internal static readonly HashSet<string> NeverSent =
     [
         "reset_all_fields", "teleport_save_marker", "teleport_clear_marker", "teleport_recall_last",
         "teleport_to_cursor", "teleport_relative", "teleport_get_markers", "set_invoke_timeout",

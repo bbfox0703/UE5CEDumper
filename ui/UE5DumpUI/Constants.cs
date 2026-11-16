@@ -71,6 +71,17 @@ public static class Constants
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
     public const int McpMinDllBuildForRawWrites = 3706;
+    /// <summary>The <c>clientInfo.name</c> Claude Code sends in initialize, compared ordinally: the only host whose
+    /// approval prompt this server knows how to rely on ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
+    public const string McpClaudeCodeClientName = "claude-code";
+    /// <summary>The first Claude Code whose approval prompt for a marked tool has no "don't ask again": below it one
+    /// such click on a grant tool would make every later grant silent, so an older or unparseable version gets every
+    /// write marked per call instead of grants.</summary>
+    public static readonly Version McpClaudeCodeMinVersion = new(2, 1, 246);
+    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name (Phase 0, M10), so each name states what
+    /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
+    public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
+    public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
 
     // Application
     public const string AppName = "UE5DumpUI";
