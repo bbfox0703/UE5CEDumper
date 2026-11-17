@@ -14420,13 +14420,16 @@ int main() {
     // -- the descriptor already held the index and the display added it again; a struct element read
     // "Items[3].Count[3]", which the UI's ParseElementIndexSuffix then took for an element row.
     {
-        // Through the deep visitor's own meta fill (Aura::DeepGroupLeafMeta), so the wiring is what is checked. Review
-        // wf_72c53295-04c F5: the helper alone could be right while the visitor stored something else.
+        // Through the two helpers the scan itself calls -- the deep visitor's meta fill (Aura::DeepGroupLeafMeta) and
+        // emitGroupCandidate's slot match (Aura::GroupSlotMatchFromMeta) -- then FieldDisplayName on the slot's index, as
+        // GroupLeafToJson renders it. That the scan calls them is the code's, not this test's (review wf_d3c2ec9a-d52).
         auto shown = [](const std::string& arrayPath, int32_t idx, const std::string& leaf) {
             Aura::GroupLeafMeta m = Aura::DeepGroupLeafMeta(arrayPath, idx, leaf, "FloatProperty");
+            const uint8_t bytes[8] = {};
+            const Radar::GroupSlotMatch sm = Aura::GroupSlotMatchFromMeta(m, 0, 0x1000, "DumperTestActor", bytes);
             Radar::FieldDescriptor d;
             d.fieldName = m.fieldName;
-            return Radar::FieldDisplayName(d, m.elementIndex);
+            return Radar::FieldDisplayName(d, sm.elementIndex);
         };
         check("* GROUP-DEEP-INDEX-TWICE: a scalar-container element shows its index once",
               shown("Deep_Buckets[29].Subs[29].Leaves", 26, "") == "Deep_Buckets[29].Subs[29].Leaves[26]");
@@ -14451,11 +14454,13 @@ int main() {
         i16.offset = i32.offset = 0x2A0;
         i16.fieldType = "Int16Property";
         i32.fieldType = "IntProperty";
+        // The key internDesc uses: this checks the key, not the scan's refine of a raw leaf (review wf_d3c2ec9a-d52).
         check("* GROUP-RAW-WIDTH-INTERN: two widths at one raw offset intern apart",
               Aura::GroupDescInternKey("BP_Hero_C", i16) != Aura::GroupDescInternKey("BP_Hero_C", i32));
-        Aura::GroupLeafMeta again = i16;
-        check("control: the same leaf interns to the same key",
-              Aura::GroupDescInternKey("BP_Hero_C", i16) == Aura::GroupDescInternKey("BP_Hero_C", again));
+        Aura::GroupLeafMeta otherOffset = i16;
+        otherOffset.offset = 0x2A4;
+        check("control: the key still separates offsets (the name alone does not make it)",
+              Aura::GroupDescInternKey("BP_Hero_C", i16) != Aura::GroupDescInternKey("BP_Hero_C", otherOffset));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

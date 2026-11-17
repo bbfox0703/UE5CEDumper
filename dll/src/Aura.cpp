@@ -9808,6 +9808,23 @@ struct GroupLeafMeta {
 // as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
 // element row). [GROUP-DEEP-INDEX-TWICE]
 struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
+// One slot match from a leaf's metadata, as the group scan records it: the descriptor it was interned under, the
+// element index (FieldDisplayName puts it at the name's "[]"), the owner and the container anchor. Pure, so the chain
+// meta -> slot -> displayed name is tested end to end (review wf_d3c2ec9a-d52 GROUP-TESTS-HELPER-ONLY).
+Radar::GroupSlotMatch GroupSlotMatchFromMeta(const GroupLeafMeta& meta, uint32_t descIdx, uintptr_t obj,
+                                             const std::string& className, const uint8_t (&leafBytes)[8]) {
+    Radar::GroupSlotMatch sm;
+    sm.descriptorIdx = descIdx;
+    sm.elementIndex  = meta.elementIndex;
+    sm.offset        = meta.offset;
+    sm.leafAddr      = meta.leafAddr;
+    sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;           // P4: leaf's owning object
+    sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;   // P4 inc 2
+    sm.anchor        = meta.anchor;                                     // A12: relay the container identity
+    std::memcpy(sm.prevValue, leafBytes, 8);
+    return sm;
+}
+
 // The key a group leaf's descriptor is interned under. The TYPE is part of it: a native-C hole emits one leaf per width
 // that satisfies a slot, all named "<raw@0xNN>" at one offset, and refine reads each leaf's width from its descriptor --
 // keyed without the type, every width got the first one's (Int16) and was refined and shown as that. A reflected leaf has
@@ -10382,16 +10399,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         for (size_t s = 0; s < nSlots; ++s) {
             for (int leafIdx : mout[s].leafIdx) {
                 const GroupLeafMeta& meta = blkMetas[static_cast<size_t>(leafIdx)];
-                Radar::GroupSlotMatch sm;
-                sm.descriptorIdx = internDesc(className, meta);
-                sm.elementIndex  = meta.elementIndex;
-                sm.offset        = meta.offset;
-                sm.leafAddr      = meta.leafAddr;
-                sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;  // P4: leaf's owning object
-                sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;  // P4 inc 2
-                sm.anchor        = meta.anchor;   // A12: relay the container identity
-                std::memcpy(sm.prevValue, blkLeaves[static_cast<size_t>(leafIdx)].bytes, 8);
-                gc.slotMatches[s].push_back(sm);
+                gc.slotMatches[s].push_back(GroupSlotMatchFromMeta(meta, internDesc(className, meta), obj, className,
+                                                                   blkLeaves[static_cast<size_t>(leafIdx)].bytes));
             }
         }
         result.candidates.push_back(std::move(gc));

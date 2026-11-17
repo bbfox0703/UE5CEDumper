@@ -4252,14 +4252,6 @@ static void Test_NumericFamily_Filter() {
     EXPECT("parse empty->Any",   ParseNumericFamily("")             == NumericFamily::Any);
 }
 
-// Which leaf each slot DISPLAYS. Reproduces the DumperTest sample exactly: a
-// Changed + Unchanged refine where slot 0 kept {Health.CurrentValue, TickCount}
-// and slot 1 kept {PrimaryActorTick.TickInterval, Health.BaseValue, FrozenInt}.
-// Two valid assignments, one row — and for four separate reports the pair the
-// row did not pick was read as a missed match.
-//
-// The rule used to live inside Fern.cpp's JSON builder where no test could reach
-// it, which is how it kept drifting away from the filter it must agree with.
 // [GROUP-DEEP-INDEX-TWICE] Review wf_72c53295-04c F5: the witness picker's term match reads the DISPLAYED name. A deep
 // leaf's descriptor is "...Leaves[]" and its slot match holds the index, so asking for "Leaves[26]" must pick the leaf
 // at element 26 -- against the raw name it matched nothing and fell to "any free leaf", the first one.
@@ -4288,6 +4280,14 @@ static void Test_Radar_PickWitness_DeepDisplayedName() {
     EXPECT("control: with no term the first free leaf is picked", none.size() == 1 && none[0] == 0);
 }
 
+// Which leaf each slot DISPLAYS. Reproduces the DumperTest sample exactly: a
+// Changed + Unchanged refine where slot 0 kept {Health.CurrentValue, TickCount}
+// and slot 1 kept {PrimaryActorTick.TickInterval, Health.BaseValue, FrozenInt}.
+// Two valid assignments, one row — and for four separate reports the pair the
+// row did not pick was read as a missed match.
+//
+// The rule used to live inside Fern.cpp's JSON builder where no test could reach
+// it, which is how it kept drifting away from the filter it must agree with.
 static void Test_Radar_PickGroupWitnessAssignment() {
     using namespace Radar;
 
