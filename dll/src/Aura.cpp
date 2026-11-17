@@ -9808,10 +9808,14 @@ struct GroupLeafMeta {
 // as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
 // element row). [GROUP-DEEP-INDEX-TWICE]
 struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
-// The key a group leaf's descriptor is interned under. [GROUP-RAW-WIDTH-INTERN]
+// The key a group leaf's descriptor is interned under. The TYPE is part of it: a native-C hole emits one leaf per width
+// that satisfies a slot, all named "<raw@0xNN>" at one offset, and refine reads each leaf's width from its descriptor --
+// keyed without the type, every width got the first one's (Int16) and was refined and shown as that. A reflected leaf has
+// one type per class / name / offset, so its descriptors are as before. [GROUP-RAW-WIDTH-INTERN]
 std::string GroupDescInternKey(const std::string& className, const GroupLeafMeta& meta) {
     std::string key = className; key += '|'; key += meta.fieldName;
     key += '|'; key += std::to_string(meta.offset);
+    key += '|'; key += meta.fieldType;
     return key;
 }
 
@@ -10331,7 +10335,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
     };
 
     auto internDesc = [&](const std::string& className, const GroupLeafMeta& meta) -> uint32_t {
-        // Direct leaves intern by (class, field, offset) across instances. A deep leaf's
+        // Direct leaves intern by (class, field, offset, type) across instances. A deep leaf's
         // name holds its outer indices and a "[]" for its own, so the elements of one
         // container share a descriptor and the slot match carries the element index.
         std::string key = GroupDescInternKey(className, meta);
