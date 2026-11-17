@@ -1012,34 +1012,49 @@ public sealed class PipePerProcessSourceTests
     }
 
     /// <summary>[PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop notes what it reads
-    /// while g_initInProgress is up, before dispatching it, and nothing between the note and the dispatch can refuse or
-    /// skip it. Once per name per run is Voll::DuringInitNotes', pinned by behaviour in dll_helpers_test; every raise of
-    /// the flag names its run with a fresh g_initRun. Review wf_8f451d97-434 A-PIN-WEAK: the first pin passed with the
-    /// log line deleted, the flag inverted and a refusal added.</summary>
+    /// while g_initInProgress is up, logs it by the name the note shows, then dispatches it unconditionally, with nothing
+    /// in between that answers, refuses or skips it. Once per name per run is Voll::DuringInitNotes', pinned by behaviour
+    /// in dll_helpers_test; every raise of the flag, in any DLL source file, names its run with a fresh g_initRun. Reviews
+    /// wf_8f451d97-434 (A-PIN-WEAK) and wf_b0aa9098-dd5 (A-PIN-DISPATCH-GATE, A-PIN-SHOWN-UNUSED, A-PIN-RAISES-ONE-FILE)
+    /// each found a broken shape this pin let through.</summary>
     [Fact]
     public void ACommandDuringInit_IsNotedBeforeDispatch_AndNeverRefused()
     {
         string src = NoComments(DllSrc("Fern.cpp"));
+        const string dispatchStatement = "std::string response = DispatchCommand(conn, line);";
         int loop = src.IndexOf("const std::string cmd = Voll::ExtractCmdName(line);", StringComparison.Ordinal);
         int gate = src.IndexOf("if (g_initInProgress.load(", loop, StringComparison.Ordinal);
-        int info = src.IndexOf("Sein::Info(\"PIPE:cmd\"", gate, StringComparison.Ordinal);
-        int dispatch = src.IndexOf("DispatchCommand(", loop, StringComparison.Ordinal);
-        Assert.True(loop > 0 && gate > loop && info > gate && dispatch > info,
-            "the read loop notes the command, then logs it, then dispatches it");
-        // One condition, the flag unnegated and the note's verdict taken as is, and the log line is its body.
+        int dispatch = src.IndexOf(dispatchStatement, loop, StringComparison.Ordinal);
+        Assert.True(loop > 0 && gate > loop && dispatch > gate, "the read loop notes the command, then dispatches it");
+        // The dispatch is a statement of its own, so neither a condition nor a ternary can sit inside it.
+        Assert.Single(Regex.Matches(src, Regex.Escape(dispatchStatement)));
+        // One condition, the flag unnegated and the note's verdict taken as is; its body logs the name Shown() gives.
         Assert.Matches(@"^if \(g_initInProgress\.load\(std::memory_order_acquire\)\s*&&\s*"
                        + @"s_duringInit\.Note\(cmd, g_initRun\.load\(std::memory_order_relaxed\)\)\) \{\s*"
-                       + @"const std::string shown\(Voll::DuringInitNotes::Shown\(cmd\)\);\s*$", src[gate..info]);
-        // Nothing between the note and the dispatch answers, refuses or skips the command.
-        string between = src[gate..dispatch];
+                       + @"const std::string shown\(Voll::DuringInitNotes::Shown\(cmd\)\);\s*"
+                       + @"Sein::Info\(""PIPE:cmd"", ""PipeServer: %s arrived during an init or rescan apply -- offsets or "
+                       + @"pointers it read ""\s*""may not be final yet"", shown\.c_str\(\)\);\s*\}", src[gate..dispatch]);
+        // Nothing between the note and the end of the dispatch answers, refuses or skips the command, and the flag is
+        // read there once: in the note's own condition, never again to gate the dispatch.
+        string between = src[gate..(dispatch + dispatchStatement.Length)];
         foreach (string refusal in new[] { "MakeError", "WriteLine(", "continue;", "break;", "return" })
             Assert.DoesNotContain(refusal, between);
-        // Every raise of the flag starts a new run.
+        Assert.Single(Regex.Matches(between, "g_initInProgress"));
+        // Every raise of the flag starts a new run: in Frieren.cpp each one follows a g_initRun bump, and no other DLL
+        // source file raises it.
+        string dir = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"))!;
+        const string raise = @"g_initInProgress\s*(?:\.store\(\s*true|\.exchange\(\s*true|=\s*true)";
+        int raises = 0, raisesElsewhere = 0;
+        foreach (string path in Directory.GetFiles(dir).Where(p => p.EndsWith(".cpp") || p.EndsWith(".h")))
+        {
+            int n = Regex.Matches(NoComments(File.ReadAllText(path).Replace("\r\n", "\n")), raise).Count;
+            if (Path.GetFileName(path) == "Frieren.cpp") raises = n; else raisesElsewhere += n;
+        }
         string fr = NoComments(DllSrc("Frieren.cpp"));
-        int raises = Regex.Matches(fr, @"g_initInProgress\.store\(true").Count;
         int named = Regex.Matches(fr, @"g_initRun\.fetch_add\(1, std::memory_order_relaxed\);\s*"
                                       + @"g_initInProgress\.store\(true, std::memory_order_release\);").Count;
-        Assert.True(raises >= 2 && named == raises, $"{named} of {raises} raises of g_initInProgress name a new run");
+        Assert.True(raises >= 2 && named == raises && raisesElsewhere == 0,
+            $"{named} of {raises} raises in Frieren.cpp name a new run; {raisesElsewhere} raise(s) elsewhere");
     }
 
     /// <summary>[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2. fly_set applies the preset first, the one setting that
