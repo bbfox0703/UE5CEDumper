@@ -66,7 +66,7 @@ def bool_rows(c) -> None:
                   f"bool_mask={r.get('bool_mask')} bool_native={r.get('bool_native')}")
 
     rep = c.request("search_properties_batch", queries=["bPlainBool", "bFlagA"], game_only=True, limit=100)
-    env = {e.get("query"): e for e in rep.get("data", rep).get("results") or []}
+    env = {e.get("query"): e for e in rep.get("data", rep).get("per_query") or []}
     for name, native in (("bPlainBool", True), ("bFlagA", False)):
         rows = actor_row((env.get(name) or {}).get("results") or [], name)
         if not check(f"batch envelope '{name}' carries the row", len(rows) == 1, f"{len(rows)} row(s)"):
@@ -81,7 +81,7 @@ def bool_rows(c) -> None:
     rep = c.request("search_properties_batch", queries=seeds, game_only=False, limit=200)
     d = rep.get("data", rep)
     natives, masked, neither = [], 0, 0
-    for e in d.get("results") or []:
+    for e in d.get("per_query") or []:
         for r in e.get("results") or []:
             if r.get("prop_type") != "BoolProperty":
                 continue
@@ -97,7 +97,7 @@ def bool_rows(c) -> None:
         q, r = natives[0]
         print(f"  step 2b target: query '{q}' -> {r.get('class_name')}.{r.get('prop_name')} "
               f"(+0x{r.get('prop_offset', 0):X}, {r.get('class_path')})")
-    masked_rows = [(e.get("query"), r) for e in d.get("results") or [] for r in e.get("results") or []
+    masked_rows = [(e.get("query"), r) for e in d.get("per_query") or [] for r in e.get("results") or []
                    if r.get("prop_type") == "BoolProperty" and r.get("bool_mask") and not r.get("bool_native")]
     if masked_rows:
         q, r = masked_rows[0]
