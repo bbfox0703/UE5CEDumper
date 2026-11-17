@@ -66,9 +66,19 @@ FAMILY = ["FSTRUCTPROP_STRUCT", "FARRAYPROP_INNER", "FBOOLPROP_FIELDSIZE",
 ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
 # A call of DynOff::SetArrayInner, the helper behind the one exception below.
 SET_ARRAY_INNER_CALL = re.compile(r"\bSetArrayInner\s*\(")
-# A write of the family epoch or of the retire count.
-EPOCH_WRITE = re.compile(r"\bg_propertyFamilyEpoch\s*(?:\.\s*(?:fetch_add|fetch_sub|store|exchange)\s*\(|\+\+|--|[-+]?=(?!=))")
-COUNT_WRITE = re.compile(r"\bg_offsetValidations\s*(?:\.\s*(?:fetch_add|fetch_sub|store|exchange)\s*\(|\+\+|--|[-+]?=(?!=))")
+# A write of the family epoch or of the retire count, in every form an atomic takes one: a member call (any fetch_*,
+# store, exchange or compare_exchange_*), a free std::atomic_* call on its address, a prefix or postfix ++/--, or an
+# assignment. Review wf_090d2608-d9f (R5-GATE-PREFIX-INC): the first pattern missed the prefix ++, the idiomatic one.
+def atomic_write(name):
+    member = r"\b" + name + r"\s*\.\s*(?:fetch_\w+|store|exchange|compare_exchange_\w+)\s*\("
+    free = r"\batomic_(?:fetch_\w+|store\w*|exchange\w*|compare_exchange_\w+)\s*\(\s*&\s*(?:\w+::)*" + name + r"\b"
+    prefix = r"(?:\+\+|--)\s*(?:\w+::)*" + name + r"\b"
+    postfix_or_assign = r"\b" + name + r"\s*(?:\+\+|--|[-+|&^]?=(?!=))"
+    return re.compile("|".join((member, free, prefix, postfix_or_assign)))
+
+
+EPOCH_WRITE = atomic_write("g_propertyFamilyEpoch")
+COUNT_WRITE = atomic_write("g_offsetValidations")
 
 # The ONE sanctioned direct writer outside ApplyPropertyFamily. Keyed by (file, member) and
 # required to carry its justification nearby, so deleting the reasoning breaks the gate too.
@@ -140,7 +150,7 @@ def main():
             elif in_retire and code.strip() == "}":
                 in_retire = False
 
-            if not is_declaration(code) and "std::atomic" not in code:
+            if not is_declaration(code):
                 if EPOCH_WRITE.search(code):
                     if in_retire:
                         retire_ops.append("epoch")
