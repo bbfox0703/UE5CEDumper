@@ -34,6 +34,19 @@ public sealed class FunctionPropRef
     /// </summary>
     public string Confidence { get; init; } = "";
 
+    /// <summary>
+    /// [DENKEN-WRITE-SITES] Path 2 only: the addresses of the native instructions that write this field, each once, in
+    /// decode order -- a write site found with no debugger, for an AOB or a code injection there. Empty for a read-only
+    /// field and for the bytecode path.
+    /// </summary>
+    public IReadOnlyList<string> WriteSites { get; init; } = Array.Empty<string>();
+
+    /// <summary>Path 2: the field has more write sites than the DLL keeps (Denken::kMaxWriteSites).</summary>
+    public bool WriteSitesTruncated { get; init; }
+
+    /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some; empty for none.</summary>
+    public string WriteSitesText => "";
+
     /// <summary>True for a low-confidence heuristic (native disasm) row.</summary>
     public bool IsLowConfidence => Confidence == "low";
 

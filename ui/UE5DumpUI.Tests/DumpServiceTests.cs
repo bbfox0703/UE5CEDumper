@@ -3719,6 +3719,55 @@ public class DumpServiceTests
         Assert.True(res.Props[1].IsLowConfidence);
     }
 
+    /// <summary>[DENKEN-WRITE-SITES] A native row carries the instructions that write it; an older DLL, or a read-only
+    /// row, carries none.</summary>
+    [Fact]
+    public async Task WalkFunctionPropsAsync_ParsesWriteSites()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["query_addr"] = "0x100",
+            ["script_bytes"] = 0,
+            ["method"] = "disasm",
+            ["unmapped"] = 0,
+            ["props"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["prop_addr"] = "0x200", ["name"] = "Health", ["type"] = "FloatProperty",
+                    ["occurrences"] = 3, ["write_count"] = 2, ["scope"] = "instance", ["offset"] = 0x1C0,
+                    ["confidence"] = "high",
+                    ["write_sites"] = new JsonArray { "0x7FF612340010", "0x7FF612340030" },
+                    ["write_sites_truncated"] = true,
+                },
+                new JsonObject
+                {
+                    ["prop_addr"] = "0x208", ["name"] = "MaxHealth", ["type"] = "FloatProperty",
+                    ["occurrences"] = 1, ["write_count"] = 0, ["scope"] = "instance", ["offset"] = 0x1C4,
+                    ["confidence"] = "high",
+                },
+            }
+        });
+
+        var res = await CreateService().WalkFunctionPropsAsync("0x100", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new[] { "0x7FF612340010", "0x7FF612340030" }, res.Props[0].WriteSites);
+        Assert.True(res.Props[0].WriteSitesTruncated);
+        Assert.Equal("0x7FF612340010 +1…", res.Props[0].WriteSitesText);
+        Assert.Empty(res.Props[1].WriteSites);
+        Assert.False(res.Props[1].WriteSitesTruncated);
+        Assert.Equal("", res.Props[1].WriteSitesText);
+    }
+
+    [Fact]
+    public void FunctionPropRef_WriteSitesText_NamesTheFirstAndCountsTheRest()
+    {
+        Assert.Equal("0x10", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" } }.WriteSitesText);
+        Assert.Equal("0x10 +2", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10", "0x20", "0x30" } }.WriteSitesText);
+        Assert.Equal("", new UE5DumpUI.Models.FunctionPropRef().WriteSitesText);
+    }
+
     [Fact]
     public async Task WalkFunctionPropsAsync_ParsesNoneMethod()
     {
