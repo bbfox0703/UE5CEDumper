@@ -27,6 +27,37 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3729) — A second copy of the DLL in a game takes over from the first `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+No visible change unless a game holds two copies of the DLL -- a proxy (version / dinput8 / dxgi / winmm.dll) from the game
+folder, and a copy injected later.
+- **What changes:** the later copy now takes over, whichever build is newer (the maintainer's call). Once its own scan
+  is done it shuts the earlier copy down, takes the pipe, and answers that copy's Cheat Engine mailbox too, so a CE table
+  that found the earlier copy keeps working. An earlier copy built from this change on hands over and passes its CE calls
+  on; an older one is shut down.
+- **When the earlier copy cannot be served** (a mailbox layout from before contract 3, or a newer contract than the
+  later copy's), its mailbox says SKIPPED and a CE script stops at once, saying another copy took over and the old one is
+  usually a stale proxy to update or remove.
+- **Logs:** a copy that cannot open its process's log files, because another copy or another instance of the game
+  holds them, now logs in `Logs\<Process>.<module>.<pid>\` instead of nowhere. After a take-over that is where the
+  serving copy's logs are.
+- **The hand-off ends what the earlier copy held**, like unticking it in CE: god mode, movement, time, force-field and
+  fly holds, Teleport markers, value-scan sessions. The UI and the MCP server reconnect.
+- **Proven live** on DumperTest Shipping: a 3727 proxy shut down in 140 ms and a 3729 proxy yielded in 125 ms, each
+  time with its mailbox answered by the injected copy; one copy alone behaved as before.
+- **Reviews:** two rounds (`wf_67396083-685`, 22 real findings; `wf_08585a12-ddf`, 11), every finding fixed in its own
+  commit group with mutation runs (11 of 11, then 11 of 11 after one pin was tightened).
+- **Tests:** C# 8400 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4230, dll_core_test 1621, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,694,400 bytes (sha256 cdccd28ebb057c2a...); UE5Dumper.dll 3,827,200 bytes (sha256 8d9e18b0e69e72b8...).
+
+## 2026-11-17 (build 3728) — A second copy of the DLL takes over from the first `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+Superseded by 3729 before it left this machine: its live run found that the copy that took over could not log.
+- **What changes:** the take-over as 3729 has it, before review round 2. Live on 3728: a 3727 proxy shut down and a 3728
+  proxy yielded, both mailboxes served by the injected copy; the later copy's own log lines were missing.
+- AOT UI 62,691,840 bytes (sha256 90756cc083901958...); UE5Dumper.dll 3,821,568 bytes (sha256 8bd5af7b36fe8f77...).
+
 ## 2026-11-17 (no build change) — Claude Code's own prompts for the two MCP grants, checked live; the 繁中 checklist retired `[MCP-WRITE-GRANTS-2026-11-14]`
 
 No program change.
