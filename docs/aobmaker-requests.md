@@ -398,8 +398,8 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
 - **AOBMaker's answer (reply §2.13):** accepted in principle, P3; design first; not started. `GenerateAob`'s context
   has no instructions before or after the target, and the script generator needs them. Script generation must first
   move out of AOBMaker.UI's view model.
-- **Pairs with:** UE5CEDumper's `[DENKEN-WRITE-SITES]`, which would supply native write sites found statically,
-  with no debugger.
+- **Pairs with:** UE5CEDumper's `[DENKEN-WRITE-SITES]`, which supplies native write sites found statically, with no
+  debugger (built 2026-11-17, build 3732: `walk_function_props`' `write_sites`, and the Props dialog's "Write site in CE").
 
 ## R14 — Find the instructions that reference an address (P3, new command)
 

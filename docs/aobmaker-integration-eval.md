@@ -552,7 +552,7 @@ are in [aobmaker-requests.md](aobmaker-requests.md).
 | C2 | `[AOBM-RECORD-HOTKEYS]` | R10 |
 | C3 | the CSX half of `[AOBM-DISSECT-INJECT]` | R12 declined — our side |
 | C4 | `[AOBM-ATTACH-CHECK]` | R11 |
-| C5 | `[DENKEN-WRITE-SITES]` (our half) | R13 |
+| C5 | `[DENKEN-WRITE-SITES]` (our half) -- ✅ built 2026-11-17, build 3732 | R13 |
 | C6 | `[AOBM-EXPORT-GWORLD-AOB]` | R14 |
 | C7 | `[AOBM-CUSTOMTYPE]` | R15 |
 

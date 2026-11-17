@@ -1192,6 +1192,19 @@ the TArray-shaped decoy (count 0, recovery runs). No corpus title has a 5.8 arra
 holds each trigger (more than 20 chunks, an exact multiple of 64K, preallocated above 16 TB and with disregard-for-GC
 off, 3 max chunks).
 
+### ✅ A field's native write sites (builds 3731-3732) — closed 2026-11-17 `[DENKEN-WRITE-SITES]`
+
+Denken keeps the address of each instruction that writes a field (todo.md has the commits). **Closed 2026-11-17 on
+3732**, DumperTest Shipping (UE 5.4, injected, pid 7360), `tools/verify/write_sites_live.py --probe 4000 --check 120`
+5/5, log `out/writesites/live_3732.log`, the game closed after: all 2,962 native UFunctions walked by disassembly; 73
+written field rows, every one with write sites, none on a read-only row, none repeated, the cap and its flag agreeing;
+74 of 74 sites read back over the pipe have, as THEIR OWN memory operand's displacement (decoded from the encoding, no
+disassembler), the field's offset; 42 of the 73 rows have sites through `this`. A census of the same walk found 30 rows
+carrying `shared_offset` (bools packed into one byte). On 3731 the first version passed 4/4 (71 rows, 72/72 by a looser
+byte search the review replaced). **Not reached live:** the "Write site in CE" button (Cheat Engine was in use by
+another session; `DenkenWriteSitesSourceTests` pins it through `AobMakerActions.MoveViewAsync`, which the dialog's
+"Disassemble in CE" already uses live); an EVEX site (none met).
+
 ### ✅ The later copy of the dumper takes over (builds 3728-3730) — closed 2026-11-17 `[DUMPER-SECOND-COPY-AUTOSTART]`
 
 Two copies of the dumper in one game process -- a proxy from the game folder and a copy injected later -- and the later
