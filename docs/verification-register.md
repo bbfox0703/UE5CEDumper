@@ -1387,7 +1387,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -2257,7 +2257,7 @@ from offset 4 on, among them `CallFunc_GetOwningActor_ReturnValue` (Actor, +16) 
 Needs: DumperTest + the new DLL (steps 1-2), the UI (steps 2-3), CE + the AOBMaker bridge (step 2b), a title with
 callable Blueprint functions (step 3).
 
-### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
+### 🟡 STEP 1 CLOSED 2026-11-17 — FIXED 2026-09-26 — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 
 Fixed in `2093ea91` (red `85c9e8ed`); the row and its mechanism are in `todo.md`. Unit tests pin the UI half and
 a source pin holds the DLL half (Fern.cpp is in no test target); what is owed is the wire. On DumperTest with the
@@ -2274,6 +2274,13 @@ NEW DLL:
    and the batch CT reports the bool as skipped.
 
 Needs: DumperTest + the new DLL (steps 1-2), the AOBMaker bridge (step 2).
+
+✅ **Step 1 CLOSED 2026-11-17 on 3732** (DumperTest Shipping, injected, `tools/verify/bool_search_v1c_live.py`, 13/13,
+log `out/register/bool_v1c.log`): `search_properties` gives `DumperTestActor.bPlainBool` `"bool_native": true` and no
+`bool_mask`, and `bFlagA` `bool_mask` 1 and no `bool_native`; both envelopes of `search_properties_batch` say the same.
+The batch over the 87 Interesting Properties seed queries (`game_only` false) holds 144 native, 210 masked and 0
+unresolved bools. Step 2b's target: `TestMovieSceneTrack.bHighPassFilter` (seed `HP`), and beside it the packed
+`SceneComponent.bUseAttachParentBound` (mask 0x20). Steps 2 and 3 stay open.
 
 ### ⬜ SHIPPED 2026-09-08/09, NEEDS A LIVE CHECK — the blind-spot sweep's residue: D2 · clipboard delivery · CE Lua · the CE-side delegate pad · the refusal arms
 
