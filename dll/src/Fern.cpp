@@ -5757,6 +5757,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 cc["max_entries"]  = Ubel::kMaxWalkClassCacheEntries;
                 cc["fields"]       = ccFields;
                 cc["approx_bytes"] = ccBytes;
+                // [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced (kept, never freed) and addresses no longer checked.
+                size_t parked = 0, stopped = 0;
+                Ubel::GetParkedClassWalks(parked, stopped);
+                cc["parked_walks"]      = parked;
+                cc["stopped_addresses"] = stopped;
                 data["class_cache"] = cc;
             }
 

@@ -1111,12 +1111,16 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 }
 
 namespace {
-// [WALKCLASS-MEMO-REUSE] Read from the address, not from the walk: the heads of the two property chains and the super.
-// Another class allocated where a freed one was has its own chains (and usually its own super), so a memo entry whose
-// witness no longer reads back describes a class that is gone. Unreadable reads stay 0.
-struct ClassWitness { uintptr_t childProps = 0, children = 0, super = 0; };
+// [WALKCLASS-MEMO-REUSE] Read from the address, not from the walk: the object's name (the FName's 8 bytes) and Outer,
+// the heads of the two property chains, and the super. A memo entry whose witness no longer reads back describes a
+// class that is gone. The name and Outer carry the identity: a data-only Blueprint adds no property and no function, so
+// two siblings have null chains and one super, and only their names differ (review wf_d3c2ec9a-d52). Unreadable reads
+// stay 0.
+struct ClassWitness { uint64_t name = 0; uintptr_t outer = 0, childProps = 0, children = 0, super = 0; };
 ClassWitness ReadClassWitness(uintptr_t cls) {
     ClassWitness w;
+    if (!Macht::ReadBytesSafe(cls + Grimoire::OFF_UOBJECT_NAME, &w.name, sizeof(w.name))) w.name = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::UOBJECT_OUTER, &w.outer, sizeof(w.outer))) w.outer = 0;
     if (DynOff::bUseFProperty && !Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDPROPS, &w.childProps, sizeof(w.childProps)))
         w.childProps = 0;
     if (!Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDREN, &w.children, sizeof(w.children))) w.children = 0;
@@ -1124,7 +1128,12 @@ ClassWitness ReadClassWitness(uintptr_t cls) {
     return w;
 }
 bool WitnessMatches(const ClassInfo& ci, const ClassWitness& w) {
-    return ci.WitnessChildProps == w.childProps && ci.WitnessChildren == w.children && ci.WitnessSuper == w.super;
+    return ci.WitnessName == w.name && ci.WitnessOuter == w.outer && ci.WitnessChildProps == w.childProps &&
+           ci.WitnessChildren == w.children && ci.WitnessSuper == w.super;
+}
+void StampWitness(ClassInfo& ci, const ClassWitness& w) {
+    ci.WitnessName = w.name; ci.WitnessOuter = w.outer;
+    ci.WitnessChildProps = w.childProps; ci.WitnessChildren = w.children; ci.WitnessSuper = w.super;
 }
 }  // namespace
 
@@ -1274,9 +1283,7 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     }
 
     info.Address = uclassAddr;
-    info.WitnessChildProps = witness.childProps;
-    info.WitnessChildren   = witness.children;
-    info.WitnessSuper      = witness.super;
+    StampWitness(info, witness);
     info.Name = GetName(uclassAddr);
     info.FullPath = GetFullName(uclassAddr);
 
@@ -1691,10 +1698,21 @@ static std::mutex s_walkClassExCacheMutex;
 // [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced. Extracted node handles keep their element where it was, so a
 // reference a caller got before the re-walk stays readable; they are never freed, like the memo. One per address reuse.
 static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkClassExParked;
-// A bound on that, because a parked entry is never freed: an engine whose witness offsets read something that keeps
-// changing would otherwise park and re-walk on every call. Past it the memo answers as it did before the witness,
-// once said in the log. A level change replaces a few hundred classes at most.
-static constexpr size_t kMaxParkedClassWalks = 4096;
+// The bound, PER ADDRESS (memo key) and on CONSECUTIVE changes: an address whose witness changes on call after call --
+// an engine whose witness offsets read something volatile, which would otherwise park and re-walk on every call -- stops
+// being checked after this many re-walks and is answered as it was before the witness, said in the log. Genuine reuse
+// re-walks once and then holds still, which starts its count over, so it never reaches the bound, however many
+// addresses or level changes a session has (review wf_d3c2ec9a-d52: one count for the whole process switched the check
+// off everywhere after 4,096).
+static constexpr uint32_t kMaxRewalksPerAddress = 8;
+static std::unordered_map<uintptr_t, uint32_t> s_walkClassExRewalks;
+static size_t s_walkClassExStopped = 0;
+
+void GetParkedClassWalks(size_t& outParked, size_t& outStoppedAddresses) {
+    std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
+    outParked = s_walkClassExParked.size();
+    outStoppedAddresses = s_walkClassExStopped;
+}
 
 
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
@@ -1705,18 +1723,26 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     const ClassWitness witness = ReadClassWitness(uclassAddr);   // [WALKCLASS-MEMO-REUSE]
     {
         std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-        auto it = s_walkClassExCache.find(DynOff::FamilyCacheKey(uclassAddr));   // [FAMILY-EPOCH]
+        const uintptr_t hitKey = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
+        auto it = s_walkClassExCache.find(hitKey);
         if (it != s_walkClassExCache.end()) {
-            if (WitnessMatches(it->second, witness)) return it->second;
-            if (s_walkClassExParked.size() >= kMaxParkedClassWalks) {
-                static bool s_saidFull = false;
-                if (!s_saidFull) {
-                    s_saidFull = true;
-                    Sein::Warn("WALK:safe", "WalkClassEx: %zu class walks replaced since start -- the memo stops checking "
-                               "whether an address still holds the class it walked", s_walkClassExParked.size());
+            if (WitnessMatches(it->second, witness)) {
+                // A class that held still since its re-walk is genuine reuse: its count starts over, so only an
+                // address whose witness never settles reaches the bound.
+                if (!s_walkClassExRewalks.empty()) s_walkClassExRewalks.erase(hitKey);
+                return it->second;
+            }
+            uint32_t& rewalks = s_walkClassExRewalks[hitKey];
+            if (rewalks >= kMaxRewalksPerAddress) {
+                if (rewalks == kMaxRewalksPerAddress) {
+                    ++rewalks;   // said once per address
+                    if (++s_walkClassExStopped <= 16)
+                        Sein::Warn("WALK:safe", "WalkClassEx: 0x%llx changed class %u times -- no longer re-walked; its "
+                                   "last walk is answered", (unsigned long long)uclassAddr, kMaxRewalksPerAddress);
                 }
                 return it->second;
             }
+            ++rewalks;
             // Another object at this address since the walk: park the old entry (callers hold references into it)
             // and walk what is there now.
             s_walkClassExParked.push_back(s_walkClassExCache.extract(it));
@@ -1929,9 +1955,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // valid. Node-based map, and the only removal parks the node rather than freeing
     // it ([WALKCLASS-MEMO-REUSE]) ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
-    info.WitnessChildProps = witness.childProps;
-    info.WitnessChildren   = witness.children;
-    info.WitnessSuper      = witness.super;
+    StampWitness(info, witness);
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     return s_walkClassExCache.try_emplace(key, std::move(info)).first->second;

@@ -101,9 +101,12 @@ struct ClassInfo {
     // min() against 0 or -1 re-emits the entire inherited chain (audit #5 W2).
     int32_t                OwnPropertiesStart = -1;
     std::vector<FieldInfo> Fields;
-    // [WALKCLASS-MEMO-REUSE] What the class looked like when WalkClassEx walked it: its property chains' heads and its
-    // super, read from the address. The memo is keyed by address, so a class freed and another object allocated there
-    // would hit this entry; a hit whose witness no longer reads back is walked again. 0 when not read.
+    // [WALKCLASS-MEMO-REUSE] What the class looked like when it was walked, read from the address: its name (the
+    // FName's 8 bytes) and Outer, its property chains' heads and its super. The caches are keyed by address, so a class
+    // freed and another object allocated there would hit this entry; a hit whose witness no longer reads back is walked
+    // again. The name and Outer are what tell apart two data-only siblings, whose chains are null and super shared.
+    uint64_t               WitnessName       = 0;
+    uintptr_t              WitnessOuter      = 0;
     uintptr_t              WitnessChildProps = 0;
     uintptr_t              WitnessChildren   = 0;
     uintptr_t              WitnessSuper      = 0;
@@ -251,6 +254,10 @@ constexpr size_t kMaxWalkClassCacheEntries = 2048;
 /// "unbounded" into a per-game number, which is the only thing that makes the
 /// bound above tunable on evidence rather than on one game's log extrapolation.
 void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApproxBytes);
+
+/// [WALKCLASS-MEMO-REUSE] How many WalkClassEx entries a re-walk replaced (parked, never freed), and how many addresses
+/// stopped being checked because their class kept changing. For get_diagnostics.
+void GetParkedClassWalks(size_t& outParked, size_t& outStoppedAddresses);
 
 // --- Shared reflection field lookup ---
 // (Extracted from the Debug Camera helpers in Frieren.cpp, build 1014;
