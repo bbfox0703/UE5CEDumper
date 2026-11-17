@@ -12266,6 +12266,28 @@ static void Test_Lager_ClassifyWriteRegion() {
     EXPECT("own image: an empty image is overlapped by nothing", !RangeOverlapsImage(kImg, 8, kImg, 0));
     EXPECT("own image: a range wrapping past the top still reaches an image above its start",
            RangeOverlapsImage(kImg - 0x10, ~static_cast<size_t>(0), kImg, kImgSize));
+
+    // [WRITEMEM-ANY-COPY] Review wf_1b9e937b-a0d DLL-1: a later copy that took over serves the earlier copy's CE
+    // mailbox, which lives in the EARLIER copy's image -- refused like this copy's own.
+    struct Mod { uintptr_t base; size_t size; bool dumper; };
+    constexpr uintptr_t kEarlier = 0x7FF700000000ull, kGameDll = 0x7FF800000000ull;
+    const std::vector<Mod> mods = { {kGameDll, 0x200000, false}, {kEarlier, 0x300000, true}, {kImg, kImgSize, true} };
+    int asked = 0;
+    auto isDumper = [&](const Mod& m) { ++asked; return m.dumper; };
+    EXPECT("any copy: this copy's own image is refused",
+           RangeOverlapsDumperImage(kImg + 0x1000, 8, kImg, kImgSize, mods, isDumper));
+    EXPECT("any copy: the earlier copy's image (its adopted mailbox) is refused",
+           RangeOverlapsDumperImage(kEarlier + 0x2000, 8, kImg, kImgSize, mods, isDumper));
+    EXPECT("any copy: a write straddling the earlier copy's end is refused",
+           RangeOverlapsDumperImage(kEarlier + 0x300000 - 4, 8, kImg, kImgSize, mods, isDumper));
+    EXPECT("any copy: a game module that is not the dumper is not",
+           !RangeOverlapsDumperImage(kGameDll + 0x1000, 8, kImg, kImgSize, mods, isDumper));
+    EXPECT("any copy: memory outside every module is not",
+           !RangeOverlapsDumperImage(0x20000000ull, 64, kImg, kImgSize, mods, isDumper));
+    // The question reads a module's export table: asked only of a module the range overlaps.
+    asked = 0;
+    (void)RangeOverlapsDumperImage(0x20000000ull, 64, kImg, kImgSize, mods, isDumper);
+    EXPECT("any copy: no module asked when the range overlaps none", asked == 0);
 }
 
 static void Test_Lager_HolderCandidateReadable() {

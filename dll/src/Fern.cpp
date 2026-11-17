@@ -3559,8 +3559,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             };
             // [WRITEMEM-OWN-IMAGE] A background client (the MCP server) never writes the DLL's own image: its globals
             // include the CE mailbox, and a write there hands an invoke to the CE-owned poller, past the background
-            // deny list. The UI's and CE's writes are not refused here.
-            if (conn->background.load() && Macht::RangeInOwnImage(addr, bytes.size()))
+            // deny list. The UI's and CE's writes are not refused here. [WRITEMEM-ANY-COPY] Nor another copy's image:
+            // after a take-over this copy's poller serves the earlier copy's mailbox too.
+            if (conn->background.load() && Macht::RangeInAnyDumperImage(addr, bytes.size()))
                 return refuse("is inside UE5Dumper's own image (the Cheat Engine mailbox and the DLL's state); an AI "
                               "client never writes there", Grimoire::WRITE_MEM_OWN_IMAGE);
             switch (Macht::ClassifyWriteRange(addr, bytes.size())) {

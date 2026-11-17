@@ -499,6 +499,17 @@ inline bool RangeOverlapsImage(uintptr_t addr, size_t size, uintptr_t imageBase,
     return addr < imageEnd && imageBase < end;
 }
 
+/// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
+/// the image of another copy of the dumper among `modules` (each with `.base` and `.size`; `isDumper(module)` answers
+/// "a build of the dumper"). A later copy that took over serves the earlier copy's CE mailbox, which lives in the
+/// earlier copy's image, so a background client's write_mem is refused there as well as in its own.
+template <class Modules, class IsDumperFn>
+bool RangeOverlapsDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, const Modules& modules,
+                              IsDumperFn&& isDumper) {
+    (void)modules; (void)isDumper;
+    return RangeOverlapsImage(addr, size, ownBase, ownSize);
+}
+
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
 // instruction by instruction until the bytes copied reach sizeof(JMP_REL) == 5; the LAST instruction it disassembles
 // therefore starts at an offset of at most 4 + 15 (the longest x86-64 instruction can precede it) = 19, and hde64

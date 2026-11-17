@@ -110,6 +110,10 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
 // the test exe in dll_core_test): its globals include the CE mailbox, so write_mem refuses a background client there.
 [[nodiscard]] bool RangeInOwnImage(uintptr_t addr, size_t size);
 
+// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps this image or another copy of the dumper loaded in the
+// process (Lager::RangeOverlapsDumperImage): write_mem refuses a background client there.
+[[nodiscard]] bool RangeInAnyDumperImage(uintptr_t addr, size_t size);
+
 // Get base address of a loaded module (nullptr = main module)
 uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);
 

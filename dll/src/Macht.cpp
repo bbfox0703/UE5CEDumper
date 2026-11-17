@@ -83,6 +83,13 @@ bool RangeInOwnImage(uintptr_t addr, size_t size) {
     return Lager::RangeOverlapsImage(addr, size, base, nt->OptionalHeader.SizeOfImage);
 }
 
+bool RangeInAnyDumperImage(uintptr_t addr, size_t size) {
+    const auto base = reinterpret_cast<uintptr_t>(&__ImageBase);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + static_cast<uintptr_t>(__ImageBase.e_lfanew));
+    return Lager::RangeOverlapsDumperImage(addr, size, base, nt->OptionalHeader.SizeOfImage, GetLoadedModules(),
+                                           [](const ModuleInfo& m) { return IsDumperModule(m.hModule); });
+}
+
 Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {
     using Lager::WriteTarget;
     if (!addr || size == 0 || !Grimoire::IsUserspacePointer(addr)) return WriteTarget::Unmapped;
