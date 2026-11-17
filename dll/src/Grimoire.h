@@ -1485,8 +1485,14 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 // family-keyed caches read, and a base that ends where it started -- or where a walk during the run had already
 // corrected it to -- is no move, so ApplyPropertyFamily alone left what was cached mid-run in place for the session
 // (review wf_8f451d97-434, B-INIT-WINDOW). Under the write lock, so a latch stored under it records a current epoch.
+// g_offsetValidations counts these retires apart from the family's moves: a builder that reads offsets before it takes its
+// key -- WalkClassEx, whose key follows CorrectSubclassOffsets' deliberate move -- compares it across the two and walks
+// again, since a move it made itself is fine and a validation that ended in between is not (review wf_b0aa9098-dd5,
+// B-EX-STRADDLE). Bumped before the epoch: a reader whose key saw the new epoch then sees the new count.
+inline std::atomic<uint32_t> g_offsetValidations{0};
 inline void RetireFamilyEpoch() {
     const FamilyWriteLock lk;
+    g_offsetValidations.fetch_add(1, std::memory_order_acq_rel);
     g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
