@@ -62,6 +62,7 @@ def main() -> int:
 
         stop = threading.Event()
         replies: list[tuple[str, dict]] = []
+        closed: list[str] = []   # client-side failures, whatever the command: a dropped pipe is a refusal too
 
         # Throttled: each request writes a DEBUG "Received" line to the same pipe-0.log, and at full speed a long scan
         # can push it past the 8 MB rotation, which truncates the file under the offset read above. A few dozen
@@ -71,8 +72,8 @@ def main() -> int:
                 for cmd in KNOWN + (UNKNOWN,):
                     try:
                         replies.append((cmd, cb.request(cmd)))
-                    except Exception as e:   # a closed pipe is a failure the checks below report
-                        replies.append((cmd, {"ok": False, "error": f"client: {e}"}))
+                    except Exception as e:   # reported below whatever the command, the unknown name included
+                        closed.append(f"{cmd}: {e}")
                         return
                 time.sleep(0.05)
 
@@ -110,6 +111,8 @@ def main() -> int:
     check("each name at most once in the run", not dupes, f"repeated: {dupes}")
     # Not a check: lane B may not have reached the unknown name inside the window.
     print(f"  (info) the unknown name {'was' if UNKNOWN in names else 'was not'} logged as having arrived")
+    check("refused never: lane B's connection stayed open for every command, the unknown name included", not closed,
+          str(closed[:3]))
     refused = [(c, r.get("error")) for c, r in replies if c in KNOWN and r.get("ok") is not True]
     check("refused never: every known command's reply is ok", not refused, str(refused[:5]))
 
