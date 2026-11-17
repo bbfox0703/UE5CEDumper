@@ -9802,6 +9802,16 @@ struct GroupLeafMeta {
     Radar::LeafAnchor anchor;
 };
 
+// The name a deep group leaf's descriptor carries, and the element index its slot match keeps.
+// [GROUP-DEEP-INDEX-TWICE]
+struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
+GroupDeepLeafName NameGroupDeepLeaf(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName) {
+    std::string name = arrayPath;
+    name += '['; name += std::to_string(elemIndex); name += ']';
+    if (!leafName.empty()) { name += '.'; name += leafName; }
+    return { std::move(name), elemIndex };
+}
+
 // One deep block = a numeric container's elements, or one struct-array/map
 // element's inner numeric fields. Orden runs over each block independently so a
 // group is matched WITHIN one array/element (the "array as a block" rule), not
@@ -10387,15 +10397,13 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         uint8_t buf[8] = {};
         if (!Macht::ReadBytesSafe(lf.leafAddr, buf, sz)) return;
 
-        std::string idx = "["; idx += std::to_string(lf.elemIndex); idx += "]";
-        std::string blockKey, display;
+        std::string blockKey;
         if (lf.leafName.empty()) {            // scalar-container element: the whole array is one block
             blockKey = lf.arrayPath;
-            display  = lf.arrayPath + idx;
         } else {                              // struct-array / map element: this element is one block
-            blockKey = lf.arrayPath + idx;
-            display  = lf.arrayPath + idx + "." + lf.leafName;
+            blockKey = lf.arrayPath; blockKey += '['; blockKey += std::to_string(lf.elemIndex); blockKey += ']';
         }
+        GroupDeepLeafName named = NameGroupDeepLeaf(lf.arrayPath, lf.elemIndex, lf.leafName);
         auto bit = deepBlocks.find(blockKey);
         if (bit == deepBlocks.end()) {
             if (deepBlocks.size() >= kMaxDeepBlocks) return;
@@ -10410,11 +10418,11 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         std::memcpy(ol.bytes, buf, sz);
         blk.leaves.push_back(ol);
         GroupLeafMeta m;
-        m.fieldName     = display;
+        m.fieldName     = std::move(named.fieldName);
         m.fieldType     = lf.leafType;
         m.definingClass = curClassName;
         m.offset        = 0;
-        m.elementIndex  = lf.elemIndex;
+        m.elementIndex  = named.elementIndex;
         m.leafAddr      = lf.leafAddr;
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
         m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)

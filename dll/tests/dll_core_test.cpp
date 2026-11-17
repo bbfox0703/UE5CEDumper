@@ -14251,6 +14251,25 @@ int main() {
         check("control: an access at no field's offset is unmapped", unmapped == 1 && refs.size() == 3);
     }
 
+    // [GROUP-DEEP-INDEX-TWICE] A deep group leaf's field_name is FieldDisplayName(descriptor, elementIndex), the call
+    // GroupLeafToJson makes. Measured live 2026-11-17 (build 3732, A9's fixture): "Deep_Buckets[29].Subs[29].Leaves[26][26]"
+    // -- the descriptor already held the index and the display added it again; a struct element read
+    // "Items[3].Count[3]", which the UI's ParseElementIndexSuffix then took for an element row.
+    {
+        auto shown = [](const std::string& arrayPath, int32_t idx, const std::string& leaf) {
+            Aura::GroupDeepLeafName n = Aura::NameGroupDeepLeaf(arrayPath, idx, leaf);
+            Radar::FieldDescriptor d;
+            d.fieldName = n.fieldName;
+            return Radar::FieldDisplayName(d, n.elementIndex);
+        };
+        check("* GROUP-DEEP-INDEX-TWICE: a scalar-container element shows its index once",
+              shown("Deep_Buckets[29].Subs[29].Leaves", 26, "") == "Deep_Buckets[29].Subs[29].Leaves[26]");
+        check("* GROUP-DEEP-INDEX-TWICE: a struct element's leaf shows the index after the array, not at the end",
+              shown("Inventory.Items", 3, "Count") == "Inventory.Items[3].Count");
+        check("control: the slot keeps the element index (the anchor and the UI's drill read it)",
+              Aura::NameGroupDeepLeaf("Arr_Int", 2, "").elementIndex == 2);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

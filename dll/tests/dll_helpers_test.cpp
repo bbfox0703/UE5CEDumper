@@ -4807,6 +4807,23 @@ static void Test_GroupScan_ExcludeAndHistogram() {
     // Empty exclude keeps all three.
     auto vAll = BuildGroupOrderedView(cands, slots, descs, insts, "", SortKey::ScanOrder, false, {});
     EXPECT("group empty exclude keeps all", vAll.size() == 3);
+
+    // [GROUP-DEEP-INDEX-TWICE] A deep leaf's descriptor holds its array path with the "[]" placeholder and the slot
+    // match holds the index, so the filter must match what the row SHOWS (FieldDisplayName), as the single-value
+    // filter does -- the raw name "Leaves[]" never contains "Leaves[26]".
+    {
+        std::vector<FieldDescriptor> dd(1);
+        dd[0].className = "DumperTestActor"; dd[0].definingClassName = "DumperTestActor";
+        dd[0].fieldName = "Deep_Buckets[29].Subs[29].Leaves[]"; dd[0].fieldType = "FloatProperty";
+        std::vector<SlotSpec> one(1); one[0].dt = DataType::Float;
+        GroupSlotMatch m; m.descriptorIdx = 0; m.elementIndex = 26;
+        GroupCandidate gc; gc.instanceIdx = 0; gc.slotMatches = { { m } };
+        std::vector<GroupCandidate> cs = { gc };
+        auto hit  = BuildGroupOrderedView(cs, one, dd, insts, "Leaves[26]", SortKey::ScanOrder, false, {});
+        auto miss = BuildGroupOrderedView(cs, one, dd, insts, "Leaves[27]", SortKey::ScanOrder, false, {});
+        EXPECT("* GROUP-DEEP-INDEX-TWICE: the group filter matches the displayed element index", hit.size() == 1);
+        EXPECT("control: another index does not match", miss.empty());
+    }
 }
 
 // V2 (build 950) — scaling smoke for the server-side ordered view. The cap
