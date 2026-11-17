@@ -4649,6 +4649,14 @@ repo's.
 >
 > ⚠ **Still run the regression arm with the variable UNSET** on the same title: no spurious warning
 > under the cap is half of what this row asserts, and it is the half a lowered cap cannot show.
+>
+> ✅ **The class-noise picker CLOSED 2026-11-18 on 3733 `[Z8-PICKER-2026-11-18]`** (DumperTest Shipping, AOT
+> UE5DumpUI 3733; ui-options.json backed up and found unchanged after). With `UE5DUMP_ALLFUNCS_LIMIT=1500`:
+> Interesting Funcs → Load read `1,500 functions from 129 of 647 classes … ⚠ STOPPED at the 1,500-row cap — more
+> functions exist`, and its Class filter picker `⚠ Counts are partial — the result list was capped, so these are a
+> lower bound.` The regression arm, the UI restarted with the variable unset: `9,649 functions from 915 of 3,870
+> classes`, no cap suffix, and the picker opens on its class list with no warning. The Console half was L60
+> (2026-09-23), so Z8's UI half is closed.
 > ⚠ A non-positive or unparseable value is **ignored, not clamped** — a typo must never silently
 > truncate a real census and return a partial answer that looks complete, which is the very defect
 > Z8 exists to catch.
