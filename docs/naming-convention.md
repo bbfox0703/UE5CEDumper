@@ -326,7 +326,7 @@ German spelling.
 | Wirbel | ヴィアベル | Wirbel | Magic Corps captain ("whirl") | 🟢 Teleport | — |
 | Scharf | シャルフ | Scharf | Petals→steel blades ("sharp") | 🟢 WalkerAlignment | — |
 | Denken | デンケン | Denken | Court magician, Macht's student | 🟢 NativeDisasm | — |
-| Land | ラント | Land | Creates flawless clones | ⬜ | Cloning / replication / duplicate detection |
+| Land | ラント | Land | Creates flawless clones | 🟢 SecondCopy | Two copies of the dumper in one game process -- a proxy and a later injection: the later copy shuts the earlier down, takes the pipe and serves the earlier copy's CE mailbox; the copy that handed over passes its C ABI calls on (`Land.cpp/.h`, [DUMPER-SECOND-COPY-AUTOSTART]) |
 | Kanne | カンネ | Kanne | Controls water ("watering can") | 🟢 WatchSample | A pipe watch's key and sample slot — the sampling thread only reads memory, the connection's handler sends the samples (`Kanne.h`, header-only, [PIPE-PER-PROCESS-2026-11-06] Stage C) |
 | Lawine | ラヴィーネ | Lawine | Freezes water ("avalanche") | ⬜ | Snapshot/freeze or bulk cascade |
 | Edel | エーデル | Edel | Hypnosis magic ("noble") | 🟢 CurrentTarget | Auto-detect the actor the player is currently targeting: GWorld→PlayerController→Pawn, score the player's outgoing object-ptr fields (`Edel.cpp/.h`, build 1400) |

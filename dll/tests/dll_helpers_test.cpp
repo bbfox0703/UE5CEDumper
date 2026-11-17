@@ -52,6 +52,7 @@
 #include <type_traits>         // the DynOff::RuntimeOffset pins beside Test_PropertyFamilyIsCoherent
 #include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
 #include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
+#include "../src/Land.h"       // Two copies in one process: which one a later copy retires ([DUMPER-SECOND-COPY-AUTOSTART])
 
 #include <Windows.h>
 
@@ -429,6 +430,47 @@ static void Test_Voll_ExtractCmdName() {
     const std::string longName(200, 'x');
     EXPECT("a name is cut at 64 characters",
            Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
+}
+
+static void Test_Land_SecondCopy() {
+    // [DUMPER-SECOND-COPY-AUTOSTART] (maintainer, 2026-11-17: the later copy takes over, whichever build is newer).
+    Land::CopySeen c;
+    c.contract = true; c.mailbox = true; c.current = Mimic::MAILBOX_CONTRACT;
+    for (int32_t s : { Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_SKIPPED, Mimic::INIT_FAILED }) {
+        c.initState = s;
+        EXPECT("* : a copy that started (RUNNING / READY / SKIPPED / FAILED) is retired",
+               Land::Judge(c) == Land::Verdict::Retire);
+    }
+    c.initState = Mimic::INIT_IDLE;
+    EXPECT("* : an IDLE copy -- the passive proxy that never started, or one already shut down -- is left",
+           Land::Judge(c) == Land::Verdict::Leave);
+    c.initState = Mimic::INIT_READY;
+    c.contract = false;
+    EXPECT("* : no contract block, so no initState to read: left", Land::Judge(c) == Land::Verdict::Leave);
+    c.contract = true; c.mailbox = false;
+    EXPECT("* : no mailbox export: left", Land::Judge(c) == Land::Verdict::Leave);
+    c.mailbox = true; c.initState = 99;
+    EXPECT("* : an initState no build writes is not read as started", Land::Judge(c) == Land::Verdict::Leave);
+    c.initState = Mimic::INIT_READY;
+    c.current = Mimic::MAILBOX_CONTRACT + 1;
+    EXPECT("control: the contract NUMBER does not decide retirement", Land::Judge(c) == Land::Verdict::Retire);
+
+    EXPECT("* : one contract number, one layout: the mailbox is served",
+           Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT, Mimic::MAILBOX_CONTRACT));
+    EXPECT("* : an older contract is not served", !Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT - 1, Mimic::MAILBOX_CONTRACT));
+    EXPECT("* : a newer contract is not served", !Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT + 1, Mimic::MAILBOX_CONTRACT));
+
+    EXPECT("* : served, the earlier mailbox says this copy's state",
+           Land::PublishedState(true, Mimic::INIT_RUNNING) == Mimic::INIT_RUNNING);
+    EXPECT("* : not served, it says SKIPPED whatever this copy's state",
+           Land::PublishedState(false, Mimic::INIT_READY) == Mimic::INIT_SKIPPED);
+
+    EXPECT("* : a copy that never yielded starts as usual", !Land::RefusesStart(Land::YieldState::None));
+    EXPECT("* : a yielding copy starts nothing", Land::RefusesStart(Land::YieldState::Yielding));
+    EXPECT("* : a yielded copy starts nothing", Land::RefusesStart(Land::YieldState::Yielded));
+    EXPECT("* : its exports run here while it shuts down", !Land::Forwards(Land::YieldState::Yielding));
+    EXPECT("* : ...and in the successor once it has yielded", Land::Forwards(Land::YieldState::Yielded));
+    EXPECT("control: a copy that never yielded runs its own exports", !Land::Forwards(Land::YieldState::None));
 }
 
 static void Test_Voll_DuringInitNotes() {
@@ -12976,6 +13018,7 @@ int main() {
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_DuringInitNotes);
+    RUN(Test_Land_SecondCopy);
     RUN(Test_Voll_Holders);
     RUN(Test_Voll_InvokeParamIndirection);
     RUN(Test_Voll_HoldLedger);
