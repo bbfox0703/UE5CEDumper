@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3727) — A UE 5.8 object array its strict layout refuses is read whole; decoys still reach recovery `[UE58-PREALLOC-NO-ROW]`
+
+No visible change unless a UE 5.8 game's object array fails its strict layout, which a large stock game does.
+- **What changes:** UE 5.8 reordered FUObjectArray, and Aura's fallback (relaxed) tier had no layout for that shape. A
+  5.8 array the strict layout refuses -- more than 20 live chunks (above 1,310,720 objects), a count at an exact
+  multiple of 64K at scan time, a preallocated array, or fewer than 6 max chunks -- was read through an unreadable
+  Objects pointer with a count above 0, so no object resolved and the decoy recovery never ran. Relaxed layout F now
+  reads it whole. It takes the 0x1000 floor, its chunk counts must hold together as UE's PreAllocate leaves them, and
+  its Objects must lead to a real chunk table.
+- **3726 published F without the chunk check;** the review found it took a TArray<UObject*>-shaped decoy (the Avowed
+  class), which kept the count above 0 and the recovery from running. 3727 refuses it again, so such a decoy still
+  reads as no array and recovery runs.
+- **Proven live** on DLL 3727 that no title's own layout moved: DumperTest58 `UE5.8`, DumperTest `UE5-Extended`, and
+  Avowed (proxy refreshed) `UE5-Extended`, 92,003 objects at the main menu, each `relaxed_layout_live.py` 4/4. No corpus
+  title carries a refused 5.8 array; dll_core_test holds each trigger and the decoy.
+- **Reviews:** two rounds (`wf_47eca989-bf9`, `wf_a2cdbbd9-859`), every finding fixed in its own commit.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1621 checks (ASan:
+  1619 at 3726), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 514f46ada4430e44...); UE5Dumper.dll 3,799,040 bytes (sha256 49bc79fc6c88614d...).
+
+## 2026-11-17 (build 3726) — Relaxed layout F for UE 5.8 arrays the strict layout refuses `[UE58-PREALLOC-NO-ROW]`
+
+Superseded by 3727 before it left this machine: the review of this build found its new row took a TArray-shaped decoy.
+- **What changes:** relaxed layout F (UE 5.8's slots) between B and D, with the floor, a first-entry check and a
+  chunk-table check; dll_core_test 1619 checks, 0 failures (ASan 1619). Live on 3726: DumperTest58 `UE5.8`, DumperTest
+  `UE5-Extended`, 4/4 each.
+- AOT UI 62,691,840 bytes (sha256 2bd1b67fb8de98d0...); UE5Dumper.dll 3,799,040 bytes (sha256 baceddca31f4fedb...).
+
 ## 2026-11-17 (build 3725) — A preallocated object array's block pointer is not read as its count `[RELAXED-D-PREALLOC-HALF]`
 
 The maintainer asked for this row the same day it was filed. No visible change unless a game preallocates its object
