@@ -3953,6 +3953,33 @@ int main() {
               im >= 0 && F[im].keyEnumName == "EMyEnum" && F[im].valueEnumName.empty(),
               im >= 0 ? F[im].keyEnumName.c_str() : "(no field)");
 
+        // [WALKCLASS-MEMO-REUSE] Review wf_72c53295-04c F1 / WALKCLASS-REUSE-MEMO: WalkClassEx's memo is keyed by address
+        // and never erased, so a class freed by a level change and ANOTHER class allocated at its address got the old
+        // class's walk -- the old fields, the freed FProperty addresses. Here the "other class" is the same buffer with
+        // its property chain repointed: the memo must notice and walk it again, and the entry handed out before must
+        // stay readable (references into the memo are held by callers).
+        {
+            static uint8_t ruP1[0x100] = {}, ruP2[0x100] = {};
+            prop(ruP1, 6, 7, 0x30, 4, nullptr);       // IntProperty "Items"
+            prop(ruP2, 6, 8, 0x30, 4, nullptr);       // IntProperty "Tags"
+            static uint8_t ruCls[0x100] = {};
+            put32(ruCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
+            putP(ruCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ruP1));
+            const uintptr_t X = reinterpret_cast<uintptr_t>(ruCls);
+            const auto& before = Ubel::WalkClassEx(X);
+            check("WALKCLASS-MEMO-REUSE control: the fake class walks to its one field",
+                  before.Fields.size() == 1 && before.Fields[0].Name == "Items", std::to_string(before.Fields.size()).c_str());
+            check("control: an unchanged class is answered from the memo, the same entry", &Ubel::WalkClassEx(X) == &before);
+            putP(ruCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ruP2));   // another class at X
+            const auto& after = Ubel::WalkClassEx(X);
+            check("* WALKCLASS-MEMO-REUSE: a different class at a walked address is walked again, not served the old walk",
+                  after.Fields.size() == 1 && after.Fields[0].Name == "Tags",
+                  after.Fields.empty() ? "(no field)" : after.Fields[0].Name.c_str());
+            check("WALKCLASS-MEMO-REUSE: the entry handed out before is still readable (parked, not freed)",
+                  before.Fields.size() == 1 && before.Fields[0].Name == "Items");
+            check("control: the new walk is memoized in turn", &Ubel::WalkClassEx(X) == &after);
+        }
+
         DynOff::bUseFProperty = savedFPropCE;
     }
 
