@@ -4260,6 +4260,34 @@ static void Test_NumericFamily_Filter() {
 //
 // The rule used to live inside Fern.cpp's JSON builder where no test could reach
 // it, which is how it kept drifting away from the filter it must agree with.
+// [GROUP-DEEP-INDEX-TWICE] Review wf_72c53295-04c F5: the witness picker's term match reads the DISPLAYED name. A deep
+// leaf's descriptor is "...Leaves[]" and its slot match holds the index, so asking for "Leaves[26]" must pick the leaf
+// at element 26 -- against the raw name it matched nothing and fell to "any free leaf", the first one.
+static void Test_Radar_PickWitness_DeepDisplayedName() {
+    using namespace Radar;
+    FieldDescriptor d;
+    d.className = d.definingClassName = "DumperTestActor";
+    d.fieldName = "Deep_Buckets[29].Subs[29].Leaves[]";
+    d.fieldType = "IntProperty";
+    std::vector<FieldDescriptor> descs = { d };
+    auto leaf = [](int32_t elem, uintptr_t addr, int32_t value) {
+        GroupSlotMatch m;
+        m.descriptorIdx = 0;
+        m.elementIndex  = elem;
+        m.leafAddr      = addr;
+        std::memcpy(m.prevValue, &value, sizeof(value));
+        return m;
+    };
+    std::vector<SlotSpec> slots(1);
+    slots[0].dt = DataType::Int32; slots[0].st = ScanType::Changed;
+    std::vector<std::vector<GroupSlotMatch>> sm = { { leaf(0, 0x1000, 7), leaf(26, 0x1068, 9) } };
+    auto picked = PickGroupWitnessAssignment(sm, slots, descs, SplitFilterTerms("Leaves[26]"));
+    EXPECT("* GROUP-DEEP-INDEX-TWICE: the picker takes the leaf whose displayed name holds the asked index",
+           picked.size() == 1 && picked[0] == 1);
+    auto none = PickGroupWitnessAssignment(sm, slots, descs, {});
+    EXPECT("control: with no term the first free leaf is picked", none.size() == 1 && none[0] == 0);
+}
+
 static void Test_Radar_PickGroupWitnessAssignment() {
     using namespace Radar;
 
@@ -12963,6 +12991,7 @@ int main() {
     RUN(Test_NumericFamily_Filter);
     RUN(Test_GroupScan_ExcludeAndHistogram);
     RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_PickWitness_DeepDisplayedName);
     RUN(Test_Radar_FormatCandidateOrigin);
     RUN(Test_Radar_GroupLeafBudget);
     RUN(Test_Radar_GroupSessionCarriesPerSlotCap);

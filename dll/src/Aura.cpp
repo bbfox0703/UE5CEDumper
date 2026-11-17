@@ -9826,6 +9826,19 @@ GroupDeepLeafName NameGroupDeepLeaf(const std::string& arrayPath, int32_t elemIn
     return { std::move(name), elemIndex };
 }
 
+// The identity half of a deep group leaf's metadata -- its name, element index, type and offset -- from the walker's
+// leaf. The deep visitor fills the rest (the owner, the address, the anchor). Pure, so the wiring is tested.
+GroupLeafMeta DeepGroupLeafMeta(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName,
+                                const std::string& leafType) {
+    GroupDeepLeafName named = NameGroupDeepLeaf(arrayPath, elemIndex, leafName);
+    GroupLeafMeta m;
+    m.fieldName    = std::move(named.fieldName);
+    m.elementIndex = named.elementIndex;
+    m.fieldType    = leafType;
+    m.offset       = 0;   // a deep leaf has no object-relative offset; leafAddr locates it
+    return m;
+}
+
 // One deep block = a numeric container's elements, or one struct-array/map
 // element's inner numeric fields. Orden runs over each block independently so a
 // group is matched WITHIN one array/element (the "array as a block" rule), not
@@ -10417,7 +10430,6 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         } else {                              // struct-array / map element: this element is one block
             blockKey = lf.arrayPath; blockKey += '['; blockKey += std::to_string(lf.elemIndex); blockKey += ']';
         }
-        GroupDeepLeafName named = NameGroupDeepLeaf(lf.arrayPath, lf.elemIndex, lf.leafName);
         auto bit = deepBlocks.find(blockKey);
         if (bit == deepBlocks.end()) {
             if (deepBlocks.size() >= kMaxDeepBlocks) return;
@@ -10431,12 +10443,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         ol.elementIndex = lf.elemIndex;
         std::memcpy(ol.bytes, buf, sz);
         blk.leaves.push_back(ol);
-        GroupLeafMeta m;
-        m.fieldName     = std::move(named.fieldName);
-        m.fieldType     = lf.leafType;
+        GroupLeafMeta m = DeepGroupLeafMeta(lf.arrayPath, lf.elemIndex, lf.leafName, lf.leafType);
         m.definingClass = curClassName;
-        m.offset        = 0;
-        m.elementIndex  = named.elementIndex;
         m.leafAddr      = lf.leafAddr;
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
         m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)

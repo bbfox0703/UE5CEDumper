@@ -14269,18 +14269,25 @@ int main() {
     // -- the descriptor already held the index and the display added it again; a struct element read
     // "Items[3].Count[3]", which the UI's ParseElementIndexSuffix then took for an element row.
     {
+        // Through the deep visitor's own meta fill (Aura::DeepGroupLeafMeta), so the wiring is what is checked. Review
+        // wf_72c53295-04c F5: the helper alone could be right while the visitor stored something else.
         auto shown = [](const std::string& arrayPath, int32_t idx, const std::string& leaf) {
-            Aura::GroupDeepLeafName n = Aura::NameGroupDeepLeaf(arrayPath, idx, leaf);
+            Aura::GroupLeafMeta m = Aura::DeepGroupLeafMeta(arrayPath, idx, leaf, "FloatProperty");
             Radar::FieldDescriptor d;
-            d.fieldName = n.fieldName;
-            return Radar::FieldDisplayName(d, n.elementIndex);
+            d.fieldName = m.fieldName;
+            return Radar::FieldDisplayName(d, m.elementIndex);
         };
         check("* GROUP-DEEP-INDEX-TWICE: a scalar-container element shows its index once",
               shown("Deep_Buckets[29].Subs[29].Leaves", 26, "") == "Deep_Buckets[29].Subs[29].Leaves[26]");
         check("* GROUP-DEEP-INDEX-TWICE: a struct element's leaf shows the index after the array, not at the end",
               shown("Inventory.Items", 3, "Count") == "Inventory.Items[3].Count");
-        check("control: the slot keeps the element index (the anchor and the UI's drill read it)",
-              Aura::NameGroupDeepLeaf("Arr_Int", 2, "").elementIndex == 2);
+        const Aura::GroupLeafMeta meta = Aura::DeepGroupLeafMeta("Arr_Int", 2, "", "IntProperty");
+        check("GROUP-DEEP-INDEX-TWICE: the meta keeps the leaf's type and no object offset",
+              meta.fieldType == "IntProperty" && meta.offset == 0 && meta.elementIndex == 2);
+        // A direct leaf (element index -1) is shown by its own name, untouched by the placeholder rule.
+        Radar::FieldDescriptor direct;
+        direct.fieldName = "Stats.Str";
+        check("control: a direct leaf keeps its name", Radar::FieldDisplayName(direct, -1) == "Stats.Str");
     }
 
     // [GROUP-RAW-WIDTH-INTERN] Review wf_72c53295-04c GRP-RAW-INTERN-WIDTH: a native-C hole emits one leaf per width that
