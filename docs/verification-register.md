@@ -4319,7 +4319,7 @@ So an absent AOB in the clipboard export is **correct**, not a regression — an
 against that artifact would report a defect that is not there. Step 2 stays **NEEDS_CE**.
 | 1 | Inject into any UE 4.27 title and grep `scan-0.log` for `GWLD_TQ_3`/`GWLD_TQ_4`/`GOBJ_PS1`/`GOBJ_PS6`. | If one of them WINS, its resolved address must be a plausible `&GWorld` / `&GUObjectArray` (matches the address the winning pattern in a previous run reported). Before build 3262 these four resolved to garbage on every hit, so any past log showing one of them *validated* is worth re-checking — that is the strongest available evidence the old geometry was wrong. ⚠ **A run where none of the four wins proves nothing** — they are low-priority entries and a better pattern normally lands first. |
 | 2 | Same session: check whether the Teleport tab's Global Pointers card still offers an AOB-wrapped CE export for GWorld. | Unchanged from before. **AD10** only withholds the triple when replaying it does not reproduce the resolved address; every GWorld entry is `RipBoth`, and the direct arm is the normal winner. |
-### 🟡 AD18 — THREE OF FOUR FLAVOURS PASS 2026-08-20 `[AD18-2026-08-20]`; `dinput8` is unreachable here
+### ✅ AD18 — ALL FOUR FLAVOURS PASS: three 2026-08-20 `[AD18-2026-08-20]`, `dinput8` 2026-11-18 on SEED `[AD18-DINPUT8-2026-11-18]`
 
 *Headless: every `init-*.log` on the machine, keyed by proxy flavour and by the DLL build that wrote
 it. The rewrite ships in **3263**, so only 3263 rows count as a regression check on it.*
@@ -4342,6 +4342,18 @@ it. The rewrite ships in **3263**, so only 3263 rows count as a regression check
 > **not one** importer of `dinput8.dll`. Deploying it to a title and launching would therefore produce
 > no `[PROXY]` line at all — an inconclusive run, not a pass. Closing this arm needs a game that
 > imports `dinput8` (a title with legacy DirectInput controller support).
+>
+> ✅ **The dinput8 arm CLOSED 2026-11-18 on 3733 `[AD18-DINPUT8-2026-11-18]`.** The premise above no longer holds:
+> `tools/pe/pe_imports_exports.py imports` on SEED BATTLE DESTINY REMASTERED's exe prints a STATIC import
+> `[dinput8.dll] DirectInput8Create`. With `dist/proxy/dinput8.dll` (3733) copied beside it (ReShade's `dxgi.dll`
+> there left alone), a Steam launch logged build 3733 and `[PROXY] Loaded real dinput8.dll:
+> C:\WINDOWS\system32\dinput8.dll`; the game window came up, and after `trigger_scan` the pipe answered
+> `load_mode proxy:dinput8.dll`, UE 427, **26,113 objects**. The proxy was removed again after the run (byte-equal to
+> dist, ProductName `UE5CEDumper`), so the folder is as found. All four flavours now have a live load.
+> ⚠ **And one version witness has gone**: Lushfoil's version.dll proxy (refreshed to 3733 the same night) is no longer
+> loaded — the running game held `C:\WINDOWS\SYSTEM32\VERSION.dll` and wrote no log, so the CADENCEBAND run injected
+> instead. Something now loads the System32 copy before the game's own folder is searched; the title, not our DLL,
+> changed. Filed as `[LUSHFOIL-VERSION-PROXY-IGNORED]` in todo.md.
 | 3 | Force the AD10 path if a title ever resolves GWorld via the DEREF arm (or a future entry gains a non-zero `adjustment`). | `scan-0.log` (or `init-0.log`) carries the new WARN `replaying its published AOB triple does not reproduce it` and the CE export offers **no** AOB — instead of exporting a triple that resolves to the wrong address. ⚠ Not reproducible on demand; watch for the line rather than trying to cause it. |
 | 4 | **AD18** — launch a game with each of the four proxies (`version` / `dinput8` / `dxgi` / `winmm`) in turn. | Each still loads its real System32 DLL and the game starts normally. The refusal path is unreachable on a healthy system, so this is a **regression check on the rewrite**, not a test of the fix: the point is that routing all four through `Lugner::SystemDllPath` did not break the ordinary case. |
 
