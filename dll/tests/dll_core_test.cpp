@@ -13854,6 +13854,27 @@ int main() {
                       got == kCount && Aura::s_layout.objectsOffset == 0x00 && Aura::s_layout.numElementsOffset == 0x14,
                       (std::to_string(got) + " objects, objectsOffset " + std::to_string(Aura::s_layout.objectsOffset)).c_str());
 
+                // Review wf_8fb9838c-132, F1: a GENUINE A/C array whose Max / Num pair, read as one qword, lands on mapped
+                // memory holding a heap pointer -- possible below 32,768 objects in a process whose heap sits where Num x 4
+                // GB + Max points. Its own Objects slot holds its table, so it must still be taken; refused, it fell to
+                // relaxed D, which reads NumChunks as the count. Count 0x2000, Max 0x7FE00000: the pair is 0x20007FE00000.
+                {
+                    void* pairPage = VirtualAlloc(reinterpret_cast<void*>(0x000020007FE00000ull), 0x10000,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                    check("VND584-03-FLOOR-HIGH-HEAP F1 setup: memory mapped at a genuine pair's address", pairPage != nullptr);
+                    if (pairPage) {
+                        *static_cast<uintptr_t*>(pairPage) = pool.chunkTable[0];   // a heap pointer to a readable chunk
+                        memset(mist, 0, sizeof(mist));
+                        putP(0x00, table); put32(0x10, 0x7FE00000); put32(0x14, 0x2000); put32(0x18, 1); put32(0x1C, 1);
+                        Aura::Init(reinterpret_cast<uintptr_t>(mist));
+                        got = Aura::GetCount();
+                        check("VND584-03-FLOOR-HIGH-HEAP ⭐: a genuine A/C whose Max / Num qword holds a pointer is still read by its row",
+                              got == 0x2000 && Aura::s_layout.objectsOffset == 0x00,
+                              (std::to_string(got) + " objects, objectsOffset " + std::to_string(Aura::s_layout.objectsOffset)).c_str());
+                        VirtualFree(pairPage, 0, MEM_RELEASE);
+                    }
+                }
+
                 // The helper alone. A table pointer is half-a-pointer; a genuine Max / Num pair is not, whether its qword
                 // lands in user space (Num under 0x8000) or past it; nor is a readable address holding no heap pointer.
                 memset(mist, 0, sizeof(mist));
