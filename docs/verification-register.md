@@ -11334,6 +11334,16 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     no memory to read and *"is this actor visible"* has no referent. A rig that reported a pass there
     would be asserting something unobservable. Recorded as structurally impossible rather than left
     looking un-run.
+
+    ✅ **Arm (d)'s substitute CLOSED 2026-11-17 on 3732 `[M123-ARM-D-SHUTDOWN]`** — recorded as the `UE5_Shutdown`
+    (CE Disable) path, NOT as "close the game" (closing a game never calls `UE5_Shutdown`, as M5's record says).
+    DumperTest **Development** (the flavour this rig relaunches), `tools/verify/seethrough_shutdown_arm.py` 7/7, log
+    `out/register/seethrough_d.log`: See-through hid one actor; its own `bHidden` bit (`Actor` +88, mask 0x80) read
+    set through ReadProcessMemory, and still set 2 s later with nothing done; `call_export.py UE5_Shutdown` returned
+    in 0.3 s with the pipe connection still open; the bit then read clear from the living process (exit code 259),
+    and the logs gained `UE5_Shutdown: Cleaning up` and `SeeThrough: disabled (1 restored)`.
+    ⚠ The rig's first run closed its pipe before the controls and failed the negative control: a dropped client
+    disables See-through by itself (arm (c)), so the connection now stays open until the export has run.
   - ✅ **M4 — PASS 2026-08-23 `[M4-TOTZOMBIE-2026-08-23]`.** `tools/verify/m4_tot_latch_zombie.py`,
     DumperTest dev / DLL 3337, 60 live `DumperTestHolder`.
     | step | observed |
