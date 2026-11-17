@@ -13809,6 +13809,59 @@ int main() {
                    "cannot work; read %d objects -- [VND584-03-FLOOR-HIGH-HEAP]\n", tableHigh, got);
         }
 
+        // [VND584-03-FLOOR-HIGH-HEAP] The same shapes with the chunk table placed above 16 TB on purpose, so every build
+        // tests what only the AddressSanitizer build's heap reached: a table pointer whose high dword (0x1F00 and up) passes
+        // the floor. Its low dword is 0x7FF00000, a positive int32 above that high dword, so relaxed A/C's `max >= num`
+        // passes too -- the floor is all that stood between that row and the pointer's high dword.
+        {
+            uintptr_t* high = nullptr;
+            for (uintptr_t at = 0x00001F007FF00000ull; !high && at < 0x00007000'00000000ull; at += 0x0000010000000000ull)
+                high = static_cast<uintptr_t*>(VirtualAlloc(reinterpret_cast<void*>(at), 0x10000, MEM_RESERVE | MEM_COMMIT,
+                                                            PAGE_READWRITE));
+            check("VND584-03-FLOOR-HIGH-HEAP setup: a chunk table placed above 16 TB", high != nullptr);
+            if (high) {
+                const uintptr_t hiTable = reinterpret_cast<uintptr_t>(high);
+                for (size_t c = 0; c < pool.chunkTable.size(); ++c) high[c] = pool.chunkTable[c];
+                const int32_t numChunks = static_cast<int32_t>(pool.chunkTable.size());
+                auto put32 = [](int at, int32_t v) { memcpy(mist + at, &v, 4); };
+                auto putP  = [](int at, uintptr_t v) { memcpy(mist + at, &v, 8); };
+                char hx[64];
+                snprintf(hx, sizeof(hx), "table 0x%llX", static_cast<unsigned long long>(hiTable));
+
+                // The chunk-counts-first shape no strict row accepts (one chunk), Objects above 16 TB.
+                memset(mist, 0, sizeof(mist));
+                put32(0x04, 1); put32(0x08, numChunks); putP(0x10, hiTable); put32(0x20, kCount); put32(0x24, kCount);
+                Aura::Init(reinterpret_cast<uintptr_t>(mist));
+                got = Aura::GetCount();
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: relaxed A/C does not take a table pointer's high dword for the count",
+                      got == kCount, (std::to_string(got) + " objects, " + hx).c_str());
+
+                // Relaxed B reads its count at +0x04: the high dword of a table pointer at +0x00. Its chunk slots are
+                // plausible and its Objects slot (+0x10) is a real table, so only the count is wrong; relaxed E, which
+                // reads +0x10 / +0x20 / +0x24, describes the array. Relaxed A/C is refused by its floor here (+0x14 is the
+                // high dword of an ordinary heap pointer).
+                memset(mist, 0, sizeof(mist));
+                putP(0x00, hiTable); put32(0x08, 2); put32(0x0C, 1); putP(0x10, table);
+                put32(0x20, kCount); put32(0x24, kCount);
+                Aura::Init(reinterpret_cast<uintptr_t>(mist));
+                got = Aura::GetCount();
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: relaxed B does not take a table pointer's high dword for the count",
+                      got == kCount, (std::to_string(got) + " objects, " + hx).c_str());
+
+                // CONTROL: a genuine A/C array with its table above 16 TB, chunk numbers no strict row accepts (the
+                // Outer Worlds 2 is the title that reaches this row live). Its Max / Num pair read as one qword is
+                // Num x 4 GB + Max, an address that holds nothing, so the row still takes it, whole.
+                memset(mist, 0, sizeof(mist));
+                putP(0x00, hiTable); put32(0x10, 0x60000); put32(0x14, kCount); put32(0x18, 1); put32(0x1C, numChunks);
+                Aura::Init(reinterpret_cast<uintptr_t>(mist));
+                got = Aura::GetCount();
+                check("VND584-03-FLOOR-HIGH-HEAP control: a genuine A/C array above 16 TB is still read whole by its row",
+                      got == kCount && Aura::s_layout.objectsOffset == 0x00 && Aura::s_layout.numElementsOffset == 0x14,
+                      (std::to_string(got) + " objects, objectsOffset " + std::to_string(Aura::s_layout.objectsOffset)).c_str());
+                VirtualFree(high, 0, MEM_RELEASE);
+            }
+        }
+
         // CONTROL: the main fixture's stock UE5-Extended array still reads whole through detection.
         Aura::Init(pool.Addr());
         check("VND584-03 control: a stock UE5-Extended array is still detected whole", Aura::GetCount() == kCount);
