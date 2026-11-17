@@ -9517,8 +9517,10 @@ int main() {
         const bool svFProp = DynOff::bUseFProperty;
         const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
                                                DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
-        const uint64_t svCalibrated = Ubel::s_subclassCalibratedAt.load();
-        const uint64_t svConfirmed = Ubel::s_subclassSlotConfirmed.load();
+        // Saved by meaning, not by value: both are tagged with the family epoch, and this block moves the family, so a
+        // raw tag put back at the end would name a dead epoch -- a latch current before the block would come back stale.
+        const bool svCalibrated = Ubel::IsSubclassCalibrated();
+        const bool svConfirmed = Ubel::IsSubclassSlotConfirmed();
         DynOff::bUseFProperty = true;
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
 
@@ -9715,8 +9717,13 @@ int main() {
 
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
-        Ubel::s_subclassCalibratedAt.store(svCalibrated);
-        Ubel::s_subclassSlotConfirmed.store(svConfirmed);
+        const uint32_t poEnd = DynOff::g_propertyFamilyEpoch.load();
+        Ubel::s_subclassCalibratedAt.store(0);
+        if (svCalibrated) Ubel::LatchSubclassCalibration(poEnd);
+        Ubel::s_subclassSlotConfirmed.store(0);
+        if (svConfirmed) Ubel::MarkSubclassSlotConfirmed(poEnd);
+        check("PROBEOVERRUN cleanup: the latch and the proof are back as they were, under the restored family's epoch",
+              Ubel::IsSubclassCalibrated() == svCalibrated && Ubel::IsSubclassSlotConfirmed() == svConfirmed);
     }
 
     {
