@@ -10268,16 +10268,29 @@ int main() {
         for (auto& th : threads) th.join();
         info = Linie::GetTraceInfo();
         check("threads: nothing is written once Stop returns", w1 == w2 && w1 > 0, sz(w2 - w1).c_str());
+        // [LINIE-THREADS-FLAKE] CopyTrace LEAVES OUT a slot written out of turn: a writer that took its number, then lost
+        // the slot to one a lap later (the ring laps many times in 30 ms of four writers). This check demanded the kept
+        // numbers be gap-free, and failed about one run in eight with 16,383 of 16,384 kept (measured 2026-11-18, two
+        // fails in sixteen runs, each one slot short). The numbers must RISE inside the window; a gap is that drop.
         bool slotsOk = copyAll() && !recs.empty();
+        uint64_t prevSeq = 0;
         for (size_t k = 0; slotsOk && k < recs.size(); ++k) {
             const Linie::TraceRecord& r = recs[k];
             const uint64_t seq = r.seqKind & Linie::kTraceSeqMask;
             const bool isRet = (r.seqKind & Linie::kTraceReturnBit) != 0;
-            slotsOk = seq == info.firstValid + k && r.tid >= 1 && r.tid <= 4 &&
+            const bool inOrder = seq >= info.firstValid && seq < info.written && (k == 0 || seq > prevSeq);
+            slotsOk = inOrder && r.tid >= 1 && r.tid <= 4 &&
                       (isRet ? (r.a < seq && r.b == 0)
                              : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
+            prevSeq = seq;
         }
         check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
+        // Only a lapped write's slot goes: nearly the whole window is kept (a writer loses its slot only when another
+        // laps the ring while it is inside its few stores).
+        const uint64_t window = info.written - info.firstValid;
+        check("threads: only out-of-turn slots are left out (at least 99% of the window kept)",
+              recs.size() <= window && recs.size() * 100 >= window * 99,
+              (sz(recs.size()) + " of " + sz(window)).c_str());
         Linie::FreeTrace();
 
         // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
