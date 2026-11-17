@@ -519,6 +519,8 @@ public class ClassStructViewModelConcurrencyTests
     /// -- so this panel painted a blank class with no error line, and its re-select dedupe (released only on an error)
     /// then refused the retry. The panel already shows an error and releases the dedupe when the call throws; the DLL
     /// has to refuse. Fern.cpp is in no C++ test target, so the handler is pinned from the source.
+    /// Measured again on 3734: when the panel had walked the class BEFORE the reload, walk_class kept answering its old
+    /// fields -- WalkClassEx's memo is immortal -- so the refusal must come before the walk, not after an empty one.
     /// </summary>
     [Fact]
     public void WalkClassRefusesAnAddressThatIsNoLongerALiveObject()
@@ -528,9 +530,10 @@ public class ClassStructViewModelConcurrencyTests
         Assert.True(at > 0, "walk_class's handler not found -- re-point this pin");
         int end = fern.IndexOf("return Renge::MakeResponse(id, data).dump();", at, StringComparison.Ordinal);
         string handler = fern[at..end];
-        // Only an EMPTY walk is refused, and only when the address is not a live object: a real walk is answered
-        // whatever its liveness reads, so a fork whose InternalIndex layout is off cannot lose a working walk.
-        Assert.Contains("if (ci.Name.empty() && ci.Fields.empty() && !IsLiveObject(addr))", handler);
+        // Refused BEFORE the walk: a stale address must neither reach the memo nor be answered from it.
+        int live = handler.IndexOf("if (!IsLiveObject(addr))", StringComparison.Ordinal);
+        int walk = handler.IndexOf("Ubel::WalkClassEx(addr)", StringComparison.Ordinal);
+        Assert.True(live > 0 && walk > live, $"the liveness refusal must precede the walk (refusal at {live}, walk at {walk})");
         Assert.Contains("return Renge::MakeError(id, \"Not a live class at \" + addrStr", handler);
         // The liveness rule is the one pe_trace_names and the snapshot decoder use: its own index leads back to it.
         Assert.Matches(@"bool IsLiveObject\(uintptr_t \w+\) \{\s*const int32_t idx = Ubel::GetIndex\(\w+\);\s*return idx >= 0 && Aura::GetByIndex\(idx\) == \w+;", fern);
