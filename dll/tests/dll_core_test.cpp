@@ -5085,10 +5085,10 @@ int main() {
         // family-keyed caches read. A run that leaves the base where it was -- or where a walk during the run had already
         // corrected it to -- is no move, so nothing retired what was cached mid-run, and it was served for the session.
         // Counted by g_offsetValidations, which a family move cannot bump: a move away and back would change the epoch too
-        // (review wf_2d9f83d5-21b, R3-UPROPSLOT-MOVE-NOT-EXCLUDED).
+        // (review wf_2d9f83d5-21b, R3-UPROPSLOT-MOVE-NOT-EXCLUDED). One retire is two bumps of it (RetireFamilyEpoch).
         check("OFFSETS ⭐: a run that leaves the family's base in place still retires its epoch, once",
               DynOff::FSTRUCTPROP_STRUCT == ofBase && DynOff::g_propertyFamilyEpoch.load() != ofEpoch
-              && DynOff::g_offsetValidations.load() == ofRetires + 1,
+              && DynOff::g_offsetValidations.load() == ofRetires + 2,
               (std::to_string(ofEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
         check("OFFSETS ⭐: ...and with it the calibration latch, so the next walk checks the slot again",
               !Ubel::IsSubclassCalibrated());
@@ -8082,7 +8082,7 @@ int main() {
         check("UPROPSLOT setup: a second 4.23 run is measured and leaves the family at 0x70", upMeasured && famAt(0x70),
               fam().c_str());
         check("UPROPSLOT ⭐: ...and still retires the epoch, once, and with it the calibration latch",
-              DynOff::g_propertyFamilyEpoch.load() != upEpoch && DynOff::g_offsetValidations.load() == upRetires + 1
+              DynOff::g_propertyFamilyEpoch.load() != upEpoch && DynOff::g_offsetValidations.load() == upRetires + 2
               && !Ubel::IsSubclassCalibrated(),
               (std::to_string(upEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
         Ubel::s_subclassCalibratedAt.store(0);

@@ -1660,7 +1660,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     }
 
     // [DYNOFF-LATCH-STALE] Read before the plain walk, checked after the key below (DynOff::g_offsetValidations).
-    const uint32_t validations = DynOff::g_offsetValidations.load(std::memory_order_acquire);
+    const uint32_t validations = DynOff::SettledOffsetValidations();
     bool readOk = true;
     ClassInfo info = WalkClassImpl(uclassAddr, readOk);
 

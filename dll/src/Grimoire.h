@@ -11,6 +11,7 @@
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
 #include <string_view>  // EngineBuildStringCode: a VERSIONINFO string is parsed without copying it
+#include <thread>       // DynOff::SettledOffsetValidations yields while a retire is half done
 
 namespace Grimoire {
 
@@ -1492,12 +1493,28 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 // g_offsetValidations counts these retires apart from the family's moves: a builder that reads offsets before it takes its
 // key -- WalkClassEx, whose key follows CorrectSubclassOffsets' deliberate move -- compares it across the two and walks
 // again, since a move it made itself is fine and a validation that ended in between is not (review wf_b0aa9098-dd5,
-// B-EX-STRADDLE). Bumped before the epoch: a reader whose key saw the new epoch then sees the new count.
+// B-EX-STRADDLE). Seqlock-shaped: odd while a retire is between its two bumps, even again only after the epoch moved. A
+// reader takes an EVEN count before its reads (SettledOffsetValidations): having seen the count a retire finished with,
+// it sees that retire's epoch too, so its plain walk cannot be keyed under the old epoch and served what was cached
+// mid-validation -- which a count bumped once, before the epoch, let through (review wf_09b53b67-caf,
+// B-R4-STRADDLE-PLAIN-HIT). Any change by the time it compares -- odd included -- means walk again.
 inline std::atomic<uint32_t> g_offsetValidations{0};
 inline void RetireFamilyEpoch() {
     const FamilyWriteLock lk;
-    g_offsetValidations.fetch_add(1, std::memory_order_acq_rel);
+    g_offsetValidations.fetch_add(1, std::memory_order_acq_rel);   // odd: the retire is under way
     g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
+    g_offsetValidations.fetch_add(1, std::memory_order_release);   // even, after the epoch
+}
+// The count with no retire half done. The two bumps are adjacent, so the wait is short unless the retiring thread is
+// preempted between them; it yields rather than takes the family write lock, so a caller already holding that lock
+// cannot deadlock here.
+inline uint32_t SettledOffsetValidations() {
+    uint32_t v = g_offsetValidations.load(std::memory_order_acquire);
+    while (v & 1u) {
+        std::this_thread::yield();
+        v = g_offsetValidations.load(std::memory_order_acquire);
+    }
+    return v;
 }
 
 // The one member allowed to leave the family on its own: UE5.3+ puts EArrayPropertyFlags before Inner, so a walker
