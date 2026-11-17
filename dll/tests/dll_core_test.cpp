@@ -13907,9 +13907,17 @@ int main() {
                 put32(0x14, 123653);   // the Outer Worlds 2's count: the qword is past user space
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose qword is past user space (Num 123,653)",
                       !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
-                static std::vector<uint64_t> notATable(4, 0x1234);
-                putP(0x10, reinterpret_cast<uintptr_t>(notATable.data()));
-                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is no heap pointer",
+                // Each judgment of the first entry on its own (review wf_8fb9838c-132, F3): one readable but inside the
+                // module -- a vtable at the start of whatever a genuine pair lands on reads that way -- and one outside it
+                // but unmapped. A first entry of 0x1234 fails both, so it pinned neither.
+                static const uint64_t inModule[2] = { 0, 0 };
+                static std::vector<uintptr_t> firstInModule(2, reinterpret_cast<uintptr_t>(inModule));
+                putP(0x10, reinterpret_cast<uintptr_t>(firstInModule.data()));
+                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is a module address",
+                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
+                static std::vector<uintptr_t> firstUnmapped(2, 0x0000123456780000ull);
+                putP(0x10, reinterpret_cast<uintptr_t>(firstUnmapped.data()));
+                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose first entry is unmapped user space",
                       !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
                 VirtualFree(high, 0, MEM_RELEASE);
             }
