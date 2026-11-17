@@ -1698,15 +1698,23 @@ static std::mutex s_walkClassExCacheMutex;
 // [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced. Extracted node handles keep their element where it was, so a
 // reference a caller got before the re-walk stays readable; they are never freed, like the memo. One per address reuse.
 static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkClassExParked;
-// The bound, PER ADDRESS (memo key) and on CONSECUTIVE changes: an address whose witness changes on call after call --
-// an engine whose witness offsets read something volatile, which would otherwise park and re-walk on every call -- stops
-// being checked after this many re-walks and is answered as it was before the witness, said in the log. Genuine reuse
-// re-walks once and then holds still, which starts its count over, so it never reaches the bound, however many
-// addresses or level changes a session has (review wf_d3c2ec9a-d52: one count for the whole process switched the check
-// off everywhere after 4,096).
+// The bounds on that, since a parked entry is never freed.
+//  * PER ADDRESS (memo key): an address whose witness keeps changing -- an engine whose witness offsets read something
+//    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
+//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY (review
+//    wf_a193c703-fe8: a match against the stopped entry, every other turn of an alternation, used to clear it).
+//  * Genuine reuse re-walks once and then HOLDS STILL: kHoldHitsToForgive matching hits in a row forgive an address
+//    that has not stopped, so many level changes at one address never reach the bound (review wf_d3c2ec9a-d52: one count
+//    for the whole process switched the check off everywhere after 4,096).
+//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers as before the
+//    witness, said once) -- the last word on memory, whatever pattern the witnesses follow.
 static constexpr uint32_t kMaxRewalksPerAddress = 8;
-static std::unordered_map<uintptr_t, uint32_t> s_walkClassExRewalks;
-static size_t s_walkClassExStopped = 0;
+static constexpr uint32_t kHoldHitsToForgive    = 3;
+static constexpr size_t   kMaxParkedBytes       = size_t(256) << 20;
+struct RewalkState { uint32_t rewalks = 0; uint32_t held = 0; bool stopped = false; };
+static std::unordered_map<uintptr_t, RewalkState> s_walkClassExRewalks;
+static size_t s_walkClassExStopped     = 0;   // distinct addresses
+static size_t s_walkClassExParkedBytes = 0;
 
 void GetParkedClassWalks(size_t& outParked, size_t& outStoppedAddresses) {
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
@@ -1726,23 +1734,37 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         const uintptr_t hitKey = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
         auto it = s_walkClassExCache.find(hitKey);
         if (it != s_walkClassExCache.end()) {
+            auto rs = s_walkClassExRewalks.empty() ? s_walkClassExRewalks.end() : s_walkClassExRewalks.find(hitKey);
             if (WitnessMatches(it->second, witness)) {
-                // A class that held still since its re-walk is genuine reuse: its count starts over, so only an
-                // address whose witness never settles reaches the bound.
-                if (!s_walkClassExRewalks.empty()) s_walkClassExRewalks.erase(hitKey);
+                // Holding still: enough matching hits in a row forgive an address that has not stopped.
+                if (rs != s_walkClassExRewalks.end() && !rs->second.stopped && ++rs->second.held >= kHoldHitsToForgive)
+                    s_walkClassExRewalks.erase(rs);
                 return it->second;
             }
-            uint32_t& rewalks = s_walkClassExRewalks[hitKey];
-            if (rewalks >= kMaxRewalksPerAddress) {
-                if (rewalks == kMaxRewalksPerAddress) {
-                    ++rewalks;   // said once per address
-                    if (++s_walkClassExStopped <= 16)
-                        Sein::Warn("WALK:safe", "WalkClassEx: 0x%llx changed class %u times -- no longer re-walked; its "
-                                   "last walk is answered", (unsigned long long)uclassAddr, kMaxRewalksPerAddress);
+            RewalkState& st = (rs != s_walkClassExRewalks.end()) ? rs->second : s_walkClassExRewalks[hitKey];
+            if (st.stopped) return it->second;
+            if (st.rewalks >= kMaxRewalksPerAddress) {
+                st.stopped = true;
+                if (++s_walkClassExStopped <= 16)
+                    Sein::Warn("WALK:safe", "WalkClassEx: 0x%llx changed class %u times running -- no longer re-walked; "
+                               "its last walk is answered", (unsigned long long)uclassAddr, kMaxRewalksPerAddress);
+                return it->second;
+            }
+            if (s_walkClassExParkedBytes >= kMaxParkedBytes) {
+                static bool s_saidFull = false;
+                if (!s_saidFull) {
+                    s_saidFull = true;
+                    Sein::Warn("WALK:safe", "WalkClassEx: %zu replaced class walks kept (~%zu MB) -- no more are kept; a "
+                               "class at a reused address is answered with the old walk from here on",
+                               s_walkClassExParked.size(), s_walkClassExParkedBytes >> 20);
                 }
                 return it->second;
             }
-            ++rewalks;
+            ++st.rewalks;
+            st.held = 0;
+            const ClassInfo& old = it->second;
+            s_walkClassExParkedBytes += EstimateClassInfoBytes(old.Name.size(), old.FullPath.size(),
+                                                               old.SuperName.size(), old.Fields.size(), sizeof(FieldInfo));
             // Another object at this address since the walk: park the old entry (callers hold references into it)
             // and walk what is there now.
             s_walkClassExParked.push_back(s_walkClassExCache.extract(it));
