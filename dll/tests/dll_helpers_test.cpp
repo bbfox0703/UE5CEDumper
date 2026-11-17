@@ -458,14 +458,16 @@ static void Test_Voll_DuringInitNotes() {
         if (cap.Note("c" + std::to_string(i), 7)) ++logged;
     EXPECT("* : a run keeps at most kMaxDuringInitNames names", logged == Voll::kMaxDuringInitNames);
     EXPECT("control: a new run starts a new list", cap.Note("c0", 8));
-    // A connection that read the serial during run N and reaches the note after run N+1 began (review wf_b0aa9098-dd5,
-    // A-RUN-REGRESS): its older serial must neither wipe N+1's list -- which logged a name twice in one run -- nor
-    // start a list of its own.
+    // A connection that read the serial during run N and reaches the note after run N+1 began. Its older serial must not
+    // wipe N+1's list, which logged a name twice in one run (review wf_b0aa9098-dd5, A-RUN-REGRESS); and its command is
+    // dispatched during N+1, so it is noted in N+1's list rather than dropped, which left no trace of it
+    // (wf_2d9f83d5-21b, R3-LATE-NOTE-DROPPED).
     Voll::DuringInitNotes late;
     EXPECT("late setup: run 2 logs a name", late.Note("get_pointers", 2));
-    EXPECT("late * : a note under the older run 1 is not logged", !late.Note("walk_class", 1));
-    EXPECT("late * : ...and run 2's list stands: its name is not logged again", !late.Note("get_pointers", 2));
-    EXPECT("late control: run 2 still logs a name of its own", late.Note("walk_class", 2));
+    EXPECT("late * : a note under the older run 1 is logged, in run 2's list", late.Note("walk_class", 1));
+    EXPECT("late * : ...so run 2 does not log that name again", !late.Note("walk_class", 2));
+    EXPECT("late * : ...and run 2's list stands: its own name is not logged again", !late.Note("get_pointers", 2));
+    EXPECT("late control: a late note of a name run 2 already logged is not logged", !late.Note("get_pointers", 1));
 }
 
 static void Test_Voll_Holders() {
