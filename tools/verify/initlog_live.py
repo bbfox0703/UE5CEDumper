@@ -106,7 +106,8 @@ def main() -> int:
     names = LINE.findall(text)
     print(f"lane B sent {len(replies)} commands; the log names {names}")
     check("the window was reached: at least one arrived-during-init line", bool(names),
-          "none -- the scan ended before lane B's first command; this run proves nothing")
+          f"{len(names)} line(s)" if names
+          else "none -- the scan ended before lane B's first command; this run proves nothing")
     dupes = sorted({n for n in names if names.count(n) > 1})
     check("each name at most once in the run", not dupes, f"repeated: {dupes}")
     # Not a check: lane B may not have reached the unknown name inside the window.
