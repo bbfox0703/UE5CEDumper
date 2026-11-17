@@ -645,6 +645,28 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public void A_dropped_start_of_a_call_still_running_is_not_called_a_return()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_53eabd00-f5e: a missing record that no return names can be a dropped RETURN or
+        // the dropped START of a call still running at Stop -- the records cannot tell them apart. Kept 10..12, the call
+        // at 10 returned at 11, and 12 is missing: the start of a call that never returned. Nothing may claim a call
+        // "shows as not returned", and the export must not file it as a return.
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(11 | TraceRecord.ReturnBit, 110, 10, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 13 });
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        string sum = vm.Summary(t);
+        Assert.DoesNotContain("whose calls show as not returned.", sum, StringComparison.Ordinal);
+        var w = new StringWriter();
+        UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
+        string head = w.ToString().Split('\n')[0];
+        Assert.DoesNotContain("returns_dropped", head, StringComparison.Ordinal);
+        Assert.Contains("\"other_dropped\":1", head, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_summary_says_how_many_calls_carry_a_stack_what_the_budget_left_out_and_what_a_capture_cost()
     {
         var (vm, _) = MakeVm(DumpWithStacks());
