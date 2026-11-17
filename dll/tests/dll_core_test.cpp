@@ -9705,24 +9705,12 @@ int main() {
         // Control: the latch still holds within one family. Publishing the SAME base again is not a move, and a field
         // whose struct reads elsewhere then moves nothing -- a fix that only dropped the latch would move it to 0x80.
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
-        Ubel::s_subclassSlotConfirmed.store(0);   // so the latch alone stands between this call and a probe
         static uint8_t lsPosHi[0x100] = {};
         fprop(lsPosHi, 7, 0);
         putP(lsPosHi, 0x80, A(poVector));
         lsFi.Address = A(lsPosHi);
         Ubel::CorrectSubclassOffsets({ lsFi });
         check("LATCHSTALE control: calibrated for this family -- nothing is probed again", DynOff::FSTRUCTPROP_STRUCT == 0x78,
-              hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
-
-        // A slot a struct was read out of under THIS family is not probed away from. Two StructProperties cannot
-        // disagree on one engine, so a field that would move a proven family is the probe's false positive; deferring
-        // to the proof keeps CorrectSubclassOffsets and WalkInstance's own correction from moving the family back and
-        // forth now that the latch re-arms on every move.
-        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x80));        // a move: the latch is stale
-        Ubel::MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load());   // filed as WalkInstance's probe files it
-        lsFi.Address = A(poPos);                                                 // a struct that reads at 0x78
-        Ubel::CorrectSubclassOffsets({ lsFi });
-        check("LATCHSTALE: a slot proven for this family is not probed away from", DynOff::FSTRUCTPROP_STRUCT == 0x80,
               hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
 
         DynOff::ApplyPropertyFamily(svFamily);

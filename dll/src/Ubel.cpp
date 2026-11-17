@@ -5650,16 +5650,16 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 // If a non-zero delta is found, all subclass offsets are updated.
 // ============================================================
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
-    // Fast path: calibrated for the current family, or its slot already proven (WalkInstance's own probe files that
-    // too). [DYNOFF-LATCH-STALE] Deferring to the proof keeps this and WalkInstance's correction from moving the family
-    // back and forth now that the latch re-arms on every move: two StructProperties cannot disagree on one engine, so a
-    // field that would move a proven family is this probe's false positive.
-    if (IsSubclassCalibrated() || IsSubclassSlotConfirmed()) return;
+    // Fast path: calibrated for the current family. [DYNOFF-LATCH-STALE] The latch alone, not the slot proof as well:
+    // this function files the proof at the same epoch as the latch, so a fast path that also took the proof would make
+    // the latch decide nothing. After WalkInstance's own correction the latch is stale and this probes once more: on one
+    // engine the struct is then IN the new slot, so it latches there without moving anything.
+    if (IsSubclassCalibrated()) return;
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
     const DynOff::FamilyWriteLock lk;
-    if (IsSubclassCalibrated() || IsSubclassSlotConfirmed()) return;
+    if (IsSubclassCalibrated()) return;
     // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
     // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
     // too. Until a struct is found in the slot the latch stays open, as it does for FProperty.
