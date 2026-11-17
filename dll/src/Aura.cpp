@@ -788,6 +788,8 @@ static bool DetectLayout(uintptr_t addr) {
     // a high dword after a pointer slot -- also refuse one that is half of a chunk table pointer
     // ([VND584-03-FLOOR-HIGH-HEAP], CountIsHalfAChunkTablePointer).
     constexpr int32_t kRelaxedMinObjects = 0x1000;
+    // A/C refused because the 8 bytes under its count are a chunk table pointer: the table is at +0x10 (the fallback).
+    bool acCountWasHalfAPointer = false;
 
     // Layout A/C (relaxed): Objects@+0x00, Num@+0x14, Max@+0x10
     {
@@ -799,6 +801,7 @@ static bool DetectLayout(uintptr_t addr) {
             Macht::ReadSafe(addr + 0x00, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
             if (CountIsHalfAChunkTablePointer(addr, 0x14, 0x00)) {
+                acCountWasHalfAPointer = true;
                 LOG_INFO("ObjectArray: Layout A/C (relaxed) refused: Num=%d is the high dword of a chunk table pointer "
                          "at +0x10", num);
             } else if (LooksLikeHeapPtr(objPtr)) {
@@ -883,6 +886,16 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
+    // [VND584-03-FLOOR-HIGH-HEAP] The default preset reads Objects at +0x00 and the count at +0x14 -- relaxed A/C's slots.
+    // After A/C was refused because the 8 bytes under that count are a chunk table pointer, it would re-read the refused
+    // count through a slot that is no table; the table is at +0x10, so the fallback is the UE5-Extended slots, which read
+    // Objects there. Its count is a guess either way, and the warning says so (review wf_8fb9838c-132, F1-DEFAULT).
+    if (acCountWasHalfAPointer) {
+        LOG_WARN("ObjectArray: Could not detect layout; a chunk table sits at +0x10, so falling back to the UE5-Extended "
+                 "slots (Objects +0x10, count +0x24) -- the count is not verified");
+        s_layout = { 0x10, 0x20, 0x24, 0x28, 0x2C };
+        return true;
+    }
     LOG_WARN("ObjectArray: Could not detect layout, using default");
     s_layout = s_chunkedPresets[0].layout;
     return true;
