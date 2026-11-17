@@ -39,9 +39,10 @@ public sealed class CallTrace
     /// drops a slot written out of turn (a writer the ring lapped mid-write, [LINIE-SEQ-LAST]).</summary>
     public int EntriesDropped { get; internal set; }
     /// <summary>[TRACE-DROPPED-ENTRY] The other records numbered inside the kept window but not sent: the window's
-    /// missing records less <see cref="EntriesDropped"/>. Each is a dropped RETURN (its call shows as not returned) or the
-    /// dropped START of a call that had not returned when the trace stopped (that call is absent) -- the records cannot
-    /// tell the two apart (review wf_53eabd00-f5e).</summary>
+    /// missing records less <see cref="EntriesDropped"/>. Returns or call starts the records cannot attribute -- among them
+    /// a return whose call then shows as not returned, the start of a call still running at Stop, both records of one call
+    /// (the call is missing), or the return of a call that began before the window (reviews wf_53eabd00-f5e,
+    /// wf_6ad0a6e1-ffa).</summary>
     public int OtherDropped { get; internal set; }
 
     /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those gone when the trace was read (named from their

@@ -124,9 +124,9 @@ def main():
             started = process_start_epoch(h)
             said = ""
             for f in glob.glob(os.path.join(os.path.dirname(walklog), "walk-*.log")):
-                if started and os.path.getmtime(f) < started:
-                    continue
-                try:
+                try:   # a file rotated away between the glob and here is skipped (review wf_6ad0a6e1-ffa)
+                    if started and os.path.getmtime(f) < started:
+                        continue
                     with open(f, "rb") as fh:
                         said += fh.read().decode("utf-8", "replace").lower()
                 except OSError:

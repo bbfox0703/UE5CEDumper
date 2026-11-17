@@ -149,8 +149,8 @@ public static class CallTraceBuilder
         t.ReturnsBeforeWindow = beforeWindow;
         t.EntriesDropped = dropped;
         // [TRACE-DROPPED-ENTRY] What else was dropped leaves no trace in the records, so it is counted from the window:
-        // the numbers kept, less the records sent, less the entries found missing above. Returns, or starts of calls
-        // still running at Stop (no return names those) -- not told apart, so not called returns.
+        // the numbers kept, less the records sent, less the entries found missing above. Returns or call starts no kept
+        // record names (a call can lose both) -- not attributed, so described as neither.
         if (info.Written > info.FirstValid)
         {
             long missing = (long)(info.Written - info.FirstValid) - recs.Length;
