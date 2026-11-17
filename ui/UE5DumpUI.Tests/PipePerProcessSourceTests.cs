@@ -1255,7 +1255,8 @@ public sealed class PipePerProcessSourceTests
     [Fact]
     public void TheShutdownFlagIsUpBeforeAnyJoin()
     {
-        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "void UE5_Shutdown(");
+        // UE5_Shutdown's body is ShutdownBody, shared with a later copy's take-over ([DUMPER-SECOND-COPY-AUTOSTART]).
+        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "static void ShutdownBody(");
         int latch = shutdown.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
         Assert.True(latch >= 0, "UE5_Shutdown no longer raises the shutdown flag");
         foreach (var later in new[] { "Mimic::StopThread(", "Schlacht::SetEnabled(", "Stark::Shutdown(", "s_pipeServer.Stop(" })

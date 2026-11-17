@@ -1887,8 +1887,9 @@ public class InvokeScriptTests
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(genau, @"bOffsetsProbeRan\.store\(true").Count);
 
         string cpp = DllSource("Frieren.cpp");
-        int at = cpp.IndexOf("void UE5_Shutdown() {", StringComparison.Ordinal);
-        Assert.True(at > 0, "UE5_Shutdown not found");
+        // UE5_Shutdown's body is ShutdownBody since a later copy's take-over shares it ([DUMPER-SECOND-COPY-AUTOSTART]).
+        int at = cpp.IndexOf("static void ShutdownBody(bool handingOver) {", StringComparison.Ordinal);
+        Assert.True(at > 0, "ShutdownBody not found");
         int end = cpp.IndexOf("\n}\n", at, StringComparison.Ordinal);
         Assert.Contains("DynOff::ResetOffsetsVerdict();", cpp.Substring(at, end - at));
     }
@@ -2504,7 +2505,7 @@ public class InvokeScriptTests
             @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
         Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
         var verdict = System.Text.RegularExpressions.Regex.Match(body,
-            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(g_invokeMailbox\.paramsData\)\)\);");
+            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(Box\(\)\.paramsData\)\)\);");
         Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
         var refused = System.Text.RegularExpressions.Regex.Match(body,
             @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
@@ -3037,8 +3038,8 @@ public class InvokeScriptTests
         int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
         Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
             "the verdict is taken after the last refusal and published before the call");
-        int clearErr = mimic.IndexOf("g_invokeMailbox.errorMsg[0] = '\\0';", StringComparison.Ordinal);
-        int clearOut = mimic.IndexOf("g_invokeMailbox.cmdOutFlags = 0;", StringComparison.Ordinal);
+        int clearErr = mimic.IndexOf("Box().errorMsg[0] = '\\0';", StringComparison.Ordinal);
+        int clearOut = mimic.IndexOf("Box().cmdOutFlags = 0;", StringComparison.Ordinal);
         Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
             "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
 
@@ -3919,7 +3920,8 @@ public class InvokeScriptTests
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
         // or Frieren.cpp, so this pins their source; the generated scripts must claim the contract that carries the byte.
         var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("g_invokeMailbox.paramsData[178] = flags;", mimic, StringComparison.Ordinal);
+        // Box(): the mailbox the command came from, this copy's or one it took over ([DUMPER-SECOND-COPY-AUTOSTART]).
+        Assert.Contains("Box().paramsData[178] = flags;", mimic, StringComparison.Ordinal);
         Assert.Contains("writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);", mimic, StringComparison.Ordinal);
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown)", mimic,
             StringComparison.Ordinal);
