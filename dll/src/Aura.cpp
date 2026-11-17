@@ -619,8 +619,10 @@ static bool ReadsAsChunkTable(uintptr_t table) {
 
 // [RELAXED-D-PREALLOC-HALF] Whether the count a row reads at numOff is half of ObjObjects.PreAllocatedObjects -- the
 // contiguous block UE 4.20-5.7 keep right after Objects (RE-UE4SS's TUObjectArray layouts: +0x08; 5.8 moved it past
-// the counts). Any row whose count slot can overlap it asks: at ObjObjects +0x08, which is FUObjectArray +0x18 on a
-// base-anchored array (review wf_47eca989-bf9, UE58-HELPER-HEADER-ROWS). UE's PreAllocate
+// the counts). A row whose count slot can overlap it -- at ObjObjects +0x08, which is FUObjectArray +0x18 on a
+// base-anchored array -- asks, or refuses the block by a guard that cannot pass there: relaxed F's chunk size of at
+// least 0x8000 puts its max at or above 0x8000, past any user-space pointer's high dword (0x7FFF), so F does not ask
+// (reviews wf_47eca989-bf9 and wf_a2cdbbd9-859). UE's PreAllocate
 // stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
 // PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so the 8 bytes holding the count are compared with the first
 // entry of the row's own table: equal, they are that pointer. A genuine Max / Num pair would have to equal a heap
@@ -877,9 +879,10 @@ static bool DetectLayout(uintptr_t addr) {
     // MaxChunks. It reads the slots of Genau's relaxed "F", here ahead of D and E. It takes the 0x1000 floor; its own
     // chunk slots must hold together as UE's PreAllocate leaves them (MaxElements a whole number of chunks, 1 <=
     // NumChunks <= MaxChunks), which refuses a TArray<UObject*> decoy -- no chunk counts after it -- and an
-    // ObjObjects-anchored 4.20-5.7 array, whose +0x08 / +0x0C are PreAllocatedObjects' halves (a high dword that is a
-    // whole number of 64K chunks lies past user space); and its Objects must read as a chunk table (review
-    // wf_47eca989-bf9, UE58F-TARRAY-DECOY).
+    // ObjObjects-anchored 4.20-5.7 array, whose +0x08 / +0x0C are PreAllocatedObjects' halves: a chunk size of at least
+    // 0x8000 puts max at or above 0x8000, past any user-space pointer's high dword (0x7FFF) -- the bound that lets F go
+    // without the first-entry check, so lowering it brings that check back; and its Objects must read as a chunk table
+    // (review wf_47eca989-bf9, UE58F-TARRAY-DECOY).
     {
         int32_t num = 0, max = 0, numChunks = 0, maxChunks = 0;
         Macht::ReadSafe(addr + 0x08, num);
