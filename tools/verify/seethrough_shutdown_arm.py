@@ -54,19 +54,22 @@ def main() -> int:
     pid, h = relaunch()
     print(f"DumperTest Development pid {pid}")
     marks = log_marks()
-    with PipeClient(pid=pid) as c:
-        off, mask, cls = resolve_field(c)
-        print(f"build {c.assert_build()}  witness {cls}.bHidden +{off} mask 0x{mask:02X}")
-        c.request("seethrough_set", enable=False)
-        time.sleep(0.5)
-        c.request("seethrough_set", enable=True, count=PIERCE)
-        addrs = []
-        for _ in range(25):
-            time.sleep(0.4)
-            st = c.request("seethrough_get_state")
-            addrs = [int(x, 16) if isinstance(x, str) else int(x) for x in (st.get("hidden_actors") or [])]
-            if addrs:
-                break
+    # The connection stays OPEN until UE5_Shutdown has run: a dropped pipe client disables See-through by itself
+    # (arm (c)'s path), so closing it first would restore the actors before the arm and credit the drop.
+    c = PipeClient(pid=pid).connect()
+    off, mask, cls = resolve_field(c)
+    print(f"build {c.assert_build()}  witness {cls}.bHidden +{off} mask 0x{mask:02X}")
+    c.request("seethrough_set", enable=False)
+    time.sleep(0.5)
+    c.request("seethrough_set", enable=True, count=PIERCE)
+    addrs = []
+    for _ in range(25):
+        time.sleep(0.4)
+        st = c.request("seethrough_get_state")
+        addrs = [int(x, 16) if isinstance(x, str) else int(x) for x in (st.get("hidden_actors") or [])]
+        if addrs:
+            break
+    marks = log_marks()   # after the enable's own disable(0): only the arm's lines count
     if not check("See-through hid at least one actor (the arm's subject)", bool(addrs), str([hex(a) for a in addrs])):
         return 1
     pre = hidden_bits(h, addrs, off, mask)
@@ -79,6 +82,10 @@ def main() -> int:
                          capture_output=True, text=True, errors="replace")
     print("  call_export:", (out.stdout + out.stderr).strip().replace("\n", " | ")[:300])
     time.sleep(1.5)
+    try:
+        c.close()
+    except OSError:
+        pass
     post = hidden_bits(h, addrs, off, mask)
     check("after UE5_Shutdown every captured actor is visible again", all(v is False for _, v in post), str(post))
     code = ctypes.c_ulong(0)
