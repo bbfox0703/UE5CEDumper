@@ -455,15 +455,66 @@ static void Test_Land_SecondCopy() {
     c.current = Mimic::MAILBOX_CONTRACT + 1;
     EXPECT("control: the contract NUMBER does not decide retirement", Land::Judge(c) == Land::Verdict::Retire);
 
-    EXPECT("* : one contract number, one layout: the mailbox is served",
-           Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT, Mimic::MAILBOX_CONTRACT));
-    EXPECT("* : an older contract is not served", !Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT - 1, Mimic::MAILBOX_CONTRACT));
-    EXPECT("* : a newer contract is not served", !Land::CanServeMailbox(Mimic::MAILBOX_CONTRACT + 1, Mimic::MAILBOX_CONTRACT));
+    // Review wf_67396083-685 MBX-1: one layout since contract 3, so an earlier copy whose accepted scripts this copy
+    // accepts too is served -- a stale contract-8 proxy beside a contract-9 injection is the likeliest double load.
+    constexpr int32_t kCur = Mimic::MAILBOX_CONTRACT, kMin = Mimic::MAILBOX_CONTRACT_MIN, kLay = Mimic::MAILBOX_LAYOUT_SINCE;
+    EXPECT("* : this build's own contract is served", Land::CanServeMailbox(kCur, kMin, kCur, kMin, kLay));
+    EXPECT("* MBX-1 : an older contract with this layout is served", Land::CanServeMailbox(kCur - 1, kMin, kCur, kMin, kLay));
+    EXPECT("* MBX-1 : the first contract with this layout is served", Land::CanServeMailbox(kLay, kMin, kCur, kMin, kLay));
+    EXPECT("* : a contract from before this layout -- a smaller struct -- is not served",
+           !Land::CanServeMailbox(kLay - 1, kMin, kCur, kMin, kLay));
+    EXPECT("* : a newer contract is not served: its scripts may send what this copy cannot answer",
+           !Land::CanServeMailbox(kCur + 1, kMin, kCur, kMin, kLay));
+    EXPECT("* : an earlier copy accepting older scripts than this copy does is not served",
+           !Land::CanServeMailbox(kCur, kMin, kCur, kMin + 1, kLay));
+    EXPECT("control: an earlier copy accepting only newer scripts is served",
+           Land::CanServeMailbox(kCur, kMin + 1, kCur, kMin, kLay));
+    static_assert(Mimic::MAILBOX_LAYOUT_SINCE <= Mimic::MAILBOX_CONTRACT, "the layout cannot postdate the contract");
 
-    EXPECT("* : served, the earlier mailbox says this copy's state",
-           Land::PublishedState(true, Mimic::INIT_RUNNING) == Mimic::INIT_RUNNING);
-    EXPECT("* : not served, it says SKIPPED whatever this copy's state",
-           Land::PublishedState(false, Mimic::INIT_READY) == Mimic::INIT_SKIPPED);
+    // Review TEST-PUBLISHEDSTATE-SAMPLE: every state, both ways.
+    for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
+        EXPECT("* : served, the earlier mailbox says this copy's state, whatever it is",
+               Land::PublishedState(true, st) == st);
+        EXPECT("* : not served, it says SKIPPED whatever this copy's state", Land::PublishedState(false, st) == Mimic::INIT_SKIPPED);
+    }
+
+    // Review LAND-MUTUAL-YIELD-CYCLE / LAND-EARLIER-RETIRES-LATER: only an earlier copy is taken over, so of two copies
+    // only one can take over from the other.
+    EXPECT("* : a copy before this one in the module list is earlier", Land::IsEarlier(0, 1));
+    EXPECT("* : a copy after this one is not earlier", !Land::IsEarlier(2, 1));
+    EXPECT("* : this copy is not earlier than itself", !Land::IsEarlier(1, 1));
+    EXPECT("* : a copy not in the list is not earlier", !Land::IsEarlier(-1, 1) && !Land::IsEarlier(0, -1));
+    bool oneWay = true;
+    for (int a = 0; a < 4; ++a)
+        for (int b = 0; b < 4; ++b)
+            if (Land::IsEarlier(a, b) && Land::IsEarlier(b, a)) oneWay = false;
+    EXPECT("* : no two copies are each earlier than the other", oneWay);
+
+    using Land::YieldState;
+    EXPECT("* : a later copy's ask is honoured by a copy that never yielded",
+           Land::ReplyToYield(YieldState::None, true) == Land::YIELD_DONE);
+    EXPECT("* : a copy already yielding says so", Land::ReplyToYield(YieldState::Yielding, true) == Land::YIELD_ALREADY);
+    EXPECT("* : a copy already yielded says so", Land::ReplyToYield(YieldState::Yielded, true) == Land::YIELD_ALREADY);
+    EXPECT("* : an ask from a copy that is not later is refused, whatever the state",
+           Land::ReplyToYield(YieldState::None, false) == Land::YIELD_NOT_LATER &&
+           Land::ReplyToYield(YieldState::Yielded, false) == Land::YIELD_NOT_LATER);
+
+    // Review FWD-FALLTHROUGH / LAND-FWD-CYCLE: a yielded copy forwards, refuses when it cannot, never runs its body.
+    EXPECT("* : a copy that never yielded runs the call", Land::RouteCall(YieldState::None, true, 0) == Land::Route::Local);
+    EXPECT("* : a yielding copy runs the call (its own teardown)",
+           Land::RouteCall(YieldState::Yielding, true, 0) == Land::Route::Local);
+    EXPECT("* : a yielded copy forwards", Land::RouteCall(YieldState::Yielded, true, 0) == Land::Route::Forward);
+    EXPECT("* : ...up to the hop cap", Land::RouteCall(YieldState::Yielded, true, Land::kMaxForwardHops - 1) == Land::Route::Forward);
+    EXPECT("* : a call forwarded kMaxForwardHops times on this thread is refused",
+           Land::RouteCall(YieldState::Yielded, true, Land::kMaxForwardHops) == Land::Route::Refuse);
+    EXPECT("* : a successor without the export: refused, not run here",
+           Land::RouteCall(YieldState::Yielded, false, 0) == Land::Route::Refuse);
+    EXPECT("* : a refused bool is false", Land::RefusalValue<bool>() == false);
+    EXPECT("* : a refused signed result is -1 (0 is success for several exports)",
+           Land::RefusalValue<int32_t>() == -1 && Land::RefusalValue<int>() == -1);
+    EXPECT("* : a refused address is null", Land::RefusalValue<uintptr_t>() == 0);
+    EXPECT("* : a refused unsigned result is 0", Land::RefusalValue<uint32_t>() == 0);
+    static_assert(std::is_void_v<decltype(Land::RefusalValue<void>())>, "a void export refuses with nothing");
 
     EXPECT("* : a copy that never yielded starts as usual", !Land::RefusesStart(Land::YieldState::None));
     EXPECT("* : a yielding copy starts nothing", Land::RefusesStart(Land::YieldState::Yielding));
