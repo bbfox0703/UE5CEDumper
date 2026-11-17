@@ -11586,6 +11586,10 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   field name and a Next Scan prunes; confirm an **unset** optional doesn't surface on a
   scan for `0` (the `bIsSet` gate). Layout helper is unit-tested; the field walk needs a
   live game with optional UPROPERTYs.
+  ✅ **The Next Scan half CLOSED 2026-11-17 on 3732** (DumperTest Shipping, `tools/verify/bool_search_v1c_live.py`,
+  log `out/register/bool_v1c.log`): an Int32 Exact scan for 24680 finds `Opt_Int_Set` on both DumperTestActors; a
+  refine to 24681 leaves none of them; the control, a fresh scan refined to 24680, keeps both at the same addresses.
+  The unset-optional half is the 2026-08-05 record above.
 - **Property freeze (Route B)** on a respawning-NPC game (build 719). Watch: tick FPS
   impact (50ms × N instances), rescan cadence at respawn, vtable-liveness guard on level
   transition, AOBMaker gating UX, multi-script coexistence. First candidate: Geri (UE
