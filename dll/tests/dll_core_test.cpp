@@ -14085,6 +14085,17 @@ int main() {
         check("UE58-PREALLOC-NO-ROW ⭐: a 5.8 array at an exact multiple of 64K is read whole", read58(0x20000),
               layoutText().c_str());
 
+        // gc.MaxObjectsInGame below 327,680 (the engine's Android and iOS configs ship 131,072): PreAllocate leaves
+        // MaxChunks 3 and MaxElements 0x30000, and the strict row wants at least 6 chunks (review wf_47eca989-bf9,
+        // UE58-TRIGGER-LIST-INCOMPLETE).
+        memset(u8, 0, sizeof(u8));
+        for (auto& t : u8Table) t = poolChunk;
+        putP(0x00, reinterpret_cast<uintptr_t>(u8Table.data()));
+        put32(0x08, 50000); put32(0x0C, 0x30000); put32(0x10, 1); put32(0x14, 3);
+        put32(0x20, 0x8001); put32(0x24, 0x8000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: a 5.8 array of 3 max chunks is read whole", read58(50000), layoutText().c_str());
+
         // gc.PreAllocateUObjectArray: NumChunks = MaxChunks = 33, PreAllocatedObjects = Objects[0]; above 16 TB its
         // high dword passes relaxed D's floor; and with gc.MaxObjectsNotConsideredByGC = 0 (ObjLastNonGCIndex -1, E
         // skipped) below 16 TB, the default layout read MaxChunks.
