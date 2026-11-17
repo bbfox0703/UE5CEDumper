@@ -389,7 +389,8 @@ public partial class CallTraceViewModel : ViewModelBase
             Progress = 1;
             StatusText = Summary(trace);
             _log.Info($"CallTrace: loaded {trace.Count} calls ({kept} records, gen {info.Gen}), " +
-                      $"{read.Funcs} functions, {read.Objs} objects" +
+                      $"{read.Funcs} functions, {read.Objs} objects, dropped {trace.EntriesDropped} entries / " +
+                      $"{trace.ReturnsDropped} returns" +
                       (trace.Stacks is { } st
                           ? $", {st.Calls.Count} stacks ({st.Orphans} orphaned, {st.Unjoined} unjoined)" : ""));
         }
@@ -604,6 +605,10 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t.Info.FirstValid > 0) sb.Append(' ').Append(Say("str.CT.Status.Lapped", t.Info.FirstValid));
         if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(StringLookup("str.CT.Status.BeforeWindowOne"));
         else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Say("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
+        // [TRACE-DROPPED-ENTRY] Records the DLL dropped inside the kept part (written out of turn as the buffer wrapped).
+        if (t.EntriesDropped + t.ReturnsDropped > 0)
+            sb.Append(' ').Append(Say("str.CT.Status.Dropped", t.EntriesDropped + t.ReturnsDropped, t.EntriesDropped,
+                                      t.ReturnsDropped));
         // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
         switch (ScopeKey(t.Info))
         {
