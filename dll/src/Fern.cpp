@@ -6928,6 +6928,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 rj["scope"]       = r.scope;
                 rj["offset"]      = r.offset;       // class-member offset (disasm; -1 = n/a)
                 rj["confidence"]  = r.confidence;   // "high"/"low" (disasm); "" (bytecode)
+                // [DENKEN-WRITE-SITES] disasm: the instructions that write this field, each once -- a native write site
+                // with no debugger. Absent for a read and for bytecode; an older DLL sends none.
+                if (!r.writeSites.empty()) {
+                    json sites = json::array();
+                    for (uintptr_t site : r.writeSites) sites.push_back(Renge::AddrToStr(site));
+                    rj["write_sites"] = sites;
+                    if (r.writeSitesTruncated) rj["write_sites_truncated"] = true;
+                }
                 arr.push_back(rj);
             }
             data["props"] = arr;

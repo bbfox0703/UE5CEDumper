@@ -1485,6 +1485,11 @@ public sealed class DumpService : IDumpService
                     Scope       = p["scope"]?.GetValue<string>() ?? "",
                     Offset      = p["offset"]?.GetValue<int>() ?? -1,
                     Confidence  = p["confidence"]?.GetValue<string>() ?? "",
+                    // [DENKEN-WRITE-SITES] Native rows that write; absent on a read, on bytecode and from an older DLL.
+                    WriteSites  = p["write_sites"] is JsonArray sites
+                        ? sites.Select(n => n?.GetValue<string>() ?? "").Where(s => s.Length > 0).ToList()
+                        : Array.Empty<string>(),
+                    WriteSitesTruncated = p["write_sites_truncated"]?.GetValue<bool>() ?? false,
                 });
             }
         }

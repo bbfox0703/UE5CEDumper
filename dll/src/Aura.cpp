@@ -7284,6 +7284,8 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
             ref.writeCount  = acc.writeCount;
             ref.scope       = "instance";   // mapped to a class member
             ref.confidence  = acc.highConfidence ? "high" : "low";
+            ref.writeSites = acc.writeSites;
+            ref.writeSitesTruncated = acc.writeSitesTruncated;
             out.refs.push_back(std::move(ref));
         }
 

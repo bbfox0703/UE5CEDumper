@@ -1569,6 +1569,10 @@ struct FunctionPropRef {
     int32_t     offset     = -1;   // class-member offset the access mapped to (-1 = n/a)
     std::string confidence;        // "high" (base proven `this`) / "low" — disasm only;
                                    // empty for the exact bytecode path.
+    // [DENKEN-WRITE-SITES] disasm only: the native instructions that write this field, each once, in decode order
+    // (at most Denken::kMaxWriteSites; writeSitesTruncated when there were more). Empty for a read and for bytecode.
+    std::vector<uintptr_t> writeSites;
+    bool        writeSitesTruncated = false;
 };
 
 struct FunctionPropRefResult {

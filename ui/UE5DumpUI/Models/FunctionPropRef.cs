@@ -45,7 +45,9 @@ public sealed class FunctionPropRef
     public bool WriteSitesTruncated { get; init; }
 
     /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some; empty for none.</summary>
-    public string WriteSitesText => "";
+    public string WriteSitesText =>
+        WriteSites.Count == 0 ? ""
+        : WriteSites[0] + (WriteSites.Count > 1 ? $" +{WriteSites.Count - 1}" : "") + (WriteSitesTruncated ? "…" : "");
 
     /// <summary>True for a low-confidence heuristic (native disasm) row.</summary>
     public bool IsLowConfidence => Confidence == "low";

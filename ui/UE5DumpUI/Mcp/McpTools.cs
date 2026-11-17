@@ -287,7 +287,7 @@ internal static class McpTools
 
             Pipe(game, "read_function_props", "Properties a function touches",
                 "The properties one UFunction reads or writes, from its bytecode, or from its machine code for a "
-                + "native function.",
+                + "native function; there, write_sites are the addresses of the instructions that write each one.",
                 [("func_addr", McpSchema.Addr("The UFunction's address (addr in read_functions)."), true)],
                 "walk_function_props", (a, r) => r["func_addr"] = a.Addr("func_addr"), HeavySeconds),
 
