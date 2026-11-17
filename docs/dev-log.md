@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3730) — The second copy's take-over, after a third review `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+No visible change from 3729 in ordinary use.
+- **What changes:** after a take-over, a mailbox command can no longer be answered into the wrong mailbox or run twice
+  when two mailbox pollers briefly overlap. When a Cheat Engine table finds an earlier copy whose mailbox could not be
+  taken over, it now says one of the two copies is out of date (the proxy in the game folder or the DLL injected later)
+  rather than blaming the proxy.
+- **Review** `wf_2875eae9-da5`: 7 real findings, all fixed.
+- **Proven live** on DumperTest Shipping: a 3730 proxy yielded to the injected 3730 copy (14/14, five rounds of mailbox
+  commands through the taken-over mailbox), and one injected copy alone behaved as before.
+- **Tests:** C# 8401 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4230, dll_core_test 1621, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,694,400 bytes (sha256 28611632a6ce47a3...); UE5Dumper.dll 3,828,736 bytes (sha256 b324230f2094564e...).
+
 ## 2026-11-17 (build 3729) — A second copy of the DLL in a game takes over from the first `[DUMPER-SECOND-COPY-AUTOSTART]`
 
 No visible change unless a game holds two copies of the DLL -- a proxy (version / dinput8 / dxgi / winmm.dll) from the game
