@@ -2463,8 +2463,18 @@ public class InvokeScriptTests
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
         string beginApply = frieren[begin..frieren.IndexOf("\n}", begin, StringComparison.Ordinal)];
+        // Code only, so a fence inside a line or block comment, or under a preprocessor branch, is not taken for one
+        // (reviews wf_b0aa9098-dd5 and wf_2d9f83d5-21b).
+        beginApply = System.Text.RegularExpressions.Regex.Replace(beginApply, @"/\*.*?\*/", " ",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        beginApply = string.Join("\n", beginApply.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        Assert.DoesNotContain("#if", beginApply);
         int raise = beginApply.IndexOf("g_initInProgress.store(true", StringComparison.Ordinal);
-        // A statement that starts its line, so a commented-out fence is not taken for one (review wf_b0aa9098-dd5).
+        // A statement that starts its line.
         var fullFence = System.Text.RegularExpressions.Regex.Match(
             beginApply, @"\n[ \t]*std::atomic_thread_fence\(std::memory_order_seq_cst\);");
         Assert.True(raise >= 0 && fullFence.Success && fullFence.Index > raise,
