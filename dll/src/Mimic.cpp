@@ -29,7 +29,7 @@
 #include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 #include "Voll.h"      // Voll::Holds -- who holds what (Stage D2-1)
-#include "Land.h"      // Land::PublishedState / kMaxCopies -- an earlier copy's mailbox served here
+#include "Land.h"      // Land::MirroredState / kMaxCopies -- an earlier copy's mailbox served here
 
 #include <Windows.h>
 #include <timeapi.h>   // MMRESULT / TIMERR_NOERROR (types only — see WinmmTimer below)
@@ -112,8 +112,10 @@ static int s_compoundDepth = 0;
 // [DUMPER-SECOND-COPY-AUTOSTART] The mailbox the command being handled came from. The poller serves this copy's own
 // g_invokeMailbox and, once this copy has taken over from an earlier copy of the dumper in the process (Land), that
 // copy's mailbox too: a CE script that resolved the earlier copy's export writes there. Handlers read and answer through
-// Box(); only the poller sets it, and every handler runs on the poller's thread.
-static MailboxData* s_box = &g_invokeMailbox;
+// Box(); only the poller sets it, and every handler runs on the poller's thread. Per thread: a copy can run two
+// pollers for a while -- a stop that gave up waiting on a handler, then a restart -- and each must answer in the mailbox
+// its own command came from (review wf_2875eae9-da5, R3-SBOX-SHARED-POLLERS).
+static thread_local MailboxData* s_box = &g_invokeMailbox;
 static MailboxData& Box() { return *s_box; }
 
 // Earlier copies' mailboxes this copy serves (AdoptMailbox). A slot once set is never cleared: the earlier copy pins its
@@ -273,8 +275,16 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
     // [DUMPER-SECOND-COPY-AUTOSTART] Another poller is mid-command on this mailbox -- the earlier copy's, still in a
     // handler after its stop gave up waiting for it (review R2-STOPTHREAD-TIMEOUT-REPLAY). It answers that command
     // itself; running it here too would run it twice.
-    if (Box().status == STATUS_PROCESSING) return;
+    const int32_t seen = Box().status;
+    if (seen == STATUS_PROCESSING) return;
     int32_t cmd = Box().cmd;
+    // ...or finishing one: its SetDone writes DONE and then cmd = IDLE, and a pass between the two stores would run that
+    // command again. A sender clears status before it writes cmd, so DONE beside a live cmd is that window or a sender
+    // that did not; look again once the other poller has had its moment (R3-PROCESSING-SKIP-DONE-WINDOW).
+    if (cmd != CMD_IDLE && seen == STATUS_DONE) {
+        Sleep(1);
+        if (Box().cmd == CMD_IDLE) return;
+    }
 
     if (cmd != CMD_IDLE) {
         // Mark as processing

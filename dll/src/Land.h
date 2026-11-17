@@ -63,9 +63,10 @@ constexpr bool CanServeMailbox(int32_t theirCurrent, int32_t theirMinimum, int32
     return theirCurrent >= layoutSince && theirCurrent <= ourCurrent && theirMinimum >= ourMinimum;
 }
 
-// What the earlier copy's mailbox says after the hand-off. Served, it says what this copy's own says. Not served, it says
-// SKIPPED, "another copy serves this process": a CE inject script reads READY and SKIPPED as served and leaves the copy
-// alone, and reads any other value as parked and calls that copy's UE5_AutoStart.
+// What the earlier copy's mailbox says when this copy cannot serve it: SKIPPED, "another copy serves this process" -- a
+// CE inject script reads READY and SKIPPED as served and leaves the copy alone, and reads any other value as parked and
+// calls that copy's UE5_AutoStart. A SERVED mailbox says MirroredState below (review R3-STALE-PUBLISHEDSTATE-COMMENTS);
+// the served arm here is that rule's for a copy that forwards, kept for the tests that pin it.
 constexpr int32_t PublishedState(bool served, int32_t ownState) {
     return served ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);
 }

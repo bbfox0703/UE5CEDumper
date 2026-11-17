@@ -248,7 +248,7 @@ public sealed class SecondCopySourceTests
     public void TheMailboxLayoutPinIsUnconditional()
     {
         string h = CodeOnly(DllSrc("Mimic.h"));
-        Assert.Matches(@"static_assert\(MAILBOX_LAYOUT_SINCE == 3 &&\s*sizeof\(MailboxData\) == 0x730", h);
+        Assert.Matches(@"static_assert\(MAILBOX_LAYOUT_SINCE == 3 &&\s*\(?sizeof\(MailboxData\) == 0x730", h);
         Assert.DoesNotContain("MAILBOX_LAYOUT_SINCE != 3", h);
     }
 
@@ -261,7 +261,7 @@ public sealed class SecondCopySourceTests
         InOrder(gen, "the generated contract check", "if _cmagic == 0 then", "_tm >= 1 and _tc >= _tm",
                 "another copy of UE5Dumper took over this game process",
                 // Either copy can be the stale one: the later copy takes over even when it is older (R3-TAKEOVER-ADVICE-NEWER-EARLIER).
-                "one of the two copies is out of date", "the proxy DLL in the game folder or the DLL injected later",
+                "of the two copies is out of date", "the proxy DLL in the game folder or the DLL injected later",
                 "if _cmagic ~= ");
         foreach (string helper in new[] { "ue5_invoke_helper.lua", "ue5_freeze_helper.lua" })
         {

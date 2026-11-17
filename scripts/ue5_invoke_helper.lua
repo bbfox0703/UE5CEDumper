@@ -218,7 +218,7 @@ local function checkContract()
     -- mailbox and cleared its magic (Land::TakeMailbox): not a stale address, and re-injecting resolves the same copy.
     local c, m = readInteger(cv + 0x04), readInteger(cv + 0x08)
     if c and m and m >= 1 and c >= m and c < 1000 then
-      return false, 'another copy of UE5Dumper took over this game process, and this script resolved the copy it replaced, whose mailbox the new copy cannot serve -- update or remove the old proxy DLL in the game folder, then restart the game'
+      return false, 'another copy of UE5Dumper took over this game process, and this script resolved the copy it replaced, whose mailbox the new copy cannot serve -- one of the two copies is out of date, the proxy DLL in the game folder or the DLL injected later: update the older one, or remove the proxy, then restart the game'
     end
   end
   if magic ~= 1127564629 then

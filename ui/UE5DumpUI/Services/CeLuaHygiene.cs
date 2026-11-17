@@ -506,7 +506,7 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("  if _tc and _tm and _tm >= 1 and _tc >= _tm and _tc < 1000 then\n");
         sb.Append(indent).Append("    ").Append(say).Append("('[").Append(tag)
           .Append("] another copy of UE5Dumper took over this game process, and this table resolved the copy it replaced, whose mailbox the new copy cannot serve.")
-          .Append("\\n\\nThe old copy is usually a stale proxy DLL (version.dll / dinput8.dll / dxgi.dll / winmm.dll) in the game folder: update or remove it, then restart the game.')\n");
+          .Append("\\n\\nOne of the two copies is out of date -- the proxy DLL in the game folder or the DLL injected later (the later one takes over even when it is the older): update the older one, or remove the proxy, then restart the game.')\n");
         AppendBail(sb, onFail, indent + "    ");
         sb.Append(indent).Append("  end\n");
         sb.Append(indent).Append("end\n");

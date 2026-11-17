@@ -814,12 +814,13 @@ constexpr int32_t MAILBOX_CONTRACT_MIN = 1;
 /// [DUMPER-SECOND-COPY-AUTOSTART] The first contract whose MailboxData has this build's layout: version 3 put cmdFlags
 /// and cmdOutFlags at the tail, and nothing has moved since. A later copy of the dumper serves an earlier copy's mailbox
 /// only from this version on (Land::CanServeMailbox). Set it to the new MAILBOX_CONTRACT whenever item 1 changes: the
-/// assertion below pins every offset and the size to the value 3, so a moved or added field fails to build until it
-/// moves (Test_Mimic_MailboxLayout's literals and check_mailbox_contract.py's hash fail too, and say nothing of this).
+/// assertion below pins this value together with every offset and the size, so a moved or added field, or a moved
+/// value, fails to build until both are restated (Test_Mimic_MailboxLayout's literals and check_mailbox_contract.py's
+/// hash fail too, and say nothing of this).
 constexpr int32_t MAILBOX_LAYOUT_SINCE = 3;
-// Contracts 1 and 2 had no cmdFlags / cmdOutFlags tail: a smaller struct, never to be served.
-static_assert(MAILBOX_LAYOUT_SINCE >= 3, "contracts 1 and 2 had a smaller MailboxData");
-static_assert(MAILBOX_LAYOUT_SINCE != 3 ||
+// Unconditional: moving MAILBOX_LAYOUT_SINCE fails here until this pin is restated for the new layout, and a pin that
+// switched itself off when the value moved would guard nothing after (review R3-LAYOUT-PIN-SELF-DISABLING).
+static_assert(MAILBOX_LAYOUT_SINCE == 3 &&
               (sizeof(MailboxData) == 0x730 && offsetof(MailboxData, cmd) == 0x000 &&
                offsetof(MailboxData, status) == 0x004 && offsetof(MailboxData, result) == 0x008 &&
                offsetof(MailboxData, initState) == 0x00C && offsetof(MailboxData, instanceAddr) == 0x010 &&
@@ -828,7 +829,8 @@ static_assert(MAILBOX_LAYOUT_SINCE != 3 ||
                offsetof(MailboxData, className) == 0x028 && offsetof(MailboxData, funcName) == 0x128 &&
                offsetof(MailboxData, errorMsg) == 0x228 && offsetof(MailboxData, paramsData) == 0x328 &&
                offsetof(MailboxData, cmdFlags) == 0x728 && offsetof(MailboxData, cmdOutFlags) == 0x72C),
-              "MailboxData's layout changed: set MAILBOX_LAYOUT_SINCE to the new MAILBOX_CONTRACT and pin that layout");
+              "MailboxData's layout or MAILBOX_LAYOUT_SINCE changed: set MAILBOX_LAYOUT_SINCE to the first contract "
+              "with this layout and restate this pin for it (contracts 1 and 2 had a smaller struct)");
 
 /// 'UE5C' — proves the symbol resolved to OUR data rather than to a stale
 /// address left behind by a previous injection. That is not hypothetical: a
