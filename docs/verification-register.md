@@ -1251,8 +1251,19 @@ reached:
    0): the 64-choice cap left out its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
    is near calls minus 1,000 a second, and calls/s and fps stay within noise of a run without snapshots (the plan
    asks to re-measure the defaults, 1,000 / 10,000 a second).
-3. **The UI's memory while it loads snapshots.** The D3 line counts the snapshot buffer in the game's figure only.
-   Acceptance: a full 32 MB snapshot buffer loaded in the Call Trace tab, and the load's memory log line.
+3. ✅ **MEASURED 2026-11-18 on 3733 `[LIVEFUNCS-STEP2-UIMEM]`** (DumperTest58 Shipping, injected, AOT UE5DumpUI 3733):
+   a 10 s plain recording, then `CameraModifier::BlueprintModifyCamera` (7 parameters, 116 B) and
+   `BlueprintModifyPostProcess` (3, 1,984 B) chosen with the 32 MB buffer, recorded 160 s. DLL side (the UI pipe log's
+   Stop reply): `snap.bytes` 33,553,984 (the slots that fit in 32 MiB), `slots_per_ring` 15,592, both rings `written`
+   19,224 with `first_valid` 3,632 — wrapped; the status read "31184 copies kept". UI side: Call Trace loaded it
+   ("Parameters: 15592 calls with a copy, from 2 load(s)"), a late call's Parameters tab decoded DeltaTime /
+   ViewLocation / FOV and the out values before and after, and an early call said its copy was written over. ⚠ **The
+   memory line contradicts the estimate**: the panel's D3 line said "this UI up to 189 MB while it loads the trace,
+   about 64 MB after"; ui-view-0.log measured `at the load's start heap 50 MB, working set 251 MB; … at its peak 1,381
+   MB …; after it heap 909->900 MB, working set 1,381->1,035 MB` — about 7x the estimate at the peak and 14x after.
+   Filed as `[LIVEFUNCS-UI-SNAP-MEMORY]` in todo.md. *Was:* **The UI's memory while it loads snapshots.** The D3 line
+   counts the snapshot buffer in the game's figure only. Acceptance: a full 32 MB snapshot buffer loaded in the Call
+   Trace tab, and the load's memory log line.
 4. ✅ **CLOSED 2026-11-17 on 3732 `[LIVEFUNCS-STEP2-UE423]`** (UE423_Flying Shipping, UE 4.23's UProperty model;
    `livefuncs_snap_live.py --label ue423 --choose "" --plain-s 20 --record-s 30`, 6/6 with 3 not run,
    `out/livefuncs-snap/ue423.json`): the 10 busiest functions with parameters chosen by name, the Start accepted with
