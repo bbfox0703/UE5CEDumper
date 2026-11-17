@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3724) — An object array no strict row fits is no longer counted from half of a pointer above 16 TB `[VND584-03-FLOOR-HIGH-HEAP]`
+
+The maintainer asked for this row the same day it was parked. No visible change unless a game's object array fits no
+strict layout.
+- **What changes:** when no strict FUObjectArray layout fits, the relaxed fallback rows A/C and B read the object count
+  from a slot that, on some layouts, is the high half of the real chunk table pointer. A 0x1000 floor refused that only
+  while the table sat below 16 TB -- a chunk-counts-first UE 5.7 array (the Mistfall Hunter shape) with its table
+  higher would have been read with a few thousand objects through a garbage table. The rows now follow the 8 bytes
+  under the count as a pointer and refuse the count when they lead to a chunk table and the row's own Objects slot does
+  not, so no array a row read before is refused; when A/C is refused and nothing else fits, the last-resort layout reads
+  Objects where that table is. The test suite places a chunk table above 16 TB in every build, and the
+  AddressSanitizer run no longer skips the check.
+- **Proven live** on DLL 3724: the Outer Worlds 2, the one title that reaches relaxed A/C, is still read by it
+  (`relaxed_layout_live.py` 4/4: 122,404 objects, nothing refused, GWorld walk at the title screen; its proxy is
+  refreshed to 3724). No chunk-counts-first title is in the corpus; dll_core_test holds it.
+- **Reviews:** three rounds (`wf_8fb9838c-132`, `wf_26ab4e6e-ff7`, `wf_16792939-c49`), every finding fixed in its own
+  commit -- the first made the check unable to refuse a genuine array and fixed the fallback. Relaxed D's own gap (no
+  floor; its count can be half of PreAllocatedObjects) is filed as `[RELAXED-D-PREALLOC-HALF]`.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1599 checks (ASan:
+  1599, three runs), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 3f27f5917252d9d0...); UE5Dumper.dll 3,798,528 bytes (sha256 5ee6847cfd06d433...).
+
 ## 2026-11-17 (build 3723) — A class walk that starts while an init is ending waits for it `[CPP-HARDENING-2026-11-14]`
 
 A follow-up to build 3722's `[DYNOFF-LATCH-STALE]` fix, found by the fourth review round. No visible change.
