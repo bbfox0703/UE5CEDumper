@@ -8766,6 +8766,40 @@ int main() {
         check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
               &Aura::GetClassRefMeta(A(feRace[4])) == raceR2);
 
+        // [DYNOFF-LATCH-STALE] Review wf_b0aa9098-dd5, B-EX-STRADDLE: an offset validation that ends while a WalkClassEx
+        // is between its plain walk and its key. WalkClassEx takes its key late on purpose -- after CorrectSubclassOffsets,
+        // which may move the family -- so its plain walk read field offsets the validation was still deriving, and the
+        // retire at the validation's end must not let them be filed under the epoch the retire starts.
+        static int s_measuredOff = 0;
+        static bool s_retireArmed = false;
+        auto retireOnce = [](const char* cache) {
+            if (s_retireArmed && strcmp(cache, "WalkClass") == 0) {
+                s_retireArmed = false;
+                DynOff::FPROPERTY_OFFSET = s_measuredOff;   // the validation's measurement lands...
+                DynOff::RetireFamilyEpoch();               // ...and its RetireOnExit runs
+            }
+        };
+        const int svPropOff = DynOff::FPROPERTY_OFFSET;
+        s_measuredOff = svPropOff + 4;
+        static uint8_t feStraddleProp[0x100] = {}, feStraddleCls[0x100] = {};
+        fprop(feStraddleProp, A(feObjFC), 5, 0x28, 8, nullptr);   // Offset_Internal 0x28 at the default slot...
+        put32(feStraddleProp, s_measuredOff, 0x40);               // ...and 0x40 at the measured one
+        put32(feStraddleCls, DynOff::USTRUCT_PROPSSIZE, 0x48);
+        putP(feStraddleCls, DynOff::USTRUCT_CHILDPROPS, A(feStraddleProp));
+        auto offsetOf = [](const ClassInfo& ci) {
+            for (const auto& f : ci.Fields) if (f.Name == "Target") return f.Offset;
+            return -1;
+        };
+        Ubel::g_beforeFamilyCachePublishForTest = retireOnce;
+        s_retireArmed = true;
+        (void)Ubel::WalkClassEx(A(feStraddleCls));
+        const bool fired6 = !s_retireArmed;
+        const int straddleOff = offsetOf(Ubel::WalkClassEx(A(feStraddleCls)));
+        check("FAMILYEPOCH straddle setup: the retire fired inside the WalkClassEx's plain walk", fired6);
+        check("FAMILYEPOCH straddle ⭐: a WalkClassEx straddling an offset validation's end is not served under the new epoch",
+              straddleOff == 0x40, std::to_string(straddleOff).c_str());
+        DynOff::FPROPERTY_OFFSET = svPropOff;
+
         Ubel::g_beforeFamilyCachePublishForTest = nullptr;
         Aura::g_beforeFamilyCachePublishForTest = nullptr;
         s_raceCache = nullptr;
