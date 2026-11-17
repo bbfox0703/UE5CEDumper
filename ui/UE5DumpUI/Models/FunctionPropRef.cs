@@ -44,6 +44,15 @@ public sealed class FunctionPropRef
     /// <summary>Path 2: the field has more write sites than the DLL keeps (Denken::kMaxWriteSites).</summary>
     public bool WriteSitesTruncated { get; init; }
 
+    /// <summary>Path 2: the first this-many <see cref="WriteSites"/> write through a register proven to hold
+    /// <c>this</c>; the rest write through another base -- another object's field at the same offset, or not this
+    /// field at all (review DWS-DLL-1). 0 from a DLL that does not say.</summary>
+    public int WriteSitesViaThis { get; init; }
+
+    /// <summary>Path 2: how many properties share this offset when more than one -- bitfield bools packed into one
+    /// byte -- so a write there may be to any of them (review DWS-DLL-2). 0 when the property is alone.</summary>
+    public int SharedOffset { get; init; }
+
     /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some; empty for none.</summary>
     public string WriteSitesText =>
         WriteSites.Count == 0 ? ""

@@ -33,6 +33,8 @@ public sealed class DenkenWriteSitesSourceTests
         Assert.Matches(@"for \(uintptr_t \w+ : r\.writeSites\) \w+\.push_back\(Renge::AddrToStr\(\w+\)\);", handler);
         Assert.Contains("rj[\"write_sites\"]", handler);
         Assert.Contains("rj[\"write_sites_truncated\"] = true;", handler);
+        Assert.Contains("rj[\"write_sites_via_this\"] = r.writeSitesViaThis;", handler);
+        Assert.Contains("rj[\"shared_offset\"] = r.sharedOffset;", handler);
     }
 
     [Fact]
@@ -40,11 +42,20 @@ public sealed class DenkenWriteSitesSourceTests
     {
         string dialog = Src("ui/UE5DumpUI/Views/FunctionPropsDialog.cs");
         Assert.Contains("x?.WriteSitesText", dialog);
-        Assert.Matches(@"NavigateDisassemblerAsync\(\w+\.WriteSites\[0\]", dialog);
-        Assert.Contains("string.Join(Environment.NewLine, ", dialog);
+        // Through the shared helper, which names a busy or absent AOBMaker pipe (review WS-UI-1, [W1-PIPEBUSY-STATUS]).
+        Assert.Matches(@"AobMakerActions\.MoveViewAsync\(bridge, x\.WriteSites\[0\], x\.Name, null, disassembler: true\)", dialog);
+        Assert.DoesNotContain("NavigateDisassemblerAsync(", dialog);
+        // Copy copies every site (review WS-TEST-1: the tooltip's Join matched the old pin as well).
+        Assert.Contains("string text = string.Join(Environment.NewLine, x.WriteSites);", dialog);
+        // The two buttons follow the selection, after every scan too (WS-TEST-1).
+        Assert.Contains("_btnCopySites.IsEnabled = hasSites;", dialog);
+        Assert.Contains("_btnSiteInCe.IsEnabled = hasSites && SharedAobMaker?.IsAvailable == true;", dialog);
+        Assert.Contains("_grid.SelectionChanged += (_, _) => UpdateSelectionButtons();", dialog);
+        Assert.Matches(@"finally\s*\{\s*_btnRefresh\.IsEnabled = true;\s*UpdateSelectionButtons\(\);", dialog);
         string en = Src("ui/UE5DumpUI/Resources/Strings/en.axaml");
         foreach (string key in new[] { "str.FunctionProps.WriteSitesHeader", "str.FunctionProps.WriteSiteInCe",
-                                       "str.FunctionProps.CopyWriteSites" })
+                                       "str.FunctionProps.CopyWriteSites", "str.FunctionProps.WriteSiteViaThis",
+                                       "str.FunctionProps.WriteSiteOtherBase", "str.FunctionProps.SharedOffsetNote" })
             Assert.Contains($"x:Key=\"{key}\"", en);
     }
 }

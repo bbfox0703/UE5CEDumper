@@ -19,22 +19,27 @@
 
 namespace Denken {
 
+// [DENKEN-WRITE-SITES] Most write sites kept per offset: a field written in more places than this is reported with the
+// ones through `this` first, then the rest in decode order, and writeSitesTruncated set.
+constexpr size_t kMaxWriteSites = 8;
+
 // One `[this + offset]` memory access recovered from native machine code.
 // Accesses to the same displacement are merged; highConfidence is OR-ed, so
 // a single provably-`this` access at an offset marks it high-confidence.
-// [DENKEN-WRITE-SITES] Most write sites kept per offset: a field written in more places than this is reported with the
-// first ones in decode order and writeSitesTruncated set.
-constexpr size_t kMaxWriteSites = 8;
-
 struct NativeFieldAccess {
     uint32_t offset         = 0;  // displacement from the this pointer
     uint8_t  accessSize     = 0;  // 1/2/4/8/16 bytes (0 = unknown)
     int32_t  occurrences    = 0;  // total accesses at this offset
     int32_t  writeCount     = 0;  // of those, writes (reads = occurrences - writeCount)
     bool     highConfidence = false;  // base register provably a `this`-alias
-    // [DENKEN-WRITE-SITES] The addresses of the instructions that write this offset, each once, in decode order: a
-    // field's native write site found with no debugger, for an AOB or a code injection there.
+    // [DENKEN-WRITE-SITES] The addresses of the instructions that write this offset, each once: a field's native write
+    // site found with no debugger, for an AOB or a code injection there. The first writeSitesViaThis of them write
+    // through a register proven to hold `this`, in decode order; the rest write through any other base (another
+    // object's field at the same offset -- or not this field at all, such as an exec thunk's store into its FFrame),
+    // in decode order. highConfidence is the offset's, not a site's: read writeSitesViaThis for the sites. A store is
+    // recorded at its own displacement only, so a wide store over several fields is a site of the first one.
     std::vector<uintptr_t> writeSites;
+    uint8_t  writeSitesViaThis   = 0;
     bool     writeSitesTruncated = false;  // more distinct write sites than kMaxWriteSites
 };
 

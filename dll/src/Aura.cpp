@@ -7198,6 +7198,44 @@ static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
     return FuncSlot(funcAddr);
 }
 
+// [DENKEN-WRITE-SITES] Path 2's mapping, pure (Aura.h). WalkClass includes the full inherited super chain with absolute
+// Offset_Internal.
+std::vector<FunctionPropRef> MapNativeAccesses(const std::vector<Denken::NativeFieldAccess>& accesses,
+                                               const std::vector<FieldInfo>& fields, int32_t& unmapped) {
+    std::vector<FunctionPropRef> refs;
+    std::unordered_map<int32_t, const FieldInfo*> byOff;
+    byOff.reserve(fields.size());
+    for (const auto& f : fields) byOff.emplace(f.Offset, &f);
+
+    for (const auto& acc : accesses) {
+        auto it = byOff.find(static_cast<int32_t>(acc.offset));
+        if (it == byOff.end()) { unmapped++; continue; }
+        const FieldInfo& f = *it->second;
+        FunctionPropRef ref;
+        ref.propAddr    = f.Address;
+        ref.name        = f.Name;
+        ref.type        = f.TypeName;
+        ref.offset      = static_cast<int32_t>(acc.offset);
+        ref.occurrences = acc.occurrences;
+        ref.writeCount  = acc.writeCount;
+        ref.scope       = "instance";   // mapped to a class member
+        ref.confidence  = acc.highConfidence ? "high" : "low";
+        ref.writeSites = acc.writeSites;
+        ref.writeSitesTruncated = acc.writeSitesTruncated;
+        refs.push_back(std::move(ref));
+    }
+
+    // High-confidence first, then writers, then frequency, then name.
+    std::sort(refs.begin(), refs.end(), [](const FunctionPropRef& a, const FunctionPropRef& b) {
+        bool ah = a.confidence == "high", bh = b.confidence == "high";
+        if (ah != bh) return ah;
+        if ((a.writeCount > 0) != (b.writeCount > 0)) return a.writeCount > 0;
+        if (a.occurrences != b.occurrences) return a.occurrences > b.occurrences;
+        return a.name < b.name;
+    });
+    return refs;
+}
+
 // --- Path 2: disassemble a native UFunction and map [this+off] to props ---
 //
 // Returns the method tag ("disasm" when the decoder ran, "none" when the exec
@@ -7267,37 +7305,7 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     uintptr_t owner = Ubel::GetOuter(funcAddr);
     if (owner) {
         ClassInfo ci = Ubel::WalkClass(owner);
-        std::unordered_map<int32_t, const FieldInfo*> byOff;
-        byOff.reserve(ci.Fields.size());
-        for (const auto& f : ci.Fields) byOff.emplace(f.Offset, &f);
-
-        for (const auto& acc : r.accesses) {
-            auto it = byOff.find(static_cast<int32_t>(acc.offset));
-            if (it == byOff.end()) { out.unmappedAccesses++; continue; }
-            const FieldInfo& f = *it->second;
-            FunctionPropRef ref;
-            ref.propAddr    = f.Address;
-            ref.name        = f.Name;
-            ref.type        = f.TypeName;
-            ref.offset      = static_cast<int32_t>(acc.offset);
-            ref.occurrences = acc.occurrences;
-            ref.writeCount  = acc.writeCount;
-            ref.scope       = "instance";   // mapped to a class member
-            ref.confidence  = acc.highConfidence ? "high" : "low";
-            ref.writeSites = acc.writeSites;
-            ref.writeSitesTruncated = acc.writeSitesTruncated;
-            out.refs.push_back(std::move(ref));
-        }
-
-        // High-confidence first, then writers, then frequency, then name.
-        std::sort(out.refs.begin(), out.refs.end(),
-                  [](const FunctionPropRef& a, const FunctionPropRef& b) {
-            bool ah = a.confidence == "high", bh = b.confidence == "high";
-            if (ah != bh) return ah;
-            if ((a.writeCount > 0) != (b.writeCount > 0)) return a.writeCount > 0;
-            if (a.occurrences != b.occurrences) return a.occurrences > b.occurrences;
-            return a.name < b.name;
-        });
+        out.refs = MapNativeAccesses(r.accesses, ci.Fields, out.unmappedAccesses);
     }
 
     LOG_INFO("AnalyzeNativeFunctionProps: 0x%llX exec=0x%llX -> %zu mapped props "

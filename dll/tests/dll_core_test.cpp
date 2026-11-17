@@ -14204,6 +14204,53 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Review wf_c87eff0e-53f DWS-DLL-2: bitfield bools
+    // packed into one byte share Offset_Internal, and the map kept the first one only -- a write to bCanBeDamaged was
+    // filed under whichever flag came first, and bCanBeDamaged had no row at all.
+    {
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
+            FieldInfo f{};
+            f.Address = 0x1000 + static_cast<uintptr_t>(off);
+            f.Name = name;
+            f.TypeName = type;
+            f.Offset = off;
+            f.Size = size;
+            return f;
+        };
+        std::vector<FieldInfo> fields = {
+            field("bCanBeDamaged", "BoolProperty", 0x5A, 1),
+            field("bBlockInput", "BoolProperty", 0x5A, 1),
+            field("Health", "FloatProperty", 0x60, 4),
+        };
+        Denken::NativeFieldAccess packed;
+        packed.offset = 0x5A; packed.accessSize = 1; packed.occurrences = 2; packed.writeCount = 2;
+        packed.highConfidence = true; packed.writeSites = { 0x7FF600001000ULL, 0x7FF600001008ULL };
+        packed.writeSitesViaThis = 2;
+        Denken::NativeFieldAccess hp;
+        hp.offset = 0x60; hp.accessSize = 4; hp.occurrences = 1; hp.writeCount = 1; hp.highConfidence = true;
+        hp.writeSites = { 0x7FF600002000ULL }; hp.writeSitesViaThis = 1;
+        Denken::NativeFieldAccess stray;
+        stray.offset = 0x70; stray.occurrences = 1;
+        int32_t unmapped = 0;
+        auto refs = Aura::MapNativeAccesses({ packed, hp, stray }, fields, unmapped);
+        auto row = [&](const char* name) -> const Aura::FunctionPropRef* {
+            for (const auto& r : refs) if (r.name == name) return &r;
+            return nullptr;
+        };
+        const Aura::FunctionPropRef* cbd = row("bCanBeDamaged");
+        const Aura::FunctionPropRef* blk = row("bBlockInput");
+        const Aura::FunctionPropRef* hpRow = row("Health");
+        check("* DWS-DLL-2: every bool packed into the written byte gets a row", cbd && blk);
+        check("* DWS-DLL-2: ...each carrying the byte's write sites",
+              cbd && blk && cbd->writeSites == packed.writeSites && blk->writeSites == packed.writeSites);
+        check("* DWS-DLL-2: ...and saying how many fields share that byte",
+              cbd && blk && cbd->sharedOffset == 2 && blk->sharedOffset == 2);
+        check("* WRITESITES: the sites, how many go through this, and the truncation reach the row",
+              hpRow && hpRow->writeSites == hp.writeSites && hpRow->writeSitesViaThis == 1 && !hpRow->writeSitesTruncated);
+        check("control: a field alone at its offset shares it with nobody", hpRow && hpRow->sharedOffset == 0);
+        check("control: an access at no field's offset is unmapped", unmapped == 1 && refs.size() == 3);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

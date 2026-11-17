@@ -5226,6 +5226,31 @@ static void Test_Denken_KeepsWriteSites() {
            w30 && w30->writeCount == 10 && w30->writeSites.size() == Denken::kMaxWriteSites &&
            w30->writeSites.front() == B0 && w30->writeSites.back() == B0 + 3 * (Denken::kMaxWriteSites - 1));
     EXPECT("* WRITESITES: ...and say more were dropped", w30 && w30->writeSitesTruncated);
+    EXPECT("* WRITESITES: the body's own writes are through this", w && w->writeSitesViaThis == 2);
+    EXPECT("* WRITESITES: ...and so is the followed impl's", w20 && w20->writeSitesViaThis == 1);
+
+    // Review wf_c87eff0e-53f DWS-DLL-1: a write through another base is kept, but after the ones through this, and
+    // counted apart -- an exec thunk's FFrame store must not be the site a "high" row offers first.
+    //   B0+0: mov [rdx+0x40], eax   89 42 40   write, base not this
+    //   B0+3: mov [rcx+0x40], eax   89 41 40   write through this
+    //   B0+6: ret                   C3
+    std::vector<DenkenRegion> mixed = { { B0, { 0x89, 0x42, 0x40, 0x89, 0x41, 0x40, 0xC3 } } };
+    auto x = Denken::Analyze(B0, MakeReader(&mixed));
+    const auto* w40 = FindAccess(x, 0x40);
+    EXPECT("* DWS-DLL-1: the write through this comes first, the other after",
+           w40 && w40->writeSites == std::vector<uintptr_t>({ B0 + 3, B0 }));
+    EXPECT("* DWS-DLL-1: ...one of them through this", w40 && w40->writeSitesViaThis == 1);
+
+    // The cap keeps a write through this over the others: eight through rdx, then one through rcx.
+    std::vector<uint8_t> crowd;
+    for (int i = 0; i < 8; ++i) crowd.insert(crowd.end(), { 0x89, 0x42, 0x48 });   // mov [rdx+0x48], eax
+    crowd.insert(crowd.end(), { 0x89, 0x41, 0x48, 0xC3 });                          // mov [rcx+0x48], eax ; ret
+    std::vector<DenkenRegion> crowdRegion = { { B0, crowd } };
+    auto cr = Denken::Analyze(B0, MakeReader(&crowdRegion));
+    const auto* w48 = FindAccess(cr, 0x48);
+    EXPECT("* DWS-DLL-1: a full list still takes a write through this, first",
+           w48 && w48->writeSites.size() == Denken::kMaxWriteSites && w48->writeSites.front() == B0 + 24 &&
+           w48->writeSitesViaThis == 1 && w48->writeSitesTruncated);
 }
 
 static void Test_Denken_ExcludesStackAndZeroDisp() {

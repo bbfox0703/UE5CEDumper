@@ -3739,7 +3739,9 @@ public class DumpServiceTests
                     ["occurrences"] = 3, ["write_count"] = 2, ["scope"] = "instance", ["offset"] = 0x1C0,
                     ["confidence"] = "high",
                     ["write_sites"] = new JsonArray { "0x7FF612340010", "0x7FF612340030" },
+                    ["write_sites_via_this"] = 1,
                     ["write_sites_truncated"] = true,
+                    ["shared_offset"] = 2,
                 },
                 new JsonObject
                 {
@@ -3754,7 +3756,10 @@ public class DumpServiceTests
 
         Assert.Equal(new[] { "0x7FF612340010", "0x7FF612340030" }, res.Props[0].WriteSites);
         Assert.True(res.Props[0].WriteSitesTruncated);
+        Assert.Equal(1, res.Props[0].WriteSitesViaThis);
+        Assert.Equal(2, res.Props[0].SharedOffset);
         Assert.Equal("0x7FF612340010 +1…", res.Props[0].WriteSitesText);
+        Assert.Equal(0, res.Props[1].SharedOffset);
         Assert.Empty(res.Props[1].WriteSites);
         Assert.False(res.Props[1].WriteSitesTruncated);
         Assert.Equal("", res.Props[1].WriteSitesText);
@@ -3763,9 +3768,12 @@ public class DumpServiceTests
     [Fact]
     public void FunctionPropRef_WriteSitesText_NamesTheFirstAndCountsTheRest()
     {
-        Assert.Equal("0x10", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" } }.WriteSitesText);
-        Assert.Equal("0x10 +2", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10", "0x20", "0x30" } }.WriteSitesText);
+        Assert.Equal("0x10", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" }, WriteSitesViaThis = 1 }.WriteSitesText);
+        Assert.Equal("0x10 +2", new UE5DumpUI.Models.FunctionPropRef
+            { WriteSites = new[] { "0x10", "0x20", "0x30" }, WriteSitesViaThis = 1 }.WriteSitesText);
         Assert.Equal("", new UE5DumpUI.Models.FunctionPropRef().WriteSitesText);
+        // Review DWS-DLL-1: when not even the first site is proven to write through `this`, the text says so.
+        Assert.Equal("0x10 ?", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" } }.WriteSitesText);
     }
 
     [Fact]
