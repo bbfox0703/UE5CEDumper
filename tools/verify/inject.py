@@ -276,7 +276,12 @@ def main(argv=None):
                   "nothing in the logs would say so. Use a FRESH process, or pass "
                   "--allow-stale if you really do want the refcount bump.", file=sys.stderr)
             return 1
-        print("   (--allow-stale given; continuing -- this is a refcount bump, NOT a load)")
+        # Only a mapped module with the injected file's NAME is returned by LoadLibraryW; a proxy (dxgi.dll, ...) is
+        # not, so the DLL is loaded as a second copy, which takes over from the first ([DUMPER-SECOND-COPY-AUTOSTART]).
+        same_name = any(n.lower() == os.path.basename(dll).lower() for n, _, _ in prior)
+        print("   (--allow-stale given; continuing -- " + (
+            "this is a refcount bump, NOT a load)" if same_name else
+            "a second copy is loaded beside it, and takes over from it)"))
     print(f"dll    : {dll}  ({os.path.getsize(dll):,} bytes)"
           if os.path.isfile(dll) else f"dll    : {dll}  (MISSING)")
     print(f"via    : {exe}")

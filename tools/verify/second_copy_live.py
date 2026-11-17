@@ -99,9 +99,13 @@ def main() -> int:
         n = int(c.request("get_object_count").get("count") or c.request("get_pointers").get("object_count") or 0)
         check(f"the object count is at least {a.min_objects}", n >= a.min_objects, str(n))
 
+    # The copy that took over usually logs beside the earlier one: Sein's second writer writes <folder>.<module>.<pid>.
     text = ""
-    for p in sorted(logdir.glob("*-0.log")):
-        text += p.read_text(encoding="utf-8", errors="replace")
+    folders = [logdir] + sorted(logdir.parent.glob(f"{logdir.name}.*.{a.pid}"))
+    print("  logs:", ", ".join(f.name for f in folders))
+    for folder in folders:
+        for p in sorted(folder.glob("*-0.log")):
+            text += p.read_text(encoding="utf-8", errors="replace")
     earlier_name = re.escape(pathlib.Path(earlier_path).name)
     check("the log: the later copy takes over from the earlier copy by name",
           re.search(r"Land: taking over from the earlier copy at [^\n]*" + earlier_name, text, re.I) is not None)
