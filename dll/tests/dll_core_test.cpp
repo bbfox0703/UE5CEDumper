@@ -8064,6 +8064,24 @@ int main() {
         check("UPROPSLOT ⭐: 4.23 stock -- the whole family at 0x70, UEnumProperty::Enum at 0x78", famAt(0x70),
               fam().c_str());
 
+        // [DYNOFF-LATCH-STALE] Review wf_b0aa9098-dd5, B-R2-2: the retire on the MEASURED return, which the OFFSETS
+        // block's give-up does not reach. A second 4.23 run over the same layout starts where the first left the family,
+        // and its default and its measurement are both 0x70: no publish moves anything -- the shape of a run whose walks
+        // had already corrected the family to its final base.
+        const bool upSvLatch = Ubel::IsSubclassCalibrated();
+        const uint32_t upEpoch = DynOff::g_propertyFamilyEpoch.load();
+        Ubel::LatchSubclassCalibration(upEpoch);
+        DynOff::UPROPERTY_OFFSET = 0x44;
+        DynOff::UFIELD_NEXT = 0x28;
+        const bool upMeasured = Genau::ValidateAndFixOffsets(423);
+        check("UPROPSLOT setup: a second 4.23 run is measured and leaves the family at 0x70", upMeasured && famAt(0x70),
+              fam().c_str());
+        check("UPROPSLOT ⭐: ...and still retires the epoch, and with it the calibration latch",
+              DynOff::g_propertyFamilyEpoch.load() != upEpoch && !Ubel::IsSubclassCalibrated(),
+              (std::to_string(upEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
+        Ubel::s_subclassCalibratedAt.store(0);
+        if (upSvLatch) Ubel::LatchSubclassCalibration(DynOff::g_propertyFamilyEpoch.load());
+
         // A walk now reads a 4.23-sized UStructProperty's Struct at +0x70 -- and not the NAMED object behind it at +0x78,
         // which the old 0x78 read took for the struct (a real neighbour UObject has a name too).
         static uint8_t upStructPropCls[0x100] = {}, upDecoy[0x100] = {}, upSP[0x100] = {}, upCls[0x100] = {};
