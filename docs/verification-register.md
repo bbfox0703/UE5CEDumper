@@ -2296,6 +2296,14 @@ written"), `bRealTimeCapture`'s CFG no `boolMask` (the whole byte). ⚠ The UI p
 so the batch reply's keys are not readable there; the table is the witness, and step 1 read the keys on the wire.
 Still open: step 2's Property Search → Freeze half (it needs the AOBMaker bridge, so CE) and step 3.
 
+⚠ **Step 3 is not producible on DQ XI S either** (census 2026-11-18 on 3733, injected, UE 418, 293,052 objects; log
+`out/register/dq11s_bool_census.log`): `search_properties` over ten bool-name queries (`b`, `Is`, `Can`, `Enable`,
+`Use`, `Has`, `Show`, `Hidden`, `Visible`, `Active`; `types` BoolProperty, `game_only` false, none truncated) found
+3,172 distinct BoolProperty rows — 1,961 `bool_native`, 1,211 with a `bool_mask`, **0 with neither**. The host this
+step named (packed bitfields read as mask 0, per `[A3-BOOL-NATIVE-NOWRITE]`) resolves every bool on the current DLL,
+so the unresolved arm stays covered by the unit tests only (`FreezeScriptGenerator.IsUnresolvedBool` and its red
+tests) until a title whose probe misses turns up.
+
 ### ⬜ SHIPPED 2026-09-08/09, NEEDS A LIVE CHECK — the blind-spot sweep's residue: D2 · clipboard delivery · CE Lua · the CE-side delegate pad · the refusal arms
 
 *The sweep and its follow-ups closed a lot on a running game — D1, D3, D4, D4b/D3b, D5, the sixth
