@@ -2,7 +2,8 @@
 
 > **Status (2026-11-17).** Phase 0 measured (§6.1). Phase 1 shipped in build 3714 and was proven live in 3715, the
 > cards' holder labels in 3716, Phase 1b (invoke grants, §4.4) in 3717, Phase 2 (`write_field`, §4.5) in 3718, each
-> proven live (verification-register.md). Phase 3 (§7, optional) waits for the maintainer. What follows is the
+> proven live (verification-register.md). Phase 3 (§7, optional) is not to be built for now (maintainer,
+> 2026-11-17). What follows is the
 > evaluation as written, with each phase's shipped notes.
 >
 > **As first written.** The maintainer asked for this evaluation first, written down, with no implementation yet (2026-11-14).
@@ -357,7 +358,8 @@ the request ("Tool permission request aborted"), and the dialog then stays on sc
 screenshot while the M1 prompt was open). With no message sent, Deny works normally: the M6b subagent's prompt was
 denied and the agent went on.
 
-**Still open:** M2-M5 need a permission-mode switch or an allow rule (the maintainer's settings); M7 needs Phase 1's
+**Not measured, by decision (maintainer, 2026-11-17: not for now):** M2-M5 need a permission-mode switch or an
+allow rule (the maintainer's settings); M7 needs Phase 1's
 version log line; M8's SDK half has no session to measure here; M9's idle lifetime; M11 only before an elicitation
 route.
 
