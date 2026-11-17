@@ -90,6 +90,13 @@ public sealed class SecondCopySourceTests
             string first = body[1..].TrimStart();
             if (NotForwarded.Contains(name))
                 Assert.DoesNotContain("LAND_FORWARD", body);
+            else if (name == "UE5_WalkClassBegin")
+            {
+                // A forwarded Begin first closes a walk left open here (review R2-WALK-STALE-FLAG).
+                Assert.StartsWith("if (Land::Forwards(Land::State()))", first);
+                InOrder(body, name, "s_walkCache = ClassInfo{}", "s_walkOpenHere.store(false",
+                        "LAND_FORWARD(UE5_WalkClassBegin, uclassAddr)");
+            }
             else if (ForwardedUnlessWalkOpen.Contains(name))
                 Assert.Matches(@"^LAND_FORWARD_UNLESS\(s_walkOpenHere\.load\([^)]*\),\s*" + name + @"\s*[,)]", first);
             else
@@ -148,7 +155,12 @@ public sealed class SecondCopySourceTests
         Assert.Contains("Land::RefusesStart(Land::State())", FunctionBody(frieren, "bool UE5_AutoStartBlocking() {"));
         InOrder(FunctionBody(frieren, "static bool AutoStartWork() {"), "AutoStartWork",
                 "Land::LockStart()", "Land::RefusesStart(Land::State())", "Tot::ResetShutdown()", "Mimic::StartThread()",
-                "UE5_Init()", "Land::RefusesStart(Land::State())", "UE5_StartPipeServer()");
+                "UE5_Init()", "Land::RefusesStart(Land::State())", "UE5_StartPipeServer()",
+                // ...and nothing published over a take-over that landed while the pipe started (R2-AUTOSTART-PUBLISH-AFTER-YIELD)
+                "Land::LockStart()", "Land::RefusesStart(Land::State())", "initState =");
+        Assert.Matches(@"bool ok = UE5_StartPipeServer\(\);\s*\{\s*const auto publishLock = Land::LockStart\(\);\s*" +
+                       @"if \(Land::RefusesStart\(Land::State\(\)\)\)[^}]*return;\s*\}\s*g_invokeMailbox\.initState",
+                       CodeOnly(DllSrc("Heiter.cpp")));
         string watcher = FunctionBody(frieren, "static void WatchForPipeAndClaim(DWORD holderPid) {");
         Assert.Contains("StartServerUnlessHandedOver(", watcher);
         Assert.DoesNotContain("s_pipeServer.Start()", watcher);
@@ -180,9 +192,16 @@ public sealed class SecondCopySourceTests
                 "if (RefusesStart(State()))");
         InOrder(FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {"), "the hand-off thread",
                 "YIELD_NOT_LATER", "if (RefusesStart(State()))", "TakeMailbox(");
-        string take = FunctionBody(land, "void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract) {");
-        InOrder(take, "TakeMailbox", "CanServeMailbox(seen.current, seen.minimum, Mimic::MAILBOX_CONTRACT",
-                "Mimic::MAILBOX_LAYOUT_SINCE", "Mimic::AdoptMailbox(box)", "PublishedState(false", "&contract->magic");
+        string take = FunctionBody(land,
+            "void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract, bool forwards) {");
+        InOrder(take, "TakeMailbox", "if (!forwards)", "now != Mimic::INIT_IDLE", "return;",
+                "CanServeMailbox(", "AdoptMailbox(", "PublishedState(false", "&contract->magic");
+        // The verdict gates the adoption, with every argument in place (review R2-SRC-PIN-MBX-GAPS: `||` and swapped
+        // arguments passed the order check).
+        Assert.Matches(@"CanServeMailbox\(seen\.current, seen\.minimum, Mimic::MAILBOX_CONTRACT,\s*" +
+                       @"Mimic::MAILBOX_CONTRACT_MIN, Mimic::MAILBOX_LAYOUT_SINCE\)", take);
+        Assert.Contains("if (layoutOk && Mimic::AdoptMailbox(box, forwards))", take);
+        Assert.Contains("TakeMailbox(call->seen, call->box, call->contract, call->yield != nullptr)", land);
         InOrder(FunctionBody(land, "YieldReply BeginYield(HMODULE successor) {"), "BeginYield",
                 "IsEarlier(IndexOf(copies, g_hDllModule), IndexOf(copies, successor))", "s_startMutex", "ReplyToYield(State(), callerIsLater)");
         Assert.Contains("RouteCall(s, target != nullptr, t_forwardHops)", FunctionBody(land, "Routing RouteExport(const char* exportName) {"));
@@ -194,16 +213,46 @@ public sealed class SecondCopySourceTests
     public void MailboxHandlersAnswerThroughBox()
     {
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        Assert.DoesNotMatch(@"\bg_invokeMailbox\.", mimic.Replace("g_invokeMailbox.initState)", "OWN_STATE)"));
+        Assert.DoesNotMatch(@"\bg_invokeMailbox\.",
+                            Regex.Replace(mimic, @"g_invokeMailbox\.initState\s*[,)]", "OWN_STATE)"));
         Assert.Contains("static MailboxData& Box()", mimic);
         string poller = FunctionBody(mimic, "static void PollingThreadBody() {");
         Assert.Matches(@"ServeOne\(&g_invokeMailbox,\s*warnedThrow\)", poller);
-        Assert.Matches(@"for\s*\(auto&\s*slot\s*:\s*s_adopted\)", poller);
+        // Each adopted mailbox says this copy's state -- strictly, for a copy that cannot forward -- before it is served
+        // (review R2-SRC-PIN-MBX-GAPS: deleting the mirror passed every test).
+        InOrder(poller, "the adopted mailboxes", "s_adopted[slot].load(", "box->initState = Land::MirroredState(g_invokeMailbox.initState,",
+                "s_adoptedForwards[slot].load(", "ServeOne(box, warnedThrow)");
+        // A mailbox another poller is mid-command on is left to it (R2-STOPTHREAD-TIMEOUT-REPLAY).
+        Assert.Matches(@"^s_box = box;\s*if \(Box\(\)\.status == STATUS_PROCESSING\) return;",
+                       FunctionBody(mimic, "static void ServeOne(MailboxData* box, bool& warnedThrow) {")[1..].TrimStart());
+        // A stop marks the adopted mailboxes by how they stop being served (R2-MBX4-IDLE-ORPHAN).
+        Assert.Contains("Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,",
+                        FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
     /// <summary>The yield is listed in all four proxy .def files. A proxy exports it either way -- every proxy links the
     /// shared objects, and /DEF merges with __declspec(dllexport) rather than replacing it (ProxyDxgi.def's header) -- so
     /// this is the list check_proxy_exports and CE's getAddress readers see, kept complete (PIN-DEF-RATIONALE).</summary>
+    /// <summary>A copy whose magic a later copy cleared (it could not serve that mailbox) is named as a take-over, with
+    /// advice that works: re-injecting or re-ticking resolves the same copy again (review R2-CLEARED-MAGIC-ADVICE). The
+    /// branch comes before the stale-address one, in the generated check and in both Lua helpers.</summary>
+    [Fact]
+    public void TheContractChecksNameATakeOver()
+    {
+        var sb = new System.Text.StringBuilder();
+        UE5DumpUI.Services.CeLuaHygiene.AppendContractCheck(sb, "T");
+        string gen = sb.ToString();
+        InOrder(gen, "the generated contract check", "if _cmagic == 0 then", "_tm >= 1 and _tc >= _tm",
+                "another copy of UE5Dumper took over this game process", "update or remove it, then restart the game",
+                "if _cmagic ~= ");
+        foreach (string helper in new[] { "ue5_invoke_helper.lua", "ue5_freeze_helper.lua" })
+        {
+            string lua = File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/" + helper)).Replace("\r\n", "\n");
+            InOrder(lua, helper, "if magic == 0 then", "m >= 1 and c >= m", "another copy of UE5Dumper took over this game process",
+                    "if magic ~= 1127564629 then");
+        }
+    }
+
     [Fact]
     public void EveryProxyListsTheYield()
     {

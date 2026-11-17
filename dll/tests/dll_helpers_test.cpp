@@ -478,6 +478,19 @@ static void Test_Land_SecondCopy() {
         EXPECT("* : not served, it says SKIPPED whatever this copy's state", Land::PublishedState(false, st) == Mimic::INIT_SKIPPED);
     }
 
+    // Review wf_08585a12-ddf R2-OLD-COPY-DOUBLE-SERVE: a served copy that forwards says this copy's every state; one
+    // that cannot says only READY or SKIPPED, so no CE inject script starts it again beside this copy.
+    for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
+        EXPECT("* R2 : a copy that forwards mirrors this copy's state", Land::MirroredState(st, true) == st);
+        const int32_t old = Land::MirroredState(st, false);
+        EXPECT("* R2 : a copy that cannot forward says only READY or SKIPPED",
+               old == Mimic::INIT_READY || old == Mimic::INIT_SKIPPED);
+    }
+    EXPECT("* R2 : ...READY while this copy is READY", Land::MirroredState(Mimic::INIT_READY, false) == Mimic::INIT_READY);
+    EXPECT("* R2 : ...SKIPPED while it is RUNNING", Land::MirroredState(Mimic::INIT_RUNNING, false) == Mimic::INIT_SKIPPED);
+    EXPECT("* R2 : ...SKIPPED once it stopped", Land::MirroredState(Mimic::INIT_IDLE, false) == Mimic::INIT_SKIPPED);
+    static_assert(Mimic::MAILBOX_LAYOUT_SINCE == 3, "review R2-LAYOUT-SINCE-UNPINNED: the value Mimic.h's layout pin names");
+
     // Review LAND-MUTUAL-YIELD-CYCLE / LAND-EARLIER-RETIRES-LATER: only an earlier copy is taken over, so of two copies
     // only one can take over from the other.
     EXPECT("* : a copy before this one in the module list is earlier", Land::IsEarlier(0, 1));
