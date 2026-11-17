@@ -624,6 +624,27 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public void The_summary_and_the_export_say_how_many_records_the_DLL_dropped()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the counts were computed and shown nowhere. Kept 10..16 (7 numbers),
+        // six records sent: the entry at 11 is missing (its return at 12 is there) -- one entry dropped, no return.
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(12 | TraceRecord.ReturnBit, 120, 11, 0, 1, 0),
+            new TraceRecord(13, 130, 0xB, 0, 1, 0), new TraceRecord(14 | TraceRecord.ReturnBit, 140, 13, 0, 1, 0),
+            new TraceRecord(15 | TraceRecord.ReturnBit, 150, 10, 0, 1, 0), new TraceRecord(16, 160, 0xC, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 17 });
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        Assert.Contains(Line("str.CT.Status.Dropped", 1, 1, 0), vm.Summary(t));
+        var w = new StringWriter();
+        UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
+        string head = w.ToString().Split('\n')[0];
+        Assert.Contains("\"entries_dropped\":1", head, StringComparison.Ordinal);
+        Assert.Contains("\"returns_dropped\":0", head, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_summary_says_how_many_calls_carry_a_stack_what_the_budget_left_out_and_what_a_capture_cost()
     {
         var (vm, _) = MakeVm(DumpWithStacks());

@@ -143,6 +143,22 @@ public class CallTraceBuilderTests
     }
 
     [Fact]
+    public void A_return_dropped_inside_the_window_is_counted()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the ring kept 10..15 and dropped 12 -- the RETURN of the call at
+        // 11. Nothing in the records says so, so it is counted from the window: 6 numbers kept, 5 records sent, no
+        // entry missing -> one return dropped.
+        var t = CallTraceBuilder.Build(new[]
+        {
+            Entry(10, 100, 0xA), Entry(11, 110, 0xB), Entry(13, 130, 0xC), Return(14, 140, 13), Return(15, 150, 10),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 16 });
+
+        Assert.Equal(0, t.EntriesDropped);
+        Assert.Equal(1, t.ReturnsDropped);
+        Assert.False(t.Returned[1]);           // B's return is the one missing
+    }
+
+    [Fact]
     public void Children_keep_their_call_order()
     {
         var t = CallTraceBuilder.Build(new[]
