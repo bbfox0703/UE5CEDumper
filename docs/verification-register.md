@@ -1143,6 +1143,16 @@ Relaxed A/C and B refuse a count that is half of a chunk table pointer unless th
     Acceptance: such a title's init log shows its own row (`UE5.7-Mistfall`) or relaxed E, never relaxed A/C or B with a
     count near the table pointer's high dword.
 
+### ✅ PreAllocatedObjects is not read as Max / Num (build 3725) — closed 2026-11-17 `[RELAXED-D-PREALLOC-HALF]`
+
+`Aura::CountIsHalfOfFirstEntry` now runs for every strict FUObjectArray row and relaxed D, so the check owed was that no
+title's own row moved. **Closed 2026-11-17 on DLL 3725**, `relaxed_layout_live.py` 4/4 each, the games closed afterwards:
+DumperTest Shipping (UE 5.4, pid 9824) `UE5-Extended`, 24,530 objects, ThirdPersonMap walked; DumperTest58 Shipping
+(UE 5.8, pid 42784) `UE5.8`, 34,570 objects, Lvl_ThirdPerson walked; NEKOPALIVE (UE 4.11, the inner `Nekopara.exe`, pid
+33752, injected) `Flat-Base`, 25,749 objects, Title walked. The Outer Worlds 2 (relaxed A/C) was checked on 3724; this
+build does not touch that row. No title in the corpus carries a preallocated array; dll_core_test holds the misread at
+both heap heights.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
