@@ -15,7 +15,8 @@ public sealed class CallTraceSnapshots
     public IReadOnlyList<SnapRingInfo> Rings { get; }
     /// <summary>Slots whose call's entry record the trace's ring no longer kept: the DLL left them out.</summary>
     public ulong Orphans { get; }
-    /// <summary>Slots whose call the loaded trace does not hold: none expected after the DLL's own orphan filter.</summary>
+    /// <summary>Slots whose call the loaded trace does not hold. The DLL's orphan filter leaves out those older than the
+    /// window; what can remain is a slot whose entry record the DLL dropped inside it ([TRACE-DROPPED-ENTRY]).</summary>
     public int Unjoined { get; private set; }
 
     private CallTraceSnapshots(IReadOnlyList<SnapArm> arms, IReadOnlyList<SnapRingInfo> rings, ulong orphans)
@@ -68,7 +69,8 @@ public sealed class CallTraceStacks
     public StackInfo? Info { get; }
     /// <summary>Slots whose call's entry record the trace's ring no longer kept: the DLL left them out.</summary>
     public ulong Orphans { get; }
-    /// <summary>Slots whose call the loaded trace does not hold: none expected after the DLL's own orphan filter.</summary>
+    /// <summary>Slots whose call the loaded trace does not hold. The DLL's orphan filter leaves out those older than the
+    /// window; what can remain is a slot whose entry record the DLL dropped inside it ([TRACE-DROPPED-ENTRY]).</summary>
     public int Unjoined { get; private set; }
 
     private CallTraceStacks(StackInfo? info, ulong orphans)
