@@ -3980,6 +3980,51 @@ int main() {
             check("control: the new walk is memoized in turn", &Ubel::WalkClassEx(X) == &after);
         }
 
+        // [WALKCLASS-MEMO-REUSE] Review wf_d3c2ec9a-d52 WITNESS-NO-IDENTITY: a data-only Blueprint adds no property and no
+        // function, so its chains are null, and two siblings share their super -- the pointers alone cannot tell them
+        // apart at one address. The witness carries the object's name (and Outer) too.
+        {
+            static uint8_t idSuper[0x100] = {}, idCls[0x100] = {};
+            put32(idCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
+            putP(idCls, DynOff::USTRUCT_SUPER, reinterpret_cast<uintptr_t>(idSuper));
+            put32(idCls, Grimoire::OFF_UOBJECT_NAME, 7);                      // "Items"
+            const uintptr_t Y = reinterpret_cast<uintptr_t>(idCls);
+            const auto& first = Ubel::WalkClassEx(Y);
+            check("WALKCLASS-MEMO-REUSE control: a class with no chains walks under its name", first.Name == "Items",
+                  first.Name.c_str());
+            put32(idCls, Grimoire::OFF_UOBJECT_NAME, 8);                      // another class, same empty chains
+            const auto& second = Ubel::WalkClassEx(Y);
+            check("* WALKCLASS-MEMO-REUSE: a different class with the same empty chains and super is walked again",
+                  second.Name == "Tags", second.Name.c_str());
+        }
+
+        // [WALKCLASS-MEMO-REUSE] Review wf_d3c2ec9a-d52 PARK-CAP-REACHABLE: the bound on parked walks was one count for the
+        // whole process, so genuine reuse at 4,096 different addresses switched the check off everywhere. It is per
+        // address: an address whose witness keeps changing stops being checked, others are not affected.
+        {
+            static uint8_t capCls[0x100] = {}, okCls[0x100] = {};
+            put32(capCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
+            put32(okCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
+            const uintptr_t C = reinterpret_cast<uintptr_t>(capCls), K = reinterpret_cast<uintptr_t>(okCls);
+            // A re-walk publishes a NEW entry, so the entry's address changing is what counts one -- the answer's text
+            // can match a stale entry by coincidence on alternate turns.
+            int rewalks = 0;
+            const ClassInfo* last = nullptr;
+            for (int i = 0; i < 20; ++i) {
+                put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
+                const ClassInfo* now = &Ubel::WalkClassEx(C);
+                if (last && now != last) ++rewalks;
+                last = now;
+            }
+            check("* WALKCLASS-MEMO-REUSE: an address whose class keeps changing is re-walked, then stops (bounded)",
+                  rewalks >= 2 && rewalks < 19, std::to_string(rewalks).c_str());
+            put32(okCls, Grimoire::OFF_UOBJECT_NAME, 7);
+            const bool okFirst = Ubel::WalkClassEx(K).Name == "Items";
+            put32(okCls, Grimoire::OFF_UOBJECT_NAME, 8);
+            check("* WALKCLASS-MEMO-REUSE: another address is still re-walked after that one stopped",
+                  okFirst && Ubel::WalkClassEx(K).Name == "Tags");
+        }
+
         DynOff::bUseFProperty = savedFPropCE;
     }
 
