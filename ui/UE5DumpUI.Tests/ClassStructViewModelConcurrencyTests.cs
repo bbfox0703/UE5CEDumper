@@ -403,12 +403,19 @@ public class ClassStructViewModelConcurrencyTests
         // same class's pre-reload header and field grid -- fields whose addresses were freed, under a selection that
         // has no class. The step's acceptance: an error line, and not the old class's fields.
         var dump = new ThrowingWalkDumpService();
-        dump.RegisterClass("0xP", Class("ClassP"));
+        // The prior class carries a field: with none, "no fields after the failure" holds before it too (review
+        // wf_72c53295-04c F3).
+        var withField = Class("ClassP");
+        withField.Fields.Add(new FieldInfoModel { Name = "Hp", TypeName = "IntProperty", Address = "0x1234" });
+        dump.RegisterClass("0xP", withField);
         dump.RegisterClass("0xB", Class("ClassB"));
 
         var vm = NewVm(dump);
         await vm.OnObjectSelected(ClassLike("0xP"));
         Assert.True(vm.HasClass);                    // precondition: something is painted
+        Assert.NotEmpty(vm.Fields);
+        Assert.Equal("0xP", vm.LoadedClassAddr);
+        vm.SelectedField = vm.Fields[0];
 
         dump.ThrowFor.Add("0xB");
         await vm.OnObjectSelected(ClassLike("0xB"));   // fails
@@ -417,6 +424,8 @@ public class ClassStructViewModelConcurrencyTests
         Assert.False(vm.HasClass);
         Assert.Empty(vm.Fields);
         Assert.Equal("", vm.ClassName);
+        Assert.Equal("", vm.LoadedClassAddr);        // Find Class Funcs must not aim at the old class
+        Assert.Null(vm.SelectedField);
     }
 
     [Fact]
