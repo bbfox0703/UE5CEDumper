@@ -5885,6 +5885,14 @@ again:
 
 ⚠ Still unconfirmed **on a live game**: 5.0, 5.1, 5.2, 5.3 and 5.5. Their slots are measured from
 the PDB oracle but no title at those versions has been run. 4.11–4.25 likewise.
+✅ **Live witnesses added 2026-11-17 on 3732** (`tools/verify/a2_es2_pehook.py`; each with `DetectProcessEvent
+(pattern)`, Add_IntInt(3,4) = 7, `validation OK — hook fired N`, no fallback and no VALIDATION FAILED; logs
+`out/register/pehook51.log` / `pehook53.log` / `pehook423.log`): **5.1** `0x260` on DumperTest51 Shipping (2,424
+fires in 1,500 ms); **5.3** `0x268` on the staged stock ThirdPerson53 **DebugGame** (detected 503, not 504, so
+`[R7-X4]` holds; 1,400 fires) — the 5.3 Shipping copy has no content and stops at a message box
+(reference-builds.md); **4.23** `0x210` on UE423_Flying Shipping (910 fires; the rig's one FAIL there is only that
+its own table covers 500-508). 5.5 has Lushfoil's witness (above). Still without one: 5.0 (Light Maze is installed),
+5.2, and the other 4.11–4.25 rows.
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
