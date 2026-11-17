@@ -1231,7 +1231,7 @@ earlier copy whose mailbox cannot be served (contract 1-2, or newer than the lat
 SKIPPED and cleared magic and the CE take-over message (pinned by the same tests); three or more copies; a revival of
 the earlier copy by CE.
 
-### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
+### 🟡 Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]` (items 1, 3, 4 done 2026-11-18; item 2's re-weigh on a busier game stays)
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
 build) and on Avowed (7/7: 64 inventory functions chosen by name, 32 of them unloaded before the trace was read, and
@@ -1271,7 +1271,7 @@ reached:
    against 613 with snapshots. *Was:* **UE4's property model** is not checked live, by decision (2026-10-07); if ever
    needed, UE 4.27.
 
-### ⬜ Live Funcs step 3 — what its live checks did not reach `[LIVEFUNCS-STEP3]`
+### 🟡 Live Funcs step 3 — what its live checks did not reach `[LIVEFUNCS-STEP3]` (all but item 2's frame-time trace done, item 3 on 2026-11-18)
 
 Built in build 3641 (2026-10-08) and proven live on DumperTest58 Shipping: the stacks rig 31/31 (7 recorded), the
 step-2 rig 33/33 and the trace rig 18/18 on the same DLL, and the UI walkthrough on the AOT build (the Stack? column,
@@ -1413,7 +1413,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
