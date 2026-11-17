@@ -32,23 +32,29 @@ enum class Verdict { Leave, Retire };
 // already shut down. Without the contract block there is no initState to read: initState sits at a fixed offset in
 // every build that exports the block, and a build from before it is left as it is.
 constexpr Verdict Judge(const CopySeen& c) {
-    (void)c;
-    return Verdict::Leave;
+    if (!c.contract || !c.mailbox) return Verdict::Leave;
+    switch (c.initState) {
+        case Mimic::INIT_RUNNING:
+        case Mimic::INIT_READY:
+        case Mimic::INIT_SKIPPED:
+        case Mimic::INIT_FAILED:
+            return Verdict::Retire;
+        default:
+            return Verdict::Leave;
+    }
 }
 
 // The later copy serves the earlier copy's mailbox only when both use one layout. A contract number names one layout
 // and one meaning: Mimic.h's bump rules, which tools/check_mailbox_contract.py enforces on a layout change.
 constexpr bool CanServeMailbox(int32_t theirCurrent, int32_t ourCurrent) {
-    (void)theirCurrent; (void)ourCurrent;
-    return false;
+    return theirCurrent == ourCurrent;
 }
 
 // What the earlier copy's mailbox says after the hand-off. Served, it says what this copy's own says. Not served, it says
 // SKIPPED, "another copy serves this process": a CE inject script reads READY and SKIPPED as served and leaves the copy
 // alone, and reads any other value as parked and calls that copy's UE5_AutoStart.
 constexpr int32_t PublishedState(bool served, int32_t ownState) {
-    (void)served;
-    return ownState;
+    return served ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);
 }
 
 // This copy's own hand-off.
@@ -57,15 +63,13 @@ enum class YieldState : int32_t { None = 0, Yielding = 1, Yielded = 2 };
 // From the moment it starts shutting down for a later copy, a copy starts nothing of its own again -- no scan, no pipe
 // server, no mailbox poller -- so a scan of its own that ends during the hand-off cannot take the pipe back.
 constexpr bool RefusesStart(YieldState s) {
-    (void)s;
-    return false;
+    return s != YieldState::None;
 }
 
 // Its C ABI exports run in the copy that took over once the hand-off is done. While it is still shutting down they run
 // here: its own teardown calls some of them.
 constexpr bool Forwards(YieldState s) {
-    (void)s;
-    return false;
+    return s == YieldState::Yielded;
 }
 
 // Most copies one process keeps track of; a game with more than this many loaded copies of the dumper is not one any
