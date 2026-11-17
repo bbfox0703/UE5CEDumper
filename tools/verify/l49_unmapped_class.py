@@ -19,7 +19,10 @@ the singular refusal is checked as a control (review wf_72c53295-04c L49-RIG-FAL
 
 ⚠ MEM_RESERVE, not a committed zero page: a committed page is "readable, PropertiesSize 0", a
 different path that is legitimately memoized as empty. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
-P is released at the end; do not reuse the address (it stays memoized as the copied class).
+P is released at the end. WalkClass says "not readable" ONCE PER ADDRESS for the life of the process
+(FirstUnreadableClassWarn), and a second run in the same game usually gets the same region back -- so the rig
+checks the log for P first and, when this process already said it, reserves another region while holding the
+first (review wf_d3c2ec9a-d52 L49-RERUN-SAME-P-FALSE-FAIL).
 """
 import argparse
 import ctypes
@@ -79,6 +82,7 @@ def main():
         print("FAIL: OpenProcess(%d) err %d" % (a.pid, ctypes.get_last_error()))
         return 2
     P = None
+    extra = []
     try:
         with PipeClient(pid=a.pid) as c:
             print("build", c.assert_build())
@@ -104,6 +108,16 @@ def main():
             if not P:
                 print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
                 return 2
+            with open(walklog, "rb") as fh:
+                said = fh.read().decode("utf-8", "replace").lower()
+            if ("0x%x is not readable" % P) in said:
+                held = P   # this process already reported P once: hold it, so the next reservation is elsewhere
+                P = k.VirtualAllocEx(h, None, 0x10000, MEM_RESERVE, PAGE_NOACCESS)
+                extra.append(held)
+                print("P 0x%X was reported by an earlier run in this process; using 0x%X" % (held, P or 0))
+                if not P:
+                    print("FAIL: the second VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
+                    return 2
             Ps = "0x%X" % P
             print("reserved (uncommitted) P = %s" % Ps)
             start = os.path.getsize(walklog)
@@ -158,8 +172,9 @@ def main():
                     fails.append("STEP B: P answered %s/%d fields, not %s/%d -- memoized empty?"
                                  % (name_b, len(fields_b), base_name, len(base_fields)))
     finally:
-        if P:
-            k.VirtualFreeEx(h, ctypes.c_void_p(P), 0, MEM_RELEASE)
+        for q in [P] + extra:
+            if q:
+                k.VirtualFreeEx(h, ctypes.c_void_p(q), 0, MEM_RELEASE)
         k.CloseHandle(h)
     for f in fails:
         print("FAIL: " + f)
