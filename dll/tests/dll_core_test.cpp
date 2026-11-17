@@ -9683,6 +9683,48 @@ int main() {
         check("PROBEOVERRUN: a proof filed late under an older epoch leaves the newer one standing",
               Ubel::IsSubclassSlotConfirmed(), std::to_string(Ubel::s_subclassSlotConfirmed.load()).c_str());
 
+        // [DYNOFF-LATCH-STALE] CorrectSubclassOffsets latched once per process, so a family published after it -- Genau's
+        // measured arm on a later UE5_Init (TQ2 derived 0x74 with the struct at 0x78), the defaults a re-run init
+        // applies first -- was never checked again. Called directly, as above: only CorrectSubclassOffsets is under test.
+        auto hx = [](int v) { char b[16]; snprintf(b, sizeof(b), "0x%X", v); return std::string(b); };
+        FieldInfo lsFi{};
+        lsFi.Address = A(poPos);   // its struct at 0x78
+        lsFi.Name = "Pos";
+        lsFi.TypeName = "StructProperty";
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x74));
+        Ubel::s_subclassSlotConfirmed.store(0);
+        Ubel::s_subclassCalibrated.store(false);
+        Ubel::CorrectSubclassOffsets({ lsFi });
+        check("LATCHSTALE setup: the walk corrects 0x74 to the struct at 0x78", DynOff::FSTRUCTPROP_STRUCT == 0x78,
+              hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x74));   // a later init's measured arm, as Genau publishes it
+        Ubel::CorrectSubclassOffsets({ lsFi });
+        check("LATCHSTALE ⭐: a family published after the calibration is calibrated again", DynOff::FSTRUCTPROP_STRUCT == 0x78,
+              hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
+
+        // Control: the latch still holds within one family. Publishing the SAME base again is not a move, and a field
+        // whose struct reads elsewhere then moves nothing -- a fix that only dropped the latch would move it to 0x80.
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+        Ubel::s_subclassSlotConfirmed.store(0);   // so the latch alone stands between this call and a probe
+        static uint8_t lsPosHi[0x100] = {};
+        fprop(lsPosHi, 7, 0);
+        putP(lsPosHi, 0x80, A(poVector));
+        lsFi.Address = A(lsPosHi);
+        Ubel::CorrectSubclassOffsets({ lsFi });
+        check("LATCHSTALE control: calibrated for this family -- nothing is probed again", DynOff::FSTRUCTPROP_STRUCT == 0x78,
+              hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
+
+        // A slot a struct was read out of under THIS family is not probed away from. Two StructProperties cannot
+        // disagree on one engine, so a field that would move a proven family is the probe's false positive; deferring
+        // to the proof keeps CorrectSubclassOffsets and WalkInstance's own correction from moving the family back and
+        // forth now that the latch re-arms on every move.
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x80));        // a move: the latch is stale
+        Ubel::MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load());   // filed as WalkInstance's probe files it
+        lsFi.Address = A(poPos);                                                 // a struct that reads at 0x78
+        Ubel::CorrectSubclassOffsets({ lsFi });
+        check("LATCHSTALE: a slot proven for this family is not probed away from", DynOff::FSTRUCTPROP_STRUCT == 0x80,
+              hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
+
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
         Ubel::s_subclassCalibrated.store(svCalibrated);
