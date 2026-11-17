@@ -512,4 +512,27 @@ public class ClassStructViewModelConcurrencyTests
 
         release.TrySetResult();
     }
+
+    /// <summary>
+    /// [WALKCLASS-STALE-OK] AE23 step 4, measured 2026-11-18 on build 3733 (DumperTest Development): a level reload
+    /// freed ThirdPersonMap_C, and walk_class on its old address answered ok with an EMPTY class -- no name, no fields
+    /// -- so this panel painted a blank class with no error line, and its re-select dedupe (released only on an error)
+    /// then refused the retry. The panel already shows an error and releases the dedupe when the call throws; the DLL
+    /// has to refuse. Fern.cpp is in no C++ test target, so the handler is pinned from the source.
+    /// </summary>
+    [Fact]
+    public void WalkClassRefusesAnAddressThatIsNoLongerALiveObject()
+    {
+        string fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp")).Replace("\r\n", "\n");
+        int at = fern.IndexOf("if (cmd == Renge::CMD_WALK_CLASS) {", StringComparison.Ordinal);
+        Assert.True(at > 0, "walk_class's handler not found -- re-point this pin");
+        int end = fern.IndexOf("return Renge::MakeResponse(id, data).dump();", at, StringComparison.Ordinal);
+        string handler = fern[at..end];
+        // Only an EMPTY walk is refused, and only when the address is not a live object: a real walk is answered
+        // whatever its liveness reads, so a fork whose InternalIndex layout is off cannot lose a working walk.
+        Assert.Contains("if (ci.Name.empty() && ci.Fields.empty() && !IsLiveObject(addr))", handler);
+        Assert.Contains("return Renge::MakeError(id, \"Not a live class at \" + addrStr", handler);
+        // The liveness rule is the one pe_trace_names and the snapshot decoder use: its own index leads back to it.
+        Assert.Matches(@"bool IsLiveObject\(uintptr_t \w+\) \{\s*const int32_t idx = Ubel::GetIndex\(\w+\);\s*return idx >= 0 && Aura::GetByIndex\(idx\) == \w+;", fern);
+    }
 }
