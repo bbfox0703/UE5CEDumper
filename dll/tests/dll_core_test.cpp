@@ -10463,7 +10463,11 @@ int main() {
                 if (r.tid == 2 && (r.flags & (Linie::kTraceSnapTaken | Linie::kTraceStackTaken))) ++falseClaims;
             check("* LINIE-SEQ-LAST: a copy the ring laps puts no taken flag on a record that took nothing",
                   copied && falseClaims == 0, (sz(falseClaims) + " of " + sz(got.size())).c_str());
-            check("control: the lap's records are kept", copied && got.size() >= 6, sz(got.size()).c_str());
+            // Review wf_a193c703-fe8: the late mark must first check the slot is still its own. Withdrawing the number of
+            // a slot the ring lapped destroyed the NEWER, whole record (and could put a bit into a newer writer that is
+            // itself between its write and its own mark). All 8 of the lap's records come back.
+            check("* LINIE-SEQ-LAST: a late mark leaves a lapped slot alone -- the lap's 8 records are all kept",
+                  copied && got.size() == 8, sz(got.size()).c_str());
             Linie::FreeTrace();
         }
 
