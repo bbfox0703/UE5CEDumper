@@ -63,6 +63,9 @@ def main() -> int:
         stop = threading.Event()
         replies: list[tuple[str, dict]] = []
 
+        # Throttled: each request writes a DEBUG "Received" line to the same pipe-0.log, and at full speed a long scan
+        # can push it past the 8 MB rotation, which truncates the file under the offset read above. A few dozen
+        # requests a second still land plenty inside the window.
         def lane_b():
             while not stop.is_set():
                 for cmd in KNOWN + (UNKNOWN,):
@@ -71,6 +74,7 @@ def main() -> int:
                     except Exception as e:   # a closed pipe is a failure the checks below report
                         replies.append((cmd, {"ok": False, "error": f"client: {e}"}))
                         return
+                time.sleep(0.05)
 
         t = threading.Thread(target=lane_b)
         t.start()
@@ -90,7 +94,14 @@ def main() -> int:
             t.join()
 
     time.sleep(0.5)   # the log line is written before the reply; give the file a moment anyway
-    text = log.read_bytes()[start:].decode("utf-8", errors="replace") if log.is_file() else ""
+    data = log.read_bytes() if log.is_file() else b""
+    if len(data) < start:
+        check("the pipe log was not rotated during the run", False,
+              f"pipe-0.log is {len(data)} bytes, under the {start} it had before trigger_scan: the lines are in the "
+              "archived copy beside it -- this run proves nothing either way")
+        print(f"\n0/{len(results)} passed")
+        return 1
+    text = data[start:].decode("utf-8", errors="replace")
     names = LINE.findall(text)
     print(f"lane B sent {len(replies)} commands; the log names {names}")
     check("the window was reached: at least one arrived-during-init line", bool(names),
