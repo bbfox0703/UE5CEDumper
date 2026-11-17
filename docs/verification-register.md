@@ -8489,10 +8489,18 @@ to change the Array Limit *and* press Refresh rather than re-open to reach it. I
 the row's own acceptance treats all three disclosures as load-bearing ("Breadcrumb **AND** header …
 **and** a status line"), and because the under-reporting direction is the one the original defect was
 about.
-- ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
-  title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
-  Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
-  element but the first was read from the middle of its predecessor.
+- ✅ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2) — CLOSED 2026-11-18 on 3733
+  `[U2-CPN-2026-11-18]`.** Host: the UE 5.4 editor running the DumperTest project with `-game` (a CPN host, todo.md
+  `[VND583-07]`; 39,328 objects, `DynOff: CPN=yes`, walk-0.log `DetectFNameSize: sizeof(FName) = 12, the ElementSize of
+  64 of 64 NameProperty field(s)`). `tools/verify/u2_cpn_names_live.py` 9/9 (`out/register/u2_cpn.log`):
+  `get_offsets` case_preserving true, probe ran; `Arr_Name` = NameA, NameBB, NameCCC at element size 12;
+  `Map_NameToInt` = Alpha 111, Beta 222, Gamma 333 at `map_stride` 24; `Set_Name` = Alpha, Beta, Gamma, Delta at
+  `set_stride` 20. Independent bytes (read_mem, 36 bytes at `array_data_addr`): three FNames of 12 bytes, ComparisonIndex
+  1563687 / 1563690 / 1563693 at +0 / +12 / +24, Number 0, DisplayIndex beside each — an 8-byte walk would have read
+  element 1 from element 0's DisplayIndex. The AOT UI's Live Walker drilled into `Arr_Name` showed `[0] NameA` +0x0,
+  `[1] NameBB` +0xC, `[2] NameCCC` +0x18. *Was:* Needs a UE 5.5+/5.7 title where `Genau` logs
+  `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`. Before the fix `InferScalarSize` forced the
+  stride to 8 against the engine's real 16, so every element but the first was read from the middle of its predecessor.
 - 🟡 **PARTIAL `[DUMPERTEST-LOG-2026-08-17]` — A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer
   wedges the walk (U1).** The **passive half PASSES**: every `KeySz=`/`ValSz=` in the DumperTest
   `walk-0.log` is plausible (8/4, 4/4, 8/4, 16/4, 4/12) — nothing like `1073742336`.
