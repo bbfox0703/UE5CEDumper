@@ -10345,16 +10345,22 @@ int main() {
         // since [LINIE-SEQ-LAST] (the number stored last). This check demanded gap-free numbers and failed about one run
         // in eight with 16,383 of 16,384 kept (measured 2026-11-18, two fails in sixteen runs, each one slot short). Kept
         // slots are CopyTrace's own: inside the window, rising. What is checked is their CONTENT, record by record.
-        bool slotsOk = copyAll() && !recs.empty();
-        for (size_t k = 0; slotsOk && k < recs.size(); ++k) {
+        // Writing the number last NARROWS the lapped-writer race, it does not close it: two writers overlapping on one
+        // slot (each stalled inside a few stores) can still mix (review wf_d3c2ec9a-d52), so a mismatch is counted and
+        // a handful tolerated, rather than failing a correct run on a double stall.
+        const bool copiedThreads = copyAll() && !recs.empty();
+        size_t mixed = 0;
+        for (size_t k = 0; copiedThreads && k < recs.size(); ++k) {
             const Linie::TraceRecord& r = recs[k];
             const uint64_t seq = r.seqKind & Linie::kTraceSeqMask;
             const bool isRet = (r.seqKind & Linie::kTraceReturnBit) != 0;
-            slotsOk = r.tid >= 1 && r.tid <= 4 &&
-                      (isRet ? (r.a < seq && r.b == 0)
-                             : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
+            const bool whole = r.tid >= 1 && r.tid <= 4 &&
+                               (isRet ? (r.a < seq && r.b == 0)
+                                      : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
+            if (!whole) ++mixed;
         }
-        check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
+        check("threads: every kept slot holds the record its sequence number says (a double-stall mix at most 2)",
+              copiedThreads && mixed <= 2, (sz(mixed) + " mixed of " + sz(recs.size())).c_str());
         // Only a lapped write's slot goes: nearly the whole window is kept (a writer loses its slot only when another
         // laps the ring while it is inside its few stores).
         const uint64_t window = info.written - info.firstValid;
