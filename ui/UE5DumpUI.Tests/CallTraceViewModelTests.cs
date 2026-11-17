@@ -641,7 +641,7 @@ public class CallTraceViewModelTests
         UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
         string head = w.ToString().Split('\n')[0];
         Assert.Contains("\"entries_dropped\":1", head, StringComparison.Ordinal);
-        Assert.Contains("\"returns_dropped\":0", head, StringComparison.Ordinal);
+        Assert.Contains("\"other_dropped\":0", head, StringComparison.Ordinal);
     }
 
     [Fact]

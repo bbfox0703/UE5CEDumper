@@ -148,12 +148,13 @@ public static class CallTraceBuilder
         t.Roots = roots.ToArray();
         t.ReturnsBeforeWindow = beforeWindow;
         t.EntriesDropped = dropped;
-        // [TRACE-DROPPED-ENTRY] A dropped RETURN leaves no trace in the records, so it is counted from the window: the
-        // numbers kept, less the records sent, less the entries found missing above.
+        // [TRACE-DROPPED-ENTRY] What else was dropped leaves no trace in the records, so it is counted from the window:
+        // the numbers kept, less the records sent, less the entries found missing above. Returns, or starts of calls
+        // still running at Stop (no return names those) -- not told apart, so not called returns.
         if (info.Written > info.FirstValid)
         {
             long missing = (long)(info.Written - info.FirstValid) - recs.Length;
-            t.ReturnsDropped = (int)Math.Max(0, missing - dropped);
+            t.OtherDropped = (int)Math.Max(0, missing - dropped);
         }
         if (funcs != null) foreach (var f in funcs) t.Funcs[f.Addr] = f;
         if (objs != null) foreach (var o in objs) t.Objs[o.Addr] = o;

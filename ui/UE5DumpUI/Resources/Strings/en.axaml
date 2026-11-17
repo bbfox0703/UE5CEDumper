@@ -1246,7 +1246,7 @@
     <sys:String x:Key="str.CT.Status.Unloaded">{0:N0} of {1:N0} functions were no longer loaded when the trace was read, and are named from their first call ({2} of the calls).</sys:String>
     <sys:String x:Key="str.CT.Status.Unnamed">{0} of the calls have no name ({1:N0} of {2:N0} functions).</sys:String>
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
-    <sys:String x:Key="str.CT.Status.Dropped">{0:N0} record(s) inside the kept part were left out, written out of turn as the buffer wrapped: {1:N0} call start(s), whose calls show under their caller, and {2:N0} return(s), whose calls show as not returned.</sys:String>
+    <sys:String x:Key="str.CT.Status.Dropped">{0:N0} record(s) inside the kept part were left out, written out of turn as the buffer wrapped: {1:N0} call start(s), whose calls show under their caller, and {2:N0} other record(s): each either a return, whose call then shows as not returned, or the start of a call still running when the trace stopped.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
     <sys:String x:Key="str.CT.Status.ReadingSnapshots">Reading the parameter snapshots...</sys:String>

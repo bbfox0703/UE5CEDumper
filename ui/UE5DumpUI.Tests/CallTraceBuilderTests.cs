@@ -154,7 +154,7 @@ public class CallTraceBuilderTests
         }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 16 });
 
         Assert.Equal(0, t.EntriesDropped);
-        Assert.Equal(1, t.ReturnsDropped);
+        Assert.Equal(1, t.OtherDropped);
         Assert.False(t.Returned[1]);           // B's return is the one missing
     }
 

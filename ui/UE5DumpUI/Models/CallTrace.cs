@@ -38,9 +38,11 @@ public sealed class CallTrace
     /// <summary>[TRACE-DROPPED-ENTRY] Returns whose entry is numbered INSIDE the kept window but was not sent: the DLL
     /// drops a slot written out of turn (a writer the ring lapped mid-write, [LINIE-SEQ-LAST]).</summary>
     public int EntriesDropped { get; internal set; }
-    /// <summary>[TRACE-DROPPED-ENTRY] Return records numbered inside the kept window but not sent (dropped the same way):
-    /// the window's missing records less <see cref="EntriesDropped"/>. Such a call shows as not returned.</summary>
-    public int ReturnsDropped { get; internal set; }
+    /// <summary>[TRACE-DROPPED-ENTRY] The other records numbered inside the kept window but not sent: the window's
+    /// missing records less <see cref="EntriesDropped"/>. Each is a dropped RETURN (its call shows as not returned) or the
+    /// dropped START of a call that had not returned when the trace stopped (that call is absent) -- the records cannot
+    /// tell the two apart (review wf_53eabd00-f5e).</summary>
+    public int OtherDropped { get; internal set; }
 
     /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those gone when the trace was read (named from their
     /// first call) and those with no name at all, each with its calls. Counted once, after the names are in.</summary>

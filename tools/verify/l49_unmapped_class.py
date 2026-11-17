@@ -52,6 +52,14 @@ ACCESS = 0x0008 | 0x0010 | 0x0020 | 0x0400    # VM_OPERATION | VM_READ | VM_WRIT
 COPY = 0x400
 
 
+def process_start_epoch(h):
+    """The process's creation time as a Unix epoch (GetProcessTimes), or None when it cannot be read."""
+    c, e, kt, ut = W.FILETIME(), W.FILETIME(), W.FILETIME(), W.FILETIME()
+    if not k.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(kt), ctypes.byref(ut)):
+        return None
+    return ((c.dwHighDateTime << 32) | c.dwLowDateTime) / 1e7 - 11644473600
+
+
 def fields_of(reply):
     # A refusal is never read as an empty class: that is exactly the confusion this rig exists to tell apart.
     if reply.get("ok") is False:
@@ -109,11 +117,15 @@ def main():
             if not P:
                 print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
                 return 2
-            # Every address this game process already reported, from walk-0.log and the walk logs it rotated into
-            # (Sein rotates at 8 MB). A reported address is HELD, so the next reservation lands elsewhere; bounded
-            # (review wf_a193c703-fe8: one retry left a third run on the second run's region).
+            # Every address THIS game launch already reported, from walk-0.log and the walk logs it rotated into (Sein
+            # rotates at 8 MB). The folder also keeps earlier launches' archives; those end before this process began,
+            # so a file last written before its start is skipped (review wf_53eabd00-f5e). A reported address is HELD,
+            # so the next reservation lands elsewhere; bounded (review wf_a193c703-fe8).
+            started = process_start_epoch(h)
             said = ""
             for f in glob.glob(os.path.join(os.path.dirname(walklog), "walk-*.log")):
+                if started and os.path.getmtime(f) < started:
+                    continue
                 try:
                     with open(f, "rb") as fh:
                         said += fh.read().decode("utf-8", "replace").lower()
@@ -123,7 +135,7 @@ def main():
                 if ("0x%x is not readable" % P) not in said:
                     break
                 extra.append(P)
-                print("P 0x%X was reported by an earlier run in this process; reserving again" % P)
+                print("P 0x%X was reported earlier in this game launch; reserving again" % P)
                 P = k.VirtualAllocEx(h, None, 0x10000, MEM_RESERVE, PAGE_NOACCESS)
                 if not P:
                     print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
