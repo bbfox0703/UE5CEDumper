@@ -621,11 +621,6 @@ Re-derive before planning — `grep` the row id across `docs/`, and read the ✅
 heading: closures are written where the work happened ([`working-lessons.md`](working-lessons.md)
 §1.ab; §1.ab-2 for why a pointer file like this one rots fastest).
 
-The checklist is [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md). ⚠ **Two different
-things are both called "step N"** and they are easy to transpose: `第 N 步` is a **bucket** (what the
-row COSTS to run — 第 1 步 needs only the UI, 第 5 步 has no fixture anywhere), while "step 1 / step 2"
-inside a row is a **sub-step**.
-
 -----
 
 ## 8. Things that will mislead you

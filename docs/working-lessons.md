@@ -651,9 +651,10 @@ had already been solved twice.
    closures; keep the body only when it still carries something (L10's five dead ends are worth
    keeping *because each is now explained*, and the explanations are what stop a sixth attempt).
 
-ℹ️ The same trap wears a second face: `docs/pending-verification_zh-TW.md` is the operational
-mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
-done — worth checking, never sufficient on its own.
+ℹ️ The same trap wore a second face while the 繁中 operational mirror
+`docs/pending-verification_zh-TW.md` existed (deleted 2026-11-17): it was deliberately **much**
+shorter, so an item absent from it was weak evidence the work was done. The rule outlives the file:
+absence from any shorter copy is worth checking, never sufficient on its own.
 
 #### 1.ab-2 ⭐ A POINTER FILE ROTS FASTER THAN THE FILE IT POINTS AT — and the entry point rots worst
 

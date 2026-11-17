@@ -41,8 +41,10 @@ under-specified — fix the row, do not pass it.
 
 ℹ️ Whether **Auto + Computer Use** can drain rows unattended is a separate question, deliberately
 left open here (2026-09-03) and to be analysed once the docs settle. `docs/log-verification-checklist.md`
-already covers the cheaper posture — sweeping a real session's logs opportunistically — and
-`docs/pending-verification_zh-TW.md` holds the residue that genuinely needs a human.
+already covers the cheaper posture — sweeping a real session's logs opportunistically. The few rows that
+genuinely need a human are in this register too: the 繁中 checklist that carried their steps,
+`docs/pending-verification_zh-TW.md`, was deleted 2026-11-17 at the maintainer's request, nearly every check it had held
+having become automatable.
 
 -----
 
@@ -86,17 +88,14 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
    still not evidence when READING (above): before planning off one, grep its tag across `docs/`.
 2. **Update the live plan in the same commit.** When the row belongs to a `*-live-plan.md` (indexed in
    [`README.md`](README.md)), its status there changes in the same commit as the row's record.
-3. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
-   — do not annotate it in place — remove its key from `BUCKETS` in
-   `tools/verify/zhtw_rebuild_buckets.py`, dry-run it, then rebuild the bucket table with
-   `py tools/verify/zhtw_rebuild_buckets.py --apply`: the table is derived, never hand-edited, and the
-   script stops on a key that matches no section. ⚠ A ✅ in
-   the audit register is **never** grounds to delete a section there: in the audit doc ✅ means *the fix
-   shipped*, which is exactly when the live check becomes owed.
-4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
-   the remainder (`（**只剩步驟 5**）`) and it **goes stale silently**: `A6`'s heading still said
-   「只剩步驟 3、5」 after step 3 had been marked ✅ in its own table. When you tick a sub-step, fix the
-   heading in the same edit.
+3. *(Retired 2026-11-17: this step pruned the 繁中 checklist `pending-verification_zh-TW.md` and its
+   bucket table, and the checklist was deleted 2026-11-17 at the maintainer's request. The number is kept so the steps below keep
+   theirs.)* ⚠ What it also said still holds: a ✅ in the audit register is **never** grounds to close a
+   live check — in the audit doc ✅ means *the fix shipped*, which is exactly when the live check becomes
+   owed.
+4. ⚠ **If only SOME sub-steps closed, retitle the heading with the remainder** — it **goes stale
+   silently**: the 繁中 checklist's `A6` heading still said 「只剩步驟 3、5」 after step 3 had been marked
+   ✅ in its own table. When you tick a sub-step, fix the heading in the same edit.
 5. **If the row came from the audit #5 register, tick every individual row** in the audit doc
    ([`audit-2026-08-13-early-code-findings.md`](audit-2026-08-13-early-code-findings.md)), not just
    the grouped one, and run `py tools/check_audit_register.py`. ⚠ **Many rows are already ✅ there** — in the audit doc ✅ means
@@ -243,6 +242,10 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > items the same day and the four `[TAG]` items below were mirrored on 2026-08-19, so the mirror is
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
+>
+> 📦 **The mirror itself was deleted 2026-11-17 at the maintainer's request**, with 3 items left in it, each
+> already a row of this register (V1a's `NumericAll` volume and b719 in the long-tail batch, U2 in its own
+> section). This block stays as its history; the command above has nothing left to count.
 
 ### ⬜ A pipe per game process, 6 clients, the worker budget — what their live checks did not reach `[PIPE-PER-PROCESS-2026-11-06]`
 
@@ -8069,6 +8072,16 @@ Needs any connected game with an `enum class : uint8` field (Property Search →
 > cannot fake it — the flag is an `#ifndef` in `NameTypes.h:30`, overridable in principle, but this
 > machine's UE 5.4 is an INSTALLED BINARY engine (`Engine/Build/InstalledBuild.txt` present) so a game
 > module compiled with a 16-byte FName would ABI-mismatch the precompiled Core.
+>
+> ℹ️ **Two later facts, moved here when the 繁中 checklist that held the first was deleted
+> (2026-11-17).** (1) U2's step 1 passed 2026-09-07 with no game: `WITH_CASE_PRESERVING_NAME` defaults
+> to `WITH_EDITORONLY_DATA`, so the injected UE 5.4 editor is a CPN process --
+> `DetectCasePreservingName: votes standard=0, CPN=20 (tested 20 objects)`, `get_offsets:
+> case_preserving=true, probe_ran=true, uobject_outer=40 (0x28)`. That editor resolved no names then
+> (`Name sanity: 0/10`), so step 2 (Live Walker on an actor's `Tags`) stayed open. (2) `[VND583-07]`
+> (todo.md, 2026-09-24) later found a CPN host that resolves names -- the UE 4.27 editor running a
+> project with `-game` -- and measured `sizeof(FName) = 12` and `TArray<FName>` `Tags` / `Layers` at
+> stride 12 there. Whether that discharges step 2 is for the next pass over this register to decide.
 
 *Closed here already: **MG1 · MG3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
 UI half 2026-08-18). **Still open: three.** **MG2**'s rows-equal-count half (the count half passed;
@@ -9256,10 +9269,9 @@ FindPropertyXrefs: N xrefs (scanned … functions, … with script, …ms)
 instrs/func, 1–5 `[this+off]` accesses, many `→ 1 mapped props`, TQ2 `2 xrefs`, zero decode
 errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 
-> 🇹🇼 **繁體中文版：[pending-verification_zh-TW.md](pending-verification_zh-TW.md)** — a standalone
-> translation of THIS section, reorganised by how much effort each check costs (seven of the ①
-> items are free from any ordinary session). **This English section is canonical**: if the two
-> disagree, this one is right, and edits land here first.
+> 🇹🇼 The 繁體中文 checklist that once mirrored THIS section, reorganised by how much effort each check
+> costs, `pending-verification_zh-TW.md`, was deleted 2026-11-17 at the maintainer's request. **This English section is the
+> only copy.**
 >
 > **Procedure lives in [log-verification-checklist.md](log-verification-checklist.md)** — where to
 > grep, which file each marker lands in, and which items need a deliberate in-game action versus
@@ -11762,7 +11774,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
 
 These are the operational `做什麼 | 預期` tables for items that **do not need a human**:
 Auto + computer-use can drive them end to end (UI clicking, the pipe, log greps, offline
-tools). They lived in [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md), whose
+tools). They lived in `pending-verification_zh-TW.md` (deleted 2026-11-17), whose
 charter is *only what a human must verify* — carrying them there had turned that file into a
 second copy of this register.
 

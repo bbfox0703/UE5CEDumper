@@ -9,10 +9,13 @@
 > `[TAG]` mirrors and L11's eight. Current split, **derived from §10's table and never from here**:
 > **A=11 · B=29 · C=15 · D=2**. §7 lists **three** D_MANUAL rows, one more than that D=2 — `AB1/AB2`'s APC sub-step
 > is impossible but its parent item is otherwise closed, so it is no longer a 繁中 item to count.
+>
+> 📦 **That denominator is gone:** `pending-verification_zh-TW.md` was deleted 2026-11-17 at the maintainer's request,
+> with its last 3 items already rows of the verification register. §10 is history now.
 
-This is the *operational* companion to [the verification register](verification-register.md) and
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md). Those two own **what** to verify and
-**why**; this file owns **how to run the batch unattended** — what is already staged, what may be
+This is the *operational* companion to [the verification register](verification-register.md),
+which owns **what** to verify and **why** (the 繁中 checklist beside it, `pending-verification_zh-TW.md`,
+was deleted 2026-11-17); this file owns **how to run the batch unattended** — what is already staged, what may be
 launched without a human, and what must never be started without one.
 
 > **The register is canonical.** When an item closes, follow
@@ -980,7 +983,7 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 ## 10. The 繁中 checklist's 61 remaining items — one row each (2026-08-19)
 
 **Denominator, stated so it cannot drift again: the `###` item count of
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **61**.** ⚠ **The headline and this
+`pending-verification_zh-TW.md` (deleted 2026-11-17; this section is history), **61**.** ⚠ **The headline and this
 sentence both said `57` while the table below already had 61 rows** — caught by the 2026-08-19
 closing sweep, and the third time this particular number has lagged its own table. **Re-derive
 before quoting it; never carry it forward by hand.** Two figures that circulated in planning notes
