@@ -1192,7 +1192,7 @@ the TArray-shaped decoy (count 0, recovery runs). No corpus title has a 5.8 arra
 holds each trigger (more than 20 chunks, an exact multiple of 64K, preallocated above 16 TB and with disregard-for-GC
 off, 3 max chunks).
 
-### ✅ The later copy of the dumper takes over (builds 3728-3729) — closed 2026-11-17 `[DUMPER-SECOND-COPY-AUTOSTART]`
+### ✅ The later copy of the dumper takes over (builds 3728-3730) — closed 2026-11-17 `[DUMPER-SECOND-COPY-AUTOSTART]`
 
 Two copies of the dumper in one game process -- a proxy from the game folder and a copy injected later -- and the later
 copy takes over (Land; todo.md has the commits). **Closed 2026-11-17 on 3729**, DumperTest Shipping (UE 5.4), the dxgi
@@ -1209,6 +1209,9 @@ proxy put in `Binaries\Win64` for the runs and removed after, `tools/verify/seco
   PASS, no `Land:` line.
 - Found on 3728 and fixed in 3729: the copy that took over logged NOTHING (the earlier copy held every live log file
   deny-write); it now logs in `<Process>.<module>.<pid>` (both runs above read from there).
+- **Re-run on 3730** (review round 3: the poller's mailbox per thread, the finishing window): a 3730 proxy, then the
+  3730 injection (pid 27180), 14/14, and `mailbox_poke.py --repeat 5` PASS through the adopted mailbox; one injected copy
+  alone (pid 42132), build 3730, 24,530 objects, `mailbox_poke.py --repeat 5` PASS, no `Land:` line.
 **Not reached live, by decision or for want of a case:** an export call forwarded by a copy that yielded (Cheat Engine
 was in use by another session; the maintainer asked for tests -- `SecondCopySourceTests`, `Test_Land_SecondCopy`); an
 earlier copy whose mailbox cannot be served (contract 1-2, or newer than the later copy: none exists to load), its
