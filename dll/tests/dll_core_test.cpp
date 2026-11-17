@@ -5050,7 +5050,8 @@ int main() {
         // fallback reason, over default offsets. UE5_Shutdown reset none of the three either.
         // A pool with no Guid / Vector struct, so the run takes the FIRST give-up. Every object points into zeroed bytes
         // with room past the deepest probe offset (+0x70), so no probe reads beyond them. UE 501 skips the version-default
-        // block, so the only DynOff it writes are the three saved here (CPN / Outer, FProperty mode).
+        // block; the DynOff it writes that a later block could trip over are saved here (CPN / Outer, FProperty mode), and
+        // the verdict flags and the latch are put back below.
         const auto svCpn   = DynOff::bCasePreservingName;
         const auto svOuter = DynOff::UOBJECT_OUTER;
         const auto svFProp = DynOff::bUseFProperty;

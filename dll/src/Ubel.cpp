@@ -1709,11 +1709,13 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // nested-struct recursion in Aura::ScanForValue bails, and the user
     // gets 0 candidates on GAS / FGameplayAttributeData scans.
     //
-    // CorrectSubclassOffsets returns at once while the current family is
-    // calibrated or its slot proven, so calling it on every WalkClassEx
-    // costs a few atomic loads; it probes again after the family moves.
-    // The cost of a probe is bounded: at most 7 probe-delta reads per
-    // StructProperty until one validates.
+    // CorrectSubclassOffsets returns at once while its latch names the
+    // current family epoch (the latch alone: a slot proof does not stop
+    // it), so calling it on every WalkClassEx costs a few atomic loads. It
+    // probes again under the family write lock after a family move or the
+    // end of an offset validation (DynOff::RetireFamilyEpoch), until one
+    // call latches. The cost of a probe is bounded: at most 7 probe-delta
+    // reads per StructProperty until one validates.
     CorrectSubclassOffsets(info.Fields);
 
     // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
@@ -5649,7 +5651,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 
 // ============================================================
 // CorrectSubclassOffsets — calibration of FSTRUCTPROP_STRUCT and
-// related subclass extension offsets, once per published family.
+// related subclass extension offsets, once per family epoch.
 //
 // The derivation formula (Offset_Internal + 0x2C) may be wrong for
 // newer UE versions (e.g., UE5.7 uses +0x30). We calibrate by probing
