@@ -1442,11 +1442,13 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
     return UPropertyFamilyFor(casePreservingName ? 0x4C : 0x44, ueVersion, casePreservingName);
 }
 
-// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base. Every memo cache whose content was read
+// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base, and once when an offset validation ends
+// (RetireFamilyEpoch, below). Every memo cache whose content was read
 // through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
 // correction is walked again after it instead of serving the old slot's answer for the rest of the session. Nothing
-// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the moves are
-// few (at most one per session in every log measured). Moves after init were measured on UE423_Flying (0x78 -> 0x70),
+// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the bumps are
+// few (at most one move per session in every log measured, and one retire per offset validation). Moves after init
+// were measured on UE423_Flying (0x78 -> 0x70),
 // DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
 // FARRAYPROP_INNER legitimately diverges after calibration (see above), and resetting it is not a move.
 inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
@@ -1475,6 +1477,17 @@ inline void ApplyPropertyFamily(const PropertyFamily& f, const FamilyWriteLock&)
 inline void ApplyPropertyFamily(const PropertyFamily& f) {
     const FamilyWriteLock lk;
     ApplyPropertyFamily(f, lk);
+}
+
+// [DYNOFF-LATCH-STALE] Retire the epoch without moving the family: every entry cached under it is built again, and Ubel's
+// slot proof and calibration latch are withdrawn, so the next walk checks the slot afresh. For the end of an offset
+// validation: an init re-derives offsets outside the family too (FPROPERTY_OFFSET, the FField layout), which the
+// family-keyed caches read, and a base that ends where it started -- or where a walk during the run had already
+// corrected it to -- is no move, so ApplyPropertyFamily alone left what was cached mid-run in place for the session
+// (review wf_8f451d97-434, B-INIT-WINDOW). Under the write lock, so a latch stored under it records a current epoch.
+inline void RetireFamilyEpoch() {
+    const FamilyWriteLock lk;
+    g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 // The one member allowed to leave the family on its own: UE5.3+ puts EArrayPropertyFlags before Inner, so a walker

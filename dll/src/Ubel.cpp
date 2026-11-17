@@ -89,8 +89,9 @@ static std::mutex s_structFieldCacheMutex;
 // tagged with bit 32 so "never" (0) cannot equal epoch 0. It was a once-per-process bool, so a family published after
 // it -- Genau's measured arm on a later UE5_Init, the defaults a re-run init applies first -- was never checked again,
 // and a derivation one pointer off (TQ2's 0x74, the struct at 0x78) stood for the session. A move bumps the epoch and
-// so re-arms this; publishing the same base again is not a move and leaves it set. Stored under DynOff::FamilyWriteLock,
-// which ApplyPropertyFamily's signature demands of a move, so the epoch it records cannot be overtaken before the store.
+// so re-arms this, and so does the end of an offset validation (DynOff::RetireFamilyEpoch); publishing the same base
+// again is not a move and leaves it set. Stored under DynOff::FamilyWriteLock, which ApplyPropertyFamily's signature
+// demands of a move and RetireFamilyEpoch takes itself, so the epoch it records cannot be overtaken before the store.
 // At namespace scope so dll_core_test, which compiles this file into its own translation unit, can re-arm it.
 static std::atomic<uint64_t> s_subclassCalibratedAt{0};
 static void LatchSubclassCalibration(uint32_t epoch) {
