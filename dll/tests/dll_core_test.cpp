@@ -13876,6 +13876,18 @@ int main() {
                     }
                 }
 
+                // Review wf_8fb9838c-132, F1-DEFAULT: A/C refused as half of a pointer and no later row fits. The default
+                // fallback is the Default preset, whose Objects slot is +0x00 and whose count is the refused +0x14 -- so it
+                // re-read the refused count through a slot that is no table. The table is at +0x10; that is where the
+                // fallback must read Objects.
+                memset(mist, 0, sizeof(mist));
+                putP(0x10, hiTable);
+                Aura::Init(reinterpret_cast<uintptr_t>(mist));
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: with A/C refused and no row left, the fallback reads Objects where the table is",
+                      Aura::s_layout.objectsOffset == 0x10 && Aura::s_layout.numElementsOffset != 0x14,
+                      ("objectsOffset " + std::to_string(Aura::s_layout.objectsOffset) + ", count at +"
+                       + std::to_string(Aura::s_layout.numElementsOffset)).c_str());
+
                 // The helper alone, on A/C's slots (count +0x14, own Objects +0x00). A table pointer under the count with
                 // no table of the row's own is half of a pointer; with the row's own table beside it, it is not; nor is a
                 // genuine Max / Num pair, whether its qword lands in user space (Num under 0x8000) or past it, nor a heap
