@@ -5177,6 +5177,57 @@ static void Test_Denken_BasicAccesses() {
     if (r08) EXPECT("basic: @0x08 high-conf via rbx alias", r08->highConfidence);
 }
 
+static void Test_Denken_KeepsWriteSites() {
+    // [DENKEN-WRITE-SITES] Each write's instruction address is kept per offset; reads leave none.
+    //   B0+0: mov [rcx+0x10], eax   89 41 10   write
+    //   B0+3: mov eax, [rcx+0x18]   8B 41 18   read
+    //   B0+6: mov [rcx+0x10], edx   89 51 10   write
+    //   B0+9: ret                   C3
+    const uintptr_t B0 = 0x140000000ULL;
+    std::vector<DenkenRegion> regions = {{ B0, { 0x89, 0x41, 0x10, 0x8B, 0x41, 0x18, 0x89, 0x51, 0x10, 0xC3 } }};
+    auto r = Denken::Analyze(B0, MakeReader(&regions));
+    const auto* w = FindAccess(r, 0x10);
+    EXPECT("* WRITESITES: @0x10 keeps both writes, in decode order",
+           w && w->writeSites == std::vector<uintptr_t>({ B0, B0 + 6 }) && !w->writeSitesTruncated);
+    const auto* rd = FindAccess(r, 0x18);
+    EXPECT("* WRITESITES: a read keeps no site", rd && rd->writeSites.empty());
+
+    // A followed impl writes: the site is the impl's own address, and two calls into it keep it once.
+    //   thunk @ B0: mov rbx, rcx ; mov rcx, rbx ; call impl ; mov rcx, rbx ; call impl ; ret
+    //   impl  @ B1: mov [rcx+0x20], eax ; ret
+    const uintptr_t B1 = 0x140001000ULL;
+    const int32_t rel1 = static_cast<int32_t>(B1 - (B0 + 11));
+    const int32_t rel2 = static_cast<int32_t>(B1 - (B0 + 19));
+    auto le = [](int32_t v) {
+        return std::vector<uint8_t>{ static_cast<uint8_t>(v & 0xFF), static_cast<uint8_t>((v >> 8) & 0xFF),
+                                     static_cast<uint8_t>((v >> 16) & 0xFF), static_cast<uint8_t>((v >> 24) & 0xFF) };
+    };
+    std::vector<uint8_t> thunk = { 0x48, 0x89, 0xCB, 0x48, 0x89, 0xD9, 0xE8 };
+    for (uint8_t b : le(rel1)) thunk.push_back(b);
+    thunk.insert(thunk.end(), { 0x48, 0x89, 0xD9, 0xE8 });
+    for (uint8_t b : le(rel2)) thunk.push_back(b);
+    thunk.push_back(0xC3);
+    std::vector<DenkenRegion> twice = { { B0, thunk }, { B1, { 0x89, 0x41, 0x20, 0xC3 } } };
+    auto t = Denken::Analyze(B0, MakeReader(&twice));
+    const auto* w20 = FindAccess(t, 0x20);
+    EXPECT("WRITESITES setup: the impl was followed twice", t.callsFollowed == 2);
+    EXPECT("* WRITESITES: two calls count two writes", w20 && w20->writeCount == 2);
+    EXPECT("* WRITESITES: ...and keep the impl's one instruction once",
+           w20 && w20->writeSites == std::vector<uintptr_t>({ B1 }));
+
+    // More distinct sites than kMaxWriteSites: the first ones, and the flag.
+    std::vector<uint8_t> many;
+    for (int i = 0; i < 10; ++i) many.insert(many.end(), { 0x89, 0x41, 0x30 });   // mov [rcx+0x30], eax
+    many.push_back(0xC3);
+    std::vector<DenkenRegion> manyRegion = { { B0, many } };
+    auto m = Denken::Analyze(B0, MakeReader(&manyRegion));
+    const auto* w30 = FindAccess(m, 0x30);
+    EXPECT("* WRITESITES: ten write sites keep the first kMaxWriteSites",
+           w30 && w30->writeCount == 10 && w30->writeSites.size() == Denken::kMaxWriteSites &&
+           w30->writeSites.front() == B0 && w30->writeSites.back() == B0 + 3 * (Denken::kMaxWriteSites - 1));
+    EXPECT("* WRITESITES: ...and say more were dropped", w30 && w30->writeSitesTruncated);
+}
+
 static void Test_Denken_ExcludesStackAndZeroDisp() {
     // mov eax, [rbp+0x10]   8B 45 10        rbp-relative (local) -> excluded
     // mov eax, [rsp+0x10]   8B 44 24 10     rsp-relative (local) -> excluded
@@ -12885,6 +12936,7 @@ int main() {
     RUN(Test_Denken_FollowedImplOutlivesItsAlias);
     RUN(Test_Denken_DoesNotFollowNonThisCall);
     RUN(Test_Denken_TerminatesAndGuards);
+    RUN(Test_Denken_KeepsWriteSites);
 
     // UE5.7+ packed FUObjectItem reconstruction (math-only; no live game exists)
     RUN(Test_Packed_RoundTrip_Basic);

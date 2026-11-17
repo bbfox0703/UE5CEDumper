@@ -22,12 +22,20 @@ namespace Denken {
 // One `[this + offset]` memory access recovered from native machine code.
 // Accesses to the same displacement are merged; highConfidence is OR-ed, so
 // a single provably-`this` access at an offset marks it high-confidence.
+// [DENKEN-WRITE-SITES] Most write sites kept per offset: a field written in more places than this is reported with the
+// first ones in decode order and writeSitesTruncated set.
+constexpr size_t kMaxWriteSites = 8;
+
 struct NativeFieldAccess {
     uint32_t offset         = 0;  // displacement from the this pointer
     uint8_t  accessSize     = 0;  // 1/2/4/8/16 bytes (0 = unknown)
     int32_t  occurrences    = 0;  // total accesses at this offset
     int32_t  writeCount     = 0;  // of those, writes (reads = occurrences - writeCount)
     bool     highConfidence = false;  // base register provably a `this`-alias
+    // [DENKEN-WRITE-SITES] The addresses of the instructions that write this offset, each once, in decode order: a
+    // field's native write site found with no debugger, for an AOB or a code injection there.
+    std::vector<uintptr_t> writeSites;
+    bool     writeSitesTruncated = false;  // more distinct write sites than kMaxWriteSites
 };
 
 struct NativeAnalysisResult {
