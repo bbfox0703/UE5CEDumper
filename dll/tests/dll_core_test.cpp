@@ -5071,6 +5071,7 @@ int main() {
         const bool ofSvLatch = Ubel::IsSubclassCalibrated();
         const int ofBase = DynOff::FSTRUCTPROP_STRUCT;
         const uint32_t ofEpoch = DynOff::g_propertyFamilyEpoch.load();
+        const uint32_t ofRetires = DynOff::g_offsetValidations.load();
         Ubel::LatchSubclassCalibration(ofEpoch);
         const bool ofRet = Genau::ValidateAndFixOffsets(501);
         check("OFFSETS setup: a pool with no Guid / Vector takes the no-guid-or-vector give-up",
@@ -5083,8 +5084,11 @@ int main() {
         // An init re-derives offsets outside the family as well (FPROPERTY_OFFSET, the FField layout), which the
         // family-keyed caches read. A run that leaves the base where it was -- or where a walk during the run had already
         // corrected it to -- is no move, so nothing retired what was cached mid-run, and it was served for the session.
-        check("OFFSETS ⭐: a run that leaves the family's base in place still retires its epoch",
-              DynOff::FSTRUCTPROP_STRUCT == ofBase && DynOff::g_propertyFamilyEpoch.load() != ofEpoch,
+        // Counted by g_offsetValidations, which a family move cannot bump: a move away and back would change the epoch too
+        // (review wf_2d9f83d5-21b, R3-UPROPSLOT-MOVE-NOT-EXCLUDED).
+        check("OFFSETS ⭐: a run that leaves the family's base in place still retires its epoch, once",
+              DynOff::FSTRUCTPROP_STRUCT == ofBase && DynOff::g_propertyFamilyEpoch.load() != ofEpoch
+              && DynOff::g_offsetValidations.load() == ofRetires + 1,
               (std::to_string(ofEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
         check("OFFSETS ⭐: ...and with it the calibration latch, so the next walk checks the slot again",
               !Ubel::IsSubclassCalibrated());
@@ -8070,14 +8074,16 @@ int main() {
         // had already corrected the family to its final base.
         const bool upSvLatch = Ubel::IsSubclassCalibrated();
         const uint32_t upEpoch = DynOff::g_propertyFamilyEpoch.load();
+        const uint32_t upRetires = DynOff::g_offsetValidations.load();
         Ubel::LatchSubclassCalibration(upEpoch);
         DynOff::UPROPERTY_OFFSET = 0x44;
         DynOff::UFIELD_NEXT = 0x28;
         const bool upMeasured = Genau::ValidateAndFixOffsets(423);
         check("UPROPSLOT setup: a second 4.23 run is measured and leaves the family at 0x70", upMeasured && famAt(0x70),
               fam().c_str());
-        check("UPROPSLOT ⭐: ...and still retires the epoch, and with it the calibration latch",
-              DynOff::g_propertyFamilyEpoch.load() != upEpoch && !Ubel::IsSubclassCalibrated(),
+        check("UPROPSLOT ⭐: ...and still retires the epoch, once, and with it the calibration latch",
+              DynOff::g_propertyFamilyEpoch.load() != upEpoch && DynOff::g_offsetValidations.load() == upRetires + 1
+              && !Ubel::IsSubclassCalibrated(),
               (std::to_string(upEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
         Ubel::s_subclassCalibratedAt.store(0);
         if (upSvLatch) Ubel::LatchSubclassCalibration(DynOff::g_propertyFamilyEpoch.load());
