@@ -13831,17 +13831,18 @@ int main() {
                 check("VND584-03-FLOOR-HIGH-HEAP ⭐: relaxed A/C does not take a table pointer's high dword for the count",
                       got == kCount, (std::to_string(got) + " objects, " + hx).c_str());
 
-                // Relaxed B reads its count at +0x04: the high dword of a table pointer at +0x00. Its chunk slots are
-                // plausible and its Objects slot (+0x10) is a real table, so only the count is wrong; relaxed E, which
-                // reads +0x10 / +0x20 / +0x24, describes the array. Relaxed A/C is refused by its floor here (+0x14 is the
-                // high dword of an ordinary heap pointer).
+                // Relaxed B reads its count at +0x04: on an A/C-shaped array, the high dword of the table pointer at +0x00,
+                // with B's own Objects slot (+0x10) holding the Max / Num pair. Here A/C refuses its own row (Max under
+                // Num), B's chunk slots are plausible, and the pair at +0x10 is a user-space value, so B would take the
+                // table pointer's high dword; refused, the array falls to the default, which reads A/C's slots.
                 memset(mist, 0, sizeof(mist));
-                putP(0x00, hiTable); put32(0x08, 2); put32(0x0C, 1); putP(0x10, table);
-                put32(0x20, kCount); put32(0x24, kCount);
+                putP(0x00, hiTable); put32(0x08, 2); put32(0x0C, 1); put32(0x10, 0x2000); put32(0x14, kCount);
                 Aura::Init(reinterpret_cast<uintptr_t>(mist));
                 got = Aura::GetCount();
                 check("VND584-03-FLOOR-HIGH-HEAP ⭐: relaxed B does not take a table pointer's high dword for the count",
-                      got == kCount, (std::to_string(got) + " objects, " + hx).c_str());
+                      got == kCount && Aura::s_layout.numElementsOffset == 0x14,
+                      (std::to_string(got) + " objects, count at +" + std::to_string(Aura::s_layout.numElementsOffset)
+                       + ", " + hx).c_str());
 
                 // CONTROL: a genuine A/C array with its table above 16 TB, chunk numbers no strict row accepts (the
                 // Outer Worlds 2 is the title that reaches this row live). Its Max / Num pair read as one qword is
@@ -13875,22 +13876,29 @@ int main() {
                     }
                 }
 
-                // The helper alone. A table pointer is half-a-pointer; a genuine Max / Num pair is not, whether its qword
-                // lands in user space (Num under 0x8000) or past it; nor is a readable address holding no heap pointer.
+                // The helper alone, on A/C's slots (count +0x14, own Objects +0x00). A table pointer under the count with
+                // no table of the row's own is half of a pointer; with the row's own table beside it, it is not; nor is a
+                // genuine Max / Num pair, whether its qword lands in user space (Num under 0x8000) or past it, nor a heap
+                // address whose first entry is no heap pointer.
+                const uintptr_t mistAddr = reinterpret_cast<uintptr_t>(mist);
                 memset(mist, 0, sizeof(mist));
                 putP(0x10, hiTable);
-                check("VND584-03-FLOOR-HIGH-HEAP ⭐: a table pointer under the count slot is half of a chunk table pointer",
-                      Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: a table pointer under the count, no table of the row's own: half of a pointer",
+                      Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
+                putP(0x00, table);
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: ...not when the row's own Objects slot holds a table",
+                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
+                putP(0x00, 0);
                 put32(0x10, 0x60000); put32(0x14, kCount);
                 check("VND584-03-FLOOR-HIGH-HEAP control: a genuine Max / Num pair (Num 16,384) is not",
-                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
                 put32(0x14, 123653);   // the Outer Worlds 2's count: the qword is past user space
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose qword is past user space (Num 123,653)",
-                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
                 static std::vector<uint64_t> notATable(4, 0x1234);
                 putP(0x10, reinterpret_cast<uintptr_t>(notATable.data()));
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is no heap pointer",
-                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
                 VirtualFree(high, 0, MEM_RELEASE);
             }
         }
