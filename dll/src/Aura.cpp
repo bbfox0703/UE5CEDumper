@@ -9786,7 +9786,7 @@ namespace {
 // One numeric leaf's display/refine metadata, index-aligned with the
 // Orden::Leaf vector produced per block (leaves[k] <-> metas[k]).
 struct GroupLeafMeta {
-    std::string fieldName;       // direct: "Stats.Str"; deep: "SaveSlotList[1]...Tunes[2]"
+    std::string fieldName;       // direct: "Stats.Str"; deep: "SaveSlotList[1]...Tunes[]" ("[]" = elementIndex)
     std::string fieldType;       // UE property type ("IntProperty" / "FloatProperty" / ...)
     std::string definingClass;   // struct/class the leaf is declared in
     int32_t     offset       = 0;   // bytes from the OWNING object base (direct); 0 for deep container leaves
@@ -9802,12 +9802,15 @@ struct GroupLeafMeta {
     Radar::LeafAnchor anchor;
 };
 
-// The name a deep group leaf's descriptor carries, and the element index its slot match keeps.
-// [GROUP-DEEP-INDEX-TWICE]
+// The name a deep group leaf's descriptor carries, and the element index its slot match keeps. The index goes in the
+// slot, not the name: field_name is rendered as Radar::FieldDisplayName(descriptor, elementIndex), which puts it at the
+// "[]" placeholder -- the convention the value scan's struct-array descriptors already use. A name that held the index
+// as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
+// element row). [GROUP-DEEP-INDEX-TWICE]
 struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
 GroupDeepLeafName NameGroupDeepLeaf(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName) {
     std::string name = arrayPath;
-    name += '['; name += std::to_string(elemIndex); name += ']';
+    name += "[]";
     if (!leafName.empty()) { name += '.'; name += leafName; }
     return { std::move(name), elemIndex };
 }
@@ -10321,8 +10324,9 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
     };
 
     auto internDesc = [&](const std::string& className, const GroupLeafMeta& meta) -> uint32_t {
-        // Direct leaves intern by (class, field, offset) across instances; deep
-        // leaves carry the fully-indexed path in fieldName so they're distinct.
+        // Direct leaves intern by (class, field, offset) across instances. A deep leaf's
+        // name holds its outer indices and a "[]" for its own, so the elements of one
+        // container share a descriptor and the slot match carries the element index.
         std::string key = className; key += '|'; key += meta.fieldName;
         key += '|'; key += std::to_string(meta.offset);
         auto it = descIntern.find(key);
@@ -10654,7 +10658,7 @@ ValueScanStats RefineGroupCandidates(
                         "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
                         "metadata hop dropped it; this leaf is refined at its stale absolute "
                         "address (audit #5 A12)",
-                        descriptors[sm.descriptorIdx].fieldName.c_str());
+                        Radar::FieldDisplayName(descriptors[sm.descriptorIdx], sm.elementIndex).c_str());
                 }
 
                 uint8_t buf[8] = {};
