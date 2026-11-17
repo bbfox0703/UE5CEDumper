@@ -1013,7 +1013,7 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
     pipe log read "Mailbox: ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera"; resumed,
     the clean-up left the camera off. *Was:* ⬜ with this acceptance test.
 
-### ⬜ MCP invoke grants, Phase 1b (build 3717) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+### ✅ MCP invoke grants, Phase 1b (build 3717) — all three rows closed 2026-11-17 `[MCP-WRITE-GRANTS-2026-11-14]`
 
 One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `write_invoke_granted_function` unasked
 -- dev-log 3717, docs/mcp-write-approval-eval.md §4.4. Unit tests (`McpGrantsTests`, `McpToolsTests`,
@@ -1032,11 +1032,23 @@ One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `
       refused -24 "latent".
     - Regressions on the same run: `probe` 29/29, `raw` 28/28, `invokeparams` 26/26, `writes --toggle-experimental`
       39/39, `holdsmore` 78/78.
-2. ⬜ **Claude Code's prompt for an invoke grant.** Acceptance: with the server registered from a 3717 exe, the AI asked
-    to call one function repeatedly calls `grant_invoke_one_function_any_object_and_args`; the prompt shows that name,
-    then Function, then Class, then the scope_ack sentence, each whole; after Allow, `write_invoke_granted_function`
-    runs without a prompt in auto mode, `write_invoke` of another function still asks, and the server's log has one
-    `Grant N: Invoke ... : <full name>` line. Covered meanwhile by
+2. ✅ **CLOSED 2026-11-17** (the server registered from the AOT exe 3727 -- the acceptance names 3717, the build that
+    brought the grant; DLL 3727 injected into DumperTest Shipping pid 37752, UE 5.4; a Claude Code desktop session in
+    auto mode; the server's log `mcp-20261117-190901-13664.log` under `Logs\UE5DumpUI\`).
+    - Asked to call `Add_IntInt` repeatedly, the AI called `grant_invoke_one_function_any_object_and_args` (function
+      `Add_IntInt`, class `//Script/Engine/KismetMathLibrary`). The maintainer read the prompt as the tool's name, then
+      Function, then Class, then the scope_ack sentence, each whole, and pressed Allow.
+    - `write_invoke_granted_function` three times on `Default__KismetMathLibrary`, no prompt (the maintainer's reading),
+      returning 5, 42 and 993 for 2+3, 40+2 and -7+1000; `read_grants` uses 3.
+    - `write_invoke` of `Subtract_IntInt` on the same object asked; the maintainer denied it, and the server's log never
+      names it.
+    - The log has one `Grant 1: Invoke for game 37752 (run 1DD7683C3CC1DC5):
+      //Script/Engine/KismetMathLibrary.Add_IntInt.` line and one `Grant 1 admitted a call of ...` line per call.
+    *Was:* ⬜ **Claude Code's prompt for an invoke grant.** Acceptance: with the server registered from a 3717 exe, the
+    AI asked to call one function repeatedly calls `grant_invoke_one_function_any_object_and_args`; the prompt shows
+    that name, then Function, then Class, then the scope_ack sentence, each whole; after Allow,
+    `write_invoke_granted_function` runs without a prompt in auto mode, `write_invoke` of another function still asks,
+    and the server's log has one `Grant N: Invoke ... : <full name>` line. Covered meanwhile by
     `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst` (the order) and Phase 0's M1 (whole arguments).
 3. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 6244; `mcp_client.py invokegrant` 29/29,
     its step 7, log `out/mcp_invokegrant_3719b.log`). `BlueprintUpdateAnimation`, the anim Blueprint
@@ -1320,7 +1332,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`16` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
