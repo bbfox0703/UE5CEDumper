@@ -396,6 +396,30 @@ public class ClassStructViewModelConcurrencyTests
     }
 
     [Fact]
+    public async Task FailedWalk_DoesNotLeaveThePreviousClassUnderTheError()
+    {
+        // [CLASSSTRUCT-FAILED-KEEPS-OLD] AE23 step 4, measured 2026-11-18 on build 3735 (DumperTest Development): after a
+        // level reload, re-selecting the freed ThirdPersonMap_C showed "DLL error: Not a live class at ..." ABOVE the
+        // same class's pre-reload header and field grid -- fields whose addresses were freed, under a selection that
+        // has no class. The step's acceptance: an error line, and not the old class's fields.
+        var dump = new ThrowingWalkDumpService();
+        dump.RegisterClass("0xP", Class("ClassP"));
+        dump.RegisterClass("0xB", Class("ClassB"));
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        Assert.True(vm.HasClass);                    // precondition: something is painted
+
+        dump.ThrowFor.Add("0xB");
+        await vm.OnObjectSelected(ClassLike("0xB"));   // fails
+
+        Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));
+        Assert.False(vm.HasClass);
+        Assert.Empty(vm.Fields);
+        Assert.Equal("", vm.ClassName);
+    }
+
+    [Fact]
     public async Task ColdFailure_WasAlreadyRetryable()
     {
         // Green BEFORE and AFTER the AE3 fix — and it is not filler. Without it, a
