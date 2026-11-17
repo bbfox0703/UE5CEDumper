@@ -542,7 +542,8 @@ static const LayoutPreset s_chunkedPresets[] = {
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
 // Extended: FUObjectArray with GC index fields before ObjObjects.
-// UE4-Extended: no PreAllocatedObjects ptr in FChunkedFixedUObjectArray.
+// UE4-Extended: Max right after Objects, with no PreAllocatedObjects slot between them -- which stock UE 4.20-5.7 have
+// (RE-UE4SS's TUObjectArray layouts: +0x08), so a stock base-anchored array of those versions has UE5-Extended's shape.
 // UE5-Extended: has PreAllocatedObjects ptr (+8 bytes shift). TQ2 (UE 5.7) confirmed.
 static const LayoutPreset s_ue4ExtendedPresets[] = {
     { "UE4-Extended", { 0x10, 0x18, 0x1C, 0x20, 0x24 } },
@@ -617,8 +618,9 @@ static bool ReadsAsChunkTable(uintptr_t table) {
 }
 
 // [RELAXED-D-PREALLOC-HALF] Whether the count a row reads at numOff is half of ObjObjects.PreAllocatedObjects -- the
-// contiguous block UE5 keeps right after Objects on a base-anchored array, where a UE4-Extended or flat row reads Max /
-// Num. UE's PreAllocate stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
+// contiguous block UE 4.20-5.7 keep right after Objects (RE-UE4SS's TUObjectArray layouts: +0x08; 5.8 moved it past
+// the counts), which on a base-anchored array is where a UE4-Extended or flat row reads Max / Num. UE's PreAllocate
+// stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
 // PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so the 8 bytes holding the count are compared with the first
 // entry of the row's own table: equal, they are that pointer. A genuine Max / Num pair would have to equal a heap
 // pointer exactly, so no real array is refused, at any heap height -- a floor holds only below 16 TB, and the
@@ -798,9 +800,9 @@ static bool DetectLayout(uintptr_t addr) {
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
-    // [VND584-03] The relaxed rows take Genau's floor: Genau refuses a NumElements below kRelaxedMinObjects for every
-    // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
-    // layout no row fits). No UE game runs with fewer objects. Above it, a row whose count slot can be the high dword of
+    // [VND584-03] Relaxed A/C, B and D take the floor Genau's own rows apply (its static-struct path floors at 16), and
+    // E does not: below it a "count" is usually half of a pointer (the Objects pointer's high dword on a layout no row
+    // fits), and no UE game runs with fewer objects. Above it, a row whose count slot can be the high dword of
     // another layout's chunk table pointer also asks CountIsHalfAChunkTablePointer ([VND584-03-FLOOR-HIGH-HEAP]), and
     // relaxed D, whose +0x1C can be the high dword of PreAllocatedObjects, asks CountIsHalfOfFirstEntry
     // ([RELAXED-D-PREALLOC-HALF]).
