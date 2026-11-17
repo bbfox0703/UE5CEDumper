@@ -1192,6 +1192,29 @@ the TArray-shaped decoy (count 0, recovery runs). No corpus title has a 5.8 arra
 holds each trigger (more than 20 chunks, an exact multiple of 64K, preallocated above 16 TB and with disregard-for-GC
 off, 3 max chunks).
 
+### ✅ The later copy of the dumper takes over (builds 3728-3729) — closed 2026-11-17 `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+Two copies of the dumper in one game process -- a proxy from the game folder and a copy injected later -- and the later
+copy takes over (Land; todo.md has the commits). **Closed 2026-11-17 on 3729**, DumperTest Shipping (UE 5.4), the dxgi
+proxy put in `Binaries\Win64` for the runs and removed after, `tools/verify/second_copy_live.py`, logs
+`out/secondcopy/`, each game closed after its run:
+- **An earlier copy built before Land** (a 3727 dxgi proxy, pid 43512): 12/12. The injected 3729 copy took over by name,
+  the 3727 copy shut down in 140 ms through its `UE5_Shutdown`, its poller stopped; the pipe answered build 3729, 24,530
+  objects; the 3727 mailbox read READY, and a GWorld query written into IT came back result 0 with the same pointer the
+  3729 mailbox gives (`0x7FF67FABA570`) -- the 3729 copy served it.
+- **An earlier copy carrying Land** (a 3729 dxgi proxy, pid 36304): 14/14, the same, through `UE5_YieldToLaterCopy`: it
+  yielded in 125 ms and logged that it handed the process to `dist\UE5Dumper.dll`.
+- **One copy alone, unchanged**: injected only (pid 44932) -- build 3729, 24,530 objects, `mailbox_poke.py` PASS, no
+  `Land:` line, no second log folder; a 3729 proxy only (pid 45016) -- scan through the pipe to 24,530 objects, mailbox
+  PASS, no `Land:` line.
+- Found on 3728 and fixed in 3729: the copy that took over logged NOTHING (the earlier copy held every live log file
+  deny-write); it now logs in `<Process>.<module>.<pid>` (both runs above read from there).
+**Not reached live, by decision or for want of a case:** an export call forwarded by a copy that yielded (Cheat Engine
+was in use by another session; the maintainer asked for tests -- `SecondCopySourceTests`, `Test_Land_SecondCopy`); an
+earlier copy whose mailbox cannot be served (contract 1-2, or newer than the later copy: none exists to load), its
+SKIPPED and cleared magic and the CE take-over message (pinned by the same tests); three or more copies; a revival of
+the earlier copy by CE.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
