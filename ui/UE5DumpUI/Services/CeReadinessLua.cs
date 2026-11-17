@@ -98,7 +98,9 @@ public static class CeReadinessLua
     /// <summary>INIT_FAILED: the scan was stopped part-way (UE5_Init aborted; the pipe server may still have started),
     /// or the pipe server refused to start while the previous stop was still finishing. The script cannot tell which,
     /// so the headline names both ([CT-INITFAILED-HEADLINE]: it used to claim init finished, the opposite of the
-    /// aborted case). A second copy of UE5Dumper never causes it: that publishes READY or SKIPPED.</summary>
+    /// aborted case). A second copy of UE5Dumper causes it only through the copy that took over: a mailbox a later copy
+    /// serves says what that copy's own says ([DUMPER-SECOND-COPY-AUTOSTART]), so that copy's own failed start shows
+    /// here; a copy that hands over publishes SKIPPED, then the later copy's state.</summary>
     public static string InitFailedMessage =>
         "'[UE5CEDumper] The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not start.\\n\\n' ..\n" +
         "    'Most likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\\n' ..\n" +

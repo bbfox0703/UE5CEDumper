@@ -126,6 +126,9 @@ void EndApply()   { g_initInProgress.store(false, std::memory_order_release); s_
 static Fern  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
+// [DUMPER-SECOND-COPY-AUTOSTART] A walk begun in this copy finishes here even if a later copy takes over meanwhile:
+// s_walkCache is this copy's, and the successor's is empty.
+static std::atomic<bool> s_walkOpenHere{false};
 
 // Global scan progress for UI polling (updated by UE5_Init, read by scan_status)
 namespace ScanProgress {
@@ -790,7 +793,10 @@ bool UE5_Init() {
     return true;
 }
 
-static void ShutdownBody() {
+// handingOver: a later copy of the dumper is taking over (UE5_YieldToLaterCopy). The mailbox is then left whole, since
+// that copy serves it next and a command a script wrote meanwhile must reach it intact, and says SKIPPED -- "another copy
+// serves this process" -- until that copy's state replaces it, rather than IDLE, which a CE inject script reads as parked.
+static void ShutdownBody(bool handingOver) {
     LOG_INFO("UE5_Shutdown: Cleaning up...");
     // Enter the shutdown window up-front: (a) in-flight scans bail so the worker
     // joins below complete fast, and (b) every module's StartWorker* refuses to
@@ -798,7 +804,7 @@ static void ShutdownBody() {
     // stop can't revive a just-joined worker that nothing would join again. Cleared
     // by Fern::Start (ResetShutdown) on re-enable in the same process. (M5)
     Tot::RequestShutdown();
-    Mimic::StopThread();
+    Mimic::StopThread(!handingOver);
     Solitar::StopWorker();   // join the GodMode re-assert worker before unload
     Laufen::StopWorker();    // join the movement-tuning re-assert worker before unload
     Hemmung::StopWorker();   // join the time-dilation re-assert worker before unload
@@ -823,25 +829,37 @@ static void ShutdownBody() {
     DynOff::ResetOffsetsVerdict();
     // The pipe is gone, so stop advertising READY — a CE Lua re-enable after a
     // Disable must wait for the fresh auto-start rather than read a stale flag.
-    g_invokeMailbox.initState = Mimic::INIT_IDLE;
+    g_invokeMailbox.initState = handingOver ? Mimic::INIT_SKIPPED : Mimic::INIT_IDLE;
 }
 
 void UE5_Shutdown() {
-    LAND_FORWARD(UE5_Shutdown);
-    ShutdownBody();
+    // [DUMPER-SECOND-COPY-AUTOSTART] Not forwarded. A copy that is handing over, or has handed over, is shut down by
+    // the hand-off itself; a CE untick that reaches it must not stop the copy that took over, which this record never
+    // started (B30's rule). A second shutdown during the hand-off's own would also race it.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("UE5_Shutdown: this copy handed the process to a later copy of the dumper -- nothing to stop here");
+        return;
+    }
+    ShutdownBody(false);
 }
 
 // [DUMPER-SECOND-COPY-AUTOSTART] A later copy of the dumper in this process is taking over (Land::RetireEarlierCopies,
 // on the later copy's thread). This copy refuses to start anything from here on, shuts down, and then passes every
 // C ABI call to the later copy. Its own teardown runs here: it calls some of those exports.
-void UE5_YieldToLaterCopy(HMODULE successor) {
-    if (!Land::BeginYield(successor)) {
+int32_t UE5_YieldToLaterCopy(HMODULE successor) {
+    const Land::YieldReply reply = Land::BeginYield(successor);
+    if (reply == Land::YIELD_NOT_LATER) {
+        LOG_WARN("UE5_YieldToLaterCopy: refused -- the asking copy is not loaded after this one");
+        return reply;
+    }
+    if (reply == Land::YIELD_ALREADY) {
         LOG_INFO("UE5_YieldToLaterCopy: this copy is already handing over -- nothing to do");
-        return;
+        return reply;
     }
     LOG_WARN("UE5_YieldToLaterCopy: a later copy of the dumper is taking over this process -- shutting this copy down");
-    ShutdownBody();
+    ShutdownBody(true);
     Land::FinishYield();
+    return reply;
 }
 
 uint32_t UE5_GetVersion() {
@@ -960,6 +978,7 @@ int32_t UE5_WalkClassBegin(uintptr_t uclassAddr) {
     LAND_FORWARD(UE5_WalkClassBegin, uclassAddr);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     s_walkCache = Ubel::WalkClass(uclassAddr);
+    s_walkOpenHere.store(true, std::memory_order_release);
     return static_cast<int32_t>(s_walkCache.Fields.size());
 }
 
@@ -970,7 +989,8 @@ bool UE5_WalkClassGetField(int32_t index,
                            int32_t* offsetOut,
                            int32_t* sizeOut)
 {
-    LAND_FORWARD(UE5_WalkClassGetField, index, outAddr, nameOut, nameBufLen, typeOut, typeBufLen, offsetOut, sizeOut);
+    LAND_FORWARD_UNLESS(s_walkOpenHere.load(std::memory_order_acquire), UE5_WalkClassGetField, index, outAddr, nameOut,
+                        nameBufLen, typeOut, typeBufLen, offsetOut, sizeOut);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     if (index < 0 || index >= static_cast<int32_t>(s_walkCache.Fields.size())) return false;
 
@@ -986,9 +1006,10 @@ bool UE5_WalkClassGetField(int32_t index,
 }
 
 void UE5_WalkClassEnd() {
-    LAND_FORWARD(UE5_WalkClassEnd);
+    LAND_FORWARD_UNLESS(s_walkOpenHere.load(std::memory_order_acquire), UE5_WalkClassEnd);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     s_walkCache = ClassInfo{};
+    s_walkOpenHere.store(false, std::memory_order_release);
 }
 
 bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
@@ -1052,6 +1073,14 @@ static bool AutoStartWork() {
     // would rescan with g_shutdown still latched (cancellable loops bail early)
     // and every module's StartWorker* would refuse to spawn, since that gate reads
     // the same flag. Both calls are no-ops on a first start.
+    //
+    // [DUMPER-SECOND-COPY-AUTOSTART] Under the start lock, which Land::BeginYield also takes: a later copy's take-over
+    // cannot fall between the check and these restarts, which would undo its shutdown.
+    std::unique_lock<std::mutex> startLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: this copy handed the process to a later copy of the dumper -- not starting");
+        return false;
+    }
     Tot::ResetShutdown();
     // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
     // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
@@ -1064,6 +1093,7 @@ static bool AutoStartWork() {
     // nothing. No-op on a first start.
     Tot::ResetPerCommand();
     Mimic::StartThread();   // early-returns when the poller is already running
+    startLock.unlock();
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
@@ -1087,7 +1117,14 @@ static bool AutoStartWork() {
         // while it IS still latched would fight the user's own untick, and
         // Tot::RequestShutdown is deliberately sticky. So this covers the transient
         // case and deliberately does NOT resurrect against a live shutdown.
-        if (!Tot::ShutdownRequested()) Mimic::StartThread();
+        const auto restartLock = Land::LockStart();
+        if (!Tot::ShutdownRequested() && !Land::RefusesStart(Land::State())) Mimic::StartThread();
+    }
+    // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over during this copy's scan: its mailbox and pipe are that
+    // copy's now, so publish nothing here.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: a later copy of the dumper took over during this copy's scan -- not starting the pipe");
+        return false;
     }
     bool ok = UE5_StartPipeServer();
     // Publish only AFTER StartPipeServer returns — a poller that sees READY must
@@ -2893,6 +2930,17 @@ uintptr_t UE5_GetMailboxAddr() {
 
 // === Pipe Server ===
 
+// [DUMPER-SECOND-COPY-AUTOSTART] This copy's server, unless a later copy has taken over -- under the start lock
+// Land::BeginYield takes too, so a take-over cannot fall between the check and the start.
+static bool StartServerUnlessHandedOver(const char* who) {
+    const auto startLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("%s: this copy handed the process to a later copy of the dumper -- not serving", who);
+        return false;
+    }
+    return s_pipeServer.Start();
+}
+
 // One watcher per process, ever. Re-entering UE5_StartPipeServer (CE Lua can call it by hand)
 // must not stack threads that all race to Start() the same server.
 static std::atomic<bool> s_claimWatcherStarted{false};
@@ -2920,11 +2968,8 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
             const DWORD err = waited ? 0 : GetLastError();
             if (Voll::WaitSaysServed(waited != FALSE, err)) continue;
 
-            if (Land::RefusesStart(Land::State())) {
-                LOG_INFO("PipeClaimWatcher: this copy handed the process to a later copy -- not claiming");
-                return;
-            }
-            const bool ok = s_pipeServer.Start();
+            const bool ok = StartServerUnlessHandedOver("PipeClaimWatcher");
+            if (!ok && Land::RefusesStart(Land::State())) return;
             LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
                      static_cast<unsigned long>(holderPid), (i + 1) * Voll::kClaimWatchPollMs,
                      ok ? "server started" : "Start() FAILED");
@@ -2954,6 +2999,11 @@ bool UE5_StartPipeServer() {
     // the pipe: the later copy always takes over (maintainer, 2026-11-17). Here rather than before the scan, so the
     // earlier copy keeps serving while this one scans; its mailbox is then served by this copy (Land).
     Land::RetireEarlierCopies();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_StartPipeServer: a later copy of the dumper took over from this one during its take-over pass "
+                 "-- not serving");
+        return false;
+    }
 
     // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
     // skipped for good on a yes — which on a self-relaunching title meant deferring to the
@@ -2984,14 +3034,23 @@ bool UE5_StartPipeServer() {
     if (!opened && probeErr == ERROR_PIPE_BUSY && s_pipeServer.HasStragglerConnections()) {
         LOG_WARN("UE5_StartPipeServer: every instance is busy with this copy's connections from "
                  "before its last stop — restarting the server beside them");
-        return s_pipeServer.Start();
+        return StartServerUnlessHandedOver("UE5_StartPipeServer");
     }
 
     switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {
         case Voll::StartAction::StartNow:
-            return s_pipeServer.Start();
+            return StartServerUnlessHandedOver("UE5_StartPipeServer");
 
         case Voll::StartAction::AlreadyOurs:
+            // [DUMPER-SECOND-COPY-AUTOSTART] The holder is the earlier copy this copy is still taking over from, whose
+            // shutdown has not reached its pipe yet: claim the pipe when it lets go rather than serve nothing.
+            if (Land::RetireInFlight()) {
+                LOG_WARN("UE5_StartPipeServer: the copy being taken over still serves the pipe -- watching for it to "
+                         "free");
+                bool expected = false;
+                if (s_claimWatcherStarted.compare_exchange_strong(expected, true)) WatchForPipeAndClaim(holderPid);
+                return true;
+            }
             LOG_INFO("UE5_StartPipeServer: another copy of UE5Dumper in this process already serves "
                      "the pipe — nothing to do");
             return true;
@@ -3017,7 +3076,12 @@ bool UE5_StartPipeServer() {
 }
 
 void UE5_StopPipeServer() {
-    LAND_FORWARD(UE5_StopPipeServer);
+    // [DUMPER-SECOND-COPY-AUTOSTART] Not forwarded, for UE5_Shutdown's reason: this copy's server stopped with its
+    // hand-off, and the copy that took over is not this caller's to stop.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("UE5_StopPipeServer: this copy handed the process to a later copy of the dumper -- nothing to stop");
+        return;
+    }
     s_pipeServer.Stop();
 }
 
