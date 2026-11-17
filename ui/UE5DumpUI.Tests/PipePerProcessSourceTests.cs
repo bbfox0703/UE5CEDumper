@@ -1037,9 +1037,15 @@ public sealed class PipePerProcessSourceTests
         // Nothing between the note and the end of the dispatch answers, refuses or skips the command, and the flag is
         // read there once: in the note's own condition, never again to gate the dispatch.
         string between = src[gate..(dispatch + dispatchStatement.Length)];
-        foreach (string refusal in new[] { "MakeError", "WriteLine(", "continue;", "break;", "return" })
+        foreach (string refusal in new[] { "MakeError", "WriteLine(", "continue;", "break;", "return", "goto ", "throw" })
             Assert.DoesNotContain(refusal, between);
         Assert.Single(Regex.Matches(between, "g_initInProgress"));
+        // The dispatch at the note's own brace depth: an else-branch or any block around it would skip it on a condition
+        // the flag count cannot see. And one note in the file: a second would take each name's first note, and the gated
+        // one would never log (review wf_2d9f83d5-21b, R3-PIN-UNCONDITIONAL-DEPTH, R3-PIN-SECOND-NOTE).
+        string upToDispatch = src[gate..dispatch];
+        Assert.Equal(upToDispatch.Count(c => c == '{'), upToDispatch.Count(c => c == '}'));
+        Assert.Single(Regex.Matches(src, @"s_duringInit\.Note\("));
         // Every raise of the flag starts a new run: in Frieren.cpp each one follows a g_initRun bump, and no other DLL
         // source file raises it.
         string dir = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"))!;
