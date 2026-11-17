@@ -1497,7 +1497,10 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 // reader takes an EVEN count before its reads (SettledOffsetValidations): having seen the count a retire finished with,
 // it sees that retire's epoch too, so its plain walk cannot be keyed under the old epoch and served what was cached
 // mid-validation -- which a count bumped once, before the epoch, let through (review wf_09b53b67-caf,
-// B-R4-STRADDLE-PLAIN-HIT). Any change by the time it compares -- odd included -- means walk again.
+// B-R4-STRADDLE-PLAIN-HIT). Any change by the time it compares -- odd included -- means its walk is not published and
+// the call starts over. One that starts over while the retire is still half done can be served what the old epoch
+// already holds: an answer from inside the validation, as any caller during it gets, never filed under the new epoch
+// (review wf_090d2608-d9f, R5-RECURSE-UNSETTLED-HIT).
 inline std::atomic<uint32_t> g_offsetValidations{0};
 inline void RetireFamilyEpoch() {
     const FamilyWriteLock lk;

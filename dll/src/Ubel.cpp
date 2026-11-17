@@ -1724,9 +1724,11 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // confirm keeps the plain walk's. Bounded -- every measured move keeps the true slot inside both probes' spreads,
     // and the classifier is strict (FieldSize 1, one mask bit) -- not "nothing predates this key".
     const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);
-    // [DYNOFF-LATCH-STALE] An offset validation ended between the plain walk and this key: the walk read field offsets
-    // it was still deriving, and this key is the epoch its retire started. Walked again under the settled offsets -- a
-    // validation ends once per init, so this repeats only when one ends mid-walk.
+    // [DYNOFF-LATCH-STALE] An offset validation ended, or is ending, between the plain walk and this key: the walk read
+    // field offsets it was still deriving, and this key may be the epoch its retire starts, so it is not published and
+    // the call starts over -- under the settled offsets once the retire has finished (DynOff::g_offsetValidations says
+    // what a restart during the retire itself can be served). A validation ends once per init, so this repeats only
+    // when one ends mid-walk.
     if (DynOff::g_offsetValidations.load(std::memory_order_acquire) != validations) return WalkClassEx(uclassAddr);
 
     // Enrich each field with extended type metadata
