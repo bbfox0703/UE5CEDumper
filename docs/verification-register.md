@@ -4514,7 +4514,7 @@ unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
 > ⇒ Stop looking for a host. The row needs a **fixture that loads >1024 modules**, not a survey.
 > The classification doc's advice to *"screen before assuming a fixture is needed"* was the right
 > question; this is the answer, recorded as a negative rather than left implicit.
-> | AB13 | (maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
+> | AB13 | ~~(maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect~~ **SUPERSEDED** (noted 2026-11-17): the 8.3 narrowing was replaced by `Methode::NarrowForAnsiLoad`, and its live check found this scenario unreachable — CE's own plugin loader refuses any non-ASCII plugin path first (todo.md `[PATH-METHODE-NO8DOT3]`, 2026-09-26) | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L8 (U5 VMs + scoring): Z8 / Z12 / Z13
 
@@ -6622,6 +6622,9 @@ on every title. That is the honest form of the null result, and it covers UE4 (4
 UE5 (503–507), which the row asks for. ⇒ The row's escalation ("only if the sweep returns all-false,
 build UE from source with `WITH_CASE_PRESERVING_NAME=1`") is now *reached*, and it is hours of work,
 so it stays a maintainer decision.
+⚠ **Superseded (noted 2026-11-17): no source build is needed.** An editor process IS case-preserving
+(`WITH_CASE_PRESERVING_NAME` follows `WITH_EDITORONLY_DATA`): the UE 5.4 editor running DumperTest with `-game` is a
+measured CPN host, and so is the 4.27 editor running UE427_3rdPerson (todo.md `[VND583-07]`, 2026-09-24).
 
 **`G11` step 3 / `G8`–`G9` — the tier ladder was entered, and Tier 2 still did not fire.**
 `DQ7R` is the one that reaches it: `PE VERSIONINFO Product=1.1 File=1.1 — unrecognised` → memory
@@ -6760,6 +6763,9 @@ exits immediately when its shipping exe is launched directly (Steam DRM wants th
 > function count**, so "find a big game" is not the search: Z8's UI half still needs a genuinely
 > SEED/FF7R-class *function* pool. Recorded as a negative so the next session does not re-try the
 > largest-object-pool title.
+> ⚠ **Superseded (noted 2026-11-17):** no big title is needed. `UE5DUMP_ALLFUNCS_LIMIT` lowers the cap on any host
+> (the audit L8 block above), and the Console half was recorded on DumperTest at a 1,500-row cap (L60, 2026-09-23).
+> What stays open is the Interesting Functions picker's "⚠ Counts are partial" on screen — the audit L8 row.
 
 ### 🟡 STEPS 4+5 CLOSED 2026-08-18 — G2: the version sweep is ~29 s faster, and must still be RIGHT
 
@@ -7032,6 +7038,8 @@ no test target compiles `Genau.cpp`.*
 **Not covered by this batch:** version detection is still uncancellable (by design — see the block
 comment in `DetectVersionDetailed`), and **MA1** — `Macht.cpp`'s AOB family has zero cancellation, so
 once a scan enters `AOBScanAllModules` every poll added here is unreachable.
+✅ **MA1 since fixed** (noted 2026-11-17): builds 3091 / 3095, verified live as `[ELLIOT-MA1-2026-08-18]`
+(docs/archive/todo-closed-2026-08-23-build-3337.md); this section's own log quote shows `AOB scan CANCELLED`.
 
 ### 🟡 4-of-6 2026-08-17 `[AE23-UI-2026-08-17]` — AE2 / AE3: the Class/Struct panel under fast selection
 
@@ -11873,6 +11881,8 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
 - **`walk_functions_batch` follow-up** — Effort: **S**. Sister to `walk_class_batch`;
   DumpAll still does `WalkFunctions` single-call per class. Same byte-equivalence safety
   net. **Skip unless profiling shows it as the new bottleneck.**
+  ⚠ **Not a verification item** (noted 2026-11-17): a feature idea carried since build 696 and never built
+  (`walk_functions_batch` exists nowhere in the DLL or the UI), so nothing here can be checked live.
 
 -----
 
