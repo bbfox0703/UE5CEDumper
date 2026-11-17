@@ -40,6 +40,15 @@ WHAT IT ALLOWS, and nothing else:
 Adding a new writer is fine -- route it through `ApplyPropertyFamily` and this gate is happy.
 Adding a new EXCEPTION means editing the list below, which is the point: it makes the second
 exception a decision somebody takes deliberately instead of a line that slips in.
+
+THE FAMILY EPOCH'S WRITERS ([DYNOFF-LATCH-STALE]). `DynOff::g_propertyFamilyEpoch` keys every
+family-keyed cache, and it moves in two places only: `ApplyPropertyFamily` on a move, and
+`RetireFamilyEpoch` when an offset validation ends. The retire is seqlock-shaped -- it bumps
+`g_offsetValidations` to odd, then the epoch, then the count to even -- and `WalkClassEx` relies on
+that order: a count bumped once, before the epoch, let a walk read the new count with its plain walk
+still keyed under the old epoch and file a mid-validation walk for the session (review
+wf_09b53b67-caf). Reordering the three, or a third writer of the epoch that skips the count, is
+exactly as silent as a split family, so both are checked here.
 """
 import os
 import re
@@ -57,6 +66,9 @@ FAMILY = ["FSTRUCTPROP_STRUCT", "FARRAYPROP_INNER", "FBOOLPROP_FIELDSIZE",
 ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
 # A call of DynOff::SetArrayInner, the helper behind the one exception below.
 SET_ARRAY_INNER_CALL = re.compile(r"\bSetArrayInner\s*\(")
+# A write of the family epoch or of the retire count.
+EPOCH_WRITE = re.compile(r"\bg_propertyFamilyEpoch\s*(?:\.\s*(?:fetch_add|fetch_sub|store|exchange)\s*\(|\+\+|--|[-+]?=(?!=))")
+COUNT_WRITE = re.compile(r"\bg_offsetValidations\s*(?:\.\s*(?:fetch_add|fetch_sub|store|exchange)\s*\(|\+\+|--|[-+]?=(?!=))")
 
 # The ONE sanctioned direct writer outside ApplyPropertyFamily. Keyed by (file, member) and
 # required to carry its justification nearby, so deleting the reasoning breaks the gate too.
@@ -103,6 +115,7 @@ def main():
     violations = []
     allowed = []
     scanned = 0
+    retire_ops = []
 
     for name in sorted(os.listdir(SRC)):
         if not name.endswith((".cpp", ".h")):
@@ -112,6 +125,7 @@ def main():
         scanned += 1
 
         in_apply = False
+        in_retire = False
         for i, line in enumerate(lines):
             code = strip_code(line)
 
@@ -120,6 +134,28 @@ def main():
                 in_apply = True
             elif in_apply and code.strip() == "}":
                 in_apply = False
+            # ...and of RetireFamilyEpoch, the epoch's other writer, whose order is pinned below.
+            if "inline void RetireFamilyEpoch" in code:
+                in_retire = True
+            elif in_retire and code.strip() == "}":
+                in_retire = False
+
+            if not is_declaration(code) and "std::atomic" not in code:
+                if EPOCH_WRITE.search(code):
+                    if in_retire:
+                        retire_ops.append("epoch")
+                    elif not in_apply:
+                        violations.append(
+                            (name, i + 1, "g_propertyFamilyEpoch",
+                             "the family epoch moves only in ApplyPropertyFamily (a move) and RetireFamilyEpoch (the end "
+                             "of an offset validation, paired with g_offsetValidations)"))
+                if COUNT_WRITE.search(code):
+                    if in_retire:
+                        retire_ops.append("count")
+                    else:
+                        violations.append(
+                            (name, i + 1, "g_offsetValidations",
+                             "the retire count moves only in RetireFamilyEpoch, around the epoch"))
 
             # The helper is a writer too, so its caller is pinned as the old direct assignment was: only Ubel.cpp's
             # ArrayProperty probe, beside its marker (which sits in a log string, hence the raw lines). Without this
@@ -164,6 +200,12 @@ def main():
                 (name, i + 1, member,
                  "direct assignment -- route it through DynOff::ApplyPropertyFamily("
                  "DynOff::PropertyFamilyAtBase(base)) so all five names move together"))
+
+    if retire_ops != ["count", "epoch", "count"]:
+        violations.append(
+            ("Grimoire.h", 0, "RetireFamilyEpoch",
+             "must bump g_offsetValidations, then g_propertyFamilyEpoch, then g_offsetValidations, once each -- found %s"
+             % (retire_ops or "no writes")))
 
     if want_list or violations:
         print("family members: %s" % ", ".join(FAMILY))
