@@ -27,6 +27,33 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3732) — Where a native function writes a field `[DENKEN-WRITE-SITES]`
+
+- **What changes:** the Props dialog (a function's Properties) now shows, for a native C++ function, the addresses of
+  the instructions that write each field it touches -- a field's write site found with no debugger, to start an AOB or
+  a code injection there. A new **Write sites** column shows the first one and how many more; its tooltip lists them,
+  says which write through the object itself (a site marked "?" is not proven to), and names a byte several packed bools
+  share. **Write site in CE** opens the first in Cheat Engine's disassembler through the AOBMaker CE plugin; **Copy write
+  sites** copies them. The dialog is wider, and its buttons wrap.
+- **Also fixed by the review:** a write to a byte of packed bools was filed under the first bool only; every bool of
+  that byte now has its row.
+- **Pipe / MCP:** `walk_function_props` rows carry `write_sites`, `write_sites_via_this`, `write_sites_truncated` and
+  `shared_offset`; the MCP's `read_function_props` passes them on.
+- **Proven live** on DumperTest Shipping: 2,962 native functions walked, 73 written fields all with write sites, and
+  each of 74 sites read back is an instruction whose own displacement is the field's offset.
+- **Review** `wf_c87eff0e-53f`: 8 real findings, all fixed.
+- **Tests:** C# 8406 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4242, dll_core_test 1627, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 58ea842521122781...); UE5Dumper.dll 3,837,952 bytes (sha256 c4736f2aa8d425e1...).
+
+## 2026-11-17 (build 3731) — Where a native function writes a field, first version `[DENKEN-WRITE-SITES]`
+
+Superseded by 3732 before it left this machine: its review found sites through other pointers listed as the field's,
+and packed bools filed under the first of their byte.
+- **What changes:** the write sites, the column and the two buttons, as 3732 has them before the review. Live on 3731:
+  71 written rows with sites, 72 of 72 checked.
+- AOT UI 62,709,760 bytes (sha256 d7afbbcebb0923ef...); UE5Dumper.dll 3,833,344 bytes (sha256 64a4e372aa46ed6c...).
+
 ## 2026-11-17 (build 3730) — The second copy's take-over, after a third review `[DUMPER-SECOND-COPY-AUTOSTART]`
 
 No visible change from 3729 in ordinary use.
