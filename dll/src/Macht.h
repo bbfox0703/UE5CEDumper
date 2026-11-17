@@ -107,7 +107,8 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
 [[nodiscard]] bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
 
 // [WRITEMEM-OWN-IMAGE] True when [addr, addr + size) overlaps the image holding this code (UE5Dumper.dll or a proxy;
-// the test exe in dll_core_test): its globals include the CE mailbox, so write_mem refuses a background client there.
+// the test exe in dll_core_test): its globals include the CE mailbox. write_mem asks RangeInAnyDumperImage, which
+// covers this image too.
 [[nodiscard]] bool RangeInOwnImage(uintptr_t addr, size_t size);
 
 // [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps this image or another copy of the dumper loaded in the

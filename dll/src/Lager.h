@@ -506,8 +506,11 @@ inline bool RangeOverlapsImage(uintptr_t addr, size_t size, uintptr_t imageBase,
 template <class Modules, class IsDumperFn>
 bool RangeOverlapsDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, const Modules& modules,
                               IsDumperFn&& isDumper) {
-    (void)modules; (void)isDumper;
-    return RangeOverlapsImage(addr, size, ownBase, ownSize);
+    if (RangeOverlapsImage(addr, size, ownBase, ownSize)) return true;
+    // The question reads a module's export table, so it is asked only of a module the range overlaps.
+    for (const auto& m : modules)
+        if (RangeOverlapsImage(addr, size, m.base, m.size) && isDumper(m)) return true;
+    return false;
 }
 
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue

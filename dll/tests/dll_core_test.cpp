@@ -295,6 +295,11 @@ int main() {
               Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&Macht::RangeInOwnImage), 1));
         check("a heap block is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(heapBlock.data()), 64));
         check("an empty range is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&ownGlobal), 0));
+        // [WRITEMEM-ANY-COPY] What write_mem asks: this image counts, and a heap block is not any module's.
+        check("any copy: this image is still refused",
+              Macht::RangeInAnyDumperImage(reinterpret_cast<uintptr_t>(&ownGlobal), sizeof(ownGlobal)));
+        check("any copy: a heap block is not",
+              !Macht::RangeInAnyDumperImage(reinterpret_cast<uintptr_t>(heapBlock.data()), 64));
     }
 
     // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
