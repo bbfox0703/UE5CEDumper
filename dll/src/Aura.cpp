@@ -786,8 +786,9 @@ static bool DetectLayout(uintptr_t addr) {
     // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
     // layout no row fits). No UE game runs with fewer objects. Above it, a floored row whose count slot can be the high
     // dword of another layout's chunk table pointer also asks CountIsHalfAChunkTablePointer ([VND584-03-FLOOR-HIGH-HEAP]).
-    // Relaxed D has no floor, and its +0x1C can be the high dword of PreAllocatedObjects -- an item-array pointer that
-    // check does not follow: [RELAXED-D-PREALLOC-HALF], a row of its own.
+    // Relaxed D has no floor, and its +0x1C can be the high dword of PreAllocatedObjects. The helper cannot refuse that:
+    // on D's misread its own Objects slot (+0x10) IS the array's table, which the own-slot clause trusts, whatever the
+    // pointer under the count reads as -- [RELAXED-D-PREALLOC-HALF], a row of its own.
     constexpr int32_t kRelaxedMinObjects = 0x1000;
     // A/C refused because the 8 bytes under its count are a chunk table pointer: the table is at +0x10 (the fallback).
     bool acCountWasHalfAPointer = false;
