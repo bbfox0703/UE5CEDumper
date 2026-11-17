@@ -71,6 +71,8 @@ struct Accum {
     int32_t writeCount  = 0;
     uint8_t accessSize  = 0;
     bool    highConf    = false;
+    std::vector<uintptr_t> writeSites;       // [DENKEN-WRITE-SITES] distinct, decode order, at most kMaxWriteSites
+    bool    writeSitesTruncated = false;
 };
 
 struct Ctx {
@@ -81,12 +83,22 @@ struct Ctx {
     bool                                   budgetHit    = false;
 };
 
-// Record one [base+disp] access. highConf when base is a tracked this-alias.
-void RecordAccess(Ctx& ctx, int64_t disp, uint8_t sizeBytes, bool isWrite, bool highConf) {
+// Record one [base+disp] access by the instruction at `ip`. highConf when base is a tracked this-alias.
+void RecordAccess(Ctx& ctx, int64_t disp, uint8_t sizeBytes, bool isWrite, bool highConf, uintptr_t ip) {
     if (disp < 0 || disp >= kDispLimit) return;
     auto& a = ctx.byOffset[static_cast<uint32_t>(disp)];
     a.occurrences++;
-    if (isWrite) a.writeCount++;
+    if (isWrite) {
+        a.writeCount++;
+        // [DENKEN-WRITE-SITES] Each writing instruction once: an impl reached by two calls is decoded twice, and its
+        // write is one site however often it counts.
+        bool known = false;
+        for (uintptr_t s : a.writeSites) known = known || s == ip;
+        if (!known) {
+            if (a.writeSites.size() < kMaxWriteSites) a.writeSites.push_back(ip);
+            else a.writeSitesTruncated = true;
+        }
+    }
     if (sizeBytes && !a.accessSize) a.accessSize = sizeBytes;
     a.highConf = a.highConf || highConf;
 }
@@ -164,7 +176,7 @@ void TraceBlock(Ctx& ctx, uintptr_t startAddr, ThisRegs tr, int depth) {
                 const bool isWrite =
                     (op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) != 0;
                 const uint8_t sz = static_cast<uint8_t>(op.size / 8);
-                RecordAccess(ctx, op.mem.disp.value, sz, isWrite, isThis);
+                RecordAccess(ctx, op.mem.disp.value, sz, isWrite, isThis, ip);
             }
 
             const ZydisInstructionCategory cat = instr.meta.category;
@@ -265,6 +277,8 @@ NativeAnalysisResult Analyze(uintptr_t startAddr, const MemReader& reader) {
         fa.occurrences    = a.occurrences;
         fa.writeCount     = a.writeCount;
         fa.highConfidence = a.highConf;
+        fa.writeSites     = a.writeSites;
+        fa.writeSitesTruncated = a.writeSitesTruncated;
         result.accesses.push_back(fa);
     }
     return result;
