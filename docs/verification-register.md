@@ -1153,6 +1153,17 @@ DumperTest Shipping (UE 5.4, pid 9824) `UE5-Extended`, 24,530 objects, ThirdPers
 build does not touch that row. No title in the corpus carries a preallocated array; dll_core_test holds the misread at
 both heap heights.
 
+### ✅ A UE 5.8 array its strict row refuses is read by relaxed F (build 3727) — closed 2026-11-17 `[UE58-PREALLOC-NO-ROW]`
+
+Relaxed row F sits between B and D, so the check owed was that no title's own row moved and that the decoy recovery
+still runs. **Closed 2026-11-17 on DLL 3727**, `relaxed_layout_live.py` 4/4 each, the games closed afterwards:
+DumperTest58 Shipping (pid 11864) `UE5.8`, 34,570 objects; DumperTest Shipping (pid 25068) `UE5-Extended`, 24,530;
+Avowed (its `dxgi.dll` proxy refreshed to 3727, pid 24696, main menu) `UE5-Extended` strict, 92,003 objects, MainMenu
+walked -- this launch's GObjects was the real array, so the decoy recovery was not exercised live; dll_core_test holds
+the TArray-shaped decoy (count 0, recovery runs). No corpus title has a 5.8 array its strict row refuses; dll_core_test
+holds each trigger (more than 20 chunks, an exact multiple of 64K, preallocated above 16 TB and with disregard-for-GC
+off, 3 max chunks).
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
