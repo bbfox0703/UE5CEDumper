@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3723) — A class walk that starts while an init is ending waits for it `[CPP-HARDENING-2026-11-14]`
+
+A follow-up to build 3722's `[DYNOFF-LATCH-STALE]` fix, found by the fourth review round. No visible change.
+- **What changes:** the end of an offset validation bumps a count and the property layout's epoch as two steps. A
+  class walk that read the count between them saw the new count while its plain walk still used the old epoch, and
+  could keep a walk made with half-measured offsets for the rest of the session -- a window of nanoseconds, once per
+  init. The count is now seqlock-shaped (odd while the retire is under way, even only after the epoch moved) and the
+  walk waits out an odd count. The `check_property_family` gate now pins the epoch's writers and the retire's order,
+  in every form an atomic write takes.
+- **Proven live** on DLL 3723 (DumperTest Shipping, UE 5.4): `latch_regression_live.py` 4/4 injected and 4/4 with a
+  `dxgi.dll` proxy, `initlog_live.py` 6/6 (proxy removed afterwards); `mcp_client.py` probe 29/29, raw 28/28,
+  fieldgrant 44/44. The interleaving itself is dll_core_test's: the retire left half done, finished from another
+  thread.
+- **Reviews:** round 4 (`wf_09b53b67-caf`) found it; a fifth (`wf_090d2608-d9f`) found two over-claims -- a comment and
+  the gate's patterns -- both fixed. The rounds converged there.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1586 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 27c555bdcdc0f863...); UE5Dumper.dll 3,797,504 bytes (sha256 304357adf4dae173...).
+
 ## 2026-11-17 (build 3722) — An init's offsets are checked again when it ends, and a command read during it leaves a trace `[CPP-HARDENING-2026-11-14]`
 
 The hardening analysis's two init-window logic gaps, fixed as the maintainer decided on 2026-11-17 and reviewed in
