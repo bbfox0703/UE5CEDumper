@@ -2464,8 +2464,11 @@ public class InvokeScriptTests
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
         string beginApply = frieren[begin..frieren.IndexOf("\n}", begin, StringComparison.Ordinal)];
         int raise = beginApply.IndexOf("g_initInProgress.store(true", StringComparison.Ordinal);
-        int fullFence = beginApply.IndexOf("std::atomic_thread_fence(std::memory_order_seq_cst)", StringComparison.Ordinal);
-        Assert.True(raise >= 0 && fullFence > raise, "BeginApply raises the flag, then fences, before the publish");
+        // A statement that starts its line, so a commented-out fence is not taken for one (review wf_b0aa9098-dd5).
+        var fullFence = System.Text.RegularExpressions.Regex.Match(
+            beginApply, @"\n[ \t]*std::atomic_thread_fence\(std::memory_order_seq_cst\);");
+        Assert.True(raise >= 0 && fullFence.Success && fullFence.Index > raise,
+                    "BeginApply raises the flag, then fences, before the publish");
     }
 
     [Fact]
