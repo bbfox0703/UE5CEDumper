@@ -1011,6 +1011,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
     }
 
+    /// <summary>[PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). Every command the pipe reads
+    /// while UE5_Init is in progress is noted, before it is dispatched; the note logs each name once per init run and
+    /// forgets them when the run ends, and nothing is refused.</summary>
+    [Fact]
+    public void ACommandDuringInit_IsLoggedOncePerRun_AndNotRefused()
+    {
+        string src = NoComments(DllSrc("Fern.cpp"));
+        int loop = src.IndexOf("const std::string cmd = Voll::ExtractCmdName(line);", StringComparison.Ordinal);
+        int note = src.IndexOf("NoteCommandDuringInit(cmd, ", loop, StringComparison.Ordinal);
+        int dispatch = src.IndexOf("DispatchCommand(", loop, StringComparison.Ordinal);
+        Assert.True(loop > 0 && note > loop && note < dispatch, "the read loop notes the command before dispatching it");
+        Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", src[loop..note]);
+        string fn = Between(src, "static void NoteCommandDuringInit(", "\n}\n");
+        Assert.Contains(".insert(cmd).second", fn);   // once per name
+        Assert.Contains(".clear()", fn);              // a new run logs afresh
+        Assert.DoesNotContain("MakeError", fn);       // nothing is refused
+    }
+
     /// <summary>[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2. fly_set applies the preset first, the one setting that
     /// can be refused, and a refused preset answers an error with nothing else changed -- it was discarded, and the reply
     /// read as applied.</summary>
