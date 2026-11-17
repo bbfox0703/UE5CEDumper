@@ -1123,6 +1123,19 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
     row 1's proxy-mode `trigger_scan`.
 
+### ⬜ The relaxed-row floor above 16 TB (build 3724) — `[VND584-03-FLOOR-HIGH-HEAP]`
+
+Relaxed A/C and B refuse a count that is half of a chunk table pointer unless the row's own Objects slot holds a table
+(docs/todo.md has the commits). Unit tests: dll_core_test's VND584-03 block, with a chunk table VirtualAlloc'd above
+16 TB in every build; the ASan run of it no longer SKIPs.
+
+1. ⬜ **The Outer Worlds 2, the one title that reaches relaxed A/C.** Its strict presets all fail (docs/test-games.md:
+    Num 123,653, stride 24). Acceptance: with a 3724 `dxgi.dll` proxy and `trigger_scan`, the init log shows `Layout A/C
+    (relaxed) detected` with the title's full count and no `refused` line beside it, and a GWorld walk works.
+2. ⬜ **A chunk-counts-first title above 16 TB** (the Mistfall Hunter shape). Not in the corpus; dll_core_test holds it.
+    Acceptance: such a title's init log shows its own row (`UE5.7-Mistfall`) or relaxed E, never relaxed A/C or B with a
+    count near the table pointer's high dword.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1279,7 +1292,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`16` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
