@@ -13915,10 +13915,16 @@ int main() {
                 putP(0x10, reinterpret_cast<uintptr_t>(firstInModule.data()));
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is a module address",
                       !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
-                static std::vector<uintptr_t> firstUnmapped(2, 0x0000123456780000ull);
+                // A reserved, no-access page, not a fixed address: under AddressSanitizer a fixed "unmapped" address can
+                // fall in its 16 TB shadow, which it commits on first touch, so the read would succeed with zeros (review
+                // wf_26ab4e6e-ff7, R2-ASAN-UNMAPPED-CONTROL). The OS places this page outside ASan's reservation.
+                void* noAccess = VirtualAlloc(nullptr, 0x10000, MEM_RESERVE, PAGE_NOACCESS);
+                static std::vector<uintptr_t> firstUnmapped(2, 0);
+                firstUnmapped[0] = reinterpret_cast<uintptr_t>(noAccess);
                 putP(0x10, reinterpret_cast<uintptr_t>(firstUnmapped.data()));
-                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose first entry is unmapped user space",
-                      !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
+                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose first entry is a page that cannot be read",
+                      noAccess != nullptr && !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
+                if (noAccess) VirtualFree(noAccess, 0, MEM_RELEASE);
                 VirtualFree(high, 0, MEM_RELEASE);
             }
         }
