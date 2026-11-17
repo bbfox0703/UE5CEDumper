@@ -588,8 +588,9 @@
     <sys:String x:Key="str.FunctionProps.CopyWriteSites">Copy write sites</sys:String>
     <sys:String x:Key="str.Tip.FunctionProps.CopyWriteSites">Copy the selected field's write-site addresses, one per line.</sys:String>
     <sys:String x:Key="str.FunctionProps.WriteSitesCopied">Copied {0} write site(s) of {1}</sys:String>
-    <sys:String x:Key="str.FunctionProps.WriteSiteOpened">Opened {0}'s write site {1} in Cheat Engine's disassembler</sys:String>
-    <sys:String x:Key="str.FunctionProps.WriteSiteNotOpened">Cheat Engine did not open {0}: is the AOBMaker CE plugin loaded, and CE attached to this game?</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSiteViaThis">{0}  through this object</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSiteOtherBase">{0}  through another pointer -- not proven to write this object's field</sys:String>
+    <sys:String x:Key="str.FunctionProps.SharedOffsetNote">{0} fields share this byte (packed bools): a write here may be to any of them.</sys:String>
     <sys:String x:Key="str.Tip.AobMaker.FuncAsm">Open this function's native code in Cheat Engine's disassembler (via the AOBMaker CE plugin), and add it to the table as a record you can right-click. From there, CE's Ctrl+Shift+A sends the selection to AOBMaker.</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Pending">Asking AOBMaker.UI for a unique AOB for '{0}'…</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.NotRunning">AOBMaker.UI is not running: '{0}' needs the AOBMaker app open, which makes the AOB (Cheat Engine alone is not enough)</sys:String>

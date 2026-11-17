@@ -7203,26 +7203,33 @@ static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
 std::vector<FunctionPropRef> MapNativeAccesses(const std::vector<Denken::NativeFieldAccess>& accesses,
                                                const std::vector<FieldInfo>& fields, int32_t& unmapped) {
     std::vector<FunctionPropRef> refs;
-    std::unordered_map<int32_t, const FieldInfo*> byOff;
+    // Every property at an offset: bitfield bools packed into one byte share Offset_Internal, and an access to that byte
+    // may be to any of them -- each gets the row, and says how many share it (review DWS-DLL-2: the first one used to
+    // take the access, and the bool actually written had no row).
+    std::unordered_map<int32_t, std::vector<const FieldInfo*>> byOff;
     byOff.reserve(fields.size());
-    for (const auto& f : fields) byOff.emplace(f.Offset, &f);
+    for (const auto& f : fields) byOff[f.Offset].push_back(&f);
 
     for (const auto& acc : accesses) {
         auto it = byOff.find(static_cast<int32_t>(acc.offset));
         if (it == byOff.end()) { unmapped++; continue; }
-        const FieldInfo& f = *it->second;
-        FunctionPropRef ref;
-        ref.propAddr    = f.Address;
-        ref.name        = f.Name;
-        ref.type        = f.TypeName;
-        ref.offset      = static_cast<int32_t>(acc.offset);
-        ref.occurrences = acc.occurrences;
-        ref.writeCount  = acc.writeCount;
-        ref.scope       = "instance";   // mapped to a class member
-        ref.confidence  = acc.highConfidence ? "high" : "low";
-        ref.writeSites = acc.writeSites;
-        ref.writeSitesTruncated = acc.writeSitesTruncated;
-        refs.push_back(std::move(ref));
+        const int32_t shared = it->second.size() > 1 ? static_cast<int32_t>(it->second.size()) : 0;
+        for (const FieldInfo* f : it->second) {
+            FunctionPropRef ref;
+            ref.propAddr    = f->Address;
+            ref.name        = f->Name;
+            ref.type        = f->TypeName;
+            ref.offset      = static_cast<int32_t>(acc.offset);
+            ref.occurrences = acc.occurrences;
+            ref.writeCount  = acc.writeCount;
+            ref.scope       = "instance";   // mapped to a class member
+            ref.confidence  = acc.highConfidence ? "high" : "low";
+            ref.writeSites  = acc.writeSites;
+            ref.writeSitesViaThis = acc.writeSitesViaThis;
+            ref.writeSitesTruncated = acc.writeSitesTruncated;
+            ref.sharedOffset = shared;
+            refs.push_back(std::move(ref));
+        }
     }
 
     // High-confidence first, then writers, then frequency, then name.
@@ -7299,9 +7306,8 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // (audit #5 AF7). Set before the mapping loop so an early return can't drop it.
     out.budgetHit = r.budgetHit;
 
-    // Map each [this+off] access to a property on the owning class (UFunction's
-    // Outer). WalkClass already includes the full inherited super chain with
-    // absolute Offset_Internal, so an offset matches at most one property.
+    // Map each [this+off] access to the properties on the owning class (UFunction's Outer) at that offset
+    // (MapNativeAccesses: bools packed into one byte share it).
     uintptr_t owner = Ubel::GetOuter(funcAddr);
     if (owner) {
         ClassInfo ci = Ubel::WalkClass(owner);

@@ -18,8 +18,12 @@ public sealed class DenkenWriteSitesSourceTests
     public void AuraCarriesTheWriteSitesOntoTheProperty()
     {
         string aura = Src("dll/src/Aura.cpp");
-        Assert.Contains("ref.writeSites = acc.writeSites;", aura);
-        Assert.Contains("ref.writeSitesTruncated = acc.writeSitesTruncated;", aura);
+        Assert.Matches(@"ref\.writeSites\s+= acc\.writeSites;", aura);
+        Assert.Matches(@"ref\.writeSitesViaThis\s+= acc\.writeSitesViaThis;", aura);
+        Assert.Matches(@"ref\.writeSitesTruncated\s+= acc\.writeSitesTruncated;", aura);
+        Assert.Matches(@"ref\.sharedOffset\s+= shared;", aura);
+        // The live path goes through the tested mapping.
+        Assert.Contains("out.refs = MapNativeAccesses(r.accesses, ci.Fields, out.unmappedAccesses);", aura);
         Assert.Matches(@"std::vector<uintptr_t>\s+writeSites;", Src("dll/src/Aura.h"));
     }
 

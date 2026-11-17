@@ -113,8 +113,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         _platform = platform;
 
         Title = $"Properties used by: {_funcName}";
-        Width = 760;
-        MinWidth = 520;
+        Width = 980;      // [DENKEN-WRITE-SITES] the Write sites column; review WS-UI-3
+        MinWidth = 720;
         Height = 520;
         MinHeight = 320;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -185,7 +185,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         DockPanel.SetDock(caveat, Dock.Bottom);
         root.Children.Add(caveat);
 
-        var btnRow = new StackPanel
+        // A WrapPanel: six buttons outgrow a narrow window, and a StackPanel cut the last ones off (review WS-UI-3).
+        var btnRow = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -333,7 +334,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         VerticalAlignment = VerticalAlignment.Center,
                         Margin = new Thickness(4, 0),
                     };
-                    if (x is { WriteSites.Count: > 1 }) ToolTip.SetTip(cell, string.Join(Environment.NewLine, x.WriteSites));
+                    if (x is { WriteSites.Count: > 0 }) ToolTip.SetTip(cell, WriteSitesTip(x));
                     return cell;
                 }, supportsRecycling: false),
         });
@@ -485,21 +486,26 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         _btnSiteInCe.IsEnabled = false;
         try
         {
-            bool opened = await bridge.NavigateDisassemblerAsync(x.WriteSites[0]);
-            _statusLabel.Text = opened
-                ? Res.Format("str.FunctionProps.WriteSiteOpened", x.Name, x.WriteSites[0])
-                : Res.Format("str.FunctionProps.WriteSiteNotOpened", x.WriteSites[0]);
-            _statusLabel.Foreground = new SolidColorBrush(Color.Parse(opened ? "#4EC9B0" : "#F44747"));
-        }
-        catch (Exception ex)
-        {
-            _statusLabel.Text = ex.Message;
-            _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+            // The shared helper: it strips the prefix, and names a busy or absent AOBMaker pipe ([W1-PIPEBUSY-STATUS]).
+            var (text, ok) = await AobMakerActions.MoveViewAsync(bridge, x.WriteSites[0], x.Name, null, disassembler: true);
+            _statusLabel.Text = text;
+            _statusLabel.Foreground = new SolidColorBrush(Color.Parse(ok ? "#4EC9B0" : "#F44747"));
         }
         finally
         {
             UpdateSelectionButtons();
         }
+    }
+
+    // Every site, labelled by whether it writes through this object, and the shared-byte note.
+    private static string WriteSitesTip(FunctionPropRef x)
+    {
+        var lines = new List<string>();
+        for (int i = 0; i < x.WriteSites.Count; i++)
+            lines.Add(Res.Format(i < x.WriteSitesViaThis ? "str.FunctionProps.WriteSiteViaThis" : "str.FunctionProps.WriteSiteOtherBase",
+                                 x.WriteSites[i]));
+        if (x.SharedOffset > 1) lines.Add(Res.Format("str.FunctionProps.SharedOffsetNote", x.SharedOffset));
+        return string.Join(Environment.NewLine, lines);
     }
 
     private async void OnCopySitesClicked(object? sender, RoutedEventArgs e)

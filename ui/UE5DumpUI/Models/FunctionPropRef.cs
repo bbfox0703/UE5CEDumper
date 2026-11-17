@@ -53,10 +53,12 @@ public sealed class FunctionPropRef
     /// byte -- so a write there may be to any of them (review DWS-DLL-2). 0 when the property is alone.</summary>
     public int SharedOffset { get; init; }
 
-    /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some; empty for none.</summary>
+    /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some, and " ?" when not even the
+    /// first is proven to write through <c>this</c>; empty for none.</summary>
     public string WriteSitesText =>
         WriteSites.Count == 0 ? ""
-        : WriteSites[0] + (WriteSites.Count > 1 ? $" +{WriteSites.Count - 1}" : "") + (WriteSitesTruncated ? "…" : "");
+        : WriteSites[0] + (WriteSites.Count > 1 ? $" +{WriteSites.Count - 1}" : "") + (WriteSitesTruncated ? "…" : "")
+          + (WriteSitesViaThis == 0 ? " ?" : "");
 
     /// <summary>True for a low-confidence heuristic (native disasm) row.</summary>
     public bool IsLowConfidence => Confidence == "low";

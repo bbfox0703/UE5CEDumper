@@ -6934,8 +6934,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     json sites = json::array();
                     for (uintptr_t site : r.writeSites) sites.push_back(Renge::AddrToStr(site));
                     rj["write_sites"] = sites;
+                    // The first this-many write through a proven `this`; the rest through another base.
+                    rj["write_sites_via_this"] = r.writeSitesViaThis;
                     if (r.writeSitesTruncated) rj["write_sites_truncated"] = true;
                 }
+                // Bools packed into one byte share its offset: an access there may be to any of them.
+                if (r.sharedOffset > 1) rj["shared_offset"] = r.sharedOffset;
                 arr.push_back(rj);
             }
             data["props"] = arr;

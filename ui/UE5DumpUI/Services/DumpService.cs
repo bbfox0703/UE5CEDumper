@@ -1490,6 +1490,8 @@ public sealed class DumpService : IDumpService
                         ? sites.Select(n => n?.GetValue<string>() ?? "").Where(s => s.Length > 0).ToList()
                         : Array.Empty<string>(),
                     WriteSitesTruncated = p["write_sites_truncated"]?.GetValue<bool>() ?? false,
+                    WriteSitesViaThis   = p["write_sites_via_this"]?.GetValue<int>() ?? 0,
+                    SharedOffset        = p["shared_offset"]?.GetValue<int>() ?? 0,
                 });
             }
         }

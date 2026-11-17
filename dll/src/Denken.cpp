@@ -71,7 +71,10 @@ struct Accum {
     int32_t writeCount  = 0;
     uint8_t accessSize  = 0;
     bool    highConf    = false;
-    std::vector<uintptr_t> writeSites;       // [DENKEN-WRITE-SITES] distinct, decode order, at most kMaxWriteSites
+    // [DENKEN-WRITE-SITES] Distinct write sites, decode order, at most kMaxWriteSites between them: through a proven
+    // `this`, and through any other base (review DWS-DLL-1).
+    std::vector<uintptr_t> thisSites;
+    std::vector<uintptr_t> otherSites;
     bool    writeSitesTruncated = false;
 };
 
@@ -93,10 +96,20 @@ void RecordAccess(Ctx& ctx, int64_t disp, uint8_t sizeBytes, bool isWrite, bool 
         // [DENKEN-WRITE-SITES] Each writing instruction once: an impl reached by two calls is decoded twice, and its
         // write is one site however often it counts.
         bool known = false;
-        for (uintptr_t s : a.writeSites) known = known || s == ip;
+        for (uintptr_t s : a.thisSites) known = known || s == ip;
+        for (uintptr_t s : a.otherSites) known = known || s == ip;
         if (!known) {
-            if (a.writeSites.size() < kMaxWriteSites) a.writeSites.push_back(ip);
-            else a.writeSitesTruncated = true;
+            auto& list = highConf ? a.thisSites : a.otherSites;
+            if (a.thisSites.size() + a.otherSites.size() < kMaxWriteSites) {
+                list.push_back(ip);
+            } else if (highConf && !a.otherSites.empty()) {
+                // A write through `this` is worth more than one through some other base: it takes the last of those.
+                a.otherSites.pop_back();
+                list.push_back(ip);
+                a.writeSitesTruncated = true;
+            } else {
+                a.writeSitesTruncated = true;
+            }
         }
     }
     if (sizeBytes && !a.accessSize) a.accessSize = sizeBytes;
@@ -277,7 +290,9 @@ NativeAnalysisResult Analyze(uintptr_t startAddr, const MemReader& reader) {
         fa.occurrences    = a.occurrences;
         fa.writeCount     = a.writeCount;
         fa.highConfidence = a.highConf;
-        fa.writeSites     = a.writeSites;
+        fa.writeSites = a.thisSites;
+        fa.writeSites.insert(fa.writeSites.end(), a.otherSites.begin(), a.otherSites.end());
+        fa.writeSitesViaThis = static_cast<uint8_t>(a.thisSites.size());
         fa.writeSitesTruncated = a.writeSitesTruncated;
         result.accesses.push_back(fa);
     }
