@@ -171,6 +171,24 @@ inline std::string ExtractCmdName(std::string_view line) {
     return name;
 }
 
+// ── What the pipe read while an init was publishing ─────────────────────────
+// [PIPE-WALK-DURING-INIT] Red stub: Fern's note as it stood -- the names forgotten only when a command finds no run in
+// progress, a blank name logged blank, no ceiling. The next commit implements it.
+inline constexpr size_t kMaxDuringInitNames = 256;
+
+class DuringInitNotes {
+public:
+    static std::string_view Shown(std::string_view name) { return name; }
+    bool Note(std::string_view name, uint32_t run) {
+        if (run == 0) { seen_.clear(); return false; }
+        for (const auto& s : seen_) if (s == name) return false;
+        seen_.emplace_back(name);
+        return true;
+    }
+private:
+    std::vector<std::string> seen_;
+};
+
 // ── Who holds the pipe's connections ────────────────────────────────────────
 // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is ever disconnected for being
 // idle, but who holds the connections can be seen -- the pipe_clients command, and, when every connection is taken

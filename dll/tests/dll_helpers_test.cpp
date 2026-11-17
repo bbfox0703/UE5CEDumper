@@ -431,6 +431,35 @@ static void Test_Voll_ExtractCmdName() {
            Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
 }
 
+static void Test_Voll_DuringInitNotes() {
+    // [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). Which commands read while an init or an
+    // apply_rescan holds g_initInProgress leave a trace: each name once per run, a run named by the serial its producer
+    // raised the flag with (g_initRun). Review wf_8f451d97-434 A-PIN-WEAK: the source pin alone passed with the log line
+    // deleted, the flag inverted and a refusal added, so the decision is pinned here by behaviour.
+    Voll::DuringInitNotes n;
+    EXPECT("no run in progress (serial 0): nothing is logged", !n.Note("walk_instance", 0));
+    EXPECT("run 1: a name is logged the first time", n.Note("walk_instance", 1));
+    EXPECT("run 1 * : ...and not again", !n.Note("walk_instance", 1));
+    EXPECT("run 1: another name is logged", n.Note("get_object", 1));
+    // Two runs back to back with no command read between them -- a cancelled init's waiter, an apply after an init. The
+    // first note forgot its names only when a command found the flag down, so run 2 said nothing of run 1's names.
+    // (review A-RESET-BOUNDARY)
+    EXPECT("run 2 * : a name run 1 logged is logged again, with nothing read between the runs", n.Note("walk_instance", 2));
+    EXPECT("run 2 * : ...once", !n.Note("walk_instance", 2));
+    // ExtractCmdName returns "" for a line with no readable "cmd" (review A-NAME-BEFORE-DISPATCH).
+    EXPECT_EQ_STR("* : a line with no readable cmd logs as (unparsed), never as a blank name",
+                  std::string(Voll::DuringInitNotes::Shown("")).c_str(), "(unparsed)");
+    EXPECT_EQ_STR("a name logs as itself", std::string(Voll::DuringInitNotes::Shown("get_object")).c_str(), "get_object");
+    EXPECT("an unparsed line is logged once per run too", n.Note("", 2) && !n.Note("", 2));
+    // Names come from the client: a run keeps at most kMaxDuringInitNames, so a client cannot grow the list without end.
+    Voll::DuringInitNotes cap;
+    size_t logged = 0;
+    for (size_t i = 0; i < Voll::kMaxDuringInitNames + 10; ++i)
+        if (cap.Note("c" + std::to_string(i), 7)) ++logged;
+    EXPECT("* : a run keeps at most kMaxDuringInitNames names", logged == Voll::kMaxDuringInitNames);
+    EXPECT("control: a new run starts a new list", cap.Note("c0", 8));
+}
+
 static void Test_Voll_Holders() {
     // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the pipe's connections, for pipe_clients and the at-capacity
     // log line a client that cannot connect reads.
@@ -12936,6 +12965,7 @@ int main() {
     RUN(Test_Voll_ProbeFoundServer);
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
+    RUN(Test_Voll_DuringInitNotes);
     RUN(Test_Voll_Holders);
     RUN(Test_Voll_InvokeParamIndirection);
     RUN(Test_Voll_HoldLedger);
