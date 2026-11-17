@@ -738,10 +738,13 @@ void WriteTraceRecord(TraceRecord& r, uint64_t seqKind, Ticks ticks, uint64_t a,
     r.seqKind = seqKind;
 }
 
-// A bit added once the record is out -- a copy or a stack it took, known only after that work. The same rule (review
-// wf_d3c2ec9a-d52): the number is withdrawn, the bit set, the number put back, so a writer the ring lapped DURING the
-// copy or the walk (the slowest part of the write) ends on its own stale number instead of marking the newer record.
+// A bit added once the record is out -- a copy or a stack it took, known only after that work. The slot is checked
+// FIRST: if the ring lapped during the copy or the walk (the slowest part of the write), it holds a newer record, which
+// is left whole -- withdrawing its number would destroy it, and its own writer may be between its write and its own
+// mark (review wf_a193c703-fe8). Otherwise the same rule as the write (review wf_d3c2ec9a-d52): the number withdrawn,
+// the bit set, the number put back.
 void MarkTraceRecord(TraceRecord& r, uint64_t seqKind, uint32_t bit) {
+    if (r.seqKind != seqKind) return;   // lapped: not ours any more
     r.seqKind = UINT64_MAX;
     std::atomic_signal_fence(std::memory_order_release);
     r.flags |= bit;
