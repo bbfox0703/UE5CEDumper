@@ -3316,14 +3316,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
-            const ClassInfo& ci = Ubel::WalkClassEx(addr);
-            // [WALKCLASS-STALE-OK] A class a level travel freed walks to nothing, and answering that as an empty class
-            // painted the Class/Struct panel blank with no error, its re-select refused as a duplicate. Refused only
-            // when the walk is empty AND the address is not a live object: a real walk is answered whatever liveness
-            // reads, so a fork whose InternalIndex layout is off cannot lose a working walk.
-            if (ci.Name.empty() && ci.Fields.empty() && !IsLiveObject(addr))
+            // [WALKCLASS-STALE-OK] Refused BEFORE the walk when the address is not a live object. A class a level travel
+            // freed either walks to nothing (painted as a blank class, no error, the panel's re-select refused as a
+            // duplicate) or, walked before it was freed, is answered from WalkClassEx's immortal memo with its OLD fields.
+            // Every walk_class caller passes a class, struct or function, which GObjects always holds; refusing first
+            // also keeps a stale address out of the memo.
+            if (!IsLiveObject(addr))
                 return Renge::MakeError(id, "Not a live class at " + addrStr +
                                                 " -- freed (a level travel?) or never a UObject").dump();
+            const ClassInfo& ci = Ubel::WalkClassEx(addr);
 
             json data;
             data["class"] = EncodeClassInfoToJson(ci);
