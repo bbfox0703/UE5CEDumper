@@ -1445,11 +1445,12 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
 // [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base, and once when an offset validation ends
 // (RetireFamilyEpoch, below). Every memo cache whose content was read
 // through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
-// correction is walked again after it instead of serving the old slot's answer for the rest of the session. Nothing
-// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the bumps are
-// few (at most one move per session in every log measured, and one retire per offset validation). The trade: a re-init
-// (CE Disable, then Enable) leaves the previous run's entries resident beside the fresh set it builds -- one set per
-// re-init, never freed -- where a re-init whose family did not move used to reuse them. Reuse across runs was never
+// correction is walked again after it instead of serving the old slot's answer for the rest of the session. A cache
+// that hands out references erases nothing: an entry of an older epoch stays put, so a `const&` already handed out
+// stays valid (a cache that returns copies may evict, oldest first), and the bumps are few (at most one move per
+// session in every log measured, and one retire per offset validation). The trade: a re-init (CE Disable, then Enable)
+// leaves the previous run's entries resident in the reference-handing caches beside the fresh set it builds -- one set
+// per re-init, never freed -- where a re-init whose family did not move used to reuse them. Reuse across runs was never
 // sound anyway: a garbage collection between them can hand a class's address to another class. Moves after init
 // were measured on UE423_Flying (0x78 -> 0x70),
 // DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
