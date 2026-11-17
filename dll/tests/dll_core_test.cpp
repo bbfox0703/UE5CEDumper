@@ -14116,6 +14116,47 @@ int main() {
             VirtualFree(loChunk, 0, MEM_RELEASE);
         }
 
+        // The new row's own first-entry check. An ObjObjects-anchored 4.20-5.7 preallocated array keeps the block at
+        // +0x08, under F's count; placed at 0x00001F00_00001000 its halves (0x1000, 0x1F00) pass F's floor and
+        // num <= max. Relaxed A/C refuses this one first (its Max under its Num), so F is the row that would read it.
+        {
+            void* base = VirtualAlloc(reinterpret_cast<void*>(0x00001F0000000000ull), chunkBytes + 0x10000,
+                                      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            check("UE58-PREALLOC-NO-ROW setup: a block at 0x00001F00_00001000", base != nullptr);
+            if (base) {
+                uint8_t* block = static_cast<uint8_t*>(base) + 0x1000;
+                memcpy(block, pool.chunks[0].data(), chunkBytes);
+                memset(u8, 0, sizeof(u8));
+                for (auto& t : u8Table) t = reinterpret_cast<uintptr_t>(pool.chunks[0].data());
+                u8Table[0] = reinterpret_cast<uintptr_t>(block);
+                putP(0x00, reinterpret_cast<uintptr_t>(u8Table.data()));
+                putP(0x08, reinterpret_cast<uintptr_t>(block));
+                put32(0x10, 0x100); put32(0x14, kCount); put32(0x18, 33); put32(0x1C, 33);
+                Aura::Init(u8Addr);
+                check("UE58-PREALLOC-NO-ROW ⭐: relaxed F does not read an ObjObjects-anchored PreAllocatedObjects as its count",
+                      Aura::s_layout.numElementsOffset != 0x08, layoutText().c_str());
+                VirtualFree(base, 0, MEM_RELEASE);
+            }
+        }
+
+        // F's floor, as A/C, B and D have: a 5.8-shaped array of 2,048 objects (which its strict row refuses for the
+        // same reason) is not taken -- no UE game runs with fewer than 0x1000.
+        build58(poolChunk, 0x800, 1, 0, 0x8000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no count under 0x1000", Aura::s_layout.numElementsOffset != 0x08,
+              layoutText().c_str());
+
+        // A decoy: count-like ints at +0x08 / +0x0C and a heap pointer at +0x00 that leads to no chunk -- the kind of
+        // candidate the heap-fallback recovery hands Aura::Init. F's Objects must read as a chunk table, so it is not
+        // taken for a 5.8 array.
+        static std::vector<uint64_t> blank(8, 0);
+        memset(u8, 0, sizeof(u8));
+        putP(0x00, reinterpret_cast<uintptr_t>(blank.data()));
+        put32(0x08, 0x2000); put32(0x0C, 0x4000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no array whose Objects leads to no chunk",
+              Aura::s_layout.numElementsOffset != 0x08, layoutText().c_str());
+
         // CONTROLS: a 5.8 array its strict row takes is still read whole (one chunk, consistent counts); and a
         // base-anchored UE5-Extended array -- whose +0x08 / +0x0C are MaxObjectsNotConsideredByGC and the
         // OpenForDisregardForGC bool -- is not taken by a 5.8 reading: relaxed E still reads it.

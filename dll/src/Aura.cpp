@@ -800,12 +800,12 @@ static bool DetectLayout(uintptr_t addr) {
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
-    // [VND584-03] Relaxed A/C, B and D take the floor Genau's own rows apply (its static-struct path floors at 16), and
-    // E does not: below it a "count" is usually half of a pointer (the Objects pointer's high dword on a layout no row
-    // fits), and no UE game runs with fewer objects. Above it, a row whose count slot can be the high dword of
+    // [VND584-03] Relaxed A/C, B, F and D take the floor Genau's own rows apply (its static-struct path floors at 16),
+    // and E does not: below it a "count" is usually half of a pointer (the Objects pointer's high dword on a layout no
+    // row fits), and no UE game runs with fewer objects. Above it, a row whose count slot can be the high dword of
     // another layout's chunk table pointer also asks CountIsHalfAChunkTablePointer ([VND584-03-FLOOR-HIGH-HEAP]), and
-    // relaxed D, whose +0x1C can be the high dword of PreAllocatedObjects, asks CountIsHalfOfFirstEntry
-    // ([RELAXED-D-PREALLOC-HALF]).
+    // relaxed F and D, whose count slots can hold half of PreAllocatedObjects, ask CountIsHalfOfFirstEntry
+    // ([RELAXED-D-PREALLOC-HALF], [UE58-PREALLOC-NO-ROW]).
     constexpr int32_t kRelaxedMinObjects = 0x1000;
     // A/C refused because the 8 bytes under its count are a chunk table pointer: the table is at +0x10 (the fallback).
     bool acCountWasHalfAPointer = false;
@@ -863,6 +863,37 @@ static bool DetectLayout(uintptr_t addr) {
                 s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
                 LOG_INFO("ObjectArray: Layout B (relaxed alt) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
+
+    // Layout F (UE 5.8 relaxed): Objects@+0x00, Num@+0x08, Max@+0x0C -- the strict "UE5.8" row's slots.
+    //
+    // [UE58-PREALLOC-NO-ROW] UE 5.8 put ObjObjects first in FUObjectArray, with the counts right after Objects and
+    // PreAllocatedObjects past them, and this tier had no row for that shape: a 5.8 array its strict row refuses -- more
+    // than 20 live chunks (above 1,310,720 objects), a count at an exact multiple of 64K, or a preallocated array
+    // (NumChunks = MaxChunks) -- fell to D or E, which read an unreadable Objects, or to the default layout's MaxChunks.
+    // It mirrors Genau's relaxed "F", ahead of D and E. Its count is an aligned low dword, so the first-entry check is
+    // the half-a-pointer check that applies (an ObjObjects-anchored 4.20-5.7 array keeps PreAllocatedObjects at +0x08),
+    // and its Objects must read as a chunk table, so a +0x00 that is no table -- another layout's GC indices -- is not
+    // taken for one.
+    {
+        int32_t num = 0, max = 0;
+        Macht::ReadSafe(addr + 0x08, num);
+        Macht::ReadSafe(addr + 0x0C, max);
+        if (num >= kRelaxedMinObjects && num <= max && max <= kMaxElementsCeiling) {
+            uintptr_t objPtr = 0, firstEntry = 0;
+            Macht::ReadSafe(addr + 0x00, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
+            Macht::ReadSafe(objPtr, firstEntry);
+            if (CountIsHalfOfFirstEntry(addr, 0x08, firstEntry)) {
+                LOG_INFO("ObjectArray: Layout F (relaxed UE5.8) refused: Num=%d is half of PreAllocatedObjects at "
+                         "+0x08, the table's first entry", num);
+            } else if (ReadsAsChunkTable(objPtr)) {
+                s_layout = { 0x00, 0x0C, 0x08, 0x14, 0x10 };
+                LOG_INFO("ObjectArray: Layout F (relaxed UE5.8) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                         num, max, (unsigned long long)objPtr);
                 return true;
             }
         }
