@@ -13984,6 +13984,20 @@ int main() {
             Aura::Init(paAddr);
             check("RELAXED-D-PREALLOC-HALF ⭐: PreAllocatedObjects above 16 TB is not read as Max / Num -- relaxed E reads it whole",
                   readByE(), layoutText().c_str());
+
+            // The ObjObjects-anchored shape (review wf_5226089b-636, PREALLOC-OBJOBJ-FLAT-UNPINNED): PreAllocatedObjects at
+            // +0x08, Max / Num at +0x10 / +0x14, NumChunks = MaxChunks = 33 as PreAllocate leaves them, which the strict
+            // Default row refuses. Here the strict FLAT row is the one that would read the block's halves; relaxed A/C
+            // reads the array right.
+            memset(pa, 0, sizeof(pa));
+            paTable[0] = reinterpret_cast<uintptr_t>(hiChunk);
+            putP(0x00, reinterpret_cast<uintptr_t>(paTable.data()));
+            putP(0x08, reinterpret_cast<uintptr_t>(hiChunk));
+            put32(0x10, 0x210000); put32(0x14, kCount); put32(0x18, 33); put32(0x1C, 33);
+            Aura::Init(paAddr);
+            check("RELAXED-D-PREALLOC-HALF ⭐: an ObjObjects-anchored array's PreAllocatedObjects is not read as Max / Num either",
+                  Aura::GetCount() == kCount && Aura::s_layout.objectsOffset == 0x00
+                  && Aura::s_layout.numElementsOffset == 0x14 && !Aura::s_presetIsFlat, layoutText().c_str());
             VirtualFree(hiChunk, 0, MEM_RELEASE);
         }
         uint8_t* loChunk = chunkAt({ 0x00F0, 0x00E0, 0x00D0, 0x00C0 });
