@@ -27,6 +27,48 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (build 3736) — A class freed by a level change shows an error, not an empty or old class `[WALKCLASS-STALE-OK]` `[CLASSSTRUCT-FAILED-KEEPS-OLD]`
+
+- **What changes:** after a level change, picking a class the change freed (it is still in the object tree) used to
+  show either an empty class with no error, or the class's fields from before the change. The Class/Struct panel now
+  says `DLL error: Not a live class at … -- freed (a level travel?) or never a UObject`, shows nothing under it, and
+  picking the class again (after another row) asks the game again. The class that the level loaded in its place has a
+  new address and shows normally.
+- **Pipe / MCP:** `walk_class` (and the MCP's `read_class`) refuses an address that is not a live object, before
+  walking it, instead of answering an empty class or a remembered one.
+- **Proven live** on DumperTest Development with a level reload (verification-register.md `[AE23-STEP4-2026-11-18]`).
+- **Verification pass on 3733-3736** (the register): besides 3733's list -- PEHOOK step 8's Run Self-Test on screen,
+  the Solide cap clause, the batch Cheat Table keeping native and packed bools, Z8's class-noise picker, AD18's
+  dinput8 proxy (SEED), the ProcessEvent slot on UE 5.0 (Light Maze), CADENCEBAND measured on Lushfoil, no unresolved
+  bool on DQ XI S, Live Funcs step 3's mutants caught live, step 2's UI memory measured (7-14x its estimate:
+  `[LIVEFUNCS-UI-SNAP-MEMORY]`, open), U2's FName containers on a case-preserving host, and AE23 step 4.
+- **Tests:** C# 8408 passed, 1 skipped; C++ dll_core_test 1631, dll_helpers_test 4244; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 5f7771dd81990944...); UE5Dumper.dll 3,837,952 bytes (sha256 b0bb1670181d7531...).
+
+## 2026-11-18 (builds 3734 and 3735) — `walk_class` and a freed class, two steps `[WALKCLASS-STALE-OK]`
+
+Superseded by 3736 before either left this machine. 3734 refused only an EMPTY walk of a non-live address; a class
+walked before the level change was still answered from the walk cache with its old fields, so 3735 refuses before the
+walk. 3735's panel still kept the old class under the error, which 3736 fixes.
+- 3734: AOT UI sha256 27db6954032b1ac9...; UE5Dumper.dll 3,837,952 bytes (sha256 7e62bf9310058867...).
+- 3735: AOT UI sha256 2ab0535b3d70c787...; UE5Dumper.dll 3,837,952 bytes (sha256 6029fd497483ee9a...).
+
+## 2026-11-18 (build 3733) — A group scan names a container element once `[GROUP-DEEP-INDEX-TWICE]`
+
+- **What changes:** a Value Search **group** scan with Deep on named a container element's field with its index
+  twice -- `Deep_Buckets[29].Subs[29].Leaves[26][26]`, and a struct element's leaf `Items[3].Count[3]`, which the
+  Live Walker's "open at this element" then read as an element row. It now reads `...Leaves[26]` and
+  `Items[3].Count`, and the group filter matches the name as shown (`Map_IntToVec3f[0].X`). Found while closing
+  verification rows on 3732; proven live on 3733.
+- **Tests only:** a Live Funcs trace-ring check that failed about one run in eight now admits the slot the ring leaves
+  out by design (`[LINIE-THREADS-FLAKE]`).
+- **Verification pass (the register):** closed live on 3732-3733 -- `[BOOL-NATIVE-SEARCH]` step 1, V1c's refine
+  prune, FREEZESCOPE step 4's hundreds-scale pool, audit L1 A9 (the deep budget bites), M1/M2/M3 arm (d) through
+  `UE5_Shutdown`, U1's degraded map read, the ProcessEvent slot on UE 5.1 / 5.3 / 4.23, b648 on UE 4.23, and Live
+  Funcs step 2's UE4 model.
+- **Tests:** C# 8406 passed, 1 skipped; C++ dll_core_test 1631, dll_helpers_test 4244; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 086510e7807f77c6...); UE5Dumper.dll 3,837,440 bytes (sha256 816b05abb8910829...).
+
 ## 2026-11-17 (build 3732) — Where a native function writes a field `[DENKEN-WRITE-SITES]`
 
 - **What changes:** the Props dialog (a function's Properties) now shows, for a native C++ function, the addresses of
