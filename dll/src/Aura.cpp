@@ -784,9 +784,10 @@ static bool DetectLayout(uintptr_t addr) {
 
     // [VND584-03] The relaxed rows take Genau's floor: Genau refuses a NumElements below kRelaxedMinObjects for every
     // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
-    // layout no row fits). No UE game runs with fewer objects. Above it, A/C and B -- the two rows that read the count as
-    // a high dword after a pointer slot -- also refuse one that is half of a chunk table pointer
-    // ([VND584-03-FLOOR-HIGH-HEAP], CountIsHalfAChunkTablePointer).
+    // layout no row fits). No UE game runs with fewer objects. Above it, a floored row whose count slot can be the high
+    // dword of another layout's chunk table pointer also asks CountIsHalfAChunkTablePointer ([VND584-03-FLOOR-HIGH-HEAP]).
+    // Relaxed D has no floor, and its +0x1C can be the high dword of PreAllocatedObjects -- an item-array pointer that
+    // check does not follow: [RELAXED-D-PREALLOC-HALF], a row of its own.
     constexpr int32_t kRelaxedMinObjects = 0x1000;
     // A/C refused because the 8 bytes under its count are a chunk table pointer: the table is at +0x10 (the fallback).
     bool acCountWasHalfAPointer = false;
