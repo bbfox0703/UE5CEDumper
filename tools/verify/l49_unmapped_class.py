@@ -3,14 +3,17 @@ r"""L49 `[A2-WALKCLASSEX-UNMAPPED]`: an unreadable class address is logged once 
 
     py tools/verify/l49_unmapped_class.py --pid <game pid> --log-dir "%LOCALAPPDATA%\UE5CEDumper\Logs\DumperTest-Win64-Shipping"
 
-THE ROW SAYS "no live trigger" -- the 2026-09-22 survey found one. `walk_class` hands ANY address to
+THE ROW SAYS "no live trigger" -- the 2026-09-22 survey found one. `walk_class_batch` hands ANY address to
 `Ubel::WalkClassEx`, which has no GObjects-membership check, so a page RESERVED (never committed) in
-the game from outside is exactly the transient fault dll_core_test manufactures by decommitting a page:
+the game from outside is exactly the transient fault dll_core_test manufactures by decommitting a page.
+⚠ Since `[WALKCLASS-STALE-OK]` (build 3734) the SINGULAR `walk_class` refuses an address that is not a live
+object before walking it, so it no longer reaches WalkClassEx with P; the arms below go through the batch, and
+the singular refusal is checked as a control (review wf_72c53295-04c L49-RIG-FALSE-FAIL).
 
-  STEP A  walk_class P twice + walk_class_batch [P, P] on a reserved page: every reply has no fields,
-          walk-0.log gains EXACTLY ONE "WalkClass: 0x<P> is not readable at +0x..." and ZERO
-          "WalkClassEx: 0x<P> REFUSED".
-  STEP B  commit P and copy a real UClass's first 0x400 bytes into it: walk_class P must now return
+  STEP A  walk_class_batch [P] twice + [P, P] on a reserved page: every reply has no fields, walk-0.log
+          gains EXACTLY ONE "WalkClass: 0x<P> is not readable at +0x..." and ZERO "WalkClassEx: 0x<P>
+          REFUSED"; and the singular walk_class P answers the "Not a live class" error.
+  STEP B  commit P and copy a real UClass's first 0x400 bytes into it: walk_class_batch [P] must now return
           that class's name and field list. ⭐ THIS is the discriminator -- pre-fix, WalkClassEx had
           memoized {P, PropertiesSize 0} forever and answered the empty class again.
 
@@ -46,9 +49,22 @@ COPY = 0x400
 
 
 def fields_of(reply):
+    # A refusal is never read as an empty class: that is exactly the confusion this rig exists to tell apart.
+    if reply.get("ok") is False:
+        raise SystemExit("FAIL: walk_class refused: %s" % reply.get("error"))
     d = reply.get("data", reply)
     c = d.get("class") or {}
     return c.get("name"), [(f.get("name"), f.get("offset"), f.get("type")) for f in (c.get("fields") or [])]
+
+
+def batch_one(c, addr):
+    """walk_class_batch [addr] -> (name, fields), the shape fields_of gives for the singular reply."""
+    r = c.request("walk_class_batch", addrs=[addr])
+    if r.get("ok") is False:
+        raise SystemExit("FAIL: walk_class_batch refused: %s" % r.get("error"))
+    d = r.get("data", r)
+    cls = (d.get("classes") or [{}])[0] or {}
+    return cls.get("name"), [(f.get("name"), f.get("offset"), f.get("type")) for f in (cls.get("fields") or [])]
 
 
 def main():
@@ -93,13 +109,17 @@ def main():
             start = os.path.getsize(walklog)
 
             # ---- STEP A ----
-            r1 = fields_of(c.request("walk_class", addr=Ps))
-            r2 = fields_of(c.request("walk_class", addr=Ps))
+            r1 = batch_one(c, Ps)
+            r2 = batch_one(c, Ps)
+            single = c.request("walk_class", addr=Ps)
+            print("        control: walk_class P -> %s" % (single.get("error") or "ok (not refused)"))
+            if single.get("ok") is not False or "Not a live class" not in (single.get("error") or ""):
+                fails.append("STEP A control: the singular walk_class answered P instead of refusing it")
             rb = c.request("walk_class_batch", addrs=[Ps, Ps])
             db = rb.get("data", rb)
             batch = db.get("classes") or db.get("results") or []
             batch_fields = [len((x.get("class", x) or {}).get("fields") or []) for x in batch]
-            print("STEP A: walk_class P -> %d, %d fields; walk_class_batch [P,P] -> %s"
+            print("STEP A: walk_class_batch [P] -> %d, %d fields; walk_class_batch [P,P] -> %s"
                   % (len(r1[1]), len(r2[1]), batch_fields))
             if r1[1] or r2[1] or any(batch_fields):
                 fails.append("STEP A: a reserved page returned fields")
@@ -130,9 +150,9 @@ def main():
                 ok2 = k.WriteProcessMemory(h, ctypes.c_void_p(P), buf, got.value, ctypes.byref(wrote))
                 print("STEP B: committed P, copied %d bytes of the real class (read ok=%s, write ok=%s)"
                       % (wrote.value, bool(ok), bool(ok2)))
-                name_b, fields_b = fields_of(c.request("walk_class", addr=Ps))
+                name_b, fields_b = batch_one(c, Ps)
                 same = (name_b == base_name and fields_b == base_fields)
-                print("        walk_class P -> class %s, %d fields; identical to the baseline: %s"
+                print("        walk_class_batch [P] -> class %s, %d fields; identical to the baseline: %s"
                       % (name_b, len(fields_b), same))
                 if not same:
                     fails.append("STEP B: P answered %s/%d fields, not %s/%d -- memoized empty?"
