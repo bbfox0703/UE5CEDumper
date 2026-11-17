@@ -771,13 +771,18 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     if (sring >= 0 && !stackTaken) StackRingAt(sring).skippedBudget.fetch_add(1, std::memory_order_relaxed);
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
-    r.seqKind = seq;
+    // [LINIE-SEQ-LAST] The number LAST, as the parameter rings do: a writer the ring laps between its first store and
+    // its last then ends on its own (stale) number, which CopyTrace drops, instead of finishing its payload under the
+    // newer record's number. The sentinel is a number no slot can hold.
+    r.seqKind = UINT64_MAX;
     r.ticks   = ticks;
     r.a       = ufunc;
     r.b       = obj;
     r.tid     = tid;
     r.flags   = (open ? kTraceScopeRoot : 0) | (lone ? kTraceSnapLone : 0) | (excluded ? kTraceSnapExcluded : 0) |
                 ((ring >= 0 && !taken) ? kTraceSnapBudget : 0) | ((sring >= 0 && !stackTaken) ? kTraceStackBudget : 0);
+    std::atomic_signal_fence(std::memory_order_release);   // the compiler keeps the payload before the number
+    r.seqKind = seq;
     // The record and the token are whole before the copy: a copy that faults out of here (the copier is game memory)
     // still leaves a call that returns and closes its scope, and a record that does not claim a copy.
     tok.entrySeq = seq;
@@ -809,12 +814,14 @@ void TraceReturn(const TraceToken& tok, uint32_t tid, uintptr_t params) {
     if (!g_tracing.load(std::memory_order_seq_cst) || g_trace.gen != tok.gen) return;
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
-    r.seqKind = seq | kTraceReturnBit;
+    r.seqKind = UINT64_MAX;            // [LINIE-SEQ-LAST] as TraceEnter: the number last
     r.ticks   = g_clock();
     r.a       = tok.entrySeq;
     r.b       = 0;
     r.tid     = tid;
     r.flags   = 0;
+    std::atomic_signal_fence(std::memory_order_release);
+    r.seqKind = seq | kTraceReturnBit;
     // [LIVEFUNCS-STEP2] The out parameters and the return value: a slot of its own, under the same gen check -- the
     // token's ring index means nothing to another recording.
     if (tok.after.ring >= 0) SnapWrite(tok.after.ring, tok.entrySeq, true, params, tok.after);

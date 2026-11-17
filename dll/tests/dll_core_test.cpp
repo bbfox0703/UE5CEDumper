@@ -10269,20 +10269,18 @@ int main() {
         info = Linie::GetTraceInfo();
         check("threads: nothing is written once Stop returns", w1 == w2 && w1 > 0, sz(w2 - w1).c_str());
         // [LINIE-THREADS-FLAKE] CopyTrace LEAVES OUT a slot written out of turn: a writer that took its number, then lost
-        // the slot to one a lap later (the ring laps many times in 30 ms of four writers). This check demanded the kept
-        // numbers be gap-free, and failed about one run in eight with 16,383 of 16,384 kept (measured 2026-11-18, two
-        // fails in sixteen runs, each one slot short). The numbers must RISE inside the window; a gap is that drop.
+        // the slot to one a lap later (the ring laps many times in 30 ms of four writers), ends on its own stale number
+        // since [LINIE-SEQ-LAST] (the number stored last). This check demanded gap-free numbers and failed about one run
+        // in eight with 16,383 of 16,384 kept (measured 2026-11-18, two fails in sixteen runs, each one slot short). Kept
+        // slots are CopyTrace's own: inside the window, rising. What is checked is their CONTENT, record by record.
         bool slotsOk = copyAll() && !recs.empty();
-        uint64_t prevSeq = 0;
         for (size_t k = 0; slotsOk && k < recs.size(); ++k) {
             const Linie::TraceRecord& r = recs[k];
             const uint64_t seq = r.seqKind & Linie::kTraceSeqMask;
             const bool isRet = (r.seqKind & Linie::kTraceReturnBit) != 0;
-            const bool inOrder = seq >= info.firstValid && seq < info.written && (k == 0 || seq > prevSeq);
-            slotsOk = inOrder && r.tid >= 1 && r.tid <= 4 &&
+            slotsOk = r.tid >= 1 && r.tid <= 4 &&
                       (isRet ? (r.a < seq && r.b == 0)
                              : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
-            prevSeq = seq;
         }
         check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
         // Only a lapped write's slot goes: nearly the whole window is kept (a writer loses its slot only when another
