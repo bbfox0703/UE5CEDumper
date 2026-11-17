@@ -27,6 +27,35 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3722) — An init's offsets are checked again when it ends, and a command read during it leaves a trace `[CPP-HARDENING-2026-11-14]`
+
+The hardening analysis's two init-window logic gaps, fixed as the maintainer decided on 2026-11-17 and reviewed in
+rounds with the maintainer present. No visible change in the UI.
+- **What changes:**
+  - `[DYNOFF-LATCH-STALE]`: the struct-slot calibration (CorrectSubclassOffsets) latched once per process, so a
+    property layout published after it -- Genau's measurement on a later init, or the defaults a re-run init applies
+    first -- was never checked again, and a derivation one pointer off stayed for the session. The latch now records
+    the layout's epoch, which every layout move re-arms; and the end of every offset validation retires the epoch, so
+    classes cached during an init, read with offsets still being measured, are walked again afterwards even when the
+    layout did not move. A class walk that straddles the end of a validation walks again.
+  - `[PIPE-WALK-DURING-INIT]`: the pipe still answers every command during an init (proxy mode's trigger_scan, an
+    Extra Scan apply) -- nothing is refused -- and now writes each command name once per run to the pipe log,
+    `<cmd> arrived during an init or rescan apply -- offsets or pointers it read may not be final yet`: the trace a
+    wrong answer from that window needs.
+- **Proven live** on DLL 3722 (DumperTest Shipping, UE 5.4): `initlog_live.py` 6/6 with a `dxgi.dll` proxy (four
+  lines, one per name, over 48 commands, every one answered); `latch_regression_live.py` 4/4 injected and 4/4 in proxy
+  mode (every StructProperty of DumperTestActor names its struct, no calibration move); `mcp_client.py` probe 29/29,
+  raw 28/28, fieldgrant 44/44. The latch's failure itself needs a mis-derived layout no fixture has; dll_core_test
+  holds it.
+- **Reviews:** three rounds (`wf_8f451d97-434`, `wf_b0aa9098-dd5`, `wf_2d9f83d5-21b`), every finding fixed in its own
+  commit; a fourth (`wf_09b53b67-caf`) found one more straddle, fixed in build 3723. Round 1's B-INIT-WINDOW -- what an
+  init cached mid-run surviving it when the layout did not move -- predates this build: a first proxy-mode init already
+  had it.
+- **Left as decided** (maintainer, 2026-11-17): `[VND584-03-FLOOR-HIGH-HEAP]` waits for a real game; no ASan CI job.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1585 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 bca2b9ffcdfdb536...); UE5Dumper.dll 3,797,504 bytes (sha256 a04c5cffa6fef726...).
+
 ## 2026-11-17 (build 3721) — The remaining lazily measured offsets are race-free reads `[CPP-HARDENING-2026-11-14]`
 
 The last code follow-up of the maintainer's C++ hardening item 2 (race-free reads of calibrated offsets). No visible
