@@ -606,6 +606,26 @@ static bool LooksLikeHeapPtr(uintptr_t ptr) {
     return true;
 }
 
+// [VND584-03-FLOOR-HIGH-HEAP] Whether the 8 bytes whose high dword a relaxed row reads as its NumElements point to a
+// chunk table -- i.e. whether that "count" is the high half of the Objects pointer of a layout no strict row fit. The
+// relaxed rows' 0x1000 floor refuses such a count only while the table sits below 16 TB; the AddressSanitizer build's
+// heap sat at high dword 0x1222, and real UE 5 heaps reach 0x7FEA. A real table pointer's high dword is under 0x8000
+// (user space ends at 128 TB), so between the floor and that the qword is FOLLOWED as a table: its first entry must be a
+// heap pointer to a readable chunk. A genuine Max / Num pair read as one qword is Num x 4 GB + Max -- past user space
+// for a game of 32,768 objects or more, and below that an address that would have to hold a heap pointer to readable
+// memory. The check reads memory rather than judging the value's range, which would refuse real arrays (the row's
+// 2026-11-17 re-read), and looks no further than the chunk, so no item layout (packed UE 5.7+ included) matters.
+static bool CountIsHalfAChunkTablePointer(uintptr_t addr, int numOff) {
+    uintptr_t qword = 0;
+    if (!Macht::ReadSafe(addr + numOff - 4, qword)) return false;
+    qword = DecryptObjectPtr(qword);
+    if (!LooksLikeHeapPtr(qword)) return false;
+    uintptr_t chunk0 = 0;
+    if (!Macht::ReadSafe(qword, chunk0) || !LooksLikeHeapPtr(chunk0)) return false;
+    uint8_t item[16];
+    return Macht::ReadBytesSafe(chunk0, item, sizeof(item));
+}
+
 // Log all 5 layout field values at an address for diagnosis.
 static void LogLayoutFields(uintptr_t addr, const ArrayLayout& layout, const char* presetName) {
     int32_t numElements = 0, maxElements = 0, numChunks = 0, maxChunks = 0;
@@ -756,7 +776,9 @@ static bool DetectLayout(uintptr_t addr) {
 
     // [VND584-03] The relaxed rows take Genau's floor: Genau refuses a NumElements below kRelaxedMinObjects for every
     // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
-    // layout no row fits). No UE game runs with fewer objects.
+    // layout no row fits). No UE game runs with fewer objects. Above it, A/C and B -- the two rows that read the count as
+    // a high dword after a pointer slot -- also refuse one that is half of a chunk table pointer
+    // ([VND584-03-FLOOR-HIGH-HEAP], CountIsHalfAChunkTablePointer).
     constexpr int32_t kRelaxedMinObjects = 0x1000;
 
     // Layout A/C (relaxed): Objects@+0x00, Num@+0x14, Max@+0x10
@@ -768,7 +790,10 @@ static bool DetectLayout(uintptr_t addr) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x00, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
+            if (CountIsHalfAChunkTablePointer(addr, 0x14)) {
+                LOG_INFO("ObjectArray: Layout A/C (relaxed) refused: Num=%d is the high dword of a chunk table pointer "
+                         "at +0x10", num);
+            } else if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
                 LOG_INFO("ObjectArray: Layout A/C (relaxed) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);
@@ -801,7 +826,10 @@ static bool DetectLayout(uintptr_t addr) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x10, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
+            if (CountIsHalfAChunkTablePointer(addr, 0x04)) {
+                LOG_INFO("ObjectArray: Layout B (relaxed alt) refused: Num=%d is the high dword of a chunk table pointer "
+                         "at +0x00", num);
+            } else if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
                 LOG_INFO("ObjectArray: Layout B (relaxed alt) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);

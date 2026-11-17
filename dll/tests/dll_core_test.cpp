@@ -13796,18 +13796,13 @@ int main() {
         buildMist(1, kCount);
         Aura::Init(reinterpret_cast<uintptr_t>(mist));
         got = Aura::GetCount();
-        // The floor tells a count from half a pointer only while the chunk table sits below 16 TB (its high dword
-        // under 0x1000). The AddressSanitizer build's heap lives higher (high dword 0x1222, 2026-11-15), and there
-        // relaxed A/C reads that dword as the count again -- as it would in a game whose table sits that high:
-        // [VND584-03-FLOOR-HIGH-HEAP]. Where the premise does not hold the check cannot test the floor, so it says so.
-        const uint32_t tableHigh = static_cast<uint32_t>(table >> 32);
-        if (tableHigh < 0x1000) {
-            check("VND584-03 ⭐: with no strict row, the relaxed rows' 0x1000 floor still reaches every object",
-                  got == kCount, std::to_string(got).c_str());
-        } else {
-            printf("  SKIP  VND584-03: the fixture's chunk table is above 16 TB (high dword 0x%X), where the floor "
-                   "cannot work; read %d objects -- [VND584-03-FLOOR-HIGH-HEAP]\n", tableHigh, got);
-        }
+        // The floor tells a count from half a pointer only while the chunk table sits below 16 TB (its high dword under
+        // 0x1000). Above, the pointer's high dword passes it -- the AddressSanitizer build's heap, high dword 0x1222 --
+        // and relaxed A/C refuses it as half of a chunk table pointer instead ([VND584-03-FLOOR-HIGH-HEAP]); this check
+        // used to SKIP there. The block below places a table above 16 TB in every build.
+        check("VND584-03 ⭐: with no strict row, the relaxed rows still reach every object",
+              got == kCount, (std::to_string(got) + " objects, table high dword "
+                              + std::to_string(static_cast<uint32_t>(table >> 32))).c_str());
 
         // [VND584-03-FLOOR-HIGH-HEAP] The same shapes with the chunk table placed above 16 TB on purpose, so every build
         // tests what only the AddressSanitizer build's heap reached: a table pointer whose high dword (0x1F00 and up) passes
@@ -13858,6 +13853,23 @@ int main() {
                 check("VND584-03-FLOOR-HIGH-HEAP control: a genuine A/C array above 16 TB is still read whole by its row",
                       got == kCount && Aura::s_layout.objectsOffset == 0x00 && Aura::s_layout.numElementsOffset == 0x14,
                       (std::to_string(got) + " objects, objectsOffset " + std::to_string(Aura::s_layout.objectsOffset)).c_str());
+
+                // The helper alone. A table pointer is half-a-pointer; a genuine Max / Num pair is not, whether its qword
+                // lands in user space (Num under 0x8000) or past it; nor is a readable address holding no heap pointer.
+                memset(mist, 0, sizeof(mist));
+                putP(0x10, hiTable);
+                check("VND584-03-FLOOR-HIGH-HEAP ⭐: a table pointer under the count slot is half of a chunk table pointer",
+                      Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                put32(0x10, 0x60000); put32(0x14, kCount);
+                check("VND584-03-FLOOR-HIGH-HEAP control: a genuine Max / Num pair (Num 16,384) is not",
+                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                put32(0x14, 123653);   // the Outer Worlds 2's count: the qword is past user space
+                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose qword is past user space (Num 123,653)",
+                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
+                static std::vector<uint64_t> notATable(4, 0x1234);
+                putP(0x10, reinterpret_cast<uintptr_t>(notATable.data()));
+                check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is no heap pointer",
+                      !Aura::CountIsHalfAChunkTablePointer(reinterpret_cast<uintptr_t>(mist), 0x14));
                 VirtualFree(high, 0, MEM_RELEASE);
             }
         }
