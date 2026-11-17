@@ -14283,6 +14283,23 @@ int main() {
               Aura::NameGroupDeepLeaf("Arr_Int", 2, "").elementIndex == 2);
     }
 
+    // [GROUP-RAW-WIDTH-INTERN] Review wf_72c53295-04c GRP-RAW-INTERN-WIDTH: a native-C hole emits one leaf per width that
+    // satisfies a slot, all named "<raw@0xNN>" at one offset, and the descriptor intern key (class | name | offset) put
+    // them all on the FIRST width's descriptor -- so a 32-bit field matched as Int16 was refined and shown as Int16, and
+    // an Exact refine past Int16's range dropped it.
+    {
+        Aura::GroupLeafMeta i16, i32;
+        i16.fieldName = i32.fieldName = "<raw@0x2A0>";
+        i16.offset = i32.offset = 0x2A0;
+        i16.fieldType = "Int16Property";
+        i32.fieldType = "IntProperty";
+        check("* GROUP-RAW-WIDTH-INTERN: two widths at one raw offset intern apart",
+              Aura::GroupDescInternKey("BP_Hero_C", i16) != Aura::GroupDescInternKey("BP_Hero_C", i32));
+        Aura::GroupLeafMeta again = i16;
+        check("control: the same leaf interns to the same key",
+              Aura::GroupDescInternKey("BP_Hero_C", i16) == Aura::GroupDescInternKey("BP_Hero_C", again));
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

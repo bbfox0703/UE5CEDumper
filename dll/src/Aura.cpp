@@ -9808,6 +9808,13 @@ struct GroupLeafMeta {
 // as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
 // element row). [GROUP-DEEP-INDEX-TWICE]
 struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
+// The key a group leaf's descriptor is interned under. [GROUP-RAW-WIDTH-INTERN]
+std::string GroupDescInternKey(const std::string& className, const GroupLeafMeta& meta) {
+    std::string key = className; key += '|'; key += meta.fieldName;
+    key += '|'; key += std::to_string(meta.offset);
+    return key;
+}
+
 GroupDeepLeafName NameGroupDeepLeaf(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName) {
     std::string name = arrayPath;
     name += "[]";
@@ -10327,8 +10334,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         // Direct leaves intern by (class, field, offset) across instances. A deep leaf's
         // name holds its outer indices and a "[]" for its own, so the elements of one
         // container share a descriptor and the slot match carries the element index.
-        std::string key = className; key += '|'; key += meta.fieldName;
-        key += '|'; key += std::to_string(meta.offset);
+        std::string key = GroupDescInternKey(className, meta);
         auto it = descIntern.find(key);
         if (it != descIntern.end()) return it->second;
         Radar::FieldDescriptor d;
