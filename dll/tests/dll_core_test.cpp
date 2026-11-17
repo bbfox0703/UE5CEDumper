@@ -10396,6 +10396,48 @@ int main() {
             Linie::FreeTrace();
         }
 
+        // [LINIE-SEQ-LAST] Review wf_d3c2ec9a-d52 (LINIE-FLAGS-AFTER-SEQ): TraceEnter published the number, THEN copied the
+        // parameters (or walked the stack) and OR-ed kTraceSnapTaken / kTraceStackTaken into the record -- the slowest
+        // part of the write. A copy during which the ring laps puts that bit on the NEWER record, kept under its own
+        // number. Deterministic: the copier below laps an 8-slot ring from inside SnapWrite (tid 2, nothing chosen).
+        {
+            static std::atomic<int> s_copyLaps{ 0 };
+            Linie::Reset();
+            Linie::FreeTrace();
+            Linie::TraceConfig c;
+            c.bytes = 8 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 64 };
+            c.snapBytes = 64 * 1024;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool {
+                if (s_copyLaps.exchange(0) == 1) {
+                    for (int i = 0; i < 4; ++i) {          // 8 records: one whole lap
+                        Linie::TraceToken t;
+                        Linie::TraceEnter(0x700, 2, 1000, 2, t);
+                        Linie::TraceReturn(t, 2);
+                    }
+                }
+                memcpy(dst, reinterpret_cast<const void*>(src), n);
+                return true;
+            };
+            Linie::StartTrace(c);
+            uint8_t params[64] = {};
+            Linie::ArmHint h{};
+            h.gen = Linie::GetTraceInfo().gen; h.ring = 0; h.arm = 1; h.copy = 16;
+            Linie::TraceToken a;
+            s_copyLaps = 1;
+            Linie::TraceEnter(0xF1, 0xB1, 1000, 1, a, reinterpret_cast<uintptr_t>(params), h);   // chosen: its copy laps
+            Linie::StopTrace();
+            std::vector<Linie::TraceRecord> got;
+            const bool copied = Linie::CopyTrace(0, SIZE_MAX, got);
+            size_t falseClaims = 0;
+            for (const auto& r : got)
+                if (r.tid == 2 && (r.flags & (Linie::kTraceSnapTaken | Linie::kTraceStackTaken))) ++falseClaims;
+            check("* LINIE-SEQ-LAST: a copy the ring laps puts no taken flag on a record that took nothing",
+                  copied && falseClaims == 0, (sz(falseClaims) + " of " + sz(got.size())).c_str());
+            check("control: the lap's records are kept", copied && got.size() >= 6, sz(got.size()).c_str());
+            Linie::FreeTrace();
+        }
+
         // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
         // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
         {
