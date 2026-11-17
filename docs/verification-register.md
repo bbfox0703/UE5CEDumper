@@ -7117,7 +7117,7 @@ once a scan enters `AOBScanAllModules` every poll added here is unreachable.
 ✅ **MA1 since fixed** (noted 2026-11-17): builds 3091 / 3095, verified live as `[ELLIOT-MA1-2026-08-18]`
 (docs/archive/todo-closed-2026-08-23-build-3337.md); this section's own log quote shows `AOB scan CANCELLED`.
 
-### 🟡 4-of-6 2026-08-17 `[AE23-UI-2026-08-17]` — AE2 / AE3: the Class/Struct panel under fast selection
+### 🟡 5-of-6 (step 4 closed 2026-11-18) `[AE23-UI-2026-08-17]` — AE2 / AE3: the Class/Struct panel under fast selection
 
 Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
 
@@ -7139,7 +7139,22 @@ Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
   — see the block below.
 * **6 — PASS.** Typing `Light` then `SkyLight` into the tree filter with a node selected left the
   Class/Struct panel **fully populated** on the previous class — it neither blanked nor flickered.
-* **4 — not run** (needs a level travel to make a class address go stale; human-gated).
+* **4 — PASS 2026-11-18 on build 3736 `[AE23-STEP4-2026-11-18]`, after two fixes it found.** Host: DumperTest
+  **Development** (its console does the travel; said so as the step asks). `open Minimal_Default` from the game console:
+  that map is not cooked, so UE reloaded ThirdPersonMap instead (`Browse: …ThirdPersonMap?closed`, `LoadMap complete`),
+  which frees the level-script class `ThirdPersonMap_C` all the same — after the reload it lives at a new address. The
+  object tree still held the old one. Before the reload the Class/Struct panel showed it (Super LevelScriptActor,
+  Properties Size 680); after it, another row and then the stale class row: the UI pipe log has a NEW
+  `walk_class` for `0x1BC0229CB80` answered `{"error":"Not a live class at 0x1BC0229CB80 -- freed (a level travel?) or
+  never a UObject","ok":false}`, the panel shows `DLL error: Not a live class at …` and nothing under it ("Select an
+  object to view its class structure"); another row and the class row again sent another request (id 163), refused
+  the same way — a retry, not a cached no-op. The freed level-script instance's row asks `get_object`, gets
+  `class_addr` 0xDDDDDDDDDDDDDDDD and is refused at `walk_class` too. Log `out/register/ae23/ui-pipe-3736.log`.
+  ⚠ What it took: on 3733 `walk_class` answered the freed address `ok` with an empty class (a blank panel, no error);
+  on 3734, with the class walked before the reload, `ok` with its OLD fields from WalkClassEx's memo
+  (`[WALKCLASS-STALE-OK]`, fixed in 3735 by refusing a non-live address before the walk); on 3735 the error line sat
+  above the pre-reload fields (`[CLASSSTRUCT-FAILED-KEEPS-OLD]`, fixed in 3736). ⚠ Clicking the row that is already
+  selected sends nothing — the list raises no selection change for it — so the retry is "another row, then back".
 * **5 — not run** (the cross-tab handoff; nothing pushed a class into Class/Struct in this session).
 
 > #### ✅ STEP 3'S SECOND HALF CLOSED 2026-08-25 `[AE23-SPINNER-2026-08-25]` — offline, because the observer was the problem
