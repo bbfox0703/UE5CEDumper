@@ -95,8 +95,9 @@ def main() -> int:
     check("the log: the later copy takes over from the earlier copy by name",
           re.search(r"Land: taking over from the earlier copy at [^\n]*" + earlier_name, text, re.I) is not None)
     how = "yielded" if a.yields else "shut down"
-    check(f"the log: the earlier copy {how}, and its mailbox is served by the later copy",
-          re.search(rf"Land: the earlier copy {how} in \d+ ms; its mailbox is served by this copy", text) is not None)
+    check(f"the log: the earlier copy {how}", re.search(rf"Land: the earlier copy {how} in \d+ ms", text) is not None)
+    check("the log: its mailbox is served by the later copy",
+          "Land: the earlier copy's mailbox is served by this copy" in text)
     check("the log: the later copy serves the earlier copy's mailbox",
           f"serving an earlier copy's mailbox at" in text)
     check("the log: the earlier copy's poller stopped", "Mailbox: polling thread stopped" in text)
