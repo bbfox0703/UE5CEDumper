@@ -27,6 +27,42 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (build 3741) — A class at a reused address is walked again; Live Funcs records stay whole when the trace buffer wraps `[WALKCLASS-MEMO-REUSE]` `[LINIE-SEQ-LAST]` `[TRACE-DROPPED-ENTRY]` `[GROUP-RAW-WIDTH-INTERN]`
+
+- **What changes:**
+  - **A class at a reused address.** After a level change frees a class and another object is allocated at its
+    address (the reloaded class, or any object of that size), everything that reads a class -- the Class/Struct
+    panel, Value and Property Search, snapshots, the CE export, Force Field, God Mode -- was answered with the freed
+    class's fields. Each remembered walk now keeps a witness of what it walked (the object's name and Outer, its
+    property chains and its super), and a hit whose witness no longer reads back is walked again. An address whose
+    contents keep changing is walked again at most 8 times running and then stops for good; one that holds still for
+    3 reads is forgiven. `get_diagnostics`' `class_cache` reports `parked_walks` and `stopped_addresses`.
+  - **Live Funcs, Call Trace.** A trace record's number is now stored after its contents, so a record overwritten
+    while the buffer wrapped is left out rather than read back with another call's function, object and thread. The
+    call tree keeps a call's callers open when its start was left out (their later calls used to become roots), and
+    the status line, the JSONL export (`entries_dropped`, `other_dropped`) and the load log say how many records
+    inside the kept part were left out.
+  - **Group scan, native C.** Two widths matched at one unmanaged offset no longer share the first width's
+    descriptor, so an int32 there is refined and shown as an int32, not as an Int16.
+- **Proven live on 3739** (the DLL's code is unchanged since; 3740 and 3741 change the UI's wording and a rig): the
+  Live Funcs trace 18/18, snapshots 34/34 and stacks 32/32 on DumperTest 5.8; the L49 unmapped-class rig three times
+  in one game process and twice more on 3740; A9's deep budget 6/6 and the bool / V1c search 13/13 on DumperTest
+  Shipping; a level reload: the freed class's address refused, the reloaded class walked. Timing medians (5 runs):
+  value scan 51 ms, deep group scan 57 ms, property batch 38 ms, against 51 / 62 / 42 ms on 3736.
+- **Reviewed** by five review rounds; every confirmed finding was fixed red then green.
+- **Tests:** C# 8413 passed, 1 skipped; C++ dll_core_test 1649, dll_helpers_test 4246; 39 gates.
+- AOT UI 62,713,856 bytes (sha256 f1743b9dea12c93d...); UE5Dumper.dll 3,847,680 bytes (sha256 320f7b840f971f00...).
+
+## 2026-11-18 (builds 3737 to 3740) — The class-walk witness and the trace numbers, four review rounds `[WALKCLASS-MEMO-REUSE]` `[LINIE-SEQ-LAST]` `[TRACE-DROPPED-ENTRY]`
+
+Superseded by 3741 before any left this machine. 3737 added the witness, the number-last trace writer and the
+group-scan key; 3738 gave the witness the object's name and Outer and kept the call tree's callers open; 3739 made
+the per-address stop sticky and counted every dropped record; 3740 stopped calling the unattributed ones returns.
+- 3737: AOT UI sha256 e4944354...; UE5Dumper.dll 3,842,048 bytes (sha256 60bc7fbd...).
+- 3738: AOT UI sha256 9e700e66...; UE5Dumper.dll 3,844,608 bytes (sha256 5dcfdcc9...).
+- 3739: AOT UI 62,713,344 bytes (sha256 6eb80967...); UE5Dumper.dll sha256 aeb83b0c....
+- 3740: AOT UI sha256 3d0f558b...; UE5Dumper.dll sha256 9b5487cf....
+
 ## 2026-11-18 (build 3736) — A class freed by a level change shows an error, not an empty or old class `[WALKCLASS-STALE-OK]` `[CLASSSTRUCT-FAILED-KEEPS-OLD]`
 
 - **What changes:** after a level change, picking a class the change freed (it is still in the object tree) used to
