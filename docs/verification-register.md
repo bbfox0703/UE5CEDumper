@@ -1103,7 +1103,8 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `initlog_live.py` 6/6). The pipe log has four lines, one per name -- the unknown `initlog_no_such_command`,
     `get_pointers`, `pipe_clients`, and lane A's own `scan_status` polls -- over 48 lane-B commands, every known one
     answered ok and the connection never dropped. The same DLL injected (pid 19744) logged none, as it must: the pipe
-    opens after `UE5_Init`. The proxy was removed from the fixture afterwards.
+    opens after `UE5_Init`. The proxy was removed from the fixture afterwards. **Re-run on 3723** (the round-4 fix,
+    pid 40176): 6/6, the same four names once each; proxy removed again.
     In inject mode the pipe opens only after `UE5_Init`, so only a proxy reaches the window. Acceptance: `py tools/verify/initlog_live.py --pid <pid>` on a game whose 3722 proxy has
     not scanned yet passes every check -- at least one `<cmd> arrived during an init or rescan apply` line in the pipe
     log, each name at most once, lane B's connection never dropped, every known command answered ok. A run whose scan
@@ -1114,6 +1115,8 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     DumperTestNestedBag); no `CorrectSubclassOffsets: delta=` line; one `ValidateAndFixOffsets` run. Same build,
     injected: `mcp_client.py probe` 29/29, `raw` 28/28, `fieldgrant` 44/44. **Not reached:** the failure itself -- no
     fixture mis-derives the family; dll_core_test's LATCHSTALE, OFFSETS, UPROPSLOT and straddle checks hold it.
+    **Re-run on 3723** (the seqlock-shaped retire count): 4/4 injected (pid 24120) and 4/4 in proxy mode (pid 40176);
+    `probe` 29/29, `raw` 28/28, `fieldgrant` 44/44. The half-retire interleaving is dll_core_test's (a timed thread).
     The failure it fixes -- a family published after a calibration, one
     pointer off -- needs a game whose Genau derivation is wrong, and no fixture has one. Acceptance: on DumperTest
     Shipping with an injected 3722 DLL, the walk log has no more `CorrectSubclassOffsets: delta=` lines than a 3721 run,
