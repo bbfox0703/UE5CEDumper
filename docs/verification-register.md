@@ -1129,7 +1129,14 @@ Relaxed A/C and B refuse a count that is half of a chunk table pointer unless th
 (docs/todo.md has the commits). Unit tests: dll_core_test's VND584-03 block, with a chunk table VirtualAlloc'd above
 16 TB in every build; the ASan run of it no longer SKIPs.
 
-1. ⬜ **The Outer Worlds 2, the one title that reaches relaxed A/C.** Its strict presets all fail (docs/test-games.md:
+1. ✅ **CLOSED 2026-11-17** (DLL 3724 as the title's `dxgi.dll` proxy, refreshed from 3,479,040 B; pid 41832, at the
+    title screen; `relaxed_layout_live.py --expect-row "A/C (relaxed)" --min-objects 100000` 4/4). The log: `Strict
+    validation failed for all presets`, then `Layout A/C (relaxed) detected (Num=122404, Objects=0x2A9DA53A580)` and no
+    `refused` line; `get_object_count` 122,404; `walk_world` answers `ConversationalMainMenu`, its PersistentLevel, 200
+    actors. Its table sits below 16 TB (high dword 0x2A9) and its count puts the Max / Num pair past user space, so the
+    new check cannot touch this title -- which is what the row had to show. The game was closed afterwards; the proxy
+    stays refreshed (3724).
+    The Outer Worlds 2, the one title that reaches relaxed A/C. Its strict presets all fail (docs/test-games.md:
     Num 123,653, stride 24). Acceptance: with a 3724 `dxgi.dll` proxy and `trigger_scan`, the init log shows `Layout A/C
     (relaxed) detected` with the title's full count and no `refused` line beside it, and a GWorld walk works.
 2. ⬜ **A chunk-counts-first title above 16 TB** (the Mistfall Hunter shape). Not in the corpus; dll_core_test holds it.
