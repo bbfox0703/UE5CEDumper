@@ -101,6 +101,11 @@ static std::mutex  s_initMutex;
 // FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
 // the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
 std::atomic<bool> g_initInProgress{false};
+// [PIPE-WALK-DURING-INIT] Which run raised g_initInProgress: bumped just before each raise, so a reader that sees the flag
+// up (acquire) reads that run's serial or a later one; the first run is 1. Fern's pipe loop logs what it read during a
+// run once per command name (Voll::DuringInitNotes), and a new serial, not the flag's fall, starts a new list: two runs
+// can follow each other with no command read between them.
+std::atomic<uint32_t> g_initRun{0};
 
 // [R7-C-05] apply_rescan is a SECOND producer of the init globals: it publishes g_cachedGObjects, then runs Aura::Init
 // and (the first time) ValidateAndFixOffsets, exactly the tail A3 fenced inside UE5_Init. It holds this for that span;
@@ -109,7 +114,12 @@ std::atomic<bool> g_initInProgress{false};
 namespace FrierenInit {
 // [R7-S9] The fence: the flag must be visible BEFORE the GObjects publish that follows in Fern.cpp. A release store
 // orders what came before it, not what comes after, so a full fence keeps that publish from being hoisted above it.
-void BeginApply() { s_initMutex.lock(); g_initInProgress.store(true, std::memory_order_release); std::atomic_thread_fence(std::memory_order_seq_cst); }
+void BeginApply() {
+    s_initMutex.lock();
+    g_initRun.fetch_add(1, std::memory_order_relaxed);
+    g_initInProgress.store(true, std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+}
 void EndApply()   { g_initInProgress.store(false, std::memory_order_release); s_initMutex.unlock(); }
 }
 static Fern  s_pipeServer;
@@ -346,7 +356,10 @@ bool UE5_Init() {
     // [A3-MIMIC-INIT-FASTPATH] From here to every return below, this thread is SCANNING under s_initMutex. The flag
     // clears on every exit (RAII) -- before initLock releases, because it is declared after it.
     struct InitInProgressScope {
-        InitInProgressScope()  { g_initInProgress.store(true,  std::memory_order_release); }
+        InitInProgressScope()  {
+            g_initRun.fetch_add(1, std::memory_order_relaxed);
+            g_initInProgress.store(true, std::memory_order_release);
+        }
         ~InitInProgressScope() { g_initInProgress.store(false, std::memory_order_release); }
     } initInProgress;
 

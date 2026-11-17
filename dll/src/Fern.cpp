@@ -1588,29 +1588,12 @@ void Fern::CloseConnOnce(Connection& conn) {
     }
 }
 
-// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). Every pipe command dispatches while
-// UE5_Init is still scanning -- in proxy mode trigger_scan runs it on a job thread while the other connections serve --
-// and one that walks may then read offsets not yet measured, or values mid-probe. Its answer is not refused; this
-// leaves the trace a wrong answer from that window needs: each command name once per init run, at INFO. The names
-// are forgotten when a command finds the run over, so the next run logs afresh.
+// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). What the read loop reads while an init or
+// an apply_rescan holds g_initInProgress is dispatched like anything else; Voll::DuringInitNotes decides which of it
+// leaves a line in the pipe log, and why.
 extern std::atomic<bool> g_initInProgress;
-static std::mutex s_duringInitMutex;
-static std::unordered_set<std::string> s_duringInitSeen;
-static std::atomic<bool> s_duringInitNoted{false};
-
-static void NoteCommandDuringInit(const std::string& cmd, bool initInProgress) {
-    std::lock_guard<std::mutex> lk(s_duringInitMutex);
-    if (!initInProgress) {
-        s_duringInitSeen.clear();
-        s_duringInitNoted.store(false, std::memory_order_relaxed);
-        return;
-    }
-    if (s_duringInitSeen.insert(cmd).second) {
-        s_duringInitNoted.store(true, std::memory_order_relaxed);
-        Sein::Info("PIPE:cmd", "PipeServer: %s ran while UE5_Init was in progress -- offsets it read may not all have "
-                   "been measured yet", cmd.c_str());
-    }
-}
+extern std::atomic<uint32_t> g_initRun;
+static Voll::DuringInitNotes s_duringInit;
 
 void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // Bind THIS thread to THIS connection's cancel flag for the whole handler, teardown
@@ -1659,10 +1642,13 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // The command's name, for the repeat-suppressed log, the diagnostics and pipe_clients. Whatever the client's JSON
         // spacing (Voll::ExtractCmdName).
         const std::string cmd = Voll::ExtractCmdName(line);
-        // [PIPE-WALK-DURING-INIT] Noted, never refused. The lock is taken only during a run, or once after it.
-        if (const bool initNow = g_initInProgress.load(std::memory_order_acquire);
-            initNow || s_duringInitNoted.load(std::memory_order_relaxed))
-            NoteCommandDuringInit(cmd, initNow);
+        // [PIPE-WALK-DURING-INIT] Noted, never refused: it is dispatched below whatever the note decides.
+        if (g_initInProgress.load(std::memory_order_acquire)
+            && s_duringInit.Note(cmd, g_initRun.load(std::memory_order_relaxed))) {
+            const std::string shown(Voll::DuringInitNotes::Shown(cmd));
+            Sein::Info("PIPE:cmd", "PipeServer: %s arrived during an init or rescan apply -- offsets or pointers it read "
+                       "may not be final yet", shown.c_str());
+        }
 
         if (cmd == lastCmd && !cmd.empty()) {
             ++repeatCount;

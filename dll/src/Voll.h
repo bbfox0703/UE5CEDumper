@@ -172,20 +172,41 @@ inline std::string ExtractCmdName(std::string_view line) {
 }
 
 // ── What the pipe read while an init was publishing ─────────────────────────
-// [PIPE-WALK-DURING-INIT] Red stub: Fern's note as it stood -- the names forgotten only when a command finds no run in
-// progress, a blank name logged blank, no ceiling. The next commit implements it.
-inline constexpr size_t kMaxDuringInitNames = 256;
+// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop dispatches what it reads while
+// an init or an apply_rescan holds g_initInProgress -- in proxy mode trigger_scan runs UE5_Init on a job thread while
+// the other connections serve -- so a command that walks may read offsets not yet measured, or pointers mid-publish.
+// Its answer is not refused; this decides which commands leave the trace a wrong answer from that window needs: each
+// name once per run. A run is named by the serial its producer raised the flag with (g_initRun, Frieren.cpp), so two
+// runs with no command read between them still log apart. Self-locking, as the connection threads call it
+// concurrently; pure, so dll_helpers_test pins it -- no test target compiles Fern.cpp.
+inline constexpr size_t kMaxDuringInitNames = 256;   // a run's ceiling: the names come from the client
 
 class DuringInitNotes {
 public:
-    static std::string_view Shown(std::string_view name) { return name; }
+    // The name a line logs under: ExtractCmdName gives "" for a line with no readable "cmd".
+    static std::string_view Shown(std::string_view name) {
+        return name.empty() ? std::string_view("(unparsed)") : name;
+    }
+
+    // run: the serial of the run in progress, 0 when none is. True when this call is the one to log `name`.
     bool Note(std::string_view name, uint32_t run) {
-        if (run == 0) { seen_.clear(); return false; }
-        for (const auto& s : seen_) if (s == name) return false;
-        seen_.emplace_back(name);
+        if (run == 0) return false;
+        const std::string_view shown = Shown(name);
+        std::lock_guard<std::mutex> g(mu_);
+        if (run != run_) {
+            seen_.clear();
+            run_ = run;
+        }
+        for (const auto& s : seen_)
+            if (s == shown) return false;
+        if (seen_.size() >= kMaxDuringInitNames) return false;
+        seen_.emplace_back(shown);
         return true;
     }
+
 private:
+    std::mutex mu_;
+    uint32_t run_ = 0;
     std::vector<std::string> seen_;
 };
 

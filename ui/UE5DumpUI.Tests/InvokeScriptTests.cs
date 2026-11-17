@@ -2462,8 +2462,10 @@ public class InvokeScriptTests
         // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
-        Assert.Contains("std::atomic_thread_fence(std::memory_order_seq_cst)",
-                        frieren[begin..frieren.IndexOf('\n', begin)]);
+        string beginApply = frieren[begin..frieren.IndexOf("\n}", begin, StringComparison.Ordinal)];
+        int raise = beginApply.IndexOf("g_initInProgress.store(true", StringComparison.Ordinal);
+        int fullFence = beginApply.IndexOf("std::atomic_thread_fence(std::memory_order_seq_cst)", StringComparison.Ordinal);
+        Assert.True(raise >= 0 && fullFence > raise, "BeginApply raises the flag, then fences, before the publish");
     }
 
     [Fact]
