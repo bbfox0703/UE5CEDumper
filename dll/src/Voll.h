@@ -193,6 +193,10 @@ public:
         if (run == 0) return false;
         const std::string_view shown = Shown(name);
         std::lock_guard<std::mutex> g(mu_);
+        // A serial older than the list's is a connection that read it before the next run began and reached here
+        // after: its run is over, and clearing would log the current run's names twice. Compared as serial numbers,
+        // so it holds across the counter's wrap.
+        if (static_cast<int32_t>(run - run_) < 0) return false;
         if (run != run_) {
             seen_.clear();
             run_ = run;
