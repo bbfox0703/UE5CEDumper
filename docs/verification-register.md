@@ -1091,6 +1091,25 @@ One field of one class per grant: `grant_write_field_one_property_every_instance
     byte, and its grant revoked. *Was:* the acceptance named `Actor:bHidden`; `bCanBeDamaged` is the same shape on an
     object nothing renders.
 
+### ⬜ The init-window gaps (build 3722) — `[PIPE-WALK-DURING-INIT]` and `[DYNOFF-LATCH-STALE]` `[CPP-HARDENING-2026-11-14]`
+
+Two LOW rows of the hardening analysis's item 2, each fixed as the maintainer decided on 2026-11-17 and reviewed in
+three rounds (`wf_8f451d97-434`, `wf_b0aa9098-dd5`, `wf_2d9f83d5-21b`); docs/todo.md has the commits. Unit tests:
+`Test_Voll_DuringInitNotes` (dll_helpers_test); the LATCHSTALE, OFFSETS, UPROPSLOT and FAMILYEPOCH straddle checks
+(dll_core_test); the source pins `PipePerProcessSourceTests.ACommandDuringInit_IsNotedBeforeDispatch_AndNeverRefused`
+and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init`.
+
+1. ⬜ **The during-init log line, on a proxy-mode game.** In inject mode the pipe opens only after `UE5_Init`, so only a
+    proxy reaches the window. Acceptance: `py tools/verify/initlog_live.py --pid <pid>` on a game whose 3722 proxy has
+    not scanned yet passes every check -- at least one `<cmd> arrived during an init or rescan apply` line in the pipe
+    log, each name at most once, lane B's connection never dropped, every known command answered ok. A run whose scan
+    ends before lane B's first command proves nothing: run it again.
+2. ⬜ **The epoch latch, as a regression check.** The failure it fixes -- a family published after a calibration, one
+    pointer off -- needs a game whose Genau derivation is wrong, and no fixture has one. Acceptance: on DumperTest
+    Shipping with an injected 3722 DLL, the walk log has no more `CorrectSubclassOffsets: delta=` lines than a 3721 run,
+    `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
+    row 1's proxy-mode `trigger_scan`.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1247,7 +1266,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`16` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
