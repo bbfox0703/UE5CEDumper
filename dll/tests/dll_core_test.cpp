@@ -14157,6 +14157,19 @@ int main() {
         check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no array whose Objects leads to no chunk",
               Aura::s_layout.numElementsOffset != 0x08, layoutText().c_str());
 
+        // Review wf_47eca989-bf9, UE58F-TARRAY-DECOY: a TArray<UObject*> in .data -- Data, ArrayNum 30,000, ArrayMax
+        // 40,321, zeros after, Data[0] a real object -- the decoy shape Genau's relaxed Flat row can hand over (the
+        // Avowed class). Every row refused it, so the count read 0 and Frieren's recoveries ran; a 5.8 reading must not
+        // take it either. Its chunk slots (+0x10 / +0x14) are zero.
+        static std::vector<uintptr_t> tarrayData(4, 0);
+        tarrayData[0] = reinterpret_cast<uintptr_t>(pool.objects.data());
+        memset(u8, 0, sizeof(u8));
+        putP(0x00, reinterpret_cast<uintptr_t>(tarrayData.data()));
+        put32(0x08, 30000); put32(0x0C, 40321);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: a TArray-shaped decoy is still read as no array (count 0), so recovery runs",
+              Aura::GetCount() == 0, layoutText().c_str());
+
         // CONTROLS: a 5.8 array its strict row takes is still read whole (one chunk, consistent counts); and a
         // base-anchored UE5-Extended array -- whose +0x08 / +0x0C are MaxObjectsNotConsideredByGC and the
         // OpenForDisregardForGC bool -- is not taken by a 5.8 reading: relaxed E still reads it.
