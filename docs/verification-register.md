@@ -5815,6 +5815,12 @@ LOWERING the cap, not by finding a host*):
 > *pipe* invoke, not the UI's **Run Self-Test** button; the panel wraps the same call but its advice
 > text is a separate surface and is not what was observed here.
 >
+> ✅ **Step 8's UI half CLOSED 2026-11-18 on 3733 `[PEHOOK-STEP8-UI-2026-11-18]`** (DumperTest Shipping, freshly
+> launched and injected, AOT UE5DumpUI 3733, no CE): System → **Run Self-Test** as the process's FIRST invoke read on
+> screen `✓ Add_IntInt(3,4) = 7 → PE hook verified`; init-0.log: `DetectProcessEvent (pattern): match at
+> vtable+0x268` and `GameThreadDispatch: validation OK — hook fired 184 times in 1500ms`, with no `falling back to UE=`
+> and no `VALIDATION FAILED`.
+>
 > Steps 3b, 3c, 4 and 6 remain open (3b/3c need a condemned host, 4 needs Lushfoil, 6 EVERSPACE 2).
 
 
