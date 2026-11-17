@@ -5479,6 +5479,15 @@ reproduce. ⚠ One sample on one machine: other titles do throttle when unfocuse
 hypothesis *here*, not everywhere. But it is now evidence rather than a guess, and the guess was
 mine.
 
+✅ **A real title, measured 2026-11-18 on 3733 `[CADENCEBAND-LUSHFOIL-2026-11-18]`** (Lushfoil Photography Sim, UE
+5.6, injected, in gameplay; `linie_cadence_gap.py --attach --window 15`, logs `out/register/cadence_lushfoil_front.log`
+/ `_min.log`): foreground, the once-per-frame rows (`CameraModifier::BlueprintModifyPostProcess`,
+`AnimBP_Rabbit_C::BlueprintUpdateAnimation`, ...) report **6.95 ms**; minimised, **10.75 ms**. Both are far inside the
+40 ms band, so the refutation now holds on a second host, a commercial one, and the row stays a design call with no
+real-game witness of the defect. (The rig's FAIL lines there are bursty event graphs —
+`TotemActor_C::ExecuteUbergraph_TotemActor`, `3Dmenu_C::ExecuteUbergraph_3Dmenu` — whose fires do not span the
+window; its evenly-spaced model is not this row's question.)
+
 ⚠ **A `TickInterval`-throttled actor tick is NOT this defect.** It is frame-driven with an arbitrary
 period and would be flagged — but it genuinely *is* periodic behaviour, and "find the callback
 driving a cooldown/respawn" is exactly what the badge is for. Do not fold it in.
