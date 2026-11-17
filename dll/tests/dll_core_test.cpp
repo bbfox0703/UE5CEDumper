@@ -4007,22 +4007,45 @@ int main() {
             put32(okCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
             const uintptr_t C = reinterpret_cast<uintptr_t>(capCls), K = reinterpret_cast<uintptr_t>(okCls);
             // A re-walk publishes a NEW entry, so the entry's address changing is what counts one -- the answer's text
-            // can match a stale entry by coincidence on alternate turns.
+            // can match a stale entry by coincidence on alternate turns. Review wf_a193c703-fe8: the stop must HOLD -- a
+            // match against the stopped entry (every other turn of an alternation) used to clear it, so the address went
+            // back to parking; over 40 turns exactly the bound's 8 re-walks, and one stopped address.
+            size_t parked0 = 0, stopped0 = 0, parked1 = 0, stopped1 = 0;
+            Ubel::GetParkedClassWalks(parked0, stopped0);
             int rewalks = 0;
             const ClassInfo* last = nullptr;
-            for (int i = 0; i < 20; ++i) {
+            for (int i = 0; i < 40; ++i) {
                 put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
                 const ClassInfo* now = &Ubel::WalkClassEx(C);
                 if (last && now != last) ++rewalks;
                 last = now;
             }
-            check("* WALKCLASS-MEMO-REUSE: an address whose class keeps changing is re-walked, then stops (bounded)",
-                  rewalks >= 2 && rewalks < 19, std::to_string(rewalks).c_str());
+            Ubel::GetParkedClassWalks(parked1, stopped1);
+            check("* WALKCLASS-MEMO-REUSE: an address whose class keeps changing is re-walked 8 times, then stops for good",
+                  rewalks == 8, std::to_string(rewalks).c_str());
+            check("* WALKCLASS-MEMO-REUSE: ...counted as ONE stopped address, with its 8 walks parked",
+                  stopped1 - stopped0 == 1 && parked1 - parked0 == 8,
+                  (std::to_string(stopped1 - stopped0) + " stopped, " + std::to_string(parked1 - parked0) + " parked").c_str());
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 7);
             const bool okFirst = Ubel::WalkClassEx(K).Name == "Items";
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 8);
             check("* WALKCLASS-MEMO-REUSE: another address is still re-walked after that one stopped",
                   okFirst && Ubel::WalkClassEx(K).Name == "Tags");
+            // Genuine reuse holds still between changes: a class that matched three hits in a row is forgiven, so a
+            // session of many level changes at one address is never stopped.
+            static uint8_t genCls[0x100] = {};
+            put32(genCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
+            const uintptr_t G = reinterpret_cast<uintptr_t>(genCls);
+            int genuine = 0;
+            for (int change = 0; change < 12; ++change) {
+                put32(genCls, Grimoire::OFF_UOBJECT_NAME, (change % 2) ? 8 : 7);
+                const char* want = (change % 2) ? "Tags" : "Items";
+                bool ok = Ubel::WalkClassEx(G).Name == want;
+                for (int hold = 0; hold < 3; ++hold) ok = ok && Ubel::WalkClassEx(G).Name == want;
+                if (ok) ++genuine;
+            }
+            check("control: twelve changes each held for three hits are all walked again (never stopped)", genuine == 12,
+                  std::to_string(genuine).c_str());
         }
 
         DynOff::bUseFProperty = savedFPropCE;
