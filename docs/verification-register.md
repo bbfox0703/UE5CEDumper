@@ -2287,6 +2287,15 @@ The batch over the 87 Interesting Properties seed queries (`game_only` false) ho
 unresolved bools. Step 2b's target: `TestMovieSceneTrack.bHighPassFilter` (seed `HP`), and beside it the packed
 `SceneComponent.bUseAttachParentBound` (mask 0x20). Steps 2 and 3 stay open.
 
+✅ **Step 2's Interesting Properties half CLOSED 2026-11-18 on 3733** (DumperTest Shipping, AOT UE5DumpUI 3733, no
+CE): Interesting Props with Game Only off and Show All on, Load, filtered to `LightComponentBase` (the panel's filter
+is space-AND, and this class carries one bool of each kind among the seed rows: the native `bRealTimeCapture` and the
+packed `bTransmission`, mask 0x20); both selected, Generate CT → `Generated 2 entries.`, no "skipped N bool(s)". The
+saved table (`out/register/bool2b.CT`) holds both: `bTransmission`'s CFG `boolMask = 0x20` ("only this bit is
+written"), `bRealTimeCapture`'s CFG no `boolMask` (the whole byte). ⚠ The UI pipe log cuts each reply at about 1 KB,
+so the batch reply's keys are not readable there; the table is the witness, and step 1 read the keys on the wire.
+Still open: step 2's Property Search → Freeze half (it needs the AOBMaker bridge, so CE) and step 3.
+
 ### ⬜ SHIPPED 2026-09-08/09, NEEDS A LIVE CHECK — the blind-spot sweep's residue: D2 · clipboard delivery · CE Lua · the CE-side delegate pad · the refusal arms
 
 *The sweep and its follow-ups closed a lot on a running game — D1, D3, D4, D4b/D3b, D5, the sixth
