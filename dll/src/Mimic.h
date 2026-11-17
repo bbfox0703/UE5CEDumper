@@ -643,6 +643,11 @@ void StopThread();
 /// Returns the address of the mailbox buffer.
 uintptr_t GetAddress();
 
+// [DUMPER-SECOND-COPY-AUTOSTART] Serve an earlier copy's mailbox beside this copy's own, after that copy shut down
+// (Land::RetireEarlierCopies). The caller has checked the layout is this build's (Land::CanServeMailbox). False when the
+// slots are full.
+bool AdoptMailbox(MailboxData* earlier);
+
 } // namespace Mimic
 
 // Exported global — CE Lua uses getAddress("g_invokeMailbox") to find it.
