@@ -85,9 +85,22 @@ static std::mutex s_nameCacheMutex;
 static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
 
-// CorrectSubclassOffsets' once-per-process latch. At namespace scope so dll_core_test, which compiles this file into its
-// own translation unit, can re-arm it.
-static std::atomic<bool> s_subclassCalibrated{false};
+// [DYNOFF-LATCH-STALE] CorrectSubclassOffsets' latch: the family epoch at which it last found a struct in the slot,
+// tagged with bit 32 so "never" (0) cannot equal epoch 0. It was a once-per-process bool, so a family published after
+// it -- Genau's measured arm on a later UE5_Init, the defaults a re-run init applies first -- was never checked again,
+// and a derivation one pointer off (TQ2's 0x74, the struct at 0x78) stood for the session. A move bumps the epoch and
+// so re-arms this; publishing the same base again is not a move and leaves it set. Stored under DynOff::FamilyWriteLock,
+// which ApplyPropertyFamily's signature demands of a move, so the epoch it records cannot be overtaken before the store.
+// At namespace scope so dll_core_test, which compiles this file into its own translation unit, can re-arm it.
+static std::atomic<uint64_t> s_subclassCalibratedAt{0};
+static void LatchSubclassCalibration(uint32_t epoch) {
+    s_subclassCalibratedAt.store((uint64_t{1} << 32) | epoch, std::memory_order_release);
+}
+static bool IsSubclassCalibrated() {
+    const uint64_t v = s_subclassCalibratedAt.load(std::memory_order_acquire);
+    return (v >> 32) != 0
+        && static_cast<uint32_t>(v) == DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+}
 // [FRIEREN-PROBE-OVERRUN] The newest family epoch at which a real UScriptStruct was read out of the slot: proof that
 // DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (TQ2 derived 0x74 from measured offsets and the
 // struct sat at 0x78). Tagged with bit 32 so "never" (0) cannot equal epoch 0; a later family move changes the epoch
@@ -1693,10 +1706,11 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // nested-struct recursion in Aura::ScanForValue bails, and the user
     // gets 0 candidates on GAS / FGameplayAttributeData scans.
     //
-    // CorrectSubclassOffsets is idempotent (guarded by an atomic), so
-    // calling it on every WalkClassEx is a no-op after the first
-    // successful probe. The cost on cold call is bounded: at most 7
-    // probe-delta reads per StructProperty until one validates.
+    // CorrectSubclassOffsets returns at once while the current family is
+    // calibrated or its slot proven, so calling it on every WalkClassEx
+    // costs a few atomic loads; it probes again after the family moves.
+    // The cost of a probe is bounded: at most 7 probe-delta reads per
+    // StructProperty until one validates.
     CorrectSubclassOffsets(info.Fields);
 
     // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
@@ -5627,8 +5641,8 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 }
 
 // ============================================================
-// CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
-// and related subclass extension offsets.
+// CorrectSubclassOffsets — calibration of FSTRUCTPROP_STRUCT and
+// related subclass extension offsets, once per published family.
 //
 // The derivation formula (Offset_Internal + 0x2C) may be wrong for
 // newer UE versions (e.g., UE5.7 uses +0x30). We calibrate by probing
@@ -5636,12 +5650,16 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 // If a non-zero delta is found, all subclass offsets are updated.
 // ============================================================
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
-    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;  // fast path: already calibrated
+    // Fast path: calibrated for the current family, or its slot already proven (WalkInstance's own probe files that
+    // too). [DYNOFF-LATCH-STALE] Deferring to the proof keeps this and WalkInstance's correction from moving the family
+    // back and forth now that the latch re-arms on every move: two StructProperties cannot disagree on one engine, so a
+    // field that would move a proven family is this probe's false positive.
+    if (IsSubclassCalibrated() || IsSubclassSlotConfirmed()) return;
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
     const DynOff::FamilyWriteLock lk;
-    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;
+    if (IsSubclassCalibrated() || IsSubclassSlotConfirmed()) return;
     // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
     // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
     // too. Until a struct is found in the slot the latch stays open, as it does for FProperty.
@@ -5676,11 +5694,13 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 // member alone, through DynOff::SetArrayInner, for exactly that reason.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected), lk);
                 // The corrected family's epoch, read after the move.
-                MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
+                const uint32_t moved = DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+                MarkSubclassSlotConfirmed(moved);
+                LatchSubclassCalibration(moved);
             } else {
                 MarkSubclassSlotConfirmed(epoch);
+                LatchSubclassCalibration(epoch);
             }
-            s_subclassCalibrated.store(true, std::memory_order_release);
             return;
         }
         // This StructProperty probe failed — try next one

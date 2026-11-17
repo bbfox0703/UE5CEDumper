@@ -9517,7 +9517,7 @@ int main() {
         const bool svFProp = DynOff::bUseFProperty;
         const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
                                                DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
-        const bool svCalibrated = Ubel::s_subclassCalibrated.load();
+        const uint64_t svCalibrated = Ubel::s_subclassCalibratedAt.load();
         const uint64_t svConfirmed = Ubel::s_subclassSlotConfirmed.load();
         DynOff::bUseFProperty = true;
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
@@ -9616,7 +9616,7 @@ int main() {
         put32(poCls, DynOff::USTRUCT_PROPSSIZE, 0x10);
         putP(poCls, DynOff::USTRUCT_CHILDPROPS, A(poPos));
         Ubel::s_subclassSlotConfirmed.store(0);
-        Ubel::s_subclassCalibrated.store(false);
+        Ubel::s_subclassCalibratedAt.store(0);
         (void)Ubel::WalkClassEx(A(poCls));
         check("PROBEOVERRUN ⭐: CorrectSubclassOffsets' struct in the slot is the proof", C(poNullNext) == 0,
               nm(C(poNullNext)).c_str());
@@ -9643,7 +9643,7 @@ int main() {
         poFi.Name = "Pos";
         poFi.TypeName = "StructProperty";
         Ubel::s_subclassSlotConfirmed.store(0);
-        Ubel::s_subclassCalibrated.store(false);
+        Ubel::s_subclassCalibratedAt.store(0);
         Ubel::CorrectSubclassOffsets({ poFi });
         check("PROBEOVERRUN ⭐: UProperty -- a struct in the slot proves it", C(poNullNext) == 0, nm(C(poNullNext)).c_str());
         static uint8_t poPosOff[0x100] = {};
@@ -9651,13 +9651,13 @@ int main() {
         putP(poPosOff, 0x80, A(poVector));
         poFi.Address = A(poPosOff);
         Ubel::s_subclassSlotConfirmed.store(0);
-        Ubel::s_subclassCalibrated.store(false);
+        Ubel::s_subclassCalibratedAt.store(0);
         Ubel::CorrectSubclassOffsets({ poFi });
         check("PROBEOVERRUN ⭐: UProperty -- a struct one pointer on neither moves the family nor latches",
-              DynOff::FSTRUCTPROP_STRUCT == 0x78 && !Ubel::s_subclassCalibrated.load() && C(poNullNext) == A(poStranger),
-              (std::to_string(DynOff::FSTRUCTPROP_STRUCT) + " latched=" + std::to_string(Ubel::s_subclassCalibrated.load())
+              DynOff::FSTRUCTPROP_STRUCT == 0x78 && !Ubel::IsSubclassCalibrated() && C(poNullNext) == A(poStranger),
+              (std::to_string(DynOff::FSTRUCTPROP_STRUCT) + " latched=" + std::to_string(Ubel::IsSubclassCalibrated())
                + " " + nm(C(poNullNext))).c_str());
-        Ubel::s_subclassCalibrated.store(true);
+        Ubel::LatchSubclassCalibration(DynOff::g_propertyFamilyEpoch.load());
         DynOff::bUseFProperty = true;
 
         // WalkInstance's persisted correction: the struct one pointer on moves the family there, and proves it. The
@@ -9693,7 +9693,7 @@ int main() {
         lsFi.TypeName = "StructProperty";
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x74));
         Ubel::s_subclassSlotConfirmed.store(0);
-        Ubel::s_subclassCalibrated.store(false);
+        Ubel::s_subclassCalibratedAt.store(0);
         Ubel::CorrectSubclassOffsets({ lsFi });
         check("LATCHSTALE setup: the walk corrects 0x74 to the struct at 0x78", DynOff::FSTRUCTPROP_STRUCT == 0x78,
               hx(DynOff::FSTRUCTPROP_STRUCT).c_str());
@@ -9727,7 +9727,7 @@ int main() {
 
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
-        Ubel::s_subclassCalibrated.store(svCalibrated);
+        Ubel::s_subclassCalibratedAt.store(svCalibrated);
         Ubel::s_subclassSlotConfirmed.store(svConfirmed);
     }
 
