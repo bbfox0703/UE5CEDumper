@@ -201,6 +201,9 @@ public sealed class SecondCopySourceTests
         Assert.Matches(@"CanServeMailbox\(seen\.current, seen\.minimum, Mimic::MAILBOX_CONTRACT,\s*" +
                        @"Mimic::MAILBOX_CONTRACT_MIN, Mimic::MAILBOX_LAYOUT_SINCE\)", take);
         Assert.Contains("if (layoutOk && Mimic::AdoptMailbox(box, forwards))", take);
+        // An old copy found started again is left to itself: the whole condition, so a weakened one fails.
+        Assert.Matches(@"if \(Macht::ReadSafe\(reinterpret_cast<uintptr_t>\(&box->initState\), now\) && " +
+                       @"now != Mimic::INIT_IDLE\) \{\s*LOG_WARN\([^;]*\);\s*return;", take);
         Assert.Contains("TakeMailbox(call->seen, call->box, call->contract, call->yield != nullptr)", land);
         InOrder(FunctionBody(land, "YieldReply BeginYield(HMODULE successor) {"), "BeginYield",
                 "IsEarlier(IndexOf(copies, g_hDllModule), IndexOf(copies, successor))", "s_startMutex", "ReplyToYield(State(), callerIsLater)");
