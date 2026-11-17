@@ -131,7 +131,17 @@ static void AutoStartBody()
     Sleep(500);
 
     bool ok = UE5_StartPipeServer();
-    g_invokeMailbox.initState = ok ? Mimic::INIT_READY : Mimic::INIT_FAILED;
+    {
+        // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over while the pipe started: its hand-off published this
+        // mailbox's state already (review R2-AUTOSTART-PUBLISH-AFTER-YIELD).
+        const auto publishLock = Land::LockStart();
+        if (Land::RefusesStart(Land::State())) {
+            LOG_WARN("DllMain ProxyStart: a later copy of the dumper took over while the pipe started -- publishing "
+                     "nothing");
+            return;
+        }
+        g_invokeMailbox.initState = ok ? Mimic::INIT_READY : Mimic::INIT_FAILED;
+    }
     LOG_INFO("DllMain ProxyStart: pipe server %s", ok ? "started" : "FAILED to start");
 }
 #else

@@ -33,7 +33,8 @@ constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDump
 // [AOB-SKIP-OWN-DLL] The exported symbol every current build of the dumper carries, UE5Dumper.dll and each proxy
 // alike: the mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of
 // ours from a module that merely exports the same name. It is how one copy recognises another mapped in the same
-// process.
+// process -- unless a later copy zeroed that magic because it could not serve the copy's mailbox ([DUMPER-SECOND-COPY-
+// AUTOSTART], Land::TakeMailbox); such a copy is recognised by the legacy export below.
 constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 // The contract only exists since 2026-08-06, so a build from before it -- a stale proxy left in a game folder -- is
 // recognised by the C ABI's init entry instead, which every build has exported (the version.dll proxy since

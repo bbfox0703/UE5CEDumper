@@ -69,8 +69,11 @@ extern std::atomic<bool> g_initInProgress;   // [A3-MIMIC-INIT-FASTPATH] Frieren
 extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
 
 // Statically initialised: a script must be able to read this the instant the DLL
-// is mapped, before StartThread and before any init has run. Nothing writes it at
-// runtime — it is a constant published through the export table.
+// is mapped, before StartThread and before any init has run. This copy never writes it.
+// [DUMPER-SECOND-COPY-AUTOSTART] A LATER copy of the dumper does, once: it zeroes the magic when
+// it took this process over and cannot serve this mailbox (Land::TakeMailbox), so a script
+// refuses at its contract check -- which is why this stays writable data, never const. A copy
+// whose magic was zeroed is still recognised by DUMPER_LEGACY_IDENTITY_EXPORT.
 // Its name and magic are also how one build of the dumper recognises another in the same
 // process (Grimoire::DUMPER_IDENTITY_EXPORT, [AOB-SKIP-OWN-DLL]): rename it and that breaks too.
 extern "C" __declspec(dllexport) Mimic::MailboxContract g_mailboxContract = {
@@ -116,6 +119,8 @@ static MailboxData& Box() { return *s_box; }
 // Earlier copies' mailboxes this copy serves (AdoptMailbox). A slot once set is never cleared: the earlier copy pins its
 // image, so its mailbox stays mapped for the life of the process.
 static std::atomic<MailboxData*> s_adopted[Land::kMaxCopies] = {};
+// Whether the copy that owns each adopted mailbox forwards its exports to this one (Land::MirroredState).
+static std::atomic<bool> s_adoptedForwards[Land::kMaxCopies] = {};
 
 // Forward declarations
 static void HandleFindInstance();
@@ -265,6 +270,10 @@ static void PollingThreadBody();
 // thread's one WARN for a throwing handler (Routine::RunTickGuarded).
 static void ServeOne(MailboxData* box, bool& warnedThrow) {
     s_box = box;
+    // [DUMPER-SECOND-COPY-AUTOSTART] Another poller is mid-command on this mailbox -- the earlier copy's, still in a
+    // handler after its stop gave up waiting for it (review R2-STOPTHREAD-TIMEOUT-REPLAY). It answers that command
+    // itself; running it here too would run it twice.
+    if (Box().status == STATUS_PROCESSING) return;
     int32_t cmd = Box().cmd;
 
     if (cmd != CMD_IDLE) {
@@ -476,13 +485,14 @@ static void PollingThreadBody() {
 
     while (s_running.load(std::memory_order_acquire)) {
         // [DUMPER-SECOND-COPY-AUTOSTART] This copy's mailbox first, then each earlier copy's it took over, one command
-        // each per pass. An adopted mailbox says what this copy's says (Land::PublishedState): a CE inject script that
-        // resolved the earlier copy reads it as this copy -- served once this copy is READY.
+        // each per pass. An adopted mailbox says what this copy's says, or for a copy that cannot forward only READY or
+        // SKIPPED (Land::MirroredState): a CE inject script that resolved the earlier copy reads it as this copy.
         ServeOne(&g_invokeMailbox, warnedThrow);
-        for (auto& slot : s_adopted) {
-            MailboxData* box = slot.load(std::memory_order_acquire);
+        for (int slot = 0; slot < Land::kMaxCopies; ++slot) {
+            MailboxData* box = s_adopted[slot].load(std::memory_order_acquire);
             if (!box) continue;
-            box->initState = Land::PublishedState(true, g_invokeMailbox.initState);
+            box->initState = Land::MirroredState(g_invokeMailbox.initState,
+                                                 s_adoptedForwards[slot].load(std::memory_order_acquire));
             ServeOne(box, warnedThrow);
         }
         s_box = &g_invokeMailbox;
@@ -523,19 +533,26 @@ void StopThread(bool clearMailbox) {
     // Clear mailbox -- unless a later copy of the dumper is about to serve it (the hand-off's own shutdown).
     if (clearMailbox) memset(&g_invokeMailbox, 0, sizeof(g_invokeMailbox));
     // [DUMPER-SECOND-COPY-AUTOSTART] Nobody serves the earlier copies' mailboxes now. Only initState is touched: a
-    // command a script wrote there is its own, and the copy that owns the memory never runs again.
-    for (auto& slot : s_adopted)
-        if (MailboxData* box = slot.load(std::memory_order_acquire)) box->initState = INIT_IDLE;
+    // command a script wrote there is its own. An untick says IDLE where the owner forwards (a revival reaches this
+    // copy); a hand-off says SKIPPED, so the copy taking over from this one retires that owner too and takes its
+    // mailbox (review R2-MBX4-IDLE-ORPHAN); an owner that cannot forward says SKIPPED either way.
+    for (int slot = 0; slot < Land::kMaxCopies; ++slot)
+        if (MailboxData* box = s_adopted[slot].load(std::memory_order_acquire))
+            box->initState = Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,
+                                                 s_adoptedForwards[slot].load(std::memory_order_acquire));
 }
 
-bool AdoptMailbox(MailboxData* earlier) {
+bool AdoptMailbox(MailboxData* earlier, bool earlierForwards) {
     if (!earlier || earlier == &g_invokeMailbox) return false;
     for (auto& slot : s_adopted)
         if (slot.load(std::memory_order_acquire) == earlier) return true;
-    for (auto& slot : s_adopted) {
+    for (int slot = 0; slot < Land::kMaxCopies; ++slot) {
         MailboxData* expected = nullptr;
-        if (slot.compare_exchange_strong(expected, earlier, std::memory_order_acq_rel)) {
-            earlier->initState = Land::PublishedState(true, g_invokeMailbox.initState);
+        // The flag lands just after the claim: a pass that sees the slot before it reads false, the stricter mirror
+        // (READY or SKIPPED), never a laxer one.
+        if (s_adopted[slot].compare_exchange_strong(expected, earlier, std::memory_order_acq_rel)) {
+            s_adoptedForwards[slot].store(earlierForwards, std::memory_order_release);
+            earlier->initState = Land::MirroredState(g_invokeMailbox.initState, earlierForwards);
             LOG_INFO("Mailbox: serving an earlier copy's mailbox at %p beside this copy's own",
                      static_cast<void*>(earlier));
             return true;

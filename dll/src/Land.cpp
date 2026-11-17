@@ -124,11 +124,22 @@ bool LaterCopyStarted(const std::vector<HMODULE>& copies, int own, HMODULE& whic
 
 // Serves the earlier copy's mailbox here, or marks it as served elsewhere and makes its contract block refuse. Runs on
 // the hand-off's own thread once the earlier copy's shutdown has returned, however long the pass waited.
-void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract) {
+void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract, bool forwards) {
     if (!box) return;
+    // A copy that cannot forward was started again on its own between its shutdown and here (CE's UE5_AutoStart reached
+    // it; its shutdown left IDLE): it polls this mailbox itself now, and a second poller would run every command twice
+    // (review R2-OLD-COPY-DOUBLE-SERVE). It runs beside this copy, as before Land.
+    if (!forwards) {
+        int32_t now = Mimic::INIT_IDLE;
+        if (Macht::ReadSafe(reinterpret_cast<uintptr_t>(&box->initState), now) && now != Mimic::INIT_IDLE) {
+            LOG_WARN("Land: the earlier copy was started again on its own (initState %d) -- it serves its mailbox "
+                     "itself, beside this copy", now);
+            return;
+        }
+    }
     const bool layoutOk = CanServeMailbox(seen.current, seen.minimum, Mimic::MAILBOX_CONTRACT,
                                           Mimic::MAILBOX_CONTRACT_MIN, Mimic::MAILBOX_LAYOUT_SINCE);
-    if (layoutOk && Mimic::AdoptMailbox(box)) {
+    if (layoutOk && Mimic::AdoptMailbox(box, forwards)) {
         LOG_INFO("Land: the earlier copy's mailbox is served by this copy (its contract %d, min %d; this copy's %d, "
                  "min %d)", seen.current, seen.minimum, Mimic::MAILBOX_CONTRACT, Mimic::MAILBOX_CONTRACT_MIN);
         return;
@@ -183,7 +194,7 @@ DWORD WINAPI RetireThread(LPVOID param) {
                      "taking over");
             return;
         }
-        TakeMailbox(call->seen, call->box, call->contract);
+        TakeMailbox(call->seen, call->box, call->contract, call->yield != nullptr);
     });
     delete call;
     s_retiresInFlight.fetch_sub(1, std::memory_order_acq_rel);

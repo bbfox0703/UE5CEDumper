@@ -844,8 +844,9 @@ void UE5_Shutdown() {
 }
 
 // [DUMPER-SECOND-COPY-AUTOSTART] A later copy of the dumper in this process is taking over (Land::RetireEarlierCopies,
-// on the later copy's thread). This copy refuses to start anything from here on, shuts down, and then passes every
-// C ABI call to the later copy. Its own teardown runs here: it calls some of those exports.
+// on the later copy's thread). This copy refuses to start anything from here on, shuts down, and then passes its C ABI
+// calls to the later copy -- all but UE5_Shutdown and UE5_StopPipeServer, which do nothing here, and the class walk's
+// GetField / End while a walk begun here is open. Its own teardown runs here: it calls some of those exports.
 int32_t UE5_YieldToLaterCopy(HMODULE successor) {
     const Land::YieldReply reply = Land::BeginYield(successor);
     if (reply == Land::YIELD_NOT_LATER) {
@@ -975,6 +976,13 @@ uintptr_t UE5_FindClass(const char* className) {
 }
 
 int32_t UE5_WalkClassBegin(uintptr_t uclassAddr) {
+    // [DUMPER-SECOND-COPY-AUTOSTART] A new walk in a copy that handed over runs in its successor: close any walk left
+    // open here first, or GetField would keep answering from this copy's old class (review R2-WALK-STALE-FLAG).
+    if (Land::Forwards(Land::State())) {
+        std::lock_guard<std::mutex> lock(s_walkMutex);
+        s_walkCache = ClassInfo{};
+        s_walkOpenHere.store(false, std::memory_order_release);
+    }
     LAND_FORWARD(UE5_WalkClassBegin, uclassAddr);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     s_walkCache = Ubel::WalkClass(uclassAddr);
@@ -1127,6 +1135,15 @@ static bool AutoStartWork() {
         return false;
     }
     bool ok = UE5_StartPipeServer();
+    // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over while the pipe started: its hand-off already published this
+    // mailbox's state (SKIPPED, then that copy's), and nothing here may replace it. Under the start lock, so the
+    // take-over cannot fall between this check and the write (review R2-AUTOSTART-PUBLISH-AFTER-YIELD).
+    std::unique_lock<std::mutex> publishLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: a later copy of the dumper took over while this copy's pipe started -- publishing "
+                 "nothing");
+        return false;
+    }
     // Publish only AFTER StartPipeServer returns — a poller that sees READY must
     // be able to connect immediately. READY now also requires init to have
     // COMPLETED: the enum defines it as "init finished AND the pipe server is up",

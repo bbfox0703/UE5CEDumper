@@ -70,6 +70,16 @@ constexpr int32_t PublishedState(bool served, int32_t ownState) {
     return served ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);
 }
 
+// What an earlier copy's mailbox says while this copy serves it. A copy that forwards its exports (it carries the yield)
+// says this copy's own state: a CE inject script that reads it as parked calls that copy's UE5_AutoStart, which reaches
+// this copy. An older copy cannot forward, and its UE5_AutoStart would start it again beside this copy, two pollers on
+// one mailbox: it says READY or SKIPPED only, the two values an inject script reads as served (review wf_08585a12-ddf,
+// R2-OLD-COPY-DOUBLE-SERVE).
+constexpr int32_t MirroredState(int32_t ownState, bool earlierForwards) {
+    if (earlierForwards) return ownState;
+    return ownState == Mimic::INIT_READY ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);
+}
+
 // This copy's own hand-off.
 enum class YieldState : int32_t { None = 0, Yielding = 1, Yielded = 2 };
 
