@@ -3318,9 +3318,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uintptr_t addr = Renge::StrToAddr(addrStr);
             // [WALKCLASS-STALE-OK] Refused BEFORE the walk when the address is not a live object. A class a level travel
             // freed either walks to nothing (painted as a blank class, no error, the panel's re-select refused as a
-            // duplicate) or, walked before it was freed, is answered from WalkClassEx's immortal memo with its OLD fields.
+            // duplicate) or, walked before it was freed, is answered from WalkClassEx's memo with its OLD fields.
             // Every walk_class caller passes a class, struct or function, which GObjects always holds; refusing first
-            // also keeps a stale address out of the memo.
+            // also keeps a stale address out of the memo. An address ANOTHER object took since is live; WalkClassEx's
+            // witness check walks that one again ([WALKCLASS-MEMO-REUSE]).
             if (!IsLiveObject(addr))
                 return Renge::MakeError(id, "Not a live class at " + addrStr +
                                                 " -- freed (a level travel?) or never a UObject").dump();

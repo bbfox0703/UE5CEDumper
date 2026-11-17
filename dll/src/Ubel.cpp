@@ -1110,11 +1110,31 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
     }
 }
 
+namespace {
+// [WALKCLASS-MEMO-REUSE] Read from the address, not from the walk: the heads of the two property chains and the super.
+// Another class allocated where a freed one was has its own chains (and usually its own super), so a memo entry whose
+// witness no longer reads back describes a class that is gone. Unreadable reads stay 0.
+struct ClassWitness { uintptr_t childProps = 0, children = 0, super = 0; };
+ClassWitness ReadClassWitness(uintptr_t cls) {
+    ClassWitness w;
+    if (DynOff::bUseFProperty && !Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDPROPS, &w.childProps, sizeof(w.childProps)))
+        w.childProps = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDREN, &w.children, sizeof(w.children))) w.children = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::USTRUCT_SUPER, &w.super, sizeof(w.super))) w.super = 0;
+    return w;
+}
+bool WitnessMatches(const ClassInfo& ci, const ClassWitness& w) {
+    return ci.WitnessChildProps == w.childProps && ci.WitnessChildren == w.children && ci.WitnessSuper == w.super;
+}
+}  // namespace
+
 // Cache for WalkClass results — class/struct field metadata doesn't change at
 // runtime, so we cache by class address (within the property family's epoch,
 // DynOff::FamilyCacheKey [FAMILY-EPOCH]) to avoid re-reading the FField chain
 // on every WalkInstance call. This dramatically speeds up repeated drilldown/
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
+// A class can be freed and another object allocated at its address, though; each
+// entry's witness catches that and the class is walked again ([WALKCLASS-MEMO-REUSE]).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 
 // [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
@@ -1144,6 +1164,14 @@ static void TouchWalkLru(uintptr_t key) {
     auto it = s_walkLruPos.find(key);
     if (it == s_walkLruPos.end()) return;
     s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
+}
+
+// [WALKCLASS-MEMO-REUSE] Drop `key` (an entry whose class witness no longer reads back), LRU included. Legal for the
+// same reason eviction is: this cache hands out copies. Caller MUST hold s_walkClassCacheMutex.
+static void ForgetWalkClass(uintptr_t key) {
+    auto pos = s_walkLruPos.find(key);
+    if (pos != s_walkLruPos.end()) { s_walkLru.erase(pos->second); s_walkLruPos.erase(pos); }
+    s_walkClassCache.erase(key);
 }
 
 // Insert-or-refresh `key`, evicting the least recently used entries until the
@@ -1232,16 +1260,23 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // Check cache first. Return a copy so callers read lock-free; node-based
     // unordered_map keeps the entry alive regardless of later inserts.
     const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
+    const ClassWitness witness = ReadClassWitness(uclassAddr);  // [WALKCLASS-MEMO-REUSE]
     {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         auto cacheIt = s_walkClassCache.find(key);
         if (cacheIt != s_walkClassCache.end()) {
-            TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
-            return cacheIt->second;
+            if (WitnessMatches(cacheIt->second, witness)) {
+                TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
+                return cacheIt->second;
+            }
+            ForgetWalkClass(key);   // another object at this address since: walk what is there now
         }
     }
 
     info.Address = uclassAddr;
+    info.WitnessChildProps = witness.childProps;
+    info.WitnessChildren   = witness.children;
+    info.WitnessSuper      = witness.super;
     info.Name = GetName(uclassAddr);
     info.FullPath = GetFullName(uclassAddr);
 
@@ -1317,6 +1352,11 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
             const uintptr_t superKey = DynOff::FamilyCacheKey(super);
             auto superCacheIt = s_walkClassCache.find(superKey);
+            // [WALKCLASS-MEMO-REUSE] A super freed and replaced at its address is walked below, not reused.
+            if (superCacheIt != s_walkClassCache.end() && !WitnessMatches(superCacheIt->second, ReadClassWitness(super))) {
+                ForgetWalkClass(superKey);
+                superCacheIt = s_walkClassCache.end();
+            }
             if (superCacheIt != s_walkClassCache.end()) {
                 // A base class is reused by every subclass, so it is exactly what must
                 // not be evicted for being "old" — the chain walk is a use.
@@ -1370,8 +1410,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // Fields vector. No reference into THIS map escapes (the hit at the top of this
     // function and the super-chain reuse below both COPY under s_walkClassCacheMutex);
     // it is s_walkClassExCache that hands out `const ClassInfo&`, and both maps follow
-    // the same rule so the two cannot drift. Node-based map + no erase/clear anywhere
-    // in dll/src ⇒ entries never move. (B10)
+    // the same rule so the two cannot drift. This by-value map erases (LRU eviction,
+    // ForgetWalkClass); the enriched memo never frees an entry, it parks a replaced one
+    // ([WALKCLASS-MEMO-REUSE]), so a reference into it never dangles. (B10)
     //
     // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
     // handing in a non-UStruct address poisoned the cache permanently — and the caller
@@ -1647,16 +1688,39 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields);
 // ParallelGObjectsScan worker at once. (B10)
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassExCache;
 static std::mutex s_walkClassExCacheMutex;
+// [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced. Extracted node handles keep their element where it was, so a
+// reference a caller got before the re-walk stays readable; they are never freed, like the memo. One per address reuse.
+static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkClassExParked;
+// A bound on that, because a parked entry is never freed: an engine whose witness offsets read something that keeps
+// changing would otherwise park and re-walk on every call. Past it the memo answers as it did before the witness,
+// once said in the log. A level change replaces a few hundred classes at most.
+static constexpr size_t kMaxParkedClassWalks = 4096;
+
 
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // Reference-return needs a stable object for the failure case too.
     static const ClassInfo s_emptyClassInfo{};
     if (!uclassAddr) return s_emptyClassInfo;
 
+    const ClassWitness witness = ReadClassWitness(uclassAddr);   // [WALKCLASS-MEMO-REUSE]
     {
         std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
         auto it = s_walkClassExCache.find(DynOff::FamilyCacheKey(uclassAddr));   // [FAMILY-EPOCH]
-        if (it != s_walkClassExCache.end()) return it->second;
+        if (it != s_walkClassExCache.end()) {
+            if (WitnessMatches(it->second, witness)) return it->second;
+            if (s_walkClassExParked.size() >= kMaxParkedClassWalks) {
+                static bool s_saidFull = false;
+                if (!s_saidFull) {
+                    s_saidFull = true;
+                    Sein::Warn("WALK:safe", "WalkClassEx: %zu class walks replaced since start -- the memo stops checking "
+                               "whether an address still holds the class it walked", s_walkClassExParked.size());
+                }
+                return it->second;
+            }
+            // Another object at this address since the walk: park the old entry (callers hold references into it)
+            // and walk what is there now.
+            s_walkClassExParked.push_back(s_walkClassExCache.extract(it));
+        }
     }
 
     // [DYNOFF-LATCH-STALE] Read before the plain walk, checked after the key below (DynOff::g_offsetValidations).
@@ -1862,8 +1926,12 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // have published an entry whose reference another thread is reading. The two
     // results are equal (the enrichment is a pure function of the same reads), so
     // keeping the existing one costs nothing and keeps every handed-out reference
-    // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
+    // valid. Node-based map, and the only removal parks the node rather than freeing
+    // it ([WALKCLASS-MEMO-REUSE]) ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
+    info.WitnessChildProps = witness.childProps;
+    info.WitnessChildren   = witness.children;
+    info.WitnessSuper      = witness.super;
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     return s_walkClassExCache.try_emplace(key, std::move(info)).first->second;
@@ -2414,8 +2482,9 @@ static ParamField ParamFieldOf(const FieldInfo& f) {
 }
 
 // What a parameter's decode needs beyond its own entry, read now -- the function is alive -- and kept by value. No
-// cache is consulted: WalkClassEx's memo and s_enumCache are keyed by address and never erased, and under widget
-// reload churn a freed struct's or enum's address can hold another (the second design critic).
+// cache is consulted: s_enumCache is keyed by address and never erased, and under widget reload churn a freed struct's
+// or enum's address can hold another (the second design critic); WalkClassEx's memo now re-walks a class whose witness
+// changed ([WALKCLASS-MEMO-REUSE]), but a capture is taken at the call and stays independent of it.
 static void EnrichParam(uintptr_t prop, ParamField& p, int depth, int& leaves) {
     ReadParamSlotNames(prop, p);
     if (p.typeName == "StructProperty") {

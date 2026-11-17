@@ -101,6 +101,12 @@ struct ClassInfo {
     // min() against 0 or -1 re-emits the entire inherited chain (audit #5 W2).
     int32_t                OwnPropertiesStart = -1;
     std::vector<FieldInfo> Fields;
+    // [WALKCLASS-MEMO-REUSE] What the class looked like when WalkClassEx walked it: its property chains' heads and its
+    // super, read from the address. The memo is keyed by address, so a class freed and another object allocated there
+    // would hit this entry; a hit whose witness no longer reads back is walked again. 0 when not read.
+    uintptr_t              WitnessChildProps = 0;
+    uintptr_t              WitnessChildren   = 0;
+    uintptr_t              WitnessSuper      = 0;
 };
 
 struct FunctionParam {
@@ -186,10 +192,11 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // inner types, enum names, bool masks, etc. by reading FProperty chain.
 //
 // MEMOIZED, and returns a REFERENCE into that memo — bind it with `const auto&`
-// unless you actually need a mutable copy. The entry is immortal for the process
-// (node-based map, never erased or cleared), so the reference stays valid. Do not
-// cast away the const: mutating the returned object would corrupt every later
-// caller's view.
+// unless you actually need a mutable copy. The entry is never freed for the process,
+// so the reference stays valid: a hit whose class witness no longer reads back (another
+// object at the address, [WALKCLASS-MEMO-REUSE]) is walked again, and the replaced entry
+// is parked, not erased. Do not cast away the const: mutating the returned object would
+// corrupt every later caller's view.
 //
 // Yields a reference to a shared EMPTY ClassInfo — never a cached one — for a null
 // uclassAddr and for any address that fails ShouldPublishClassWalk (unmapped, or an
