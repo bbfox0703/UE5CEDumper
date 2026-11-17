@@ -67,11 +67,22 @@ def main() -> int:
     logdir = LOGROOT / (a.logdir or pathlib.Path(process_image(a.pid)).stem)
 
     r = mailbox_addr.Reader(a.pid)
-    mods = {pathlib.Path(p).name.lower(): (p, base) for p, base in mailbox_addr.modules(a.pid) if base}
+    # A proxy shares its file name with the System32 DLL it forwards to, so of the modules with that name, ours is the
+    # one exporting the mailbox.
+    mods = [(p, base) for p, base in mailbox_addr.modules(a.pid) if base]
     found = {}
     for role, name in (("earlier", a.earlier), ("later", a.later)):
-        hit = mods.get(name.lower())
-        box = mailbox_addr.find_export(r, hit[1], "g_invokeMailbox") if hit else None
+        hit, box = None, None
+        for p, base in mods:
+            if pathlib.Path(p).name.lower() != name.lower():
+                continue
+            try:
+                b = mailbox_addr.find_export(r, base, "g_invokeMailbox")
+            except SystemExit:
+                b = None
+            if b:
+                hit, box = (p, base), b
+                break
         check(f"the {role} copy {name} is loaded and exports g_invokeMailbox", bool(hit and box),
               f"{hit[0]} mailbox={box:#x}" if hit and box else "missing")
         found[role] = (hit[0], box) if hit and box else None
