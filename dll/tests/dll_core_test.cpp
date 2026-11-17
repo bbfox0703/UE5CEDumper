@@ -10293,6 +10293,39 @@ int main() {
               (sz(recs.size()) + " of " + sz(window)).c_str());
         Linie::FreeTrace();
 
+        // [LINIE-SEQ-LAST] Review wf_72c53295-04c F4: TraceEnter / TraceReturn stored the record's number FIRST and the
+        // payload after it, so a writer the ring lapped between those stores finished its payload over the newer
+        // record and CopyTrace kept that slot under the newer number with the late writer's content. Made deterministic
+        // here: TraceReturn reads the trace clock in the middle of its stores, and the clock below laps the 8-slot ring
+        // from inside that read (tid 2), so writer A (tid 1) resumes over the record that took its slot.
+        {
+            static std::atomic<int> s_lapArmed{ 0 };
+            Linie::SetTraceClockForTest([]() -> uint64_t {
+                if (s_lapArmed.exchange(0) == 1) {
+                    for (int i = 0; i < 4; ++i) {          // 8 records: one whole lap of an 8-slot ring
+                        Linie::TraceToken t;
+                        Linie::TraceEnter(0x700, 2, 1000, 2, t);
+                        Linie::TraceReturn(t, 2);
+                    }
+                }
+                return 42;
+            });
+            Linie::StartTrace(cfg(8));
+            Linie::TraceToken a;
+            Linie::TraceEnter(0x600, 1, 2000, 1, a);
+            s_lapArmed = 1;
+            Linie::TraceReturn(a, 1);                  // its clock read laps the ring mid-write
+            Linie::StopTrace();
+            const bool copied = copyAll();
+            size_t lateWriter = 0;
+            for (const auto& r : recs) if (r.tid == 1) ++lateWriter;
+            check("* LINIE-SEQ-LAST: a writer lapped inside its own stores leaves nothing under another record's number",
+                  copied && lateWriter == 0, (sz(lateWriter) + " record(s) of tid 1 among " + sz(recs.size())).c_str());
+            check("control: the lap's own records are kept", copied && recs.size() >= 6, sz(recs.size()).c_str());
+            Linie::SetTraceClockForTest(nullptr);
+            Linie::FreeTrace();
+        }
+
         // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
         // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
         {
