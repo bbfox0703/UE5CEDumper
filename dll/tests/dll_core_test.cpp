@@ -14116,9 +14116,10 @@ int main() {
             VirtualFree(loChunk, 0, MEM_RELEASE);
         }
 
-        // The new row's own first-entry check. An ObjObjects-anchored 4.20-5.7 preallocated array keeps the block at
-        // +0x08, under F's count; placed at 0x00001F00_00001000 its halves (0x1000, 0x1F00) pass F's floor and
-        // num <= max. Relaxed A/C refuses this one first (its Max under its Num), so F is the row that would read it.
+        // An ObjObjects-anchored 4.20-5.7 preallocated array keeps the block at +0x08, under F's count; placed at
+        // 0x00001F00_00001000 its halves (0x1000, 0x1F00) pass F's floor and num <= max. Relaxed A/C refuses this one
+        // first (its Max under its Num), so F is the row that would read it; its chunk slots refuse it (a max of 0x1F00
+        // is no whole number of chunks).
         {
             void* base = VirtualAlloc(reinterpret_cast<void*>(0x00001F0000000000ull), chunkBytes + 0x10000,
                                       MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -14146,13 +14147,13 @@ int main() {
         check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no count under 0x1000", Aura::s_layout.numElementsOffset != 0x08,
               layoutText().c_str());
 
-        // A decoy: count-like ints at +0x08 / +0x0C and a heap pointer at +0x00 that leads to no chunk -- the kind of
-        // candidate the heap-fallback recovery hands Aura::Init. F's Objects must read as a chunk table, so it is not
-        // taken for a 5.8 array.
+        // A header whose counts and chunk slots hold together for F but whose +0x00 leads to no chunk: F's Objects must
+        // read as a chunk table, so it is not taken for a 5.8 array. NumChunks 22 keeps the strict row (which accepts a
+        // null first chunk) out of it.
         static std::vector<uint64_t> blank(8, 0);
         memset(u8, 0, sizeof(u8));
         putP(0x00, reinterpret_cast<uintptr_t>(blank.data()));
-        put32(0x08, 0x2000); put32(0x0C, 0x4000);
+        put32(0x08, 0x2000); put32(0x0C, 0x210000); put32(0x10, 22); put32(0x14, 33);
         Aura::Init(u8Addr);
         check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no array whose Objects leads to no chunk",
               Aura::s_layout.numElementsOffset != 0x08, layoutText().c_str());
