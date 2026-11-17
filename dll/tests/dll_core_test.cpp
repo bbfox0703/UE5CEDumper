@@ -14041,6 +14041,103 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // [UE58-PREALLOC-NO-ROW] UE 5.8 put ObjObjects first in FUObjectArray -- Objects +0x00, NumElements +0x08,
+    // MaxElements +0x0C, NumChunks +0x10, MaxChunks +0x14, PreAllocatedObjects +0x18, then ObjFirstGCIndex +0x20 and
+    // ObjLastNonGCIndex +0x24 (UObjectArray.h, 5.8.4) -- and Aura's relaxed tier had no row for it. Any 5.8 array its
+    // strict row refuses was then misread: relaxed E latched ObjLastNonGCIndex as the count with Objects = NumChunks |
+    // MaxChunks, relaxed D a PreAllocatedObjects high dword, or the default layout MaxChunks -- each above 0, so the
+    // Count == 0 recovery never ran.
+    {
+        blk("UE58-PREALLOC-NO-ROW: a UE 5.8 array its strict row refuses is still read whole");
+        alignas(16) static uint8_t u8[0x40] = {};
+        auto put32 = [](int at, int32_t v) { memcpy(u8 + at, &v, 4); };
+        auto putP  = [](int at, uintptr_t v) { memcpy(u8 + at, &v, 8); };
+        const uintptr_t u8Addr = reinterpret_cast<uintptr_t>(u8);
+        static std::vector<uintptr_t> u8Table(33, 0);
+        auto build58 = [&](uintptr_t chunk0, int32_t num, int32_t numChunks, uintptr_t preAlloc, int32_t lastNonGC) {
+            memset(u8, 0, sizeof(u8));
+            for (auto& t : u8Table) t = reinterpret_cast<uintptr_t>(pool.chunks[0].data());
+            u8Table[0] = chunk0;
+            putP(0x00, reinterpret_cast<uintptr_t>(u8Table.data()));
+            put32(0x08, num); put32(0x0C, 0x210000); put32(0x10, numChunks); put32(0x14, 33);
+            putP(0x18, preAlloc);
+            // As UObjectArray.cpp leaves them once the disregard set closes: ObjFirstGCIndex = ObjLastNonGCIndex + 1; with
+            // the set off, ObjLastNonGCIndex stays -1 and ObjFirstGCIndex 0.
+            put32(0x20, lastNonGC >= 0 ? lastNonGC + 1 : 0); put32(0x24, lastNonGC);
+        };
+        auto layoutText = [] {
+            return "count " + std::to_string(Aura::GetCount()) + ", objects +" + std::to_string(Aura::s_layout.objectsOffset)
+                 + ", count at +" + std::to_string(Aura::s_layout.numElementsOffset);
+        };
+        auto read58 = [](int32_t want) {
+            return Aura::GetCount() == want && Aura::s_layout.objectsOffset == 0x00 && Aura::s_layout.numElementsOffset == 0x08;
+        };
+        const uintptr_t poolChunk = reinterpret_cast<uintptr_t>(pool.chunks[0].data());
+
+        // More than 20 live chunks: above 1,310,720 objects, a large stock game. Not preallocated.
+        build58(poolChunk, 0x150005, 22, 0, 0x8000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: a 5.8 array of 22 live chunks is read whole", read58(0x150005), layoutText().c_str());
+
+        // A count at an exact multiple of 64K: NumChunks = N / 64K, the strict cross-field check wants one more.
+        build58(poolChunk, 0x20000, 2, 0, 0x8000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW ⭐: a 5.8 array at an exact multiple of 64K is read whole", read58(0x20000),
+              layoutText().c_str());
+
+        // gc.PreAllocateUObjectArray: NumChunks = MaxChunks = 33, PreAllocatedObjects = Objects[0]; above 16 TB its
+        // high dword passes relaxed D's floor; and with gc.MaxObjectsNotConsideredByGC = 0 (ObjLastNonGCIndex -1, E
+        // skipped) below 16 TB, the default layout read MaxChunks.
+        const size_t chunkBytes = pool.chunks[0].size();
+        auto chunkAt = [&](std::initializer_list<uint32_t> highs) -> uint8_t* {
+            for (uint32_t hi : highs) {
+                void* p = VirtualAlloc(reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x00450000u),
+                                       chunkBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                if (p) { memcpy(p, pool.chunks[0].data(), chunkBytes); return static_cast<uint8_t*>(p); }
+            }
+            return nullptr;
+        };
+        uint8_t* hiChunk = chunkAt({ 0x1F00, 0x2100, 0x2300, 0x2500 });
+        check("UE58-PREALLOC-NO-ROW setup: a preallocated block above 16 TB", hiChunk != nullptr);
+        if (hiChunk) {
+            build58(reinterpret_cast<uintptr_t>(hiChunk), kCount, 33, reinterpret_cast<uintptr_t>(hiChunk), 0x8000);
+            Aura::Init(u8Addr);
+            check("UE58-PREALLOC-NO-ROW ⭐: a preallocated 5.8 array above 16 TB is read whole", read58(kCount),
+                  layoutText().c_str());
+            VirtualFree(hiChunk, 0, MEM_RELEASE);
+        }
+        uint8_t* loChunk = chunkAt({ 0x00F0, 0x00E0, 0x00D0, 0x00C0 });
+        check("UE58-PREALLOC-NO-ROW setup: a preallocated block below 16 TB", loChunk != nullptr);
+        if (loChunk) {
+            build58(reinterpret_cast<uintptr_t>(loChunk), kCount, 33, reinterpret_cast<uintptr_t>(loChunk), -1);
+            Aura::Init(u8Addr);
+            check("UE58-PREALLOC-NO-ROW ⭐: a preallocated 5.8 array with disregard-for-GC off is read whole", read58(kCount),
+                  layoutText().c_str());
+            VirtualFree(loChunk, 0, MEM_RELEASE);
+        }
+
+        // CONTROLS: a 5.8 array its strict row takes is still read whole (one chunk, consistent counts); and a
+        // base-anchored UE5-Extended array -- whose +0x08 / +0x0C are MaxObjectsNotConsideredByGC and the
+        // OpenForDisregardForGC bool -- is not taken by a 5.8 reading: relaxed E still reads it.
+        build58(poolChunk, kCount, 1, 0, 0x8000);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW control: a 5.8 array its strict row takes is read whole", read58(kCount),
+              layoutText().c_str());
+        static std::vector<uintptr_t> extTable(1, 0);
+        extTable[0] = poolChunk;
+        memset(u8, 0, sizeof(u8));
+        put32(0x08, 0x30000); put32(0x0C, 0);                     // MaxObjectsNotConsideredByGC, OpenForDisregardForGC
+        putP(0x10, reinterpret_cast<uintptr_t>(extTable.data()));
+        put32(0x20, 0x10000); put32(0x24, kCount); put32(0x28, 1); put32(0x2C, 1);
+        Aura::Init(u8Addr);
+        check("UE58-PREALLOC-NO-ROW control: a base-anchored UE5-Extended array is still relaxed E's",
+              Aura::GetCount() == kCount && Aura::s_layout.objectsOffset == 0x10 && Aura::s_layout.numElementsOffset == 0x24,
+              layoutText().c_str());
+
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
