@@ -1059,7 +1059,7 @@ One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `
     override; asked directly as a background client (`grant`, `expect_func_full` the native name), the DLL resolved
     the override and refused it -28 with `func_full` naming `ABP_Manny_C.BlueprintUpdateAnimation`.
 
-### ⬜ MCP field grants, Phase 2 (build 3718) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+### ✅ MCP field grants, Phase 2 (build 3718) — all four rows closed 2026-11-17, row 3 narrower than written `[MCP-WRITE-GRANTS-2026-11-14]`
 
 One field of one class per grant: `grant_write_field_one_property_every_instance`, then `write_field` unasked -- dev-log
 3718, docs/mcp-write-approval-eval.md §4.5. Unit tests (`McpGrantsTests`, `McpToolsTests` with the `FieldGame` fake,
@@ -1082,12 +1082,25 @@ One field of one class per grant: `grant_write_field_one_property_every_instance
     - Regressions on the same build: `probe` 29/29, `invokegrant` 22/22, `raw` 28/28, `invokeparams` 26/26,
       `writes --toggle-experimental` 39/39, `holdsmore` 78/78; `olddll` 41/41 on a fresh 3695 DLL (pid 24960): the
       field grant and `write_field` refused "older than 3718", nothing sent.
-2. ⬜ **Claude Code's prompt for a field grant.** Acceptance: with the server registered from a 3718 exe, the AI asked to
-    change one field repeatedly calls `grant_write_field_one_property_every_instance`; the prompt shows that name, then
-    Field, then Class, then the scope_ack sentence, each whole; after Allow, `write_field` runs without a prompt in auto
-    mode, `write_memory` elsewhere still asks, and the server's log has one `Grant N: Field ... : <class path>:<field>`
-    line. Covered meanwhile by `McpToolsTests.TheFieldGrant_StatesItsScope_WithTheFieldFirst` (the order) and Phase 0's
-    M1 (whole arguments).
+2. ✅ **CLOSED 2026-11-17** (the same session, server and game as Phase 1b's row 2 above: the AOT exe 3727 -- the
+    acceptance names 3718, the build that brought the grant -- DLL 3727, DumperTest Shipping pid 37752, auto mode).
+    - Asked to change `HolderValue` repeatedly, the AI called `grant_write_field_one_property_every_instance` (field
+      `HolderValue`, class `//Script/DumperTest/DumperTestHolder`, a FloatProperty at 0x290). The maintainer read the
+      prompt as the tool's name, then Field, then Class, then the scope_ack sentence, each whole, and pressed Allow.
+    - `write_field` four times on two of the level's three `DumperTestHolder` instances, no prompt (the maintainer's
+      reading): 12.5 (`00000000` -> `00004841`), -3.25 on the second (`00000000` -> `000050C0`), 99 (`00004841` ->
+      `0000C642`), then 0 put back (`0000C642` -> `00000000`); `read_grants` uses 4.
+    - `write_memory` still asked -- on the second instance's `HolderValue`, the granted field's own bytes, so a field
+      grant does not cover `write_memory` even there. The maintainer allowed it, and it put back 0 (`000050C0` ->
+      `00000000`); both instances read back `00000000` afterwards.
+    - The log has one `Grant 2: Field for game 37752 (run 1DD7683C3CC1DC5):
+      //Script/DumperTest/DumperTestHolder:HolderValue.` line and one `Grant 2 admitted a write of ...` line per write.
+    *Was:* ⬜ **Claude Code's prompt for a field grant.** Acceptance: with the server registered from a 3718 exe, the AI
+    asked to change one field repeatedly calls `grant_write_field_one_property_every_instance`; the prompt shows that
+    name, then Field, then Class, then the scope_ack sentence, each whole; after Allow, `write_field` runs without a
+    prompt in auto mode, `write_memory` elsewhere still asks, and the server's log has one
+    `Grant N: Field ... : <class path>:<field>` line. Covered meanwhile by
+    `McpToolsTests.TheFieldGrant_StatesItsScope_WithTheFieldFirst` (the order) and Phase 0's M1 (whole arguments).
 3. ✅ **CLOSED 2026-11-17, narrower than written** (DLL 3718, DumperTest Shipping pid 12168; `mcp_client.py
     fieldgrant` 44/44, log `out/mcp_fieldgrant_3718b.log`, step 4d). `GroundSpeed`, a DoubleProperty of the anim
     Blueprint `//Game/Characters/Mannequins/Animations/ABP_Manny/ABP_Manny_C`, was granted by that path and written
@@ -1332,7 +1345,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
