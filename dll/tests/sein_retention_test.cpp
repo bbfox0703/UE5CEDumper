@@ -361,6 +361,52 @@ int main() {
               text.find("mirror probe 4242") != std::string::npos);
     }
 
+    // [DUMPER-SECOND-COPY-AUTOSTART] Each live file is opened deny-write, so a second writer of a process's logs -- a
+    // later copy of the dumper beside a proxy (measured 2026-11-17: the copy that took over logged nothing at all), or
+    // a second instance of the same game -- could open none of them.
+    {
+        Fixture fx;
+        blk("InitProcessMirror: a second writer logs beside the first");
+        const fs::path primary = fx.root / L"Game";
+        std::error_code ec;
+        fs::create_directories(primary, ec);
+        std::vector<FILE*> held;
+        for (const auto& n : Sein::s_fileNames)
+            held.push_back(_wfsopen((primary / (std::wstring(n.w) + L"-0.log")).c_str(), L"w", _SH_DENYWR));
+        bool allHeld = true;
+        for (FILE* f : held) allHeld = allHeld && f != nullptr;
+        check("S0 setup: every category's live file is held deny-write, as a first writer holds it", allHeld);
+        wchar_t self[MAX_PATH]{};
+        ::GetModuleFileNameW(nullptr, self, MAX_PATH);
+        const fs::path beside = fx.root / (L"Game." + fs::path(self).stem().wstring() + L"." +
+                                           std::to_wstring(::GetCurrentProcessId()));
+        Sein::s_filesOpen = false;
+        Sein::InitProcessMirror(L"Game.exe");
+        check("S1 the second writer's folder is <root>\\Game.<module>.<pid>", Sein::s_processDir == beside);
+        check("S2 its category files opened", Sein::s_filesOpen);
+        Sein::Info("TEST", "second writer probe %d", 4343);
+        Sein::Shutdown();
+        std::string text;
+        if (FILE* f = _wfsopen((beside / L"init-0.log").c_str(), L"rb", _SH_DENYNO)) {
+            char buf[4096]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+            fclose(f);
+        }
+        check("S3 its lines reach that folder", text.find("second writer probe 4343") != std::string::npos);
+        check("S4 it says why it logs there", text.find("held by another writer") != std::string::npos);
+        check("S5 the first writer's live file is untouched", fs::file_size(primary / L"init-0.log", ec) == 0 && !ec);
+        for (FILE* f : held)
+            if (f) fclose(f);
+    }
+    {
+        Fixture fx;
+        blk("InitProcessMirror: one writer keeps the process folder (control)");
+        Sein::s_filesOpen = false;
+        Sein::InitProcessMirror(L"Game.exe");
+        check("S6 control: with nobody holding the files the logs stay in <root>\\Game", Sein::s_processDir == fx.root / L"Game");
+        Sein::Shutdown();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
