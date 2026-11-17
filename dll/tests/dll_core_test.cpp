@@ -8830,6 +8830,31 @@ int main() {
               &straddleNext == &straddleFirst && offsetOf(straddleNext) == 0x40, std::to_string(offsetOf(straddleNext)).c_str());
         DynOff::FPROPERTY_OFFSET = svPropOff;
 
+        // Review wf_09b53b67-caf, B-R4-STRADDLE-PLAIN-HIT: a WalkClassEx that starts while a retire is between its two
+        // bumps -- the count already moved, the epoch not yet. The count it read is the one it compares after its key,
+        // so it cannot see the retire, while its plain walk is keyed under the old epoch and may be served what was cached
+        // mid-validation. It must wait the retire out. The retire's second half lands from another thread, with the
+        // measured offset it settled.
+        Ubel::g_beforeFamilyCachePublishForTest = nullptr;
+        static uint8_t feHalfProp[0x100] = {}, feHalfCls[0x100] = {};
+        fprop(feHalfProp, A(feObjFC), 5, 0x28, 8, nullptr);   // Offset_Internal 0x28 at the default slot...
+        put32(feHalfProp, s_measuredOff, 0x40);               // ...and 0x40 at the measured one
+        put32(feHalfCls, DynOff::USTRUCT_PROPSSIZE, 0x48);
+        putP(feHalfCls, DynOff::USTRUCT_CHILDPROPS, A(feHalfProp));
+        DynOff::g_offsetValidations.fetch_add(1);   // the retire's first bump
+        std::thread halfRetire([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const DynOff::FamilyWriteLock lk;
+            DynOff::FPROPERTY_OFFSET = s_measuredOff;
+            DynOff::g_propertyFamilyEpoch.fetch_add(1);
+            DynOff::g_offsetValidations.fetch_add(1);
+        });
+        const int halfOff = offsetOf(Ubel::WalkClassEx(A(feHalfCls)));
+        halfRetire.join();
+        check("FAMILYEPOCH half-retire ⭐: a WalkClassEx that starts between a retire's two bumps waits it out",
+              halfOff == 0x40, std::to_string(halfOff).c_str());
+        DynOff::FPROPERTY_OFFSET = svPropOff;
+
         Ubel::g_beforeFamilyCachePublishForTest = nullptr;
         Aura::g_beforeFamilyCachePublishForTest = nullptr;
         s_raceCache = nullptr;
