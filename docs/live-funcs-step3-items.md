@@ -365,8 +365,10 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
   function, about 300 µs each while the game churned its address space. Fixed by a per-region cache (S3-A1): 11 ms.
 - **The maintainer's decision on the budget (2026-10-08), from the fixture's figure:** (A), Standard 50 a second in all
   and Low 25 (per function 25 and 12, the 1:2 ratio kept). Built as S3-U9.
-- **Owed:** the rig mutations against a real DLL (scripted offline instead: no_stack_ok, ignore_kind, no_known, each
-  failing its named check in `--self-test`), a register row.
+- ✅ **Done 2026-11-18 on 3733:** the rig mutations against a real DLL -- no_stack_ok, ignore_kind, no_known, each built
+  and injected and each failing its named check live, the control 32/32 (verification-register.md
+  `[LIVEFUNCS-STEP3-MUTANTS]`). *Was owed:* the rig mutations against a real DLL (scripted offline instead: no_stack_ok,
+  ignore_kind, no_known, each failing its named check in `--self-test`), a register row.
 - **The UI walkthrough (8.2), on the AOT build 3641** (dist/UE5DumpUI.exe 60,989,952 bytes, SHA-256 6fdc95f1…; the
   dist DLL injected): (1) the Stack? column ("S") beside T and P, the warning in orange and the Standard / Low radios
   once a stack is chosen; (2) Low, Start, Stop: "Stacks: 621 taken; 1,332 calls over the budget had none … About

@@ -1285,9 +1285,19 @@ the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM thr
    review's M3).** The budget keeps the first calls of each second, so up to the total's
    worth of captures can land in one frame. Acceptance: on Avowed with a busy function chosen, a frame-time trace
    (the fps overlay's graph, or PresentMon) shows no spike once a second; if it does, M3's 100 ms window.
-3. **The rig's own mutations against a real DLL.** S3-F1's stackOk left out of the refusal, S3-F2's ignored `kind`
-   and the trampoline compared for `known` are scripted against the rig's dry run (`--self-test`), each failing its
-   named check; a DLL built with each mutation and the rig run live is owed.
+3. ✅ **CLOSED 2026-11-18 on 3733 `[LIVEFUNCS-STEP3-MUTANTS]`** (DumperTest58 Shipping, a fresh game per run,
+   `livefuncs_snap_live.py --stacks`; logs `out/register/mut_*.log`). Each mutant is the dist build's source with one
+   line of `Fern.cpp` changed, built by `build_dll.py --targets UE5Dumper` (no dist, no bump) and injected with
+   `inject.py --dll`; `Fern.cpp` was restored byte-for-byte after each build. The control, dist 3733: **32/32**, 7
+   recorded. `no_stack_ok` (the refusal sum without `stackOk`): 27/28, the ONE failure "S0 a stacks-only Start …
+   is accepted". `no_known` (`known` compared with an address that is never the function start -- Stark publishes no
+   trampoline getter, so `processEvent + 1` stands in): 31/32, the ONE failure S3's "every in-scope stack holds
+   known:"process_event"" (0 of 16). `ignore_kind` (`kind:"stack"` ignored): 22/32, "S1 no orphans" failing with
+   "items without kind "stack" (kind None): the DLL ignored it", and the S1-S5 checks that read stack pages failing
+   behind it, as the self-test allows for this mutant. *Was:* **The rig's own mutations against a real DLL.** S3-F1's
+   stackOk left out of the refusal, S3-F2's ignored `kind` and the trampoline compared for `known` are scripted against
+   the rig's dry run (`--self-test`), each failing its named check; a DLL built with each mutation and the rig run
+   live is owed.
 4. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`**: Avowed's max over 6,200 captures was 241 µs, under the
    1 ms trigger, so S3-P1 (prewarm) stays deferred. *Was:* **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
    not again in ~3,500 captures (max 0.5 ms; a fresh game's first capture 112 µs). Read as preemption mid-walk.
