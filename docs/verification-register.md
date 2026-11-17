@@ -11647,6 +11647,11 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   `GameThreadDispatch: validation OK — hook fired N times`; previously-`-5`-timing-out
   instance invokes should now succeed. Lower-priority extras: a UE 4.18-4.24 game (smaller
   vtable / lower slot) + a heavily-modified publisher fork.
+  ✅ **Extra (a) CLOSED 2026-11-17 on 3732** (UE423_Flying Shipping, UE 4.23): `DetectProcessEvent (pattern): match
+  at vtable+0x210`, `GameThreadDispatch: validation OK — hook fired 910 times in 1500ms`, no `fired 0 times in`;
+  `pe_profile_get` after 4 s on one connection: 10 distinct UFunctions and 2,460 calls (`FlyingPawn_C::ReceiveTick`,
+  its input-axis events, `HUD::ReceiveDrawHUD`), so the hook dispatches and is not merely installed. Log
+  `out/register/b648_profile.log`.
 - ✅ **Static-native PE fast path** (build 636) — **BOTH halves now closed.** The "by accident"
   half closed 2026-08-23 `[B636-NOACCIDENT-2026-08-23]` offline; **the latency half closed
   2026-08-24 `[B636-FASTPATH-2026-08-24]`**, DumperTest dev, DLL **3349**,
