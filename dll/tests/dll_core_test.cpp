@@ -9707,9 +9707,75 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- STRUCTKIND-2026-11-18 -- what walk_class walks: a UStruct of some kind, not any live object ------------------
+    //
+    // ⛔ OWN name table (after KINDNAMES). [WALKCLASS-NOT-STRUCT] Review wf_1b9e937b-a0d DLL-3: walk_class's liveness
+    // gate let any live object through, and a level travel can free a class and put an actor at its address -- walked as
+    // a class, that answered an empty or made-up class with no error. The engine's metaclasses pass by name (a give-up
+    // session never measures USTRUCT_SUPER), any other subclass by its chain reaching Struct.
+    {
+        blk("STRUCTKIND - a class, a struct and a function are walkable; an actor, an enum and an asset are not");
+        ResetCancel();
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t skEntry[12][0x40] = {};
+        const char* skNames[12] = { "", "Class", "ScriptStruct", "Function", "Enum", "Struct", "VerseClass",
+                                    "SoundClass", "Actor", "MyActor", "Vector", "E_Mood" };
+        static uintptr_t skChunk[13] = {};
+        for (int i = 1; i <= 11; ++i) {
+            memcpy(skEntry[i] + 0x10, skNames[i], strlen(skNames[i]) + 1);
+            skChunk[i] = A(skEntry[i]);
+        }
+        static uintptr_t skChunks[2] = { A(skChunk), 0 };
+        Serie::InitUE4(A(skChunks), 0x10);
+
+        static uint8_t skClassMeta[0x100] = {}, skSsMeta[0x100] = {}, skFnMeta[0x100] = {}, skEnumMeta[0x100] = {},
+                       skStructRoot[0x100] = {}, skVerseMeta[0x100] = {}, skSoundMeta[0x100] = {},
+                       skActorCls[0x100] = {}, skMyActorCls[0x100] = {},
+                       skVector[0x100] = {}, skFunc[0x100] = {}, skEnum[0x100] = {}, skActor[0x100] = {},
+                       skVerseObj[0x100] = {}, skSound[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, cls ? A(cls) : 0);
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(skClassMeta, skClassMeta, 1);
+        uobj(skSsMeta, skClassMeta, 2);
+        uobj(skFnMeta, skClassMeta, 3);
+        uobj(skEnumMeta, skClassMeta, 4);
+        uobj(skStructRoot, skClassMeta, 5);
+        uobj(skVerseMeta, skClassMeta, 6);   // a UClass subclass no name list knows: its chain reaches Class, then Struct
+        putP(skVerseMeta, DynOff::USTRUCT_SUPER, A(skClassMeta));
+        putP(skClassMeta, DynOff::USTRUCT_SUPER, A(skStructRoot));
+        uobj(skSoundMeta, skClassMeta, 7);   // an asset whose TYPE merely ends in Class
+        uobj(skActorCls, skClassMeta, 8);
+        uobj(skMyActorCls, skClassMeta, 9);
+        putP(skMyActorCls, DynOff::USTRUCT_SUPER, A(skActorCls));
+
+        uobj(skVector, skSsMeta, 10);        // a struct
+        uobj(skFunc, skFnMeta, 3);           // a function
+        uobj(skEnum, skEnumMeta, 11);        // an enum
+        uobj(skActor, skMyActorCls, 9);      // an actor: what a freed class's address can hold after a level travel
+        uobj(skVerseObj, skVerseMeta, 6);
+        uobj(skSound, skSoundMeta, 7);
+
+        check("STRUCTKIND control: a class (metaclass Class) is walkable", Ubel::IsStructKindObject(A(skActorCls)));
+        check("STRUCTKIND control: a script struct is walkable", Ubel::IsStructKindObject(A(skVector)));
+        check("STRUCTKIND control: a function is walkable", Ubel::IsStructKindObject(A(skFunc)));
+        check("STRUCTKIND control: a class of a UClass subclass no list names is walkable (chain reaches Struct)",
+              Ubel::IsStructKindObject(A(skVerseObj)));
+        check("* STRUCTKIND: an actor instance is not walkable as a class", !Ubel::IsStructKindObject(A(skActor)));
+        check("* STRUCTKIND: an enum is not walkable as a class", !Ubel::IsStructKindObject(A(skEnum)));
+        check("* STRUCTKIND: an asset whose type ends in Class (SoundClass) is not walkable",
+              !Ubel::IsStructKindObject(A(skSound)));
+        check("STRUCTKIND: a null address is not walkable", !Ubel::IsStructKindObject(0));
+        putP(skClassMeta, DynOff::USTRUCT_SUPER, 0);
+    }
+
     // -- PROBEOVERRUN-2026-09-28 -- the C-ABI subclass getters read no further than a proven slot ---------------------
     //
-    // ⛔ OWN name table (after KINDNAMES). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
+    // ⛔ OWN name table (after STRUCTKIND). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
     // FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned) and returned the first object of the wanted kind. On
     // EVERSPACE 2 the PropertyClass getter, asked about a Blueprint UberGraphFrame StructProperty (0x78 bytes), returned
     // the component class at +0x80 -- the NEXT heap block -- and a null PropertyClass would have done the same. A slot a

@@ -568,6 +568,11 @@ public class ClassStructViewModelConcurrencyTests
         int walk = handler.IndexOf("Ubel::WalkClassEx(addr)", StringComparison.Ordinal);
         Assert.True(live > 0 && walk > live, $"the liveness refusal must precede the walk (refusal at {live}, walk at {walk})");
         Assert.Contains("return Renge::MakeError(id, \"Not a live class at \" + addrStr", handler);
+        // [WALKCLASS-NOT-STRUCT] Review wf_1b9e937b-a0d DLL-3: live is not enough -- an actor at a freed class's address
+        // is live. The kind check sits between the liveness refusal and the walk.
+        int kind = handler.IndexOf("if (!Ubel::IsStructKindObject(addr))", StringComparison.Ordinal);
+        Assert.True(kind > live && walk > kind, $"the kind refusal must sit between liveness ({live}) and the walk ({walk}), at {kind}");
+        Assert.Contains("\"Not a class or struct at \" + addrStr", handler);
         // The liveness rule is the one pe_trace_names and the snapshot decoder use: its own index leads back to it.
         Assert.Matches(@"bool IsLiveObject\(uintptr_t \w+\) \{\s*const int32_t idx = Ubel::GetIndex\(\w+\);\s*return idx >= 0 && Aura::GetByIndex\(idx\) == \w+;", fern);
     }

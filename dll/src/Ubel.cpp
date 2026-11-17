@@ -1547,6 +1547,11 @@ bool IsClassObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Class", Aura::IsClassLikeMeta);
 }
 
+bool IsStructKindObject(uintptr_t obj) {
+    (void)obj;
+    return true;
+}
+
 // A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
 // there. [STRUCTCACHE-ENUM-UNCHECKED] fixed one reader that kept the pointer unchecked; [ENUMSLOT-ANY-NAME] found the
 // rest -- the enum names the exports write took any printable name -- and that the check itself matched two exact

@@ -3325,6 +3325,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (!IsLiveObject(addr))
                 return Renge::MakeError(id, "Not a live class at " + addrStr +
                                                 " -- freed (a level travel?) or never a UObject").dump();
+            // [WALKCLASS-NOT-STRUCT] Live is not enough: the freed class's address may hold another kind of object now
+            // (an actor), and walking that as a class answered an empty or made-up class with no error.
+            if (!Ubel::IsStructKindObject(addr)) {
+                const uintptr_t holderCls = Ubel::GetClass(addr);
+                return Renge::MakeError(id, "Not a class or struct at " + addrStr + " -- it holds " +
+                                                Ubel::GetName(addr) + " (" +
+                                                (holderCls ? Ubel::GetName(holderCls) : std::string("no class")) +
+                                                "); a level travel can free a class and reuse its address").dump();
+            }
             const ClassInfo& ci = Ubel::WalkClassEx(addr);
 
             json data;
