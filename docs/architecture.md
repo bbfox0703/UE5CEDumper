@@ -295,6 +295,12 @@ All logs written to `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\`:
 
 8 MB max per file. UI mirrors to `ui-init`, `ui-pipe`, `ui-view` prefixed files.
 
+**A second writer logs beside the first** ([DUMPER-SECOND-COPY-AUTOSTART]): each live `-0.log` is held
+open deny-write, so while one copy of the DLL logs into `<ProcessName>\`, a second one -- a copy
+injected beside a proxy, or another instance of the same game -- writes `<ProcessName>.<module>.<pid>\`
+instead (`init-0.log` says why). After a take-over, the copy that serves the process is usually that
+second one. The UI's folder lookup does not follow it.
+
 **Retention is age-based (21 days), not a generation count.** `<cat>-0.log` is always the current
 run; at startup the previous one is renamed `<cat>-YYYYMMDD-HHMMSS.log` — stamped from the file's
 *own* last-write time, never "now", or archiving would reset a stale log's clock and it would
