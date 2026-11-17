@@ -8400,6 +8400,13 @@ about.
   wedges the walk (U1).** The **passive half PASSES**: every `KeySz=`/`ValSz=` in the DumperTest
   `walk-0.log` is plausible (8/4, 4/4, 8/4, 16/4, 4/12) — nothing like `1073742336`.
   ⚠ **The degraded branch itself is NOT TESTED and must not be recorded as passing.**
+  ✅ **The degraded branch CLOSED 2026-11-17 on 3732 `[U1-ELEMSIZE-2026-11-17]`** (DumperTest **Development**, the
+  log folder the rig reads; `tools/verify/u1_map_elemsize.py` PASS, log `out/register/u1.log`): `Map_IntToVec3f`'s
+  ValueProp ElementSize poked to `0x40000200` (read back); `walk_instance` answered promptly with `map_count=3` and no
+  elements, and walk-0.log gained `Cannot read map elements for 'Map_IntToVec3f': count=3 ... KeySz=4 ValSz=0`. After
+  the restore (read back) the map read its 3 elements again, 6201 / 6202 / 6203 by value. ⚠ The rig's first run said
+  the warning was absent although it had fired: it sliced the DECODED log by byte marks, and walk-0.log carries
+  multi-byte characters. It slices bytes since.
 
 > ### ⛔ U1's PRESCRIBED PROBE CANNOT WORK 2026-08-23 `[U1-PROBE-2026-08-23]` — measured, and the reason is three layers of defence
 >
