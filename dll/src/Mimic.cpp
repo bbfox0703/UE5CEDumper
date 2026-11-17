@@ -476,8 +476,8 @@ static void PollingThreadBody() {
 
     while (s_running.load(std::memory_order_acquire)) {
         // [DUMPER-SECOND-COPY-AUTOSTART] This copy's mailbox first, then each earlier copy's it took over, one command
-        // each per pass. An adopted mailbox says what this copy's says, so a CE inject script that resolved the earlier
-        // copy reads it as served (Land::PublishedState).
+        // each per pass. An adopted mailbox says what this copy's says (Land::PublishedState): a CE inject script that
+        // resolved the earlier copy reads it as this copy -- served once this copy is READY.
         ServeOne(&g_invokeMailbox, warnedThrow);
         for (auto& slot : s_adopted) {
             MailboxData* box = slot.load(std::memory_order_acquire);
@@ -509,7 +509,7 @@ void StartThread() {
     }
 }
 
-void StopThread() {
+void StopThread(bool clearMailbox) {
     if (!s_running.load()) return;
 
     s_running.store(false, std::memory_order_release);
@@ -520,8 +520,8 @@ void StopThread() {
         s_hThread = nullptr;
     }
 
-    // Clear mailbox
-    memset(&g_invokeMailbox, 0, sizeof(g_invokeMailbox));
+    // Clear mailbox -- unless a later copy of the dumper is about to serve it (the hand-off's own shutdown).
+    if (clearMailbox) memset(&g_invokeMailbox, 0, sizeof(g_invokeMailbox));
     // [DUMPER-SECOND-COPY-AUTOSTART] Nobody serves the earlier copies' mailboxes now. Only initState is touched: a
     // command a script wrote there is its own, and the copy that owns the memory never runs again.
     for (auto& slot : s_adopted)

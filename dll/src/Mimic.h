@@ -335,8 +335,17 @@ enum InitState : int32_t {
     INIT_FAILED  = 3, // start-up did not complete: init aborted (a shutdown landed mid-scan; the
                       // pipe server may still have started), or the pipe server failed to start
     INIT_SKIPPED = 4, // auto-start deliberately skipped — CE plugin host, or
-                      // another UE5CEDumper instance already owns the pipe
+                      // another UE5CEDumper instance already owns the pipe.
+                      // [DUMPER-SECOND-COPY-AUTOSTART] Also a copy that handed this process to a
+                      // later copy of the dumper (Land): during the hand-off, and for good when
+                      // the later copy cannot serve its mailbox -- then nothing polls this one,
+                      // and its contract block's magic is cleared so a feature script refuses
+                      // at once instead of waiting out a command nobody takes.
 };
+// [DUMPER-SECOND-COPY-AUTOSTART] A mailbox a later copy took over (Mimic::AdoptMailbox) says
+// whatever that copy's own says, RUNNING, FAILED and IDLE included: it is served exactly
+// as well as the later copy's own. No contract bump: no field moved and no value changed
+// meaning for the scripts -- a mailbox that answers is served, as it always was.
 
 // Mailbox structure (exported as global variable)
 // CE Lua accesses via getAddress("g_invokeMailbox") + offset reads/writes
@@ -445,6 +454,11 @@ struct MailboxData {
 #pragma pack(pop)
 
 static_assert(sizeof(MailboxData) <= 4096, "MailboxData must fit in a single page");
+// [DUMPER-SECOND-COPY-AUTOSTART] The exact size, so a layout change cannot pass unnoticed by
+// MAILBOX_LAYOUT_SINCE below: a later copy of the dumper writes THIS struct into an earlier
+// copy's mailbox when it serves it, and a smaller one would be written past its end.
+static_assert(sizeof(MailboxData) == 0x730,
+              "MailboxData's layout changed: set MAILBOX_LAYOUT_SINCE to the new MAILBOX_CONTRACT");
 
 // ---- CMD_LIST_INSTANCES page geometry + result caps (contract 3+) -----------
 //
@@ -637,8 +651,9 @@ constexpr bool CommandRequiresInit(int32_t cmd) {
 void StartThread();
 
 /// Stop the mailbox polling thread and clean up.
-/// Called from UE5_Shutdown().
-void StopThread();
+/// Called from UE5_Shutdown(). [DUMPER-SECOND-COPY-AUTOSTART] A hand-off to a later copy passes clearMailbox = false:
+/// the later copy serves this mailbox next, and a command a script wrote meanwhile must reach it whole.
+void StopThread(bool clearMailbox = true);
 
 /// Returns the address of the mailbox buffer.
 uintptr_t GetAddress();
@@ -793,6 +808,12 @@ constexpr int32_t MAILBOX_CONTRACT = 9;
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.
 constexpr int32_t MAILBOX_CONTRACT_MIN = 1;
+
+/// [DUMPER-SECOND-COPY-AUTOSTART] The first contract whose MailboxData has this build's layout: version 3 put cmdFlags
+/// and cmdOutFlags at the tail, and nothing has moved since. A later copy of the dumper serves an earlier copy's mailbox
+/// only from this version on (Land::CanServeMailbox). Set it to the new MAILBOX_CONTRACT whenever item 1 changes; the
+/// exact-size assertion beside MailboxData fails until someone looks.
+constexpr int32_t MAILBOX_LAYOUT_SINCE = 3;
 
 /// 'UE5C' — proves the symbol resolved to OUR data rather than to a stale
 /// address left behind by a previous injection. That is not hypothetical: a

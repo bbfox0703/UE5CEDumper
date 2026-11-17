@@ -40,6 +40,14 @@ constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 // 2026-03-05) and the CE scripts look for by name. It carries no magic to check; no engine module exports that name,
 // so a module that does is not one the walk needs.
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
+// [DUMPER-SECOND-COPY-AUTOSTART] What a later copy calls or reads on an earlier copy in the same process (Land): its
+// mailbox, the hand-off it carries from this change on, and the shutdown every build carries.
+constexpr const char*    DUMPER_MAILBOX_EXPORT  = "g_invokeMailbox";
+constexpr const char*    DUMPER_YIELD_EXPORT    = "UE5_YieldToLaterCopy";
+constexpr const char*    DUMPER_SHUTDOWN_EXPORT = "UE5_Shutdown";
+// One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two
+// passes at once could each hand the other's mailbox over while it is still served.
+constexpr const wchar_t* LAND_PASS_MUTEX_FORMAT = L"Local\\UE5CEDumper_Land_%lu";
 
 // --- Named Pipe ---
 // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid>; Voll::PipeNameForPid builds
