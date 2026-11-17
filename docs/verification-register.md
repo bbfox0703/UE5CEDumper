@@ -1253,7 +1253,12 @@ reached:
    asks to re-measure the defaults, 1,000 / 10,000 a second).
 3. **The UI's memory while it loads snapshots.** The D3 line counts the snapshot buffer in the game's figure only.
    Acceptance: a full 32 MB snapshot buffer loaded in the Call Trace tab, and the load's memory log line.
-4. **UE4's property model** is not checked live, by decision (2026-10-07); if ever needed, UE 4.27.
+4. ✅ **CLOSED 2026-11-17 on 3732 `[LIVEFUNCS-STEP2-UE423]`** (UE423_Flying Shipping, UE 4.23's UProperty model;
+   `livefuncs_snap_live.py --label ue423 --choose "" --plain-s 20 --record-s 30`, 6/6 with 3 not run,
+   `out/livefuncs-snap/ue423.json`): the 10 busiest functions with parameters chosen by name, the Start accepted with
+   none refused, all 10 arms' layouts `read` 0-2 ms after arming, 27,600 copies decoded and 0 raw; 614 calls/s plain
+   against 613 with snapshots. *Was:* **UE4's property model** is not checked live, by decision (2026-10-07); if ever
+   needed, UE 4.27.
 
 ### ⬜ Live Funcs step 3 — what its live checks did not reach `[LIVEFUNCS-STEP3]`
 
