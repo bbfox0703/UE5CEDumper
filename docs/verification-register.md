@@ -11238,6 +11238,13 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   "cap reached, more exist unheld" has never been read on screen — `[SOLIDEHOLD-2026-08-22]` says so
   itself at todo.md:5846 — and the secondary `RemoveForce`-while-capped check was closed under L4,
   not here.
+  ✅ **The status-line sliver CLOSED 2026-11-18 on 3733 `[SOLIDE-CLAUSE-2026-11-18]`** (DumperTest Shipping, AOT
+  UE5DumpUI 3733; the fixture's `Spawn_ManyComponents(600)` first, so the component pool is past the cap): Property
+  Search `bIsEditorOnly` → ActorComponent → Force ON read `✓ Holding ActorComponent::bIsEditorOnly = ON on 256
+  instance(s) — cap reached, more exist unheld.`, the strip `(256 held) ⚠ capped`; the control, Actor ·
+  `bIsEditorOnlyActor` Force OFF, read `✓ Holding Actor::bIsEditorOnlyActor = OFF on 59 instance(s).` with no clause
+  and no badge. `get_forced_fields` agreed: held 256 `truncated: true` / held 59 `truncated: false`
+  (`out/register/solide_badge_forced.json`). Clear all then released both (0 held over the pipe).
 
 - **Copy CE Field drills object-pointer arrays — leaf + GWorld-path spine + dup-crumb dedup — DONE +
   MERGED (PR #323, builds 1364-1379).** LEAF (`SpawnedAttributes[2]` → `CharacterAttributeSet` →
