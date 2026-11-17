@@ -11,6 +11,7 @@
 #include "Grimoire.h"
 #include "Tot.h"
 #include "Voll.h"
+#include "Land.h"      // Land::AnyCopyToRetire -- a later copy does not defer to an earlier one [DUMPER-SECOND-COPY-AUTOSTART]
 #include "Utf8Helpers.h"
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 #include "Stark.h"     // Stark::HoldTrampolineBlock ([MH-PRERESERVE-PROXY])
@@ -235,8 +236,15 @@ static void AutoStartBody()
         CloseHandle(testPipe);
     }
 
-    if (Voll::DecideStart(pipeExists, holderPid, GetCurrentProcessId())
-            == Voll::StartAction::DeferAndWatch) {
+    // [DUMPER-SECOND-COPY-AUTOSTART] A busy pipe whose holder is unknown may be another copy of the dumper in this
+    // process, and the later copy takes over from that one rather than waiting for it: it scans, and its pipe start
+    // retires the earlier copy (Land::RetireEarlierCopies).
+    const bool deferToHolder = Voll::DecideStart(pipeExists, holderPid, GetCurrentProcessId())
+                                   == Voll::StartAction::DeferAndWatch;
+    if (deferToHolder && Land::AnyCopyToRetire()) {
+        LOG_WARN("DllMain AutoStart: every pipe instance is busy and another copy of the dumper in this process has "
+                 "started -- not deferring: this later copy scans, then takes over from it");
+    } else if (deferToHolder) {
         LOG_WARN("DllMain AutoStart: pipe is held by PID %lu (0: every instance busy, holder "
                  "unknown) — deferring auto-start, and watching for it to free",
                  static_cast<unsigned long>(holderPid));

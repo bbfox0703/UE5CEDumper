@@ -17,7 +17,7 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/                        ← 32 .cpp + 42 .h (newest: Falsch, [MH-TRAMPOLINE-PREFLIGHT]; Frieren-themed; see naming-convention.md)
+│   └── src/                        ← 33 .cpp + 44 .h (newest: Land, [DUMPER-SECOND-COPY-AUTOSTART]; Frieren-themed; see naming-convention.md)
 │       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
 │       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
@@ -71,7 +71,10 @@ UE5CEDumper/
 │       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
-│       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
+│       ├── Frieren.cpp / .h        ← ExportAPI — 64 C ABI exports for CE Lua bridge
+│       ├── Land.cpp / .h           ← SecondCopy — two copies of the dumper in one process: the later one shuts the
+│       │                             earlier down, takes the pipe and serves its CE mailbox; a copy that handed over
+│       │                             passes its export calls on
 │       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (107 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
