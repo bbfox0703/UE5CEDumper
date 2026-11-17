@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3725) — A preallocated object array's block pointer is not read as its count `[RELAXED-D-PREALLOC-HALF]`
+
+The maintainer asked for this row the same day it was filed. No visible change unless a game preallocates its object
+array (gc.PreAllocateUObjectArray) and its array fits no strict layout.
+- **What changes:** UE 4.20-5.7 keep ObjObjects.PreAllocatedObjects right after the Objects pointer, which on a
+  base-anchored array is where the UE4-Extended and flat layouts read Max and Num. A preallocated array that its own
+  strict row refused could then be read with the block pointer's high dword as its object count -- by relaxed D, which
+  had no floor at all, or, above 16 TB, by the strict Flat-Base layout first. UE stores that block as the chunk table's
+  first entry, so every strict row and relaxed D now refuse a count that lies in a qword equal to their own table's
+  first entry: exact at any heap height, and no genuine Max / Num pair can match it. Relaxed D also takes the 0x1000
+  floor A/C and B have.
+- **Proven live** on DLL 3725 that no title's own layout moved: DumperTest Shipping `UE5-Extended`, DumperTest58
+  `UE5.8`, NEKOPALIVE (UE 4.11) `Flat-Base`, each `relaxed_layout_live.py` 4/4 with the object count and a GWorld walk.
+  No corpus title preallocates; dll_core_test holds the misread above and below 16 TB.
+- **Review:** `wf_7e04517c-ef7`; its three surviving findings were wording, fixed. It also found a different, older
+  gap: a preallocated UE 5.8 array has no relaxed layout of its own (`[UE58-PREALLOC-NO-ROW]`, filed).
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1606 checks (ASan:
+  1606), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 09d5761e865f67ea...); UE5Dumper.dll 3,798,528 bytes (sha256 74e336aee109efba...).
+
 ## 2026-11-17 (build 3724) — An object array no strict row fits is no longer counted from half of a pointer above 16 TB `[VND584-03-FLOOR-HIGH-HEAP]`
 
 The maintainer asked for this row the same day it was parked. No visible change unless a game's object array fits no
