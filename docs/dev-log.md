@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (no build change) — Claude Code's own prompts for the two MCP grants, checked live; the 繁中 checklist retired `[MCP-WRITE-GRANTS-2026-11-14]`
+
+No program change.
+- **What was checked:** on the 3727 MCP server and DLL (DumperTest Shipping, a Claude Code desktop session in auto
+  mode), the maintainer read Claude Code's prompt for each grant as the tool's name, then Function or Field, then
+  Class, then the scope_ack sentence, each whole, and pressed Allow.
+  - **Invoke grant:** `KismetMathLibrary.Add_IntInt` ran three times unasked (5, 42, 993). `write_invoke` of
+    another function still asked; it was denied and never reached the server.
+  - **Field grant:** `DumperTestHolder:HolderValue` was written four times unasked and put back. `write_memory` on
+    that same field still asked.
+  - **Log:** the server logged one `Grant N:` line per grant. Both register sections (Phase 1b, Phase 2) are now
+    closed.
+- **Removed:** `docs/pending-verification_zh-TW.md`, the checklist of checks to run by hand, at the maintainer's
+  request: nearly every check it held is automated now, and its last three items were already register rows. Its
+  bucket tool and two spent helpers went with it.
+
 ## 2026-11-17 (build 3727) — A UE 5.8 object array its strict layout refuses is read whole; decoys still reach recovery `[UE58-PREALLOC-NO-ROW]`
 
 No visible change unless a UE 5.8 game's object array fails its strict layout, which a large stock game does.
