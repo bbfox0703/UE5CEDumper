@@ -8231,7 +8231,7 @@ Needs any connected game with an `enum class : uint8` field (Property Search →
    must still map to `int32`. That is the no-regression half; 4 is the one width the old code was
    right about.
 
-### 🟡 U2 only — container geometry on a real game (build 2830); MG2 is CLOSED
+### ✅ Container geometry on a real game (build 2830) — MG2 CLOSED 2026-08-23, U1 and U2 CLOSED 2026-11-18
 
 > **MG2 closed in full 2026-08-23** — step 1 + the TSet halves `[MG2-CONTAINER-2026-08-23]`, and the
 > UDataTable half once `[DTROWMAP-2026-08-23]` / `[DTTEXT-2026-08-23]` were fixed. **Only U2 is left**,
@@ -8249,6 +8249,9 @@ Needs any connected game with an `enum class : uint8` field (Property Search →
 > (todo.md, 2026-09-24) later found a CPN host that resolves names -- the UE 4.27 editor running a
 > project with `-game` -- and measured `sizeof(FName) = 12` and `TArray<FName>` `Tags` / `Layers` at
 > stride 12 there. Whether that discharges step 2 is for the next pass over this register to decide.
+> ✅ **Decided 2026-11-18:** step 2 was run on the UE 5.4 editor with `-game`, which now resolves names, and passed
+> with the element values read back (`[U2-CPN-2026-11-18]` below); U1's degraded branch closed the night before
+> (`[U1-ELEMSIZE-2026-11-17]`). Nothing in this section is open.
 
 *Closed here already: **MG1 · MG3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
 UI half 2026-08-18). **Still open: three.** **MG2**'s rows-equal-count half (the count half passed;
