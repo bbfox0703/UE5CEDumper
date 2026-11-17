@@ -158,6 +158,8 @@ public sealed class SecondCopySourceTests
                 "UE5_Init()", "Land::RefusesStart(Land::State())", "UE5_StartPipeServer()",
                 // ...and nothing published over a take-over that landed while the pipe started (R2-AUTOSTART-PUBLISH-AFTER-YIELD)
                 "Land::LockStart()", "Land::RefusesStart(Land::State())", "initState =");
+        Assert.Matches(@"\}\s*if \(Land::RefusesStart\(Land::State\(\)\)\) \{[^}]*return false;\s*\}\s*bool ok = UE5_StartPipeServer\(\)",
+                       FunctionBody(frieren, "static bool AutoStartWork() {"));
         Assert.Matches(@"bool ok = UE5_StartPipeServer\(\);\s*\{\s*const auto publishLock = Land::LockStart\(\);\s*" +
                        @"if \(Land::RefusesStart\(Land::State\(\)\)\)[^}]*return;\s*\}\s*g_invokeMailbox\.initState",
                        CodeOnly(DllSrc("Heiter.cpp")));
@@ -226,19 +228,30 @@ public sealed class SecondCopySourceTests
         InOrder(poller, "the adopted mailboxes", "s_adopted[slot].load(", "box->initState = Land::MirroredState(g_invokeMailbox.initState,",
                 "s_adoptedForwards[slot].load(", "ServeOne(box, warnedThrow)");
         // A mailbox another poller is mid-command on is left to it (R2-STOPTHREAD-TIMEOUT-REPLAY).
-        Assert.Matches(@"^s_box = box;\s*if \(Box\(\)\.status == STATUS_PROCESSING\) return;",
-                       FunctionBody(mimic, "static void ServeOne(MailboxData* box, bool& warnedThrow) {")[1..].TrimStart());
+        string serve = FunctionBody(mimic, "static void ServeOne(MailboxData* box, bool& warnedThrow) {")[1..].TrimStart();
+        Assert.Matches(@"^s_box = box;\s*const int32_t seen = Box\(\)\.status;\s*if \(seen == STATUS_PROCESSING\) return;", serve);
+        // ...and one finishing -- DONE written, its cmd = IDLE not yet (review wf_2875eae9-da5, R3-PROCESSING-SKIP-DONE-WINDOW).
+        Assert.Matches(@"if \(cmd != CMD_IDLE && seen == STATUS_DONE\) \{\s*Sleep\(1\);\s*if \(Box\(\)\.cmd == CMD_IDLE\) return;", serve);
+        // One poller's mailbox is not another's: a copy can run two (a stop that gave up, then a restart; R3-SBOX-SHARED-POLLERS).
+        Assert.Contains("static thread_local MailboxData* s_box", mimic);
         // A stop marks the adopted mailboxes by how they stop being served (R2-MBX4-IDLE-ORPHAN).
         Assert.Contains("Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,",
                         FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
-    /// <summary>The yield is listed in all four proxy .def files. A proxy exports it either way -- every proxy links the
-    /// shared objects, and /DEF merges with __declspec(dllexport) rather than replacing it (ProxyDxgi.def's header) -- so
-    /// this is the list check_proxy_exports and CE's getAddress readers see, kept complete (PIN-DEF-RATIONALE).</summary>
     /// <summary>A copy whose magic a later copy cleared (it could not serve that mailbox) is named as a take-over, with
     /// advice that works: re-injecting or re-ticking resolves the same copy again (review R2-CLEARED-MAGIC-ADVICE). The
     /// branch comes before the stale-address one, in the generated check and in both Lua helpers.</summary>
+    /// <summary>The layout pin holds whatever MAILBOX_LAYOUT_SINCE says: moving it fails the build until the pin is
+    /// restated for the new layout (review R3-LAYOUT-PIN-SELF-DISABLING: a conditional pin switched itself off).</summary>
+    [Fact]
+    public void TheMailboxLayoutPinIsUnconditional()
+    {
+        string h = CodeOnly(DllSrc("Mimic.h"));
+        Assert.Matches(@"static_assert\(MAILBOX_LAYOUT_SINCE == 3 &&\s*sizeof\(MailboxData\) == 0x730", h);
+        Assert.DoesNotContain("MAILBOX_LAYOUT_SINCE != 3", h);
+    }
+
     [Fact]
     public void TheContractChecksNameATakeOver()
     {
@@ -246,16 +259,21 @@ public sealed class SecondCopySourceTests
         UE5DumpUI.Services.CeLuaHygiene.AppendContractCheck(sb, "T");
         string gen = sb.ToString();
         InOrder(gen, "the generated contract check", "if _cmagic == 0 then", "_tm >= 1 and _tc >= _tm",
-                "another copy of UE5Dumper took over this game process", "update or remove it, then restart the game",
+                "another copy of UE5Dumper took over this game process",
+                // Either copy can be the stale one: the later copy takes over even when it is older (R3-TAKEOVER-ADVICE-NEWER-EARLIER).
+                "one of the two copies is out of date", "the proxy DLL in the game folder or the DLL injected later",
                 "if _cmagic ~= ");
         foreach (string helper in new[] { "ue5_invoke_helper.lua", "ue5_freeze_helper.lua" })
         {
             string lua = File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/" + helper)).Replace("\r\n", "\n");
             InOrder(lua, helper, "if magic == 0 then", "m >= 1 and c >= m", "another copy of UE5Dumper took over this game process",
-                    "if magic ~= 1127564629 then");
+                    "one of the two copies is out of date", "if magic ~= 1127564629 then");
         }
     }
 
+    /// <summary>The yield is listed in all four proxy .def files. A proxy exports it either way -- every proxy links the
+    /// shared objects, and /DEF merges with __declspec(dllexport) rather than replacing it (ProxyDxgi.def's header) -- so
+    /// this is the list check_proxy_exports and CE's getAddress readers see, kept complete (PIN-DEF-RATIONALE).</summary>
     [Fact]
     public void EveryProxyListsTheYield()
     {
