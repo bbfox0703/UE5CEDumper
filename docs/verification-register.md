@@ -5921,6 +5921,9 @@ fires in 1,500 ms); **5.3** `0x268` on the staged stock ThirdPerson53 **DebugGam
 (reference-builds.md); **4.23** `0x210` on UE423_Flying Shipping (910 fires; the rig's one FAIL there is only that
 its own table covers 500-508). 5.5 has Lushfoil's witness (above). Still without one: 5.0 (Light Maze is installed),
 5.2, and the other 4.11–4.25 rows.
+✅ **5.0 added 2026-11-18 on 3733**: Light Maze (Steam, UE 5.0.3, injected, 14,958 objects) `0x258`, Add_IntInt = 7,
+`validation OK — hook fired 1800 times in 1500ms`, no fallback, no VALIDATION FAILED (`out/register/pehook500.log`).
+Still without one: 5.2 (no 5.2 host is installed) and the 4.x rows other than 4.23 and 4.27.
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
