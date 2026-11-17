@@ -527,6 +527,14 @@ local function checkContract()
     return false, 'the contract symbol could not be read -- the game process has ' ..
       'most likely exited (if it is running, re-inject UE5Dumper.dll)'
   end
+  if magic == 0 then
+    -- [DUMPER-SECOND-COPY-AUTOSTART] A later copy of the dumper took this process over, could not serve this copy's
+    -- mailbox and cleared its magic (Land::TakeMailbox): not a stale address, and re-injecting resolves the same copy.
+    local c, m = readInteger(cv + 0x04), readInteger(cv + 0x08)
+    if c and m and m >= 1 and c >= m and c < 1000 then
+      return false, 'another copy of UE5Dumper took over this game process, and this script resolved the copy it replaced, whose mailbox the new copy cannot serve -- one of the two copies is out of date, the proxy DLL in the game folder or the DLL injected later: update the older one, or remove the proxy, then restart the game'
+    end
+  end
   if magic ~= 1127564629 then
     return false, 'the contract symbol resolved to the wrong memory (stale address) -- re-inject the DLL'
   end

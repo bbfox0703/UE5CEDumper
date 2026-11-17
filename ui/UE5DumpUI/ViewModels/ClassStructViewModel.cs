@@ -174,6 +174,16 @@ public partial class ClassStructViewModel : ViewModelBase
         // bump above just took that from it, so no load is left to retire a spinner raised before the disconnect.
         IsLoading = false;
         _shownNodeAddress = null;
+        DropShownClass();
+        // [CLASSSTRUCT-DISCONNECT-ERROR] The panel shows the error on its own line whenever it is set, so a failed walk
+        // of the process that just went away would stay above the next game's empty panel.
+        ClearError();
+    }
+
+    /// <summary>The class on screen, gone: no header, no fields, no UClass* for Find Func. A disconnect needs it, and so
+    /// does a failed load -- the panel must not keep a class under an error about another selection.</summary>
+    private void DropShownClass()
+    {
         SelectedField = null;
         _allFields.Clear();
         Fields.Clear();
@@ -183,9 +193,6 @@ public partial class ClassStructViewModel : ViewModelBase
         PropertiesSize = 0;
         LoadedClassAddr = "";
         HasClass = false;
-        // [CLASSSTRUCT-DISCONNECT-ERROR] The panel shows the error on its own line whenever it is set, so a failed walk
-        // of the process that just went away would stay above the next game's empty panel.
-        ClearError();
     }
 
     /// <summary>
@@ -311,6 +318,9 @@ public partial class ClassStructViewModel : ViewModelBase
             // re-selecting the same node is refused forever and the panel stays
             // pinned on whatever it happened to be showing (audit #5 AE3).
             _shownNodeAddress = null;
+            // [CLASSSTRUCT-FAILED-KEEPS-OLD] And nothing OLD stays either: a stale class re-selected after a level
+            // reload showed its error above the same class's pre-reload fields.
+            DropShownClass();
             SetError(ex);
         }
         finally

@@ -733,6 +733,11 @@ public interface IDumpService
     /// <summary>Snapshot the active hold-jobs + their live held counts.</summary>
     Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default);
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Who holds each gameplay hold (<c>get_holds</c>, DLL
+    /// <see cref="Constants.HoldsMinDllBuild"/>+): the cards' holder labels. An older DLL answers it with an error.
+    /// </summary>
+    Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default);
+
     /// <summary>
     /// Auto-find the player's stealth/noise/visibility/detection meter: resolve the
     /// local pawn + its owned components, keyword-score every reflected numeric field,

@@ -622,6 +622,34 @@ std::wstring ProcessFolderName(const std::wstring& processName) {
     return safeName;
 }
 
+// [DUMPER-SECOND-COPY-AUTOSTART] The folder a SECOND writer of a process's logs uses. Each live -0.log is opened
+// deny-write, so while one writer holds them -- another copy of the dumper in this process (a proxy, then a later
+// injection), or another instance of the same game -- a second one could open none and logged nothing at all. It
+// writes beside the first instead, in <process folder>.<its module>.<pid>; the retention sweep ages that folder like any.
+static std::wstring SecondWriterFolderName(const std::wstring& processFolder, const std::wstring& moduleStem,
+                                           unsigned long pid) {
+    return processFolder + L"." + moduleStem + L"." + std::to_wstring(pid);
+}
+
+// The stem of the image this code is in: UE5Dumper, dxgi, ... (the test executable in a test).
+static std::wstring OwnModuleStem() {
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&OwnModuleStem), &self))
+        return L"module";
+    wchar_t path[MAX_PATH] = {};
+    if (!GetModuleFileNameW(self, path, MAX_PATH)) return L"module";
+    return fs::path(path).stem().wstring();
+}
+
+// Every category failed as a sharing violation: another writer holds them. A partial failure is something else, and
+// is rerouted into the files that did open, as before.
+static bool AllHeldByAnotherWriter(const int (&errs)[LF_COUNT]) {
+    for (int e : errs)
+        if (e != EACCES) return false;
+    return true;
+}
+
 void InitProcessMirror(const std::wstring& processName) {
     std::lock_guard<std::mutex> lock(s_mutex);
 
@@ -648,6 +676,23 @@ void InitProcessMirror(const std::wstring& processName) {
         if (opened[i]) ++openCount;
     }
 
+    // [DUMPER-SECOND-COPY-AUTOSTART] Another writer holds every live file: log beside it rather than not at all.
+    std::wstring heldFolder;
+    if (openCount == 0 && AllHeldByAnotherWriter(openErr)) {
+        const std::wstring folder = ProcessFolderName(processName);
+        const fs::path beside = s_logDir / SecondWriterFolderName(folder, OwnModuleStem(), GetCurrentProcessId());
+        std::error_code besideErr;
+        fs::create_directories(beside, besideErr);
+        if (!besideErr) {
+            heldFolder = folder;
+            s_processDir = beside;
+            for (int i = 0; i < LF_COUNT; ++i) {
+                opened[i] = OpenFileInDir(s_files[i], s_processDir, s_fileNames[i], &openErr[i]);
+                if (opened[i]) ++openCount;
+            }
+        }
+    }
+
     if (openCount > 0) {
         s_filesOpen = true;
         s_buffering = false;
@@ -665,6 +710,20 @@ void InitProcessMirror(const std::wstring& processName) {
                      "'%s-0.log' (errno=%d) — its lines are rerouted here for this run",
                      ts.c_str(), s_fileNames[i].a, s_fileNames[i].a, openErr[i]);
             LogFile sink = ResolveSink(static_cast<LogFile>(i));
+            if (sink != LF_COUNT) WriteToFile(s_files[sink], line);
+        }
+
+        if (!heldFolder.empty()) {
+            char folderA[MAX_PATH * 3] = {};
+            WideCharToMultiByte(CP_UTF8, 0, heldFolder.c_str(), -1, folderA, static_cast<int>(sizeof(folderA)), nullptr,
+                                nullptr);
+            auto ts = GetTimestamp();
+            char line[1024];
+            snprintf(line, sizeof(line),
+                     "[%s] [INFO] [INIT] Logger: the logs in '%s' are held by another writer -- another copy of the "
+                     "dumper in this process, or another instance of this game -- so this copy logs in this folder",
+                     ts.c_str(), folderA);
+            LogFile sink = ResolveSink(LF_Init);
             if (sink != LF_COUNT) WriteToFile(s_files[sink], line);
         }
 

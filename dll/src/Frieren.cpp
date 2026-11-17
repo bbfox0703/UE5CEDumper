@@ -1,6 +1,6 @@
 ﻿// ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: 63 C ABI exports for CE Lua bridge
+// ExportAPI: 64 C ABI exports for CE Lua bridge
 // ============================================================
 
 #include "Frieren.h"
@@ -28,6 +28,7 @@
 #include "Tot.h"     // Tot::RequestShutdown — enter the shutdown window before joining workers (M5)
 #include "Routine.h" // Routine::SafeThread — the pipe-claim watcher
 #include "Voll.h"    // Voll::DecideStart — who owns the pipe at startup (RELAUNCHPIPE)
+#include "Land.h"    // Land: a later copy of the dumper in this process takes over [DUMPER-SECOND-COPY-AUTOSTART]
 
 #include <string>
 #include <cstring>
@@ -101,6 +102,11 @@ static std::mutex  s_initMutex;
 // FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
 // the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
 std::atomic<bool> g_initInProgress{false};
+// [PIPE-WALK-DURING-INIT] Which run raised g_initInProgress: bumped just before each raise, so a reader that sees the flag
+// up (acquire) reads that run's serial or a later one; the first run is 1. Fern's pipe loop logs what it read during a
+// run once per command name (Voll::DuringInitNotes), and a new serial, not the flag's fall, starts a new list: two runs
+// can follow each other with no command read between them.
+std::atomic<uint32_t> g_initRun{0};
 
 // [R7-C-05] apply_rescan is a SECOND producer of the init globals: it publishes g_cachedGObjects, then runs Aura::Init
 // and (the first time) ValidateAndFixOffsets, exactly the tail A3 fenced inside UE5_Init. It holds this for that span;
@@ -109,12 +115,20 @@ std::atomic<bool> g_initInProgress{false};
 namespace FrierenInit {
 // [R7-S9] The fence: the flag must be visible BEFORE the GObjects publish that follows in Fern.cpp. A release store
 // orders what came before it, not what comes after, so a full fence keeps that publish from being hoisted above it.
-void BeginApply() { s_initMutex.lock(); g_initInProgress.store(true, std::memory_order_release); std::atomic_thread_fence(std::memory_order_seq_cst); }
+void BeginApply() {
+    s_initMutex.lock();
+    g_initRun.fetch_add(1, std::memory_order_relaxed);
+    g_initInProgress.store(true, std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+}
 void EndApply()   { g_initInProgress.store(false, std::memory_order_release); s_initMutex.unlock(); }
 }
 static Fern  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
+// [DUMPER-SECOND-COPY-AUTOSTART] A walk begun in this copy finishes here even if a later copy takes over meanwhile:
+// s_walkCache is this copy's, and the successor's is empty.
+static std::atomic<bool> s_walkOpenHere{false};
 
 // Global scan progress for UI polling (updated by UE5_Init, read by scan_status)
 namespace ScanProgress {
@@ -313,6 +327,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
 extern "C" {
 
 bool UE5_Init() {
+    LAND_FORWARD(UE5_Init);
     if (s_initialized.load(std::memory_order_acquire)) {
         // [R7-C-05] An apply_rescan is re-publishing GObjects and probing the offsets (FrierenInit::BeginApply): wait it
         // out. The mailbox's EnsureInitialized lands here exactly when the flag failed its fast path.
@@ -342,11 +357,20 @@ bool UE5_Init() {
         LOG_WARN("UE5_Init: Already initialized");
         return true;
     }
+    // [DUMPER-SECOND-COPY-AUTOSTART] Asked under the lock, last before the scan, so a caller that waited here while a
+    // later copy took over does not scan either.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_Init: this copy handed the process to a later copy of the dumper -- not scanning");
+        return false;
+    }
 
     // [A3-MIMIC-INIT-FASTPATH] From here to every return below, this thread is SCANNING under s_initMutex. The flag
     // clears on every exit (RAII) -- before initLock releases, because it is declared after it.
     struct InitInProgressScope {
-        InitInProgressScope()  { g_initInProgress.store(true,  std::memory_order_release); }
+        InitInProgressScope()  {
+            g_initRun.fetch_add(1, std::memory_order_relaxed);
+            g_initInProgress.store(true, std::memory_order_release);
+        }
         ~InitInProgressScope() { g_initInProgress.store(false, std::memory_order_release); }
     } initInProgress;
 
@@ -769,7 +793,10 @@ bool UE5_Init() {
     return true;
 }
 
-void UE5_Shutdown() {
+// handingOver: a later copy of the dumper is taking over (UE5_YieldToLaterCopy). The mailbox is then left whole, since
+// that copy serves it next and a command a script wrote meanwhile must reach it intact, and says SKIPPED -- "another copy
+// serves this process" -- until that copy's state replaces it, rather than IDLE, which a CE inject script reads as parked.
+static void ShutdownBody(bool handingOver) {
     LOG_INFO("UE5_Shutdown: Cleaning up...");
     // Enter the shutdown window up-front: (a) in-flight scans bail so the worker
     // joins below complete fast, and (b) every module's StartWorker* refuses to
@@ -777,14 +804,16 @@ void UE5_Shutdown() {
     // stop can't revive a just-joined worker that nothing would join again. Cleared
     // by Fern::Start (ResetShutdown) on re-enable in the same process. (M5)
     Tot::RequestShutdown();
-    Mimic::StopThread();
+    Mimic::StopThread(!handingOver);
     Solitar::StopWorker();   // join the GodMode re-assert worker before unload
     Laufen::StopWorker();    // join the movement-tuning re-assert worker before unload
     Hemmung::StopWorker();   // join the time-dilation re-assert worker before unload
     Solide::StopWorker();    // join the force-field hold worker before unload
     Dunste::StopWorker();    // join the fly worker before unload
-    Schlacht::SetEnabled(false, Schlacht::kOwnerNone);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3). On a stalled game thread nothing can dispatch: the record is kept for the next ON, and the shutdown flag set above cuts the waits that would hold this call ([SHUTDOWN-SEETHRU-WAIT])
-    Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
+    // Both OFFs below return 0 by contract (only an enable can fail), and See-through reports what it could not
+    // un-hide itself (its log line and restoreAbandoned), so their results carry nothing to act on here.
+    std::ignore = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3). On a stalled game thread nothing can dispatch: the record is kept for the next ON, and the shutdown flag set above cuts the waits that would hold this call ([SHUTDOWN-SEETHRU-WAIT])
+    std::ignore = Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
     // Teardown: soft RemoveHook + drain the pending invoke queue (MinHook stays
     // initialised -- see Stark::Shutdown). Pipe server is stopped after Shutdown() so any in-flight pipe thread
     // blocked on EnqueueInvoke receives its -7 result and unwinds cleanly.
@@ -800,10 +829,42 @@ void UE5_Shutdown() {
     DynOff::ResetOffsetsVerdict();
     // The pipe is gone, so stop advertising READY — a CE Lua re-enable after a
     // Disable must wait for the fresh auto-start rather than read a stale flag.
-    g_invokeMailbox.initState = Mimic::INIT_IDLE;
+    g_invokeMailbox.initState = handingOver ? Mimic::INIT_SKIPPED : Mimic::INIT_IDLE;
+}
+
+void UE5_Shutdown() {
+    // [DUMPER-SECOND-COPY-AUTOSTART] Not forwarded. A copy that is handing over, or has handed over, is shut down by
+    // the hand-off itself; a CE untick that reaches it must not stop the copy that took over, which this record never
+    // started (B30's rule). A second shutdown during the hand-off's own would also race it.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("UE5_Shutdown: this copy handed the process to a later copy of the dumper -- nothing to stop here");
+        return;
+    }
+    ShutdownBody(false);
+}
+
+// [DUMPER-SECOND-COPY-AUTOSTART] A later copy of the dumper in this process is taking over (Land::RetireEarlierCopies,
+// on the later copy's thread). This copy refuses to start anything from here on, shuts down, and then passes its C ABI
+// calls to the later copy -- all but UE5_Shutdown and UE5_StopPipeServer, which do nothing here, and the class walk's
+// GetField / End while a walk begun here is open. Its own teardown runs here: it calls some of those exports.
+int32_t UE5_YieldToLaterCopy(HMODULE successor) {
+    const Land::YieldReply reply = Land::BeginYield(successor);
+    if (reply == Land::YIELD_NOT_LATER) {
+        LOG_WARN("UE5_YieldToLaterCopy: refused -- the asking copy is not loaded after this one");
+        return reply;
+    }
+    if (reply == Land::YIELD_ALREADY) {
+        LOG_INFO("UE5_YieldToLaterCopy: this copy is already handing over -- nothing to do");
+        return reply;
+    }
+    LOG_WARN("UE5_YieldToLaterCopy: a later copy of the dumper is taking over this process -- shutting this copy down");
+    ShutdownBody(true);
+    Land::FinishYield();
+    return reply;
 }
 
 uint32_t UE5_GetVersion() {
+    LAND_FORWARD(UE5_GetVersion);
     // Lazy UE5.5 / 5.7 refines off markers discovered during walks / enum access (the
     // structural ladder ran at init; these two can surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
@@ -824,6 +885,7 @@ uint32_t UE5_GetVersion() {
 }
 
 int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
+    LAND_FORWARD(UE5_GetOffsetsVerdict, reasonBuf, bufLen);
     // [W5-OFFSETS-UNMEASURED] The pipe's get_offsets carried this verdict and nothing CE reads did -- while
     // ue5_dissect.lua builds CE structures from these very offsets. 1 = MEASURED; 0 = not, and reasonBuf says why.
     const bool ran       = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
@@ -833,46 +895,56 @@ int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
 }
 
 uintptr_t UE5_GetGObjectsAddr() {
+    LAND_FORWARD(UE5_GetGObjectsAddr);
     return g_cachedGObjects;
 }
 
 uintptr_t UE5_GetGNamesAddr() {
+    LAND_FORWARD(UE5_GetGNamesAddr);
     return g_cachedGNames;
 }
 
 void UE5_SetObjectDecryption(uintptr_t (*decryptFunc)(uintptr_t)) {
+    LAND_FORWARD(UE5_SetObjectDecryption, decryptFunc);
     Aura::SetDecryptFunc(decryptFunc);
     LOG_INFO("UE5_SetObjectDecryption: %s",
              decryptFunc ? "Custom decryption set" : "Decryption cleared");
 }
 
 int32_t UE5_GetObjectCount() {
+    LAND_FORWARD(UE5_GetObjectCount);
     return Aura::GetCount();
 }
 
 uintptr_t UE5_GetObjectByIndex(int32_t index) {
+    LAND_FORWARD(UE5_GetObjectByIndex, index);
     return Aura::GetByIndex(index);
 }
 
 bool UE5_GetObjectName(uintptr_t obj, char* buf, int32_t bufLen) {
+    LAND_FORWARD(UE5_GetObjectName, obj, buf, bufLen);
     std::string name = Ubel::GetName(obj);
     return CopyToBuffer(name, buf, bufLen);
 }
 
 bool UE5_GetObjectFullName(uintptr_t obj, char* buf, int32_t bufLen) {
+    LAND_FORWARD(UE5_GetObjectFullName, obj, buf, bufLen);
     std::string name = Ubel::GetFullName(obj);
     return CopyToBuffer(name, buf, bufLen);
 }
 
 uintptr_t UE5_GetObjectClass(uintptr_t obj) {
+    LAND_FORWARD(UE5_GetObjectClass, obj);
     return Ubel::GetClass(obj);
 }
 
 uintptr_t UE5_GetObjectOuter(uintptr_t obj) {
+    LAND_FORWARD(UE5_GetObjectOuter, obj);
     return Ubel::GetOuter(obj);
 }
 
 uintptr_t UE5_FindObject(const char* fullPath) {
+    LAND_FORWARD(UE5_FindObject, fullPath);
     if (!fullPath) return 0;
     // The parameter has always been named `fullPath`, but this called FindByName —
     // a bare-FName match — so every path-shaped argument returned 0. That is what
@@ -882,6 +954,7 @@ uintptr_t UE5_FindObject(const char* fullPath) {
 }
 
 uintptr_t UE5_FindClass(const char* className) {
+    LAND_FORWARD(UE5_FindClass, className);
     if (!className) return 0;
 
     uintptr_t result = 0;
@@ -903,8 +976,17 @@ uintptr_t UE5_FindClass(const char* className) {
 }
 
 int32_t UE5_WalkClassBegin(uintptr_t uclassAddr) {
+    // [DUMPER-SECOND-COPY-AUTOSTART] A new walk in a copy that handed over runs in its successor: close any walk left
+    // open here first, or GetField would keep answering from this copy's old class (review R2-WALK-STALE-FLAG).
+    if (Land::Forwards(Land::State())) {
+        std::lock_guard<std::mutex> lock(s_walkMutex);
+        s_walkCache = ClassInfo{};
+        s_walkOpenHere.store(false, std::memory_order_release);
+    }
+    LAND_FORWARD(UE5_WalkClassBegin, uclassAddr);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     s_walkCache = Ubel::WalkClass(uclassAddr);
+    s_walkOpenHere.store(true, std::memory_order_release);
     return static_cast<int32_t>(s_walkCache.Fields.size());
 }
 
@@ -915,6 +997,8 @@ bool UE5_WalkClassGetField(int32_t index,
                            int32_t* offsetOut,
                            int32_t* sizeOut)
 {
+    LAND_FORWARD_UNLESS(s_walkOpenHere.load(std::memory_order_acquire), UE5_WalkClassGetField, index, outAddr, nameOut,
+                        nameBufLen, typeOut, typeBufLen, offsetOut, sizeOut);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     if (index < 0 || index >= static_cast<int32_t>(s_walkCache.Fields.size())) return false;
 
@@ -930,11 +1014,14 @@ bool UE5_WalkClassGetField(int32_t index,
 }
 
 void UE5_WalkClassEnd() {
+    LAND_FORWARD_UNLESS(s_walkOpenHere.load(std::memory_order_acquire), UE5_WalkClassEnd);
     std::lock_guard<std::mutex> lock(s_walkMutex);
     s_walkCache = ClassInfo{};
+    s_walkOpenHere.store(false, std::memory_order_release);
 }
 
 bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
+    LAND_FORWARD(UE5_ResolveFName, fname, buf, bufLen);
     int32_t compIndex = static_cast<int32_t>(fname & 0xFFFFFFFF);
     int32_t number    = static_cast<int32_t>((fname >> 32) & 0xFFFFFFFF);
     // [VND583-07] The caller hands the FName's first 8 bytes. On a case-preserving UE4 / 5.0 build the
@@ -994,6 +1081,14 @@ static bool AutoStartWork() {
     // would rescan with g_shutdown still latched (cancellable loops bail early)
     // and every module's StartWorker* would refuse to spawn, since that gate reads
     // the same flag. Both calls are no-ops on a first start.
+    //
+    // [DUMPER-SECOND-COPY-AUTOSTART] Under the start lock, which Land::BeginYield also takes: a later copy's take-over
+    // cannot fall between the check and these restarts, which would undo its shutdown.
+    std::unique_lock<std::mutex> startLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: this copy handed the process to a later copy of the dumper -- not starting");
+        return false;
+    }
     Tot::ResetShutdown();
     // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
     // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
@@ -1006,6 +1101,7 @@ static bool AutoStartWork() {
     // nothing. No-op on a first start.
     Tot::ResetPerCommand();
     Mimic::StartThread();   // early-returns when the poller is already running
+    startLock.unlock();
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
@@ -1029,9 +1125,25 @@ static bool AutoStartWork() {
         // while it IS still latched would fight the user's own untick, and
         // Tot::RequestShutdown is deliberately sticky. So this covers the transient
         // case and deliberately does NOT resurrect against a live shutdown.
-        if (!Tot::ShutdownRequested()) Mimic::StartThread();
+        const auto restartLock = Land::LockStart();
+        if (!Tot::ShutdownRequested() && !Land::RefusesStart(Land::State())) Mimic::StartThread();
+    }
+    // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over during this copy's scan: its mailbox and pipe are that
+    // copy's now, so publish nothing here.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: a later copy of the dumper took over during this copy's scan -- not starting the pipe");
+        return false;
     }
     bool ok = UE5_StartPipeServer();
+    // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over while the pipe started: its hand-off already published this
+    // mailbox's state (SKIPPED, then that copy's), and nothing here may replace it. Under the start lock, so the
+    // take-over cannot fall between this check and the write (review R2-AUTOSTART-PUBLISH-AFTER-YIELD).
+    std::unique_lock<std::mutex> publishLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: a later copy of the dumper took over while this copy's pipe started -- publishing "
+                 "nothing");
+        return false;
+    }
     // Publish only AFTER StartPipeServer returns — a poller that sees READY must
     // be able to connect immediately. READY now also requires init to have
     // COMPLETED: the enum defines it as "init finished AND the pipe server is up",
@@ -1054,6 +1166,11 @@ static bool AutoStartWork() {
 static std::atomic<bool> s_autoStartInFlight{false};
 
 bool UE5_AutoStartBlocking() {
+    // Not an export (UE5_AutoStart is, and forwards once this copy has yielded); Heiter's watcher reaches it directly.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_AutoStart: this copy handed the process to a later copy of the dumper -- not starting");
+        return false;
+    }
     bool expected = false;
     if (!s_autoStartInFlight.compare_exchange_strong(expected, true)) {
         LOG_INFO("UE5_AutoStart: a start is already in flight — not starting a second");
@@ -1073,6 +1190,7 @@ bool UE5_AutoStartBlocking() {
 }
 
 bool UE5_AutoStart() {
+    LAND_FORWARD(UE5_AutoStart);
     // Cheat Engine hosting us is the one case where a background thread is the
     // wrong answer (audit #5 AB1: CE FreeLibrary's plugin DLLs, and a thread left
     // running in an unmapped image crashes CE). There is also no remote stub to
@@ -1113,6 +1231,7 @@ bool UE5_AutoStart() {
 // === Property Detail Queries (for CE Lua dissect) ===
 
 int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
+    LAND_FORWARD(UE5_GetFieldBoolMask, fieldAddr);
     if (!fieldAddr) return 0;
     // FBoolProperty/UBoolProperty: { FieldSize(1), ByteOffset(1), ByteMask(1), FieldMask(1) }
     // FProperty (UE4.25+/UE5): at FBOOLPROP_FIELDSIZE (~0x78)
@@ -1134,17 +1253,20 @@ int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
 }
 
 uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr) {
+    LAND_FORWARD(UE5_GetFieldStructClass, fieldAddr);
     // FStructProperty stores UScriptStruct* at DynOff::FSTRUCTPROP_STRUCT.
     return Ubel::ProbeSubclassSlot(fieldAddr, Ubel::IsScriptStructObject);
 }
 
 uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr) {
+    LAND_FORWARD(UE5_GetFieldPropertyClass, fieldAddr);
     // FObjectPropertyBase::PropertyClass sits at the same offset as
     // FStructProperty::Struct (DynOff::FSTRUCTPROP_STRUCT), and holds a UClass.
     return Ubel::ProbeSubclassSlot(fieldAddr, Ubel::IsClassObject);
 }
 
 int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
+    LAND_FORWARD(UE5_GetClassPropsSize, classAddr);
     if (!classAddr) return 0;
     int32_t propsSize = 0;
     Macht::ReadSafe(classAddr + DynOff::USTRUCT_PROPSSIZE, propsSize);
@@ -1159,6 +1281,7 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 // cheat extension or the Debug Camera's own CheatManager. [FINDINSTANCE-SUBSTRING-USERFACING] Internal callers keep
 // Aura::FindLiveOrDefaultOf or Aura::FindClassByPath: a state read must never take the Debug Camera's object at all.
 uintptr_t UE5_FindInstanceOfClass(const char* className) {
+    LAND_FORWARD(UE5_FindInstanceOfClass, className);
     if (!className || !className[0]) return 0;
     return Aura::ResolveUserInstance(className).obj;   // 0 = nothing usable, or a lookup cut short
 }
@@ -1208,6 +1331,7 @@ static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintpt
 // still per-class — that is correct for LISTING, which attributes each function to its
 // declaring class — so the climb belongs here, in the resolver, and NOT in the walker.
 uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
+    LAND_FORWARD(UE5_FindFunctionByName, classAddr, funcName);
     if (!classAddr || !funcName || !funcName[0]) return 0;
 
     FunctionInfo hit;
@@ -1365,6 +1489,7 @@ static bool DbgCam_SwapControllerBack(uintptr_t dcc) {
 }
 
 int32_t UE5_GetDebugCameraState() {
+    LAND_FORWARD(UE5_GetDebugCameraState);
     uintptr_t cm = 0, dcc = 0;
     return DbgCam_ReadState(cm, dcc);
 }
@@ -1440,6 +1565,7 @@ bool ToggleOutstanding() {
 }  // extern "C++"
 
 int32_t UE5_SetDebugCamera(int32_t enable) {
+    LAND_FORWARD(UE5_SetDebugCamera, enable);
     const bool want = (enable != 0);
     uintptr_t cm = 0, dcc = 0;
     int state = -1;
@@ -1552,6 +1678,7 @@ static void Teleport_CopyPose(const Wirbel::Pose& p, double* out6) {
 }
 
 int32_t UE5_TeleportGetPose(double* outPose6, char* outMapName, int32_t mapNameCap) {
+    LAND_FORWARD(UE5_TeleportGetPose, outPose6, outMapName, mapNameCap);
     Wirbel::Pose p{};
     int32_t rc = Wirbel::GetPose(p, outMapName, mapNameCap, nullptr);
     if (rc == 0) Teleport_CopyPose(p, outPose6);
@@ -1559,21 +1686,25 @@ int32_t UE5_TeleportGetPose(double* outPose6, char* outMapName, int32_t mapNameC
 }
 
 int32_t UE5_TeleportSaveMarker(int32_t slot) {
+    LAND_FORWARD(UE5_TeleportSaveMarker, slot);
     return Wirbel::SaveMarker(slot);
 }
 
 int32_t UE5_TeleportRecallMarker(int32_t slot, int32_t force) {
+    LAND_FORWARD(UE5_TeleportRecallMarker, slot, force);
     return Wirbel::RecallMarker(slot, force != 0, nullptr);
 }
 
 int32_t UE5_TeleportToCursor(double zOffset, int32_t traceChannel,
                              int32_t fallbackToCenter) {
+    LAND_FORWARD(UE5_TeleportToCursor, zOffset, traceChannel, fallbackToCenter);
     return Wirbel::TeleportToCursor(zOffset, traceChannel, fallbackToCenter != 0,
                                     nullptr, nullptr, nullptr);
 }
 
 int32_t UE5_TeleportGetMarker(int32_t slot, double* outPose6,
                               char* outMapName, int32_t mapNameCap) {
+    LAND_FORWARD(UE5_TeleportGetMarker, slot, outPose6, outMapName, mapNameCap);
     Wirbel::Marker m{};
     int32_t rc = Wirbel::GetMarker(slot, m);
     if (rc == 0) {
@@ -1585,14 +1716,17 @@ int32_t UE5_TeleportGetMarker(int32_t slot, double* outPose6,
 }
 
 int32_t UE5_TeleportClearMarker(int32_t slot) {
+    LAND_FORWARD(UE5_TeleportClearMarker, slot);
     return Wirbel::ClearMarker(slot);
 }
 
 int32_t UE5_TeleportRecallLast() {
+    LAND_FORWARD(UE5_TeleportRecallLast);
     return Wirbel::RecallLast(nullptr);
 }
 
 int32_t UE5_TeleportGetLast(double* outPose6, char* outMapName, int32_t mapNameCap) {
+    LAND_FORWARD(UE5_TeleportGetLast, outPose6, outMapName, mapNameCap);
     Wirbel::Marker m{};
     int32_t rc = Wirbel::GetLast(m);
     if (rc == 0) {
@@ -1607,6 +1741,7 @@ int32_t UE5_TeleportGetLast(double* outPose6, char* outMapName, int32_t mapNameC
 // passes the flag GetPose already computes; the marker reads copy the one the Marker already stores.
 int32_t UE5_TeleportGetPoseEx(double* outPose6, char* outMapName, int32_t mapNameCap,
                               int32_t* outParentRelative) {
+    LAND_FORWARD(UE5_TeleportGetPoseEx, outPose6, outMapName, mapNameCap, outParentRelative);
     Wirbel::Pose p{};
     bool parentRel = false;
     int32_t rc = Wirbel::GetPose(p, outMapName, mapNameCap, nullptr, &parentRel);
@@ -1617,6 +1752,7 @@ int32_t UE5_TeleportGetPoseEx(double* outPose6, char* outMapName, int32_t mapNam
 
 int32_t UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6, char* outMapName, int32_t mapNameCap,
                                 int32_t* outParentRelative) {
+    LAND_FORWARD(UE5_TeleportGetMarkerEx, slot, outPose6, outMapName, mapNameCap, outParentRelative);
     Wirbel::Marker m{};
     int32_t rc = Wirbel::GetMarker(slot, m);
     if (rc == 0) {
@@ -1630,6 +1766,7 @@ int32_t UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6, char* outMapName
 
 int32_t UE5_TeleportGetLastEx(double* outPose6, char* outMapName, int32_t mapNameCap,
                               int32_t* outParentRelative) {
+    LAND_FORWARD(UE5_TeleportGetLastEx, outPose6, outMapName, mapNameCap, outParentRelative);
     Wirbel::Marker m{};
     int32_t rc = Wirbel::GetLast(m);
     if (rc == 0) {
@@ -1642,6 +1779,7 @@ int32_t UE5_TeleportGetLastEx(double* outPose6, char* outMapName, int32_t mapNam
 }
 
 int32_t UE5_TeleportGetPov(double* outPov11) {
+    LAND_FORWARD(UE5_TeleportGetPov, outPov11);
     Wirbel::Pov pov{};
     int32_t rc = Wirbel::GetPov(pov);
     if (rc == 0 && outPov11) {
@@ -1656,6 +1794,7 @@ int32_t UE5_TeleportGetPov(double* outPov11) {
 
 int32_t UE5_TeleportRelative(double distance, int32_t horizontalOnly,
                              double* outNewPose6) {
+    LAND_FORWARD(UE5_TeleportRelative, distance, horizontalOnly, outNewPose6);
     Wirbel::Pose p{};
     bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
     int32_t rc = Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown);
@@ -1674,6 +1813,7 @@ int32_t UE5_TeleportRelative(double distance, int32_t horizontalOnly,
 int32_t UE5_TeleportRecallExplicit(double x, double y, double z,
                                    double pitch, double yaw, double roll,
                                    int32_t hasRot) {
+    LAND_FORWARD(UE5_TeleportRecallExplicit, x, y, z, pitch, yaw, roll, hasRot);
     Wirbel::Pose p{};
     p.X = x; p.Y = y; p.Z = z;
     p.Pitch = pitch; p.Yaw = yaw; p.Roll = roll;
@@ -1681,6 +1821,7 @@ int32_t UE5_TeleportRecallExplicit(double x, double y, double z,
 }
 
 int32_t UE5_SetMouseCursor(int32_t show, int32_t* outState) {
+    LAND_FORWARD(UE5_SetMouseCursor, show, outState);
     bool state = false;
     int32_t rc = Wirbel::SetMouseCursor(show != 0, &state);
     if (outState) *outState = state ? 1 : 0;
@@ -1688,6 +1829,7 @@ int32_t UE5_SetMouseCursor(int32_t show, int32_t* outState) {
 }
 
 int32_t UE5_GetMouseCursor(int32_t* outState) {
+    LAND_FORWARD(UE5_GetMouseCursor, outState);
     bool state = false;
     int32_t rc = Wirbel::GetMouseCursor(&state);
     if (outState) *outState = state ? 1 : 0;
@@ -1697,14 +1839,17 @@ int32_t UE5_GetMouseCursor(int32_t* outState) {
 // === GodMode (Solitar) ===
 
 int32_t UE5_SetGodMode(int32_t enable) {
+    LAND_FORWARD(UE5_SetGodMode, enable);
     return Solitar::SetGodMode(enable != 0);
 }
 
 int32_t UE5_GetGodMode() {
+    LAND_FORWARD(UE5_GetGodMode);
     return Solitar::GetGodMode();
 }
 
 int32_t UE5_GetProtectState(int32_t* outWant, int32_t* outLive, int32_t* outResolvable) {
+    LAND_FORWARD(UE5_GetProtectState, outWant, outLive, outResolvable);
     Solitar::State st{};
     int32_t rc = Solitar::GetState(st);
     if (outWant)       *outWant = st.want;
@@ -1716,38 +1861,46 @@ int32_t UE5_GetProtectState(int32_t* outWant, int32_t* outLive, int32_t* outReso
 // === Movement tuning (Laufen) ===
 
 int32_t UE5_SetMovementPercent(int32_t knobId, double percent) {
+    LAND_FORWARD(UE5_SetMovementPercent, knobId, percent);
     return Laufen::SetKnobPercent(knobId, percent);
 }
 
 int32_t UE5_SetGravityDirection(double x, double y, double z) {
+    LAND_FORWARD(UE5_SetGravityDirection, x, y, z);
     return Laufen::SetGravityDirection(x, y, z);   // (0,0,0) = reset
 }
 
 // === Time dilation (Hemmung) ===
 
 int32_t UE5_SetTimeDilation(int32_t target, double value) {
+    LAND_FORWARD(UE5_SetTimeDilation, target, value);
     return Hemmung::SetDilation(target, value);
 }
 
 int32_t UE5_ResetTimeDilation(int32_t target) {
+    LAND_FORWARD(UE5_ResetTimeDilation, target);
     return Hemmung::ResetDilation(target);
 }
 
 // === Fly (Dunste) — no-gravity keyboard-driven 3D flight ===
 
 int32_t UE5_SetFly(int32_t enable) {
+    LAND_FORWARD(UE5_SetFly, enable);
     return Dunste::SetEnabled(enable != 0);
 }
 
 int32_t UE5_SetFlySpeed(double uuPerSec) {
+    LAND_FORWARD(UE5_SetFlySpeed, uuPerSec);
     return Dunste::SetSpeed(uuPerSec);
 }
 
 int32_t UE5_SetFlyPreset(int32_t preset) {
+    LAND_FORWARD(UE5_SetFlyPreset, preset);
     return Dunste::SetPreset(preset);
 }
 
 int32_t UE5_SetFlyNoclip(int32_t enable) {
+    LAND_FORWARD(UE5_SetFlyNoclip, enable);
     return Dunste::SetNoclip(enable != 0);
 }
 
@@ -2541,6 +2694,7 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
 extern "C" bool UE5_IsGameThreadHookActive() { return Stark::IsHookActive(); }
 
 int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    LAND_FORWARD(UE5_CallProcessEvent, instance, ufunc, params);
     // Legacy 3-arg export (CE Lua + Mimic's mailbox). Size 0 = no owned copy:
     // callers here pass persistent buffers that outlive the queued request.
     return UE5_CallProcessEventEx(instance, ufunc, params, 0);
@@ -2681,6 +2835,7 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
 // is active afterward (false ⇒ vtable-offset detection failed on this game;
 // the profiler will record nothing and the UI warns).
 extern "C" bool UE5_EnsureGameThreadHook() {
+    LAND_FORWARD(UE5_EnsureGameThreadHook);
     EnsureProcessEventReady();          // one-time offset detection + first install attempt
     if (Stark::IsHookActive()) return true;
 
@@ -2711,6 +2866,7 @@ extern "C" bool UE5_EnsureGameThreadHook() {
 // it; kPeOffsetFailed (-1) = terminal for this process. Lets the UI advise the
 // right remedy instead of collapsing three different causes into one message.
 extern "C" int UE5_GetProcessEventOffset() {
+    LAND_FORWARD(UE5_GetProcessEventOffset);
     return s_processEventOffset.load(std::memory_order_relaxed);
 }
 
@@ -2730,6 +2886,7 @@ extern "C" int UE5_GetProcessEventOffset() {
 // ([A3-ST1-SUPER-DRAIN]). The SEH frame and that mark live in Stark's helper pair
 // (CallAddressSEH / CallAddressAsOwnSEH).
 int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    LAND_FORWARD(UE5_CallProcessEventDirect, instance, ufunc, params);
     if (!instance || !ufunc) return -1;
 
     // Lazy, race-safe one-time detection + hook install (audit #3).
@@ -2784,10 +2941,22 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
 // === Mailbox ===
 
 uintptr_t UE5_GetMailboxAddr() {
+    LAND_FORWARD(UE5_GetMailboxAddr);
     return Mimic::GetAddress();
 }
 
 // === Pipe Server ===
+
+// [DUMPER-SECOND-COPY-AUTOSTART] This copy's server, unless a later copy has taken over -- under the start lock
+// Land::BeginYield takes too, so a take-over cannot fall between the check and the start.
+static bool StartServerUnlessHandedOver(const char* who) {
+    const auto startLock = Land::LockStart();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("%s: this copy handed the process to a later copy of the dumper -- not serving", who);
+        return false;
+    }
+    return s_pipeServer.Start();
+}
 
 // One watcher per process, ever. Re-entering UE5_StartPipeServer (CE Lua can call it by hand)
 // must not stack threads that all race to Start() the same server.
@@ -2816,7 +2985,8 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
             const DWORD err = waited ? 0 : GetLastError();
             if (Voll::WaitSaysServed(waited != FALSE, err)) continue;
 
-            const bool ok = s_pipeServer.Start();
+            const bool ok = StartServerUnlessHandedOver("PipeClaimWatcher");
+            if (!ok && Land::RefusesStart(Land::State())) return;
             LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
                      static_cast<unsigned long>(holderPid), (i + 1) * Voll::kClaimWatchPollMs,
                      ok ? "server started" : "Start() FAILED");
@@ -2830,12 +3000,26 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
 }
 
 bool UE5_StartPipeServer() {
+    LAND_FORWARD(UE5_StartPipeServer);
     // This copy already serves (CE Lua can call the export by hand after auto-start ran). Asked
     // first because the probe below cannot tell this server from another copy's when every
     // instance is busy. [PIPE-PER-PROCESS-2026-11-06]
     if (s_pipeServer.IsRunning()) {
         LOG_INFO("UE5_StartPipeServer: this copy already serves the pipe — nothing to do");
         return true;
+    }
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_StartPipeServer: this copy handed the process to a later copy of the dumper -- not serving");
+        return false;
+    }
+    // [DUMPER-SECOND-COPY-AUTOSTART] An earlier copy of the dumper here gives way before the probe below asks who holds
+    // the pipe: the later copy always takes over (maintainer, 2026-11-17). Here rather than before the scan, so the
+    // earlier copy keeps serving while this one scans; its mailbox is then served by this copy (Land).
+    Land::RetireEarlierCopies();
+    if (Land::RefusesStart(Land::State())) {
+        LOG_WARN("UE5_StartPipeServer: a later copy of the dumper took over from this one during its take-over pass "
+                 "-- not serving");
+        return false;
     }
 
     // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
@@ -2867,14 +3051,23 @@ bool UE5_StartPipeServer() {
     if (!opened && probeErr == ERROR_PIPE_BUSY && s_pipeServer.HasStragglerConnections()) {
         LOG_WARN("UE5_StartPipeServer: every instance is busy with this copy's connections from "
                  "before its last stop — restarting the server beside them");
-        return s_pipeServer.Start();
+        return StartServerUnlessHandedOver("UE5_StartPipeServer");
     }
 
     switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {
         case Voll::StartAction::StartNow:
-            return s_pipeServer.Start();
+            return StartServerUnlessHandedOver("UE5_StartPipeServer");
 
         case Voll::StartAction::AlreadyOurs:
+            // [DUMPER-SECOND-COPY-AUTOSTART] The holder is the earlier copy this copy is still taking over from, whose
+            // shutdown has not reached its pipe yet: claim the pipe when it lets go rather than serve nothing.
+            if (Land::RetireInFlight()) {
+                LOG_WARN("UE5_StartPipeServer: the copy being taken over still serves the pipe -- watching for it to "
+                         "free");
+                bool expected = false;
+                if (s_claimWatcherStarted.compare_exchange_strong(expected, true)) WatchForPipeAndClaim(holderPid);
+                return true;
+            }
             LOG_INFO("UE5_StartPipeServer: another copy of UE5Dumper in this process already serves "
                      "the pipe — nothing to do");
             return true;
@@ -2900,10 +3093,17 @@ bool UE5_StartPipeServer() {
 }
 
 void UE5_StopPipeServer() {
+    // [DUMPER-SECOND-COPY-AUTOSTART] Not forwarded, for UE5_Shutdown's reason: this copy's server stopped with its
+    // hand-off, and the copy that took over is not this caller's to stop.
+    if (Land::RefusesStart(Land::State())) {
+        LOG_INFO("UE5_StopPipeServer: this copy handed the process to a later copy of the dumper -- nothing to stop");
+        return;
+    }
     s_pipeServer.Stop();
 }
 
 bool UE5_IsPipeConnected() {
+    LAND_FORWARD(UE5_IsPipeConnected);
     return s_pipeServer.IsClientConnected();
 }
 

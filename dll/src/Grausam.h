@@ -20,7 +20,7 @@ namespace Grausam {
 //   1  = enabled (hook active)
 //   0  = disabled (soft; hook left installed but passes through)
 //  <0  = error installing the hook
-int SetForegroundLock(bool enable);
+[[nodiscard]] int SetForegroundLock(bool enable);
 
 // 1 if the illusion is currently active, else 0.
 int IsForegroundLockEnabled();

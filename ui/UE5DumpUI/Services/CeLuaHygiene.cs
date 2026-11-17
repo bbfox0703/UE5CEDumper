@@ -497,6 +497,19 @@ public static class CeLuaHygiene
           .Append("re-open it in CE, then untick and re-tick this table.')\n");
         AppendBail(sb, onFail, indent + "  ");
         sb.Append(indent).Append("end\n");
+        // [DUMPER-SECOND-COPY-AUTOSTART] A zero magic over a block whose numbers still read sanely is not a stale
+        // address: a later copy of the dumper took the process over, could not serve this copy's mailbox, and cleared the
+        // magic (Land::TakeMailbox). Re-injecting or re-ticking resolves the same copy again, so the advice differs.
+        sb.Append(indent).Append("if _cmagic == 0 then\n");
+        sb.Append(indent).Append("  local _tc, _tm = readInteger(_cv + ").Append(CeMailboxLayout.OffContractCur)
+          .Append("), readInteger(_cv + ").Append(CeMailboxLayout.OffContractMin).Append(")\n");
+        sb.Append(indent).Append("  if _tc and _tm and _tm >= 1 and _tc >= _tm and _tc < 1000 then\n");
+        sb.Append(indent).Append("    ").Append(say).Append("('[").Append(tag)
+          .Append("] another copy of UE5Dumper took over this game process, and this table resolved the copy it replaced, whose mailbox the new copy cannot serve.")
+          .Append("\\n\\nOne of the two copies is out of date -- the proxy DLL in the game folder or the DLL injected later (the later one takes over even when it is the older): update the older one, or remove the proxy, then restart the game.')\n");
+        AppendBail(sb, onFail, indent + "    ");
+        sb.Append(indent).Append("  end\n");
+        sb.Append(indent).Append("end\n");
         sb.Append(indent).Append("if _cmagic ~= ")
           .Append(CeMailboxLayout.ContractMagic).Append(" then\n");
         sb.Append(indent).Append("  ").Append(say).Append("('[").Append(tag)

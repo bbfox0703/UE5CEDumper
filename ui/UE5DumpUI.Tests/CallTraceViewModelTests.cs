@@ -624,6 +624,70 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public void The_summary_and_the_export_say_how_many_records_the_DLL_dropped()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the counts were computed and shown nowhere. Kept 10..16 (7 numbers),
+        // six records sent: the entry at 11 is missing (its return at 12 is there) -- one entry dropped, no return.
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(12 | TraceRecord.ReturnBit, 120, 11, 0, 1, 0),
+            new TraceRecord(13, 130, 0xB, 0, 1, 0), new TraceRecord(14 | TraceRecord.ReturnBit, 140, 13, 0, 1, 0),
+            new TraceRecord(15 | TraceRecord.ReturnBit, 150, 10, 0, 1, 0), new TraceRecord(16, 160, 0xC, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 17 });
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        Assert.Contains(Line("str.CT.Status.Dropped", 1, 1, 0), vm.Summary(t));
+        var w = new StringWriter();
+        UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
+        string head = w.ToString().Split('\n')[0];
+        Assert.Contains("\"entries_dropped\":1", head, StringComparison.Ordinal);
+        Assert.Contains("\"other_dropped\":0", head, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_call_that_lost_both_records_is_not_described_as_one_of_two_cases()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_6ad0a6e1-ffa: B lost its start (11) AND its return (12) -- it returned before
+        // Stop and is simply absent. Neither "a return whose call shows as not returned" nor "a start of a call still
+        // running" fits, so the status line may not claim the other records are each one of those two.
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(13, 130, 0xC, 0, 1, 0),
+            new TraceRecord(14 | TraceRecord.ReturnBit, 140, 13, 0, 1, 0), new TraceRecord(15 | TraceRecord.ReturnBit, 150, 10, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 16 });
+        Assert.Equal(0, t.EntriesDropped);
+        Assert.Equal(2, t.OtherDropped);
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        string sum = vm.Summary(t);
+        Assert.Contains(Line("str.CT.Status.Dropped", 2, 0, 2), sum);
+        Assert.DoesNotContain("each either", sum, StringComparison.Ordinal);
+        Assert.Contains("missing", sum, StringComparison.Ordinal);   // says a call can be absent
+    }
+
+    [Fact]
+    public void A_dropped_start_of_a_call_still_running_is_not_called_a_return()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_53eabd00-f5e: a missing record that no return names can be a dropped RETURN or
+        // the dropped START of a call still running at Stop -- the records cannot tell them apart. Kept 10..12, the call
+        // at 10 returned at 11, and 12 is missing: the start of a call that never returned. Nothing may claim a call
+        // "shows as not returned", and the export must not file it as a return.
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(11 | TraceRecord.ReturnBit, 110, 10, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 13 });
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        string sum = vm.Summary(t);
+        Assert.DoesNotContain("whose calls show as not returned.", sum, StringComparison.Ordinal);
+        var w = new StringWriter();
+        UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
+        string head = w.ToString().Split('\n')[0];
+        Assert.DoesNotContain("returns_dropped", head, StringComparison.Ordinal);
+        Assert.Contains("\"other_dropped\":1", head, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_summary_says_how_many_calls_carry_a_stack_what_the_budget_left_out_and_what_a_capture_cost()
     {
         var (vm, _) = MakeVm(DumpWithStacks());

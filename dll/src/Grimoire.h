@@ -11,6 +11,7 @@
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
 #include <string_view>  // EngineBuildStringCode: a VERSIONINFO string is parsed without copying it
+#include <thread>       // DynOff::SettledOffsetValidations yields while a retire is half done
 
 namespace Grimoire {
 
@@ -32,13 +33,22 @@ constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDump
 // [AOB-SKIP-OWN-DLL] The exported symbol every current build of the dumper carries, UE5Dumper.dll and each proxy
 // alike: the mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of
 // ours from a module that merely exports the same name. It is how one copy recognises another mapped in the same
-// process.
+// process -- unless a later copy zeroed that magic because it could not serve the copy's mailbox ([DUMPER-SECOND-COPY-
+// AUTOSTART], Land::TakeMailbox); such a copy is recognised by the legacy export below.
 constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 // The contract only exists since 2026-08-06, so a build from before it -- a stale proxy left in a game folder -- is
 // recognised by the C ABI's init entry instead, which every build has exported (the version.dll proxy since
 // 2026-03-05) and the CE scripts look for by name. It carries no magic to check; no engine module exports that name,
 // so a module that does is not one the walk needs.
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
+// [DUMPER-SECOND-COPY-AUTOSTART] What a later copy calls or reads on an earlier copy in the same process (Land): its
+// mailbox, the hand-off it carries from this change on, and the shutdown every build carries.
+constexpr const char*    DUMPER_MAILBOX_EXPORT  = "g_invokeMailbox";
+constexpr const char*    DUMPER_YIELD_EXPORT    = "UE5_YieldToLaterCopy";
+constexpr const char*    DUMPER_SHUTDOWN_EXPORT = "UE5_Shutdown";
+// One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two
+// passes at once could each hand the other's mailbox over while it is still served.
+constexpr const wchar_t* LAND_PASS_MUTEX_FORMAT = L"Local\\UE5CEDumper_Land_%lu";
 
 // --- Named Pipe ---
 // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid>; Voll::PipeNameForPid builds
@@ -72,9 +82,14 @@ constexpr int32_t        HOLD_HELD_BY_OTHER      = -20;
 constexpr int32_t        WRITE_MEM_EXECUTABLE    = -21;   // the range touches code
 constexpr int32_t        WRITE_MEM_NOT_WRITABLE  = -22;   // a read-only, guard, no-access or uncommitted page
 constexpr int32_t        WRITE_MEM_CHANGED       = -23;   // `expect` no longer matches what is there
+constexpr int32_t        WRITE_MEM_OWN_IMAGE     = -25;   // [WRITEMEM-OWN-IMAGE] a background client, inside the DLL's image
 // [D2-3-INVOKE] invoke_function's refusal of a background client's call the maintainer's list names (Voll); and the
 // name an if_free invoke's conflict carries, beside the holds, when another client's invoke is outstanding.
 constexpr int32_t        INVOKE_REFUSED_FOR_BACKGROUND = -24;
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: invoke_function's refusal of a background client's call under a grant
+// (`grant`) that its checks do not allow: another function than the grant names, a parameter that reaches functions or
+// properties by name, one it cannot read, or a non-static function on a template.
+constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;
 constexpr const char*    HOLD_INVOKE_QUEUE       = "invoke_queue";
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
@@ -233,6 +248,28 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 
 namespace DynOff {
 
+// [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
+// sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
+// CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
+// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
+// Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
+// family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
+// The other offsets measured the same way -- the persistent-pointer envelopes latched from an ElementSize, UEnum::Names'
+// layout, UFunction's Func and flags -- are RuntimeOffset for the same reason.
+// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
+class RuntimeOffset {
+public:
+    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
+    // `cond ? DynOff::X : 0` ambiguous (C2445).
+    constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
+    RuntimeOffset(const RuntimeOffset&) = delete;
+    RuntimeOffset& operator=(const RuntimeOffset&) = delete;
+    operator int() const noexcept { return v_.load(std::memory_order_relaxed); }
+    RuntimeOffset& operator=(int v) noexcept { v_.store(v, std::memory_order_relaxed); return *this; }
+private:
+    std::atomic<int> v_;
+};
+
 // === UObject — runtime-detected ===
 // Most are stable, but Outer shifts when CasePreservingName enlarges FName.
 inline int UOBJECT_OUTER      = 0x20;  // OuterPrivate: 0x20 (standard), 0x28 (CPN)
@@ -291,7 +328,7 @@ inline void ApplyUStructHead(const UStructHead& h) {
 // offset that holds an in-module code pointer across several sampled native
 // UFunctions. 0 = not found → Path 2 native analysis disabled (the Path 1
 // bytecode path is unaffected).
-inline int UFUNCTION_FUNC     = 0;
+inline RuntimeOffset UFUNCTION_FUNC     {0};
 // Latched once detection has run (success or failure), to avoid re-sampling.
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
@@ -361,25 +398,6 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
     return -1;
 }
 
-// [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
-// sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
-// CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
-// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
-// Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
-// family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
-// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
-class RuntimeOffset {
-public:
-    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
-    // `cond ? DynOff::X : 0` ambiguous (C2445).
-    constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
-    RuntimeOffset(const RuntimeOffset&) = delete;
-    RuntimeOffset& operator=(const RuntimeOffset&) = delete;
-    operator int() const noexcept { return v_.load(std::memory_order_relaxed); }
-    RuntimeOffset& operator=(int v) noexcept { v_.store(v, std::memory_order_relaxed); return *this; }
-private:
-    std::atomic<int> v_;
-};
 
 // Every writer of the family holds this, so two corrections cannot interleave into a split family. Genau's writers
 // take it while they hold the init mutex, so it must never be held while taking that one.
@@ -446,8 +464,8 @@ inline int UBOOLPROP_FIELDSIZE = 0x70;
 // misdetected version is precisely the case where a hardcoded offset does the most harm.
 // -1 = not yet measured; Ubel falls back to a version-derived value until a real
 // property is seen. See PersistentObjectPtrEnvelope() in Ubel.cpp.
-inline int SOFTPTR_PATH  = -1;   // FSoftObjectPath offset inside TSoftObjectPtr
-inline int LAZYPTR_GUID  = -1;   // FGuid           offset inside TLazyObjectPtr
+inline RuntimeOffset SOFTPTR_PATH  {-1};   // FSoftObjectPath offset inside TSoftObjectPtr
+inline RuntimeOffset LAZYPTR_GUID  {-1};   // FGuid           offset inside TLazyObjectPtr
 
 // The pure-arithmetic half of that decision, in the header so the test target can
 // pin it — the tests link headers, not Ubel.cpp, so a rule left in the .cpp is a
@@ -698,8 +716,8 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // the offsets probe). UFUNCTION_FLAGS 0 = undecided -> the readers keep the primary + sweep.
 // UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
-inline int UFUNCTION_FLAGS      = 0;
-inline int UFUNCTION_TAIL_EXTRA = 0;
+inline RuntimeOffset UFUNCTION_FLAGS      {0};
+inline RuntimeOffset UFUNCTION_TAIL_EXTRA {0};
 // The extras a game's tail can carry: none, or Split Fiction's +4. The vote weighs exactly these, and a version is
 // judged against them (CheckTailForVersion), so the two cannot disagree about what a tail may look like.
 inline constexpr int UFUNCTION_TAIL_EXTRAS[] = { 0, 4 };
@@ -1434,11 +1452,17 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
     return UPropertyFamilyFor(casePreservingName ? 0x4C : 0x44, ueVersion, casePreservingName);
 }
 
-// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base. Every memo cache whose content was read
+// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base, and once when an offset validation ends
+// (RetireFamilyEpoch, below). Every memo cache whose content was read
 // through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
-// correction is walked again after it instead of serving the old slot's answer for the rest of the session. Nothing
-// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the moves are
-// few (at most one per session in every log measured). Moves after init were measured on UE423_Flying (0x78 -> 0x70),
+// correction is walked again after it instead of serving the old slot's answer for the rest of the session. A cache
+// that hands out references erases nothing: an entry of an older epoch stays put, so a `const&` already handed out
+// stays valid (a cache that returns copies may evict, oldest first), and the bumps are few (at most one move per
+// session in every log measured, and one retire per offset validation). The trade: a re-init (CE Disable, then Enable)
+// leaves the previous run's entries resident in the reference-handing caches beside the fresh set it builds -- one set
+// per re-init, never freed -- where a re-init whose family did not move used to reuse them. Reuse across runs was never
+// sound anyway: a garbage collection between them can hand a class's address to another class. Moves after init
+// were measured on UE423_Flying (0x78 -> 0x70),
 // DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
 // FARRAYPROP_INNER legitimately diverges after calibration (see above), and resetting it is not a move.
 inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
@@ -1469,6 +1493,42 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
     ApplyPropertyFamily(f, lk);
 }
 
+// [DYNOFF-LATCH-STALE] Retire the epoch without moving the family: every entry cached under it is built again, and Ubel's
+// slot proof and calibration latch are withdrawn, so the next walk checks the slot afresh. For the end of an offset
+// validation: an init re-derives offsets outside the family too (FPROPERTY_OFFSET, the FField layout), which the
+// family-keyed caches read, and a base that ends where it started -- or where a walk during the run had already
+// corrected it to -- is no move, so ApplyPropertyFamily alone left what was cached mid-run in place for the session
+// (review wf_8f451d97-434, B-INIT-WINDOW). Under the write lock, so a latch stored under it records a current epoch.
+// g_offsetValidations counts these retires apart from the family's moves: a builder that reads offsets before it takes its
+// key -- WalkClassEx, whose key follows CorrectSubclassOffsets' deliberate move -- compares it across the two and walks
+// again, since a move it made itself is fine and a validation that ended in between is not (review wf_b0aa9098-dd5,
+// B-EX-STRADDLE). Seqlock-shaped: odd while a retire is between its two bumps, even again only after the epoch moved. A
+// reader takes an EVEN count before its reads (SettledOffsetValidations): having seen the count a retire finished with,
+// it sees that retire's epoch too, so its plain walk cannot be keyed under the old epoch and served what was cached
+// mid-validation -- which a count bumped once, before the epoch, let through (review wf_09b53b67-caf,
+// B-R4-STRADDLE-PLAIN-HIT). Any change by the time it compares -- odd included -- means its walk is not published and
+// the call starts over. One that starts over while the retire is still half done can be served what the old epoch
+// already holds: an answer from inside the validation, as any caller during it gets, never filed under the new epoch
+// (review wf_090d2608-d9f, R5-RECURSE-UNSETTLED-HIT).
+inline std::atomic<uint32_t> g_offsetValidations{0};
+inline void RetireFamilyEpoch() {
+    const FamilyWriteLock lk;
+    g_offsetValidations.fetch_add(1, std::memory_order_acq_rel);   // odd: the retire is under way
+    g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
+    g_offsetValidations.fetch_add(1, std::memory_order_release);   // even, after the epoch
+}
+// The count with no retire half done. The two bumps are adjacent, so the wait is short unless the retiring thread is
+// preempted between them; it yields rather than takes the family write lock, so a caller already holding that lock
+// cannot deadlock here.
+inline uint32_t SettledOffsetValidations() {
+    uint32_t v = g_offsetValidations.load(std::memory_order_acquire);
+    while (v & 1u) {
+        std::this_thread::yield();
+        v = g_offsetValidations.load(std::memory_order_acquire);
+    }
+    return v;
+}
+
 // The one member allowed to leave the family on its own: UE5.3+ puts EArrayPropertyFlags before Inner, so a walker
 // that finds Inner off the shared base corrects it here. Under the family lock, so it cannot interleave with a
 // family write; a later family write resetting it to the base is intended, and the probe re-corrects per walk.
@@ -1478,13 +1538,13 @@ inline void SetArrayInner(int off) {
 }
 
 // === UEnum — detected by DetectUEnumNames(), on first use or by the version ladder at init ===
-inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
+inline RuntimeOffset UENUM_NAMES          {0x40};  // UEnum::Names (Neu::EnumNamesLayout region offset)
 // [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
 // (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).
 // Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer. (This
 // replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
-inline int UENUM_VALUE_SIZE     = 8;
-inline int UENUM_PAIR_STRIDE    = 0;
+inline RuntimeOffset UENUM_VALUE_SIZE     {8};
+inline RuntimeOffset UENUM_PAIR_STRIDE    {0};
 // UE5.7+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
 // FNameData struct-of-arrays {tagged FName*, tagged int64*, int32 NumValues}. Set by
 // DetectUEnumNames (try-both); the enum reader (Ubel) branches on it. Written before the

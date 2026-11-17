@@ -54,8 +54,17 @@ do in the UI: find objects, read their fields and class layouts, follow pointers
 <code>write_</code> turn the gameplay features on and off (god mode, movement, gravity direction, time dilation, debug
 camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field), teleport the player
 to explicit coordinates, write data in memory (never code or read-only memory) and call a game function on the game
-thread (network calls, console commands, quitting, travelling, destroying and save slots are refused). They ask you
-before every call.</blockquote>
+thread (network calls, console commands, quitting, travelling, destroying, save slots, calls by name and online
+achievement, leaderboard and purchase calls are refused). Claude Code 2.1.246 or later asks you first: once per game
+run for the gameplay toggles, once for movement and teleport (each through a tool whose name starts with
+<code>grant_</code>), and before every memory write, function call and forced field. With a DLL of build 3717 or
+later you can also allow one game function for the game run: <code>grant_invoke_one_function_any_object_and_args</code>
+names it by function and class, and <code>write_invoke_granted_function</code> then calls only that one without asking
+again. With a DLL of build 3718 or later you can also allow one field of one class (a number, a bool or an enum):
+<code>grant_write_field_one_property_every_instance</code> names the field and its class, and <code>write_field</code>
+then writes only that field, on every live instance of the class and its subclasses (other characters included),
+without asking again; what it wrote is not undone when the AI session ends. Any other client only reads, unless you let
+it write (section 2).</blockquote>
 
 <hr>
 
@@ -97,6 +106,19 @@ start a new one. To remove it: <code>claude mcp remove ue5cedumper -s user</code
   }
 }</code></pre>
 
+<h3>Other clients only read, unless you say so</h3>
+
+<p>The server lists its write tools only to Claude Code 2.1.246 or later, whose prompt is how you approve a grant.
+Claude Desktop and every other client get the reading tools and <code>scan_start</code>. To let one of them write,
+add <code>--writes=any-host</code> to that client's own registration:</p>
+
+<pre><code>"args": ["--mcp", "--writes=any-host"]</code></pre>
+
+<div class="note"><strong>On a client that never asks, or that you set to always allow, the AI then grants
+itself:</strong> the grant tools and every write run with no prompt. Use <code>--writes=any-host</code> only with a
+client that asks before each tool call. <code>--writes=off</code> turns every write off, for Claude Code too; any
+other value stops the server, and the client reports that it failed to start.</div>
+
 <div class="note"><strong>Updating to a new release:</strong> each AI session keeps the server running while it is
 open, and Windows does not let a running exe be replaced. Close the AI sessions (or Claude Desktop) before copying a
 new <code>UE5DumpUI.exe</code> over the old one.</div>
@@ -111,8 +133,39 @@ Claude Code <code>settings.json</code>:</p>
 <p>In the default permission mode, <code>scan_start</code> still asks first. In auto mode, Claude Code decides on its
 own and may run <code>scan_start</code> without asking.</p>
 
-<p>The <code>write_</code> tools ask every time, in every permission mode, and an allow rule does not skip them
-(Claude Code 2.1.246 or later).</p>
+<p>The grant tools, and <code>write_memory</code>, <code>write_invoke</code> and <code>write_force_field</code>, ask
+every time, in every permission mode, and an allow rule does not skip them (Claude Code 2.1.246 or later). A grant
+covers one game run: the game exiting or restarting, the AI session ending, or <code>revoke_grants</code> ends it.
+An invoke grant covers one function only, on any object and with any arguments. The server refuses one for a
+function the DLL refuses the AI, and for one whose arguments it can see reach other functions or properties by name;
+the DLL refuses every call under a grant that does, however deep the argument.</p>
+
+<p>In the default permission mode Claude Code also asks before each write a grant already covers. To stop that, allow
+the write tools too; the server still refuses every write no grant covers. Leave this out in auto mode for now:</p>
+
+<pre><code>{ "permissions": { "allow": ["mcp__ue5cedumper__read_*", "mcp__ue5cedumper__write_*",
+  "mcp__ue5cedumper__revoke_grants"] } }</code></pre>
+
+<h3>Keep subagents from changing the game (recommended)</h3>
+
+<p>A subagent or workflow agent the AI starts calls the same server and holds the grants you gave the main
+conversation, and its grant prompt looks just like the main one's. This hook in your user-level
+<code>~/.claude/settings.json</code> refuses their writes and grants and leaves their reads alone. The exe itself is
+the hook, so nothing else needs installing; use your own path:</p>
+
+<pre><code>{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__ue5cedumper__(write|grant)_.*$",
+        "hooks": [{ "type": "command", "command": "\"C:/Tools/UE5CEDumper/UE5DumpUI.exe\" --mcp-agent-guard" }]
+      }
+    ]
+  }
+}</code></pre>
+
+<p>Claude Code reads hooks when a session starts. If the exe is not at that path, the hook fails to run and the call
+goes on without it, so update the path when you move the exe.</p>
 
 <h2>4. Using it</h2>
 
@@ -123,6 +176,11 @@ own and may run <code>scan_start</code> without asking.</p>
   <li>With several games running the DLL, the AI lists them (<code>read_games</code>) and names the game's pid on every
     call.</li>
 </ol>
+
+<p><strong>To stop an AI:</strong> tick <strong>Block AI writes</strong> at the top of the UE5DumpUI window's
+Teleport tab. Every AI session is then refused every change to the game (it can still turn off or reset what it
+holds) and every grant ends; then use a card's OFF or Reset to take back what an AI holds. The switch is per Windows
+user: a server started over SSH under another account does not see it.</p>
 
 <p><strong>Beside the UI.</strong> The server and <code>UE5DumpUI.exe</code> are separate processes and can run
 together; the AI's work never ends or slows down yours:</p>

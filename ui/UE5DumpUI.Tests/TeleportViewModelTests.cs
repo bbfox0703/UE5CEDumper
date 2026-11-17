@@ -21,11 +21,27 @@ public class TeleportViewModelTests
         public TeleportPov NextPov { get; set; } = new() { Code = 0 };
         public int GetPovCalls { get; private set; }
 
+        // ── get_holds ([MCP-WRITE-GRANTS-2026-11-14]) ──
+        public HoldsReport? NextHolds { get; set; }
+        public int GetHoldsCalls { get; private set; }
+        public bool HoldsFail { get; set; }
+        /// <summary>When set, get_holds waits for it: a reply that lands later (after a disconnect, say).</summary>
+        public TaskCompletionSource<HoldsReport>? HoldsGate { get; set; }
+        public override Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default)
+        {
+            GetHoldsCalls++;
+            if (HoldsFail) return Task.FromException<HoldsReport>(new InvalidOperationException("DLL error: test"));
+            if (HoldsGate is { } gate) return gate.Task;
+            return NextHolds is { } r ? Task.FromResult(r) : throw new NotImplementedException();
+        }
+
         public ProtectState NextProtectState { get; set; } = new();
         public int GetProtectStateCalls { get; private set; }
+        public bool ProtectStateFails { get; set; }
         public override Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default)
         {
             GetProtectStateCalls++;
+            if (ProtectStateFails) return Task.FromException<ProtectState>(new InvalidOperationException("DLL error: test"));
             return Task.FromResult(NextProtectState);
         }
 
@@ -54,6 +70,15 @@ public class TeleportViewModelTests
 
         public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
         { GetDebugCameraCalls++; return Task.FromResult(NextDebugCameraState); }
+
+        // Opt-in: null keeps the base stub's NotImplementedException, which the connect tests rely on.
+        public int? NextForegroundLock { get; set; }
+        public int GetForegroundLockCalls { get; private set; }
+        public override Task<int> GetForegroundLockAsync(CancellationToken ct = default)
+        {
+            GetForegroundLockCalls++;
+            return NextForegroundLock is { } state ? Task.FromResult(state) : throw new NotImplementedException();
+        }
 
         public int NextGodModeState { get; set; } = -1;
         public int SetGodModeCalls { get; private set; }
@@ -87,8 +112,12 @@ public class TeleportViewModelTests
 
         // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
         public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
+        public int GetForcedFieldsCalls { get; private set; }
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
-            => NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+        {
+            GetForcedFieldsCalls++;
+            return NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+        }
 
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind, double value = 0, bool on = false, CancellationToken ct = default)
         { ForceFieldCalls++; LastForceClass = className; LastForceField = fieldName; LastForceKind = kind; LastForceValue = value; return Task.FromResult(NextForce); }
@@ -104,8 +133,9 @@ public class TeleportViewModelTests
         public string? LastMovementKnob { get; private set; }
         public double LastMovementMultiplier { get; private set; }
 
+        public int GetMovementParamsCalls { get; private set; }
         public override Task<MovementParams> GetMovementParamsAsync(CancellationToken ct = default)
-            => Task.FromResult(NextMovementParams);
+        { GetMovementParamsCalls++; return Task.FromResult(NextMovementParams); }
 
         public override Task<MovementSetResult> SetMovementMultiplierAsync(string knob, double multiplier, CancellationToken ct = default)
         { SetMovementCalls++; LastMovementKnob = knob; LastMovementMultiplier = multiplier; return Task.FromResult(NextMovementSet); }
@@ -121,8 +151,9 @@ public class TeleportViewModelTests
         public string? LastTimeTarget { get; private set; }
         public double LastTimeValue { get; private set; }
 
+        public int GetTimeStateCalls { get; private set; }
         public override Task<TimeState> GetTimeStateAsync(CancellationToken ct = default)
-            => Task.FromResult(NextTimeState);
+        { GetTimeStateCalls++; return Task.FromResult(NextTimeState); }
 
         public override Task<TimeDilationSetResult> SetTimeDilationAsync(string target, double value, CancellationToken ct = default)
         { SetTimeCalls++; LastTimeTarget = target; LastTimeValue = value; return Task.FromResult(NextTimeSet); }
@@ -171,8 +202,14 @@ public class TeleportViewModelTests
         public override Task<SeeThroughStatus> SeeThroughSetAsync(bool? enable, int? count, CancellationToken ct = default)
         { SeeThroughSetCalls++; LastSeeThroughEnable = enable; LastSeeThroughCount = count; return Task.FromResult(NextSeeThroughStatus); }
 
+        public bool SeeThroughGetStateFails { get; set; }
         public override Task<SeeThroughStatus> SeeThroughGetStateAsync(CancellationToken ct = default)
-        { SeeThroughGetStateCalls++; return Task.FromResult(NextSeeThroughStatus); }
+        {
+            SeeThroughGetStateCalls++;
+            if (SeeThroughGetStateFails)
+                return Task.FromException<SeeThroughStatus>(new InvalidOperationException("DLL error: test"));
+            return Task.FromResult(NextSeeThroughStatus);
+        }
 
         public override Task<TeleportPose> TeleportGetPoseAsync(CancellationToken ct = default)
         { GetPoseCalls++; return Task.FromResult(NextPose); }
@@ -242,6 +279,17 @@ public class TeleportViewModelTests
         public string? LastClipboard { get; private set; }
         /// <summary>Answer every copy with "did nothing" (a clipboard another application holds), the copy still recorded.</summary>
         public bool RefuseClipboard { get; set; }
+        /// <summary>The processes that run, by pid: every other pid reads as exited, as DescribeProcess answers it.
+        /// </summary>
+        public Dictionary<int, string> Running { get; } = new();
+        /// <summary>Each DescribeProcess call's pid, and the synchronization context it ran under.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<(int Pid, SynchronizationContext? Context)> Described
+        { get; } = new();
+        public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
+        {
+            Described.Enqueue((pid, SynchronizationContext.Current));
+            return Running.TryGetValue(pid, out var image) ? (image, null) : ("", null);
+        }
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
@@ -333,6 +381,721 @@ public class TeleportViewModelTests
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed;
+    }
+
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ───────────────────────────────────────────
+
+    private sealed class FakeBlockGate : IAiWriteBlockGate
+    {
+        public bool IsBlocked { get; set; }
+        public long RevokeStamp { get; set; }
+        public bool SaveSucceeds { get; set; } = true;
+        public int AsyncReloads { get; private set; }
+        public event EventHandler? Changed;
+
+        public bool TrySetBlocked(bool blocked)
+        {
+            if (!SaveSucceeds) return false;
+            IsBlocked = blocked;
+            if (blocked) RevokeStamp++;
+            Changed?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
+
+        public Task ReloadAsync()
+        {
+            AsyncReloads++;
+            return Task.CompletedTask;
+        }
+        public void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static TeleportViewModel CreateBlockVm(FakeBlockGate gate)
+        => new(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aiWriteBlock: gate);
+
+    [Fact]
+    public void BlockAiWrites_ShowsTheSwitch_AndTicksThroughToIt()
+    {
+        var gate = new FakeBlockGate { IsBlocked = true };
+        var vm = CreateBlockVm(gate);
+        Assert.True(vm.HasAiWriteBlock);
+        Assert.True(vm.BlockAiWrites);
+        vm.BlockAiWrites = false;
+        Assert.False(gate.IsBlocked);
+        vm.BlockAiWrites = true;
+        Assert.True(gate.IsBlocked);
+        Assert.Equal(1, gate.RevokeStamp);
+    }
+
+    [Fact]
+    public void BlockAiWrites_ASaveThatFails_UnticksTheBox_AndSaysSo()
+    {
+        // A stop control that looks on while nothing reached the servers stops nothing.
+        var gate = new FakeBlockGate { SaveSucceeds = false };
+        var vm = CreateBlockVm(gate);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.BlockAiWrites = true;
+        Assert.False(vm.BlockAiWrites);
+        Assert.Contains(nameof(TeleportViewModel.BlockAiWrites), raised);
+        Assert.False(string.IsNullOrWhiteSpace(TeleportViewModel.BlockAiSaveFailedText));
+        Assert.Equal(TeleportViewModel.BlockAiSaveFailedText, vm.StatusText);
+    }
+
+    [Fact]
+    public void BlockAiWrites_FollowsAChangeMadeElsewhere()
+    {
+        var gate = new FakeBlockGate();
+        var vm = CreateBlockVm(gate);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        gate.IsBlocked = true;
+        gate.RaiseChanged();
+        Assert.True(vm.BlockAiWrites);
+        Assert.Contains(nameof(TeleportViewModel.BlockAiWrites), raised);
+    }
+
+    [Fact]
+    public void BlockAiWrites_SaysWhatItDoes_InTheDictionary()
+    {
+        foreach (var key in new[] { "str.TP.BlockAi", "str.Tip.TP.BlockAi", "str.TP.BlockAiOnNote",
+                                    TeleportViewModel.KeyBlockAiSaveFailed })
+            Assert.False(string.IsNullOrWhiteSpace(Res.Get(key)), key);
+        Assert.Equal(Res.Get(TeleportViewModel.KeyBlockAiSaveFailed), TeleportViewModel.BlockAiSaveFailedText);
+    }
+
+    // ── The cards' holder labels ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──────────────────────────────────
+
+    private const int AiPid = 8048;
+    private const int OtherPid = 77;
+
+    private static HoldEntry HeldBy(string hold, string kind = "client", long? pid = AiPid, bool background = true,
+        bool you = false, bool active = true, bool pending = false)
+        => new()
+        {
+            Hold = hold, Active = active, Pending = pending,
+            Holder = new HoldOwner { Kind = kind, Pid = pid, Background = background, You = you },
+        };
+
+    private static HoldsReport Report(params HoldEntry[] holds) => new() { Holds = holds };
+
+    /// <summary>A window connected to a DLL that answers get_holds (unless <paramref name="dllBuild"/> says
+    /// otherwise), with no connect prime: only the poll's own reads are counted.</summary>
+    private static (TeleportViewModel Vm, FakeDumpService Dump) HoldsVm(int dllBuild = Constants.HoldsMinDllBuild,
+        bool experimental = false, IAiWriteBlockGate? gate = null, HoldsReport? first = null,
+        FakePlatform? platform = null)
+    {
+        var dump = new FakeDumpService { NextHolds = first ?? Report() };
+        platform ??= new FakePlatform();
+        platform.Running[AiPid] = "UE5DumpUI.exe";
+        platform.Running[OtherPid] = "Other.exe";
+        var vm = new TeleportViewModel(dump, new NoopLogger(), platform,
+            experimentalGate: experimental ? new FakeExperimentalGate(true) : null, aiWriteBlock: gate);
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = dllBuild });
+        return (vm, dump);
+    }
+
+    [Fact]
+    public void TheHoldsPoll_RunsEveryTwoSeconds()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(2), TeleportViewModel.HoldsPollInterval);
+        var (vm, _) = HoldsVm();
+        Assert.Equal(TeleportViewModel.HoldsPollInterval, vm.HoldsTimerInterval);   // the timer is built with it
+    }
+
+    private static Dictionary<string, int> CardReads(FakeDumpService d) => new()
+    {
+        ["god"] = d.GetProtectStateCalls, ["camera"] = d.GetDebugCameraCalls, ["movement"] = d.GetMovementParamsCalls,
+        ["time"] = d.GetTimeStateCalls, ["foreground"] = d.GetForegroundLockCalls, ["fly"] = d.FlyGetStateCalls,
+    };
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: only God Mode's re-read was tested. Each card someone else holds is read
+    // again by its own read and by no other card's.
+    [Theory]
+    [InlineData(Constants.HoldGodMode, "god")]
+    [InlineData(Constants.HoldDebugCamera, "camera")]
+    [InlineData(Constants.HoldMovementPrefix + "walk_speed", "movement")]
+    [InlineData(Constants.HoldMovementPrefix + "gravity", "movement")]
+    [InlineData(Constants.HoldMovementPrefix + "jump", "movement")]
+    [InlineData(Constants.HoldGravityDirection, "movement")]
+    [InlineData(Constants.HoldTimePrefix + "global", "time")]
+    [InlineData(Constants.HoldTimePrefix + "pawn", "time")]
+    [InlineData(Constants.HoldForegroundLock, "foreground")]
+    [InlineData(Constants.HoldFly, "fly")]
+    public async Task EachCardSomeoneElseHolds_IsReadAgain_ByItsOwnRead(string hold, string read)
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        dump.NextForegroundLock = 1;
+        await vm.HoldsFirstPoll;
+        var before = CardReads(dump);
+        dump.NextHolds = Report(HeldBy(hold));
+        await vm.PollHoldsOnceAsync();
+        var after = CardReads(dump);
+        foreach (var (key, count) in after)
+            Assert.True(count == before[key] + (key == read ? 1 : 0), $"{hold}: {key} read {count - before[key]} time(s)");
+    }
+
+    [Fact]
+    public async Task TheTimeReRead_FillsTheReadout_AndLeavesTheSliders()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.WorldTimeDilation = 0.5;   // the user's own slider, not yet applied
+        vm.PawnTimeDilation = 0.25;
+        dump.NextTimeState = new TimeState
+        {
+            Global = new TimeDilationKnob { Resolved = true, Active = true, Current = 2, Value = 2 },
+            Pawn = new TimeDilationKnob { Resolved = true, Active = true, Current = 3, Value = 3 },
+        };
+        dump.NextHolds = Report(HeldBy(Constants.HoldTimePrefix + "global"), HeldBy(Constants.HoldTimePrefix + "pawn"));
+        await vm.PollHoldsOnceAsync();
+        Assert.Contains("2", vm.WorldTimeCurrentText);
+        Assert.Contains("3", vm.PawnTimeCurrentText);
+        Assert.Equal((0.5, 0.25), (vm.WorldTimeDilation, vm.PawnTimeDilation));
+    }
+
+    [Fact]
+    public async Task EachCard_NamesWhoElseHoldsIt()
+    {
+        var (vm, _) = HoldsVm(first: Report(
+            HeldBy(Constants.HoldGodMode),
+            HeldBy(Constants.HoldForegroundLock, kind: "ce", pid: null, background: false),
+            HeldBy(Constants.HoldFly, pid: OtherPid, background: false),
+            HeldBy(Constants.HoldMovementPrefix + "walk_speed"),
+            HeldBy(Constants.HoldMovementPrefix + "gravity", you: true, background: false),
+            HeldBy(Constants.HoldMovementPrefix + "jump", active: false),
+            HeldBy(Constants.HoldTimePrefix + "global", kind: "ce", pid: null, background: false),
+            HeldBy(Constants.HoldTimePrefix + "pawn", kind: "none", pid: null, background: false),
+            HeldBy(Constants.HoldGravityDirection, pid: null),
+            HeldBy(Constants.HoldDebugCamera, active: false, pending: true)));
+        await vm.HoldsFirstPoll;
+
+        Assert.True(vm.HoldsPollRunning);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+        Assert.Equal("Held by Cheat Engine", vm.ForegroundLockHolderText);
+        Assert.Equal("Held by another program (pid 77)", vm.FlyHolderText);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.MoveSpeedHolderText);
+        Assert.Equal("", vm.GravityHolderText);       // this window's own
+        Assert.Equal("", vm.SuperJumpHolderText);     // no longer in force
+        Assert.Equal("Held by Cheat Engine", vm.WorldTimeHolderText);
+        Assert.Equal("Held by a program that recorded no owner", vm.PawnTimeHolderText);
+        Assert.Equal("Held by an AI session", vm.GravDirHolderText);
+        Assert.Equal("Held by an AI session (pid 8048)", vm.DebugCameraHolderText);   // an ON on its way
+        Assert.Equal("", vm.StealthHolderText);       // no meter detected: no job is this card's
+    }
+
+    [Fact]
+    public async Task AHolderWhosePidNoLongerRuns_IsSaidToHaveExited()
+    {
+        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode, pid: 99, background: false)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: a pid Windows gives to a new process names that process, not the one that
+    // exited -- an AI session's MCP server among them.
+    [Fact]
+    public async Task AnExitedHoldersPid_ThatRunsAgain_IsNamedForWhatRunsNow()
+    {
+        var platform = new FakePlatform();
+        var (vm, dump) = HoldsVm(platform: platform,
+            first: Report(HeldBy(Constants.HoldGodMode, pid: 99, background: false)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
+
+        platform.Running[99] = "UE5DumpUI.exe";
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode, pid: 99));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 99)", vm.GodModeHolderText);
+    }
+
+    private sealed class MarkerContext : SynchronizationContext
+    {
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: a lookup lists every process and window; seven holds of one AI session
+    // made seven of them on the UI thread every two seconds.
+    [Fact]
+    public async Task EachHolderPid_IsLookedUpOncePerPoll_OffTheCallersThread()
+    {
+        var platform = new FakePlatform();
+        var (vm, dump) = HoldsVm(platform: platform);
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode), HeldBy(Constants.HoldMovementPrefix + "walk_speed"),
+            HeldBy(Constants.HoldTimePrefix + "global"), HeldBy(Constants.HoldGravityDirection),
+            HeldBy(Constants.HoldFly, pid: OtherPid, background: false));
+        platform.Described.Clear();
+
+        var marker = new MarkerContext();
+        var outer = SynchronizationContext.Current;
+        Task poll;
+        SynchronizationContext.SetSynchronizationContext(marker);
+        try { poll = vm.PollHoldsOnceAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(outer); }
+        await poll;
+
+        var calls = platform.Described.ToArray();
+        Assert.Equal(1, calls.Count(c => c.Pid == AiPid));
+        Assert.Equal(1, calls.Count(c => c.Pid == OtherPid));
+        Assert.DoesNotContain(calls, c => ReferenceEquals(c.Context, marker));
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+    }
+
+    [Fact]
+    public async Task TheStealthCard_IsLabelledFromItsOwnMetersJob()
+    {
+        var (vm, dump) = HoldsVm();
+        dump.NextStealthCandidates = new List<StealthCandidate>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
+        };
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        // Matched whole and ordinally: a job on another spelling is another job, which this card's Reset does not end.
+        // Listed first, so a looser match would name it (review: listed second, nothing could tell).
+        var otherSpelling = HeldBy(Constants.HoldForceFieldPrefix + "bp_player_c" + Constants.HoldForceFieldSeparator
+                                   + "Visibility", kind: "ce", pid: null, background: false);
+        var longer = HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator
+                            + "VisibilityScale", pid: OtherPid, background: false);
+        dump.NextHolds = Report(otherSpelling, longer,
+            HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator + "Visibility"));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+
+        dump.NextHolds = Report(otherSpelling, longer);   // only the jobs on other names
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.StealthHolderText);
+    }
+
+    private const string StealthJob = Constants.HoldForceFieldPrefix + "BP_Player_C"
+                                      + Constants.HoldForceFieldSeparator + "Visibility";
+
+    private static ForcedFieldInfo StealthJobAt(double value)
+        => new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = value, Held = 1 };
+
+    /// <summary>A window whose Stealth card detected BP_Player_C::Visibility, then held and released it itself: the
+    /// card then knows that no stealth hold exists.</summary>
+    private static async Task<(TeleportViewModel Vm, FakeDumpService Dump)> StealthReleasedVm()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextStealthCandidates = new List<StealthCandidate>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
+        };
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(1, dump.ResetFieldCalls);
+        return (vm, dump);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the chip says the card's Reset takes the feature over and ends it.
+    [Fact]
+    public async Task TheStealthCardsReset_EndsTheJobItsChipNames()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));          // an AI session forces the same meter
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(2, dump.ResetFieldCalls);
+        Assert.Equal(("BP_Player_C", "Visibility"), (dump.LastForceClass, dump.LastForceField));
+    }
+
+    [Fact]
+    public async Task TheStealthBadge_FollowsTheJobSomeoneElseHolds_WithoutSearchingAgain()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        int searches = dump.FindStealthCalls;
+
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Holding @0", vm.StealthState);
+
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(5) };   // held, at a value this card never sets
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Unknown", vm.StealthState);
+
+        dump.NextHolds = Report();                             // they let go
+        dump.NextForcedFields = new List<ForcedFieldInfo>();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Off", vm.StealthState);
+        Assert.Equal(searches, dump.FindStealthCalls);         // the forced fields only: no search of the pawn
+    }
+
+    // Review round 2: Solide keeps a job that matched no live instance (a menu, a level between); it holds nothing yet.
+    [Fact]
+    public async Task AStealthJobHoldingNoInstance_ReadsArmed_NotHolding()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        var armed = StealthJobAt(0);
+        dump.NextForcedFields = new List<ForcedFieldInfo>
+        {
+            new() { ClassName = armed.ClassName, FieldName = armed.FieldName, Kind = "numeric", Value = 0, Held = 0 },
+        };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Armed @0", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task TheCardsOwnArmedHold_IsNotTurnedIntoHolding_ByTheReadItIsOwed()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));                    // someone else's job on the meter
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(0) };
+        await vm.PollHoldsOnceAsync();
+
+        dump.NextForce = new ForceFieldResult { Held = 0, Resolved = true };   // the window's Hold @0 takes it over,
+        await vm.HoldStealthCommand.ExecuteAsync(null);                     // with nothing live to hold yet
+        Assert.Equal("Armed @0", vm.StealthState);
+        dump.NextHolds = Report(HeldBy(StealthJob, you: true, background: false));
+        dump.NextForcedFields = new List<ForcedFieldInfo>
+        {
+            new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 0 },
+        };
+        await vm.PollHoldsOnceAsync();                                     // the read owed after the takeover
+        Assert.Equal("Armed @0", vm.StealthState);
+    }
+
+    // Review round 2: the badge followed the job and the readout kept "= 0 (held)" -- Off beside held, or a value the
+    // holder no longer holds.
+    [Fact]
+    public async Task TheStealthReadout_FollowsTheJobSomeoneElseHolds()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(5) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("BP_Player_C::Visibility = 5 (held)", vm.StealthFieldText);
+
+        dump.NextHolds = Report();
+        dump.NextForcedFields = new List<ForcedFieldInfo>();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Off", vm.StealthState);
+        Assert.Equal("BP_Player_C::Visibility", vm.StealthFieldText);   // the meter's name, no value it no longer knows
+    }
+
+    [Fact]
+    public async Task SeeThrough_IsLabelledFromItsClaims_WhileItsCardShows()
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = true, Claims = 2, You = true };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by another program or AI session", vm.SeeThroughHolderText);
+
+        var (hidden, hiddenDump) = HoldsVm(experimental: false);
+        await hidden.HoldsFirstPoll;
+        Assert.Equal(0, hiddenDump.SeeThroughGetStateCalls);   // its card is hidden: no read every two seconds
+        Assert.Equal("", hidden.SeeThroughHolderText);
+    }
+
+    [Fact]
+    public async Task ThePoll_IsQuiet()
+    {
+        var (vm, dump) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
+        string status = vm.StatusText;
+        await vm.HoldsFirstPoll;
+        // A poll that reads a card again never touches the busy flag (every CanOperate button would flicker every two
+        // seconds), nor the status line, even for a moment.
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);   // it did read the card
+        foreach (var name in new[] { nameof(TeleportViewModel.IsBusy), nameof(TeleportViewModel.StatusText),
+                                     nameof(TeleportViewModel.CanOperate) })
+            Assert.DoesNotContain(name, raised);
+        Assert.Equal(status, vm.StatusText);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task ACardHeldBySomeoneElse_IsReadAgain_AndNoOtherCard()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        Assert.Equal((0, 0, 0), (dump.GetProtectStateCalls, dump.GetTimeStateCalls, dump.GetMovementParamsCalls));
+
+        // An AI takes god mode: its card is read again, and again on each poll while it holds it (a value changed
+        // inside the hold changes neither its holder nor its state).
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode),
+            HeldBy(Constants.HoldTimePrefix + "global", you: true, background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);
+        Assert.Equal((0, 0), (dump.GetTimeStateCalls, dump.GetMovementParamsCalls));   // this window's own: read on use
+
+        // It lets go: read once more, to show the card as it is now, then left alone.
+        dump.NextHolds = Report();
+        await vm.PollHoldsOnceAsync();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+    }
+
+    [Fact]
+    public async Task WhileACommandRuns_TheCardsAreNotReadAgain_ButTheLabelsMove()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.IsBusy = true;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+        Assert.Equal(0, dump.GetProtectStateCalls);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the read a card is owed once its holder lets go is made, whatever the
+    // poll that saw the release met -- a command running, or a read that failed.
+    [Fact]
+    public async Task AHoldReleasedWhileACommandRuns_IsReadOnceTheCommandEnds()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);
+
+        vm.IsBusy = true;                // the AI lets go while a command of the window's runs
+        dump.NextHolds = Report();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetProtectStateCalls);   // the command's own readout stands
+
+        vm.IsBusy = false;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);   // the read it was owed
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);   // and only that one
+    }
+
+    [Fact]
+    public async Task AReadThatFails_IsMadeAgainOnTheNextPoll()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+
+        dump.NextHolds = Report();       // released, and the read that follows fails
+        dump.ProtectStateFails = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(2, dump.GetProtectStateCalls);
+
+        dump.ProtectStateFails = false;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(3, dump.GetProtectStateCalls);
+    }
+
+    [Fact]
+    public async Task ASeeThroughReadThatFails_KeepsWhatTheLastPollKnew()
+    {
+        var (vm, dump) = HoldsVm(experimental: true);
+        await vm.HoldsFirstPoll;
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = true, Claims = 1, You = false };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.SeeThroughState);
+
+        dump.SeeThroughGetStateFails = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by another program or AI session", vm.SeeThroughHolderText);   // as it was
+
+        // The other program lets go: the card is shown as it is now, though the poll before could not read it.
+        dump.SeeThroughGetStateFails = false;
+        dump.NextSeeThroughStatus = new SeeThroughStatus { Active = false, Claims = 0, You = false };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.SeeThroughHolderText);
+        Assert.Equal("OFF", vm.SeeThroughState);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: get_debug_camera_state reads OFF until a queued ON's toggle runs, so a
+    // read then would replace the card's "Queued" ([W3-DEBUGCAM-QUEUED]) with an OFF the game is about to undo.
+    [Fact]
+    public async Task ADebugCameraOnOnItsWay_IsShownQueued_AndReadOnceItRuns()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 0;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal(0, dump.GetDebugCameraCalls);
+
+        dump.NextDebugCameraState = 1;   // the toggle ran
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.DebugCameraState);
+    }
+
+    [Fact]
+    public async Task AQueuedOnTheWindowJoined_StaysQueued_UntilItRuns()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 0;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true));
+        await vm.PollHoldsOnceAsync();
+
+        // The window's Force ON joins the AI's queued toggle and is told it is its own: no longer someone else's.
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true, you: true,
+            background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.DebugCameraHolderText);
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal(0, dump.GetDebugCameraCalls);
+
+        dump.NextDebugCameraState = 1;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, you: true, background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.DebugCameraState);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetDebugCameraCalls);   // read once it ran, then the window's own: read on use
+    }
+
+    [Fact]
+    public async Task ADebugCameraTheDllOwesAnOff_IsLabelled_AndFollowedUntilItIsOff()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 1;
+        dump.NextHolds = Report(new HoldEntry
+        {
+            Hold = Constants.HoldDebugCamera, Active = true, ReleaseOwed = true, Holder = new HoldOwner { Kind = "none" },
+        });
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Turning off: the AI session that held it has ended", vm.DebugCameraHolderText);
+        Assert.Equal("ON", vm.DebugCameraState);
+
+        dump.NextDebugCameraState = 0;   // the owed OFF ran
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, kind: "none", pid: null, background: false,
+            active: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.DebugCameraHolderText);
+        Assert.Equal("OFF", vm.DebugCameraState);
+    }
+
+    [Theory]
+    [InlineData(0, false)]                                // an engine state that names no build
+    [InlineData(Constants.HoldsMinDllBuild - 1, false)]   // a DLL that answers get_holds with an error
+    [InlineData(Constants.HoldsMinDllBuild, true)]
+    public async Task ThePoll_RunsOnlyAgainstADllThatAnswersGetHolds(int build, bool runs)
+    {
+        var (vm, dump) = HoldsVm(dllBuild: build);
+        await vm.HoldsFirstPoll;
+        Assert.Equal(runs, vm.HoldsPollRunning);
+        Assert.Equal(runs ? 1 : 0, dump.GetHoldsCalls);
+    }
+
+    [Fact]
+    public async Task ThePoll_StartsWhicheverComesFirst_TheConnectOrTheEngineState_AndOnce()
+    {
+        var dump = new FakeDumpService { NextHolds = Report() };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        Assert.False(vm.HoldsPollRunning);   // not connected yet
+        vm.SetConnected(true);
+        vm.SetConnected(true);               // a connect reports itself twice
+        await vm.HoldsFirstPoll;
+        Assert.True(vm.HoldsPollRunning);
+        Assert.Equal(1, dump.GetHoldsCalls);
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });   // a rescan
+        await vm.HoldsFirstPoll;
+        Assert.Equal(1, dump.GetHoldsCalls);
+    }
+
+    [Fact]
+    public async Task ADisconnect_StopsThePoll_AndClearsEveryLabel()
+    {
+        var (vm, _) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode), HeldBy(Constants.HoldFly)));
+        await vm.HoldsFirstPoll;
+        Assert.NotEqual("", vm.GodModeHolderText);
+
+        vm.SetConnected(false);
+
+        Assert.False(vm.HoldsPollRunning);
+        Assert.Equal("", vm.GodModeHolderText);
+        Assert.Equal("", vm.FlyHolderText);
+        // A reconnect to an older DLL starts nothing until its engine state says it can.
+        vm.SetConnected(true);
+        Assert.False(vm.HoldsPollRunning);
+    }
+
+    [Fact]
+    public async Task AReplyThatLandsAfterADisconnect_IsDropped()
+    {
+        var dump = new FakeDumpService { HoldsGate = new TaskCompletionSource<HoldsReport>() };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        vm.SetConnected(false);
+        dump.HoldsGate.SetResult(Report(HeldBy(Constants.HoldGodMode)));
+        await vm.HoldsFirstPoll;
+        Assert.Equal("", vm.GodModeHolderText);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the case the generation check is for. The test above drops its reply through
+    // IsConnected alone; here the window is connected again, perhaps to another game, when the old reply lands.
+    [Fact]
+    public async Task AReplyFromBeforeAReconnect_IsDropped_AndLeavesTheNewStartItsBaseline()
+    {
+        var oldReply = new TaskCompletionSource<HoldsReport>();
+        var dump = new FakeDumpService { HoldsGate = oldReply };
+        var vm = new TeleportViewModel(dump, new NoopLogger(), new FakePlatform());
+        vm.IsConnected = true;
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        var stale = vm.HoldsFirstPoll;
+
+        vm.SetConnected(false);
+        vm.IsConnected = true;   // connected again (without the connect prime, whose reads would be counted)
+        dump.HoldsGate = null;
+        dump.NextHolds = Report();
+        vm.SetEngineState(new EngineState { DllBuildNumber = Constants.HoldsMinDllBuild });
+        oldReply.SetResult(Report(HeldBy(Constants.HoldGodMode)));
+        await stale;
+        Assert.Equal("", vm.GodModeHolderText);
+
+        // The new start's first poll still only records: the connect prime has just read every card.
+        dump.NextHolds = Report(HeldBy(Constants.HoldGodMode));
+        await vm.PollHoldsOnceAsync();
+        Assert.NotEqual("", vm.GodModeHolderText);
+        Assert.Equal(0, dump.GetProtectStateCalls);
+    }
+
+    [Fact]
+    public async Task AFailedRead_LeavesTheLabelsAsTheyWere()
+    {
+        var (vm, dump) = HoldsVm(first: Report(HeldBy(Constants.HoldGodMode)));
+        await vm.HoldsFirstPoll;
+        dump.HoldsFail = true;
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Held by an AI session (pid 8048)", vm.GodModeHolderText);
+    }
+
+    [Fact]
+    public async Task ThePoll_ReadsTheBlockAiWritesSwitchAgain()
+    {
+        // The switch can change in another window or by hand: the box must not show a tick the servers do not see.
+        var gate = new FakeBlockGate();
+        var (vm, _) = HoldsVm(gate: gate);
+        await vm.HoldsFirstPoll;
+        int after = gate.AsyncReloads;
+        await vm.PollHoldsOnceAsync();
+        Assert.True(after >= 1);
+        Assert.Equal(after + 1, gate.AsyncReloads);
+    }
+
+    [Fact]
+    public async Task Dispose_StopsThePoll()
+    {
+        var (vm, _) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        vm.Dispose();
+        Assert.False(vm.HoldsPollRunning);
     }
 
     private static TeleportViewModel CreateVm(FakeDumpService fake, out FakePlatform platform,
@@ -4079,6 +4842,48 @@ public class TeleportViewModelTests
         vm.SetConnected(false);
 
         Assert.False(vm.PoseParentRelative);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] No test renders the panel either: pin each card's holder chip in the markup.
+    [Theory]
+    [InlineData("DebugCamera")]
+    [InlineData("GodMode")]
+    [InlineData("Stealth")]
+    [InlineData("ForegroundLock")]
+    [InlineData("MoveSpeed")]
+    [InlineData("WorldTime")]
+    [InlineData("PawnTime")]
+    [InlineData("Gravity")]
+    [InlineData("SuperJump")]
+    [InlineData("Fly")]
+    [InlineData("SeeThrough")]
+    [InlineData("GravDir")]
+    public void EachGameplayCard_ShowsWhoElseHoldsIt_BesideItsBadge(string card)
+    {
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml")).Replace("\r\n", "\n");
+        string text = "Text=\"{Binding " + card + "HolderText}\"";
+        Assert.Contains("IsVisible=\"{Binding " + card + "HolderText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}\"",
+            axaml);
+        int badge = axaml.IndexOf("Text=\"{Binding " + card + "State}\"", StringComparison.Ordinal);
+        int chip = axaml.IndexOf(text, StringComparison.Ordinal);
+        Assert.True(badge > 0 && chip > badge, card + ": the chip follows the card's own badge");
+        // In the badge's header row: nothing but the badge's own closing tags between them, so the chip is not a
+        // top-level Border the jump menu would list, nor ahead of the card's title.
+        string between = axaml[badge..chip];
+        Assert.DoesNotContain("<StackPanel", between);
+        Assert.DoesNotContain("FontWeight=\"SemiBold\"", axaml[chip..axaml.IndexOf("/>", chip, StringComparison.Ordinal)]);
+    }
+
+    [Fact]
+    public void TheHolderChip_SaysHowToTakeTheFeatureBack()
+    {
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml"));
+        Assert.Equal(12, System.Text.RegularExpressions.Regex.Matches(axaml,
+            System.Text.RegularExpressions.Regex.Escape("{StaticResource str.Tip.TP.HolderChip}")).Count);
+        Assert.Contains("Block AI writes", Res.Get("str.Tip.TP.HolderChip"));
+        Assert.DoesNotContain("MouseCursorHolderText", axaml);   // the cursor holds nothing: no holder
     }
 
     [Fact]

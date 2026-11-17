@@ -1,0 +1,154 @@
+r"""[DENKEN-WRITE-SITES] live check: native write sites from walk_function_props are real write instructions.
+
+    py tools/verify/write_sites_live.py --pid 1234
+    py tools/verify/write_sites_live.py --pid 1234 --probe 2000 --check 60
+
+On a scanned game: lists every native UFunction (list_all_functions), walks up to --probe of them
+(walk_function_props), and keeps the rows that carry write_sites. For up to --check of those sites it reads the
+instruction's bytes (read_mem) and reads ITS memory operand's displacement from the encoding (prefixes, REX / VEX,
+opcode, ModRM, SIB, disp8 / disp32): it must be the field's offset. No disassembler, so the check does not trust the
+code it checks; an EVEX instruction (scaled disp8) is counted as not read. Also: no read-only row (write_count 0) carries a site, a row's sites are distinct, and at most 8 (Denken's
+kMaxWriteSites) unless write_sites_truncated says more were dropped.
+The game, its pid and the limits are arguments, never written here.
+"""
+import argparse
+import pathlib
+import struct
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from pipe_client import PipeClient   # noqa: E402
+
+FUNC_NATIVE = 0x400
+MAX_WRITE_SITES = 8   # Denken::kMaxWriteSites
+results: list[tuple[str, bool, str]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> bool:
+    results.append((name, ok, detail))
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" -- {detail}" if detail else ""))
+    return ok
+
+
+LEGACY_PREFIXES = {0x66, 0x67, 0xF2, 0xF3, 0xF0, 0x2E, 0x36, 0x3E, 0x26, 0x64, 0x65}
+
+
+def displacement_of(code: bytes):
+    """The memory operand's displacement of the ONE instruction at code[0], read from its encoding: legacy prefixes,
+    REX or VEX, the opcode (0F / 0F38 / 0F3A maps), ModRM, SIB, then disp8 (mod 01) or disp32 (mod 10). None when it
+    has no [base+disp] memory form; "evex" for an EVEX instruction, whose disp8 is scaled (disp8*N) and is not read
+    here. Review WS-RIG-1: searching the next 14 bytes for the offset also matched the FOLLOWING instructions."""
+    try:
+        i = 0
+        while code[i] in LEGACY_PREFIXES:
+            i += 1
+        if code[i] == 0x62:
+            return "evex"
+        if code[i] == 0xC5:          # 2-byte VEX, map 0F
+            i += 2
+        elif code[i] == 0xC4:        # 3-byte VEX
+            i += 3
+        else:
+            if 0x40 <= code[i] <= 0x4F:
+                i += 1               # REX
+            if code[i] == 0x0F:
+                i += 1
+                if code[i] in (0x38, 0x3A):
+                    i += 1
+        i += 1                       # the opcode byte
+        modrm = code[i]
+        i += 1
+        mod, rm = modrm >> 6, modrm & 7
+        if mod == 3 or (mod == 0 and rm == 5):
+            return None              # a register, or RIP-relative
+        if rm == 4:
+            i += 1                   # SIB
+        if mod == 1:
+            return struct.unpack_from("<b", code, i)[0]
+        if mod == 2:
+            return struct.unpack_from("<i", code, i)[0]
+        return 0
+    except (IndexError, struct.error):
+        return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--pid", type=int, required=True)
+    ap.add_argument("--probe", type=int, default=1500, help="most native functions to walk")
+    ap.add_argument("--check", type=int, default=40, help="most write sites to read back")
+    a = ap.parse_args()
+
+    with PipeClient(pid=a.pid) as c:
+        print("build", c.assert_build())
+        c.ensure_scanned()
+        g = c.request("list_all_functions", limit=200000)
+        rows = g.get("results") or g.get("functions") or []
+        native = [r for r in rows if (r.get("function_flags") or 0) & FUNC_NATIVE and r.get("func_addr")]
+        print(f"  {len(rows)} function(s), {len(native)} native; walking {min(len(native), a.probe)}")
+        walked = disasm = 0
+        writers, sites_rows, bad_rows = [], [], []
+        for r in native[:a.probe]:
+            rep = c.request("walk_function_props", func_addr=r["func_addr"])
+            d = rep.get("data", rep)
+            walked += 1
+            if d.get("method") != "disasm":
+                continue
+            disasm += 1
+            for p in d.get("props") or []:
+                sites = p.get("write_sites") or []
+                if (p.get("write_count") or 0) > 0:
+                    writers.append(p)
+                if sites:
+                    sites_rows.append((r, p))
+                if sites and (p.get("write_count") or 0) == 0:
+                    bad_rows.append(("a read-only row carries sites", r.get("func_name"), p.get("name")))
+                if len(set(sites)) != len(sites):
+                    bad_rows.append(("repeated site", r.get("func_name"), p.get("name")))
+                if len(sites) > MAX_WRITE_SITES or (len(sites) < MAX_WRITE_SITES and p.get("write_sites_truncated")):
+                    bad_rows.append(("cap / truncation flag disagree", r.get("func_name"), p.get("name")))
+        print(f"  {walked} walked, {disasm} by disassembly; {len(writers)} written field row(s), "
+              f"{len(sites_rows)} with write sites")
+        check("native rows that write carry write sites", bool(sites_rows), f"{len(sites_rows)} row(s)")
+        check("every written native row carries at least one site",
+              all((p.get("write_sites") or []) for p in writers), f"{len(writers)} written row(s)")
+        check("no row breaks the site rules (read-only, repeats, the cap)", not bad_rows, str(bad_rows[:3]))
+
+        checked = carried = unchecked = via_this_rows = 0
+        misses = []
+        for r, p in sites_rows:
+            if (p.get("write_sites_via_this") or 0) > 0:
+                via_this_rows += 1
+            for site in p["write_sites"]:
+                if checked >= a.check:
+                    break
+                rep = c.request("read_mem", addr=site, size=16)
+                d = rep.get("data", rep)
+                code = bytes.fromhex(d.get("bytes", ""))
+                checked += 1
+                disp = displacement_of(code)
+                if disp == "evex":
+                    unchecked += 1
+                elif disp == int(p.get("offset", -1)):
+                    carried += 1
+                else:
+                    misses.append(f"{r.get('class_name')}.{r.get('func_name')}:{p.get('name')}@{site} "
+                                  f"off={p.get('offset')} disp={disp} bytes={code[:8].hex()}")
+        check(f"each checked site's own displacement is the field's offset ({carried}/{checked}, "
+              f"{unchecked} EVEX not read)", checked > 0 and carried + unchecked == checked and carried > 0,
+              "; ".join(misses[:3]))
+        check("write sites through this are counted (write_sites_via_this)", via_this_rows > 0,
+              f"{via_this_rows} of {len(sites_rows)} row(s)")
+        if sites_rows:
+            r, p = sites_rows[0]
+            print(f"  e.g. {r.get('class_name')}.{r.get('func_name')} writes {p.get('name')} (+0x{p.get('offset', 0):X}) "
+                  f"at {', '.join(p['write_sites'])}")
+
+    failed = [n for n, ok, _ in results if not ok]
+    print(f"\n{len(results) - len(failed)}/{len(results)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

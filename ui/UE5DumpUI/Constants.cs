@@ -21,6 +21,28 @@ public static class Constants
     public const string PipeHoldersMoreToken = " more=";
     public const string PipeSlotFreedText = "slot freed";
 
+    // ── Hold names: the DLL's own words for what get_holds lists (Grimoire.h), matched whole and ordinally ──
+    // ⛔ DO NOT LOCALIZE. [MCP-WRITE-GRANTS-2026-11-14] PipePerProcessSourceTests pins each to Grimoire.h.
+    public const string HoldGodMode = "god_mode";
+    public const string HoldForegroundLock = "foreground_lock";
+    public const string HoldGravityDirection = "gravity_direction";
+    public const string HoldFly = "fly";
+    public const string HoldDebugCamera = "debug_camera";
+    /// <summary>A movement knob's hold is this plus the knob (walk_speed, gravity, jump).</summary>
+    public const string HoldMovementPrefix = "movement:";
+    /// <summary>A time-dilation lane's hold is this plus the lane (global, pawn).</summary>
+    public const string HoldTimePrefix = "time:";
+    /// <summary>A force-field job's hold is this plus the class and field as the client sent them, joined by
+    /// <see cref="HoldForceFieldSeparator"/>.</summary>
+    public const string HoldForceFieldPrefix = "force_field:";
+    public const string HoldForceFieldSeparator = "::";
+    /// <summary>The holder kinds get_holds names.</summary>
+    public const string HoldKindCe = "ce";
+    public const string HoldKindClient = "client";
+    public const string HoldKindNone = "none";
+    /// <summary>The first DLL build that answers get_holds (build 3704 recorded who holds each hold).</summary>
+    public const int HoldsMinDllBuild = 3704;
+
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
     // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5
     // A branch below tells another program's reply apart by its text, because that reply carries no code. The words
@@ -59,18 +81,95 @@ public static class Constants
     /// folder, aged out by the same <see cref="LogMaxAgeDays"/> sweep.</summary>
     public const string McpLogFilePrefix = "mcp-";
     /// <summary>The tool-definition <c>_meta</c> key Claude Code reads to ask before every call of a tool, in every
-    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Every write_* tool carries it.
-    /// </summary>
+    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Which tools carry it depends on
+    /// the host's decision (<see cref="Mcp.McpGrants.IsMarked"/>).</summary>
     public const string McpRequiresInteractionKey = "anthropic/requiresUserInteraction";
     /// <summary>The first DLL build the write tools may change a game through: build 3704 records who holds each hold
     /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
     /// both keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
     public const int McpMinDllBuildForWrites = 3705;
-    /// <summary>The first DLL build write_memory and write_invoke may go through (Stage D2-3): write_mem refuses code and
-    /// read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
+    /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through (Stage D2-3): write_mem refuses
+    /// code and read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
     public const int McpMinDllBuildForRawWrites = 3706;
+    /// <summary>The first DLL build whose seethrough_set takes own_claim: an OFF that drops only the caller's claim
+    /// ([MCP-WRITE-GRANTS-2026-11-14]). An older DLL ignores the key and runs an explicit OFF, which drops every claim,
+    /// the user's and CE's too, so the AI's See-through OFF is refused there.</summary>
+    public const int McpMinDllBuildForOwnClaim = 3714;
+    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b): its
+    /// invoke_function checks a call under a grant (grant, expect_func_full) against the function the grant names, its
+    /// parameters and a template. An older DLL ignores both keys and would run whatever function it resolves.</summary>
+    public const int McpMinDllBuildForInvokeGrants = 3717;
+    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14] Phase 2): its
+    /// get_object names the template verdict (template), so write_field can refuse a class default and an archetype. An
+    /// older DLL sends no verdict, and an archetype is named like any component.</summary>
+    public const int McpMinDllBuildForFieldWrites = 3718;
+    /// <summary>The switch that runs the exe as a Claude Code PreToolUse hook instead: it reads the hook's input on stdin
+    /// and refuses a subagent's or workflow agent's write or grant ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
+    public const string McpAgentGuardSwitch = "--mcp-agent-guard";
+    /// <summary>The <c>--writes=</c> switch after --mcp. Written into one host's own registration, it opens writes to
+    /// that host only ([MCP-WRITE-GRANTS-2026-11-14]); any other value stops the server before it serves.</summary>
+    public const string McpWritesArgPrefix = "--writes=";
+    /// <summary>Grants for a host other than Claude Code. On a host that never asks, the AI then grants itself.</summary>
+    public const string McpWritesAnyHost = "any-host";
+    /// <summary>No write and no grant tool on any host.</summary>
+    public const string McpWritesOff = "off";
+    /// <summary>The <c>clientInfo.name</c> Claude Code sends in initialize, compared ordinally: the only host whose
+    /// approval prompt this server knows how to rely on ([MCP-WRITE-GRANTS-2026-11-14]).</summary>
+    public const string McpClaudeCodeClientName = "claude-code";
+    /// <summary>The first Claude Code whose approval prompt for a marked tool has no "don't ask again": below it one
+    /// such click on a grant tool would make every later grant silent, so an older or unparseable version gets every
+    /// write marked per call instead of grants.</summary>
+    public static readonly Version McpClaudeCodeMinVersion = new(2, 1, 246);
+    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name (Phase 0, M10), so each name states what
+    /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
+    public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
+    public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
+    /// <summary>Phase 1b's grant: one UFunction, named by its function and class arguments, which the prompt shows.
+    /// </summary>
+    public const string McpGrantToolInvoke = "grant_invoke_one_function_any_object_and_args";
+    /// <summary>The tool that calls a function an invoke grant names, without a prompt per call.</summary>
+    public const string McpInvokeGrantedTool = "write_invoke_granted_function";
+    /// <summary>Phase 2's grant: one field of one class, on every instance of it and its subclasses.</summary>
+    public const string McpGrantToolField = "grant_write_field_one_property_every_instance";
+    /// <summary>The tool that writes a field a field grant names, without a prompt per call.</summary>
+    public const string McpFieldGrantedTool = "write_field";
+    // The ranges an AI's gameplay values must lie in: the UI's own, refused outside rather than clamped, because the
+    // DLL clamps several silently and allows more than the UI for two (time dilation, jump).
+    /// <summary>The world time-dilation slider's ceiling (TeleportPanel); the DLL's TIME_DILATION_MAX is 100.</summary>
+    public const double McpWorldTimeDilationMax = 3.0;
+    /// <summary>The pawn time-dilation slider's ceiling.</summary>
+    public const double McpPawnTimeDilationMax = 10.0;
+    /// <summary>The walk-speed and gravity multipliers: the DLL's MOVE_MULT_MIN / MOVE_MULT_MAX and the UI's sliders.
+    /// </summary>
+    public const double McpMoveMultiplierMin = 0.1;
+    public const double McpMoveMultiplierMax = 10.0;
+    /// <summary>The jump knob's multiplier is velocity, and the UI's slider is height, 10% to 30x: velocity is the
+    /// square root. Kept exact, never as a rounded 0.316 / 5.48, which would refuse the edge itself.</summary>
+    public static readonly double McpJumpVelocityMin = Math.Sqrt(0.1);
+    public static readonly double McpJumpVelocityMax = Math.Sqrt(30.0);
+    /// <summary>Fly's speed in uu/s: the DLL's FLY_SPEED_MIN / FLY_SPEED_MAX and the UI's slider.</summary>
+    public const double McpFlySpeedMin = 50.0;
+    public const double McpFlySpeedMax = 20000.0;
+    /// <summary>See-through's pierce count: the DLL's SCHLACHT_PIERCE_MAX and the UI's box.</summary>
+    public const int McpSeeThroughCountMax = 10;
+    /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
+    /// prompt shows a call's arguments in full (Phase 0, M1), so the user approves these words, not the model's own.
+    /// </summary>
+    public const string McpGrantAckToggles =
+        "The user asked for this. Until this game run or this session ends, the AI may turn on and off: god mode, "
+        + "the debug camera, the mouse cursor, time dilation, See-through, Keep Foreground.";
+    public const string McpGrantAckMovement =
+        "The user asked for this. Until this game run or this session ends, the AI may change movement, gravity "
+        + "direction and Fly, and teleport the player. This may kill or lose the pawn; a teleport is not undone.";
+    public const string McpGrantAckField =
+        "The user asked for this. Until this game run or this session ends, the AI may write the one field named here "
+        + "on every instance of this class and its subclasses (NPCs included), with any value its type allows, without "
+        + "asking again. A value can still crash the game.";
+    public const string McpGrantAckInvoke =
+        "The user asked for this. Until this game run or this session ends, the AI may call the one UFunction named "
+        + "here, on any object (NPCs included), with any arguments, without asking again.";
 
     // Application
     public const string AppName = "UE5DumpUI";
@@ -284,6 +383,10 @@ public static class Constants
     // System-tab credit checkbox). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string ExperimentalSettingsFile = "experimental.json";
 
+    // [MCP-WRITE-GRANTS-2026-11-14] The "Block AI writes" switch and its revoke stamp (Models.AiWriteBlockSettings).
+    // Written by the window, read by every MCP server on every call that would change the game.
+    public const string AiWriteBlockFile = "ai-writes.json";
+
     // Global panel/Live-Walker OPTIONS (stable user preferences — export toggles,
     // scan/search behaviour, formats, limits). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string UiOptionsFile = "ui-options.json";
@@ -327,7 +430,7 @@ public static class Constants
     // Both families used to sit at the folder ROOT. They are the only files there whose
     // count grows without bound — one set per game, and a new PE hash on every game
     // patch — so they buried the handful of app-wide files (dll-path.txt,
-    // experimental.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
+    // experimental.json, ai-writes.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
     // UE5CEDumper.{COMPUTERNAME}.json — the per-machine hint cache, see
     // dll/src/Grimoire.h) that someone actually has to find by hand.
     //

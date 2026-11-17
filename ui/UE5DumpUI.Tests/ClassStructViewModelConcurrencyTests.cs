@@ -396,6 +396,39 @@ public class ClassStructViewModelConcurrencyTests
     }
 
     [Fact]
+    public async Task FailedWalk_DoesNotLeaveThePreviousClassUnderTheError()
+    {
+        // [CLASSSTRUCT-FAILED-KEEPS-OLD] AE23 step 4, measured 2026-11-18 on build 3735 (DumperTest Development): after a
+        // level reload, re-selecting the freed ThirdPersonMap_C showed "DLL error: Not a live class at ..." ABOVE the
+        // same class's pre-reload header and field grid -- fields whose addresses were freed, under a selection that
+        // has no class. The step's acceptance: an error line, and not the old class's fields.
+        var dump = new ThrowingWalkDumpService();
+        // The prior class carries a field: with none, "no fields after the failure" holds before it too (review
+        // wf_72c53295-04c F3).
+        var withField = Class("ClassP");
+        withField.Fields.Add(new FieldInfoModel { Name = "Hp", TypeName = "IntProperty", Address = "0x1234" });
+        dump.RegisterClass("0xP", withField);
+        dump.RegisterClass("0xB", Class("ClassB"));
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        Assert.True(vm.HasClass);                    // precondition: something is painted
+        Assert.NotEmpty(vm.Fields);
+        Assert.Equal("0xP", vm.LoadedClassAddr);
+        vm.SelectedField = vm.Fields[0];
+
+        dump.ThrowFor.Add("0xB");
+        await vm.OnObjectSelected(ClassLike("0xB"));   // fails
+
+        Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));
+        Assert.False(vm.HasClass);
+        Assert.Empty(vm.Fields);
+        Assert.Equal("", vm.ClassName);
+        Assert.Equal("", vm.LoadedClassAddr);        // Find Class Funcs must not aim at the old class
+        Assert.Null(vm.SelectedField);
+    }
+
+    [Fact]
     public async Task ColdFailure_WasAlreadyRetryable()
     {
         // Green BEFORE and AFTER the AE3 fix — and it is not filler. Without it, a
@@ -511,5 +544,31 @@ public class ClassStructViewModelConcurrencyTests
         Assert.False(finished);   // the setter returned while the handler is parked
 
         release.TrySetResult();
+    }
+
+    /// <summary>
+    /// [WALKCLASS-STALE-OK] AE23 step 4, measured 2026-11-18 on build 3733 (DumperTest Development): a level reload
+    /// freed ThirdPersonMap_C, and walk_class on its old address answered ok with an EMPTY class -- no name, no fields
+    /// -- so this panel painted a blank class with no error line, and its re-select dedupe (released only on an error)
+    /// then refused the retry. The panel already shows an error and releases the dedupe when the call throws; the DLL
+    /// has to refuse. Fern.cpp is in no C++ test target, so the handler is pinned from the source.
+    /// Measured again on 3734: when the panel had walked the class BEFORE the reload, walk_class kept answering its old
+    /// fields -- WalkClassEx's memo is immortal -- so the refusal must come before the walk, not after an empty one.
+    /// </summary>
+    [Fact]
+    public void WalkClassRefusesAnAddressThatIsNoLongerALiveObject()
+    {
+        string fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp")).Replace("\r\n", "\n");
+        int at = fern.IndexOf("if (cmd == Renge::CMD_WALK_CLASS) {", StringComparison.Ordinal);
+        Assert.True(at > 0, "walk_class's handler not found -- re-point this pin");
+        int end = fern.IndexOf("return Renge::MakeResponse(id, data).dump();", at, StringComparison.Ordinal);
+        string handler = fern[at..end];
+        // Refused BEFORE the walk: a stale address must neither reach the memo nor be answered from it.
+        int live = handler.IndexOf("if (!IsLiveObject(addr))", StringComparison.Ordinal);
+        int walk = handler.IndexOf("Ubel::WalkClassEx(addr)", StringComparison.Ordinal);
+        Assert.True(live > 0 && walk > live, $"the liveness refusal must precede the walk (refusal at {live}, walk at {walk})");
+        Assert.Contains("return Renge::MakeError(id, \"Not a live class at \" + addrStr", handler);
+        // The liveness rule is the one pe_trace_names and the snapshot decoder use: its own index leads back to it.
+        Assert.Matches(@"bool IsLiveObject\(uintptr_t \w+\) \{\s*const int32_t idx = Ubel::GetIndex\(\w+\);\s*return idx >= 0 && Aura::GetByIndex\(idx\) == \w+;", fern);
     }
 }

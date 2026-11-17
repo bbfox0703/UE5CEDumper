@@ -26,7 +26,7 @@ namespace Stark {
 /// Install the ProcessEvent hook at the given address.
 /// @param processEventAddr  Absolute address of UObject::ProcessEvent
 /// @return true if hook installed successfully
-bool InstallHook(uintptr_t processEventAddr);
+[[nodiscard]] bool InstallHook(uintptr_t processEventAddr);
 
 /// [MH-PRERESERVE-PROXY] Take a MinHook trampoline block next to the main image now, and keep it for the process
 /// lifetime. MinHook reuses a block that serves a new target before it allocates one, so the ProcessEvent hook later
@@ -69,7 +69,7 @@ bool IsHookActive();
 /// @param queuedOut  [DBGCAM-OFF-OVER-QUEUED-ON] on a timeout that leaves the request queued, receives its completion,
 ///                   for a caller that must know when it has run (QueuedInvoke). Untouched otherwise.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
-int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
+[[nodiscard]] int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
                       bool dropIfAbandoned = false, std::shared_future<int32_t>* queuedOut = nullptr);
 
 /// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the wait for the game-thread dispatch ended -- it TIMED OUT, or a shutdown
@@ -277,7 +277,7 @@ bool HasOriginal();
 ///
 /// Marks the calling thread as "inside our own PE call" for its duration, so a
 /// nested dispatch that DOES re-enter the detour is recognised as ours.
-int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
+[[nodiscard]] int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 /// True while this thread is inside CallOriginalSEH or CallAddressAsOwnSEH.
 bool InOwnPeCall();
@@ -287,7 +287,7 @@ bool InOwnPeCall();
 /// An override (every AActor's) calls Super::ProcessEvent, which IS the patched address, so an unmarked
 /// call re-entered our detour off the game thread and drained the invoke queue there.
 /// Returns 0 on success, -3 on a null address, -4 on an SEH exception.
-int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params);
+[[nodiscard]] int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 /// Should a caller that resolved `resolvedPeAddr` out of an instance's vtable
 /// route through the trampoline instead of calling that address directly?

@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <cstddef>   // offsetof: the layout pin beside MAILBOX_LAYOUT_SINCE
 #include <cstdint>
 
 namespace Mimic {
@@ -335,8 +336,17 @@ enum InitState : int32_t {
     INIT_FAILED  = 3, // start-up did not complete: init aborted (a shutdown landed mid-scan; the
                       // pipe server may still have started), or the pipe server failed to start
     INIT_SKIPPED = 4, // auto-start deliberately skipped — CE plugin host, or
-                      // another UE5CEDumper instance already owns the pipe
+                      // another UE5CEDumper instance already owns the pipe.
+                      // [DUMPER-SECOND-COPY-AUTOSTART] Also a copy that handed this process to a
+                      // later copy of the dumper (Land): during the hand-off, and for good when
+                      // the later copy cannot serve its mailbox -- then nothing polls this one,
+                      // and its contract block's magic is cleared so a feature script refuses
+                      // at once instead of waiting out a command nobody takes.
 };
+// [DUMPER-SECOND-COPY-AUTOSTART] A mailbox a later copy took over (Mimic::AdoptMailbox) says
+// whatever that copy's own says, RUNNING, FAILED and IDLE included: it is served exactly
+// as well as the later copy's own. No contract bump: no field moved and no value changed
+// meaning for the scripts -- a mailbox that answers is served, as it always was.
 
 // Mailbox structure (exported as global variable)
 // CE Lua accesses via getAddress("g_invokeMailbox") + offset reads/writes
@@ -445,6 +455,11 @@ struct MailboxData {
 #pragma pack(pop)
 
 static_assert(sizeof(MailboxData) <= 4096, "MailboxData must fit in a single page");
+// [DUMPER-SECOND-COPY-AUTOSTART] A later copy of the dumper writes THIS struct into an earlier
+// copy's mailbox when it serves it (Land::CanServeMailbox, from MAILBOX_LAYOUT_SINCE on), and a
+// smaller or rearranged one would be written wrongly. Below, the layout of contract 3 is pinned
+// to MAILBOX_LAYOUT_SINCE == 3, every offset and the size: a change to either fails here until
+// MAILBOX_LAYOUT_SINCE moves to the new MAILBOX_CONTRACT (and this pin is restated for it).
 
 // ---- CMD_LIST_INSTANCES page geometry + result caps (contract 3+) -----------
 //
@@ -637,11 +652,18 @@ constexpr bool CommandRequiresInit(int32_t cmd) {
 void StartThread();
 
 /// Stop the mailbox polling thread and clean up.
-/// Called from UE5_Shutdown().
-void StopThread();
+/// Called from UE5_Shutdown(). [DUMPER-SECOND-COPY-AUTOSTART] A hand-off to a later copy passes clearMailbox = false:
+/// the later copy serves this mailbox next, and a command a script wrote meanwhile must reach it whole.
+void StopThread(bool clearMailbox = true);
 
 /// Returns the address of the mailbox buffer.
 uintptr_t GetAddress();
+
+// [DUMPER-SECOND-COPY-AUTOSTART] Serve an earlier copy's mailbox beside this copy's own, after that copy shut down
+// (Land::RetireEarlierCopies). The caller has checked the layout is this build's (Land::CanServeMailbox).
+// earlierForwards: that copy passes its exports to this one, so its mailbox may say this copy's every state
+// (Land::MirroredState). False when the slots are full.
+bool AdoptMailbox(MailboxData* earlier, bool earlierForwards);
 
 } // namespace Mimic
 
@@ -788,6 +810,27 @@ constexpr int32_t MAILBOX_CONTRACT = 9;
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.
 constexpr int32_t MAILBOX_CONTRACT_MIN = 1;
+
+/// [DUMPER-SECOND-COPY-AUTOSTART] The first contract whose MailboxData has this build's layout: version 3 put cmdFlags
+/// and cmdOutFlags at the tail, and nothing has moved since. A later copy of the dumper serves an earlier copy's mailbox
+/// only from this version on (Land::CanServeMailbox). Set it to the new MAILBOX_CONTRACT whenever item 1 changes: the
+/// assertion below pins this value together with every offset and the size, so a moved or added field, or a moved
+/// value, fails to build until both are restated (Test_Mimic_MailboxLayout's literals and check_mailbox_contract.py's
+/// hash fail too, and say nothing of this).
+constexpr int32_t MAILBOX_LAYOUT_SINCE = 3;
+// Unconditional: moving MAILBOX_LAYOUT_SINCE fails here until this pin is restated for the new layout, and a pin that
+// switched itself off when the value moved would guard nothing after (review R3-LAYOUT-PIN-SELF-DISABLING).
+static_assert(MAILBOX_LAYOUT_SINCE == 3 &&
+              (sizeof(MailboxData) == 0x730 && offsetof(MailboxData, cmd) == 0x000 &&
+               offsetof(MailboxData, status) == 0x004 && offsetof(MailboxData, result) == 0x008 &&
+               offsetof(MailboxData, initState) == 0x00C && offsetof(MailboxData, instanceAddr) == 0x010 &&
+               offsetof(MailboxData, ufuncAddr) == 0x018 && offsetof(MailboxData, parmsSize) == 0x020 &&
+               offsetof(MailboxData, numParms) == 0x022 && offsetof(MailboxData, functionFlags) == 0x024 &&
+               offsetof(MailboxData, className) == 0x028 && offsetof(MailboxData, funcName) == 0x128 &&
+               offsetof(MailboxData, errorMsg) == 0x228 && offsetof(MailboxData, paramsData) == 0x328 &&
+               offsetof(MailboxData, cmdFlags) == 0x728 && offsetof(MailboxData, cmdOutFlags) == 0x72C),
+              "MailboxData's layout or MAILBOX_LAYOUT_SINCE changed: set MAILBOX_LAYOUT_SINCE to the first contract "
+              "with this layout and restate this pin for it (contracts 1 and 2 had a smaller struct)");
 
 /// 'UE5C' — proves the symbol resolved to OUR data rather than to a stale
 /// address left behind by a previous injection. That is not hypothetical: a

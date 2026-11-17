@@ -3,23 +3,30 @@ r"""L49 `[A2-WALKCLASSEX-UNMAPPED]`: an unreadable class address is logged once 
 
     py tools/verify/l49_unmapped_class.py --pid <game pid> --log-dir "%LOCALAPPDATA%\UE5CEDumper\Logs\DumperTest-Win64-Shipping"
 
-THE ROW SAYS "no live trigger" -- the 2026-09-22 survey found one. `walk_class` hands ANY address to
+THE ROW SAYS "no live trigger" -- the 2026-09-22 survey found one. `walk_class_batch` hands ANY address to
 `Ubel::WalkClassEx`, which has no GObjects-membership check, so a page RESERVED (never committed) in
-the game from outside is exactly the transient fault dll_core_test manufactures by decommitting a page:
+the game from outside is exactly the transient fault dll_core_test manufactures by decommitting a page.
+⚠ Since `[WALKCLASS-STALE-OK]` (build 3734) the SINGULAR `walk_class` refuses an address that is not a live
+object before walking it, so it no longer reaches WalkClassEx with P; the arms below go through the batch, and
+the singular refusal is checked as a control (review wf_72c53295-04c L49-RIG-FALSE-FAIL).
 
-  STEP A  walk_class P twice + walk_class_batch [P, P] on a reserved page: every reply has no fields,
-          walk-0.log gains EXACTLY ONE "WalkClass: 0x<P> is not readable at +0x..." and ZERO
-          "WalkClassEx: 0x<P> REFUSED".
-  STEP B  commit P and copy a real UClass's first 0x400 bytes into it: walk_class P must now return
+  STEP A  walk_class_batch [P] twice + [P, P] on a reserved page: every reply has no fields, walk-0.log
+          gains EXACTLY ONE "WalkClass: 0x<P> is not readable at +0x..." and ZERO "WalkClassEx: 0x<P>
+          REFUSED"; and the singular walk_class P answers the "Not a live class" error.
+  STEP B  commit P and copy a real UClass's first 0x400 bytes into it: walk_class_batch [P] must now return
           that class's name and field list. ⭐ THIS is the discriminator -- pre-fix, WalkClassEx had
           memoized {P, PropertiesSize 0} forever and answered the empty class again.
 
 ⚠ MEM_RESERVE, not a committed zero page: a committed page is "readable, PropertiesSize 0", a
 different path that is legitimately memoized as empty. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
-P is released at the end; do not reuse the address (it stays memoized as the copied class).
+P is released at the end. WalkClass says "not readable" ONCE PER ADDRESS for the life of the process
+(FirstUnreadableClassWarn), and a second run in the same game usually gets the same region back -- so the rig
+checks the log for P first and, when this process already said it, reserves another region while holding the
+first (review wf_d3c2ec9a-d52 L49-RERUN-SAME-P-FALSE-FAIL).
 """
 import argparse
 import ctypes
+import glob
 import ctypes.wintypes as W
 import os
 import sys
@@ -45,10 +52,31 @@ ACCESS = 0x0008 | 0x0010 | 0x0020 | 0x0400    # VM_OPERATION | VM_READ | VM_WRIT
 COPY = 0x400
 
 
+def process_start_epoch(h):
+    """The process's creation time as a Unix epoch (GetProcessTimes), or None when it cannot be read."""
+    c, e, kt, ut = W.FILETIME(), W.FILETIME(), W.FILETIME(), W.FILETIME()
+    if not k.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(kt), ctypes.byref(ut)):
+        return None
+    return ((c.dwHighDateTime << 32) | c.dwLowDateTime) / 1e7 - 11644473600
+
+
 def fields_of(reply):
+    # A refusal is never read as an empty class: that is exactly the confusion this rig exists to tell apart.
+    if reply.get("ok") is False:
+        raise SystemExit("FAIL: walk_class refused: %s" % reply.get("error"))
     d = reply.get("data", reply)
     c = d.get("class") or {}
     return c.get("name"), [(f.get("name"), f.get("offset"), f.get("type")) for f in (c.get("fields") or [])]
+
+
+def batch_one(c, addr):
+    """walk_class_batch [addr] -> (name, fields), the shape fields_of gives for the singular reply."""
+    r = c.request("walk_class_batch", addrs=[addr])
+    if r.get("ok") is False:
+        raise SystemExit("FAIL: walk_class_batch refused: %s" % r.get("error"))
+    d = r.get("data", r)
+    cls = (d.get("classes") or [{}])[0] or {}
+    return cls.get("name"), [(f.get("name"), f.get("offset"), f.get("type")) for f in (cls.get("fields") or [])]
 
 
 def main():
@@ -63,6 +91,7 @@ def main():
         print("FAIL: OpenProcess(%d) err %d" % (a.pid, ctypes.get_last_error()))
         return 2
     P = None
+    extra = []
     try:
         with PipeClient(pid=a.pid) as c:
             print("build", c.assert_build())
@@ -88,18 +117,48 @@ def main():
             if not P:
                 print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
                 return 2
+            # Every address THIS game launch already reported, from walk-0.log and the walk logs it rotated into (Sein
+            # rotates at 8 MB). The folder also keeps earlier launches' archives; those end before this process began,
+            # so a file last written before its start is skipped (review wf_53eabd00-f5e). A reported address is HELD,
+            # so the next reservation lands elsewhere; bounded (review wf_a193c703-fe8).
+            started = process_start_epoch(h)
+            said = ""
+            for f in glob.glob(os.path.join(os.path.dirname(walklog), "walk-*.log")):
+                try:   # a file rotated away between the glob and here is skipped (review wf_6ad0a6e1-ffa)
+                    if started and os.path.getmtime(f) < started:
+                        continue
+                    with open(f, "rb") as fh:
+                        said += fh.read().decode("utf-8", "replace").lower()
+                except OSError:
+                    pass
+            for _ in range(64):
+                if ("0x%x is not readable" % P) not in said:
+                    break
+                extra.append(P)
+                print("P 0x%X was reported earlier in this game launch; reserving again" % P)
+                P = k.VirtualAllocEx(h, None, 0x10000, MEM_RESERVE, PAGE_NOACCESS)
+                if not P:
+                    print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
+                    return 2
+            else:
+                print("FAIL: 64 reservations in a row were already reported by this process")
+                return 2
             Ps = "0x%X" % P
             print("reserved (uncommitted) P = %s" % Ps)
             start = os.path.getsize(walklog)
 
             # ---- STEP A ----
-            r1 = fields_of(c.request("walk_class", addr=Ps))
-            r2 = fields_of(c.request("walk_class", addr=Ps))
+            r1 = batch_one(c, Ps)
+            r2 = batch_one(c, Ps)
+            single = c.request("walk_class", addr=Ps)
+            print("        control: walk_class P -> %s" % (single.get("error") or "ok (not refused)"))
+            if single.get("ok") is not False or "Not a live class" not in (single.get("error") or ""):
+                fails.append("STEP A control: the singular walk_class answered P instead of refusing it")
             rb = c.request("walk_class_batch", addrs=[Ps, Ps])
             db = rb.get("data", rb)
             batch = db.get("classes") or db.get("results") or []
             batch_fields = [len((x.get("class", x) or {}).get("fields") or []) for x in batch]
-            print("STEP A: walk_class P -> %d, %d fields; walk_class_batch [P,P] -> %s"
+            print("STEP A: walk_class_batch [P] -> %d, %d fields; walk_class_batch [P,P] -> %s"
                   % (len(r1[1]), len(r2[1]), batch_fields))
             if r1[1] or r2[1] or any(batch_fields):
                 fails.append("STEP A: a reserved page returned fields")
@@ -130,16 +189,17 @@ def main():
                 ok2 = k.WriteProcessMemory(h, ctypes.c_void_p(P), buf, got.value, ctypes.byref(wrote))
                 print("STEP B: committed P, copied %d bytes of the real class (read ok=%s, write ok=%s)"
                       % (wrote.value, bool(ok), bool(ok2)))
-                name_b, fields_b = fields_of(c.request("walk_class", addr=Ps))
+                name_b, fields_b = batch_one(c, Ps)
                 same = (name_b == base_name and fields_b == base_fields)
-                print("        walk_class P -> class %s, %d fields; identical to the baseline: %s"
+                print("        walk_class_batch [P] -> class %s, %d fields; identical to the baseline: %s"
                       % (name_b, len(fields_b), same))
                 if not same:
                     fails.append("STEP B: P answered %s/%d fields, not %s/%d -- memoized empty?"
                                  % (name_b, len(fields_b), base_name, len(base_fields)))
     finally:
-        if P:
-            k.VirtualFreeEx(h, ctypes.c_void_p(P), 0, MEM_RELEASE)
+        for q in [P] + extra:
+            if q:
+                k.VirtualFreeEx(h, ctypes.c_void_p(q), 0, MEM_RELEASE)
         k.CloseHandle(h)
     for f in fails:
         print("FAIL: " + f)

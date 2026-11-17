@@ -1679,7 +1679,8 @@ std::vector<size_t> PickGroupWitnessAssignment(
             auto leafMatchesTerm = [&](size_t k, const std::string& term) {
                 const FieldDescriptor* d = descOf(k);
                 if (!d) return false;
-                return GroupTextContainsCI(d->fieldName, term) ||
+                // The name the row SHOWS: a deep leaf's descriptor holds "[]" where its index goes.
+                return GroupTextContainsCI(FieldDisplayName(*d, matches[k].elementIndex), term) ||
                        GroupTextContainsCI(d->className, term) ||
                        GroupTextContainsCI(d->definingClassName, term) ||
                        GroupTextContainsCI(
@@ -1790,7 +1791,8 @@ std::vector<uint32_t> BuildGroupOrderedView(
                 const FieldDescriptor& d = descriptors[sm.descriptorIdx];
                 if (ContainsCI(d.className, term)) return true;
                 if (ContainsCI(d.definingClassName, term)) return true;
-                if (ContainsCI(d.fieldName, term)) return true;
+                // As shown, like the single-value filter: a deep leaf's raw name is "Leaves[]".
+                if (ContainsCI(FieldDisplayName(d, sm.elementIndex), term)) return true;
                 if (ContainsCI(slotValue(sm, spec), term)) return true;
             }
         }

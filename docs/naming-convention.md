@@ -25,7 +25,7 @@ narrative identity resonates with what the module *does*.
 
 | File | Frieren Name | 日文名 | Character | Poll # | Actual Function | Why This Name |
 |---|---|---|---|---|---|---|
-| **Frieren.cpp** | 芙莉蓮 | フリーレン | Protagonist | #4 (1v1: #1) | ExportAPI: 63 C ABI exports for CE Lua | Everyone meets her first — the sole gateway to the DLL |
+| **Frieren.cpp** | 芙莉蓮 | フリーレン | Protagonist | #4 (1v1: #1) | ExportAPI: 64 C ABI exports for CE Lua | Everyone meets her first — the sole gateway to the DLL |
 | **Genau.cpp** | 葛納烏 | ゲナウ | First-class mage examiner | **#1** | OffsetFinder: AOB signatures, GObjects/GNames/GWorld | The examiner who *screens* candidates — scans & validates every pattern |
 | **Macht.cpp** | 黃金鄉馬哈特 | マハト | Seven Sages, transmutation | #5 | Memory: AOBScan, SEH reads, RIP resolution, AVX2 SIMD | Raw elemental power — direct memory manipulation |
 | **Aura.cpp** | 斷頭台的阿烏拉 | アウラ | Obedience Scale demon | #3 | ObjectArray: FUObjectArray slot enumeration | Weighs every soul on her scale — validates each object slot |
@@ -326,7 +326,7 @@ German spelling.
 | Wirbel | ヴィアベル | Wirbel | Magic Corps captain ("whirl") | 🟢 Teleport | — |
 | Scharf | シャルフ | Scharf | Petals→steel blades ("sharp") | 🟢 WalkerAlignment | — |
 | Denken | デンケン | Denken | Court magician, Macht's student | 🟢 NativeDisasm | — |
-| Land | ラント | Land | Creates flawless clones | ⬜ | Cloning / replication / duplicate detection |
+| Land | ラント | Land | Creates flawless clones | 🟢 SecondCopy | Two copies of the dumper in one game process -- a proxy and a later injection: the later copy shuts the earlier down, takes the pipe and serves the earlier copy's CE mailbox; the copy that handed over passes its C ABI calls on (`Land.cpp/.h`, [DUMPER-SECOND-COPY-AUTOSTART]) |
 | Kanne | カンネ | Kanne | Controls water ("watering can") | 🟢 WatchSample | A pipe watch's key and sample slot — the sampling thread only reads memory, the connection's handler sends the samples (`Kanne.h`, header-only, [PIPE-PER-PROCESS-2026-11-06] Stage C) |
 | Lawine | ラヴィーネ | Lawine | Freezes water ("avalanche") | ⬜ | Snapshot/freeze or bulk cascade |
 | Edel | エーデル | Edel | Hypnosis magic ("noble") | 🟢 CurrentTarget | Auto-detect the actor the player is currently targeting: GWorld→PlayerController→Pawn, score the player's outgoing object-ptr fields (`Edel.cpp/.h`, build 1400) |

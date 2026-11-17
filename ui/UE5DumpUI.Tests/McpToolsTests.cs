@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using UE5DumpUI.Mcp;
+using UE5DumpUI.Models;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -20,12 +22,40 @@ public sealed class McpToolsTests
         public List<JsonObject> Sent { get; } = new();
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
         public McpScanState State { get; set; } = McpScanState.Ready;
-        /// <summary>The DLL build get_pointers reports: one every write tool accepts unless a test says otherwise.</summary>
-        public int DllBuild { get; set; } = Constants.McpMinDllBuildForRawWrites;
+        /// <summary>The DLL build get_pointers reports: one the gameplay and raw write tools accept unless a test says
+        /// otherwise. The invoke and field grants have later floors (Constants.McpMinDllBuildFor*), which their games
+        /// set.</summary>
+        public int DllBuild { get; set; } = 3714;
         /// <summary>The timeout each request was sent with, in order.</summary>
         public List<TimeSpan> Timeouts { get; } = new();
         public string? PendingNotice { get; set; }
         public int ScanChecks { get; private set; }
+
+        /// <summary>The game run get_pointers reports, which a grant and an admission are keyed on.</summary>
+        public const string Run = "1DB5F0A2C3E4D50";
+        /// <summary>The session's grants, on the game rather than the catalogue: Tool() builds a new catalogue for every
+        /// call, and a grant must outlive one call. A grants host, with the toggles and movement grants given for this
+        /// game's run unless a test revokes them; the fake's send runs the same gate check as the link.</summary>
+        public McpGrants Grants { get; }
+        /// <summary>The UI's "Block AI writes" file as the server reads it on every call: off unless a test says so.
+        /// </summary>
+        public AiWriteBlockState Block { get; set; }
+
+        public FakeGame() => Grants = Granted(() => Block);
+
+        public static JsonObject Pointers() => new() { ["pid"] = 4242, ["process_creation_time"] = Run };
+        /// <summary>Whether get_holds names this server as holding what an OFF or a reset ends: yes unless a test
+        /// says the hold is someone else's or nobody's.</summary>
+        public bool HoldsWhatItReleases { get; set; } = true;
+
+        private static McpGrants Granted(Func<AiWriteBlockState> block)
+        {
+            var g = new McpGrants(McpWriteMode.Default, null, block);
+            g.Decide(Constants.McpClaudeCodeClientName, "2.1.246");
+            g.Grant(McpGrantKind.Toggles, Pointers(), out _);
+            g.Grant(McpGrantKind.Movement, Pointers(), out _);
+            return g;
+        }
 
         public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames()
             => ([new McpGameInfo(4242, "Game-Win64-Shipping.exe", "Game", true)], false);
@@ -53,13 +83,31 @@ public sealed class McpToolsTests
         }
 
         public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-            bool requireScan = false)
+            bool requireScan = false, McpGrantCapability? grant = null)
         {
             if (requireScan)
             {
                 var report = Report();
                 if (report.State != McpScanState.Ready) throw new McpToolError(McpGameLink.Explain(report));
             }
+            // As the link does: whose hold a release ends is read on the connection right before it.
+            JsonObject? holds = null;
+            if (McpGrants.IsRelease(request) && Grants.Decision != McpHostDecision.ReadOnly)
+            {
+                Sent.Add(new JsonObject { ["cmd"] = "get_holds" });
+                Timeouts.Add(TimeSpan.FromSeconds(15));   // the link reads it with its probe timeout
+                string? hold = McpGrants.ReleasedHold(request);
+                var arr = new JsonArray();
+                if (hold is not null && HoldsWhatItReleases)
+                    arr.Add(new JsonObject
+                    {
+                        ["hold"] = hold, ["active"] = true,
+                        ["holder"] = new JsonObject { ["kind"] = "client", ["background"] = true, ["you"] = true },
+                    });
+                holds = new JsonObject { ["ok"] = true, ["holds"] = arr };
+            }
+            string? refusal = Grants.Check(request, grant, ConnectedPid, Run, holds);
+            if (refusal is not null) throw new McpToolError("Not sent: " + refusal);
             Sent.Add((JsonObject)request.DeepClone());
             Timeouts.Add(timeout);
             string cmd = request["cmd"]!.GetValue<string>();
@@ -79,6 +127,11 @@ public sealed class McpToolsTests
                     ["found"] = true, ["match_kind"] = "exact", ["addr"] = request["addr"]!.GetValue<string>(),
                 }
                 : new JsonObject();
+            if (cmd == "get_pointers")
+            {
+                reply["pid"] ??= 4242;
+                reply["process_creation_time"] ??= Run;
+            }
             reply["id"] = 1;
             reply["ok"] ??= true;
             reply["_t_read_ms"] = 3;
@@ -103,7 +156,10 @@ public sealed class McpToolsTests
 
     /// <summary>The catalogue, with the UI's experimental switch read as <paramref name="experimental"/>.</summary>
     private static IReadOnlyList<McpTool> Catalog(FakeGame? game = null, bool experimental = true)
-        => McpTools.Create(game ?? new FakeGame(), () => experimental);
+    {
+        game ??= new FakeGame();
+        return McpTools.Create(game, game.Grants, () => experimental);
+    }
 
     private static McpTool Tool(string name, FakeGame game, bool experimental = true)
         => Catalog(game, experimental).Single(t => t.Name == name);
@@ -140,20 +196,44 @@ public sealed class McpToolsTests
         var tools = Catalog();
         Assert.All(tools, t => Assert.Equal(t.Name.StartsWith("read_", StringComparison.Ordinal), t.ReadOnly));
         Assert.All(tools.Where(t => !t.ReadOnly), t =>
-            Assert.True(t.Name == "scan_start" || t.Name.StartsWith("write_", StringComparison.Ordinal), t.Name));
+            Assert.True(t.Name is "scan_start" or "revoke_grants" || t.Name.StartsWith("write_", StringComparison.Ordinal)
+                        || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Name));
         Assert.Contains(tools, t => t.Name.StartsWith("write_", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void EveryWriteTool_AsksEveryTime_AndIsMarkedDestructive()
+    public void EveryWriteTool_HasAWriteRole_AndIsMarkedDestructive()
     {
-        // An allow rule does not keep a tool from running in auto mode (measured, register item 15): the marker does.
+        // Whether a write is asked about is the host's decision now ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
+        // what the catalogue fixes is each tool's role and the grant it needs.
         foreach (var t in Catalog())
         {
             bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
-            Assert.Equal(write, t.RequiresInteraction);
-            Assert.Equal(write, t.Destructive);
+            Assert.Equal(write, t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.PerCallWrite
+                or McpToolRole.Release or McpToolRole.GrantedInvoke or McpToolRole.GrantedField);
+            // A grant unlocks destructive tools: a host that auto-runs non-destructive ones must not auto-approve it.
+            Assert.Equal(write || t.Name.StartsWith("grant_", StringComparison.Ordinal), t.Destructive);
+            Assert.Equal(t.EffectiveRole is McpToolRole.GrantedWrite or McpToolRole.Grant or McpToolRole.GrantedInvoke
+                    or McpToolRole.GrantedField,
+                t.GrantKind != McpGrantKind.None);
         }
+        string[] Named(Func<McpTool, bool> which) =>
+            Catalog().Where(which).Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(["write_debug_camera", "write_foreground_lock", "write_god_mode", "write_mouse_cursor",
+                      "write_see_through", "write_time_dilation"],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedWrite && t.GrantKind == McpGrantKind.Toggles));
+        Assert.Equal(["write_fly", "write_gravity_direction", "write_movement", "write_teleport"],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedWrite && t.GrantKind == McpGrantKind.Movement));
+        Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
+            Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
+        Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
+        // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: the one tool an invoke grant covers.
+        Assert.Equal([Constants.McpInvokeGrantedTool],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedInvoke && t.GrantKind == McpGrantKind.Invoke));
+        // Phase 2: the one tool a field grant covers.
+        Assert.Equal([Constants.McpFieldGrantedTool],
+            Named(t => t.EffectiveRole == McpToolRole.GrantedField && t.GrantKind == McpGrantKind.Field));
+        Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
     }
 
     [Fact]
@@ -189,7 +269,7 @@ public sealed class McpToolsTests
         foreach (var t in Catalog())
         {
             bool hasPid = t.InputSchema["properties"]!.AsObject().ContainsKey("pid");
-            Assert.Equal(t.Name != "read_games", hasPid);
+            Assert.Equal(t.Name is not ("read_games" or "read_grants" or "revoke_grants"), hasPid);
         }
     }
 
@@ -200,7 +280,7 @@ public sealed class McpToolsTests
     /// UI walks, reset_diagnostics and the version / timeout / packed overrides are process-wide (an AI must not lengthen
     /// the invoke timeout to dodge -5), reset_all_fields ends everyone's holds, and the marker slots and the undo point
     /// are the user's.</summary>
-    private static readonly HashSet<string> AllowedCommands =
+    internal static readonly HashSet<string> AllowedCommands =
     [
         "get_pointers", "scan_status", "trigger_scan", "search_objects", "find_object", "find_instances",
         "find_live_instance", "get_object", "find_by_address", "list_classes", "walk_class", "walk_functions",
@@ -221,7 +301,7 @@ public sealed class McpToolsTests
     ];
 
     /// <summary>Commands the server must never send, whatever a later edit allows.</summary>
-    private static readonly HashSet<string> NeverSent =
+    internal static readonly HashSet<string> NeverSent =
     [
         "reset_all_fields", "teleport_save_marker", "teleport_clear_marker", "teleport_recall_last",
         "teleport_to_cursor", "teleport_relative", "teleport_get_markers", "set_invoke_timeout",
@@ -243,8 +323,9 @@ public sealed class McpToolsTests
         {
             foreach (bool scanned in new[] { true, false })
             {
-                var game = new FakeGame { State = scanned ? McpScanState.Ready : McpScanState.NotStarted };
-                var (payload, result) = await Call(game, t.Name, ArgsFromSchema(t.InputSchema));
+                var (game, args) = await SchemaCall(t);
+                game.State = scanned ? McpScanState.Ready : McpScanState.NotStarted;
+                var (payload, result) = await Call(game, t.Name, args);
                 if (scanned && result.IsError) refused.Add($"{t.Name}: {payload!["error"]}");
                 foreach (var cmd in game.Commands)
                 {
@@ -257,6 +338,617 @@ public sealed class McpToolsTests
         }
         // Every tool's schema-valid call succeeded on a scanned game, so its main path was walked.
         Assert.Empty(refused);
+    }
+
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+
+    private const string HolderPath = "//Script/DumperTest/DumperTestHolder";
+    private const string DerivedPath = "//Script/DumperTest/DumperTestDerivedHolder";
+    private const string HolderClass = "0x7FF600003000";
+    private const string DerivedClass = "0x7FF600004000";
+    // A UScriptStruct: walk_class answers for any UStruct, so only get_object's class tells it from a UClass.
+    private const string StructPath = "//Script/DumperTest/DumperTestAttribute";
+    private const string StructAddr = "0x7FF600006000";
+    // DumperTest's Decoy: not derived from DumperTestHolder, with a HolderValue of its own at the same offset.
+    private const string DecoyPath = "//Script/DumperTest/DumperTestHolderDecoy";
+    private const string DecoyClass = "0x7FF600005000";
+
+    private static JsonObject ClassField(string name, string type, int offset, int size, int arrayDim = 1,
+        int boolMask = 0, string structType = "", string enumName = "")
+    {
+        var f = new JsonObject
+        {
+            ["name"] = name, ["type"] = type, ["offset"] = offset, ["size"] = size, ["array_dim"] = arrayDim,
+        };
+        if (boolMask != 0) f["bool_mask"] = boolMask;
+        if (structType.Length > 0) f["struct_type"] = structType;
+        if (enumName.Length > 0) f["enum_name"] = enumName;
+        return f;
+    }
+
+    private static JsonArray HolderFields() => new(
+        ClassField("HolderValue", "IntProperty", 0x2A0, 4),
+        ClassField("bHolderFlag", "BoolProperty", 0x2A4, 1, boolMask: 4),
+        ClassField("Mode", "ByteProperty", 0x2A5, 1, enumName: "EHolderMode"),
+        ClassField("Where", "StructProperty", 0x2A8, 12, structType: "Vector"),
+        ClassField("Ints", "IntProperty", 0x2B4, 4, arrayDim: 3),
+        // A bitfield bool whose storage word starts at 0x2C0, its bit in that word's third byte.
+        ClassField("bDeep", "BoolProperty", 0x2C0, 4, boolMask: 0x10));
+
+    /// <summary>The live fields of the object at 0x1000 (a DumperTestDerivedHolder), as walk_instance sends them.
+    /// </summary>
+    private static JsonArray LiveFields() => new(
+        new JsonObject { ["name"] = "HolderValue", ["type"] = "IntProperty", ["offset"] = 0x2A0, ["size"] = 4, ["value"] = "41" },
+        new JsonObject
+        {
+            ["name"] = "bHolderFlag", ["type"] = "BoolProperty", ["offset"] = 0x2A4, ["size"] = 1, ["value"] = "false",
+            ["bool_mask"] = 4, ["bool_byte_offset"] = 0, ["bool_native"] = false,
+        },
+        new JsonObject
+        {
+            ["name"] = "bDeep", ["type"] = "BoolProperty", ["offset"] = 0x2C0, ["size"] = 4, ["value"] = "false",
+            ["bool_mask"] = 0x10, ["bool_byte_offset"] = 2, ["bool_native"] = false,
+        },
+        new JsonObject
+        {
+            ["name"] = "Mode", ["type"] = "ByteProperty", ["offset"] = 0x2A5, ["size"] = 1, ["value"] = "0",
+            // A real state named like a sentinel (Busy_MAX), then UHT's own sentinel, which is always last.
+            ["enum_entries"] = new JsonArray(new JsonObject { ["v"] = 0, ["n"] = "EHolderMode::Idle" },
+                new JsonObject { ["v"] = 1, ["n"] = "EHolderMode::Busy" },
+                new JsonObject { ["v"] = 2, ["n"] = "EHolderMode::Busy_MAX" },
+                new JsonObject { ["v"] = 3, ["n"] = "EHolderMode::EHolderMode_MAX" }),
+        });
+
+    /// <summary>A game where 0x1000 is a live DumperTestDerivedHolder, 0x2000 its class default, 0x3000 an archetype of
+    /// it (a class default's subobject, as the DLL's TemplateOf names it), and DumperTestHolder its super, with an int, a
+    /// packed bool, an enum byte, a struct and a static array; memory reads answer the live bytes and a write_mem answers
+    /// as the DLL does. The DLL is 3718, the first whose get_object names a template.</summary>
+    private static FakeGame FieldGame()
+    {
+        var game = new FakeGame { DllBuild = 3718 };
+        // 0x12C2: bDeep's byte, a sibling bit (0x01) and another (0x20) already set.
+        var memory = new Dictionary<ulong, string>
+        {
+            [0x12A0] = "29000000", [0x12A4] = "00", [0x12A5] = "00", [0x12C2] = "21", [0x52A0] = "07000000",
+        };
+        game.Answers["find_object"] = r => new JsonObject
+        {
+            ["addr"] = r["path"]!.GetValue<string>() switch
+            {
+                HolderPath => HolderClass,
+                StructPath => StructAddr,
+                _ => DerivedClass,
+            },
+        };
+        game.Answers["get_object"] = r => r["addr"]!.GetValue<string>() switch
+        {
+            HolderClass => new JsonObject { ["name"] = "DumperTestHolder", ["full_name"] = HolderPath, ["class"] = "Class" },
+            DerivedClass => new JsonObject
+            {
+                ["name"] = "DumperTestDerivedHolder", ["full_name"] = DerivedPath, ["class"] = "BlueprintGeneratedClass",
+            },
+            StructAddr => new JsonObject
+            {
+                ["name"] = "DumperTestAttribute", ["full_name"] = StructPath, ["class"] = "ScriptStruct",
+            },
+            DecoyClass => new JsonObject { ["name"] = "DumperTestHolderDecoy", ["full_name"] = DecoyPath, ["class"] = "Class" },
+            "0x5000" => new JsonObject
+            {
+                ["name"] = "DumperTestHolderDecoy_0", ["class_addr"] = DecoyClass, ["class"] = "DumperTestHolderDecoy",
+                ["template"] = "",
+            },
+            "0x2000" => new JsonObject
+            {
+                ["name"] = "Default__DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
+                ["class"] = "DumperTestDerivedHolder", ["template"] = "class_default",
+            },
+            // Named like any component: only the DLL's verdict tells it from a live object.
+            "0x3000" => new JsonObject
+            {
+                ["name"] = "HolderComp", ["class_addr"] = DerivedClass, ["class"] = "DumperTestDerivedHolder",
+                ["template"] = "template",
+            },
+            _ => new JsonObject
+            {
+                ["name"] = "DumperTestDerivedHolder_0", ["class_addr"] = DerivedClass,
+                ["class"] = "DumperTestDerivedHolder", ["template"] = "",
+            },
+        };
+        game.Answers["walk_class"] = r => new JsonObject
+        {
+            ["class"] = r["addr"]!.GetValue<string>() == DecoyClass
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestHolderDecoy", ["full_path"] = DecoyPath, ["super_addr"] = "0x0",
+                    ["fields"] = new JsonArray(ClassField("HolderValue", "IntProperty", 0x2A0, 4)),
+                }
+                : r["addr"]!.GetValue<string>() == StructAddr
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestAttribute", ["full_path"] = StructPath, ["super_addr"] = "0x0",
+                    ["fields"] = new JsonArray(ClassField("CurrentValue", "FloatProperty", 0, 4)),
+                }
+                : r["addr"]!.GetValue<string>() == DerivedClass
+                ? new JsonObject
+                {
+                    ["name"] = "DumperTestDerivedHolder", ["full_path"] = DerivedPath, ["super_addr"] = HolderClass,
+                    ["fields"] = HolderFields(),
+                }
+                : new JsonObject
+                {
+                    ["name"] = "DumperTestHolder", ["full_path"] = HolderPath, ["super_addr"] = "0x0",
+                    ["fields"] = HolderFields(),
+                },
+        };
+        // Through its text, as the pipe delivers it: a number built in memory is a JsonValue<int>, which the parsers'
+        // GetValue<long> refuses, and a parsed one is not.
+        game.Answers["walk_instance"] = r => JsonNode.Parse(new JsonObject
+        {
+            ["addr"] = r["addr"]!.GetValue<string>(), ["class"] = "DumperTestDerivedHolder", ["class_addr"] = DerivedClass,
+            ["fields"] = LiveFields(),
+        }.ToJsonString())!.AsObject();
+        game.Answers["read_mem"] = r =>
+        {
+            McpArgs.TryParseHex(r["addr"]!.GetValue<string>(), out ulong a);
+            return new JsonObject { ["bytes"] = memory.TryGetValue(a, out var b) ? b : "00" };
+        };
+        game.Answers["write_mem"] = r =>
+        {
+            McpArgs.TryParseHex(r["addr"]!.GetValue<string>(), out ulong a);
+            string before = memory.TryGetValue(a, out var b) ? b : "00";
+            if (!string.Equals(before, r["expect"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase))
+                return new JsonObject { ["ok"] = false, ["code"] = -23, ["error"] = "changed", ["current"] = before };
+            memory[a] = r["bytes"]!.GetValue<string>();
+            return new JsonObject { ["before"] = before };
+        };
+        return game;
+    }
+
+    private static JsonObject FieldGrantArgs(string field = "HolderValue", string cls = HolderPath)
+        => new() { ["field"] = field, ["class"] = cls, ["scope_ack"] = Constants.McpGrantAckField };
+
+    private static JsonObject FieldWrite(string field, JsonNode value, string inst = "0x1000")
+        => new() { ["instance_addr"] = inst, ["field"] = field, ["value"] = value };
+
+    private static JsonObject SentWrite(FakeGame game) => game.Sent.Last(r => r["cmd"]!.GetValue<string>() == "write_mem");
+
+    [Fact]
+    public void TheFieldGrant_StatesItsScope_WithTheFieldFirst()
+    {
+        var tool = Tool(Constants.McpGrantToolField, new FakeGame());
+        var props = tool.InputSchema["properties"]!.AsObject().Select(p => p.Key).ToList();
+        Assert.True(props.IndexOf("field") >= 0 && props.IndexOf("field") < props.IndexOf("class")
+                    && props.IndexOf("class") < props.IndexOf("scope_ack"), string.Join(",", props));
+        Assert.Equal(Constants.McpGrantAckField,
+            tool.InputSchema["properties"]!["scope_ack"]!["enum"]![0]!.GetValue<string>());
+        Assert.Equal((McpToolRole.Grant, McpGrantKind.Field), (tool.EffectiveRole, tool.GrantKind));
+        var write = Tool(Constants.McpFieldGrantedTool, new FakeGame());
+        Assert.Equal((McpToolRole.GrantedField, McpGrantKind.Field), (write.EffectiveRole, write.GrantKind));
+    }
+
+    [Fact]
+    public async Task TheFieldGrant_GrantsAScalarFieldItsClassHas_AndReadGrantsNamesIt()
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HolderPath + ":HolderValue", payload!["field"]!.GetValue<string>());
+        Assert.Contains(Constants.McpFieldGrantedTool, payload["tools"]!.ToJsonString());
+        var (grants, _) = await Call(game, "read_grants");
+        Assert.Contains(grants!["grants"]!.AsArray(), g => g!["field"]?.GetValue<string>() == HolderPath + ":HolderValue");
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("Where", HolderPath)]          // a struct: not a scalar
+    [InlineData("Ints", HolderPath)]           // a static array (ArrayDim 3)
+    [InlineData("NoSuchField", HolderPath)]
+    [InlineData("HolderValue", "DumperTestHolder")]   // a short class name, not a path
+    // The DLL's path lookup answers another class (the fake's DumperTestDerivedHolder), which has the field too: only the
+    // check of the answer's own full name refuses it.
+    [InlineData("HolderValue", "//Script/DumperTest/DumperTestHolderX")]
+    // A struct's float: walk_class lists it as it would a class's, and no instance's class chain ever holds a struct.
+    [InlineData("CurrentValue", StructPath)]
+    public async Task TheFieldGrant_RefusesWhatItCannotWriteOrFind(string field, string cls)
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs(field, cls));
+        Assert.True(result.IsError, field);
+        Assert.Contains("write_memory", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
+    [Fact]
+    public async Task WriteField_WritesTheGrantedField_OnASubclassInstance_WithExpect_AndNoPrompt()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());   // on the base class
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        var sent = SentWrite(game);
+        Assert.Equal(("0x12A0", "2A000000", "29000000"),
+            (sent["addr"]!.GetValue<string>(), sent["bytes"]!.GetValue<string>(), sent["expect"]!.GetValue<string>()));
+        Assert.Equal(1, game.Grants.List().Single(g => g.Kind == McpGrantKind.Field).Uses);
+        Assert.False(McpGrants.IsMarked(Tool(Constants.McpFieldGrantedTool, game).EffectiveRole, McpHostDecision.Grants));
+    }
+
+    [Fact]
+    public async Task WriteField_APackedBool_IsWrittenThroughItsMask()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bHolderFlag", true));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(("0x12A4", "04", "00"), (SentWrite(game)["addr"]!.GetValue<string>(),
+            SentWrite(game)["bytes"]!.GetValue<string>(), SentWrite(game)["expect"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task WriteField_AnEnumValue_MustBeOneOfItsEntries()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 1))).Result.IsError);
+        Assert.Equal("01", SentWrite(game)["bytes"]!.GetValue<string>());
+        var (_, refused) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 7));
+        Assert.True(refused.IsError);
+    }
+
+    [Theory]
+    [InlineData("HolderValue", "99999999999")]   // past int32
+    [InlineData("HolderValue", "abc")]
+    public async Task WriteField_AValueItsTypeCannotHold_IsRefused_AndNothingWritten(string field, string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs(field));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite(field, value));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WithoutItsGrant_OrOnAClassDefault_IsRefused_AndNothingWritten()
+    {
+        var game = FieldGame();
+        var (before, r1) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(r1.IsError);
+        Assert.Contains(Constants.McpGrantToolField, before!["error"]!.GetValue<string>());
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));   // another field's grant
+        Assert.True((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42))).Result.IsError);
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (cdo, r2) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, inst: "0x2000"));
+        Assert.True(r2.IsError);
+        Assert.Contains("class default", cdo!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WhereTheObjectsWalkDisagreesWithItsClass_IsRefused_AndNothingWritten()
+    {
+        // The class layout puts HolderValue at 0x2A0; a walk that reports it elsewhere is another layout than the one the
+        // grant was checked against, so the address computed from the class is not trusted.
+        var game = FieldGame();
+        game.Answers["walk_instance"] = r => JsonNode.Parse(new JsonObject
+        {
+            ["addr"] = r["addr"]!.GetValue<string>(), ["class_addr"] = DerivedClass,
+            ["fields"] = new JsonArray(new JsonObject
+            {
+                ["name"] = "HolderValue", ["type"] = "IntProperty", ["offset"] = 0x2A8, ["size"] = 4, ["value"] = "41",
+            }),
+        }.ToJsonString())!.AsObject();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains("0x2A0", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("0x2000", "class default")]   // named Default__, and the DLL says so
+    [InlineData("0x3000", "template")]        // a template whose own name says nothing
+    public async Task WriteField_OnATemplateTheDllNames_IsRefused_AndNothingWritten(string inst, string why)
+    {
+        // What a class default or an archetype holds reaches every instance spawned later: more than "every live
+        // instance", which is what the user approved.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, inst));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains(why, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_WhenGetObjectNamesNoTemplateVerdict_IsRefused()
+    {
+        // A reply without the key cannot tell a template from a live object, so it is not taken for a live one.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var inner = game.Answers["get_object"];
+        game.Answers["get_object"] = r =>
+        {
+            var o = inner(r);
+            o.Remove("template");
+            return o;
+        };
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task TheFieldGrantAndWriteField_RefuseADllOlderThan3718()
+    {
+        var game = FieldGame();
+        game.DllBuild = 3717;
+        var (grant, r1) = await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        Assert.True(r1.IsError);
+        Assert.Contains("older than 3718", grant!["error"]!.GetValue<string>());
+        var (write, r2) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(r2.IsError);
+        Assert.Contains("older than 3718", write!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+        // This floor's own reason: a 3717 DLL keeps the AI's changes off the user's well enough.
+        Assert.Contains("template", write["error"]!.GetValue<string>());
+        Assert.DoesNotContain("off the user's", write["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_OnADllOlderThan3717_SaysThatFloorsReason()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        game.DllBuild = 3716;
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("older than 3717", error);
+        Assert.Contains("the function a grant names", error);
+        Assert.Contains("nothing is changed through it", error);   // the words every floor's refusal shares
+    }
+
+    [Fact]
+    public async Task WriteField_AnotherRunsGrantOnTheSubclass_DoesNotHideThisRunsGrantOnTheSuper()
+    {
+        // An earlier run of the same pid granted the subclass's field; this run granted the base class's. The chain walk
+        // starts at the subclass, so a target set taken from every run stopped there, and the admission (keyed on this
+        // run) then refused a write this run's grant covers.
+        var game = FieldGame();
+        var earlier = new JsonObject { ["pid"] = 4242, ["process_creation_time"] = "1DB5F0A2C3E4D49" };
+        Assert.NotNull(game.Grants.Grant(McpGrantKind.Field, earlier, out _, DerivedPath + ":HolderValue"));
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HolderPath + ":HolderValue", payload!["field"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("class_addr", "0x7FF600009000")]   // the address now holds an object of another class
+    [InlineData("stale", true)]
+    [InlineData("unreadable", true)]
+    [InlineData("no_header", true)]
+    public async Task WriteField_AWalkOfAnotherObjectThanGetObjectSaw_IsRefused_AndNothingWritten(string key, object value)
+    {
+        // Between get_object and the walk the object can be freed and its slot reused by another class whose field of
+        // the same name sits at the same offset: the walk must still be of the object whose class was resolved.
+        var game = FieldGame();
+        var inner = game.Answers["walk_instance"];
+        game.Answers["walk_instance"] = r =>
+        {
+            var o = inner(r);
+            o[key] = value is bool b ? JsonValue.Create(b) : JsonValue.Create((string)value);
+            return o;
+        };
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("06", false)]   // the game set a sibling bit at once: this bool still reads true
+    [InlineData("02", true)]    // the game cleared this bool's own bit: it did not stay
+    public async Task WriteField_APackedBoolsReadBack_IsJudgedByItsOwnBit(string readBack, bool noted)
+    {
+        var game = FieldGame();
+        var inner = game.Answers["read_mem"];
+        bool written = false;
+        var write = game.Answers["write_mem"];
+        game.Answers["write_mem"] = r =>
+        {
+            written = true;
+            return write(r);
+        };
+        game.Answers["read_mem"] = r => written && r["addr"]!.GetValue<string>() == "0x12A4"
+            ? new JsonObject { ["bytes"] = readBack }
+            : inner(r);
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bHolderFlag", true));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(noted, result.Note is not null);
+    }
+
+    [Theory]
+    [InlineData("Busy_MAX", "02")]       // a real state whose name ends in _MAX: only the last entry is the sentinel
+    [InlineData("2", "02")]
+    public async Task WriteField_AnEnumStateNamedLikeASentinel_IsAnEntry(string value, string bytes)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(bytes, SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("Busy")]                 // the short name, as a user says it
+    [InlineData("EHolderMode::Busy")]    // the name as the DLL sends it
+    [InlineData("busy")]
+    [InlineData("1")]
+    public async Task WriteField_AnEnumEntry_ByItsNameOrValue_IsWritten(string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal("01", SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("3")]                    // UHT's _MAX sentinel: no state of the enum
+    [InlineData("EHolderMode_MAX")]
+    [InlineData("Idl")]
+    public async Task WriteField_AnEnumsSentinelOrANonEntry_IsRefused(string value)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", value));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteField_AnEnumWhoseEntriesCouldNotBeRead_IsRefused()
+    {
+        // With UEnum::Names never located the walk sends no entries, and any number that fits would otherwise pass.
+        var game = FieldGame();
+        var inner = game.Answers["walk_instance"];
+        game.Answers["walk_instance"] = r =>
+        {
+            var o = inner(r);
+            foreach (var f in o["fields"]!.AsArray()) f!.AsObject().Remove("enum_entries");
+            o["enum_names_failed"] = true;
+            return o;
+        };
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("Mode"));
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("Mode", 1));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("42.0", "2A000000")]    // a model's JSON number, parsed as the server receives it
+    [InlineData("1e3", "E8030000")]
+    [InlineData("\"42.0\"", "2A000000")]
+    [InlineData("-7.000", "F9FFFFFF")]
+    [InlineData("4.2E1", "2A000000")]
+    [InlineData("4200e-2", "2A000000")]
+    public async Task WriteField_AnIntegralNumberWrittenAsADecimal_ReachesAnIntegerField(string json, string bytes)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool,
+            FieldWrite("HolderValue", JsonNode.Parse(json)!));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(bytes, SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("42.5")]
+    [InlineData("1e300")]
+    // Each rounds to an integer as a double, though its text is none: judged from the text, never the rounded double.
+    [InlineData("0.99999999999999999")]
+    [InlineData("42.0000000000000001")]
+    [InlineData("1e-400")]
+    public async Task WriteField_ANumberNoIntegerFieldHolds_IsStillRefused(string json)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", JsonNode.Parse(json)!));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("field", "field", "HolderValue")]              // every other field argument is the bare name
+    [InlineData("invoke", "function", "SetActorHiddenInGame")]
+    public async Task RevokeGrants_ABareName_IsRefused_NamingTheFormItNeeds(string kind, string key, string name)
+    {
+        // A bare name matched no grant and returned revoked 0: the grant the user wanted ended stayed.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, "revoke_grants", new JsonObject { ["kind"] = kind, [key] = name });
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains("read_grants", payload!["error"]!.GetValue<string>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_AFullNameNoGrantHas_SaysSo()
+    {
+        var game = FieldGame();
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "field", ["field"] = HolderPath + ":bHolderFlag" });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(0, payload!["revoked"]!.GetValue<int>());
+        Assert.Contains("read_grants", result.Note ?? "");
+    }
+
+    [Fact]
+    public async Task WriteField_APackedBool_KeepsItsSiblings_AndClearsOnlyItsOwnBit()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bDeep"));
+        // Its byte is the storage word's third (bool_byte_offset 2), and holds two other bools' bits.
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bDeep", true))).Result.IsError);
+        Assert.Equal(("0x12C2", "31", "21"), (SentWrite(game)["addr"]!.GetValue<string>(),
+            SentWrite(game)["bytes"]!.GetValue<string>(), SentWrite(game)["expect"]!.GetValue<string>()));
+        Assert.False((await Call(game, Constants.McpFieldGrantedTool, FieldWrite("bDeep", false))).Result.IsError);
+        Assert.Equal(("21", "31"), (SentWrite(game)["bytes"]!.GetValue<string>(),
+            SentWrite(game)["expect"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task WriteField_ASameNamedFieldOnAClassOutsideTheGrant_IsRefused_AndNothingWritten()
+    {
+        // The Decoy's HolderValue sits at the same offset, but the Decoy does not derive from the granted class.
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42, "0x5000"));
+        Assert.True(result.IsError, payload?.ToJsonString());
+        Assert.Contains(Constants.McpGrantToolField, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_EndsOneFieldsGrant()
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs("bHolderFlag"));
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "field", ["field"] = HolderPath + ":HolderValue" });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Field);
+    }
+
+    /// <summary>A game and a schema-valid call for one tool. An invoke grant and its call need a function the game
+    /// declares, by full name, which no schema can say; revoke_grants' function goes with kind invoke.</summary>
+    private static async Task<(FakeGame Game, JsonObject Args)> SchemaCall(McpTool t)
+    {
+        var args = ArgsFromSchema(t.InputSchema);
+        if (t.Name == Constants.McpGrantToolInvoke) return (InvokeGrantGame(HiddenFn()), GrantArgs());
+        if (t.Name == Constants.McpInvokeGrantedTool)
+        {
+            var game = InvokeGrantGame(HiddenFn());
+            await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+            game.Sent.Clear();
+            return (game, HiddenCall());
+        }
+        if (t.Name == Constants.McpGrantToolField) return (FieldGame(), FieldGrantArgs());
+        if (t.Name == Constants.McpFieldGrantedTool)
+        {
+            var game = FieldGame();
+            await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+            game.Sent.Clear();
+            return (game, FieldWrite("HolderValue", 42));
+        }
+        if (t.Name == "revoke_grants")
+        {
+            args.Remove("function");
+            args.Remove("field");
+        }
+        return (new FakeGame(), args);
     }
 
     [Fact]
@@ -293,7 +985,8 @@ public sealed class McpToolsTests
             args[name] = type switch
             {
                 "integer" => name == "session_id" ? 7 : p["minimum"]?.GetValue<int>() ?? 1,
-                "number" => 1.5,
+                // A bounded number's own floor (Fly's speed starts at 50); 1.5 fits every other one.
+                "number" => p["minimum"]?.GetValue<double>() ?? 1.5,
                 "boolean" => false,
                 "array" => new JsonArray(),
                 "object" => new JsonObject(),
@@ -303,6 +996,442 @@ public sealed class McpToolsTests
             };
         }
         return args;
+    }
+
+    // ── Grants ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────────────
+
+    /// <summary>A call of each write a grant covers that turns something on, so it is no release.</summary>
+    private static readonly (string Tool, McpGrantKind Kind, string Args, string Cmd)[] CoveredOn =
+    [
+        ("write_god_mode", McpGrantKind.Toggles, """{"enable":true}""", "set_god_mode"),
+        ("write_debug_camera", McpGrantKind.Toggles, """{"enable":true}""", "set_debug_camera"),
+        ("write_mouse_cursor", McpGrantKind.Toggles, """{"show":true}""", "set_mouse_cursor"),
+        ("write_time_dilation", McpGrantKind.Toggles, """{"target":"global","value":0.5}""", "set_time_dilation"),
+        ("write_see_through", McpGrantKind.Toggles, """{"enable":true,"count":3}""", "seethrough_set"),
+        ("write_foreground_lock", McpGrantKind.Toggles, """{"enable":true}""", "set_foreground_lock"),
+        ("write_movement", McpGrantKind.Movement, """{"knob":"walk_speed","multiplier":1.5}""",
+         "set_movement_multiplier"),
+        ("write_gravity_direction", McpGrantKind.Movement, """{"x":0,"y":0,"z":-1}""", "set_gravity_direction"),
+        ("write_fly", McpGrantKind.Movement, """{"enable":true}""", "fly_set"),
+        ("write_teleport", McpGrantKind.Movement, """{"x":1,"y":2,"z":3}""", "teleport_recall_marker"),
+    ];
+
+    private static string ErrorOf(JsonNode? payload) => payload?["error"]?.GetValue<string>() ?? "";
+
+    [Fact]
+    public async Task WithoutItsGrant_EveryCoveredWrite_IsRefusedNamingTheGrant_AndChangesNothing()
+    {
+        Assert.Equal(
+            Catalog().Where(t => t.EffectiveRole == McpToolRole.GrantedWrite).Select(t => t.Name)
+                .Order(StringComparer.Ordinal),
+            CoveredOn.Select(c => c.Tool).Order(StringComparer.Ordinal));
+        foreach (var (tool, kind, args, cmd) in CoveredOn)
+        {
+            var game = new FakeGame();
+            // The guarded camera answers with the state it reached; the default 0 would read as a toggle that failed.
+            game.Answers["set_debug_camera"] = r => new JsonObject { ["state"] = r["enable"]!.GetValue<bool>() ? 1 : 0 };
+            game.Grants.Revoke(kind);   // the other kind's grant stays, and does not stand in for this one
+            var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+            Assert.True(result.IsError, tool);
+            // Refused by the tool, naming the exact grant, before the send: the fake's gate never saw a write.
+            Assert.Contains(McpGrants.GrantToolFor(kind), ErrorOf(payload));
+            Assert.DoesNotContain("Not sent", ErrorOf(payload));
+            Assert.All(game.Commands, c => Assert.True(McpGrants.ReadCommands.Contains(c), $"{tool} sent {c}"));
+
+            Assert.NotNull(game.Grants.Grant(kind, FakeGame.Pointers(), out _));
+            var (after, granted) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+            Assert.False(granted.IsError, $"{tool}: {ErrorOf(after)}");
+            Assert.Contains(cmd, game.Commands);
+        }
+    }
+
+    [Fact]
+    public async Task UnderGrants_ThePerCallWrites_NeedNoGrant()
+    {
+        foreach (var name in new[] { "write_memory", "write_invoke", "write_force_field" })
+        {
+            var game = new FakeGame();
+            game.Grants.Revoke();
+            var (payload, result) = await Call(game, name, ArgsFromSchema(Tool(name, game).InputSchema));
+            Assert.False(result.IsError, $"{name}: {ErrorOf(payload)}");
+        }
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
+    [InlineData("write_foreground_lock", """{"enable":false}""", "set_foreground_lock")]
+    [InlineData("write_debug_camera", """{"enable":false}""", "set_debug_camera")]
+    [InlineData("write_fly", """{"enable":false}""", "fly_set")]
+    [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
+    [InlineData("write_gravity_direction", """{"reset":true}""", "reset_gravity_direction")]
+    [InlineData("write_time_dilation", """{"target":"pawn","reset":true}""", "reset_time_dilation")]
+    [InlineData("write_force_field_reset", """{"class_name":"Pawn","field_name":"bCanBeDamaged"}""",
+        "reset_field")]
+    public async Task AnOffOrAReset_NeedsNoGrant(string tool, string args, string cmd)
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Contains(cmd, game.Commands);
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_LeavesTheCountAlone()
+    {
+        // seethrough_set applies its global count before enable, and nobody turning it off needs a new count.
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, "write_see_through",
+            new JsonObject { ["enable"] = false, ["count"] = 5 });
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.False(game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "seethrough_set").ContainsKey("count"));
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_DropsOnlyThisServersClaim_AndNeedsNoGrant()
+    {
+        // An explicit OFF drops every claim, the user's and CE's too; own_claim drops only this server's, and the DLL
+        // turns See-through off only with the last claim.
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.False(result.IsError, ErrorOf(payload));
+        var off = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "seethrough_set");
+        Assert.True(off["own_claim"]!.GetValue<bool>());
+        Assert.False(off["enable"]!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("still_held", "stays on")]
+    [InlineData("not_held", "no claim")]
+    public async Task SeeThroughOff_SaysWhatStayed(string released, string words)
+    {
+        var game = new FakeGame();
+        game.Answers["seethrough_set"] = _ => new JsonObject
+        {
+            ["code"] = 0, ["active"] = released == "still_held", ["released"] = released, ["state"] = 1,
+        };
+        var (_, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.False(result.IsError);
+        Assert.Contains(words, result.Note);
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_OnAnOlderDll_IsRefused_AndNothingIsSent()
+    {
+        var game = new FakeGame { DllBuild = 3713 };
+        var (payload, result) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.True(result.IsError);
+        Assert.Contains("3714", ErrorOf(payload));
+        Assert.DoesNotContain("seethrough_set", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", "{\"enable\":false}", "set_god_mode")]
+    [InlineData("write_movement", "{\"knob\":\"jump\",\"reset\":true}", "reset_movement")]
+    [InlineData("write_force_field_reset", "{\"class_name\":\"Pawn\",\"field_name\":\"bCanBeDamaged\"}",
+        "reset_field")]
+    public async Task AnOffOfWhatThisServerDoesNotHold_IsNoRelease(string tool, string args, string cmd)
+    {
+        // God mode's OFF writes the normal value to every protection bool whoever made the pawn invulnerable; a reset
+        // writes the knob's base whoever changed it.
+        var game = new FakeGame { HoldsWhatItReleases = false };
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.True(result.IsError, tool);
+        Assert.DoesNotContain(cmd, game.Commands);
+        Assert.False(string.IsNullOrWhiteSpace(ErrorOf(payload)));
+    }
+
+    [Fact]
+    public async Task TheTimeDilationRefusal_NeverNamesARefusedValue()
+    {
+        var (payload, _) = await Call(new FakeGame(), "write_time_dilation",
+            new JsonObject { ["target"] = "global", ["value"] = 3.5 });
+        Assert.Contains("above 0 and at most 3", ErrorOf(payload));
+        Assert.DoesNotContain("from 0", ErrorOf(payload));
+    }
+
+    [Fact]
+    public async Task FlyOffWithASetting_NeedsTheMovementGrant_AndSaysWhy()
+    {
+        // fly_set applies speed, preset and noclip before enable, as global settings no release undoes.
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, "write_fly", new JsonObject { ["enable"] = false, ["speed"] = 600 });
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantToolMovement, ErrorOf(payload));
+        Assert.Contains("Only an OFF with nothing else in it needs no grant", ErrorOf(payload));
+        Assert.DoesNotContain("fly_set", game.Commands);
+    }
+
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ───────────────────────────────────────────
+
+    [Fact]
+    public async Task WhileTheUserBlocksAiWrites_EveryChangeIsRefused_AndNothingChangingIsSent()
+    {
+        var calls = new List<(string Tool, JsonObject Args)>
+        {
+            ("write_god_mode", new JsonObject { ["enable"] = true }),
+            ("write_teleport", new JsonObject { ["x"] = 1, ["y"] = 2, ["z"] = 3 }),
+            ("write_fly", new JsonObject { ["enable"] = false, ["noclip"] = true }),   // an OFF that sets: no release
+            (Constants.McpGrantToolToggles, new JsonObject { ["scope_ack"] = Constants.McpGrantAckToggles }),
+        };
+        foreach (var name in new[] { "write_memory", "write_invoke", "write_force_field" })
+            calls.Add((name, ArgsFromSchema(Tool(name, new FakeGame()).InputSchema)));
+        foreach (var (tool, args) in calls)
+        {
+            var game = new FakeGame { Block = new AiWriteBlockState(true, 0, false) };
+            var (payload, result) = await Call(game, tool, args);
+            Assert.True(result.IsError, tool);
+            Assert.Contains("Block AI writes", ErrorOf(payload));
+            Assert.All(game.Commands, c => Assert.True(McpGrants.ReadCommands.Contains(c), $"{tool} sent {c}"));
+        }
+    }
+
+    [Fact]
+    public async Task WhileTheUserBlocksAiWrites_TheGrantedInvokeAndFieldTools_SayTheBlock()
+    {
+        // The block ends every grant, so a tool that looks for its grant first would answer "ask for a grant, or use
+        // write_memory" -- two routes the block forbids -- instead of the block's own "stop".
+        var field = FieldGame();
+        await Call(field, Constants.McpGrantToolField, FieldGrantArgs());
+        var invoke = InvokeGrantGame(HiddenFn());
+        await Call(invoke, Constants.McpGrantToolInvoke, GrantArgs());
+        foreach (var (game, tool, args) in new[]
+                 {
+                     (field, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42)),
+                     (invoke, Constants.McpInvokeGrantedTool, HiddenCall()),
+                 })
+        {
+            // Turning the switch on writes a new stamp, which ends every grant at the server's next look.
+            game.Block = new AiWriteBlockState(true, 1, false);
+            var (payload, result) = await Call(game, tool, args);
+            Assert.True(result.IsError, tool);
+            Assert.Contains("Block AI writes", ErrorOf(payload));
+            Assert.DoesNotContain("write_memory", ErrorOf(payload));
+        }
+    }
+
+    [Theory]
+    [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
+    [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
+    [InlineData("write_force_field_reset", """{"class_name":"Pawn","field_name":"bCanBeDamaged"}""", "reset_field")]
+    public async Task WhileTheUserBlocksAiWrites_TheAiCanStillEndItsOwnHolds(string tool, string args, string cmd)
+    {
+        var game = new FakeGame { Block = new AiWriteBlockState(true, 0, false) };
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Contains(cmd, game.Commands);
+    }
+
+    [Fact]
+    public async Task TurningTheBlockOnAndOff_EndsTheGrants()
+    {
+        var game = new FakeGame();   // the block file never written: stamp 0
+        var (_, before) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.False(before.IsError);
+        game.Block = new AiWriteBlockState(false, 1, false);   // turned on and off again between two calls
+        var (payload, after) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.True(after.IsError);
+        Assert.Contains(Constants.McpGrantToolToggles, ErrorOf(payload));
+        var (listed, _) = await Call(game, "read_grants");
+        Assert.Empty(listed!["grants"]!.AsArray());
+    }
+
+    // ── Bounds ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────────────
+
+    /// <summary>The UI's own ranges, at and past each edge. The DLL clamps several of these silently and allows more
+    /// than the UI for two (time dilation to 100, jump past 30x height), so a value outside is refused, not clamped.
+    /// </summary>
+    public static TheoryData<string, string, bool> Bounds => new()
+    {
+        { "write_time_dilation", """{"target":"global","value":3}""", true },
+        { "write_time_dilation", """{"target":"global","value":3.0001}""", false },
+        { "write_time_dilation", """{"target":"pawn","value":10}""", true },
+        { "write_time_dilation", """{"target":"pawn","value":10.0001}""", false },
+        { "write_time_dilation", """{"target":"global","value":0}""", false },
+        { "write_movement", """{"knob":"walk_speed","multiplier":0.1}""", true },
+        { "write_movement", """{"knob":"walk_speed","multiplier":10}""", true },
+        { "write_movement", """{"knob":"walk_speed","multiplier":0.0999}""", false },
+        { "write_movement", """{"knob":"gravity","multiplier":10.0001}""", false },
+        // The jump slider is height, 10% to 30x; the DLL's multiplier is velocity, its square root. 5.48 is the
+        // eval's rounding of the square root of 30 and lies past it.
+        { "write_movement", """{"knob":"jump","multiplier":5.48}""", false },
+        { "write_movement", """{"knob":"jump","multiplier":5.477}""", true },
+        { "write_movement", """{"knob":"jump","multiplier":0.3}""", false },
+        { "write_movement", """{"knob":"jump","multiplier":0.1}""", false },
+        { "write_fly", """{"speed":50}""", true },
+        { "write_fly", """{"speed":20000}""", true },
+        { "write_fly", """{"speed":49.9}""", false },
+        { "write_fly", """{"speed":20001}""", false },
+        { "write_fly", """{"preset":2}""", true },
+        { "write_fly", """{"preset":3}""", false },
+        { "write_fly", """{"preset":-1}""", false },
+        // The DLL's own pierce ceiling is 10 (Schlacht), as is the UI's box.
+        { "write_see_through", """{"enable":true,"count":10}""", true },
+        { "write_see_through", """{"enable":true,"count":11}""", false },
+        { "write_see_through", """{"enable":true,"count":0}""", false },
+        // A zero vector is the DLL's own OFF, which a set would carry past the gate as no release.
+        { "write_gravity_direction", """{"x":0,"y":0,"z":0}""", false },
+        { "write_gravity_direction", """{"x":0,"y":0,"z":-1}""", true },
+    };
+
+    [Theory]
+    [MemberData(nameof(Bounds))]
+    public async Task AValueOutsideTheUisOwnRange_IsRefused_BeforeAnythingIsSent(string tool, string args, bool ok)
+    {
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, tool, (JsonObject)JsonNode.Parse(args)!);
+        Assert.Equal(!ok, result.IsError);
+        if (!ok)
+        {
+            Assert.Empty(game.Sent);
+            Assert.False(string.IsNullOrWhiteSpace(ErrorOf(payload)));
+        }
+    }
+
+    [Fact]
+    public async Task TheJumpEdges_AreTheExactSquareRoots()
+    {
+        foreach (double v in new[] { Math.Sqrt(0.1), Math.Sqrt(30.0) })
+        {
+            var (payload, result) = await Call(new FakeGame(), "write_movement",
+                new JsonObject { ["knob"] = "jump", ["multiplier"] = v });
+            Assert.False(result.IsError, ErrorOf(payload));
+        }
+    }
+
+    [Fact]
+    public void TheBoundedValues_AdvertiseTheirRange()
+    {
+        JsonObject Prop(string tool, string name) => Tool(tool, new FakeGame()).InputSchema["properties"]![name]!.AsObject();
+        Assert.Equal(50, Prop("write_fly", "speed")["minimum"]!.GetValue<double>());
+        Assert.Equal(20000, Prop("write_fly", "speed")["maximum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_see_through", "count")["maximum"]!.GetValue<int>());
+        Assert.Equal(0.1, Prop("write_movement", "multiplier")["minimum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_movement", "multiplier")["maximum"]!.GetValue<double>());
+        Assert.Equal(10, Prop("write_time_dilation", "value")["maximum"]!.GetValue<double>());
+        Assert.Equal(0, Prop("write_time_dilation", "value")["exclusiveMinimum"]!.GetValue<double>());
+    }
+
+    // ── The grant tools ─────────────────────────────────────────────────────────────────────────────────
+
+    private static readonly (McpGrantKind Kind, string Tool, string Ack)[] GrantTools =
+    [
+        (McpGrantKind.Toggles, Constants.McpGrantToolToggles, Constants.McpGrantAckToggles),
+        (McpGrantKind.Movement, Constants.McpGrantToolMovement, Constants.McpGrantAckMovement),
+    ];
+
+    private static JsonObject Ack(McpGrantKind kind)
+        => new() { ["scope_ack"] = GrantTools.Single(g => g.Kind == kind).Ack };
+
+    [Fact]
+    public void TheGrantTools_StateTheirScopeInTheName_AndAskForTheFixedSentence()
+    {
+        foreach (var (kind, name, ack) in GrantTools)
+        {
+            var t = Tool(name, new FakeGame());
+            Assert.Equal(McpToolRole.Grant, t.EffectiveRole);
+            Assert.Equal(kind, t.GrantKind);
+            Assert.False(t.ReadOnly);
+            var schema = t.InputSchema;
+            Assert.Contains("scope_ack", schema["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+            Assert.Equal([ack], schema["properties"]!["scope_ack"]!["enum"]!.AsArray().Select(n => n!.GetValue<string>()));
+        }
+        var read = Tool("read_grants", new FakeGame());
+        Assert.Equal(McpToolRole.GrantAdmin, read.EffectiveRole);
+        Assert.True(read.ReadOnly);
+        var revoke = Tool("revoke_grants", new FakeGame());
+        Assert.Equal(McpToolRole.GrantAdmin, revoke.EffectiveRole);
+        Assert.False(revoke.ReadOnly);
+        Assert.False(revoke.Destructive);   // it only narrows
+    }
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("")]
+    [InlineData("The user asked for this.")]
+    public async Task AGrantTool_RefusesAnyOtherScopeAck_AndGrantsNothing(string ack)
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, Constants.McpGrantToolToggles, new JsonObject { ["scope_ack"] = ack });
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantAckToggles, ErrorOf(payload));
+        Assert.Empty(game.Grants.List());
+    }
+
+    [Fact]
+    public async Task AGrantTool_RefusesAnOldDll_AndGrantsNothing()
+    {
+        var game = new FakeGame { DllBuild = Constants.McpMinDllBuildForWrites - 1 };
+        game.Grants.Revoke();
+        var (payload, result) = await Call(game, Constants.McpGrantToolMovement, Ack(McpGrantKind.Movement));
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpMinDllBuildForWrites.ToString(CultureInfo.InvariantCulture), ErrorOf(payload));
+        Assert.Empty(game.Grants.List());
+    }
+
+    [Fact]
+    public async Task AGrantTool_GrantsItsKindForThisGameRun_AndSaysWhatItCoversAndWhatEndsIt()
+    {
+        var game = new FakeGame();
+        game.Grants.Revoke(McpGrantKind.Toggles);   // movement stays, and the reply lists it among the others
+        var (payload, result) = await Call(game, Constants.McpGrantToolToggles, Ack(McpGrantKind.Toggles));
+        Assert.False(result.IsError, ErrorOf(payload));
+        var p = payload!.AsObject();
+        var tools = p["tools"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+        Assert.Contains("write_god_mode", tools);
+        Assert.Contains("write_see_through", tools);
+        Assert.DoesNotContain("write_fly", tools);
+        Assert.DoesNotContain("write_memory", tools);
+        Assert.Equal(4242, p["game"]!["pid"]!.GetValue<int>());
+        Assert.Equal("Game-Win64-Shipping.exe", p["game"]!["exe"]!.GetValue<string>());
+        // A window title is the game's own text, and the game's text is data: only the OS's exe name is echoed.
+        Assert.Null(p["game"]!["window_title"]);
+        Assert.Contains("revoke_grants", p["ends"]!.GetValue<string>());
+        Assert.Contains(Constants.McpGrantToolMovement, p["other_grants"]!.ToJsonString());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Toggles);
+
+        var (_, write) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.False(write.IsError);
+    }
+
+    [Fact]
+    public async Task ReadGrants_ListsEachGrant_AndSendsNothing()
+    {
+        var game = new FakeGame();
+        await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        int before = game.Sent.Count;
+        var (payload, result) = await Call(game, "read_grants");
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Equal(before, game.Sent.Count);
+        Assert.Equal("Grants", payload!["decision"]!.GetValue<string>());
+        var grants = payload["grants"]!.AsArray();
+        Assert.Equal(2, grants.Count);
+        var toggles = grants.Single(g => g!["tool"]!.GetValue<string>() == Constants.McpGrantToolToggles)!;
+        Assert.Equal(1, toggles["uses"]!.GetValue<long>());
+        Assert.Equal(4242, toggles["pid"]!.GetValue<long>());
+        Assert.Equal("Game-Win64-Shipping.exe", toggles["exe"]!.GetValue<string>());
+        Assert.True(toggles["game_running"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task RevokeGrants_OnlyNarrows_SendsNothing_AndSaysTheHoldsStay()
+    {
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, "revoke_grants", new JsonObject { ["kind"] = "movement" });
+        Assert.False(result.IsError, ErrorOf(payload));
+        Assert.Empty(game.Sent);
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Equal(McpGrantKind.Toggles, Assert.Single(game.Grants.List()).Kind);
+        Assert.Contains("hold", payload["note"]!.GetValue<string>());
+
+        var (all, _) = await Call(game, "revoke_grants");
+        Assert.Equal(1, all!["revoked"]!.GetValue<int>());
+        Assert.Empty(game.Grants.List());
+        Assert.Empty(game.Sent);
     }
 
     // ── What the tools send ─────────────────────────────────────────────────────────────────────────────
@@ -772,38 +1901,6 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("force_field", game.Commands);
     }
 
-    [Theory]
-    [InlineData(2, false, true)]    // the UI also holds a claim
-    [InlineData(1, true, true)]     // CE's record holds it
-    [InlineData(1, false, false)]   // only this server's claim: may turn it off
-    public async Task SeeThroughOff_IsRefused_WhileAnotherClaimWouldEndWithIt(int claims, bool ce, bool refused)
-    {
-        // An explicit OFF drops every claim (Stage C), so this server turns it off only over its own claim alone.
-        var game = new FakeGame();
-        var tool = Tool("write_see_through", game);
-        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = true };
-        await tool.Run(new McpArgs(new JsonObject { ["enable"] = true }), CancellationToken.None);
-        game.Answers["seethrough_get_state"] = _ => new JsonObject
-        {
-            ["active"] = true, ["claims"] = claims, ["ce_claimed"] = ce,
-        };
-        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = false };
-        McpToolResult result;
-        try { result = await tool.Run(new McpArgs(new JsonObject { ["enable"] = false }), CancellationToken.None); }
-        catch (McpToolError e) { result = McpToolResult.Fail(e.Message); }
-        Assert.Equal(refused, result.IsError);
-        Assert.Equal(refused ? 1 : 2, game.Commands.Count(c => c == "seethrough_set"));
-    }
-
-    [Fact]
-    public async Task SeeThroughOff_IsRefused_WhenThisServerNeverTurnedItOn()
-    {
-        var game = new FakeGame();
-        game.Answers["seethrough_get_state"] = _ => new JsonObject { ["active"] = true, ["claims"] = 1 };
-        var (_, r) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
-        Assert.True(r.IsError);
-        Assert.DoesNotContain("seethrough_set", game.Commands);
-    }
 
     [Fact]
     public async Task WriteMovement_Reset_SendsTheReset_NotAMultiplier()
@@ -907,6 +2004,233 @@ public sealed class McpToolsTests
         return game;
     }
 
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+
+    private const string ActorPath = "//Script/Engine/Actor";
+    private const string HiddenFull = ActorPath + ".SetActorHiddenInGame";
+
+    /// <summary>A function as walk_functions sends it, with its full name and flags (BlueprintCallable, Native,
+    /// Public by default).</summary>
+    private static JsonObject FnFull(string name, long flags = 0x04020401, params JsonObject[] parms)
+    {
+        var f = Fn(name, parms);
+        f["full"] = ActorPath + "." + name;
+        f["flags"] = (uint)flags;   // as ParseFunctions reads it; a reply parsed from text converts either way
+        return f;
+    }
+
+    private static JsonObject TypedParm(string name, string type, string structType = "", string objClass = "")
+    {
+        var p = Parm(name, type, 8, 0);
+        if (structType.Length > 0) p["struct_type"] = structType;
+        if (objClass.Length > 0) p["obj_class"] = objClass;
+        return p;
+    }
+
+    /// <summary>A game whose DLL takes invoke grants, where //Script/Engine/Actor is the class of every object and has
+    /// the given functions.</summary>
+    private static FakeGame InvokeGrantGame(params JsonObject[] functions)
+    {
+        var game = InvokeGame(functions);
+        game.DllBuild = Constants.McpMinDllBuildForInvokeGrants;
+        game.Answers["find_object"] = _ => new JsonObject { ["addr"] = "0x7FF600002000", ["name"] = "Actor" };
+        game.Answers["get_object"] = r => new JsonObject
+        {
+            ["class_addr"] = "0x7FF600002000", ["class"] = "Actor",
+            ["full_name"] = r["addr"]!.GetValue<string>() == "0x7FF600002000" ? ActorPath : "//Game/Map/Actor_1",
+        };
+        return game;
+    }
+
+    private static JsonObject GrantArgs(string function = "SetActorHiddenInGame", string cls = ActorPath)
+        => new() { ["function"] = function, ["class"] = cls, ["scope_ack"] = Constants.McpGrantAckInvoke };
+
+    private static JsonObject HiddenCall() => new()
+    {
+        ["instance_addr"] = "0x1000", ["function"] = "SetActorHiddenInGame",
+        ["params"] = new JsonObject { ["bNewHidden"] = true },
+    };
+
+    private static JsonObject HiddenFn() => FnFull("SetActorHiddenInGame", parms: Parm("bNewHidden", "BoolProperty", 1, 0));
+
+    [Fact]
+    public void TheInvokeGrant_StatesItsScope_WithTheFunctionFirst()
+    {
+        // The prompt shows the name and the arguments in order (Phase 0, M1 / M10): the function before its class.
+        var tool = Tool(Constants.McpGrantToolInvoke, new FakeGame());
+        var props = tool.InputSchema["properties"]!.AsObject().Select(p => p.Key).ToList();
+        Assert.True(props.IndexOf("function") >= 0 && props.IndexOf("function") < props.IndexOf("class")
+                    && props.IndexOf("class") < props.IndexOf("scope_ack"), string.Join(",", props));
+        Assert.Equal(Constants.McpGrantAckInvoke,
+            tool.InputSchema["properties"]!["scope_ack"]!["enum"]![0]!.GetValue<string>());
+        Assert.Equal(McpToolRole.Grant, tool.EffectiveRole);
+        Assert.Equal(McpGrantKind.Invoke, tool.GrantKind);
+        var granted = Tool(Constants.McpInvokeGrantedTool, new FakeGame());
+        Assert.Equal(McpToolRole.GrantedInvoke, granted.EffectiveRole);
+        Assert.Equal(McpGrantKind.Invoke, granted.GrantKind);
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_GrantsAFunctionItsClassHas_AndReadGrantsNamesIt()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(HiddenFull, payload!["function"]!.GetValue<string>());
+        Assert.Contains(Constants.McpInvokeGrantedTool, payload["tools"]!.ToJsonString());
+        Assert.Contains(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke && g.Target == HiddenFull);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+
+        var (grants, _) = await Call(game, "read_grants");
+        Assert.Contains(grants!["grants"]!.AsArray(),
+            g => g!["function"]?.GetValue<string>() == HiddenFull
+                 && g["tool"]!.GetValue<string>() == Constants.McpGrantToolInvoke);
+    }
+
+    [Theory]
+    [InlineData("SetActorHiddenInGame", "//Script/Engine/Pawn")]   // another class's path than the one found
+    [InlineData("SetActorHidden", ActorPath)]                       // its class has no such function
+    [InlineData("SetActorHiddenInGame", "Actor")]                    // a short name, not a path
+    public async Task TheInvokeGrant_RefusesAFunctionItCannotFindExactly(string function, string cls)
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        var (_, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs(function, cls));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    // Review: the case above with another class's path is refused by the later full-name match too, so it never pinned
+    // the class check. Here the path lookup lands on a class that does declare the function, by its own name, and only
+    // the check of the object found refuses it.
+    [Fact]
+    public async Task TheInvokeGrant_ChecksTheClassItFound_ByItsOwnFullName()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        game.Answers["get_object"] = _ => new JsonObject
+        {
+            ["class_addr"] = "0x7FF600002000", ["class"] = "Pawn", ["full_name"] = "//Script/Engine/Pawn",
+        };
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        Assert.True(result.IsError);
+        Assert.Contains("the object found there is //Script/Engine/Pawn", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("walk_functions", game.Commands);
+    }
+
+    [Fact]
+    public async Task TheInvokeGrant_RefusesAnOlderDll_AndAWrongAck()
+    {
+        var old = InvokeGrantGame(HiddenFn());
+        old.DllBuild = Constants.McpMinDllBuildForInvokeGrants - 1;
+        Assert.True((await Call(old, Constants.McpGrantToolInvoke, GrantArgs())).Result.IsError);
+        var game = InvokeGrantGame(HiddenFn());
+        var args = GrantArgs();
+        args["scope_ack"] = "yes";
+        Assert.True((await Call(game, Constants.McpGrantToolInvoke, args)).Result.IsError);
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    public static TheoryData<string, string> NotGrantable => new()
+    {
+        { "K2_DestroyActor", "{}" },                                                      // on the DLL's deny list
+        { "ExecuteUbergraph_BP_Hero", "{}" },                                             // a family
+        { "ServerFire", "{\"flags\":64}" },                                             // a network RPC
+        { "OnGraph", "{\"flags\":32768}" },                                             // an event graph
+        { "K2_ClearTimer", "{\"param\":[\"FunctionName\",\"StrProperty\"]}" },          // names a function
+        { "BindDone", "{\"param\":[\"Done\",\"DelegateProperty\"]}" },                  // a delegate
+        { "Delay", "{\"param\":[\"LatentInfo\",\"StructProperty\",\"LatentActionInfo\"]}" },   // latent
+        { "SetLabel", "{\"param\":[\"Label\",\"TextProperty\"]}" },                     // an FText
+    };
+
+    [Theory]
+    [MemberData(nameof(NotGrantable))]
+    public async Task TheInvokeGrant_RefusesWhatTheAiMayNotCallOrCannotSee(string function, string shape)
+    {
+        var spec = JsonNode.Parse(shape)!.AsObject();
+        long flags = spec["flags"] is { } f ? f.GetValue<long>() : 0x04020401;
+        var parms = new List<JsonObject>();
+        if (spec["param"] is JsonArray p)
+            parms.Add(TypedParm(p[0]!.GetValue<string>(), p[1]!.GetValue<string>(),
+                p.Count > 2 ? p[2]!.GetValue<string>() : ""));
+        var game = InvokeGrantGame(FnFull(function, flags, parms.ToArray()));
+        var (payload, result) = await Call(game, Constants.McpGrantToolInvoke, GrantArgs(function));
+        Assert.True(result.IsError, function);
+        Assert.Contains("write_invoke", payload!["error"]!.GetValue<string>());   // the per-call route stays
+        Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_CallsTheGrantedFunction_InTheDllsGrantMode_WithoutAPrompt()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.False(result.IsError, payload?.ToJsonString());
+        var sent = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "invoke_function");
+        Assert.True(sent["grant"]!.GetValue<bool>());
+        Assert.Equal(HiddenFull, sent["expect_func_full"]!.GetValue<string>());
+        Assert.Equal("SetActorHiddenInGame", sent["func_name"]!.GetValue<string>());
+        Assert.Equal(1, game.Grants.List().Single(g => g.Kind == McpGrantKind.Invoke).Uses);
+        Assert.False(McpGrants.IsMarked(Tool(Constants.McpInvokeGrantedTool, game).EffectiveRole,
+            McpHostDecision.Grants));
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_WithoutItsGrant_IsRefused_AndNoCallIsSent()
+    {
+        var game = InvokeGrantGame(HiddenFn(), FnFull("SetActorScale3D"));
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        var call = HiddenCall();
+        call["function"] = "SetActorScale3D";
+        call.Remove("params");
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, call);
+        Assert.True(result.IsError);
+        Assert.Contains(Constants.McpGrantToolInvoke, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_OnADllOlderThanTheGrantMode_IsRefused()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        game.DllBuild = Constants.McpMinDllBuildForInvokeGrants - 1;
+        var (_, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvokeGranted_TheDllsRefusalUnderTheGrant_SaysWhy()
+    {
+        var game = InvokeGrantGame(HiddenFn());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        game.Answers["invoke_function"] = _ => new JsonObject
+        {
+            ["ok"] = false, ["code"] = -28, ["func_full"] = HiddenFull,
+            ["error"] = "Not invoked under the grant: SetActorHiddenInGame is not static, and the object is a class "
+                        + "default or a template: a grant never calls one there",
+        };
+        var (payload, result) = await Call(game, Constants.McpInvokeGrantedTool, HiddenCall());
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("class default or a template", error);
+        Assert.Contains("write_invoke", error);
+    }
+
+    [Fact]
+    public async Task RevokeGrants_EndsOneFunctionsGrant()
+    {
+        var game = InvokeGrantGame(HiddenFn(), FnFull("SetActorScale3D"));
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs());
+        await Call(game, Constants.McpGrantToolInvoke, GrantArgs("SetActorScale3D"));
+        var (payload, result) = await Call(game, "revoke_grants",
+            new JsonObject { ["kind"] = "invoke", ["function"] = HiddenFull });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(1, payload!["revoked"]!.GetValue<int>());
+        Assert.Single(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
+        Assert.Equal(2, game.Grants.List().Count(g => g.Kind != McpGrantKind.Invoke));   // the kind grants stand
+    }
+
     [Fact]
     public async Task WriteInvoke_BuildsTheBufferByName_IfFree_OnTheObjectsClass_NeverDirect()
     {
@@ -998,6 +2322,136 @@ public sealed class McpToolsTests
         Assert.True(result.IsError);
         Assert.Contains(says, payload!["error"]!.GetValue<string>());
         Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    /// <summary>A game whose objects have classes: 0x3000 a Widget (no super), 0x4000 a BP_Enemy_C, which derives from
+    /// Character and then Actor; get_object and walk_class answer as Fern does.</summary>
+    private static FakeGame ClassedGame(JsonObject fn)
+    {
+        var game = InvokeGame(fn);
+        var classOf = new Dictionary<string, (string Addr, string Name)>
+        {
+            ["0x1000"] = ("0x7FF600002000", "C"),
+            ["0x3000"] = ("0x7FF600007000", "Widget"),
+            ["0x4000"] = ("0x7FF600008000", "BP_Enemy_C"),
+            // A class object: BP_Enemy_C's own class is a BlueprintGeneratedClass, which derives from Class.
+            ["0x7FF600008000"] = ("0x7FF60000B000", "BlueprintGeneratedClass"),
+            // An object whose class's walk the DLL refuses (an empty layout): its chain cannot be read.
+            ["0x5000"] = ("0x7FF60000D000", "Unwalkable"),
+        };
+        var supers = new Dictionary<string, (string Name, string Super)>
+        {
+            ["0x7FF600002000"] = ("C", "0x0"),
+            ["0x7FF600007000"] = ("Widget", "0x0"),
+            ["0x7FF600008000"] = ("BP_Enemy_C", "0x7FF600009000"),
+            ["0x7FF600009000"] = ("Character", "0x7FF60000A000"),
+            ["0x7FF60000A000"] = ("Actor", "0x0"),
+            ["0x7FF60000B000"] = ("BlueprintGeneratedClass", "0x7FF60000C000"),
+            ["0x7FF60000C000"] = ("Class", "0x0"),
+            ["0x7FF60000D000"] = ("", "0x0"),
+        };
+        game.Answers["get_object"] = r => classOf.TryGetValue(r["addr"]!.GetValue<string>(), out var c)
+            ? new JsonObject { ["class_addr"] = c.Addr, ["class"] = c.Name }
+            : new JsonObject { ["class_addr"] = "0x0" };
+        game.Answers["walk_class"] = r => supers.TryGetValue(r["addr"]!.GetValue<string>(), out var k)
+            ? new JsonObject { ["class"] = new JsonObject { ["name"] = k.Name, ["super_addr"] = k.Super } }
+            : new JsonObject();
+        return game;
+    }
+
+    private static JsonObject ActorParm(string type = "ObjectProperty", string objClass = "Actor")
+    {
+        var p = Parm("Target", type, 8, 0);
+        p["obj_class"] = objClass;
+        return p;
+    }
+
+    private static JsonObject TargetCall(string target) => new()
+    {
+        ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = target },
+    };
+
+    [Theory]
+    [InlineData("ClassProperty", "0x4000", false)]           // an actor where a class is declared: refused
+    [InlineData("ClassProperty", "0x7FF600008000", true)]    // a Blueprint class object: its own class derives from Class
+    [InlineData("SoftClassProperty", "0x4000", false)]
+    public async Task WriteInvoke_AClassParameter_TakesAClassObjectOnly(string type, string target, bool runs)
+    {
+        // A class parameter's declared class (its PropertyClass) is Class, which every class object's own class derives
+        // from: an instance or a class default there would be read at UClass offsets.
+        var game = ClassedGame(Fn("SetTarget", ActorParm(type, "Class")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall(target));
+        Assert.Equal(!runs, result.IsError);
+        Assert.Equal(runs, game.Commands.Contains("invoke_function"));
+        if (!runs) Assert.Contains("does not derive", payload!["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectWhoseClassChainCannotBeRead_IsRefused_WithoutClaimingItsKind()
+    {
+        // The chain stopping at an unwalkable class is no verdict: the refusal must not tell the AI its object is of the
+        // wrong kind.
+        var game = ClassedGame(Fn("SetTarget", ActorParm()));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x5000"));
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("could not be read", error);
+        Assert.DoesNotContain("does not derive", error);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectParameterDeclaredAsObject_TakesAnyLiveObject_WithoutWalkingItsClass()
+    {
+        // Every live GObjects entry is a UObject: a WorldContextObject needs no class walk.
+        var game = ClassedGame(Fn("SetTarget", ActorParm("ObjectProperty", "Object")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x3000"));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.DoesNotContain("walk_class", game.Commands);
+        Assert.Contains("invoke_function", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("ObjectProperty")]
+    [InlineData("WeakObjectProperty")]
+    [InlineData("SoftObjectProperty")]
+    public async Task WriteInvoke_AnObjectOfAnotherClassThanDeclared_IsRefused(string type)
+    {
+        // [INVOKE-OBJECT-PARAM-CLASS] A native function handed an object of another class calls through its vtable as if
+        // it were the declared one.
+        var game = ClassedGame(Fn("SetTarget", ActorParm(type)));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x3000" },
+        });
+        Assert.True(result.IsError, payload?.ToJsonString());
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("Widget", error);
+        Assert.Contains("Actor", error);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectOfASubclassOfTheDeclaredClass_IsPassed()
+    {
+        var game = ClassedGame(Fn("SetTarget", ActorParm()));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0x4000" },
+        });
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Contains("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnInterfaceParameter_IsNotHeldToItsPropertyClass()
+    {
+        // An interface parameter's property class is the interface, which an object implements rather than derives from:
+        // it is held to liveness only.
+        var game = ClassedGame(Fn("SetTarget", ActorParm("InterfaceProperty")));
+        var (payload, result) = await Call(game, "write_invoke", TargetCall("0x3000"));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Contains("invoke_function", game.Commands);
     }
 
     private static JsonObject StructParm(string name, int size, params (string Name, string Type, int Offset, int Size)[] fields)
@@ -1252,6 +2706,26 @@ public sealed class McpToolsTests
             new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
         Assert.True(result.IsError);
         Assert.Contains("the UE5DumpUI window or another program (pid 4321)", payload!["error"]!.GetValue<string>());
+    }
+
+    // Review round 2: the dispatcher refuses an if_free change to another's hold with ok:true and code -20, before the
+    // invoke handler; write_invoke read that as a call that failed with a made-up code -999.
+    [Fact]
+    public async Task WriteInvoke_AHoldAnotherHolds_IsNamed_NotAFailedCall()
+    {
+        var game = InvokeGame(Fn("ToggleDebugCamera"));
+        game.Answers["invoke_function"] = _ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = -20, ["hold"] = "debug_camera",
+            ["holder"] = new JsonObject { ["kind"] = "client", ["pid"] = 4321, ["background"] = false, ["you"] = false },
+        };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "ToggleDebugCamera" });
+        Assert.True(result.IsError);
+        string error = payload!["error"]!.GetValue<string>();
+        Assert.Contains("the UE5DumpUI window or another program (pid 4321)", error);
+        Assert.Contains("debug_camera", error);
+        Assert.DoesNotContain("-999", error);
     }
 
     [Fact]

@@ -53,6 +53,9 @@ public static class CallTraceBuilder
     /// stack. A return closes its call, and any call still open above it on that thread never returned (an
     /// exception unwound it). A return whose entry is older than the kept window ends a call that began before it,
     /// and every call still open on that thread was inside that call, so they are closed as never returned too.
+    /// A return whose entry is numbered INSIDE the window but missing is different: the DLL dropped that slot (written
+    /// out of turn, [LINIE-SEQ-LAST]), so it is counted in <see cref="CallTrace.EntriesDropped"/> and the calls still
+    /// open around it stay open. [TRACE-DROPPED-ENTRY]
     /// </summary>
     public static CallTrace Build(ReadOnlySpan<TraceRecord> records, TraceInfo info,
                                   IEnumerable<TraceFuncName>? funcs = null, IEnumerable<TraceObjName>? objs = null)
@@ -89,7 +92,7 @@ public static class CallTraceBuilder
             Info = info,
         };
         var stacks = new Dictionary<uint, List<int>>();
-        int n = 0, beforeWindow = 0;
+        int n = 0, beforeWindow = 0, dropped = 0;
 
         foreach (ref readonly var r in recs)
         {
@@ -115,6 +118,11 @@ public static class CallTraceBuilder
             int call = t.FindBySeq(r.A, n);
             if (call < 0)
             {
+                if (r.A >= info.FirstValid)
+                {
+                    dropped++;   // [TRACE-DROPPED-ENTRY] a slot the DLL dropped, not a call from before the window
+                    continue;
+                }
                 beforeWindow++;
                 stack.Clear();
                 continue;
@@ -139,6 +147,15 @@ public static class CallTraceBuilder
 
         t.Roots = roots.ToArray();
         t.ReturnsBeforeWindow = beforeWindow;
+        t.EntriesDropped = dropped;
+        // [TRACE-DROPPED-ENTRY] What else was dropped leaves no trace in the records, so it is counted from the window:
+        // the numbers kept, less the records sent, less the entries found missing above. Returns or call starts no kept
+        // record names (a call can lose both) -- not attributed, so described as neither.
+        if (info.Written > info.FirstValid)
+        {
+            long missing = (long)(info.Written - info.FirstValid) - recs.Length;
+            t.OtherDropped = (int)Math.Max(0, missing - dropped);
+        }
         if (funcs != null) foreach (var f in funcs) t.Funcs[f.Addr] = f;
         if (objs != null) foreach (var o in objs) t.Objs[o.Addr] = o;
         CountNames(t);

@@ -3549,8 +3549,8 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > on this register. Start there.
 >
 > ⛔ Do not go hunting for a new MED to fix. If the ask is "carry on", the answer is
-> the verification register, and [pending-verification_zh-TW.md](pending-verification_zh-TW.md)
-> is the operational index for it — grouped by what each check COSTS to run.
+> the verification register. (The 繁中 operational index beside it, `pending-verification_zh-TW.md`,
+> was deleted 2026-11-17.)
 
 > ## ⚠ WHAT THE FOUR 2026-08-17 PM FIXES TAUGHT — this is the reusable part
 >

@@ -370,7 +370,7 @@ public class DumpServiceTests
     public void Fern_InvokeReply_NamesTheClassItReadAtTheAddress()
     {
         var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
-        int start = s.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        int start = s.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
         Assert.True(start > 0);
         int reply = s.IndexOf("data[\"instance_addr\"] = Renge::AddrToStr(instanceAddr);", start, StringComparison.Ordinal);
         Assert.True(reply > start);
@@ -1790,6 +1790,85 @@ public class DumpServiceTests
 
         Assert.Equal(carried, p.ParentRelativeKnown);
         Assert.False(p.ParentRelative);
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] get_holds and See-through's claims: the cards' holder labels.
+    [Fact]
+    public async Task GetHoldsAsync_ParsesEachHold_AndItsHolder()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["holds"] = new JsonArray(
+                new JsonObject
+                {
+                    ["hold"] = "god_mode", ["active"] = true,
+                    // A uint32 pid past int.MaxValue must not throw.
+                    ["holder"] = new JsonObject
+                    {
+                        ["kind"] = "client", ["pid"] = 4294967295L, ["background"] = true, ["you"] = false,
+                    },
+                },
+                new JsonObject
+                {
+                    ["hold"] = "debug_camera", ["active"] = false, ["pending"] = true, ["release_owed"] = true,
+                    // No pid: the DLL keyed this owner by its connection.
+                    ["holder"] = new JsonObject { ["kind"] = "client", ["background"] = false, ["you"] = true },
+                },
+                new JsonObject
+                {
+                    ["hold"] = "fly", ["active"] = false,
+                    ["holder"] = new JsonObject { ["kind"] = "none", ["you"] = false },
+                }),
+            ["invokes"] = new JsonArray(),
+        });
+
+        var r = await CreateService().GetHoldsAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, r.Holds.Count);
+        var god = r.Find("god_mode")!;
+        Assert.True(god.InForce);
+        Assert.Equal("client", god.Holder.Kind);
+        Assert.Equal(4294967295L, god.Holder.Pid);
+        Assert.True(god.Holder.Background);
+        Assert.False(god.Holder.You);
+        var cam = r.Find("debug_camera")!;
+        Assert.True(cam.Pending);
+        Assert.True(cam.ReleaseOwed);
+        Assert.True(cam.InForce);
+        Assert.Null(cam.Holder.Pid);
+        Assert.True(cam.Holder.You);
+        var fly = r.Find("fly")!;
+        Assert.False(fly.InForce);
+        Assert.Equal("none", fly.Holder.Kind);
+        Assert.Null(r.Find("time:global"));
+    }
+
+    [Fact]
+    public async Task GetHoldsAsync_ThrowsOnAnOlderDllsUnknownCommand()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = "Unknown command: get_holds" });
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            CreateService().GetHoldsAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(true)]    // DLL 3714+: you
+    [InlineData(false)]   // 3698-3713: claims and ce_claimed only
+    public async Task SeeThroughGetStateAsync_ParsesTheClaims(bool sendsYou)
+    {
+        var reply = new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["active"] = true, ["claims"] = 2, ["ce_claimed"] = true,
+        };
+        if (sendsYou) reply["you"] = true;
+        _pipe.SetHandler(_ => reply);
+
+        var st = await CreateService().SeeThroughGetStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, st.Claims);
+        Assert.True(st.CeClaimed);
+        Assert.Equal(sendsYou ? true : null, st.You);
     }
 
     [Theory]
@@ -3638,6 +3717,63 @@ public class DumpServiceTests
 
         Assert.Equal("low", res.Props[1].Confidence);
         Assert.True(res.Props[1].IsLowConfidence);
+    }
+
+    /// <summary>[DENKEN-WRITE-SITES] A native row carries the instructions that write it; an older DLL, or a read-only
+    /// row, carries none.</summary>
+    [Fact]
+    public async Task WalkFunctionPropsAsync_ParsesWriteSites()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["query_addr"] = "0x100",
+            ["script_bytes"] = 0,
+            ["method"] = "disasm",
+            ["unmapped"] = 0,
+            ["props"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["prop_addr"] = "0x200", ["name"] = "Health", ["type"] = "FloatProperty",
+                    ["occurrences"] = 3, ["write_count"] = 2, ["scope"] = "instance", ["offset"] = 0x1C0,
+                    ["confidence"] = "high",
+                    ["write_sites"] = new JsonArray { "0x7FF612340010", "0x7FF612340030" },
+                    ["write_sites_via_this"] = 1,
+                    ["write_sites_truncated"] = true,
+                    ["shared_offset"] = 2,
+                },
+                new JsonObject
+                {
+                    ["prop_addr"] = "0x208", ["name"] = "MaxHealth", ["type"] = "FloatProperty",
+                    ["occurrences"] = 1, ["write_count"] = 0, ["scope"] = "instance", ["offset"] = 0x1C4,
+                    ["confidence"] = "high",
+                },
+            }
+        });
+
+        var res = await CreateService().WalkFunctionPropsAsync("0x100", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new[] { "0x7FF612340010", "0x7FF612340030" }, res.Props[0].WriteSites);
+        Assert.True(res.Props[0].WriteSitesTruncated);
+        Assert.Equal(1, res.Props[0].WriteSitesViaThis);
+        Assert.Equal(2, res.Props[0].SharedOffset);
+        Assert.Equal("0x7FF612340010 +1…", res.Props[0].WriteSitesText);
+        Assert.Equal(0, res.Props[1].SharedOffset);
+        Assert.Empty(res.Props[1].WriteSites);
+        Assert.False(res.Props[1].WriteSitesTruncated);
+        Assert.Equal("", res.Props[1].WriteSitesText);
+    }
+
+    [Fact]
+    public void FunctionPropRef_WriteSitesText_NamesTheFirstAndCountsTheRest()
+    {
+        Assert.Equal("0x10", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" }, WriteSitesViaThis = 1 }.WriteSitesText);
+        Assert.Equal("0x10 +2", new UE5DumpUI.Models.FunctionPropRef
+            { WriteSites = new[] { "0x10", "0x20", "0x30" }, WriteSitesViaThis = 1 }.WriteSitesText);
+        Assert.Equal("", new UE5DumpUI.Models.FunctionPropRef().WriteSitesText);
+        // Review DWS-DLL-1: when not even the first site is proven to write through `this`, the text says so.
+        Assert.Equal("0x10 ?", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" } }.WriteSitesText);
     }
 
     [Fact]

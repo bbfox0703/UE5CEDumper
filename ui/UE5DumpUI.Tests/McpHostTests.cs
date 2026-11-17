@@ -34,7 +34,7 @@ public sealed class McpHostTests
         int avalonia = main.IndexOf("BuildAvaloniaApp()", StringComparison.Ordinal);
         Assert.True(branch > 0, "Program.Main has no --mcp branch");
         Assert.True(branch < mutex && branch < avalonia, "the --mcp branch must come first");
-        Assert.Contains("return Mcp.McpHost.Run();", main);
+        Assert.Contains("return Mcp.McpHost.Run(args);", main);
         Assert.Equal("--mcp", Constants.McpSwitch);
     }
 
@@ -64,6 +64,102 @@ public sealed class McpHostTests
         Assert.True(setOut < host.IndexOf("new McpLog(", StringComparison.Ordinal));
     }
 
+    // ── --writes ([MCP-WRITE-GRANTS-2026-11-14]) ───────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(new[] { "--mcp" }, McpWriteMode.Default)]
+    [InlineData(new[] { "--mcp", "--writes=any-host" }, McpWriteMode.AnyHost)]
+    [InlineData(new[] { "--mcp", "--writes=off" }, McpWriteMode.Off)]
+    [InlineData(new[] { "--writes=off", "--mcp" }, McpWriteMode.Off)]   // a registration may put the flag first
+    public void TheWritesFlag_Parses(string[] args, McpWriteMode want)
+    {
+        Assert.True(McpHost.TryParseArgs(args, out var mode, out var error), error);
+        Assert.Equal(want, mode);
+        Assert.Null(error);
+    }
+
+    [Theory]
+    [InlineData("--mcp --writes=bogus")]
+    [InlineData("--mcp --writes=")]
+    [InlineData("--mcp --writes")]
+    [InlineData("--mcp --writes=OFF")]
+    [InlineData("--mcp --WRITES=off")]
+    [InlineData("--mcp --writes=off --writes=off")]
+    [InlineData("--mcp --writes=off --writes=any-host")]
+    [InlineData("--mcp --verbose")]
+    [InlineData("--mcp --mcp")]
+    public void AnyOtherArgument_StopsTheServerBeforeItServes(string commandLine)
+    {
+        // A typo must not quietly serve with a policy the user did not write.
+        Assert.False(McpHost.TryParseArgs(commandLine.Split(' '), out _, out var error));
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
+
+    [Fact]
+    public void TheHost_RefusesABadArgument_OnStderrWithExitCode1_BeforeServing()
+    {
+        string host = Code(Source("ui/UE5DumpUI/Mcp/McpHost.cs"));
+        int parse = host.IndexOf("TryParseArgs(args,", StringComparison.Ordinal);
+        Assert.True(parse > 0);
+        string refusal = host[parse..host.IndexOf("return 1;", parse, StringComparison.Ordinal)];
+        Assert.Contains("Console.Error.WriteLine(", refusal);
+        Assert.True(parse < host.IndexOf("new McpServer(", StringComparison.Ordinal));
+        // One decision object for the server and the link, or the link's gate would never see it.
+        Assert.Matches(@"new McpGameLink\([^;]*\bgrants\)", host);
+        Assert.Matches(@"new McpServer\([^;]*\bgrants\)", host);
+    }
+
+    // ── The agent guard ([MCP-WRITE-GRANTS-2026-11-14]) ──────────────────────────────────────────────────
+
+    private static JsonObject? Guard(string input)
+        => McpAgentGuard.Decide(input) is { } output ? JsonNode.Parse(output)!.AsObject() : null;
+
+    [Theory]
+    [InlineData("mcp__ue5cedumper__write_god_mode")]
+    [InlineData("mcp__ue5cedumper__write_memory")]
+    [InlineData("mcp__ue5cedumper__grant_movement_fly_teleport_may_kill_or_lose_pawn")]
+    public void TheGuard_RefusesASubagentsWriteOrGrant(string tool)
+    {
+        // Subagents and workflow agents share the session's server and its grants (Phase 0, M6), and a subagent's
+        // prompt looks like the main conversation's (M6b): only the main conversation may change the game.
+        var output = Guard(new JsonObject { ["tool_name"] = tool, ["agent_id"] = "a1b2", ["agent_type"] = "x" }
+            .ToJsonString());
+        Assert.NotNull(output);
+        var decision = output!["hookSpecificOutput"]!.AsObject();
+        Assert.Equal("PreToolUse", decision["hookEventName"]!.GetValue<string>());
+        Assert.Equal("deny", decision["permissionDecision"]!.GetValue<string>());
+        string reason = decision["permissionDecisionReason"]!.GetValue<string>();
+        Assert.Contains("main conversation", reason);
+        Assert.DoesNotContain(".py", reason);   // naming a way around the server would advertise it
+    }
+
+    [Theory]
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__write_god_mode"}""")]                  // the main conversation
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__write_god_mode","agent_id":""}""")]
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__read_status","agent_id":"a1"}""")]     // a subagent may read
+    [InlineData("""{"tool_name":"mcp__ue5cedumper__revoke_grants","agent_id":"a1"}""")]   // and narrow
+    public void TheGuard_LeavesEverythingElseToTheUsualRules(string input) => Assert.Null(Guard(input));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{not json")]
+    [InlineData("[1,2]")]
+    [InlineData("""{"agent_id":"a1"}""")]
+    public void TheGuard_RefusesWhatItCannotRead(string input)
+        => Assert.Equal("deny", Guard(input)?["hookSpecificOutput"]?["permissionDecision"]?.GetValue<string>());
+
+    [Fact]
+    public void TheGuardSwitch_ComesBeforeTheMutexAndTheServer_AndWritesOnlyThroughTheHost()
+    {
+        string main = Code(Source("ui/UE5DumpUI/Program.cs"));
+        int guard = main.IndexOf("Constants.McpAgentGuardSwitch", StringComparison.Ordinal);
+        Assert.True(guard > 0, "Program.Main has no --mcp-agent-guard branch");
+        Assert.True(guard < main.IndexOf("TryAcquireSingleInstance", StringComparison.Ordinal));
+        Assert.True(guard < main.IndexOf("Constants.McpSwitch", StringComparison.Ordinal));
+        Assert.Contains("return Mcp.McpHost.RunAgentGuard();", main);
+        Assert.Equal("--mcp-agent-guard", Constants.McpAgentGuardSwitch);
+    }
+
     // ── The shipped setup guide ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -85,11 +181,30 @@ public sealed class McpHostTests
         Assert.Contains("claude mcp add --scope user " + Constants.McpServerName + " --", guide);
         Assert.Contains("\"mcp__" + Constants.McpServerName + "__read_*\"", guide);
         // Every tool it names is one the server offers.
-        var catalog = McpTools.Create(new NoGame()).Select(t => t.Name).ToHashSet();
-        var named = Regex.Matches(guide, "<code>((?:read|scan)_[a-z_]+)</code>").Select(m => m.Groups[1].Value)
+        var catalog = McpTools.Create(new NoGame(), new McpGrants()).Select(t => t.Name).ToHashSet();
+        var named = Regex.Matches(guide, "<code>((?:read|scan|write|grant|revoke)_[a-z_]+)</code>")
+            .Select(m => m.Groups[1].Value)
             .Distinct().ToList();
         Assert.NotEmpty(named);
         foreach (var name in named) Assert.True(catalog.Contains(name), $"MCP-Setup.html names {name}");
+    }
+
+    [Theory]
+    [InlineData(McpHostDecision.Grants)]
+    [InlineData(McpHostDecision.MarkedPerCall)]
+    [InlineData(McpHostDecision.ReadOnly)]
+    public void TheInstructions_NameOnlyToolsTheirHostLists(McpHostDecision decision)
+    {
+        // Each decision's text describes its own host: a tool it names that the host does not list sends the model after
+        // a tool that is not there (the review of [MCP-WRITE-GRANTS-2026-11-14] Phase 2 found write_field named on a
+        // host that asks every call, which lists no grant and no granted tool).
+        var listed = McpTools.Create(new NoGame(), new McpGrants())
+            .Where(t => McpGrants.IsListed(t.EffectiveRole, decision)).Select(t => t.Name).ToHashSet();
+        string text = McpServer.InstructionsFor(decision);
+        var named = Regex.Matches(text, @"\b(?:read|write|grant|revoke|scan)_[a-z_]+").Select(m => m.Value).Distinct()
+            .ToList();
+        Assert.NotEmpty(named);
+        foreach (var name in named) Assert.True(listed.Contains(name), $"{decision}: the instructions name {name}");
     }
 
     [Fact]
@@ -110,7 +225,7 @@ public sealed class McpHostTests
         public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames() => ([], false);
         public int ConnectedPid => 0;
         public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
-            bool requireScan = false) => throw new NotSupportedException();
+            bool requireScan = false, McpGrantCapability? grant = null) => throw new NotSupportedException();
         public Task<McpScanReport> ScanStateAsync(int? pid, CancellationToken ct) => throw new NotSupportedException();
         public Task<(McpScanReport Before, JsonObject? Started)> StartScanAsync(int? pid, CancellationToken ct)
             => throw new NotSupportedException();

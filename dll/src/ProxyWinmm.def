@@ -208,6 +208,7 @@ EXPORTS
     ; --- UE5CEDumper C ABI (unchanged from the other proxies) ---
     UE5_Init
     UE5_Shutdown
+    UE5_YieldToLaterCopy
     UE5_GetVersion
     UE5_AutoStart
     UE5_GetGObjectsAddr

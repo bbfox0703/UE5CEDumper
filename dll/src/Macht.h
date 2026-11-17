@@ -106,6 +106,10 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
 // not writable.
 [[nodiscard]] bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
 
+// [WRITEMEM-OWN-IMAGE] True when [addr, addr + size) overlaps the image holding this code (UE5Dumper.dll or a proxy;
+// the test exe in dll_core_test): its globals include the CE mailbox, so write_mem refuses a background client there.
+[[nodiscard]] bool RangeInOwnImage(uintptr_t addr, size_t size);
+
 // Get base address of a loaded module (nullptr = main module)
 uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);
 

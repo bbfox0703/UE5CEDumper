@@ -132,6 +132,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::PIPE_HOLDERS_TOKEN", branch);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] The hold names the window labels its cards by, and the server judges
+    /// releases by, are the DLL's (Grimoire.h): a name that drifts matches nothing, silently.</summary>
+    [Theory]
+    [InlineData("HOLD_GOD_MODE", Constants.HoldGodMode)]
+    [InlineData("HOLD_FOREGROUND_LOCK", Constants.HoldForegroundLock)]
+    [InlineData("HOLD_GRAVITY_DIRECTION", Constants.HoldGravityDirection)]
+    [InlineData("HOLD_FLY", Constants.HoldFly)]
+    [InlineData("HOLD_DEBUG_CAMERA", Constants.HoldDebugCamera)]
+    [InlineData("HOLD_MOVEMENT_PREFIX", Constants.HoldMovementPrefix)]
+    [InlineData("HOLD_TIME_PREFIX", Constants.HoldTimePrefix)]
+    [InlineData("HOLD_FORCE_FIELD_PREFIX", Constants.HoldForceFieldPrefix)]
+    public void TheHoldNamesAreTheDlls(string grimoire, string ui)
+    {
+        var dll = Regex.Match(DllSrc("Grimoire.h"), $@"\b{grimoire}\s*=\s*""([^""]*)""");
+        Assert.True(dll.Success, $"Grimoire.h: {grimoire} not found");
+        Assert.Equal(dll.Groups[1].Value, ui);
+    }
+
     /// <summary>The words of the at-capacity line exist three times -- the DLL that writes them (Grimoire.h), the UI
     /// and pipe_client.py that read them -- and a reader that drifts from the writer finds nothing, silently.</summary>
     [Theory]
@@ -582,6 +600,39 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", head);
     }
 
+    private static string HoldRecorderBody()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int start = fern.IndexOf("struct HoldRecorder {", StringComparison.Ordinal);
+        Assert.True(start > 0, "Fern.cpp has a HoldRecorder");
+        int end = fern.IndexOf("} holdRecorder{", start, StringComparison.Ordinal);
+        Assert.True(end > start, "the HoldRecorder is constructed after its declaration");
+        int close = fern.IndexOf(';', end);
+        return fern[start..(close + 1)];
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a join belongs to set_debug_camera's own toggle. An
+    /// invoke of the camera's functions sends none, and consuming another's would hand the camera it turned on to an
+    /// old joiner (a CE record that joined the window's queued Force ON).</summary>
+    [Fact]
+    public void TheHoldRecorder_HandsTheCameraToAJoiner_OnlyForSetDebugCamerasOwnToggle()
+    {
+        string recorder = HoldRecorderBody();
+        Assert.Matches(@"holdRecorder\{[^;]*cmd == Renge::CMD_INVOKE_FUNCTION", recorder);   // it knows an invoke
+        Assert.Matches(@"!invoke\s*&&[^;]*FrierenDebugCamera::ConsumeJoin\(", recorder);
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: an invoke's toggle queued behind a stalled game thread
+    /// leaves the camera off for now, and FrierenDebugCamera's pending state tracks set_debug_camera's toggles only. Named
+    /// nobody's, the camera it turns on later read as held by "a program that recorded no owner" -- the window's own.
+    /// An off hold reads as free whoever is named.</summary>
+    [Fact]
+    public void AnInvokesToggleThatLeavesTheCameraOff_NamesItsCaller()
+    {
+        string recorder = HoldRecorderBody();
+        Assert.Matches(@"SetOwner\(h,\s*invoke\s*\?\s*caller\s*:\s*Voll::kHoldOwnerNone\)", recorder);
+    }
+
     /// <summary>What a background client turned on ends with it; a foreground client's holds outlive it.</summary>
     [Fact]
     public void ABackgroundClientsHolds_AreReleasedWhenItsProcessLeaves()
@@ -617,6 +668,42 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::" + hold, body);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a CE record that runs the debug camera's own functions
+    /// (a Console row baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as
+    /// CMD_SET_DEBUG_CAMERA does. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI
+    /// session, whose end then turned it off.</summary>
+    [Fact]
+    public void TheMailboxsInvokes_OfTheCamerasFunctions_ChangeItsHoldAsCe()
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        Assert.Matches(@"case CMD_INVOKE:\s*HandleInvokeHeld\(\);", mimic);
+        string byName = Between(mimic, "static void HandleInvokeByName() {", "\nstatic void ");
+        Assert.Contains("HandleInvokeHeld();", byName);
+        Assert.DoesNotContain("HandleInvoke();", byName);
+        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
+        Assert.Contains("Voll::IsDebugCameraFunction(", held);
+        Assert.Contains("ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
+        Assert.Contains("HandleInvoke();", held);
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 3: a pipe writer holds the camera's lock across its own
+    /// game-thread wait (up to the invoke timeout, 5 s by default, more by override), and the mailbox has one poller. A
+    /// CE invoke that waited for the lock and then for its own toggle passed CE's 10 s deadline, reporting "did not
+    /// finish" where it used to answer "queued". Busy, it runs unrecorded instead, as every mailbox invoke did before.
+    /// </summary>
+    [Fact]
+    public void TheMailboxsCameraInvoke_NeverWaitsForTheHoldsLock()
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
+        Assert.Contains("TryChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
+        string tryChange = Between(mimic, "static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {",
+            "\n}");
+        Assert.Contains("std::try_to_lock", tryChange);
+        Assert.DoesNotContain("std::lock_guard", tryChange);
+        Assert.Contains("RecordCeChange(hold);", tryChange);   // recorded as ChangeHoldAsCe records, when it got the lock
+    }
+
     /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
     /// would let an if_free request through and never be released.</summary>
     [Fact]
@@ -630,6 +717,7 @@ public sealed class PipePerProcessSourceTests
                      "set_god_mode", "set_foreground_lock", "set_gravity_direction", "reset_gravity_direction",
                      "fly_set", "set_debug_camera", "set_movement_multiplier", "reset_movement", "set_time_dilation",
                      "reset_time_dilation", "force_field", "reset_field", "reset_all_fields",
+                     "invoke_function",   // the debug camera's own functions, which the Console panel runs
                  })
             Assert.Contains("\"" + cmd + "\"", body);
         // ...and each of those is a real command (Renge.h), so a rename cannot leave the ledger matching nothing.
@@ -745,14 +833,15 @@ public sealed class PipePerProcessSourceTests
         string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
         Assert.Contains("const bool inForce = HoldActive(h) || HoldPending(h, sender);", head);
         // The recorder's three branches: in force -> the caller (or a joiner of the caller's toggle); on its way -> its
-        // sender only; off -> nobody.
+        // sender only; off -> nobody (an invoke's toggle may still be queued: its caller).
         string recorder = Between(head, "struct HoldRecorder {", "} holdRecorder{");
         int active = recorder.IndexOf("if (HoldActive(h)) {", StringComparison.Ordinal);
         int joined = recorder.IndexOf("FrierenDebugCamera::ConsumeJoin(caller, joinedBy)", StringComparison.Ordinal);
         int setActive = recorder.IndexOf("Voll::Holds().SetOwner(h, joined ? joinedBy : caller);", StringComparison.Ordinal);
         int pendingAt = recorder.IndexOf("} else if (HoldPending(h, sender)) {", StringComparison.Ordinal);
         int senderOnly = recorder.IndexOf("if (sender == caller) Voll::Holds().SetOwner(h, caller);", StringComparison.Ordinal);
-        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);", StringComparison.Ordinal);
+        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, invoke ? caller : Voll::kHoldOwnerNone);",
+            StringComparison.Ordinal);
         Assert.True(active > 0 && joined > active && setActive > joined && pendingAt > setActive && senderOnly > pendingAt
                     && off > senderOnly, "active (or its joiner), pending (its sender only), off (nobody) -- in order");
         Assert.DoesNotContain("HoldActive(h) || HoldPending(h) ? caller", head);
@@ -767,10 +856,12 @@ public sealed class PipePerProcessSourceTests
 
         // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(", "static void HandleSetDebugCamera()");
+        string ce = Between(mimic, "static void RecordCeChange(const std::string& hold) {", "\n}");
         int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
         int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
         Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
+        Assert.Contains("RecordCeChange(hold);", Between(mimic,
+            "static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {", "\n}"));
     }
 
     /// <summary>[DBGCAM-RELEASE-STALLED] An AI's camera release that timed out with the game thread stalled is owed,
@@ -889,6 +980,117 @@ public sealed class PipePerProcessSourceTests
 
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
         Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 1b. An invoke under a grant (`grant`, background clients only)
+    /// is checked against the function the grant names (`expect_func_full`, the resolved full name), its parameters
+    /// (Voll::InvokeParamIndirection under a grant, failing closed on a layout it cannot read) and a template, all
+    /// before anything is allocated or queued; every background invoke's parameters are checked for a latent call.
+    /// </summary>
+    [Fact]
+    public void InvokeFunction_UnderAGrant_ChecksTheFunctionItsParametersAndTheTemplate_BeforeAllocating()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_INVOKE_FUNCTION) {",
+            "if (cmd == Renge::CMD_");
+        int deny = body.IndexOf("Voll::InvokeRefusedForBackground(", StringComparison.Ordinal);
+        int capture = body.IndexOf("Ubel::CaptureParamLayout(ufuncAddr", StringComparison.Ordinal);
+        int rule = body.IndexOf("Voll::InvokeParamIndirection(", StringComparison.Ordinal);
+        int template_ = body.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
+        int blocker = body.IndexOf("Stark::IfFreeBlocker(conn->ownerKey)", StringComparison.Ordinal);
+        int alloc = body.IndexOf("strAllocs", StringComparison.Ordinal);
+        Assert.True(deny > 0 && capture > deny && rule > capture && template_ > rule && blocker > template_
+                    && alloc > blocker, "the deny list, the parameters, the template, then the conflict and the strings");
+        Assert.Contains("request.value(\"grant\", false)", body);
+        Assert.Contains("request.value(\"expect_func_full\"", body);
+        Assert.Matches(@"fi\.fullName\s*!=\s*expectFull", body[..blocker]);           // the grant's function, ordinally
+        Assert.Matches(@"underGrant\s*&&\s*nonStaticOnTemplate", body[..blocker]);     // refused, not warned, under one
+        Assert.Contains("FUNC_FLAG_UBERGRAPH", body[..blocker]);
+        Assert.Contains("layout.truncated", body[..blocker]);
+        Assert.Contains("Grimoire::INVOKE_REFUSED_UNDER_GRANT", body[..blocker]);
+        Assert.Contains("data[\"func_full\"]", body);
+        Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
+    }
+
+    /// <summary>[PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop notes what it reads
+    /// while g_initInProgress is up, logs it by the name the note shows, then dispatches it unconditionally, with nothing
+    /// in between that answers, refuses or skips it. Once per name per run is Voll::DuringInitNotes', pinned by behaviour
+    /// in dll_helpers_test; every raise of the flag, in any DLL source file, names its run with a fresh g_initRun. Reviews
+    /// wf_8f451d97-434 (A-PIN-WEAK) and wf_b0aa9098-dd5 (A-PIN-DISPATCH-GATE, A-PIN-SHOWN-UNUSED, A-PIN-RAISES-ONE-FILE)
+    /// each found a broken shape this pin let through.</summary>
+    [Fact]
+    public void ACommandDuringInit_IsNotedBeforeDispatch_AndNeverRefused()
+    {
+        string src = NoComments(DllSrc("Fern.cpp"));
+        const string dispatchStatement = "std::string response = DispatchCommand(conn, line);";
+        int loop = src.IndexOf("const std::string cmd = Voll::ExtractCmdName(line);", StringComparison.Ordinal);
+        int gate = src.IndexOf("if (g_initInProgress.load(", loop, StringComparison.Ordinal);
+        int dispatch = src.IndexOf(dispatchStatement, loop, StringComparison.Ordinal);
+        Assert.True(loop > 0 && gate > loop && dispatch > gate, "the read loop notes the command, then dispatches it");
+        // The dispatch is a statement of its own, so neither a condition nor a ternary can sit inside it.
+        Assert.Single(Regex.Matches(src, Regex.Escape(dispatchStatement)));
+        // One condition, the flag unnegated and the note's verdict taken as is; its body logs the name Shown() gives.
+        Assert.Matches(@"^if \(g_initInProgress\.load\(std::memory_order_acquire\)\s*&&\s*"
+                       + @"s_duringInit\.Note\(cmd, g_initRun\.load\(std::memory_order_relaxed\)\)\) \{\s*"
+                       + @"const std::string shown\(Voll::DuringInitNotes::Shown\(cmd\)\);\s*"
+                       + @"Sein::Info\(""PIPE:cmd"", ""PipeServer: %s arrived during an init or rescan apply -- offsets or "
+                       + @"pointers it read ""\s*""may not be final yet"", shown\.c_str\(\)\);\s*\}", src[gate..dispatch]);
+        // Nothing between the note and the end of the dispatch answers, refuses or skips the command, and the flag is
+        // read there once: in the note's own condition, never again to gate the dispatch.
+        string between = src[gate..(dispatch + dispatchStatement.Length)];
+        foreach (string refusal in new[] { "MakeError", "WriteLine(", "continue;", "break;", "return", "goto ", "throw" })
+            Assert.DoesNotContain(refusal, between);
+        Assert.Single(Regex.Matches(between, "g_initInProgress"));
+        // The dispatch at the note's own brace depth: an else-branch or any block around it would skip it on a condition
+        // the flag count cannot see. And one note in the file: a second would take each name's first note, and the gated
+        // one would never log (review wf_2d9f83d5-21b, R3-PIN-UNCONDITIONAL-DEPTH, R3-PIN-SECOND-NOTE).
+        string upToDispatch = src[gate..dispatch];
+        Assert.Equal(upToDispatch.Count(c => c == '{'), upToDispatch.Count(c => c == '}'));
+        Assert.Single(Regex.Matches(src, @"s_duringInit\.Note\("));
+        // Every raise of the flag starts a new run: in Frieren.cpp each one follows a g_initRun bump, and no other DLL
+        // source file raises it.
+        string dir = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"))!;
+        const string raise = @"g_initInProgress\s*(?:\.store\(\s*true|\.exchange\(\s*true|=\s*true)";
+        int raises = 0, raisesElsewhere = 0;
+        foreach (string path in Directory.GetFiles(dir).Where(p => p.EndsWith(".cpp") || p.EndsWith(".h")))
+        {
+            int n = Regex.Matches(NoComments(File.ReadAllText(path).Replace("\r\n", "\n")), raise).Count;
+            if (Path.GetFileName(path) == "Frieren.cpp") raises = n; else raisesElsewhere += n;
+        }
+        string fr = NoComments(DllSrc("Frieren.cpp"));
+        int named = Regex.Matches(fr, @"g_initRun\.fetch_add\(1, std::memory_order_relaxed\);\s*"
+                                      + @"g_initInProgress\.store\(true, std::memory_order_release\);").Count;
+        Assert.True(raises >= 2 && named == raises && raisesElsewhere == 0,
+            $"{named} of {raises} raises in Frieren.cpp name a new run; {raisesElsewhere} raise(s) elsewhere");
+    }
+
+    /// <summary>[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2. fly_set applies the preset first, the one setting that
+    /// can be refused, and a refused preset answers an error with nothing else changed -- it was discarded, and the reply
+    /// read as applied.</summary>
+    [Fact]
+    public void FlySet_ARefusedPreset_AnswersAnError_BeforeAnythingElseChanges()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_FLY_SET) {", "if (cmd == Renge::CMD_");
+        int preset = body.IndexOf("Dunste::SetPreset(", StringComparison.Ordinal);
+        int speed = body.IndexOf("Dunste::SetSpeed(", StringComparison.Ordinal);
+        int noclip = body.IndexOf("Dunste::SetNoclip(", StringComparison.Ordinal);
+        int enable = body.IndexOf("Dunste::SetEnabled(", StringComparison.Ordinal);
+        Assert.True(preset > 0 && preset < speed && preset < noclip && preset < enable,
+            "the preset is applied before speed, noclip and enable");
+        int error = body.IndexOf("Renge::MakeError(", preset, StringComparison.Ordinal);
+        Assert.True(error > preset && error < speed, "a refused preset answers an error before speed is set");
+        // "Nothing was changed" holds for the ledger too: the hold recorder reads `holds` as the command returns, and
+        // would name the refused caller as Fly's holder.
+        int clear = body.IndexOf("holds.clear();", preset, StringComparison.Ordinal);
+        Assert.True(clear > preset && clear < error, "the refused preset clears the holds it would record");
+    }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 2. get_object names the DLL's template verdict, which write_field
+    /// refuses a class default and an archetype by (Constants.McpMinDllBuildForFieldWrites).</summary>
+    [Fact]
+    public void GetObject_NamesTheTemplateVerdict()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_OBJECT) {", "if (cmd == Renge::CMD_");
+        Assert.Contains("data[\"template\"]   = Aura::TemplateKindWire(Aura::TemplateOf(addr).kind);", body);
     }
 
     /// <summary>A background client's refusals come before anything is allocated or queued, and the queue's conflict
@@ -1053,7 +1255,8 @@ public sealed class PipePerProcessSourceTests
     [Fact]
     public void TheShutdownFlagIsUpBeforeAnyJoin()
     {
-        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "void UE5_Shutdown(");
+        // UE5_Shutdown's body is ShutdownBody, shared with a later copy's take-over ([DUMPER-SECOND-COPY-AUTOSTART]).
+        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "static void ShutdownBody(");
         int latch = shutdown.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
         Assert.True(latch >= 0, "UE5_Shutdown no longer raises the shutdown flag");
         foreach (var later in new[] { "Mimic::StopThread(", "Schlacht::SetEnabled(", "Stark::Shutdown(", "s_pipeServer.Stop(" })

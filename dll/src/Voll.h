@@ -171,6 +171,50 @@ inline std::string ExtractCmdName(std::string_view line) {
     return name;
 }
 
+// ── What the pipe read while an init was publishing ─────────────────────────
+// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop dispatches what it reads while
+// an init or an apply_rescan holds g_initInProgress -- in proxy mode trigger_scan runs UE5_Init on a job thread while
+// the other connections serve -- so a command that walks may read offsets not yet measured, or pointers mid-publish.
+// Its answer is not refused; this decides which commands leave the trace a wrong answer from that window needs: each
+// name once per run. A run is named by the serial its producer raised the flag with (g_initRun, Frieren.cpp), so two
+// runs with no command read between them still log apart. Self-locking, as the connection threads call it
+// concurrently; pure, so dll_helpers_test pins it -- no test target compiles Fern.cpp.
+inline constexpr size_t kMaxDuringInitNames = 256;   // a run's ceiling: the names come from the client
+
+class DuringInitNotes {
+public:
+    // The name a line logs under: ExtractCmdName gives "" for a line with no readable "cmd".
+    static std::string_view Shown(std::string_view name) {
+        return name.empty() ? std::string_view("(unparsed)") : name;
+    }
+
+    // run: the serial of the run in progress, 0 when none is. True when this call is the one to log `name`.
+    bool Note(std::string_view name, uint32_t run) {
+        if (run == 0) return false;
+        const std::string_view shown = Shown(name);
+        std::lock_guard<std::mutex> g(mu_);
+        // A serial older than the list's is a connection that read it before the next run began and reached here
+        // after. Its command is dispatched during the newer run, so it is noted in that run's list -- clearing the list
+        // for it would log the newer run's names twice, and dropping it would leave no trace of the command. Compared
+        // as serial numbers, so it holds across the counter's wrap.
+        if (static_cast<int32_t>(run - run_) < 0) run = run_;
+        if (run != run_) {
+            seen_.clear();
+            run_ = run;
+        }
+        for (const auto& s : seen_)
+            if (s == shown) return false;
+        if (seen_.size() >= kMaxDuringInitNames) return false;
+        seen_.emplace_back(shown);
+        return true;
+    }
+
+private:
+    std::mutex mu_;
+    uint32_t run_ = 0;
+    std::vector<std::string> seen_;
+};
+
 // ── Who holds the pipe's connections ────────────────────────────────────────
 // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is ever disconnected for being
 // idle, but who holds the connections can be seen -- the pipe_clients command, and, when every connection is taken
@@ -350,6 +394,15 @@ constexpr OwedRelease OwedCameraReleaseSent(int32_t state) noexcept {
     return state == kOwedOffQueued ? OwedRelease::Wait : OwedRelease::Abandon;
 }
 
+// Whether a UFunction name is one of the debug camera's own, compared case-insensitively as the DLL's function lookup
+// falls back to.
+inline bool IsDebugCameraFunction(const std::string& funcName) {
+    std::string n;
+    n.reserve(funcName.size());
+    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    return n == "toggledebugcamera" || n == "enabledebugcamera" || n == "disabledebugcamera";
+}
+
 // The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.
 // `reset_all_fields` changes every force-field job, which the caller lists (`forceFieldJobs`, "<class>::<field>").
 inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlohmann::json& request,
@@ -363,6 +416,14 @@ inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlo
     if (cmd == "set_gravity_direction" || cmd == "reset_gravity_direction") return {Grimoire::HOLD_GRAVITY_DIRECTION};
     if (cmd == "fly_set") return {Grimoire::HOLD_FLY};
     if (cmd == "set_debug_camera") return {Grimoire::HOLD_DEBUG_CAMERA};
+    // [MCP-WRITE-GRANTS-2026-11-14] The UI's Console panel toggles the camera through invoke_function: the camera that
+    // call turns on is the caller's, as set_debug_camera's is. get_holds reports the camera's real state, so an owner
+    // left from before would be named for a camera someone else turned on. A toggle in the game's own console still
+    // reaches no ledger. A background client's invoke of these never runs (InvokeRefusedForBackground) and names no
+    // hold: as a hold change, its if_free check would answer first, without that refusal's pointer to
+    // write_debug_camera.
+    if (cmd == "invoke_function" && !request.value("background", false) && IsDebugCameraFunction(str("func_name")))
+        return {Grimoire::HOLD_DEBUG_CAMERA};
     // A knob or a lane the handler would refuse names no hold: a name made up by a request would grow the ledger.
     if (cmd == "set_movement_multiplier" || cmd == "reset_movement") {
         const std::string knob = str("knob");
@@ -405,16 +466,34 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 
 // ── What a background client may not invoke ─────────────────────────────────
 // [D2-3-INVOKE] The maintainer's list (2026-11-11) for the MCP server's invoke_function. Empty when the call may go
-// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag: a call that can leave the
-// machine. The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
+// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag (FUNC_Net marks replication RPCs
+// only). The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
 // a heuristic, and a game function that does the same under another name is not caught. The UI and CE are never asked.
-inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags) {
+// [INVOKE-DENY-INDIRECTION] (2026-11-16) By name too: the families that reach a refused effect INDIRECTLY (a timer that
+// calls any function by name, a setter that writes any property by name, a Blueprint graph entered at a free entry
+// point), RemovePlayer, and the online-service writes that leave the machine without being RPCs (achievements,
+// leaderboards, in-app purchases; names from UE's OnlineSubsystemUtils). A per-function grant must never reach these.
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's scan of every UFUNCTION in the UE 4.18-5.8 sources added the names the list
+// missed, and an async action's Activate by its resolved `fullName` (Ubel::GetFullName's form): it does the
+// online-service write, session join or save its factory set up, while UActorComponent::Activate shares its name.
+inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags,
+                                              const std::string& fullName = {}) {
     constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
     if (functionFlags & kFuncNet)
         return "is a network RPC: it can reach a server outside this machine";
-    std::string n;
-    n.reserve(funcName.size());
-    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    auto lower = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) out.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+        return out;
+    };
+    const std::string full = lower(fullName);
+    // 4.27+ derives every online proxy and the async save from BlueprintAsyncActionBase; 4.18-4.23's online proxies
+    // declare their own Activate. A native override has no UFunction of its own, so these are the only two.
+    if (full == "//script/engine/blueprintasyncactionbase.activate"
+        || full == "//script/engine/onlineblueprintcallproxybase.activate")
+        return "starts an async action, which can write to the online service, join a session or write a save slot";
+    const std::string n = lower(funcName);
     struct Rule { const char* name; const char* why; };
     static constexpr Rule kRules[] = {
         {"toggledebugcamera", "toggles the debug camera: use write_debug_camera, which reads the state first and "
@@ -450,10 +529,101 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
         {"destroyallpawnsexcepttarget", "destroys pawns, which cannot be undone"},
         {"savegametoslot", "writes a save slot, which can overwrite the user's save"},
         {"asyncsavegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"savegametoslotforlocalplayer", "writes a save slot, which can overwrite the user's save"},
+        {"asyncsavegametoslotforlocalplayer", "writes a save slot, which can overwrite the user's save"},
         {"deletegameinslot", "deletes a save slot, which cannot be undone"},
+        {"removeplayer", "removes a player, and with bDestroyPawn destroys its pawn"},
+        {"setcollisionprofilenameproperty", "writes a property by name"},
+        {"edittextpropertysourcestring", "writes a property by name"},
+        {"addinterpfloat", "writes a property by name on every tick of a timeline"},
+        {"addinterpvector", "writes a property by name on every tick of a timeline"},
+        {"addinterplinearcolor", "writes a property by name on every tick of a timeline"},
+        {"remoteevent", "calls any function by name on the level's scripts, which reaches functions this list refuses"},
+        {"setbind", "binds a key to a console command, which can run anything"},
+        {"loadstreamlevel", "loads a level, which can invalidate every address the user is looking at"},
+        {"loadstreamlevelbysoftobjectptr", "loads a level, which can invalidate every address the user is looking at"},
+        {"unloadstreamlevel", "unloads a level, which can invalidate every address the user is looking at"},
+        {"unloadstreamlevelbysoftobjectptr",
+         "unloads a level, which can invalidate every address the user is looking at"},
+        {"streamlevelin", "loads a level, which can invalidate every address the user is looking at"},
+        {"streamlevelout", "unloads a level, which can invalidate every address the user is looking at"},
+        {"onlyloadlevel", "loads a level, which can invalidate every address the user is looking at"},
+        {"setshouldbeloaded", "loads or unloads a level, which can invalidate every address the user is looking at"},
+        {"setisrequestingunloadandremoval",
+         "unloads a level, which can invalidate every address the user is looking at"},
+        {"loadlevelinstance", "loads a level, which can invalidate every address the user is looking at"},
+        {"loadlevelinstancebysoftobjectptr",
+         "loads a level, which can invalidate every address the user is looking at"},
+        {"unloadlevelinstance", "unloads a level, which can invalidate every address the user is looking at"},
+        {"writeprogress", "writes achievement progress to the online service, outside the game"},
+        {"writeachievementprogress", "writes achievement progress to the online service, outside the game"},
+        {"writeleaderboardinteger", "writes a leaderboard score to the online service, outside the game"},
+        {"createproxyobjectforflush", "flushes leaderboard writes to the online service, outside the game"},
     };
     for (const Rule& r : kRules)
         if (n == r.name) return r.why;
+    // Families: a name that starts with `prefix` and ends with `suffix` (either may be empty).
+    struct Family { const char* prefix; const char* suffix; const char* why; };
+    static constexpr Family kFamilies[] = {
+        {"k2_settimer", "", "schedules a call by name or event, which reaches functions this list refuses"},
+        {"set", "propertybyname", "writes any property by name, object pointers included"},
+        {"executeubergraph", "", "enters a Blueprint's event graph at whatever entry point it is given"},
+        {"createproxyobjectforinapppurchase", "", "talks to the platform's in-app purchase service, outside the game"},
+    };
+    for (const Family& f : kFamilies) {
+        const std::string_view p(f.prefix), s(f.suffix);
+        if (n.size() >= p.size() + s.size() && n.compare(0, p.size(), p) == 0
+            && n.compare(n.size() - s.size(), s.size(), s) == 0)
+            return f.why;
+    }
+    return {};
+}
+
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. What a parameter list says about an invoke that reaches other functions or
+// properties by name, which a name list cannot see. `Field` is Ubel::ParamField's shape (name, typeName, structType,
+// objClass, and `sub`, a struct's members). Empty when it may go ahead.
+// - Always refused: a latent function. Its LatentActionInfo names the function the engine calls on CallbackTarget when
+//   it finishes (LatentActionManager: FindFunction(ExecutionFunction), then ProcessEvent): any function, refused ones
+//   included, behind numbers a prompt cannot show.
+// - Under a grant (`underGrant`), whose prompt shows no later call's arguments, also any parameter that hands the engine
+//   a function, an event or a property: a delegate, a property path, a UFunction object, or a string, a name or a
+//   struct (an FGameplayTag wraps a name) whose parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
+//   pass, while a few harmless ones (an animation's TransitionEvent) are refused under a grant and stay per call.
+// FUNC_UbergraphFunction: a Blueprint's event graph, entered at any offset. Defined from 4.23; the bit is unused
+// before, so testing it is safe on every engine.
+inline constexpr uint32_t FUNC_FLAG_UBERGRAPH = 0x00008000;
+
+template <typename Field>
+inline std::string InvokeParamIndirection(const std::vector<Field>& params, bool underGrant) {
+    static constexpr const char* kNameLike[] = {"func", "event", "property", "command", "delegate", "callback"};
+    for (const Field& f : params) {
+        const std::string& t = f.typeName;
+        if (t == "StructProperty" && f.structType == "LatentActionInfo")
+            return "is latent: its LatentActionInfo names the function the engine calls when it finishes, which can be "
+                   "any function";
+        if (underGrant) {
+            if (t == "DelegateProperty" || t == "MulticastDelegateProperty" || t == "MulticastInlineDelegateProperty"
+                || t == "MulticastSparseDelegateProperty")
+                return "takes a delegate (" + f.name + "), which calls whatever function it is bound to";
+            if (t == "FieldPathProperty")
+                return "takes a property path (" + f.name + "), which reaches any property";
+            if (f.objClass == "Function")
+                return "takes a UFunction (" + f.name + "), which it can call";
+            if (t == "NameProperty" || t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty"
+                || t == "TextProperty" || t == "StructProperty") {
+                std::string n;
+                n.reserve(f.name.size());
+                for (char c : f.name) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+                for (const char* token : kNameLike)
+                    if (n.find(token) != std::string::npos)
+                        return "takes a name (" + f.name + ") that says what to call or write";
+            }
+        }
+        if (!f.sub.empty()) {
+            std::string why = InvokeParamIndirection(f.sub, underGrant);
+            if (!why.empty()) return why;
+        }
+    }
     return {};
 }
 

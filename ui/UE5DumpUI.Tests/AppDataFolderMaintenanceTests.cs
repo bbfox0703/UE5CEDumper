@@ -236,6 +236,7 @@ public class AppDataFolderMaintenanceTests : IDisposable
         WriteAt(_root, "ui-options.json");
         WriteAt(_root, "dll-path.txt");
         WriteAt(_root, "experimental.json");
+        WriteAt(_root, "ai-writes.json");
         WriteAt(_root, "teleport-coords.Game.json");
         WriteAt(_root, "snapshots-backup.db");     // ours by eye, not by the prefix rule
         WriteAt(_root, "bookmarks.AAA.json");      // another family — its own pass owns it
@@ -247,7 +248,7 @@ public class AppDataFolderMaintenanceTests : IDisposable
         Assert.Equal(
             new[]
             {
-                "bookmarks.AAA.json", "dll-path.txt", "experimental.json",
+                "ai-writes.json", "bookmarks.AAA.json", "dll-path.txt", "experimental.json",
                 "snapshots-backup.db", "teleport-coords.Game.json", "ui-options.json",
             },
             NamesIn(_root));

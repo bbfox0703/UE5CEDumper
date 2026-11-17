@@ -581,6 +581,16 @@
     <sys:String x:Key="str.AobMaker.Disasm.RecordOnly">Added {0} to the CE table @ {1}, but CE did not open its disassembler there: find the record and browse to it</sys:String>
     <sys:String x:Key="str.AobMaker.Disasm.Refused">Cheat Engine refused the push for {0}: nothing was added</sys:String>
     <sys:String x:Key="str.FunctionProps.AsmInCe">&#x2699; Disassemble in CE</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSitesHeader">Write sites</sys:String>
+    <sys:String x:Key="str.Tip.FunctionProps.WriteSitesHeader">The native instructions that write this field, found in the function's machine code: the first, and how many more. A field written in more places than the DLL keeps ends with '…'. Empty for a read and for Blueprint bytecode.</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSiteInCe">&#x2699; Write site in CE</sys:String>
+    <sys:String x:Key="str.Tip.FunctionProps.WriteSiteInCe">Open the selected field's first write site in Cheat Engine's disassembler (via the AOBMaker CE plugin): the instruction that writes it, where an AOB or a code injection starts. Needs a selected row with a write site.</sys:String>
+    <sys:String x:Key="str.FunctionProps.CopyWriteSites">Copy write sites</sys:String>
+    <sys:String x:Key="str.Tip.FunctionProps.CopyWriteSites">Copy the selected field's write-site addresses, one per line.</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSitesCopied">Copied {0} write site(s) of {1}</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSiteViaThis">{0}  through this object</sys:String>
+    <sys:String x:Key="str.FunctionProps.WriteSiteOtherBase">{0}  through another pointer -- not proven to write this object's field</sys:String>
+    <sys:String x:Key="str.FunctionProps.SharedOffsetNote">{0} fields share this byte (packed bools): a write here may be to any of them.</sys:String>
     <sys:String x:Key="str.Tip.AobMaker.FuncAsm">Open this function's native code in Cheat Engine's disassembler (via the AOBMaker CE plugin), and add it to the table as a record you can right-click. From there, CE's Ctrl+Shift+A sends the selection to AOBMaker.</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Pending">Asking AOBMaker.UI for a unique AOB for '{0}'…</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.NotRunning">AOBMaker.UI is not running: '{0}' needs the AOBMaker app open, which makes the AOB (Cheat Engine alone is not enough)</sys:String>
@@ -1236,6 +1246,7 @@
     <sys:String x:Key="str.CT.Status.Unloaded">{0:N0} of {1:N0} functions were no longer loaded when the trace was read, and are named from their first call ({2} of the calls).</sys:String>
     <sys:String x:Key="str.CT.Status.Unnamed">{0} of the calls have no name ({1:N0} of {2:N0} functions).</sys:String>
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
+    <sys:String x:Key="str.CT.Status.Dropped">{0:N0} record(s) inside the kept part were left out, written out of turn as the buffer wrapped: {1:N0} call start(s), whose calls show under their caller, and {2:N0} other record(s), returns or call starts the trace cannot tell apart: a call can then show as not returned, or be missing.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
     <sys:String x:Key="str.CT.Status.ReadingSnapshots">Reading the parameter snapshots...</sys:String>
@@ -1633,6 +1644,27 @@
     <sys:String x:Key="str.TP.PtrGameEngine">Get GameEngine</sys:String>
     <sys:String x:Key="str.Tip.TP.PtrGWorld">Add a CE record that resolves the stable &amp;GWorld pointer slot via the DLL and registers it directly as the symbol UE_GWorld, so [UE_GWorld]+offset dereferences the slot to the CURRENT UWorld and chains into it — it auto-follows level transitions (no snapshot). Enable = register, disable = unregister (nothing to free — the slot is a game address). Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR), so it works where executeCodeEx can't read export returns.</sys:String>
     <sys:String x:Key="str.Tip.TP.PtrGameEngine">Add a CE record that resolves the live UEngine* (GameEngine instance) via the DLL and registers it as the symbol UE_GameEngine, so [UE_GameEngine]+offset chains straight into the engine. Resolved by walking GObjects — no static GEngine slot needed. Enable = register, disable = unregister + free. Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR).</sys:String>
+    <sys:String x:Key="str.TP.BlockAi">Block AI writes</sys:String>
+    <sys:String x:Key="str.Tip.TP.BlockAi">While ticked, every AI session using UE5DumpUI's MCP server (UE5DumpUI.exe --mcp) is refused every change to the game, and each tick ends every grant an AI was given. An AI can still turn off or reset what it holds. To take back what an AI holds, tick this first, then use the card's OFF or Reset.</sys:String>
+    <sys:String x:Key="str.TP.BlockAiOnNote">AI writes are blocked: AI sessions can read and clean up, but change nothing until you untick this.</sys:String>
+    <!-- [MCP-WRITE-GRANTS-2026-11-14] A gameplay card's holder label: who other than this window holds the
+         feature (get_holds). {0} = the holder's process id. -->
+    <sys:String x:Key="str.Tip.TP.HolderChip">Someone other than this window holds this feature. This card's OFF or Reset takes it over and ends it. To keep an AI session from turning it back on, tick Block AI writes at the top of this tab first.</sys:String>
+    <sys:String x:Key="str.TP.HolderAi">Held by an AI session (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderAiNoPid">Held by an AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderCe">Held by Cheat Engine</sys:String>
+    <sys:String x:Key="str.TP.HolderOther">Held by another program (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderOtherNoPid">Held by another program</sys:String>
+    <sys:String x:Key="str.TP.HolderExited">Held by a program that has exited (pid {0})</sys:String>
+    <sys:String x:Key="str.TP.HolderUnrecorded">Held by a program that recorded no owner</sys:String>
+    <!-- An ended AI session's debug camera, whose OFF waits for the game thread: nobody holds it any more. -->
+    <sys:String x:Key="str.TP.HolderReleaseOwed">Turning off: the AI session that held it has ended</sys:String>
+    <!-- See-through's claims name nobody. {0} = how many claims besides this window's and Cheat Engine's. -->
+    <sys:String x:Key="str.TP.HolderStOne">Held by another program or AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderStMany">Held by {0} other programs or AI sessions</sys:String>
+    <sys:String x:Key="str.TP.HolderStCeOne">Held by Cheat Engine and another program or AI session</sys:String>
+    <sys:String x:Key="str.TP.HolderStCeMany">Held by Cheat Engine and {0} other programs or AI sessions</sys:String>
+    <sys:String x:Key="str.TP.BlockAiSaveFailed">Block AI writes could not be saved, so AI sessions do not see the change and the box shows the switch as it was. Try again.</sys:String>
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
     <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort: the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
     <sys:String x:Key="str.Tip.TP.Refresh">Read the current pawn's world location and control rotation (DLL resolves the local PlayerController → Pawn → RootComponent via reflection).</sys:String>

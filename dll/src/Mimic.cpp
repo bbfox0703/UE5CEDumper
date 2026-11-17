@@ -29,6 +29,7 @@
 #include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 #include "Voll.h"      // Voll::Holds -- who holds what (Stage D2-1)
+#include "Land.h"      // Land::MirroredState / kMaxCopies -- an earlier copy's mailbox served here
 
 #include <Windows.h>
 #include <timeapi.h>   // MMRESULT / TIMERR_NOERROR (types only — see WinmmTimer below)
@@ -68,8 +69,11 @@ extern std::atomic<bool> g_initInProgress;   // [A3-MIMIC-INIT-FASTPATH] Frieren
 extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
 
 // Statically initialised: a script must be able to read this the instant the DLL
-// is mapped, before StartThread and before any init has run. Nothing writes it at
-// runtime — it is a constant published through the export table.
+// is mapped, before StartThread and before any init has run. This copy never writes it.
+// [DUMPER-SECOND-COPY-AUTOSTART] A LATER copy of the dumper does, once: it zeroes the magic when
+// it took this process over and cannot serve this mailbox (Land::TakeMailbox), so a script
+// refuses at its contract check -- which is why this stays writable data, never const. A copy
+// whose magic was zeroed is still recognised by DUMPER_LEGACY_IDENTITY_EXPORT.
 // Its name and magic are also how one build of the dumper recognises another in the same
 // process (Grimoire::DUMPER_IDENTITY_EXPORT, [AOB-SKIP-OWN-DLL]): rename it and that breaks too.
 extern "C" __declspec(dllexport) Mimic::MailboxContract g_mailboxContract = {
@@ -105,11 +109,29 @@ static constexpr UINT kPollIntervalMs = 1;
 // CompoundOpGuard's destructor.
 static int s_compoundDepth = 0;
 
+// [DUMPER-SECOND-COPY-AUTOSTART] The mailbox the command being handled came from. The poller serves this copy's own
+// g_invokeMailbox and, once this copy has taken over from an earlier copy of the dumper in the process (Land), that
+// copy's mailbox too: a CE script that resolved the earlier copy's export writes there. Handlers read and answer through
+// Box(); only the poller sets it, and every handler runs on the poller's thread. Per thread: a copy can run two
+// pollers for a while -- a stop that gave up waiting on a handler, then a restart -- and each must answer in the mailbox
+// its own command came from (review wf_2875eae9-da5, R3-SBOX-SHARED-POLLERS).
+static thread_local MailboxData* s_box = &g_invokeMailbox;
+static MailboxData& Box() { return *s_box; }
+
+// Earlier copies' mailboxes this copy serves (AdoptMailbox). A slot once set is never cleared: the earlier copy pins its
+// image, so its mailbox stays mapped for the life of the process.
+static std::atomic<MailboxData*> s_adopted[Land::kMaxCopies] = {};
+// Whether the copy that owns each adopted mailbox forwards its exports to this one (Land::MirroredState).
+static std::atomic<bool> s_adoptedForwards[Land::kMaxCopies] = {};
+
 // Forward declarations
 static void HandleFindInstance();
 static void HandleFindFunction();
 static void HandleInvoke();
+static void HandleInvokeHeld();
 static void HandleInvokeByName();
+template <typename Change>
+static bool TryChangeHoldAsCe(const std::string& hold, Change&& change);
 static void HandleListFunctions();
 static void HandleListInstances();
 static void HandleSetDebugCamera();
@@ -140,7 +162,7 @@ static constexpr int32_t MB_ERR_HANDLER_THREW = -11;
 // written. Catches all return paths (success, early error, exception).
 //
 // ⚠ "any return path" includes UNWINDING, and that path needed its own answer
-// (audit #5 MB3, sibling of the per-iteration guard in PollingThreadBody).
+// (audit #5 MB3, sibling of the per-command guard in ServeOne).
 // `result` holds whatever the last COMPLETED sub-step wrote, and the sub-steps
 // only write it on failure — HandleInvokeByName returns early when it is
 // non-zero, so at the moment a later sub-step throws `result` is normally 0.
@@ -155,14 +177,14 @@ struct CompoundOpGuard {
         --s_compoundDepth;
         if (s_compoundDepth == 0) {
             if (std::uncaught_exceptions() > uncaughtAtEntry) {
-                g_invokeMailbox.result = MB_ERR_HANDLER_THREW;
-                strncpy(g_invokeMailbox.errorMsg,
+                Box().result = MB_ERR_HANDLER_THREW;
+                strncpy(Box().errorMsg,
                         "command handler threw — the operation did NOT complete",
-                        sizeof(g_invokeMailbox.errorMsg) - 1);
-                g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+                        sizeof(Box().errorMsg) - 1);
+                Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
             }
-            g_invokeMailbox.status = STATUS_DONE;
-            g_invokeMailbox.cmd    = CMD_IDLE;
+            Box().status = STATUS_DONE;
+            Box().cmd    = CMD_IDLE;
         }
     }
 
@@ -246,6 +268,179 @@ void EndTimePeriod(UINT ms) {
 
 static void PollingThreadBody();
 
+// One pass over one mailbox: the command waiting there, if any, run and answered in that mailbox. `warnedThrow` is the
+// thread's one WARN for a throwing handler (Routine::RunTickGuarded).
+static void ServeOne(MailboxData* box, bool& warnedThrow) {
+    s_box = box;
+    // [DUMPER-SECOND-COPY-AUTOSTART] Another poller is mid-command on this mailbox -- the earlier copy's, still in a
+    // handler after its stop gave up waiting for it (review R2-STOPTHREAD-TIMEOUT-REPLAY). It answers that command
+    // itself; running it here too would run it twice.
+    const int32_t seen = Box().status;
+    if (seen == STATUS_PROCESSING) return;
+    int32_t cmd = Box().cmd;
+    // ...or finishing one: its SetDone writes DONE and then cmd = IDLE, and a pass between the two stores would run that
+    // command again. A sender clears status before it writes cmd, so DONE beside a live cmd is that window or a sender
+    // that did not; look again once the other poller has had its moment (R3-PROCESSING-SKIP-DONE-WINDOW).
+    if (cmd != CMD_IDLE && seen == STATUS_DONE) {
+        Sleep(1);
+        if (Box().cmd == CMD_IDLE) return;
+    }
+
+    if (cmd != CMD_IDLE) {
+        // Mark as processing
+        Box().status = STATUS_PROCESSING;
+
+        // Clear the previous command's error text BEFORE dispatching this one.
+        // SetError writes errorMsg; SetDone writes only `result` and never touches
+        // it -- so without this a SUCCESSFUL command inherited the last failure's
+        // message, and a caller reading errorMsg without checking `result` first saw
+        // a stale error on a command that worked. Measured 2026-08-23: after a handler
+        // threw, `GWORLD result=0` still carried "command handler threw ...".
+        // (MBERRSTALE-2026-08-23)
+        //
+        // Cleared HERE, not after the handler: a post-clear would wipe the message a
+        // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
+        // success and populated on failure -- the only consistent pairing.
+        Box().errorMsg[0] = '\0';
+        // [INVOKE-NONSTATIC-ON-CDO] Same reasoning for the output flags (contract 7): an INVOKE_BY_NAME whose
+        // lookup fails never reaches HandleInvoke, and must not carry the previous invoke's warning.
+        Box().cmdOutFlags = 0;
+
+        LOG_INFO("Mailbox: received cmd=%d", cmd);
+
+        // The state B4's immunity exists for is otherwise invisible: a UI client
+        // that died mid-command leaves the per-command cancel latched forever in a
+        // CE-only session, and the old code answered every lookup with an empty set
+        // while reporting scanned=<full pool>. Log the FIRST command that runs under
+        // a latched cancel — once per latch, so the whole session costs one line.
+        {
+            static bool s_loggedCancelLatch = false;
+            const bool latched = Tot::g_perCommand.load(std::memory_order_relaxed);
+            if (latched && !s_loggedCancelLatch) {
+                s_loggedCancelLatch = true;
+                LOG_WARN("Mailbox: cmd=%d runs while a pipe client's per-command cancel is "
+                         "latched — this thread is cancel-immune, so lookups still scan (B4)",
+                         cmd);
+            } else if (!latched) {
+                s_loggedCancelLatch = false;
+            }
+        }
+
+        // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
+        //
+        // Skipped entirely for the commands CommandRequiresInit() exempts —
+        // CMD_FOREGROUND and CMD_OFFSETS_VERDICT, for two different reasons.
+        //
+        // CMD_FOREGROUND: its handler is pure Win32 and the PIPE path services it
+        // with no init gate at all. Gating it made the CE-Lua Keep-Foreground
+        // toggle fail with -10 on any game whose AOB scan fails, and the generated
+        // script renders that as "hook error -10", naming MinHook — a subsystem the
+        // command never even reached. The exemption also skips the auto-init
+        // ATTEMPT, so the toggle no longer pays for a whole-image sweep it does not
+        // need. (audit #5 MB2)
+        //
+        // CMD_OFFSETS_VERDICT: its answer IS the init state — it reports whether the
+        // offsets were measured, and "no probe has run" is one of the answers. Gating
+        // it would return -10 in exactly the case the caller asked about, and
+        // auto-init would run a whole-image sweep to answer a question about whether
+        // that sweep has happened. ([W5-OFFSETS-MAILBOX]; Mimic.h carries the rule,
+        // and this comment is checked against it by a source pin — [A1-REVIEW6-PINS])
+        if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
+            // Init failed — these commands all walk UE reflection.
+            if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {
+                SetError(-10, "DLL not initialized (GObjects/GNames not found)");
+                return;
+            }
+            // FIND_INSTANCE/FIND_FUNCTION also need init
+            SetError(-10, "DLL not initialized");
+            return;
+        }
+
+        // ---- audit #5 MB3: guard the DISPATCH, not the whole thread ----
+        //
+        // PollingThreadProc's Routine::RunThreadGuarded is the outer net that
+        // stops a throw reaching a frame with no handler, and it stays. But it
+        // was ALSO the only guard, so one throwing handler unwound straight out
+        // of this loop and the CE mailbox was dead for the rest of the session —
+        // recoverable only by a CE Disable→Enable the user has no reason to try,
+        // since every subsequent script just times out.
+        //
+        // This is now the per-iteration form the two siblings already use:
+        // Routine::ReassertLoop guards per TICK, Stark guards per PE CALL. One
+        // bad command loses that command, not the mailbox.
+        //
+        // `threw` is set false by the lambda's own last statement rather than by
+        // a catch, so it stays true on ANY escape, including one the compiler
+        // routes around a `break`.
+        bool threw = true;
+        Routine::RunTickGuarded("Mailbox", warnedThrow, [&] {
+        switch (cmd) {
+        case CMD_FIND_INSTANCE:
+            HandleFindInstance();
+            break;
+        case CMD_FIND_FUNCTION:
+            HandleFindFunction();
+            break;
+        case CMD_INVOKE:
+            HandleInvokeHeld();
+            break;
+        case CMD_INVOKE_BY_NAME:
+            HandleInvokeByName();
+            break;
+        case CMD_LIST_FUNCTIONS:
+            HandleListFunctions();
+            break;
+        case CMD_LIST_INSTANCES:
+            HandleListInstances();
+            break;
+        case CMD_SET_DEBUG_CAMERA:
+            HandleSetDebugCamera();
+            break;
+        case CMD_TELEPORT:
+            HandleTeleport();
+            break;
+        case CMD_PROTECT:
+            HandleProtect();
+            break;
+        case CMD_MOVEMENT:
+            HandleMovement();
+            break;
+        case CMD_FLY:
+            HandleFly();
+            break;
+        case CMD_FOREGROUND:
+            HandleForeground();
+            break;
+        case CMD_QUERY_PTR:
+            HandleQueryPtr();
+            break;
+        case CMD_SEETHROUGH:
+            HandleSeeThrough();
+            break;
+        case CMD_TIME:
+            HandleTime();
+            break;
+        case CMD_OFFSETS_VERDICT:
+            HandleOffsetsVerdict();
+            break;
+        default:
+            SetError(-1, "Unknown command");
+            break;
+        }
+        threw = false;
+        });
+
+        // Publish a definite failure rather than leaving status=PROCESSING for
+        // the script to time out on. CompoundOpGuard has already run for the one
+        // compound handler and written the same code; SetError here is what
+        // covers the other fourteen, which have no guard at all.
+        if (threw) {
+            SetError(MB_ERR_HANDLER_THREW,
+                     "command handler threw — the operation did NOT complete");
+        }
+    }
+}
+
 // Guarded thread entry. The poller resolves names, walks reflection and builds result
 // buffers straight out of a live game, so it allocates constantly — and it is a raw
 // CreateThread proc, where a throw is std::terminate. (B14)
@@ -299,162 +494,18 @@ static void PollingThreadBody() {
     bool warnedThrow = false;
 
     while (s_running.load(std::memory_order_acquire)) {
-        int32_t cmd = g_invokeMailbox.cmd;
-
-        if (cmd != CMD_IDLE) {
-            // Mark as processing
-            g_invokeMailbox.status = STATUS_PROCESSING;
-
-            // Clear the previous command's error text BEFORE dispatching this one.
-            // SetError writes errorMsg; SetDone writes only `result` and never touches
-            // it -- so without this a SUCCESSFUL command inherited the last failure's
-            // message, and a caller reading errorMsg without checking `result` first saw
-            // a stale error on a command that worked. Measured 2026-08-23: after a handler
-            // threw, `GWORLD result=0` still carried "command handler threw ...".
-            // (MBERRSTALE-2026-08-23)
-            //
-            // Cleared HERE, not after the handler: a post-clear would wipe the message a
-            // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
-            // success and populated on failure -- the only consistent pairing.
-            g_invokeMailbox.errorMsg[0] = '\0';
-            // [INVOKE-NONSTATIC-ON-CDO] Same reasoning for the output flags (contract 7): an INVOKE_BY_NAME whose
-            // lookup fails never reaches HandleInvoke, and must not carry the previous invoke's warning.
-            g_invokeMailbox.cmdOutFlags = 0;
-
-            LOG_INFO("Mailbox: received cmd=%d", cmd);
-
-            // The state B4's immunity exists for is otherwise invisible: a UI client
-            // that died mid-command leaves the per-command cancel latched forever in a
-            // CE-only session, and the old code answered every lookup with an empty set
-            // while reporting scanned=<full pool>. Log the FIRST command that runs under
-            // a latched cancel — once per latch, so the whole session costs one line.
-            {
-                static bool s_loggedCancelLatch = false;
-                const bool latched = Tot::g_perCommand.load(std::memory_order_relaxed);
-                if (latched && !s_loggedCancelLatch) {
-                    s_loggedCancelLatch = true;
-                    LOG_WARN("Mailbox: cmd=%d runs while a pipe client's per-command cancel is "
-                             "latched — this thread is cancel-immune, so lookups still scan (B4)",
-                             cmd);
-                } else if (!latched) {
-                    s_loggedCancelLatch = false;
-                }
-            }
-
-            // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
-            //
-            // Skipped entirely for the commands CommandRequiresInit() exempts —
-            // CMD_FOREGROUND and CMD_OFFSETS_VERDICT, for two different reasons.
-            //
-            // CMD_FOREGROUND: its handler is pure Win32 and the PIPE path services it
-            // with no init gate at all. Gating it made the CE-Lua Keep-Foreground
-            // toggle fail with -10 on any game whose AOB scan fails, and the generated
-            // script renders that as "hook error -10", naming MinHook — a subsystem the
-            // command never even reached. The exemption also skips the auto-init
-            // ATTEMPT, so the toggle no longer pays for a whole-image sweep it does not
-            // need. (audit #5 MB2)
-            //
-            // CMD_OFFSETS_VERDICT: its answer IS the init state — it reports whether the
-            // offsets were measured, and "no probe has run" is one of the answers. Gating
-            // it would return -10 in exactly the case the caller asked about, and
-            // auto-init would run a whole-image sweep to answer a question about whether
-            // that sweep has happened. ([W5-OFFSETS-MAILBOX]; Mimic.h carries the rule,
-            // and this comment is checked against it by a source pin — [A1-REVIEW6-PINS])
-            if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
-                // Init failed — these commands all walk UE reflection.
-                if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {
-                    SetError(-10, "DLL not initialized (GObjects/GNames not found)");
-                    continue;
-                }
-                // FIND_INSTANCE/FIND_FUNCTION also need init
-                SetError(-10, "DLL not initialized");
-                continue;
-            }
-
-            // ---- audit #5 MB3: guard the DISPATCH, not the whole thread ----
-            //
-            // PollingThreadProc's Routine::RunThreadGuarded is the outer net that
-            // stops a throw reaching a frame with no handler, and it stays. But it
-            // was ALSO the only guard, so one throwing handler unwound straight out
-            // of this loop and the CE mailbox was dead for the rest of the session —
-            // recoverable only by a CE Disable→Enable the user has no reason to try,
-            // since every subsequent script just times out.
-            //
-            // This is now the per-iteration form the two siblings already use:
-            // Routine::ReassertLoop guards per TICK, Stark guards per PE CALL. One
-            // bad command loses that command, not the mailbox.
-            //
-            // `threw` is set false by the lambda's own last statement rather than by
-            // a catch, so it stays true on ANY escape, including one the compiler
-            // routes around a `break`.
-            bool threw = true;
-            Routine::RunTickGuarded("Mailbox", warnedThrow, [&] {
-            switch (cmd) {
-            case CMD_FIND_INSTANCE:
-                HandleFindInstance();
-                break;
-            case CMD_FIND_FUNCTION:
-                HandleFindFunction();
-                break;
-            case CMD_INVOKE:
-                HandleInvoke();
-                break;
-            case CMD_INVOKE_BY_NAME:
-                HandleInvokeByName();
-                break;
-            case CMD_LIST_FUNCTIONS:
-                HandleListFunctions();
-                break;
-            case CMD_LIST_INSTANCES:
-                HandleListInstances();
-                break;
-            case CMD_SET_DEBUG_CAMERA:
-                HandleSetDebugCamera();
-                break;
-            case CMD_TELEPORT:
-                HandleTeleport();
-                break;
-            case CMD_PROTECT:
-                HandleProtect();
-                break;
-            case CMD_MOVEMENT:
-                HandleMovement();
-                break;
-            case CMD_FLY:
-                HandleFly();
-                break;
-            case CMD_FOREGROUND:
-                HandleForeground();
-                break;
-            case CMD_QUERY_PTR:
-                HandleQueryPtr();
-                break;
-            case CMD_SEETHROUGH:
-                HandleSeeThrough();
-                break;
-            case CMD_TIME:
-                HandleTime();
-                break;
-            case CMD_OFFSETS_VERDICT:
-                HandleOffsetsVerdict();
-                break;
-            default:
-                SetError(-1, "Unknown command");
-                break;
-            }
-            threw = false;
-            });
-
-            // Publish a definite failure rather than leaving status=PROCESSING for
-            // the script to time out on. CompoundOpGuard has already run for the one
-            // compound handler and written the same code; SetError here is what
-            // covers the other fourteen, which have no guard at all.
-            if (threw) {
-                SetError(MB_ERR_HANDLER_THREW,
-                         "command handler threw — the operation did NOT complete");
-            }
+        // [DUMPER-SECOND-COPY-AUTOSTART] This copy's mailbox first, then each earlier copy's it took over, one command
+        // each per pass. An adopted mailbox says what this copy's says, or for a copy that cannot forward only READY or
+        // SKIPPED (Land::MirroredState): a CE inject script that resolved the earlier copy reads it as this copy.
+        ServeOne(&g_invokeMailbox, warnedThrow);
+        for (int slot = 0; slot < Land::kMaxCopies; ++slot) {
+            MailboxData* box = s_adopted[slot].load(std::memory_order_acquire);
+            if (!box) continue;
+            box->initState = Land::MirroredState(g_invokeMailbox.initState,
+                                                 s_adoptedForwards[slot].load(std::memory_order_acquire));
+            ServeOne(box, warnedThrow);
         }
-
+        s_box = &g_invokeMailbox;
         Sleep(kPollIntervalMs);
     }
 
@@ -478,7 +529,7 @@ void StartThread() {
     }
 }
 
-void StopThread() {
+void StopThread(bool clearMailbox) {
     if (!s_running.load()) return;
 
     s_running.store(false, std::memory_order_release);
@@ -489,8 +540,37 @@ void StopThread() {
         s_hThread = nullptr;
     }
 
-    // Clear mailbox
-    memset(&g_invokeMailbox, 0, sizeof(g_invokeMailbox));
+    // Clear mailbox -- unless a later copy of the dumper is about to serve it (the hand-off's own shutdown).
+    if (clearMailbox) memset(&g_invokeMailbox, 0, sizeof(g_invokeMailbox));
+    // [DUMPER-SECOND-COPY-AUTOSTART] Nobody serves the earlier copies' mailboxes now. Only initState is touched: a
+    // command a script wrote there is its own. An untick says IDLE where the owner forwards (a revival reaches this
+    // copy); a hand-off says SKIPPED, so the copy taking over from this one retires that owner too and takes its
+    // mailbox (review R2-MBX4-IDLE-ORPHAN); an owner that cannot forward says SKIPPED either way.
+    for (int slot = 0; slot < Land::kMaxCopies; ++slot)
+        if (MailboxData* box = s_adopted[slot].load(std::memory_order_acquire))
+            box->initState = Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,
+                                                 s_adoptedForwards[slot].load(std::memory_order_acquire));
+}
+
+bool AdoptMailbox(MailboxData* earlier, bool earlierForwards) {
+    if (!earlier || earlier == &g_invokeMailbox) return false;
+    for (auto& slot : s_adopted)
+        if (slot.load(std::memory_order_acquire) == earlier) return true;
+    for (int slot = 0; slot < Land::kMaxCopies; ++slot) {
+        MailboxData* expected = nullptr;
+        // The flag lands just after the claim: a pass that sees the slot before it reads false, the stricter mirror
+        // (READY or SKIPPED), never a laxer one.
+        if (s_adopted[slot].compare_exchange_strong(expected, earlier, std::memory_order_acq_rel)) {
+            s_adoptedForwards[slot].store(earlierForwards, std::memory_order_release);
+            earlier->initState = Land::MirroredState(g_invokeMailbox.initState, earlierForwards);
+            LOG_INFO("Mailbox: serving an earlier copy's mailbox at %p beside this copy's own",
+                     static_cast<void*>(earlier));
+            return true;
+        }
+    }
+    LOG_WARN("Mailbox: no slot left to serve the earlier copy's mailbox at %p (%d in use)",
+             static_cast<void*>(earlier), Land::kMaxCopies);
+    return false;
 }
 
 uintptr_t GetAddress() {
@@ -536,7 +616,7 @@ static bool EnsureInitialized() {
 static void HandleFindInstance() {
     // Read class name from mailbox
     char className[256];
-    memcpy(className, g_invokeMailbox.className, sizeof(className));
+    memcpy(className, Box().className, sizeof(className));
     className[255] = '\0';
 
     if (className[0] == '\0') {
@@ -549,7 +629,7 @@ static void HandleFindInstance() {
     // [FINDINSTANCE-SUBSTRING-USERFACING] The user-facing resolver (Aura.h); its rule is contract 9 (6, + templates in
     // 7, + destroyed objects in 9).
     const Aura::UserInstance found = Aura::ResolveUserInstance(className);
-    g_invokeMailbox.instanceAddr = found.obj;
+    Box().instanceAddr = found.obj;
     char msg[256];
     if (found.pick == Aura::UserPick::Cancelled) {
         // This thread is cancel-immune (Tot::MarkCancelImmune), so only a shutdown cuts the walk short.
@@ -579,10 +659,10 @@ static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintpt
 }
 
 static void HandleFindFunction() {
-    uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
+    uintptr_t instanceAddr = Box().instanceAddr;
 
     char funcName[256];
-    memcpy(funcName, g_invokeMailbox.funcName, sizeof(funcName));
+    memcpy(funcName, Box().funcName, sizeof(funcName));
     funcName[255] = '\0';
 
     if (!instanceAddr) {
@@ -620,16 +700,16 @@ static void HandleFindFunction() {
     uint32_t funcFlags = found ? hit.functionFlags : 0;
 
     if (ufuncAddr) {
-        g_invokeMailbox.ufuncAddr = ufuncAddr;
-        g_invokeMailbox.parmsSize = parmsSize;
-        g_invokeMailbox.numParms = numParms;
-        g_invokeMailbox.functionFlags = funcFlags;
+        Box().ufuncAddr = ufuncAddr;
+        Box().parmsSize = parmsSize;
+        Box().numParms = numParms;
+        Box().functionFlags = funcFlags;
         LOG_INFO("Mailbox: FIND_FUNCTION '%s' -> 0x%llX (parmsSize=%u numParms=%u flags=0x%X)",
                  funcName, (unsigned long long)ufuncAddr,
                  parmsSize, numParms, funcFlags);
         SetDone(0);
     } else {
-        g_invokeMailbox.ufuncAddr = 0;
+        Box().ufuncAddr = 0;
         char msg[256];
         snprintf(msg, sizeof(msg),
                  "Function '%s' not found (%d class level(s) searched, own class + supers)",
@@ -639,8 +719,8 @@ static void HandleFindFunction() {
 }
 
 static void HandleInvoke() {
-    uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
-    uintptr_t ufuncAddr = g_invokeMailbox.ufuncAddr;
+    uintptr_t instanceAddr = Box().instanceAddr;
+    uintptr_t ufuncAddr = Box().ufuncAddr;
 
     if (!instanceAddr || !ufuncAddr) {
         SetError(-1, "Instance or UFunction address is null");
@@ -690,7 +770,7 @@ static void HandleInvoke() {
     // Mimic::InvokeSlabRefusal says why each case is refused.
     const uint32_t needBytes = flagsResolved ? Ubel::ParamBufferSize(ufuncAddr, fi.parmsSize) : 0;
     const int32_t refusal = InvokeSlabRefusal(flagsResolved, needBytes,
-                                              static_cast<uint32_t>(sizeof(g_invokeMailbox.paramsData)));
+                                              static_cast<uint32_t>(sizeof(Box().paramsData)));
     if (refusal != 0) {
         char msg[256];
         if (!flagsResolved)
@@ -699,7 +779,7 @@ static void HandleInvoke() {
         else
             snprintf(msg, sizeof(msg), "'%s' needs %u bytes of parameters (where its parameter chain ends), "
                      "the mailbox holds %zu -- not invoked", fi.name.c_str(), needBytes,
-                     sizeof(g_invokeMailbox.paramsData));
+                     sizeof(Box().paramsData));
         SetError(refusal, msg);
         return;
     }
@@ -725,12 +805,12 @@ static void HandleInvoke() {
 
     const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
 
-    if (fi.functionFlags != g_invokeMailbox.functionFlags) {
+    if (fi.functionFlags != Box().functionFlags) {
         // The whole point of MB1, made greppable: the mailbox field disagreed with
         // the function actually being invoked. Before the fix this decided the route.
         LOG_WARN("Mailbox: INVOKE mailbox functionFlags=0x%08X is STALE — '%s' "
                  "really has 0x%08X; routing on the re-read value (MB1)",
-                 g_invokeMailbox.functionFlags, fi.name.c_str(), fi.functionFlags);
+                 Box().functionFlags, fi.name.c_str(), fi.functionFlags);
     }
 
     // Clear the ReturnValue slot before dispatching, so the After dump cannot be
@@ -766,20 +846,20 @@ static void HandleInvoke() {
         // Bounds are checked against the real buffer, not against ParmsSize: a
         // forked layout can report a ParmsSize larger than the mailbox slab, and a
         // memset past the end would corrupt whatever follows it in the struct.
-        if (off + len > sizeof(g_invokeMailbox.paramsData)) {
+        if (off + len > sizeof(Box().paramsData)) {
             LOG_WARN("Mailbox: INVOKE return slot +%zu size %zu exceeds paramsData "
                      "(%zu) — not clearing", off, len,
-                     sizeof(g_invokeMailbox.paramsData));
+                     sizeof(Box().paramsData));
         } else {
-            memset(g_invokeMailbox.paramsData + off, 0, len);
+            memset(Box().paramsData + off, 0, len);
             LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
         }
     }
 
     {
         std::string objWhy;
-        if (!FrierenInvoke::PrepareObjectParams(ufuncAddr, g_invokeMailbox.paramsData,
-                                                sizeof(g_invokeMailbox.paramsData), isStaticNative, objWhy)) {
+        if (!FrierenInvoke::PrepareObjectParams(ufuncAddr, Box().paramsData,
+                                                sizeof(Box().paramsData), isStaticNative, objWhy)) {
             SetError(MB_ERR_INVOKE_OBJECT_PARAM, ("Not invoked: " + objWhy).c_str());
             return;
         }
@@ -790,7 +870,7 @@ static void HandleInvoke() {
     {
         const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
         if (WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, flagsResolved, fi.functionFlags)) {
-            g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
+            Box().cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
             LOG_WARN("Mailbox: INVOKE '%s' is not static and 0x%llX is a %s -- it may do nothing there",
                      fi.name.c_str(), (unsigned long long)instanceAddr, Aura::TemplateKindWire(tpl.kind));
         }
@@ -803,7 +883,7 @@ static void HandleInvoke() {
                  fi.functionFlags);
         result = UE5_CallProcessEventDirect(
             instanceAddr, ufuncAddr,
-            reinterpret_cast<uintptr_t>(g_invokeMailbox.paramsData));
+            reinterpret_cast<uintptr_t>(Box().paramsData));
     } else {
         // Call ProcessEvent via the SIZE-AWARE entry so the queued
         // GameThreadDispatch request OWNS a copy of the param bytes.
@@ -823,8 +903,8 @@ static void HandleInvoke() {
         // the direct-call fallback when the hook isn't active.
         result = UE5_CallProcessEventEx(
             instanceAddr, ufuncAddr,
-            reinterpret_cast<uintptr_t>(g_invokeMailbox.paramsData),
-            static_cast<uint32_t>(sizeof(g_invokeMailbox.paramsData)));
+            reinterpret_cast<uintptr_t>(Box().paramsData),
+            static_cast<uint32_t>(sizeof(Box().paramsData)));
         if (result == -5) {
             LOG_WARN("Mailbox: INVOKE timed out (game thread idle?). The queued "
                      "request keeps its OWN param copy, so a later drain runs "
@@ -836,8 +916,8 @@ static void HandleInvoke() {
         char msg[256];
         snprintf(msg, sizeof(msg), "ProcessEvent returned %d", result);
         // Still mark as done (not error) — the result code tells the story
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
 
     LOG_INFO("Mailbox: INVOKE result=%d", result);
@@ -854,23 +934,41 @@ static void HandleInvokeByName() {
     CompoundOpGuard guard;
 
     HandleFindInstance();
-    if (g_invokeMailbox.result != 0) return;
+    if (Box().result != 0) return;
 
     HandleFindFunction();
-    if (g_invokeMailbox.result != 0) return;
+    if (Box().result != 0) return;
 
+    HandleInvokeHeld();
+
+    LOG_INFO("Mailbox: INVOKE_BY_NAME complete, result=%d", Box().result);
+}
+
+// [MCP-WRITE-GRANTS-2026-11-14] CMD_INVOKE and INVOKE_BY_NAME. A record that runs the debug camera's own functions (a
+// Console row baked into a CE record) changes the camera as CMD_SET_DEBUG_CAMERA does: under the hold's lock, and CE's
+// afterwards. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI session, whose end
+// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it. It never
+// waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this poller is the
+// mailbox's only one.
+static void HandleInvokeHeld() {
+    char name[128] = {};
+    const uintptr_t ufuncAddr = Box().ufuncAddr;
+    if (ufuncAddr && UE5_GetObjectName(ufuncAddr, name, static_cast<int32_t>(sizeof(name)))
+        && Voll::IsDebugCameraFunction(name)) {
+        if (!TryChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [] { HandleInvoke(); }))
+            LOG_INFO("Mailbox: %s ran unrecorded -- another writer was changing the debug camera", name);
+        return;
+    }
     HandleInvoke();
-
-    LOG_INFO("Mailbox: INVOKE_BY_NAME complete, result=%d", g_invokeMailbox.result);
 }
 
 static void HandleListFunctions() {
     // Resolve instance: use instanceAddr if set, otherwise find by className
-    uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
+    uintptr_t instanceAddr = Box().instanceAddr;
 
     if (!instanceAddr) {
         char className[256];
-        memcpy(className, g_invokeMailbox.className, sizeof(className));
+        memcpy(className, Box().className, sizeof(className));
         className[255] = '\0';
 
         if (className[0] == '\0') {
@@ -893,12 +991,12 @@ static void HandleListFunctions() {
             SetError(-2, msg);
             return;
         }
-        g_invokeMailbox.instanceAddr = instanceAddr;
+        Box().instanceAddr = instanceAddr;
     }
 
     // Get page index from params_data[0..3]
     uint32_t pageIndex = 0;
-    memcpy(&pageIndex, g_invokeMailbox.paramsData, sizeof(uint32_t));
+    memcpy(&pageIndex, Box().paramsData, sizeof(uint32_t));
 
     // Get UClass
     uintptr_t classAddr = Ubel::GetClass(instanceAddr);
@@ -929,17 +1027,17 @@ static void HandleListFunctions() {
     uint32_t returnedCount = (startIdx < totalCount) ? (endIdx - startIdx) : 0;
 
     // Write metadata to header fields (repurposed)
-    g_invokeMailbox.parmsSize = static_cast<uint16_t>(totalCount);
-    g_invokeMailbox.numParms = static_cast<uint16_t>(returnedCount);
-    g_invokeMailbox.functionFlags = totalPages;
+    Box().parmsSize = static_cast<uint16_t>(totalCount);
+    Box().numParms = static_cast<uint16_t>(returnedCount);
+    Box().functionFlags = totalPages;
 
     // Zero out params_data
-    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    memset(Box().paramsData, 0, sizeof(Box().paramsData));
 
     // Write entries: each 64 bytes
     for (uint32_t i = 0; i < returnedCount; ++i) {
         const auto& f = funcs[startIdx + i];
-        uint8_t* entry = g_invokeMailbox.paramsData + (i * ENTRY_SIZE);
+        uint8_t* entry = Box().paramsData + (i * ENTRY_SIZE);
 
         // [0..7] addr
         uint64_t addr64 = f.address;
@@ -988,7 +1086,7 @@ static void HandleListFunctions() {
 // before contract 3 keeps the pool it was written against.
 static void HandleListInstances() {
     char className[256];
-    memcpy(className, g_invokeMailbox.className, sizeof(className));
+    memcpy(className, Box().className, sizeof(className));
     className[255] = '\0';
 
     // Read the scope flag and CLEAR it in the same breath, BEFORE any early return.
@@ -999,13 +1097,13 @@ static void HandleListInstances() {
     // next — including a contract-1/2 script that never writes the field and is
     // entitled to exact-match behaviour. Clearing here is what makes the flag
     // genuinely additive rather than sticky.
-    const uint32_t inFlags = g_invokeMailbox.cmdFlags;
-    g_invokeMailbox.cmdFlags = 0;
+    const uint32_t inFlags = Box().cmdFlags;
+    Box().cmdFlags = 0;
     const bool derived = (inFlags & LI_IN_DERIVED) != 0;
 
     // Rewritten, never accumulated: a stale truncation bit from a previous page
     // would tell the caller its pool was capped when it was not.
-    g_invokeMailbox.cmdOutFlags = 0;
+    Box().cmdOutFlags = 0;
 
     if (className[0] == '\0') {
         SetError(-1, "Empty class name");
@@ -1014,7 +1112,7 @@ static void HandleListInstances() {
 
     // Read page index from paramsData[0..3] BEFORE we overwrite the buffer.
     uint32_t pageIndex = 0;
-    memcpy(&pageIndex, g_invokeMailbox.paramsData, sizeof(uint32_t));
+    memcpy(&pageIndex, Box().paramsData, sizeof(uint32_t));
 
     LOG_INFO("Mailbox: LIST_INSTANCES class='%s' page=%u scope=%s",
              className, pageIndex, derived ? "derived" : "exact");
@@ -1054,9 +1152,9 @@ static void HandleListInstances() {
     uint32_t returnedCount = (startIdx < totalCount) ? (endIdx - startIdx) : 0;
 
     // parmsSize is uint16 — saturate if a class somehow has >65535 instances.
-    g_invokeMailbox.parmsSize = static_cast<uint16_t>(totalCount > 0xFFFFu ? 0xFFFFu : totalCount);
-    g_invokeMailbox.numParms = static_cast<uint16_t>(returnedCount);
-    g_invokeMailbox.functionFlags = totalPages;
+    Box().parmsSize = static_cast<uint16_t>(totalCount > 0xFFFFu ? 0xFFFFu : totalCount);
+    Box().numParms = static_cast<uint16_t>(returnedCount);
+    Box().functionFlags = totalPages;
 
     // "The pool was capped" comes from the walk that did the capping, not from a
     // second test over the page — that is audit #4's own named root cause (report
@@ -1064,7 +1162,7 @@ static void HandleListInstances() {
     // base reaches this routinely, so the caller must be TOLD rather than left to
     // read a truthful-but-partial count as a total.
     if (rset.truncated || rset.aborted)
-        g_invokeMailbox.cmdOutFlags |= LI_OUT_TRUNCATED;
+        Box().cmdOutFlags |= LI_OUT_TRUNCATED;
 
     // Contract 2: publish the identity witness a caching caller needs to tell a
     // live instance from a recycled slot (audit #5 AA2/AA3).
@@ -1084,26 +1182,26 @@ static void HandleListInstances() {
     // Both are cleared first: a previous command may have left an unrelated
     // UObject*/UFunction* here, and a caller must never mistake that for a
     // witness. Zero means "not available" and the caller falls back.
-    g_invokeMailbox.instanceAddr = 0;
-    g_invokeMailbox.ufuncAddr    = 0;
+    Box().instanceAddr = 0;
+    Box().ufuncAddr    = 0;
     if (derived) {
         // The offset is a property of the ENGINE, not of the page, so it is
         // published whenever the scope needs it — the caller treats a zero here as
         // a hard error rather than as a reason to write unguarded.
-        g_invokeMailbox.ufuncAddr = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
+        Box().ufuncAddr = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
     } else if (returnedCount > 0) {
         uintptr_t cls = Ubel::GetClass(static_cast<uintptr_t>(live[startIdx].obj));
         if (cls) {
-            g_invokeMailbox.instanceAddr = static_cast<uint64_t>(cls);
-            g_invokeMailbox.ufuncAddr    = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
+            Box().instanceAddr = static_cast<uint64_t>(cls);
+            Box().ufuncAddr    = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
         }
     }
 
-    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    memset(Box().paramsData, 0, sizeof(Box().paramsData));
 
     for (uint32_t i = 0; i < returnedCount; ++i) {
         const LiveEntry& e = live[startIdx + i];
-        uint8_t* slot = g_invokeMailbox.paramsData + (i * entrySize);
+        uint8_t* slot = Box().paramsData + (i * entrySize);
         memcpy(slot, &e.obj, sizeof(uint64_t));
         if (derived) memcpy(slot + sizeof(uint64_t), &e.cls, sizeof(uint64_t));
     }
@@ -1111,8 +1209,8 @@ static void HandleListInstances() {
     LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) scope=%s%s classWitness=0x%llX",
              returnedCount, totalCount, pageIndex + 1, totalPages,
              derived ? "derived" : "exact",
-             (g_invokeMailbox.cmdOutFlags & LI_OUT_TRUNCATED) ? " CAPPED" : "",
-             (unsigned long long)g_invokeMailbox.instanceAddr);
+             (Box().cmdOutFlags & LI_OUT_TRUNCATED) ? " CAPPED" : "",
+             (unsigned long long)Box().instanceAddr);
     SetDone(0);
 }
 
@@ -1127,22 +1225,41 @@ static void HandleListInstances() {
 // controller-swap fallback.
 // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a hold CE changes is changed under the ledger lock the pipe's writers take
 // too, and is CE's afterwards (Voll::HoldLedger). An OFF leaves CE named on a hold that is off, which reads as free.
-template <typename Change>
-static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
-    std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
-    const int32_t rc = change();
+// Called with the hold's lock held.
+static void RecordCeChange(const std::string& hold) {
     // [D2-3-INVOKE] A debug-camera ON still pending is its sender's, as the pipe's hold recorder has it: CE's answer
     // that sent nothing (a toggle already pending, the other way) never takes another client's.
     uint64_t sender = 0;
     if (hold == Grimoire::HOLD_DEBUG_CAMERA && UE5_GetDebugCameraState() != 1
         && FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe)
-        return rc;
+        return;
     Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);
+}
+
+template <typename Change>
+static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
+    std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
+    const int32_t rc = change();
+    RecordCeChange(hold);
     return rc;
 }
 
+// As ChangeHoldAsCe, but never waits for the lock: busy, the change runs unrecorded, as a mailbox invoke always did
+// before build 3716. Returns whether it was recorded.
+template <typename Change>
+static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {
+    std::unique_lock<std::mutex> lock(Voll::Holds().LockFor(hold), std::try_to_lock);
+    if (!lock.owns_lock()) {
+        change();
+        return false;
+    }
+    change();
+    RecordCeChange(hold);
+    return true;
+}
+
 static void HandleSetDebugCamera() {
-    uint64_t req = g_invokeMailbox.instanceAddr;
+    uint64_t req = Box().instanceAddr;
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [&] { return UE5_SetDebugCamera(req != 0 ? 1 : 0); });
@@ -1151,18 +1268,18 @@ static void HandleSetDebugCamera() {
     if (state == -1) {
         // -1 is a state that did not read or a toggle that failed (-4 faulted inside it). Never the no-live-CheatManager
         // case: its read lands on the class default object and answers 0 or 1, and an ON there answers -17.
-        strncpy(g_invokeMailbox.errorMsg,
+        strncpy(Box().errorMsg,
                 "Debug Camera: unreadable state, or the toggle failed (see the DLL log)",
-                sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+                sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     } else if (state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER) {
         // [DEBUGCAM-FORCEON-CDO] A new negative code, only for an ON: every [ENABLE] reports it (Mimic.h, WHAT IS NOT
         // A CHANGE AT ALL).
-        strncpy(g_invokeMailbox.errorMsg,
+        strncpy(Box().errorMsg,
                 "Debug Camera: ON not sent -- no live CheatManager (UE 5 leaves it out of Shipping by default); "
                 "ToggleDebugCamera does nothing on its class default object",
-                sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+                sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     } else if (state == Stark::kInvokeTimedOutStillQueued) {
         // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED. Not a contract change (MB3
         // above: a new negative result code; every script treats non-zero as failure and renders errorMsg verbatim) --
@@ -1172,16 +1289,16 @@ static void HandleSetDebugCamera() {
         const char* queued = (req == 0)
             ? "Debug Camera: OFF did not complete -- the game thread is busy; send OFF again once the game responds"
             : "Debug Camera: ON queued -- it will run when the game thread is free; do not re-send";
-        strncpy(g_invokeMailbox.errorMsg, queued, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, queued, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     } else if (state == Stark::kToggleBlockedByQueued) {
         // [DBGCAM-OFF-OVER-QUEUED-ON] An earlier toggle of the OTHER direction is still queued: this one sent nothing,
         // and the state it would have read predates that toggle. A new negative code, the same MB3 reasoning as -5.
         const char* blocked = (req == 0)
             ? "Debug Camera: OFF not sent -- an earlier ON is still queued; send OFF again once the game responds"
             : "Debug Camera: ON not sent -- an earlier OFF is still queued; send ON again once the game responds";
-        strncpy(g_invokeMailbox.errorMsg, blocked, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, blocked, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: SET_DEBUG_CAMERA req=%llu -> state=%d",
              (unsigned long long)req, state);
@@ -1195,10 +1312,10 @@ static void HandleSetDebugCamera() {
 // carries the reason ("" when measured, "probe-not-run" before any detection).
 // Init-EXEMPT (Mimic.h CommandRequiresInit): "no probe has run" is an ANSWER here, not a failure.
 static void HandleOffsetsVerdict() {
-    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    memset(Box().paramsData, 0, sizeof(Box().paramsData));
     char reason[128] = {};
     const int32_t measured = UE5_GetOffsetsVerdict(reason, static_cast<int32_t>(sizeof(reason)));
-    memcpy(g_invokeMailbox.paramsData, reason, sizeof(reason));
+    memcpy(Box().paramsData, reason, sizeof(reason));
     LOG_INFO("Mailbox: OFFSETS_VERDICT -> measured=%d reason='%s'", measured, reason);
     SetDone(measured);
 }
@@ -1208,26 +1325,26 @@ static void HandleOffsetsVerdict() {
 // docs/teleport-spec.md §8. Delegates entirely to Wirbel — this handler only
 // marshals the mailbox fields.
 static void HandleTeleport() {
-    const uint64_t op  = g_invokeMailbox.instanceAddr;
-    const int32_t slot = static_cast<int32_t>(g_invokeMailbox.ufuncAddr);
+    const uint64_t op  = Box().instanceAddr;
+    const int32_t slot = static_cast<int32_t>(Box().ufuncAddr);
 
     // Pose block writer: [0..47] 6 doubles, [48..175] mapName,
     // [176] source, [177] tier, [178] pose flags (contract 4: bit0 parent-relative,
     // bit1 landing unknown). Zeroes the whole buffer first.
     auto writePoseBlock = [](const Wirbel::Pose& p, const char* mapName,
                              uint8_t source, uint8_t tier, uint8_t flags = 0) {
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
         double v[6] = { p.X, p.Y, p.Z, p.Pitch, p.Yaw, p.Roll };
-        memcpy(g_invokeMailbox.paramsData, v, sizeof(v));
+        memcpy(Box().paramsData, v, sizeof(v));
         if (mapName) {
             size_t cap = static_cast<size_t>(Grimoire::TELEPORT_MAPNAME_CAP);
             size_t n = strnlen(mapName, cap - 1);
-            memcpy(g_invokeMailbox.paramsData + 48, mapName, n);
-            g_invokeMailbox.paramsData[48 + n] = '\0';
+            memcpy(Box().paramsData + 48, mapName, n);
+            Box().paramsData[48 + n] = '\0';
         }
-        g_invokeMailbox.paramsData[176] = source;
-        g_invokeMailbox.paramsData[177] = tier;
-        g_invokeMailbox.paramsData[178] = flags;   // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]
+        Box().paramsData[176] = source;
+        Box().paramsData[177] = tier;
+        Box().paramsData[178] = flags;   // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]
     };
 
     int32_t rc;
@@ -1254,29 +1371,29 @@ static void HandleTeleport() {
     case TP_OP_RECALL_FORCE: {
         uint8_t tier = 0;
         rc = Wirbel::RecallMarker(slot, op == TP_OP_RECALL_FORCE, &tier);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[177] = tier;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[177] = tier;
         break;
     }
     case TP_OP_CURSOR: {
         // Read inputs BEFORE outputs overwrite the shared buffer.
         double zOffset = Grimoire::TELEPORT_DEFAULT_ZOFFSET;
-        memcpy(&zOffset, g_invokeMailbox.paramsData, sizeof(double));
-        uint8_t channel = g_invokeMailbox.paramsData[8];
-        bool fallbackCenter = g_invokeMailbox.paramsData[9] != 0;
+        memcpy(&zOffset, Box().paramsData, sizeof(double));
+        uint8_t channel = Box().paramsData[8];
+        bool fallbackCenter = Box().paramsData[9] != 0;
 
         Wirbel::Pose hit{};
         uint8_t tier = 0;
         bool usedCenter = false;
         rc = Wirbel::TeleportToCursor(zOffset, channel, fallbackCenter,
                                       &hit, &tier, &usedCenter);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
         if (rc == 0) {
             double v[3] = { hit.X, hit.Y, hit.Z };
-            memcpy(g_invokeMailbox.paramsData, v, sizeof(v));
+            memcpy(Box().paramsData, v, sizeof(v));
         }
-        g_invokeMailbox.paramsData[177] = tier;
-        g_invokeMailbox.paramsData[178] = usedCenter ? 1 : 0;
+        Box().paramsData[177] = tier;
+        Box().paramsData[178] = usedCenter ? 1 : 0;
         break;
     }
     case TP_OP_GET_MARKER: {
@@ -1291,8 +1408,8 @@ static void HandleTeleport() {
     case TP_OP_RECALL_LAST: {
         uint8_t tier = 0;
         rc = Wirbel::RecallLast(&tier);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[177] = tier;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[177] = tier;
         break;
     }
     case TP_OP_GET_LAST: {
@@ -1313,31 +1430,31 @@ static void HandleTeleport() {
     case TP_OP_BUGIT_GO: {
         uint8_t tier = 0;
         rc = Wirbel::BugItGo(&tier);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[177] = tier;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[177] = tier;
         break;
     }
     case TP_OP_GET_POV: {
         Wirbel::Pov pov{};
         rc = Wirbel::GetPov(pov);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
         if (rc == 0) {
             double cam[6] = { pov.Cam.X, pov.Cam.Y, pov.Cam.Z,
                               pov.Cam.Pitch, pov.Cam.Yaw, pov.Cam.Roll };
-            memcpy(g_invokeMailbox.paramsData, cam, sizeof(cam));
-            memcpy(g_invokeMailbox.paramsData + 48, &pov.Fov, sizeof(double));
+            memcpy(Box().paramsData, cam, sizeof(cam));
+            memcpy(Box().paramsData + 48, &pov.Fov, sizeof(double));
             double pawn[3] = { pov.Pawn.X, pov.Pawn.Y, pov.Pawn.Z };
-            memcpy(g_invokeMailbox.paramsData + 56, pawn, sizeof(pawn));
-            g_invokeMailbox.paramsData[80] = pov.HasPawn ? 1 : 0;
-            g_invokeMailbox.paramsData[81] = pov.Source;
+            memcpy(Box().paramsData + 56, pawn, sizeof(pawn));
+            Box().paramsData[80] = pov.HasPawn ? 1 : 0;
+            Box().paramsData[81] = pov.Source;
         }
         break;
     }
     case TP_OP_RELATIVE: {
         // Read inputs BEFORE outputs overwrite the shared buffer.
         double distance = 0;
-        memcpy(&distance, g_invokeMailbox.paramsData, sizeof(double));
-        bool horizontalOnly = g_invokeMailbox.paramsData[8] == 0;  // mode 0 = horizontal
+        memcpy(&distance, Box().paramsData, sizeof(double));
+        bool horizontalOnly = Box().paramsData[8] == 0;  // mode 0 = horizontal
         Wirbel::Pose p{};
         uint8_t tier = 0;
         bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
@@ -1356,29 +1473,29 @@ static void HandleTeleport() {
     case TP_OP_EXPLICIT: {
         // Read inputs BEFORE outputs overwrite the shared buffer.
         double v[6] = {};
-        memcpy(v, g_invokeMailbox.paramsData, sizeof(v));
-        bool hasRot = g_invokeMailbox.paramsData[48] != 0;
+        memcpy(v, Box().paramsData, sizeof(v));
+        bool hasRot = Box().paramsData[48] != 0;
         Wirbel::Pose p{};
         p.X = v[0]; p.Y = v[1]; p.Z = v[2];
         p.Pitch = v[3]; p.Yaw = v[4]; p.Roll = v[5];
         uint8_t tier = 0;
         rc = Wirbel::RecallExplicit(p, hasRot, &tier);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[177] = tier;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[177] = tier;
         break;
     }
     case TP_OP_SET_CURSOR: {
         bool state = false;
         rc = Wirbel::SetMouseCursor(slot != 0, &state);   // ufuncAddr(slot) = 1/0
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[0] = state ? 1 : 0;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[0] = state ? 1 : 0;
         break;
     }
     case TP_OP_GET_CURSOR: {
         bool state = false;
         rc = Wirbel::GetMouseCursor(&state);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        if (rc == 0) g_invokeMailbox.paramsData[0] = state ? 1 : 0;
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        if (rc == 0) Box().paramsData[0] = state ? 1 : 0;
         break;
     }
     default:
@@ -1390,8 +1507,8 @@ static void HandleTeleport() {
         char msg[256];
         snprintf(msg, sizeof(msg), "Teleport: op=%llu slot=%d failed code=%d",
                  (unsigned long long)op, slot, rc);
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: TELEPORT op=%llu slot=%d -> rc=%d",
              (unsigned long long)op, slot, rc);
@@ -1403,12 +1520,12 @@ static void HandleTeleport() {
 // SET op. Delegates entirely to the Frieren exports; this handler only marshals
 // the mailbox fields (docs/godmode-spec.md §6.2).
 static void HandleProtect() {
-    const uint64_t op = g_invokeMailbox.instanceAddr;
+    const uint64_t op = Box().instanceAddr;
     int32_t rc;
     switch (op) {
     case PROTECT_OP_SET_GODMODE:
         rc = ChangeHoldAsCe(Grimoire::HOLD_GOD_MODE,
-                            [] { return UE5_SetGodMode(g_invokeMailbox.ufuncAddr != 0 ? 1 : 0); });
+                            [] { return UE5_SetGodMode(Box().ufuncAddr != 0 ? 1 : 0); });
         break;
     case PROTECT_OP_GET_GODMODE:
         rc = UE5_GetGodMode();
@@ -1416,11 +1533,11 @@ static void HandleProtect() {
     case PROTECT_OP_GET_STATE: {
         int32_t want = 0, live = -1, resolvable = 0;
         rc = UE5_GetProtectState(&want, &live, &resolvable);
-        memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
-        g_invokeMailbox.paramsData[0] = static_cast<uint8_t>(want ? 1 : 0);
-        g_invokeMailbox.paramsData[1] = (live < 0)
+        memset(Box().paramsData, 0, sizeof(Box().paramsData));
+        Box().paramsData[0] = static_cast<uint8_t>(want ? 1 : 0);
+        Box().paramsData[1] = (live < 0)
             ? 0xFF : static_cast<uint8_t>(live ? 1 : 0);
-        g_invokeMailbox.paramsData[2] = static_cast<uint8_t>(resolvable ? 1 : 0);
+        Box().paramsData[2] = static_cast<uint8_t>(resolvable ? 1 : 0);
         break;
     }
     default:
@@ -1431,8 +1548,8 @@ static void HandleProtect() {
         char msg[128];
         snprintf(msg, sizeof(msg), "GodMode: op=%llu failed code=%d",
                  (unsigned long long)op, rc);
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: PROTECT op=%llu -> rc=%d", (unsigned long long)op, rc);
     SetDone(rc);
@@ -1444,12 +1561,12 @@ static void HandleProtect() {
 // so this runs entirely on the mailbox polling thread (no game-thread dispatch),
 // and therefore works even while the game thread is idle/paused.
 static void HandleForeground() {
-    const uint64_t op = g_invokeMailbox.instanceAddr;
+    const uint64_t op = Box().instanceAddr;
     int32_t rc;
     switch (op) {
     case FG_OP_SET:
         rc = ChangeHoldAsCe(Grimoire::HOLD_FOREGROUND_LOCK,
-                            [] { return Grausam::SetForegroundLock(g_invokeMailbox.ufuncAddr != 0); });
+                            [] { return Grausam::SetForegroundLock(Box().ufuncAddr != 0); });
         break;
     case FG_OP_GET:
         rc = Grausam::IsForegroundLockEnabled();
@@ -1470,12 +1587,12 @@ static void HandleForeground() {
 // turns off what CE's record turned on. Nothing in the mailbox changed, so the
 // contract version did not either.
 static void HandleSeeThrough() {
-    if (g_invokeMailbox.instanceAddr >= 1)
-        Schlacht::SetPierceCount(static_cast<int32_t>(g_invokeMailbox.instanceAddr));
-    int32_t rc = Schlacht::SetEnabled(g_invokeMailbox.ufuncAddr != 0, Schlacht::kOwnerCe);
+    if (Box().instanceAddr >= 1)
+        Schlacht::SetPierceCount(static_cast<int32_t>(Box().instanceAddr));
+    int32_t rc = Schlacht::SetEnabled(Box().ufuncAddr != 0, Schlacht::kOwnerCe);
     LOG_INFO("Mailbox: SEETHROUGH count=%llu value=%llu -> rc=%d",
-             (unsigned long long)g_invokeMailbox.instanceAddr,
-             (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
+             (unsigned long long)Box().instanceAddr,
+             (unsigned long long)Box().ufuncAddr, rc);
     SetDone(rc);
 }
 
@@ -1487,8 +1604,8 @@ static void HandleSeeThrough() {
 // because CE Lua's executeCodeEx can't reliably read an export's return value
 // (see docs/godmode-spec.md §10 + docs/lessons-learned.md).
 static void HandleQueryPtr() {
-    const uint64_t op = g_invokeMailbox.instanceAddr;
-    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    const uint64_t op = Box().instanceAddr;
+    memset(Box().paramsData, 0, sizeof(Box().paramsData));
 
     switch (op) {
     case QUERY_OP_GWORLD: {
@@ -1499,7 +1616,7 @@ static void HandleQueryPtr() {
         uintptr_t world = 0;
         if (slot) Macht::ReadSafe(slot, world);
         uint64_t out[2] = { static_cast<uint64_t>(slot), static_cast<uint64_t>(world) };
-        memcpy(g_invokeMailbox.paramsData, out, sizeof(out));
+        memcpy(Box().paramsData, out, sizeof(out));
         LOG_INFO("Mailbox: QUERY_PTR GWorld -> &GWorld=0x%llX UWorld*=0x%llX",
                  (unsigned long long)slot, (unsigned long long)world);
         if (!slot) {
@@ -1513,12 +1630,12 @@ static void HandleQueryPtr() {
         Genau::GameEngineInfo info = Genau::FindGameEngine();
         uint64_t out[2] = { static_cast<uint64_t>(info.engineAddr),
                             static_cast<uint64_t>(info.classAddr) };
-        memcpy(g_invokeMailbox.paramsData, out, sizeof(out));
+        memcpy(Box().paramsData, out, sizeof(out));
         if (!info.className.empty()) {
             // paramsData[16..143] — 128-byte class-name field (leave a null).
             size_t n = (std::min)(info.className.size(), static_cast<size_t>(127));
-            memcpy(g_invokeMailbox.paramsData + 16, info.className.c_str(), n);
-            g_invokeMailbox.paramsData[16 + n] = '\0';
+            memcpy(Box().paramsData + 16, info.className.c_str(), n);
+            Box().paramsData[16 + n] = '\0';
         }
         LOG_INFO("Mailbox: QUERY_PTR GameEngine -> 0x%llX class='%s'",
                  (unsigned long long)info.engineAddr, info.className.c_str());
@@ -1538,7 +1655,7 @@ static void HandleQueryPtr() {
         uintptr_t engine = 0;
         if (slot) Macht::ReadSafe(slot, engine);
         uint64_t out[2] = { static_cast<uint64_t>(slot), static_cast<uint64_t>(engine) };
-        memcpy(g_invokeMailbox.paramsData, out, sizeof(out));
+        memcpy(Box().paramsData, out, sizeof(out));
         LOG_INFO("Mailbox: QUERY_PTR GEngineSlot -> &GEngine=0x%llX UEngine*=0x%llX",
                  (unsigned long long)slot, (unsigned long long)engine);
         if (!slot) {
@@ -1561,18 +1678,18 @@ static void HandleQueryPtr() {
 // knob 2 = jump height %). The percent is read BEFORE SetDone (paramsData is not
 // overwritten with outputs here). Returns 1 (active) / 0 (off) / negative.
 static void HandleMovement() {
-    const uint64_t knobId = g_invokeMailbox.instanceAddr;
+    const uint64_t knobId = Box().instanceAddr;
     int32_t rc;
     if (knobId == 3) {
         // Gravity direction (UE5.3+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
         double v[3] = {};
-        memcpy(v, g_invokeMailbox.paramsData, sizeof(v));
+        memcpy(v, Box().paramsData, sizeof(v));
         rc = ChangeHoldAsCe(Grimoire::HOLD_GRAVITY_DIRECTION, [&] { return UE5_SetGravityDirection(v[0], v[1], v[2]); });
         LOG_INFO("Mailbox: MOVEMENT gravdir -> (%.3f, %.3f, %.3f) rc=%d",
                  v[0], v[1], v[2], rc);
     } else {
         double percent = 0.0;
-        memcpy(&percent, g_invokeMailbox.paramsData, sizeof(double));
+        memcpy(&percent, Box().paramsData, sizeof(double));
         static const char* const kKnobs[] = {"walk_speed", "gravity", "jump"};   // Laufen's KNOB_* order
         if (knobId < 3)
             rc = ChangeHoldAsCe(std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + kKnobs[knobId],
@@ -1586,8 +1703,8 @@ static void HandleMovement() {
         char msg[128];
         snprintf(msg, sizeof(msg), "Movement: knob=%llu failed code=%d",
                  (unsigned long long)knobId, rc);
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     SetDone(rc);
 }
@@ -1597,8 +1714,8 @@ static void HandleMovement() {
 // paramsData[0..7] = double value for SET (read BEFORE SetDone). Returns
 // 1 (active) / 0 (off) / negative Hemmung::TimeResult.
 static void HandleTime() {
-    const uint64_t op = g_invokeMailbox.instanceAddr;
-    const int32_t  target = static_cast<int32_t>(g_invokeMailbox.ufuncAddr);
+    const uint64_t op = Box().instanceAddr;
+    const int32_t  target = static_cast<int32_t>(Box().ufuncAddr);
     // Hemmung's DIL_GLOBAL / DIL_PAWN; any other target is the module's to refuse, and names no hold.
     const std::string hold = (target == 0 || target == 1)
         ? std::string(Grimoire::HOLD_TIME_PREFIX) + (target == 0 ? "global" : "pawn") : std::string();
@@ -1607,7 +1724,7 @@ static void HandleTime() {
     switch (op) {
     case TIME_OP_SET: {
         double value = 0.0;
-        memcpy(&value, g_invokeMailbox.paramsData, sizeof(double));
+        memcpy(&value, Box().paramsData, sizeof(double));
         rc = asCe([&] { return UE5_SetTimeDilation(target, value); });
         LOG_INFO("Mailbox: TIME set target=%d value=%.4f -> rc=%d", target, value, rc);
         break;
@@ -1625,8 +1742,8 @@ static void HandleTime() {
         char msg[128];
         snprintf(msg, sizeof(msg), "Time: op=%llu target=%d failed code=%d",
                  (unsigned long long)op, target, rc);
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     SetDone(rc);
 }
@@ -1635,41 +1752,41 @@ static void HandleTime() {
 // UI pipe (fly_set). instanceAddr = op (FlyOp); ufuncAddr / paramsData carry the
 // operand (read BEFORE SetDone). GET_STATE writes the live status into paramsData.
 static void HandleFly() {
-    const uint64_t op = g_invokeMailbox.instanceAddr;
+    const uint64_t op = Box().instanceAddr;
     int32_t rc;
     switch (op) {
     case FLY_OP_SET_ENABLED:
         rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
-                            [] { return UE5_SetFly(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0); });
+                            [] { return UE5_SetFly(static_cast<int32_t>(Box().ufuncAddr) != 0 ? 1 : 0); });
         LOG_INFO("Mailbox: FLY enable=%llu -> rc=%d",
-                 (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
+                 (unsigned long long)Box().ufuncAddr, rc);
         break;
     case FLY_OP_SET_SPEED: {
         double speed = 0.0;
-        memcpy(&speed, g_invokeMailbox.paramsData, sizeof(double));
+        memcpy(&speed, Box().paramsData, sizeof(double));
         rc = ChangeHoldAsCe(Grimoire::HOLD_FLY, [&] { return UE5_SetFlySpeed(speed); });
         LOG_INFO("Mailbox: FLY speed=%.0f -> rc=%d", speed, rc);
         break;
     }
     case FLY_OP_SET_PRESET:
         rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
-                            [] { return UE5_SetFlyPreset(static_cast<int32_t>(g_invokeMailbox.ufuncAddr)); });
+                            [] { return UE5_SetFlyPreset(static_cast<int32_t>(Box().ufuncAddr)); });
         LOG_INFO("Mailbox: FLY preset=%llu -> rc=%d",
-                 (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
+                 (unsigned long long)Box().ufuncAddr, rc);
         break;
     case FLY_OP_SET_NOCLIP:
         rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
-                            [] { return UE5_SetFlyNoclip(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0); });
+                            [] { return UE5_SetFlyNoclip(static_cast<int32_t>(Box().ufuncAddr) != 0 ? 1 : 0); });
         LOG_INFO("Mailbox: FLY noclip=%llu -> rc=%d",
-                 (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
+                 (unsigned long long)Box().ufuncAddr, rc);
         break;
     case FLY_OP_GET_STATE: {
         Dunste::FlyStatus st{};
         rc = Dunste::GetStatus(st);
-        g_invokeMailbox.paramsData[0] = st.active ? 1 : 0;
-        g_invokeMailbox.paramsData[1] = static_cast<uint8_t>(st.preset);
-        g_invokeMailbox.paramsData[2] = st.noclip ? 1 : 0;
-        memcpy(g_invokeMailbox.paramsData + 8, &st.speed, sizeof(double));
+        Box().paramsData[0] = st.active ? 1 : 0;
+        Box().paramsData[1] = static_cast<uint8_t>(st.preset);
+        Box().paramsData[2] = st.noclip ? 1 : 0;
+        memcpy(Box().paramsData + 8, &st.speed, sizeof(double));
         break;
     }
     default:
@@ -1680,17 +1797,17 @@ static void HandleFly() {
         char msg[128];
         snprintf(msg, sizeof(msg), "Fly: op=%llu failed code=%d",
                  (unsigned long long)op, rc);
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     SetDone(rc);
 }
 
 static void SetError(int32_t code, const char* msg) {
-    g_invokeMailbox.result = code;
+    Box().result = code;
     if (msg) {
-        strncpy(g_invokeMailbox.errorMsg, msg, sizeof(g_invokeMailbox.errorMsg) - 1);
-        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+        strncpy(Box().errorMsg, msg, sizeof(Box().errorMsg) - 1);
+        Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     }
     LOG_WARN("Mailbox: error=%d msg='%s'", code, msg ? msg : "");
 
@@ -1700,19 +1817,19 @@ static void SetError(int32_t code, const char* msg) {
     if (s_compoundDepth > 0) return;
 
     // Signal completion — MUST write status BEFORE clearing cmd
-    g_invokeMailbox.status = STATUS_DONE;
-    g_invokeMailbox.cmd = CMD_IDLE;
+    Box().status = STATUS_DONE;
+    Box().cmd = CMD_IDLE;
 }
 
 static void SetDone(int32_t resultCode) {
-    g_invokeMailbox.result = resultCode;
+    Box().result = resultCode;
 
     // Audit fix #10: see SetError comment.
     if (s_compoundDepth > 0) return;
 
     // Signal completion — MUST write status BEFORE clearing cmd
-    g_invokeMailbox.status = STATUS_DONE;
-    g_invokeMailbox.cmd = CMD_IDLE;
+    Box().status = STATUS_DONE;
+    Box().cmd = CMD_IDLE;
 }
 
 } // namespace Mimic

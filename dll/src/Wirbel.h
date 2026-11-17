@@ -206,7 +206,7 @@ int32_t GetPoseAndMovement(Pose& out, char* mapName, int32_t mapNameCap,
 int32_t GetPov(Pov& out);
 
 // Save the current pose + map name into a marker slot (0..TELEPORT_SLOTS-1).
-int32_t SaveMarker(int32_t slot);
+[[nodiscard]] int32_t SaveMarker(int32_t slot);
 
 // Teleport back to a saved marker. Refuses with TP_ERR_MAP_MISMATCH when the
 // current map differs from the marker's, unless force; refuses with
@@ -214,13 +214,13 @@ int32_t SaveMarker(int32_t slot);
 // or not (RecallMarkerRefusal). A refusal moves neither the pawn nor the "last"
 // slot. tierOut (optional): 1 = invoke path (K2_SetActorLocation), 2 = raw-write
 // fallback.
-int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut);
+[[nodiscard]] int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut);
 
 // Teleport to an explicit pose (BugItGo interop, pipe-only path). Bypasses
 // the marker store and the map check. hasRot: also restore Pitch/Yaw/Roll.
 // keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: the slot is one for the whole
 // process, and an AI's teleport through the MCP server must not replace the place the user's "Recall last" returns to.
-int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo = false);
+[[nodiscard]] int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo = false);
 
 // Teleport the pawn to the world position under the mouse cursor (or the
 // screen center when the cursor is unavailable and fallbackToCenter is set).
@@ -228,7 +228,7 @@ int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool kee
 // engine mapping; games can remap). zOffset is added to the hit Z so the
 // capsule doesn't spawn intersecting the ground. outHit (optional) receives
 // the raw hit point (without zOffset) in X/Y/Z.
-int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
+[[nodiscard]] int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
                          bool fallbackToCenter, Pose* outHit,
                          uint8_t* tierOut, bool* outUsedCenter);
 
@@ -236,7 +236,7 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
 int32_t GetMarker(int32_t slot, Marker& out);
 
 // Clear a marker slot.
-int32_t ClearMarker(int32_t slot);
+[[nodiscard]] int32_t ClearMarker(int32_t slot);
 
 // Recall to the system "last" position — the pose captured automatically right
 // before a jump, so a teleport that lands the pawn somewhere bad can be undone.
@@ -247,7 +247,7 @@ int32_t ClearMarker(int32_t slot);
 // the same pre-teleport spot). System-managed — never user-saved. Map check is
 // skipped (the last pose is normally from moments ago on the current map).
 // TP_ERR_EMPTY_MARKER when nothing has been auto-saved yet.
-int32_t RecallLast(uint8_t* tierOut);
+[[nodiscard]] int32_t RecallLast(uint8_t* tierOut);
 
 // Read the system "last" slot for display. TP_ERR_EMPTY_MARKER when empty.
 int32_t GetLast(Marker& out);
@@ -257,7 +257,7 @@ int32_t GetLast(Marker& out);
 // slot, distinct from the markers and the system "last" slot — it persists DLL
 // side so a later BugItGo can teleport back without the caller holding the pose.
 // outParentRelative (optional): the pose came from the raw parent-relative fallback. [W2-MARKER-PARENTREL]
-int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+[[nodiscard]] int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
                   bool* outParentRelative = nullptr);
 
 // BugItGo: teleport to the pose stored by the most recent BugItSave (restores
@@ -265,7 +265,7 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
 // BugIt has been stored yet. TP_ERR_PARENT_RELATIVE when the stored BugIt came from
 // the parent-relative fallback: nothing moves and the "last" slot is untouched; a
 // BugIt taken while the world-space read works replaces it. [TELEPORT-BUGITGO-PARENTREL]
-int32_t BugItGo(uint8_t* tierOut);
+[[nodiscard]] int32_t BugItGo(uint8_t* tierOut);
 
 // Teleport along the pawn's facing direction by `distance` unreal units
 // (negative = backward). horizontalOnly: move on the ground plane (forward from

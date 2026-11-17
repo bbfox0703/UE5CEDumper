@@ -542,7 +542,8 @@ static const LayoutPreset s_chunkedPresets[] = {
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
 // Extended: FUObjectArray with GC index fields before ObjObjects.
-// UE4-Extended: no PreAllocatedObjects ptr in FChunkedFixedUObjectArray.
+// UE4-Extended: Max right after Objects, with no PreAllocatedObjects slot between them -- which stock UE 4.20-5.7 have
+// (RE-UE4SS's TUObjectArray layouts: +0x08), so a stock base-anchored array of those versions has UE5-Extended's shape.
 // UE5-Extended: has PreAllocatedObjects ptr (+8 bytes shift). TQ2 (UE 5.7) confirmed.
 static const LayoutPreset s_ue4ExtendedPresets[] = {
     { "UE4-Extended", { 0x10, 0x18, 0x1C, 0x20, 0x24 } },
@@ -604,6 +605,51 @@ static bool LooksLikeHeapPtr(uintptr_t ptr) {
     uintptr_t modSize = Macht::GetModuleSize(nullptr);
     if (modBase && modSize && ptr >= modBase && ptr < modBase + modSize) return false;
     return true;
+}
+
+// Whether `table` reads as a chunk table: a heap pointer whose first entry is a heap pointer to a readable chunk. It looks
+// no further than the chunk, so no item layout (packed UE 5.7+ included) matters.
+static bool ReadsAsChunkTable(uintptr_t table) {
+    if (!LooksLikeHeapPtr(table)) return false;
+    uintptr_t chunk0 = 0;
+    if (!Macht::ReadSafe(table, chunk0) || !LooksLikeHeapPtr(chunk0)) return false;
+    uint8_t item[16];
+    return Macht::ReadBytesSafe(chunk0, item, sizeof(item));
+}
+
+// [RELAXED-D-PREALLOC-HALF] Whether the count a row reads at numOff is half of ObjObjects.PreAllocatedObjects -- the
+// contiguous block UE 4.20-5.7 keep right after Objects (RE-UE4SS's TUObjectArray layouts: +0x08; 5.8 moved it past
+// the counts). A row whose count slot can overlap it -- at ObjObjects +0x08, which is FUObjectArray +0x18 on a
+// base-anchored array -- asks, or refuses the block by a guard that cannot pass there: relaxed F's chunk size of at
+// least 0x8000 puts its max at or above 0x8000, past any user-space pointer's high dword (0x7FFF), so F does not ask
+// (reviews wf_47eca989-bf9 and wf_a2cdbbd9-859). UE's PreAllocate
+// stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
+// PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so the 8 bytes holding the count are compared with the first
+// entry of the row's own table: equal, they are that pointer. A genuine Max / Num pair would have to equal a heap
+// pointer exactly, so no real array is refused, at any heap height -- a floor holds only below 16 TB, and the
+// half-a-table-pointer check cannot help here, since on this misread the row's own Objects slot IS the array's table.
+static bool CountIsHalfOfFirstEntry(uintptr_t addr, int numOff, uintptr_t firstEntry) {
+    if (!firstEntry) return false;
+    uintptr_t qword = 0;
+    return Macht::ReadSafe(addr + (numOff & ~7), qword) && qword == firstEntry;
+}
+
+// [VND584-03-FLOOR-HIGH-HEAP] Whether the count a relaxed row reads at numOff is the high half of a chunk table pointer
+// -- the Objects pointer of a layout no strict row fit -- rather than a count. The relaxed rows' 0x1000 floor refuses
+// such a count only while the table sits below 16 TB; the AddressSanitizer build's heap sat at high dword 0x1222, and
+// real UE 5 heaps reach 0x7FEA. A real table pointer's high dword is under 0x8000 (user space ends at 128 TB), so
+// between the floor and that the 8 bytes under the count are FOLLOWED as a table, which reads memory rather than judging
+// the value's range (a range test refuses real arrays: the row's 2026-11-17 re-read).
+// A genuine Max / Num pair read as one qword is Num x 4 GB + Max: past user space for a game of 32,768 objects or more,
+// and below that an address that can hold a heap pointer in a process whose heap sits there. So the row's OWN Objects
+// slot decides as well: a genuine array's own slot holds its table, and the count is refused only when that slot does
+// not read as one -- no array a row described before this check is refused by it (review wf_8fb9838c-132, F1).
+static bool CountIsHalfAChunkTablePointer(uintptr_t addr, int numOff, int objOff) {
+    uintptr_t underCount = 0, own = 0;
+    if (!Macht::ReadSafe(addr + numOff - 4, underCount)) return false;
+    if (!ReadsAsChunkTable(DecryptObjectPtr(underCount))) return false;
+    Macht::ReadSafe(addr + objOff, own);
+    return !ReadsAsChunkTable(DecryptObjectPtr(own));
 }
 
 // Log all 5 layout field values at an address for diagnosis.
@@ -669,6 +715,9 @@ static bool ValidateChunkedLayout(uintptr_t addr, const ArrayLayout& layout) {
     // --- Pointer dereference validation ---
     uintptr_t chunk0 = 0;
     if (!Macht::ReadSafe(objPtr, chunk0)) return false;
+    // [RELAXED-D-PREALLOC-HALF] A count that is half of the table's first entry is PreAllocatedObjects: above 16 TB its
+    // high dword passed the Flat-Base row's range, which reached a strict-failing UE5-Extended array before relaxed D.
+    if (CountIsHalfOfFirstEntry(addr, layout.numElementsOffset, chunk0)) return false;
 
     if (chunk0 == 0) {
         // chunk[0] null — unlikely for valid array, but accept if objPtr is heap
@@ -754,10 +803,15 @@ static bool DetectLayout(uintptr_t addr) {
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
-    // [VND584-03] The relaxed rows take Genau's floor: Genau refuses a NumElements below kRelaxedMinObjects for every
-    // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
-    // layout no row fits). No UE game runs with fewer objects.
+    // [VND584-03] Relaxed A/C, B, F and D take the floor Genau's own rows apply (its static-struct path floors at 16),
+    // and E does not: below it a "count" is usually half of a pointer (the Objects pointer's high dword on a layout no
+    // row fits), and no UE game runs with fewer objects. Above it, a row whose count slot can be the high dword of
+    // another layout's chunk table pointer also asks CountIsHalfAChunkTablePointer ([VND584-03-FLOOR-HIGH-HEAP]), and
+    // relaxed D, whose count slot can hold half of PreAllocatedObjects, asks CountIsHalfOfFirstEntry
+    // ([RELAXED-D-PREALLOC-HALF]).
     constexpr int32_t kRelaxedMinObjects = 0x1000;
+    // A/C refused because the 8 bytes under its count are a chunk table pointer: the table is at +0x10 (the fallback).
+    bool acCountWasHalfAPointer = false;
 
     // Layout A/C (relaxed): Objects@+0x00, Num@+0x14, Max@+0x10
     {
@@ -768,7 +822,11 @@ static bool DetectLayout(uintptr_t addr) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x00, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
+            if (CountIsHalfAChunkTablePointer(addr, 0x14, 0x00)) {
+                acCountWasHalfAPointer = true;
+                LOG_INFO("ObjectArray: Layout A/C (relaxed) refused: Num=%d is the high dword of a chunk table pointer "
+                         "at +0x10", num);
+            } else if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
                 LOG_INFO("ObjectArray: Layout A/C (relaxed) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);
@@ -801,7 +859,10 @@ static bool DetectLayout(uintptr_t addr) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x10, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
+            if (CountIsHalfAChunkTablePointer(addr, 0x04, 0x10)) {
+                LOG_INFO("ObjectArray: Layout B (relaxed alt) refused: Num=%d is the high dword of a chunk table pointer "
+                         "at +0x00", num);
+            } else if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
                 LOG_INFO("ObjectArray: Layout B (relaxed alt) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);
@@ -810,16 +871,58 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
+    // Layout F (UE 5.8 relaxed): Objects@+0x00, Num@+0x08, Max@+0x0C -- the strict "UE5.8" row's slots.
+    //
+    // [UE58-PREALLOC-NO-ROW] UE 5.8 put ObjObjects first in FUObjectArray, with the counts right after Objects and
+    // PreAllocatedObjects past them, and this tier had no row for that shape: a 5.8 array the strict row's range or
+    // chunk-consistency checks refuse fell to D or E, which read an unreadable Objects, or to the default layout's
+    // MaxChunks. It reads the slots of Genau's relaxed "F", here ahead of D and E. It takes the 0x1000 floor; its own
+    // chunk slots must hold together as UE's PreAllocate leaves them (MaxElements a whole number of chunks, 1 <=
+    // NumChunks <= MaxChunks), which refuses a TArray<UObject*> decoy -- no chunk counts after it -- and an
+    // ObjObjects-anchored 4.20-5.7 array, whose +0x08 / +0x0C are PreAllocatedObjects' halves: a chunk size of at least
+    // 0x8000 puts max at or above 0x8000, past any user-space pointer's high dword (0x7FFF) -- the bound that lets F go
+    // without the first-entry check, so lowering it brings that check back; and its Objects must read as a chunk table
+    // (review wf_47eca989-bf9, UE58F-TARRAY-DECOY).
+    {
+        int32_t num = 0, max = 0, numChunks = 0, maxChunks = 0;
+        Macht::ReadSafe(addr + 0x08, num);
+        Macht::ReadSafe(addr + 0x0C, max);
+        Macht::ReadSafe(addr + 0x10, numChunks);
+        Macht::ReadSafe(addr + 0x14, maxChunks);
+        // numChunks >= 1 and <= maxChunks first, so maxChunks is never 0 below; the chunk size range is the strict tier's.
+        const bool chunksHold = numChunks >= 1 && numChunks <= maxChunks && max % maxChunks == 0
+                             && max / maxChunks >= 0x8000 && max / maxChunks <= 0x80000;
+        if (num >= kRelaxedMinObjects && num <= max && max <= kMaxElementsCeiling && chunksHold) {
+            uintptr_t objPtr = 0;
+            Macht::ReadSafe(addr + 0x00, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
+            if (ReadsAsChunkTable(objPtr)) {
+                s_layout = { 0x00, 0x0C, 0x08, 0x14, 0x10 };
+                LOG_INFO("ObjectArray: Layout F (relaxed UE5.8) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                         num, max, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
+
     // Layout D (UE4 extended relaxed): Objects@+0x10, Num@+0x1C, Max@+0x18
+    //
+    // [RELAXED-D-PREALLOC-HALF] Floored like A/C and B -- it took any count above 0 -- and it refuses a count that is
+    // half of PreAllocatedObjects: on a base-anchored UE5-Extended array +0x18 is that pointer, and it is the table's
+    // first entry (CountIsHalfOfFirstEntry). Relaxed E then reads the array from +0x20 / +0x24.
     {
         int32_t num = 0, max = 0;
         Macht::ReadSafe(addr + 0x1C, num);
         Macht::ReadSafe(addr + 0x18, max);
-        if (num > 0 && num <= max && max <= kMaxElementsCeiling) {
-            uintptr_t objPtr = 0;
+        if (num >= kRelaxedMinObjects && num <= max && max <= kMaxElementsCeiling) {
+            uintptr_t objPtr = 0, firstEntry = 0;
             Macht::ReadSafe(addr + 0x10, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
+            Macht::ReadSafe(objPtr, firstEntry);
+            if (CountIsHalfOfFirstEntry(addr, 0x1C, firstEntry)) {
+                LOG_INFO("ObjectArray: Layout D (relaxed UE4 ext) refused: Num=%d is half of PreAllocatedObjects at "
+                         "+0x18, the table's first entry", num);
+            } else if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x18, 0x1C, 0x20, 0x24 };
                 LOG_INFO("ObjectArray: Layout D (relaxed UE4 ext) detected (Num=%d, Max=%d, Objects=0x%llX)",
                          num, max, (unsigned long long)objPtr);
@@ -847,6 +950,16 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
+    // [VND584-03-FLOOR-HIGH-HEAP] The default preset reads Objects at +0x00 and the count at +0x14 -- relaxed A/C's slots.
+    // After A/C was refused because the 8 bytes under that count are a chunk table pointer, it would re-read the refused
+    // count through a slot that is no table; the table is at +0x10, so the fallback is the UE5-Extended slots, which read
+    // Objects there. Its count is a guess either way, and the warning says so (review wf_8fb9838c-132, F1-DEFAULT).
+    if (acCountWasHalfAPointer) {
+        LOG_WARN("ObjectArray: Could not detect layout; a chunk table sits at +0x10, so falling back to the UE5-Extended "
+                 "slots (Objects +0x10, count +0x24) -- the count is not verified");
+        s_layout = { 0x10, 0x20, 0x24, 0x28, 0x2C };
+        return true;
+    }
     LOG_WARN("ObjectArray: Could not detect layout, using default");
     s_layout = s_chunkedPresets[0].layout;
     return true;
@@ -7085,6 +7198,51 @@ static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
     return FuncSlot(funcAddr);
 }
 
+// [DENKEN-WRITE-SITES] Path 2's mapping, pure (Aura.h). WalkClass includes the full inherited super chain with absolute
+// Offset_Internal.
+std::vector<FunctionPropRef> MapNativeAccesses(const std::vector<Denken::NativeFieldAccess>& accesses,
+                                               const std::vector<FieldInfo>& fields, int32_t& unmapped) {
+    std::vector<FunctionPropRef> refs;
+    // Every property at an offset: bitfield bools packed into one byte share Offset_Internal, and an access to that byte
+    // may be to any of them -- each gets the row, and says how many share it (review DWS-DLL-2: the first one used to
+    // take the access, and the bool actually written had no row).
+    std::unordered_map<int32_t, std::vector<const FieldInfo*>> byOff;
+    byOff.reserve(fields.size());
+    for (const auto& f : fields) byOff[f.Offset].push_back(&f);
+
+    for (const auto& acc : accesses) {
+        auto it = byOff.find(static_cast<int32_t>(acc.offset));
+        if (it == byOff.end()) { unmapped++; continue; }
+        const int32_t shared = it->second.size() > 1 ? static_cast<int32_t>(it->second.size()) : 0;
+        for (const FieldInfo* f : it->second) {
+            FunctionPropRef ref;
+            ref.propAddr    = f->Address;
+            ref.name        = f->Name;
+            ref.type        = f->TypeName;
+            ref.offset      = static_cast<int32_t>(acc.offset);
+            ref.occurrences = acc.occurrences;
+            ref.writeCount  = acc.writeCount;
+            ref.scope       = "instance";   // mapped to a class member
+            ref.confidence  = acc.highConfidence ? "high" : "low";
+            ref.writeSites  = acc.writeSites;
+            ref.writeSitesViaThis = acc.writeSitesViaThis;
+            ref.writeSitesTruncated = acc.writeSitesTruncated;
+            ref.sharedOffset = shared;
+            refs.push_back(std::move(ref));
+        }
+    }
+
+    // High-confidence first, then writers, then frequency, then name.
+    std::sort(refs.begin(), refs.end(), [](const FunctionPropRef& a, const FunctionPropRef& b) {
+        bool ah = a.confidence == "high", bh = b.confidence == "high";
+        if (ah != bh) return ah;
+        if ((a.writeCount > 0) != (b.writeCount > 0)) return a.writeCount > 0;
+        if (a.occurrences != b.occurrences) return a.occurrences > b.occurrences;
+        return a.name < b.name;
+    });
+    return refs;
+}
+
 // --- Path 2: disassemble a native UFunction and map [this+off] to props ---
 //
 // Returns the method tag ("disasm" when the decoder ran, "none" when the exec
@@ -7148,41 +7306,12 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // (audit #5 AF7). Set before the mapping loop so an early return can't drop it.
     out.budgetHit = r.budgetHit;
 
-    // Map each [this+off] access to a property on the owning class (UFunction's
-    // Outer). WalkClass already includes the full inherited super chain with
-    // absolute Offset_Internal, so an offset matches at most one property.
+    // Map each [this+off] access to the properties on the owning class (UFunction's Outer) at that offset
+    // (MapNativeAccesses: bools packed into one byte share it).
     uintptr_t owner = Ubel::GetOuter(funcAddr);
     if (owner) {
         ClassInfo ci = Ubel::WalkClass(owner);
-        std::unordered_map<int32_t, const FieldInfo*> byOff;
-        byOff.reserve(ci.Fields.size());
-        for (const auto& f : ci.Fields) byOff.emplace(f.Offset, &f);
-
-        for (const auto& acc : r.accesses) {
-            auto it = byOff.find(static_cast<int32_t>(acc.offset));
-            if (it == byOff.end()) { out.unmappedAccesses++; continue; }
-            const FieldInfo& f = *it->second;
-            FunctionPropRef ref;
-            ref.propAddr    = f.Address;
-            ref.name        = f.Name;
-            ref.type        = f.TypeName;
-            ref.offset      = static_cast<int32_t>(acc.offset);
-            ref.occurrences = acc.occurrences;
-            ref.writeCount  = acc.writeCount;
-            ref.scope       = "instance";   // mapped to a class member
-            ref.confidence  = acc.highConfidence ? "high" : "low";
-            out.refs.push_back(std::move(ref));
-        }
-
-        // High-confidence first, then writers, then frequency, then name.
-        std::sort(out.refs.begin(), out.refs.end(),
-                  [](const FunctionPropRef& a, const FunctionPropRef& b) {
-            bool ah = a.confidence == "high", bh = b.confidence == "high";
-            if (ah != bh) return ah;
-            if ((a.writeCount > 0) != (b.writeCount > 0)) return a.writeCount > 0;
-            if (a.occurrences != b.occurrences) return a.occurrences > b.occurrences;
-            return a.name < b.name;
-        });
+        out.refs = MapNativeAccesses(r.accesses, ci.Fields, out.unmappedAccesses);
     }
 
     LOG_INFO("AnalyzeNativeFunctionProps: 0x%llX exec=0x%llX -> %zu mapped props "
@@ -9657,7 +9786,7 @@ namespace {
 // One numeric leaf's display/refine metadata, index-aligned with the
 // Orden::Leaf vector produced per block (leaves[k] <-> metas[k]).
 struct GroupLeafMeta {
-    std::string fieldName;       // direct: "Stats.Str"; deep: "SaveSlotList[1]...Tunes[2]"
+    std::string fieldName;       // direct: "Stats.Str"; deep: "SaveSlotList[1]...Tunes[]" ("[]" = elementIndex)
     std::string fieldType;       // UE property type ("IntProperty" / "FloatProperty" / ...)
     std::string definingClass;   // struct/class the leaf is declared in
     int32_t     offset       = 0;   // bytes from the OWNING object base (direct); 0 for deep container leaves
@@ -9672,6 +9801,60 @@ struct GroupLeafMeta {
     // container element. Defaults to Unknown/-1, which the rule refuses to act on.
     Radar::LeafAnchor anchor;
 };
+
+// The name a deep group leaf's descriptor carries, and the element index its slot match keeps. The index goes in the
+// slot, not the name: field_name is rendered as Radar::FieldDisplayName(descriptor, elementIndex), which puts it at the
+// "[]" placeholder -- the convention the value scan's struct-array descriptors already use. A name that held the index
+// as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
+// element row). [GROUP-DEEP-INDEX-TWICE]
+struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
+// One slot match from a leaf's metadata, as the group scan records it: the descriptor it was interned under, the
+// element index (FieldDisplayName puts it at the name's "[]"), the owner and the container anchor. Pure, so the chain
+// meta -> slot -> displayed name is tested end to end (review wf_d3c2ec9a-d52 GROUP-TESTS-HELPER-ONLY).
+Radar::GroupSlotMatch GroupSlotMatchFromMeta(const GroupLeafMeta& meta, uint32_t descIdx, uintptr_t obj,
+                                             const std::string& className, const uint8_t (&leafBytes)[8]) {
+    Radar::GroupSlotMatch sm;
+    sm.descriptorIdx = descIdx;
+    sm.elementIndex  = meta.elementIndex;
+    sm.offset        = meta.offset;
+    sm.leafAddr      = meta.leafAddr;
+    sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;           // P4: leaf's owning object
+    sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;   // P4 inc 2
+    sm.anchor        = meta.anchor;                                     // A12: relay the container identity
+    std::memcpy(sm.prevValue, leafBytes, 8);
+    return sm;
+}
+
+// The key a group leaf's descriptor is interned under. The TYPE is part of it: a native-C hole emits one leaf per width
+// that satisfies a slot, all named "<raw@0xNN>" at one offset, and refine reads each leaf's width from its descriptor --
+// keyed without the type, every width got the first one's (Int16) and was refined and shown as that. A reflected leaf has
+// one type per class / name / offset, so its descriptors are as before. [GROUP-RAW-WIDTH-INTERN]
+std::string GroupDescInternKey(const std::string& className, const GroupLeafMeta& meta) {
+    std::string key = className; key += '|'; key += meta.fieldName;
+    key += '|'; key += std::to_string(meta.offset);
+    key += '|'; key += meta.fieldType;
+    return key;
+}
+
+GroupDeepLeafName NameGroupDeepLeaf(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName) {
+    std::string name = arrayPath;
+    name += "[]";
+    if (!leafName.empty()) { name += '.'; name += leafName; }
+    return { std::move(name), elemIndex };
+}
+
+// The identity half of a deep group leaf's metadata -- its name, element index, type and offset -- from the walker's
+// leaf. The deep visitor fills the rest (the owner, the address, the anchor). Pure, so the wiring is tested.
+GroupLeafMeta DeepGroupLeafMeta(const std::string& arrayPath, int32_t elemIndex, const std::string& leafName,
+                                const std::string& leafType) {
+    GroupDeepLeafName named = NameGroupDeepLeaf(arrayPath, elemIndex, leafName);
+    GroupLeafMeta m;
+    m.fieldName    = std::move(named.fieldName);
+    m.elementIndex = named.elementIndex;
+    m.fieldType    = leafType;
+    m.offset       = 0;   // a deep leaf has no object-relative offset; leafAddr locates it
+    return m;
+}
 
 // One deep block = a numeric container's elements, or one struct-array/map
 // element's inner numeric fields. Orden runs over each block independently so a
@@ -10182,10 +10365,10 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
     };
 
     auto internDesc = [&](const std::string& className, const GroupLeafMeta& meta) -> uint32_t {
-        // Direct leaves intern by (class, field, offset) across instances; deep
-        // leaves carry the fully-indexed path in fieldName so they're distinct.
-        std::string key = className; key += '|'; key += meta.fieldName;
-        key += '|'; key += std::to_string(meta.offset);
+        // Direct leaves intern by (class, field, offset, type) across instances. A deep leaf's
+        // name holds its outer indices and a "[]" for its own, so the elements of one
+        // container share a descriptor and the slot match carries the element index.
+        std::string key = GroupDescInternKey(className, meta);
         auto it = descIntern.find(key);
         if (it != descIntern.end()) return it->second;
         Radar::FieldDescriptor d;
@@ -10216,16 +10399,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         for (size_t s = 0; s < nSlots; ++s) {
             for (int leafIdx : mout[s].leafIdx) {
                 const GroupLeafMeta& meta = blkMetas[static_cast<size_t>(leafIdx)];
-                Radar::GroupSlotMatch sm;
-                sm.descriptorIdx = internDesc(className, meta);
-                sm.elementIndex  = meta.elementIndex;
-                sm.offset        = meta.offset;
-                sm.leafAddr      = meta.leafAddr;
-                sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;  // P4: leaf's owning object
-                sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;  // P4 inc 2
-                sm.anchor        = meta.anchor;   // A12: relay the container identity
-                std::memcpy(sm.prevValue, blkLeaves[static_cast<size_t>(leafIdx)].bytes, 8);
-                gc.slotMatches[s].push_back(sm);
+                gc.slotMatches[s].push_back(GroupSlotMatchFromMeta(meta, internDesc(className, meta), obj, className,
+                                                                   blkLeaves[static_cast<size_t>(leafIdx)].bytes));
             }
         }
         result.candidates.push_back(std::move(gc));
@@ -10258,14 +10433,11 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         uint8_t buf[8] = {};
         if (!Macht::ReadBytesSafe(lf.leafAddr, buf, sz)) return;
 
-        std::string idx = "["; idx += std::to_string(lf.elemIndex); idx += "]";
-        std::string blockKey, display;
+        std::string blockKey;
         if (lf.leafName.empty()) {            // scalar-container element: the whole array is one block
             blockKey = lf.arrayPath;
-            display  = lf.arrayPath + idx;
         } else {                              // struct-array / map element: this element is one block
-            blockKey = lf.arrayPath + idx;
-            display  = lf.arrayPath + idx + "." + lf.leafName;
+            blockKey = lf.arrayPath; blockKey += '['; blockKey += std::to_string(lf.elemIndex); blockKey += ']';
         }
         auto bit = deepBlocks.find(blockKey);
         if (bit == deepBlocks.end()) {
@@ -10280,12 +10452,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         ol.elementIndex = lf.elemIndex;
         std::memcpy(ol.bytes, buf, sz);
         blk.leaves.push_back(ol);
-        GroupLeafMeta m;
-        m.fieldName     = display;
-        m.fieldType     = lf.leafType;
+        GroupLeafMeta m = DeepGroupLeafMeta(lf.arrayPath, lf.elemIndex, lf.leafName, lf.leafType);
         m.definingClass = curClassName;
-        m.offset        = 0;
-        m.elementIndex  = lf.elemIndex;
         m.leafAddr      = lf.leafAddr;
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
         m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)
@@ -10517,7 +10685,7 @@ ValueScanStats RefineGroupCandidates(
                         "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
                         "metadata hop dropped it; this leaf is refined at its stale absolute "
                         "address (audit #5 A12)",
-                        descriptors[sm.descriptorIdx].fieldName.c_str());
+                        Radar::FieldDisplayName(descriptors[sm.descriptorIdx], sm.elementIndex).c_str());
                 }
 
                 uint8_t buf[8] = {};

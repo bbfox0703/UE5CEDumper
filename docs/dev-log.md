@@ -27,6 +27,580 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (build 3741) — A class at a reused address is walked again; Live Funcs records stay whole when the trace buffer wraps `[WALKCLASS-MEMO-REUSE]` `[LINIE-SEQ-LAST]` `[TRACE-DROPPED-ENTRY]` `[GROUP-RAW-WIDTH-INTERN]`
+
+- **What changes:**
+  - **A class at a reused address.** After a level change frees a class and another object is allocated at its
+    address (the reloaded class, or any object of that size), everything that reads a class -- the Class/Struct
+    panel, Value and Property Search, snapshots, the CE export, Force Field, God Mode -- was answered with the freed
+    class's fields. Each remembered walk now keeps a witness of what it walked (the object's name and Outer, its
+    property chains and its super), and a hit whose witness no longer reads back is walked again. An address whose
+    contents keep changing is walked again at most 8 times running and then stops for good; one that holds still for
+    3 reads is forgiven. `get_diagnostics`' `class_cache` reports `parked_walks` and `stopped_addresses`.
+  - **Live Funcs, Call Trace.** A trace record's number is now stored after its contents, so a record overwritten
+    while the buffer wrapped is left out rather than read back with another call's function, object and thread. The
+    call tree keeps a call's callers open when its start was left out (their later calls used to become roots), and
+    the status line, the JSONL export (`entries_dropped`, `other_dropped`) and the load log say how many records
+    inside the kept part were left out.
+  - **Group scan, native C.** Two widths matched at one unmanaged offset no longer share the first width's
+    descriptor, so an int32 there is refined and shown as an int32, not as an Int16.
+- **Proven live on 3739** (the DLL's code is unchanged since; 3740 and 3741 change the UI's wording and a rig): the
+  Live Funcs trace 18/18, snapshots 34/34 and stacks 32/32 on DumperTest 5.8; the L49 unmapped-class rig three times
+  in one game process and twice more on 3740; A9's deep budget 6/6 and the bool / V1c search 13/13 on DumperTest
+  Shipping; a level reload: the freed class's address refused, the reloaded class walked. Timing medians (5 runs):
+  value scan 51 ms, deep group scan 57 ms, property batch 38 ms, against 51 / 62 / 42 ms on 3736.
+- **Reviewed** by five review rounds; every confirmed finding was fixed red then green.
+- **Tests:** C# 8413 passed, 1 skipped; C++ dll_core_test 1649, dll_helpers_test 4246; 39 gates.
+- AOT UI 62,713,856 bytes (sha256 f1743b9dea12c93d...); UE5Dumper.dll 3,847,680 bytes (sha256 320f7b840f971f00...).
+
+## 2026-11-18 (builds 3737 to 3740) — The class-walk witness and the trace numbers, four review rounds `[WALKCLASS-MEMO-REUSE]` `[LINIE-SEQ-LAST]` `[TRACE-DROPPED-ENTRY]`
+
+Superseded by 3741 before any left this machine. 3737 added the witness, the number-last trace writer and the
+group-scan key; 3738 gave the witness the object's name and Outer and kept the call tree's callers open; 3739 made
+the per-address stop sticky and counted every dropped record; 3740 stopped calling the unattributed ones returns.
+- 3737: AOT UI sha256 e4944354...; UE5Dumper.dll 3,842,048 bytes (sha256 60bc7fbd...).
+- 3738: AOT UI sha256 9e700e66...; UE5Dumper.dll 3,844,608 bytes (sha256 5dcfdcc9...).
+- 3739: AOT UI 62,713,344 bytes (sha256 6eb80967...); UE5Dumper.dll sha256 aeb83b0c....
+- 3740: AOT UI sha256 3d0f558b...; UE5Dumper.dll sha256 9b5487cf....
+
+## 2026-11-18 (build 3736) — A class freed by a level change shows an error, not an empty or old class `[WALKCLASS-STALE-OK]` `[CLASSSTRUCT-FAILED-KEEPS-OLD]`
+
+- **What changes:** after a level change, picking a class the change freed (it is still in the object tree) used to
+  show either an empty class with no error, or the class's fields from before the change. The Class/Struct panel now
+  says `DLL error: Not a live class at … -- freed (a level travel?) or never a UObject`, shows nothing under it, and
+  picking the class again (after another row) asks the game again. The class that the level loaded in its place has a
+  new address and shows normally.
+- **Pipe / MCP:** `walk_class` (and the MCP's `read_class`) refuses an address that is not a live object, before
+  walking it, instead of answering an empty class or a remembered one.
+- **Proven live** on DumperTest Development with a level reload (verification-register.md `[AE23-STEP4-2026-11-18]`).
+- **Verification pass on 3733-3736** (the register): besides 3733's list -- PEHOOK step 8's Run Self-Test on screen,
+  the Solide cap clause, the batch Cheat Table keeping native and packed bools, Z8's class-noise picker, AD18's
+  dinput8 proxy (SEED), the ProcessEvent slot on UE 5.0 (Light Maze), CADENCEBAND measured on Lushfoil, no unresolved
+  bool on DQ XI S, Live Funcs step 3's mutants caught live, step 2's UI memory measured (7-14x its estimate:
+  `[LIVEFUNCS-UI-SNAP-MEMORY]`, open), U2's FName containers on a case-preserving host, and AE23 step 4.
+- **Tests:** C# 8408 passed, 1 skipped; C++ dll_core_test 1631, dll_helpers_test 4244; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 5f7771dd81990944...); UE5Dumper.dll 3,837,952 bytes (sha256 b0bb1670181d7531...).
+
+## 2026-11-18 (builds 3734 and 3735) — `walk_class` and a freed class, two steps `[WALKCLASS-STALE-OK]`
+
+Superseded by 3736 before either left this machine. 3734 refused only an EMPTY walk of a non-live address; a class
+walked before the level change was still answered from the walk cache with its old fields, so 3735 refuses before the
+walk. 3735's panel still kept the old class under the error, which 3736 fixes.
+- 3734: AOT UI sha256 27db6954032b1ac9...; UE5Dumper.dll 3,837,952 bytes (sha256 7e62bf9310058867...).
+- 3735: AOT UI sha256 2ab0535b3d70c787...; UE5Dumper.dll 3,837,952 bytes (sha256 6029fd497483ee9a...).
+
+## 2026-11-18 (build 3733) — A group scan names a container element once `[GROUP-DEEP-INDEX-TWICE]`
+
+- **What changes:** a Value Search **group** scan with Deep on named a container element's field with its index
+  twice -- `Deep_Buckets[29].Subs[29].Leaves[26][26]`, and a struct element's leaf `Items[3].Count[3]`, which the
+  Live Walker's "open at this element" then read as an element row. It now reads `...Leaves[26]` and
+  `Items[3].Count`, and the group filter matches the name as shown (`Map_IntToVec3f[0].X`). Found while closing
+  verification rows on 3732; proven live on 3733.
+- **Tests only:** a Live Funcs trace-ring check that failed about one run in eight now admits the slot the ring leaves
+  out by design (`[LINIE-THREADS-FLAKE]`).
+- **Verification pass (the register):** closed live on 3732-3733 -- `[BOOL-NATIVE-SEARCH]` step 1, V1c's refine
+  prune, FREEZESCOPE step 4's hundreds-scale pool, audit L1 A9 (the deep budget bites), M1/M2/M3 arm (d) through
+  `UE5_Shutdown`, U1's degraded map read, the ProcessEvent slot on UE 5.1 / 5.3 / 4.23, b648 on UE 4.23, and Live
+  Funcs step 2's UE4 model.
+- **Tests:** C# 8406 passed, 1 skipped; C++ dll_core_test 1631, dll_helpers_test 4244; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 086510e7807f77c6...); UE5Dumper.dll 3,837,440 bytes (sha256 816b05abb8910829...).
+
+## 2026-11-17 (build 3732) — Where a native function writes a field `[DENKEN-WRITE-SITES]`
+
+- **What changes:** the Props dialog (a function's Properties) now shows, for a native C++ function, the addresses of
+  the instructions that write each field it touches -- a field's write site found with no debugger, to start an AOB or
+  a code injection there. A new **Write sites** column shows the first one and how many more; its tooltip lists them,
+  says which write through the object itself (a site marked "?" is not proven to), and names a byte several packed bools
+  share. **Write site in CE** opens the first in Cheat Engine's disassembler through the AOBMaker CE plugin; **Copy write
+  sites** copies them. The dialog is wider, and its buttons wrap.
+- **Also fixed by the review:** a write to a byte of packed bools was filed under the first bool only; every bool of
+  that byte now has its row.
+- **Pipe / MCP:** `walk_function_props` rows carry `write_sites`, `write_sites_via_this`, `write_sites_truncated` and
+  `shared_offset`; the MCP's `read_function_props` passes them on.
+- **Proven live** on DumperTest Shipping: 2,962 native functions walked, 73 written fields all with write sites, and
+  each of 74 sites read back is an instruction whose own displacement is the field's offset.
+- **Review** `wf_c87eff0e-53f`: 8 real findings, all fixed.
+- **Tests:** C# 8406 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4242, dll_core_test 1627, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,711,296 bytes (sha256 58ea842521122781...); UE5Dumper.dll 3,837,952 bytes (sha256 c4736f2aa8d425e1...).
+
+## 2026-11-17 (build 3731) — Where a native function writes a field, first version `[DENKEN-WRITE-SITES]`
+
+Superseded by 3732 before it left this machine: its review found sites through other pointers listed as the field's,
+and packed bools filed under the first of their byte.
+- **What changes:** the write sites, the column and the two buttons, as 3732 has them before the review. Live on 3731:
+  71 written rows with sites, 72 of 72 checked.
+- AOT UI 62,709,760 bytes (sha256 d7afbbcebb0923ef...); UE5Dumper.dll 3,833,344 bytes (sha256 64a4e372aa46ed6c...).
+
+## 2026-11-17 (build 3730) — The second copy's take-over, after a third review `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+No visible change from 3729 in ordinary use.
+- **What changes:** after a take-over, a mailbox command can no longer be answered into the wrong mailbox or run twice
+  when two mailbox pollers briefly overlap. When a Cheat Engine table finds an earlier copy whose mailbox could not be
+  taken over, it now says one of the two copies is out of date (the proxy in the game folder or the DLL injected later)
+  rather than blaming the proxy.
+- **Review** `wf_2875eae9-da5`: 7 real findings, all fixed.
+- **Proven live** on DumperTest Shipping: a 3730 proxy yielded to the injected 3730 copy (14/14, five rounds of mailbox
+  commands through the taken-over mailbox), and one injected copy alone behaved as before.
+- **Tests:** C# 8401 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4230, dll_core_test 1621, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,694,400 bytes (sha256 28611632a6ce47a3...); UE5Dumper.dll 3,828,736 bytes (sha256 b324230f2094564e...).
+
+## 2026-11-17 (build 3729) — A second copy of the DLL in a game takes over from the first `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+No visible change unless a game holds two copies of the DLL -- a proxy (version / dinput8 / dxgi / winmm.dll) from the game
+folder, and a copy injected later.
+- **What changes:** the later copy now takes over, whichever build is newer (the maintainer's call). Once its own scan
+  is done it shuts the earlier copy down, takes the pipe, and answers that copy's Cheat Engine mailbox too, so a CE table
+  that found the earlier copy keeps working. An earlier copy built from this change on hands over and passes its CE calls
+  on; an older one is shut down.
+- **When the earlier copy cannot be served** (a mailbox layout from before contract 3, or a newer contract than the
+  later copy's), its mailbox says SKIPPED and a CE script stops at once, saying another copy took over and the old one is
+  usually a stale proxy to update or remove.
+- **Logs:** a copy that cannot open its process's log files, because another copy or another instance of the game
+  holds them, now logs in `Logs\<Process>.<module>.<pid>\` instead of nowhere. After a take-over that is where the
+  serving copy's logs are.
+- **The hand-off ends what the earlier copy held**, like unticking it in CE: god mode, movement, time, force-field and
+  fly holds, Teleport markers, value-scan sessions. The UI and the MCP server reconnect.
+- **Proven live** on DumperTest Shipping: a 3727 proxy shut down in 140 ms and a 3729 proxy yielded in 125 ms, each
+  time with its mailbox answered by the injected copy; one copy alone behaved as before.
+- **Reviews:** two rounds (`wf_67396083-685`, 22 real findings; `wf_08585a12-ddf`, 11), every finding fixed in its own
+  commit group with mutation runs (11 of 11, then 11 of 11 after one pin was tightened).
+- **Tests:** C# 8400 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4230, dll_core_test 1621, utf8_helpers_test
+  287, grausam_window_test 22, sein_retention_test 37; 39 gates.
+- AOT UI 62,694,400 bytes (sha256 cdccd28ebb057c2a...); UE5Dumper.dll 3,827,200 bytes (sha256 8d9e18b0e69e72b8...).
+
+## 2026-11-17 (build 3728) — A second copy of the DLL takes over from the first `[DUMPER-SECOND-COPY-AUTOSTART]`
+
+Superseded by 3729 before it left this machine: its live run found that the copy that took over could not log.
+- **What changes:** the take-over as 3729 has it, before review round 2. Live on 3728: a 3727 proxy shut down and a 3728
+  proxy yielded, both mailboxes served by the injected copy; the later copy's own log lines were missing.
+- AOT UI 62,691,840 bytes (sha256 90756cc083901958...); UE5Dumper.dll 3,821,568 bytes (sha256 8bd5af7b36fe8f77...).
+
+## 2026-11-17 (no build change) — Claude Code's own prompts for the two MCP grants, checked live; the 繁中 checklist retired `[MCP-WRITE-GRANTS-2026-11-14]`
+
+No program change.
+- **What was checked:** on the 3727 MCP server and DLL (DumperTest Shipping, a Claude Code desktop session in auto
+  mode), the maintainer read Claude Code's prompt for each grant as the tool's name, then Function or Field, then
+  Class, then the scope_ack sentence, each whole, and pressed Allow.
+  - **Invoke grant:** `KismetMathLibrary.Add_IntInt` ran three times unasked (5, 42, 993). `write_invoke` of
+    another function still asked; it was denied and never reached the server.
+  - **Field grant:** `DumperTestHolder:HolderValue` was written four times unasked and put back. `write_memory` on
+    that same field still asked.
+  - **Log:** the server logged one `Grant N:` line per grant. Both register sections (Phase 1b, Phase 2) are now
+    closed.
+- **Removed:** `docs/pending-verification_zh-TW.md`, the checklist of checks to run by hand, at the maintainer's
+  request: nearly every check it held is automated now, and its last three items were already register rows. Its
+  bucket tool and two spent helpers went with it.
+
+## 2026-11-17 (build 3727) — A UE 5.8 object array its strict layout refuses is read whole; decoys still reach recovery `[UE58-PREALLOC-NO-ROW]`
+
+No visible change unless a UE 5.8 game's object array fails its strict layout, which a large stock game does.
+- **What changes:** UE 5.8 reordered FUObjectArray, and Aura's fallback (relaxed) tier had no layout for that shape. A
+  5.8 array the strict layout refuses -- more than 20 live chunks (above 1,310,720 objects), a count at an exact
+  multiple of 64K at scan time, a preallocated array, or fewer than 6 max chunks -- was read through an unreadable
+  Objects pointer with a count above 0, so no object resolved and the decoy recovery never ran. Relaxed layout F now
+  reads it whole. It takes the 0x1000 floor, its chunk counts must hold together as UE's PreAllocate leaves them, and
+  its Objects must lead to a real chunk table.
+- **3726 published F without the chunk check;** the review found it took a TArray<UObject*>-shaped decoy (the Avowed
+  class), which kept the count above 0 and the recovery from running. 3727 refuses it again, so such a decoy still
+  reads as no array and recovery runs.
+- **Proven live** on DLL 3727 that no title's own layout moved: DumperTest58 `UE5.8`, DumperTest `UE5-Extended`, and
+  Avowed (proxy refreshed) `UE5-Extended`, 92,003 objects at the main menu, each `relaxed_layout_live.py` 4/4. No corpus
+  title carries a refused 5.8 array; dll_core_test holds each trigger and the decoy.
+- **Reviews:** two rounds (`wf_47eca989-bf9`, `wf_a2cdbbd9-859`), every finding fixed in its own commit.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1621 checks (ASan:
+  1619 at 3726), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 514f46ada4430e44...); UE5Dumper.dll 3,799,040 bytes (sha256 49bc79fc6c88614d...).
+
+## 2026-11-17 (build 3726) — Relaxed layout F for UE 5.8 arrays the strict layout refuses `[UE58-PREALLOC-NO-ROW]`
+
+Superseded by 3727 before it left this machine: the review of this build found its new row took a TArray-shaped decoy.
+- **What changes:** relaxed layout F (UE 5.8's slots) between B and D, with the floor, a first-entry check and a
+  chunk-table check; dll_core_test 1619 checks, 0 failures (ASan 1619). Live on 3726: DumperTest58 `UE5.8`, DumperTest
+  `UE5-Extended`, 4/4 each.
+- AOT UI 62,691,840 bytes (sha256 2bd1b67fb8de98d0...); UE5Dumper.dll 3,799,040 bytes (sha256 baceddca31f4fedb...).
+
+## 2026-11-17 (build 3725) — A preallocated object array's block pointer is not read as its count `[RELAXED-D-PREALLOC-HALF]`
+
+The maintainer asked for this row the same day it was filed. No visible change unless a game preallocates its object
+array (gc.PreAllocateUObjectArray) and its array fits no strict layout.
+- **What changes:** UE 4.20-5.7 keep ObjObjects.PreAllocatedObjects right after the Objects pointer, which on a
+  base-anchored array is where the UE4-Extended and flat layouts read Max and Num. A preallocated array that its own
+  strict row refused could then be read with the block pointer's high dword as its object count -- by relaxed D, which
+  had no floor at all, or, above 16 TB, by the strict Flat-Base layout first. UE stores that block as the chunk table's
+  first entry, so every strict row and relaxed D now refuse a count that lies in a qword equal to their own table's
+  first entry: exact at any heap height, and no genuine Max / Num pair can match it. Relaxed D also takes the 0x1000
+  floor A/C and B have.
+- **Proven live** on DLL 3725 that no title's own layout moved: DumperTest Shipping `UE5-Extended`, DumperTest58
+  `UE5.8`, NEKOPALIVE (UE 4.11) `Flat-Base`, each `relaxed_layout_live.py` 4/4 with the object count and a GWorld walk.
+  No corpus title preallocates; dll_core_test holds the misread above and below 16 TB.
+- **Review:** `wf_7e04517c-ef7`; its three surviving findings were wording, fixed. It also found a different, older
+  gap: a preallocated UE 5.8 array has no relaxed layout of its own (`[UE58-PREALLOC-NO-ROW]`, filed).
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1606 checks (ASan:
+  1606), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 09d5761e865f67ea...); UE5Dumper.dll 3,798,528 bytes (sha256 74e336aee109efba...).
+
+## 2026-11-17 (build 3724) — An object array no strict row fits is no longer counted from half of a pointer above 16 TB `[VND584-03-FLOOR-HIGH-HEAP]`
+
+The maintainer asked for this row the same day it was parked. No visible change unless a game's object array fits no
+strict layout.
+- **What changes:** when no strict FUObjectArray layout fits, the relaxed fallback rows A/C and B read the object count
+  from a slot that, on some layouts, is the high half of the real chunk table pointer. A 0x1000 floor refused that only
+  while the table sat below 16 TB -- a chunk-counts-first UE 5.7 array (the Mistfall Hunter shape) with its table
+  higher would have been read with a few thousand objects through a garbage table. The rows now follow the 8 bytes
+  under the count as a pointer and refuse the count when they lead to a chunk table and the row's own Objects slot does
+  not, so no array a row read before is refused; when A/C is refused and nothing else fits, the last-resort layout reads
+  Objects where that table is. The test suite places a chunk table above 16 TB in every build, and the
+  AddressSanitizer run no longer skips the check.
+- **Proven live** on DLL 3724: the Outer Worlds 2, the one title that reaches relaxed A/C, is still read by it
+  (`relaxed_layout_live.py` 4/4: 122,404 objects, nothing refused, GWorld walk at the title screen; its proxy is
+  refreshed to 3724). No chunk-counts-first title is in the corpus; dll_core_test holds it.
+- **Reviews:** three rounds (`wf_8fb9838c-132`, `wf_26ab4e6e-ff7`, `wf_16792939-c49`), every finding fixed in its own
+  commit -- the first made the check unable to refuse a genuine array and fixed the fallback. Relaxed D's own gap (no
+  floor; its count can be half of PreAllocatedObjects) is filed as `[RELAXED-D-PREALLOC-HALF]`.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1599 checks (ASan:
+  1599, three runs), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 3f27f5917252d9d0...); UE5Dumper.dll 3,798,528 bytes (sha256 5ee6847cfd06d433...).
+
+## 2026-11-17 (build 3723) — A class walk that starts while an init is ending waits for it `[CPP-HARDENING-2026-11-14]`
+
+A follow-up to build 3722's `[DYNOFF-LATCH-STALE]` fix, found by the fourth review round. No visible change.
+- **What changes:** the end of an offset validation bumps a count and the property layout's epoch as two steps. A
+  class walk that read the count between them saw the new count while its plain walk still used the old epoch, and
+  could keep a walk made with half-measured offsets for the rest of the session -- a window of nanoseconds, once per
+  init. The count is now seqlock-shaped (odd while the retire is under way, even only after the epoch moved) and the
+  walk waits out an odd count. The `check_property_family` gate now pins the epoch's writers and the retire's order,
+  in every form an atomic write takes.
+- **Proven live** on DLL 3723 (DumperTest Shipping, UE 5.4): `latch_regression_live.py` 4/4 injected and 4/4 with a
+  `dxgi.dll` proxy, `initlog_live.py` 6/6 (proxy removed afterwards); `mcp_client.py` probe 29/29, raw 28/28,
+  fieldgrant 44/44. The interleaving itself is dll_core_test's: the retire left half done, finished from another
+  thread.
+- **Reviews:** round 4 (`wf_09b53b67-caf`) found it; a fifth (`wf_090d2608-d9f`) found two over-claims -- a comment and
+  the gate's patterns -- both fixed. The rounds converged there.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1586 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 27c555bdcdc0f863...); UE5Dumper.dll 3,797,504 bytes (sha256 304357adf4dae173...).
+
+## 2026-11-17 (build 3722) — An init's offsets are checked again when it ends, and a command read during it leaves a trace `[CPP-HARDENING-2026-11-14]`
+
+The hardening analysis's two init-window logic gaps, fixed as the maintainer decided on 2026-11-17 and reviewed in
+rounds with the maintainer present. No visible change in the UI.
+- **What changes:**
+  - `[DYNOFF-LATCH-STALE]`: the struct-slot calibration (CorrectSubclassOffsets) latched once per process, so a
+    property layout published after it -- Genau's measurement on a later init, or the defaults a re-run init applies
+    first -- was never checked again, and a derivation one pointer off stayed for the session. The latch now records
+    the layout's epoch, which every layout move re-arms; and the end of every offset validation retires the epoch, so
+    classes cached during an init, read with offsets still being measured, are walked again afterwards even when the
+    layout did not move. A class walk that straddles the end of a validation walks again.
+  - `[PIPE-WALK-DURING-INIT]`: the pipe still answers every command during an init (proxy mode's trigger_scan, an
+    Extra Scan apply) -- nothing is refused -- and now writes each command name once per run to the pipe log,
+    `<cmd> arrived during an init or rescan apply -- offsets or pointers it read may not be final yet`: the trace a
+    wrong answer from that window needs.
+- **Proven live** on DLL 3722 (DumperTest Shipping, UE 5.4): `initlog_live.py` 6/6 with a `dxgi.dll` proxy (four
+  lines, one per name, over 48 commands, every one answered); `latch_regression_live.py` 4/4 injected and 4/4 in proxy
+  mode (every StructProperty of DumperTestActor names its struct, no calibration move); `mcp_client.py` probe 29/29,
+  raw 28/28, fieldgrant 44/44. The latch's failure itself needs a mis-derived layout no fixture has; dll_core_test
+  holds it.
+- **Reviews:** three rounds (`wf_8f451d97-434`, `wf_b0aa9098-dd5`, `wf_2d9f83d5-21b`), every finding fixed in its own
+  commit; a fourth (`wf_09b53b67-caf`) found one more straddle, fixed in build 3723. Round 1's B-INIT-WINDOW -- what an
+  init cached mid-run surviving it when the layout did not move -- predates this build: a first proxy-mode init already
+  had it.
+- **Left as decided** (maintainer, 2026-11-17): `[VND584-03-FLOOR-HIGH-HEAP]` waits for a real game; no ASan CI job.
+- **Tests:** C# 8391 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4166, dll_core_test 1585 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 bca2b9ffcdfdb536...); UE5Dumper.dll 3,797,504 bytes (sha256 a04c5cffa6fef726...).
+
+## 2026-11-17 (build 3721) — The remaining lazily measured offsets are race-free reads `[CPP-HARDENING-2026-11-14]`
+
+The last code follow-up of the maintainer's C++ hardening item 2 (race-free reads of calibrated offsets). No visible
+change.
+- **What changes:** eight more DLL offsets -- the soft and lazy pointers' payload envelopes, UEnum::Names' layout
+  (offset, value size, pair stride) and UFunction's Func, flags and tail -- are measured by whichever walk first meets
+  the evidence while the scan workers and other pipe connections read them. As plain ints that was a formal data race,
+  as the property family's was before build 3712; they are now `DynOff::RuntimeOffset` (relaxed atomics),
+  pinned by eight `static_assert`s in dll_helpers_test. The compiler found every site that needed more than the
+  implicit int (the envelope latch, four log arguments, one saved test value).
+- **Proven live** on DLL 3721 (DumperTest Shipping, UE 5.4): the DLL log shows the measurements still land through the
+  new type (TSoftObjectPtr and TLazyObjectPtr envelopes +0x08, FunctionFlags +0xB0 at 64/64 votes); `mcp_client.py
+  fieldgrant` 44/44 (an enum written by its entry), `invokeparams` 30/30 (+3/3 apart, soft-pointer struct fields),
+  `invokegrant` 29/29, `raw` 28/28, `holdsmore` 78/78.
+- **Open in the item:** an AddressSanitizer CI job; and the hardening analysis's LOW rows `[DYNOFF-LATCH-STALE]`,
+  `[PIPE-WALK-DURING-INIT]` (which needs a decision on which commands count as walking) and
+  `[VND584-03-FLOOR-HIGH-HEAP]`, left for a session with someone to review a calibration change.
+- **Tests:** C# 8390 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 410efce4173dc2a6...); UE5Dumper.dll 3,795,456 bytes (sha256 db0680bfa8fed215...).
+
+## 2026-11-17 (build 3720) — `[[nodiscard]]` batch 2: a refused Fly preset is an error, not a silent no-op `[CPP-HARDENING-2026-11-14]`
+
+The second batch of the maintainer's C++ hardening item 1 (2026-11-14: cheap hardening instead of a Rust rewrite).
+- **What changes for a user:** `fly_set` with a key preset other than 0 (WASD), 1 (numpad) or 2 (arrows) used to be
+  dropped while the reply read as applied. It now answers an error and changes nothing in that request (not the speed,
+  noclip or ON/OFF it also carried), and records no holder. The UI, the MCP server and CE send only valid presets, so
+  this reaches a raw pipe client or a script.
+- **The batch:** 28 more DLL declarations are `[[nodiscard]]` -- the gameplay setters (god mode, movement, gravity
+  direction, time dilation, Fly, See-through, Keep Foreground, forced fields), the teleport API, and the
+  ProcessEvent hook's invoke and install entries. The compiler (`/we4834`, a build error) found the five discards
+  batch 1 had recorded: the preset above; Fly's speed and noclip setters, which cannot fail and stay unannotated; and
+  the shutdown's See-through and Keep Foreground OFFs, which return 0 by contract. The teleport's file-local helpers
+  were tried and left unannotated: every teleport measures where the pawn ended up afterwards, so their 9 discards are
+  by design.
+- **Review:** a fresh-context review with a verifier (1 LOW, 3 INFO, all confirmed and fixed before the build): the
+  shutdown's two warnings could never fire, a refused preset could still record a holder, a stale comment, a count.
+- **Proven live** on the AOT exe and DLL 3720 (DumperTest Shipping, UE 5.4): `tools/verify/flyset_preset_live.py` 4/4
+  -- preset 7 refused with the preset unchanged, preset 7 with a speed refused with neither changed, a valid preset
+  taken, the originals put back. Regressions: `mcp_client.py writes --toggle-experimental` 39/39 (Fly among them),
+  `holdsmore` 78/78, `raw` 28/28, `probe` 29/29.
+- **Also since 3719 (docs and rigs, no code):** the verification register's holder-labels batch is closed (rows 3-6
+  live: the experimental cards' chips, a restarted window's "exited" hold, a queued camera ON and an owed release --
+  that row's premise corrected, since a departed AI's queued ON is dropped and never runs -- and a CE invoke behind a
+  busy camera lock), and Phase 1b's row 3 (a Blueprint function under an invoke grant, the DLL's -28 naming the
+  override).
+- **Tests:** C# 8390 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; nodiscard_probe OK; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 a055a972c7d6dbf7...); UE5Dumper.dll 3,794,944 bytes (sha256 e45e174c31b01b24...).
+
+## 2026-11-17 (build 3719) — An AI's UFunction call: an object argument must be of the class its parameter declares `[INVOKE-OBJECT-PARAM-CLASS]`
+
+The LOW hardening item from Phase 1b's review, for `write_invoke` and `write_invoke_granted_function` alike.
+- **What changes:** an object argument was checked for being a live object only, so a native function could be
+  handed an object of another class and call through its vtable, or read its fields, as if it were the declared one.
+  Now a top-level object argument (strong, weak or soft) must be of the parameter's declared class or a subclass,
+  matched by the class's short name; a class parameter (`UClass*`, `TSubclassOf`) takes a class object only. Refused
+  before anything is sent: "'Player' takes a PlayerController; 0x... is a ..., which does not derive from it." A
+  chain that cannot be read is refused without a claim about the object's kind. Held to liveness only, as before: an
+  interface parameter, one declared as any object (no class walk at all), a struct's object field and a parameter whose
+  declared class the DLL could not read.
+- **Review:** a fresh-context review with a verifier (2 LOW, 4 INFO, all confirmed), each fixed before the build: the
+  class parameters, the unread-chain wording, Object's free pass, the dead Lazy arm, the short-name note and the docs.
+  Mutation checks: 4 of 4 killed.
+- **Proven live** on the AOT exe and DLL 3719 (DumperTest Shipping, UE 5.4): `mcp_client.py invokeparams` 30/30 (+3/3
+  apart), its new step C: `GameplayStatics.GetPlayerControllerID` given the pawn refused by the server, no invoke line
+  in the pipe log, and given the live PlayerController run, returning 0. Regressions: `invokegrant` 22/22, `fieldgrant`
+  44/44, `probe` 29/29, `raw` 28/28, `writes --toggle-experimental` 39/39, `holdsmore` 78/78.
+- **Also in this build's docs (no code):** the verification register's Phase 2 rows 3 and 4 closed on 3718 -- a
+  Blueprint class's field (`ABP_Manny_C`'s `GroundSpeed`, written on the live `ABP_Quinn_C`) and a packed bool on a
+  live object (`Actor:bCanBeDamaged`, only its own bit) -- through `mcp_client.py fieldgrant`'s new steps 4c and 4d.
+- **Tests:** C# 8389 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 634c05dfe24ec4c3...); UE5Dumper.dll 3,794,432 bytes (sha256 84ba09fb89ade730...).
+
+## 2026-11-17 (build 3718) — MCP field grants: one field of one class, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Phase 2 of docs/mcp-write-approval-eval.md (§4.5): the typed twin of the UI's field edit, approved once per game run.
+- **What changes for a user of an AI client:** `grant_write_field_one_property_every_instance` asks once, for one game
+  run, to let the AI write ONE field of ONE class, named by the field and the class's full path as `read_class` shows
+  them (e.g. `HolderValue` and `//Script/DumperTest/DumperTestHolder`), on every live instance of that class and its
+  subclasses (other characters included), with any value its type allows. `write_field` then writes it without asking
+  again. `read_grants` names the field and counts its writes; `revoke_grants` ends one field's grant, named as
+  `read_grants` shows it. `write_memory` still asks every call, for anything else.
+- **What a field grant covers:** a number, a bool or an enum field, one element -- never a struct, a string, a
+  reference, a container or a static array, nor a struct's or a function's member. Each write goes to the address the
+  server computes from the granted class's layout, checked against the object's own walk; the gate passes the write
+  nowhere else, and it carries the bytes read just before it (expect). An enum takes one of its own entries (by its
+  qualified or short name, or its value; never its trailing `_MAX`, and nothing when the game's enum names could not
+  be read); a packed bool keeps its sibling bits; `42.0` or `1e3` for an integer reads as 42 or 1000.
+- **Refused:** a template -- a class default, one of its subobjects, a Blueprint component template -- by the DLL's
+  own verdict; a field of the same name on a class outside the grant's derivation; and a walk of another object than
+  the one resolved (freed, its slot reused).
+- **The DLL:** `get_object` now names its template verdict (`template`: "", "class_default" or "template"), so field
+  grants need DLL 3718; an older DLL is refused with that floor's own reason.
+- **The server's instructions** name the field grant; what stays after the session names
+  `write_invoke_granted_function` and `write_field` too; the per-call exceptions follow the server's refusal of an
+  invoke or a field grant, never a declined prompt or the user's block; a host that asks every call no longer names
+  tools it does not list. Under "Block AI writes", `write_field` answers with the block.
+- **Reviews:** two fresh-context rounds, each with an adversarial verifier. Round 1, 26 rows (3 MED: archetypes written
+  under a grant, and two in the live rig; 11 LOW; INFO) in 18 distinct issues, each fixed or covered by a test; round
+  2, 22 rows (LOW / INFO) in 12, fixed. Mutation checks: 8, 16 and 4 mutations, every one killed.
+- **Proven live** on the AOT exe and DLL 3718 (DumperTest Shipping, UE 5.4): `mcp_client.py fieldgrant` 33/33 --
+  grants refused for a struct, a static array, a short class name and a missing field; `HolderValue` granted on
+  `DumperTestHolder`, written unasked on a spawned `DumperTestDerivedHolder` (4321.5, read back) and put back byte for
+  byte; refused on a `DumperTestHolderDecoy` (the same field name, no derivation), on the class default and on
+  `Default__Character`'s movement component (an archetype named like any component); a float past its range refused;
+  a native bool set and cleared, a 4-byte enum set by its short name (`Wide_High`, all four bytes) and refused a value
+  that is no entry, each put back; one grant revoked while the others stand. Regressions: `probe` 29/29, `invokegrant`
+  22/22, `raw` 28/28, `invokeparams` 26/26 (+3/3 apart), `writes --toggle-experimental` 39/39, `holdsmore` 78/78;
+  `olddll` 41/41 on a fresh 3695 DLL (the field grant and `write_field` refused "older than 3718", nothing sent).
+- **Not seen live:** Claude Code's own prompt for the field grant (the session's server is an older build), a
+  Blueprint class's field and a packed bool on a live object (the fixture's flag is a native bool): the verification
+  register's new batch, each with its acceptance test.
+- **Tests:** C# 8379 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,684,160 bytes (sha256 b8278dc7993e07f3...); UE5Dumper.dll 3,794,432 bytes (sha256 176a023f13160af1...).
+
+## 2026-11-17 (build 3717) — MCP invoke grants: one game function, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Phase 1b of docs/mcp-write-approval-eval.md (§4.4): CE's point for invoke, without unmarking arbitrary calls.
+- **What changes for a user of an AI client:** `grant_invoke_one_function_any_object_and_args` asks once, for one game
+  run, to let the AI call ONE UFunction, named by its function and its class's full path as `read_functions` shows it
+  (e.g. `SetActorHiddenInGame` and `//Script/Engine/Actor`); the prompt shows the function first. `write_invoke_granted_function` then calls that function on any object, with any
+  arguments, without asking again. `read_grants` names the function and counts its calls; `revoke_grants` ends one
+  function's grant. `write_invoke` still asks every call, for anything else.
+- **What no invoke grant can name** (refused when asked for, and by the DLL at every call): the DLL's deny list, a
+  network RPC, a Blueprint event graph, and a function whose arguments reach other functions or properties by name --
+  a delegate, a property path, a UFunction, a latent call, or a name, string or struct parameter named for a function,
+  event, property, command, delegate or callback (`K2_ClearTimer`'s FunctionName, `SendGameplayEventToActor`'s
+  EventTag). Under a grant the DLL also refuses a non-static function on a class default or a template, and checks
+  that the function it resolves is the granted one by full name (`grant`, `expect_func_full`; code -28).
+- **The AI's invoke deny list (every AI call, per call too)** gains what a scan of the UE 4.18-5.8 sources found: UE4's
+  achievement write (`WriteAchievementProgress`), an async action's `Activate` (the online-service and save actions),
+  latent calls, `RemoteEvent`, `SetBind`, the timeline's `AddInterp*`, `EditTextPropertySourceString`, the save slot's
+  local-player twins, and every streaming-level and level-instance load and unload.
+- **Reviews:** a fresh-context review with a refuter per finding (10 LOW confirmed, 1 refuted), each fixed or covered by
+  a test: Blueprint function names with a space, '?' or '*' are grantable; a struct parameter named for an event is
+  refused under a grant; the other level-loading functions are refused; the text that overstated when the grant's
+  lookup runs and which replies carry `func_full` is corrected.
+- **Proven live** on the AOT exe and DLL 3717 (DumperTest Shipping, UE 5.4): `mcp_client.py invokegrant` 22/22 -- a
+  grant on `KismetMathLibrary.Add_IntInt` and its unasked call returning 42; six grants refused (a deny-list name, a
+  timer by name, a latent call, a FunctionName parameter, a missing class, a short class name); a granted
+  `SetActorHiddenInGame` refused by the DLL on a class default and run on a live StaticMeshActor; the DLL's own checks
+  driven as a background client through the pipe (another function -28, a FunctionName parameter -28, a latent call
+  -24 per call); one function's grant revoked while the other stands. Regressions: `probe` 29/29, `raw` 28/28,
+  `invokeparams` 26/26 (+3/3 apart), `writes --toggle-experimental` 39/39, `holdsmore` 78/78.
+- **Not seen live:** Claude Code's prompt for the invoke grant (this session's server is an older build); the argument
+  order it shows is pinned by `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst`, and Phase 0 (M1)
+  measured that the prompt shows each argument whole.
+- **Tests:** C# 8311 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,601,216 bytes (sha256 9ef40a357cd0dbb5...); UE5Dumper.dll 3,793,920 bytes (sha256 7dcde89886bcf970...).
+
+## 2026-11-16 (build 3716) — each gameplay card says who else holds it `[MCP-WRITE-GRANTS-2026-11-14]`
+
+The rest of Phase 1's UI half (docs/mcp-write-approval-eval.md §4.10): once grants took the per-call prompt away, this
+is how the user sees what an AI session holds.
+- **What changes on the Teleport tab:** every gameplay card with a hold (Debug Camera, God Mode, Stealth Meter, Keep
+  Foreground, Move Speed, both time lanes, Gravity, Super Jump, Fly, See-through, Gravity Direction) shows an amber
+  chip beside its state badge while someone other than this window holds the feature: "Held by an AI session
+  (pid N)", "Held by Cheat Engine", "Held by another program (pid N)", "Held by a program that has exited (pid N)"
+  (typically this window's own holds from before a restart), "Held by a program that recorded no owner", or "Turning
+  off: the AI session that held it has ended". See-through counts the claims that are neither this window's nor
+  CE's. The chip's tooltip says the card's OFF or Reset takes the feature over and ends it, and to tick Block AI
+  writes first to keep an AI session from turning it back on.
+- **The card follows the holder:** the window reads `get_holds` every 2 s (DLL 3704 or later), quietly. A card
+  someone else holds is read again on each poll, so its badge and readout show their value (the time lanes' readout,
+  never the sliders), and once more after they let go. A read the poll could not make (a command running, a failed
+  read) is made on the next poll. A debug-camera ON still queued shows Queued rather than the OFF a read would give.
+- **Stealth card:** its Reset now ends a job someone else holds on its meter (it used to send nothing once it had
+  seen no hold), and its badge and readout follow that job from the forced-field list alone: Holding @0, Armed @0
+  (nothing live to hold yet), Unknown (another value), Off.
+- **Block AI writes:** the window re-reads the switch file off the UI thread on every poll, and a click that lands
+  during that read is no longer undone.
+- **Debug camera ownership (DLL):** the UI's Console panel Run of `ToggleDebugCamera` / `EnableDebugCamera` /
+  `DisableDebugCamera` and a CE record's invoke of them (INVOKE_BY_NAME, CMD_INVOKE) now record who toggled the camera,
+  so an AI session's end no longer turns off a camera the user turned on that way, and the chip names the right
+  holder. A CE invoke never waits for the camera's lock (busy, it runs unrecorded, as before). An AI's `write_invoke`
+  of those functions keeps its "use write_debug_camera" refusal, and `write_invoke` names the holder of a hold
+  refusal instead of reporting "code -999". docs/pipe-protocol.md says which invokes name whom.
+- **`[MCP-GRANT-USES-RELEASES]` fixed:** `read_grants`' uses count counts only what a grant let through, not an OFF
+  or a reset that needed none.
+- **Reviews:** three fresh-context review rounds over the change, each finding checked by a refuter (round 1: 2 MED,
+  8 LOW; round 2: 8 LOW; round 3: 2 LOW, 1 refuted); every confirmed one fixed red then green or covered by a new test.
+- **Proven live** on the AOT exe and DLL 3716:
+  - `tools/verify/holder_chips_live.py` (DumperTest Shipping, the window connected): a background client's god mode,
+    world time 0.5 and walk speed x1.5 read "Held by an AI session (pid 30864)", with the badges ON, the readout
+    "0.5x (held; natural 1x)" and the world slider left at 100%; a foreground client's jump x1.2 read "Held by another
+    program (pid 34140)"; the card's Reset took the jump over (chip gone, 700 cm/s); when the background client left,
+    every chip went and the badges read OFF. PASS.
+  - `tools/verify/dbgcam_ledger_live.py` 13/13 (DumperTest58 Development, UE 5.8): the AI's invoke refused by name;
+    the window's invokes name the window on and off and take the camera over from the AI, whose end then left it on;
+    the mailbox's INVOKE_BY_NAME names CE. No pre-3716 DLL was at hand for a live negative control; each fix had its
+    red step in a unit test or a source pin.
+- **Tests:** C# 8274 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4104, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,557,696 bytes (sha256 afbf6c4c086ff538...); UE5Dumper.dll 3,779,584 bytes (sha256 0c0a7cdf62d3ad10...).
+
+## 2026-11-16 (build 3715) — MCP write grants, Phase 1 proven live; an AI's OFF of another's hold names the holder `[MCP-WRITE-GRANTS-2026-11-14]`
+
+The live pass of build 3714's Phase 1, with the maintainer at the prompts (verification-register.md, "MCP write grants,
+Phase 1": all five closed).
+- **What changes for a user of an AI client:** when an AI tries to turn off or reset something the UI, a Cheat Engine
+  record or another session holds, the refusal says who holds it again ("... is held by the UE5DumpUI window or
+  another program (pid N)"). In 3714 the server refused it before the DLL could, but without naming the holder, and
+  asked for a grant the DLL would have refused past anyway.
+- **Proven live, in Claude Code 2.1.325 (the maintainer's default mode is auto):**
+  - the grant prompt shows the tool's name and the whole `scope_ack` sentence, Deny / Allow once; a covered write
+    before its grant is refused naming it and reaches nothing; after Allow the covered writes run without prompts,
+    while `write_memory` still asks every call;
+  - the server logs `initialize from claude-code 2.1.325 ... writes: Grants` (Phase 0's M7);
+  - Block AI writes, ticked in the window, revokes the live grant at the AI's next call, refuses new changes and lets
+    the AI's OFF of its own hold through; unticking does not bring the grant back;
+  - the `--mcp-agent-guard` hook denies a subagent's and a workflow agent's write before it runs (a workflow agent's
+    hook input carries `agent_id` too, which the hooks reference does not say);
+  - See-through's own-claim OFF ends only the AI's claim (DLL `own claim released (1)` beside the UI's claim, `(2)`
+    alone).
+- **Rigs on the AOT exe and DLL 3715** (DumperTest Shipping): holdsmore 78/78, writes 39/39, raw 28/28, invokeparams
+  26/26, olddll 37/37.
+- **Found and left open:** `[MCP-GRANT-USES-RELEASES]` (LOW): `read_grants`' uses count counts an OFF or a reset that
+  needed no grant.
+- **Tests:** C# 8182 passed, 1 skipped; headless 71/71; C++ self-tests passed.
+- AOT UI 62,439,424 bytes (sha256 06c2e4c4ec525591...); UE5Dumper.dll 3,777,536 bytes (sha256 c286ca5b75167b34...).
+
+## 2026-11-16 (build 3714) — MCP write grants, Phase 1: one grant per game run instead of a prompt per write, and a switch to stop every AI session `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Claude Code's prompt for a write tool offers only "Deny" and "Allow once", so every repeat of a write asked again. The
+maintainer took every recommendation of docs/mcp-write-approval-eval.md §8 for Phase 1; Phase 0 had measured the prompt
+(it shows the tool's name and its arguments in full, nothing else) and that subagents share the session's server.
+- **What changes for a user of an AI client** (the UI and Cheat Engine change only by the new switch):
+  - Claude Code 2.1.246 or later asks once per game run, through two grant tools whose names say what they unlock:
+    `grant_god_mode_camera_cursor_time_see_through_foreground` (god mode, the debug camera, the mouse cursor, time
+    dilation, See-through, Keep Foreground) and `grant_movement_fly_teleport_may_kill_or_lose_pawn` (the movement
+    knobs, gravity direction, Fly, teleport). The prompt shows a fixed sentence of what the grant covers and how long.
+    A grant ends with the game run, the AI session or its server's reconnect, or `revoke_grants`; `read_grants` lists
+    them. A dropped pipe connection to the same game run keeps them.
+  - `write_memory`, `write_invoke` and `write_force_field` still ask before every call.
+  - Turning off or resetting what the AI itself holds needs no grant. Turning off what it did not turn on needs the
+    grant: god mode's OFF writes the normal value to every protection bool, whoever set them.
+  - Every other client, Claude Desktop included, only reads unless its own registration adds `--writes=any-host`. An
+    older or unparseable Claude Code asks before every write, as before. `--writes=off` turns writes off; any other
+    argument stops the server with exit code 1.
+  - A value outside the UI's own range is refused, never clamped by the DLL: time dilation up to 3 (world) and 10
+    (pawn), walk speed and gravity 0.1 to 10 times, jump 10% to 30 times the height, Fly 50 to 20000, See-through 1 to
+    10 (the tool said 16, the DLL clamps at 10). A zero gravity vector points to the reset.
+  - **Block AI writes**, at the top of the Teleport tab: every AI session is refused every change but an OFF or a
+    reset of its own holds, and every grant ends. Per Windows user (`ai-writes.json`); a file that cannot be read
+    blocks too.
+  - `UE5DumpUI.exe --mcp-agent-guard` is a Claude Code PreToolUse hook that refuses a subagent's or a workflow agent's
+    write or grant; docs/mcp.md gives the settings entry.
+  - An AI's See-through OFF ends only its own claim: `seethrough_set` takes `own_claim` (DLL change), and See-through
+    stays on while the user or a Cheat Engine record has it on. `seethrough_get_state` says `you`.
+- **How:** `McpGrants` decides the client once, at the first initialize, classes every DLL command, and keys grants on
+  the game run (pid and process start time). `McpGameLink` checks every send under its lock: a write admitted for
+  another run, another kind, a revoked grant, or an OFF of what this server does not hold (read from get_holds right
+  before) is refused and nothing is sent.
+- **Review:** a fresh-context review of the change found two MED and two LOW; all four were fixed, red then green,
+  before this build (an OFF of what the server does not hold was passed as a release; See-through's OFF ended
+  everyone's claims; a release did not need `if_free`; the time-dilation refusal named 0).
+- **Tests:** C# 8180 passed, 1 skipped (McpGrantsTests and AiWriteBlockGateTests are new); headless 71/71; C++
+  dll_helpers_test 4101 and dll_core_test 1574 checks. `mcp_client.py probe` 29/29 on a local build: the host decision
+  through real server processes.
+- **Live: pending.** The grant prompts in Claude Code, the guard hook in a real session, the switch against a running
+  server, and the write rigs on DumperTest are open in docs/verification-register.md.
+- AOT UI 62,438,912 bytes (sha256 040ba069aec56233...); UE5Dumper.dll 3,777,536 bytes (sha256 828bd085db3d5800...).
+
+## 2026-11-16 (build 3713) — The AI's calls: three gaps closed before any grant ships `[INVOKE-DENY-INDIRECTION]` `[WRITEMEM-OWN-IMAGE]` `[MCP-INSTR-CLAIMS]`
+
+The maintainer chose these three from the MCP write-approval plan (docs/mcp-write-approval-eval.md) because they need
+no measurement and must be closed before a per-function grant could let an AI repeat a call unasked.
+- **What changes for a user of an AI client** (the UI and Cheat Engine are not affected):
+  - `write_invoke` also refuses the calls that reach a refused effect by name: timers by function name or event
+    (`K2_SetTimer*`), property setters by name (`Set*PropertyByName`, `SetCollisionProfileNameProperty`) and a
+    Blueprint's event-graph entry (`ExecuteUbergraph_*`); and `RemovePlayer`, whose `bDestroyPawn` destroys the pawn;
+    and the achievement, leaderboard and in-app purchase calls, which leave the machine without being network RPCs.
+    Every name was checked against Unreal Engine's source.
+  - `write_memory` refuses a range inside UE5Dumper's own image (code -25): its globals include the Cheat Engine
+    mailbox, and a write there would have handed an invoke to the CE-owned poller, past the deny list.
+  - The server's instructions no longer tell the model that "the user is asked before each one" (only Claude Code
+    asks; another host decides for itself) or that "everything this server turns on is released" (Fly's speed, preset
+    and noclip stay, and so does what a `write_invoke` or `write_memory` did). docs/mcp.md says the same.
+- **Tests:** red, then green, for each. dll_helpers_test +19 deny-list checks with controls (reading a timer, an
+  ordinary setter, a name merely containing a family stay allowed) and the image-overlap edges; dll_core_test checks the
+  own-image test on its exe's global, code and a heap block; `McpServerTests.Instructions_DoNotOverstateTheApprovalOrTheRelease`.
+- **Publish:** C++ 287 + 4098 + 22 + 30 + 1574 checks; C# 7937 passed, 1 skipped; headless 71/71.
+- **Live, 3713,** DumperTest Shipping: `mcp_client.py raw` 28/28, its two new checks included -- `write_invoke
+  K2_SetTimer` refused as a call by name, `write_memory` into the DLL's own `g_invokeMailbox` answered -25.
+- AOT UI 62,289,920 bytes (sha256 81c45bdae2913830...); UE5Dumper.dll 3,774,976 bytes (sha256 bd6c75610c353373...).
+
 ## 2026-11-15 (build 3712) — C++ hardening instead of a Rust rewrite: unhandled status results, a data race in the property offsets, AddressSanitizer on the self-tests `[CPP-HARDENING-2026-11-14]`
 
 The maintainer decided against rewriting any part of the DLL in Rust (docs/rust-rewrite-eval.md: about 2-4% of the

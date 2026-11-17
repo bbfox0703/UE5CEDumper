@@ -1,6 +1,12 @@
-# MCP write approval: grants instead of a prompt on every call — EVALUATED 2026-11-14, NOT STARTED
+# MCP write approval: grants instead of a prompt on every call — EVALUATED 2026-11-14; PHASES 1, 1b AND 2 SHIPPED
 
-> **Status.** The maintainer asked for this evaluation first, written down, with no implementation yet (2026-11-14).
+> **Status (2026-11-17).** Phase 0 measured (§6.1). Phase 1 shipped in build 3714 and was proven live in 3715, the
+> cards' holder labels in 3716, Phase 1b (invoke grants, §4.4) in 3717, Phase 2 (`write_field`, §4.5) in 3718, each
+> proven live (verification-register.md). Phase 3 (§7, optional) is not to be built for now (maintainer,
+> 2026-11-17). What follows is the
+> evaluation as written, with each phase's shipped notes.
+>
+> **As first written.** The maintainer asked for this evaluation first, written down, with no implementation yet (2026-11-14).
 > Next step: the Phase 0 measurements in §6, which need no build. Then the maintainer decides the open points in §8,
 > and Phase 1 can start. Tracked in [todo.md](todo.md) under `[PIPE-PER-PROCESS-2026-11-06]` Stage D as
 > `[MCP-WRITE-GRANTS-2026-11-14]`.
@@ -139,7 +145,10 @@ marker. The write tools they cover lose it, and the server refuses any covered w
 - **Key.** The exact resolved FullName, ordinal compare. Its real format is `Ubel::GetFullName`'s
   `//Script/Engine/Actor.SetActorHiddenInGame`: the function comes **last**, so a prompt that cuts long strings hides
   exactly the function. The grant therefore takes the short function name first and the declaring class second, and the
-  server compares both with the resolved FullName. A subclass override has its own FullName and needs its own grant.
+  server compares both with the resolved FullName. A Blueprint override has its own FullName and needs its own grant;
+  a native override has no UFunction of its own (UHT refuses a UFUNCTION on one), so a grant on the parent's function
+  covers it -- a grant on `BlueprintAsyncActionBase.Activate` would have covered every async action, which is why that
+  Activate is on the deny list (build 3717).
 - **Free arguments and instance**, like CE's runtime invoke form. One function per grant, no lists, no wildcards.
 - **Refused for grants** (the per-call marked route stays):
   - **Indirection functions.** These turn one name into every function or property: `K2_SetTimer` and its family
@@ -155,8 +164,8 @@ marker. The write tools they cover lose it, and the server refuses any covered w
     verified at implementation.
 - **Under a grant, refuse a non-static function on a class default object.** Today the DLL only warns about that, and
   it can change the defaults of later spawns.
-- **No use cap in Phase 1** (§8): each call is still a model turn, so a runaway loop is slow and visible. Every
-  admitted call is counted, and the count shows in `read_grants` and the log.
+- **No use cap in Phase 1** (§8): each call is still a model turn, so a runaway loop is slow and visible. Every call
+  a grant lets through is counted (build 3716: at the gate, not at admission), and the count shows in `read_grants`.
 
 ### 4.5 `write_field` (Phase 2, after M1)
 
@@ -173,6 +182,13 @@ A typed twin of the UI's field edit: `write_field {instance_addr, field_name, va
   AI chooses values within the type's range: an index or a state value can still crash a game.
 - **Raw `write_memory` stays per call.** Its CE equivalent is a human typing each address. A raw-range grant would ask a
   human to approve a hex range, which nobody can read meaningfully.
+- **Shipped in build 3718** (dev-log 3718). The names follow the invoke grant's: `write_field {instance_addr, field,
+  value}` under `grant_write_field_one_property_every_instance {field, class}`, the field first in the prompt. Two
+  review rounds added what this section did not foresee: a template is refused by the DLL's own verdict, which
+  `get_object` now sends (so DLL 3718+), since a class default's subobject is named like any component; the grant
+  names a class only, never a struct's or a function's member; the walk must be of the object whose class was
+  resolved; an enum takes its short or qualified name, never its trailing `_MAX`, and nothing when its names were not
+  read; and the chain walk sees this game run's grants only.
 
 ### 4.6 Lifetime
 
@@ -322,6 +338,31 @@ Use the current 3709 dist in the desktop Code tab, and record the Claude Code ve
    quitting the app? How long does an idle session's server live?
 10. **M11 (only before any future elicitation route).** Does the Code tab render `elicitation/create`?
 
+### 6.1 Results so far (2026-11-16)
+
+Measured in the desktop app's Code tab, Claude Code 2.1.322 (the version this session reported earlier), with the build
+3713 server (`out\mcp\UE5DumpUI.exe`, pid 36620) and no game running. The prompt appears before a call reaches the
+server, so none needs a game; every probe was denied, and the server log shows no `write_*` call.
+
+| | Question | Result | What it decides |
+|---|---|---|---|
+| **M1** | Does a marked tool's prompt show its arguments in full? | **Yes.** Under "What Claude sent": `Instance addr`, `Function` (a 140-character name, wrapped, its end marker shown) and an expanded `Params` list (a 220-character string, wrapped, its end marker shown; a number). Nothing was cut at these lengths. | `grant_invoke` and `grant_field` (§4.4, §4.5) can ship: the human sees the whole target. A required `scope_ack` argument (§4.2) would be shown in full too. |
+| **M10** | Does the prompt show the tool's title or description? | **No: the tool's name only**, underscores turned into spaces, with the server's name: "Allow Claude to use write invoke (ue5cedumper)?". The title ("Invoke a UFunction") and the description are not shown. | The grant tools' NAMES must state their scope (§4.2); the argument display makes a `scope_ack` sentence a workable second channel. |
+| — | Which options does a marked prompt offer? | "Deny" and "Allow once" only. | Matches the docs: no "don't ask again" on a marked tool. |
+| **M6** | Do subagents and workflow agents share the session's server? | **Yes.** A background subagent's and a workflow agent's `read_games` ran on the same server process (pid 36620 logged both; no new server log appeared). | Grants are shared with every agent of the session. The PreToolUse hook that denies `write_*` and `grant_*` calls carrying `agent_id`, and the instruction that game text is data (§4.9), are required in Phase 1, not optional. |
+| **M6b** | Does a background subagent's marked prompt reach the main session? | **Yes, and it looks exactly like the main conversation's own prompt**: same title, same fields, nothing naming the subagent. | A human cannot tell a subagent's grant request from the main conversation's. This strengthens M6's conclusion. |
+| **M9** (part) | Does `/mcp` enable / reconnect end the server process? | **Yes.** Enabling the server started one process (pid 22408), which logged "stdin closed; server exiting" 11 s later, and a new one (pid 36620) took over. | A reconnect ends every grant, as §4.6 assumes. Idle lifetime, session close and app quit are still open. |
+
+Seen along the way (an app behaviour, not this server's): a user message sent while a permission prompt is open aborts
+the request ("Tool permission request aborted"), and the dialog then stays on screen, inert (the maintainer pasted a
+screenshot while the M1 prompt was open). With no message sent, Deny works normally: the M6b subagent's prompt was
+denied and the agent went on.
+
+**Not measured, by decision (maintainer, 2026-11-17: not for now):** M2-M5 need a permission-mode switch or an
+allow rule (the maintainer's settings); M7 needs Phase 1's
+version log line; M8's SDK half has no session to measure here; M9's idle lifetime; M11 only before an elicitation
+route.
+
 ## 7. Phases and what each touches
 
 - **Phase 1: kind grants, the gate, the host policy.** UE5DumpUI only: no DLL change, no mailbox contract bump.
@@ -350,8 +391,11 @@ Use the current 3709 dist in the desktop Code tab, and record the Claude Code ve
     register's new live rows, working-lessons §6, architecture.md.
   - One AOT `-Mode Publish` build.
   - Estimate: about 450 lines of C# and 300 of tests for the server, plus the UI half; 2–3 sessions.
-- **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions.
-- **Phase 2: `write_field`**, after M1. About one session.
+- **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions. **Shipped in build 3717** (dev-log 3717): the grant
+  tool and `write_invoke_granted_function`, the DLL's grant mode (`grant`, `expect_func_full`, code -28), and the
+  exclusions checked both when the grant is asked for and at every call.
+- **Phase 2: `write_field`**, after M1. **Shipped in build 3718** (dev-log 3718): the grant tool, `write_field`, the
+  gate's hold on one address and size, `get_object`'s template verdict in the DLL, and two review rounds.
 - **Phase 3 (optional): an "AI sessions" card.** Per-session status files listing each session's grants, with a
   per-session revoke. The holder labels and the "Block AI writes" switch moved into Phase 1 (§4.10).
 

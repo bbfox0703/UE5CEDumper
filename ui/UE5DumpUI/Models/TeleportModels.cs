@@ -409,6 +409,17 @@ public sealed class SeeThroughStatus
     /// actors stay hidden until See-through is turned on and off again with the game running. False from an older
     /// DLL.</summary>
     public bool RestoreAbandoned { get; init; }
+
+    /// <summary>How many clients (and Cheat Engine's record) have it on (<c>claims</c>, DLL 3698+; 0 from an older
+    /// one). It names nobody: See-through's holder label can carry no pid.</summary>
+    public int Claims { get; init; }
+
+    /// <summary>Cheat Engine's mailbox record is one of the claims (<c>ce_claimed</c>, DLL 3698+).</summary>
+    public bool CeClaimed { get; init; }
+
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] This window holds one of the claims (<c>you</c>, DLL 3714+). Null from an
+    /// older DLL: not known, so the window's own claim is never counted as someone else's on a guess.</summary>
+    public bool? You { get; init; }
 }
 
 /// <summary>Result of a teleport action (recall / cursor).</summary>

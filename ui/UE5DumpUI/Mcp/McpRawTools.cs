@@ -9,8 +9,13 @@ namespace UE5DumpUI.Mcp;
 
 /// <summary>
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D2-3: raw memory writes and UFunction invokes, to the maintainer's decisions of
-/// 2026-11-11. Both ask every time, as every write_* tool does, and both need the DLL from
-/// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself:
+/// 2026-11-11. Wherever the host writes, both are asked about on every call, since no grant covers them
+/// (<see cref="McpGrants.PerCallCommands"/>), and both need the DLL from
+/// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself. The exceptions,
+/// [MCP-WRITE-GRANTS-2026-11-14], run unasked what a grant names: Phase 1b's <c>write_invoke_granted_function</c> runs
+/// write_invoke's call for the one function an invoke grant names, in the DLL's grant mode (DLL 3717+), which checks that
+/// function again, and Phase 2's <c>write_field</c> (<see cref="McpFieldTools"/>) sends this write_mem for the one field
+/// a field grant names, at the one address the gate then holds it to:
 ///
 /// <para><b>write_memory</b> writes data only. The DLL refuses code, read-only, guard and uncommitted pages for every
 /// client and never changes page protection; this tool also sends the bytes the AI read (<c>expect</c>), so memory the
@@ -19,11 +24,15 @@ namespace UE5DumpUI.Mcp;
 /// <para><b>write_invoke</b> calls a UFunction on the game thread, its parameters by name. The server reads the
 /// signature and builds the buffer by the Invoke dialog's rules (<see cref="ParamBufferBuilder"/>), stricter where the
 /// dialog relies on a human reading the box: a value that does not parse as its type is refused rather than written as
-/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory). It
+/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory) of
+/// the parameter's declared class or a subclass, by short name (a top-level argument; a class parameter takes a class
+/// object, and an interface parameter and a struct's object field are held to liveness only). It
 /// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
 /// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
-/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera), never runs it
-/// off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
+/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera, and since
+/// [INVOKE-DENY-INDIRECTION] timers and property setters by name, ubergraph entries, RemovePlayer and the
+/// achievement / leaderboard / purchase calls, and since 3717 a latent call and an async action's Activate), never
+/// runs it off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
 /// one of its own is still queued, so a -5 call is never sent again. It never sends direct_call or
 /// set_invoke_timeout.</para>
 /// </summary>
@@ -38,6 +47,7 @@ internal static class McpRawTools
     private const long WriteMemChanged = -23;
     private const long InvokeQueued = -5;
     private const long InvokeFaulted = -4;
+    private const long InvokeRefusedUnderGrant = -28;
 
     private static readonly HashSet<string> IntegerTypes =
     [
@@ -45,15 +55,16 @@ internal static class McpRawTools
         "Int64Property", "UInt64Property", "EnumProperty",
     ];
 
-    public static IEnumerable<McpTool> Create(IMcpGame game)
+    public static IEnumerable<McpTool> Create(IMcpGame game, McpGrants grants)
     {
-        yield return WriteMemory(game);
-        yield return Invoke(game);
+        yield return WriteMemory(game, grants);
+        yield return Invoke(game, grants);
+        yield return InvokeGranted(game, grants);
     }
 
     // ── write_memory ────────────────────────────────────────────────────────────────────────────────────
 
-    private static McpTool WriteMemory(IMcpGame game) => new(
+    private static McpTool WriteMemory(IMcpGame game, McpGrants grants) => new(
         "write_memory", "Write memory",
         "Writes bytes at an address. Data only: the DLL refuses code, read-only, guard and uncommitted pages, and never "
         + "changes page protection. Pass the bytes there now as expect (read them with read_memory first): if the user, "
@@ -77,13 +88,15 @@ internal static class McpRawTools
                 throw new McpToolError($"Up to {MaxWriteBytes} bytes per write ({count} given).");
             if (expect.Length != bytes.Length)
                 throw new McpToolError("'expect' must be as many bytes as 'bytes'.");
-            await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+            var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
 
             var timeout = TimeSpan.FromSeconds(LookupSeconds);
-            var reply = await game.SendAsync(pid, new JsonObject
+            var request = new JsonObject
             {
                 ["cmd"] = "write_mem", ["addr"] = addr, ["bytes"] = bytes, ["expect"] = expect,
-            }, timeout, ct);
+            };
+            var grant = McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
+            var reply = await game.SendAsync(pid, request, timeout, ct, grant: grant);
             if (!McpWriteTools.Truthy(reply, "ok"))
             {
                 var fail = new JsonObject { ["error"] = McpJson.GetString(reply, "error") ?? "Not written." };
@@ -106,20 +119,23 @@ internal static class McpRawTools
                     ? "Read back differently: the game (or a hold) changed it again at once."
                     : null;
             return McpWriteTools.Combine(new McpToolResult(payload, Note: note), game.TakeNotice());
-        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+        }, Idempotent: true, Destructive: true, Role: McpToolRole.PerCallWrite);
 
     // ── write_invoke ────────────────────────────────────────────────────────────────────────────────────
 
-    private static McpTool Invoke(IMcpGame game) => new(
+    private static McpTool Invoke(IMcpGame game, McpGrants grants) => new(
         "write_invoke", "Invoke a UFunction",
         "Calls a UFunction on a live object, on the game thread, with its parameters by name: the server reads the "
         + "signature (read_functions shows it, include_interfaces for an interface's) and builds the call. instance_addr "
         + "is a live object (read_find_live_instance). Returns the return value and out parameters. A call the game "
         + "thread did not run in time is queued and runs later, unless this session ends first: never send it again; "
         + "read_holds lists it until it runs. Refused while the UE5DumpUI window, a Cheat Engine record or another AI "
-        + "session has a call outstanding, and for network RPCs, console commands, quitting or travelling, destroying "
-        + "actors, writing or deleting save slots, functions taking an FText, and the debug camera (use "
-        + "write_debug_camera).",
+        + "session has a call outstanding, and for network RPCs, console commands and key binds, quitting, travelling "
+        + "or loading a streaming level, destroying actors or removing a player, writing or deleting save slots, "
+        + "timers, property setters and events that take a name (they reach any function or property), latent calls "
+        + "(a LatentActionInfo names what runs when they finish), a Blueprint's event-graph entry (ExecuteUbergraph_*), "
+        + "an async action's Activate, achievement, leaderboard and in-app purchase calls, functions taking an FText, "
+        + "and the debug camera (use write_debug_camera).",
         McpSchema.Object(
             ("instance_addr", McpSchema.Addr("The object to call it on."), true),
             ("function", McpSchema.Str("The UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),
@@ -128,16 +144,36 @@ internal static class McpRawTools
                                             + "an object of its fields. One left out is zero."),
                 false),
             McpWriteTools.PidProp),
-        ReadOnly: false, (a, ct) => RunInvokeAsync(game, a, ct), Idempotent: false, Destructive: true,
-        RequiresInteraction: true);
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct, granted: false), Idempotent: false,
+        Destructive: true, Role: McpToolRole.PerCallWrite);
 
-    private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpArgs a, CancellationToken ct)
+    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: write_invoke's twin for a function an invoke grant names. Never marked:
+    // the grant's prompt was the user's check, and the gate and the DLL both hold the call to that one function.
+    private static McpTool InvokeGranted(IMcpGame game, McpGrants grants) => new(
+        Constants.McpInvokeGrantedTool, "Invoke a granted UFunction",
+        "Calls a UFunction that one of this session's invoke grants names (" + Constants.McpGrantToolInvoke + "), "
+        + "without asking the user again: as write_invoke, on any live object, with any arguments. The function is "
+        + "resolved on the object's class as write_invoke resolves it and must be the granted one, by full name; a "
+        + "Blueprint override or another class's function of the same name needs its own grant. The DLL refuses a "
+        + "non-static function on a class default or template under a grant. Anything else goes through write_invoke, "
+        + "asked every call.",
+        McpSchema.Object(
+            ("instance_addr", McpSchema.Addr("The object to call it on."), true),
+            ("function", McpSchema.Str("The granted UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),
+            ("params", McpSchema.FreeObject("Parameters by name, as write_invoke takes them."), false),
+            McpWriteTools.PidProp),
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct, granted: true), Idempotent: false,
+        Destructive: true, Role: McpToolRole.GrantedInvoke, GrantKind: McpGrantKind.Invoke);
+
+    private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpGrants grants, McpArgs a,
+        CancellationToken ct, bool granted)
     {
         int? pid = a.OptInt("pid");
         string inst = a.Addr("instance_addr");
         string funcName = a.ReqStr("function").Trim();
         JsonObject given = a.Obj("params") ?? new JsonObject();
-        var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+        var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid,
+            granted ? Constants.McpMinDllBuildForInvokeGrants : Constants.McpMinDllBuildForRawWrites, ct);
         int ueVersion = McpJson.TryGetLong(ptrs["ue_version"], out long ue) ? (int)ue : 0;
         var lookup = TimeSpan.FromSeconds(LookupSeconds);
 
@@ -162,6 +198,17 @@ internal static class McpRawTools
                  ?? throw new McpToolError($"{McpJson.GetString(obj, "class") ?? "Its class"} has no UFunction "
                                            + $"'{funcName}' (read_functions lists them; include_interfaces for an "
                                            + "interface's).");
+        // Under a grant, admitted before the call is built: the grant names the function resolved here, by full name.
+        McpGrantCapability? grantedCap = null;
+        if (granted)
+        {
+            if (!McpGrants.IsFunctionFullName(fn.FullName)
+                || !string.Equals(McpGrants.FunctionNameOf(fn.FullName), fn.Name, StringComparison.Ordinal))
+                throw new McpToolError("Not invoked: " + fn.Name + "'s full name could not be read whole, so no grant "
+                                       + "can cover it; write_invoke asks the user every call instead.");
+            grantedCap = grants.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, ptrs, out string? refusal,
+                fn.FullName) ?? throw new McpToolError(refusal ?? "Not invoked.");
+        }
 
         var call = await BuildCallAsync(game, pid, fn, given, ueVersion, lookup, ct);
         var request = new JsonObject
@@ -172,6 +219,11 @@ internal static class McpRawTools
             ["expect_class_addr"] = classAddr,
             ["if_free"] = true,
         };
+        if (granted)
+        {
+            request["grant"] = true;
+            request["expect_func_full"] = fn.FullName;
+        }
         if (call.Size > 0)
         {
             request["parms_size"] = call.Size;
@@ -189,7 +241,10 @@ internal static class McpRawTools
         // game-thread call the DLL may wait on.
         int calls = 1 + fn.InputParams.Sum(p => IsConvertedSlot(p.TypeName) ? 1
             : StructFields(p, ueVersion)?.Count(f => IsConvertedSlot(f.TypeName)) ?? 0);
-        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true);
+        var grant = grantedCap
+                    ?? McpWriteTools.Admit(grants, McpToolRole.PerCallWrite, McpGrantKind.None, request, ptrs);
+        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true,
+            grant: grant);
         return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
     }
 
@@ -254,7 +309,8 @@ internal static class McpRawTools
     /// fields, a string sent as the DLL's descriptor, a container or delegate only empty, each scalar range-checked
     /// before it is written. Stricter than the dialog where it relies on a person reading the box: a function taking an
     /// FText is refused outright (a zeroed FText is a crash, not an empty one), a value that does not parse as its type is
-    /// refused rather than written as zero, and an object pointer must be a live object.</summary>
+    /// refused rather than written as zero, and an object pointer must be a live object -- at top level, of the
+    /// parameter's declared class or a subclass.</summary>
     internal static async Task<InvokeCall> BuildCallAsync(IMcpGame game, int? pid, FunctionInfoModel fn,
         JsonObject given, int ueVersion, TimeSpan timeout, CancellationToken ct)
     {
@@ -342,14 +398,65 @@ internal static class McpRawTools
             }
             if (node is null) continue;
             string scalar = StrictScalar(type, node, p.Name);
-            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0
-                && !await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
-                throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0)
+            {
+                if (!await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
+                    throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+                // [INVOKE-OBJECT-PARAM-CLASS] A native function handed an object of another class calls through its
+                // vtable, or reads its fields, as if it were the declared one.
+                if (DeclaredClassOf(type, p.ObjectClassName) is { } declared
+                    && await NotDerivedFromAsync(game, pid, scalar, declared, timeout, ct) is { } why)
+                    throw new McpToolError($"'{p.Name}' takes a {declared}; {scalar} {why}.");
+            }
             if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, scalar, out string rangeErr))
                 throw new McpToolError($"'{p.Name}': {rangeErr}");
             ParamBufferBuilder.WriteParam(buf, p.Offset, type, p.Size, scalar);
         }
         return new InvokeCall(buf, size, strings);
+    }
+
+    /// <summary>The class an object argument's own class chain must reach, or null for none to check. An object
+    /// parameter (strong, weak or soft) declares its PropertyClass (obj_class); a class parameter's PropertyClass is
+    /// Class or a subclass of it, and the argument is a class object, whose own class derives from Class -- which is
+    /// asked for literally, so a metaclass read for the property class cannot narrow it. An interface parameter declares
+    /// the interface, which an object implements rather than derives from: liveness only. So is a parameter whose
+    /// declared class the DLL could not read, and Object, which every live GObjects entry is.</summary>
+    private static string? DeclaredClassOf(string type, string objClass) => type switch
+    {
+        "ClassProperty" or "SoftClassProperty" => "Class",
+        "ObjectProperty" or "WeakObjectProperty" or "SoftObjectProperty"
+            when objClass.Length > 0 && objClass != "Object" => objClass,
+        _ => null,
+    };
+
+    /// <summary>Null when the live object at <paramref name="addr"/> is a <paramref name="declared"/>: its class, or a
+    /// super of it, has that name. The match is by short name, the only one walk_functions sends for the declared class,
+    /// so an unrelated class of the same short name in another package passes. Otherwise the reason, for the refusal:
+    /// "is a X, which does not derive from it" only when the chain was read to its root through named classes; a chain
+    /// that could not be read (a class whose walk the DLL refuses, an unmeasured super offset) is refused without a
+    /// claim about what the object is.</summary>
+    private static async Task<string?> NotDerivedFromAsync(IMcpGame game, int? pid, string addr, string declared,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = addr }, timeout, ct,
+            requireScan: true);
+        string own = McpJson.GetString(obj, "class") ?? "";
+        if (string.Equals(own, declared, StringComparison.Ordinal)) return null;
+        string? cls = McpJson.GetString(obj, "class_addr");
+        for (int hop = 0; hop < MaxSuperHops && cls is not null && McpArgs.TryParseHex(cls, out ulong c) && c != 0; hop++)
+        {
+            var cr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = cls }, timeout, ct,
+                requireScan: true);
+            string name = (McpWriteTools.Truthy(cr, "ok") && cr["class"] is JsonObject k
+                ? McpJson.GetString(k, "name") : null) ?? "";
+            if (name.Length == 0) break;   // unread: no verdict
+            if (string.Equals(name, declared, StringComparison.Ordinal)) return null;
+            string? super = McpJson.GetString((JsonObject)cr["class"]!, "super_addr");
+            if (super is null || !McpArgs.TryParseHex(super, out ulong s) || s == 0)
+                return (own.Length > 0 ? "is a " + own : "is an object") + ", which does not derive from it";
+            cls = super;
+        }
+        return "has a class chain that could not be read, so it was not passed";
     }
 
     /// <summary>A struct parameter's fields as the dialog expands them: a trusted engine layout first (version-aware),
@@ -463,8 +570,9 @@ internal static class McpRawTools
     };
 
     /// <summary>An invoke's reply: a refusal (ok:false, nothing ran), another client's outstanding call (code -20), a
-    /// call that ran (its return value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose
-    /// buffer is the INPUT, never shown as output), or one that did not run.</summary>
+    /// hold another holds (ok:true, code -20, from the DLL's dispatcher before the invoke), a call that ran (its return
+    /// value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose buffer is the INPUT,
+    /// never shown as output), or one that did not run.</summary>
     internal static McpToolResult Answer(JsonObject reply, FunctionInfoModel fn, int ueVersion)
     {
         if (!McpWriteTools.Truthy(reply, "ok"))
@@ -473,8 +581,16 @@ internal static class McpRawTools
                 return McpToolResult.Fail("Not invoked: " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
                                           + " has a game-thread call still queued or running, and this server never "
                                           + "queues beside it. Try again once it has run (read_holds lists it).");
+            if (code == InvokeRefusedUnderGrant)
+                return McpToolResult.Fail((McpJson.GetString(reply, "error") ?? "Not invoked under the grant.")
+                                          + ". Nothing ran. write_invoke asks the user about each call instead.");
             return McpToolResult.Fail(McpJson.GetString(reply, "error") ?? "Not invoked.");
         }
+        if (reply["result"] is null && McpJson.TryGetLong(reply["code"], out long held) && held == HeldByOther)
+            return McpToolResult.Fail("Not invoked: " + (McpJson.GetString(reply, "hold") ?? "a hold it changes")
+                                      + " is held by " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
+                                      + ". This server never replaces or ends what someone else holds; the user can "
+                                      + "release it where it was set.");
         long result = McpJson.TryGetLong(reply["result"], out long r) ? r : -999;
         var payload = new JsonObject
         {

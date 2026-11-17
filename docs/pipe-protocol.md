@@ -45,7 +45,14 @@ Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
   the two time lanes, fly, the foreground lock, the debug camera and each force-field job are one
   process-wide state each. The DLL records who holds each (`Voll::HoldLedger`): a client process, CE's
   mailbox, or none. After a command that changes a hold, an active hold is the caller's and one that is
-  off is nobody's.
+  off is nobody's. An `invoke_function` of `ToggleDebugCamera`, `EnableDebugCamera` or
+  `DisableDebugCamera` (any case) from a client that is not background changes the debug camera too
+  (build 3716+), as the UI's Console panel runs it, and names its caller even when the camera is off
+  after it: its toggle may still be queued behind a stalled game thread and turn the camera on later.
+  A background client's is refused before it runs and changes no hold. CE's mailbox `INVOKE` and
+  `INVOKE_BY_NAME` of those functions name CE, as its `SET_DEBUG_CAMERA` does, unless another writer
+  holds the camera's lock at that moment: the invoke then runs unrecorded rather than wait. A toggle in
+  the game's own console reaches no ledger.
   - **`"if_free": true`** (bool, optional, on any of those commands): refuse when the hold is active and
     anyone else holds it -- an active hold with no recorded owner counts as someone else's. The answer is
     `ok: true` with `"code": -20`, `"hold"` (its name) and `"holder"` (below); nothing changes. The check
@@ -82,7 +89,9 @@ Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
 // Paginated object list — advance by "scanned", not objects.length
 { "id": 5, "cmd": "get_object_list", "offset": 0, "limit": 200 }
 
-// Single object detail
+// Single object detail: addr, name, full_name, class, class_addr, outer, outer_addr, and (build 3718+) template --
+// "" for a world object, "class_default" or "template" (a class default's subobject, a Blueprint component template),
+// Aura::TemplateOf's verdict; the MCP server's write_field refuses an instance with either.
 { "id": 6, "cmd": "get_object", "addr": "7FF123456789" }
 
 // Find object by full path
@@ -1925,7 +1934,10 @@ eyeball calibration (tweak constants until names look like real UObjects).
 read-only, guard, no-access and uncommitted pages (`-22`) are refused, and no page's protection is changed: before,
 any page was made READWRITE for the write, which patched code and read-only data and restored the first page's
 protection on every page of a multi-page write. With `expect`, a range that no longer holds those bytes is refused
-(`-23`, with what is there now in `current`). The codes are Grimoire.h's `WRITE_MEM_*`.
+(`-23`, with what is there now in `current`). `[WRITEMEM-OWN-IMAGE]` (build 3713+): a client whose requests are
+marked `background` (the MCP server) is refused a range inside the DLL's own image (`-25`): its globals include the
+Cheat Engine mailbox, and a write there would hand an invoke to the CE-owned poller, past the background deny list.
+The codes are Grimoire.h's `WRITE_MEM_*`.
 
 ### walk_functions
 
@@ -2126,11 +2138,26 @@ request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing qu
   Camera" -- and a pending ON counts as the debug camera held by the client that sent it.
 - `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
 - From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
-  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
-  restart, actor destruction, save-slot write / delete, the debug-camera toggles -- see `set_debug_camera`). Voll.h's
-  `InvokeRefusedForBackground`.
+  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands and key binds, quit /
+  level travel / streaming-level load and unload / restart, actor destruction, save-slot write / delete, timers,
+  property setters and events that take a name, `ExecuteUbergraph_*`, achievement / leaderboard / in-app purchase
+  writes, the debug-camera toggles -- see `set_debug_camera`), or an async action's `Activate` by its resolved full
+  name (build 3717+). Voll.h's `InvokeRefusedForBackground`.
 - A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
   still waiting).
+- A background client's call of a latent function (a `LatentActionInfo` parameter, which names the function the engine
+  calls when it finishes) is refused with `code` `-24` (build 3717+), when its parameters can be read; one whose
+  parameters cannot be read is not refused for this outside a grant.
+- **Under an invoke grant** (`[MCP-WRITE-GRANTS-2026-11-14]` Phase 1b, build 3717+): a background client sends
+  `"grant": true` and `"expect_func_full"`, the full name of the function the grant names (`walk_functions`' `full`,
+  e.g. `//Script/Engine/Actor.SetActorHiddenInGame`). Refused with `code` `-28` (`func_full` names the function
+  resolved) when the function resolved is another one, ordinally; when it is a Blueprint event graph
+  (`FUNC_UbergraphFunction`); when its parameters cannot be read whole; when a parameter reaches functions or
+  properties by name (a delegate, a property path, a UFunction, or a name or string parameter named for a function,
+  event, property, command, delegate or callback); and when the function is not static and the object is a class
+  default or a template (warned, never refused, otherwise). A client that is not background has `grant` ignored.
+- The reply of a call that ran or was queued, and a `-28` refusal, name the function resolved by full name
+  (`func_full`, build 3717+); the other refusals do not.
 
 ### walk_instance_batch
 

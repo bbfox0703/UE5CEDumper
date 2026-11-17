@@ -35,6 +35,15 @@ public sealed class CallTrace
     public TraceInfo Info { get; init; } = new();
     /// <summary>Returns whose call began before the kept window: the ring overwrote their entry.</summary>
     public int ReturnsBeforeWindow { get; internal set; }
+    /// <summary>[TRACE-DROPPED-ENTRY] Returns whose entry is numbered INSIDE the kept window but was not sent: the DLL
+    /// drops a slot written out of turn (a writer the ring lapped mid-write, [LINIE-SEQ-LAST]).</summary>
+    public int EntriesDropped { get; internal set; }
+    /// <summary>[TRACE-DROPPED-ENTRY] The other records numbered inside the kept window but not sent: the window's
+    /// missing records less <see cref="EntriesDropped"/>. Returns or call starts the records cannot attribute -- among them
+    /// a return whose call then shows as not returned, the start of a call still running at Stop, both records of one call
+    /// (the call is missing), or the return of a call that began before the window (reviews wf_53eabd00-f5e,
+    /// wf_6ad0a6e1-ffa).</summary>
+    public int OtherDropped { get; internal set; }
 
     /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those gone when the trace was read (named from their
     /// first call) and those with no name at all, each with its calls. Counted once, after the names are in.</summary>

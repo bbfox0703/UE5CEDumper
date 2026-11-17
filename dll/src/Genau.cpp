@@ -3894,6 +3894,9 @@ static bool PublishOffsetsGiveUp(const char* reason) {
 }
 
 bool ValidateAndFixOffsets(uint32_t ueVersion) {
+    // [DYNOFF-LATCH-STALE] On the way out, a give-up included: what was cached while this ran was read through offsets
+    // it was still deriving (DynOff::RetireFamilyEpoch says why a family that did not move needs it too).
+    struct RetireOnExit { ~RetireOnExit() { DynOff::RetireFamilyEpoch(); } } retireOnExit;
     Sein::Info("DYNO", "ValidateAndFixOffsets: Starting dynamic offset detection...");
 
     // Step 1: Detect CasePreservingName by probing UObject layout
@@ -6050,7 +6053,8 @@ bool DetectUEnumNames(bool latchFailure) {
                     "(%s, verified with '%s', count=%d, %d name matches, value %d B, pair stride %d)",
                     off, DynOff::bEnumNamesNewContainer ? "UE5.7+ FNameData"
                                                         : "legacy TArray",
-                    cand.name, layout.count, verified, DynOff::UENUM_VALUE_SIZE, DynOff::UENUM_PAIR_STRIDE);
+                    cand.name, layout.count, verified, static_cast<int>(DynOff::UENUM_VALUE_SIZE),
+                    static_cast<int>(DynOff::UENUM_PAIR_STRIDE));
                 return true;
             }
         }

@@ -8,10 +8,12 @@ namespace UE5DumpUI.Mcp;
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D. One MCP tool: what <c>tools/list</c> advertises and what <c>tools/call</c>
 /// runs. <paramref name="ReadOnly"/> becomes <c>readOnlyHint</c>, and the name's <c>read_</c> prefix is what lets one
 /// Claude Code allow rule (<c>mcp__&lt;server&gt;__read_*</c>) admit every read; McpToolsTests pins that the two agree.
-/// <para><paramref name="RequiresInteraction"/> (Stage D2, every <c>write_*</c> tool) becomes
-/// <c>_meta["anthropic/requiresUserInteraction"]</c>: Claude Code then asks before every call in every permission
-/// mode, an allow rule notwithstanding. An allow rule alone does not keep a tool from running in auto mode -- measured,
-/// verification-register item 15 -- so a tool that changes the game carries the marker, not just its name.</para>
+/// <para><paramref name="Role"/> ([MCP-WRITE-GRANTS-2026-11-14]) decides, with the host's decision, whether the
+/// server lists the tool and whether it carries <c>_meta["anthropic/requiresUserInteraction"]</c>, on which Claude Code
+/// asks before every call in every permission mode, an allow rule notwithstanding (an allow rule alone does not keep a
+/// tool from running in auto mode: measured, verification-register item 15). <see cref="McpGrants.IsListed"/> and
+/// <see cref="McpGrants.IsMarked"/> hold the rule; <paramref name="GrantKind"/> names the grant a granted write needs.
+/// </para>
 /// </summary>
 internal sealed record McpTool(
     string Name,
@@ -22,7 +24,13 @@ internal sealed record McpTool(
     Func<McpArgs, CancellationToken, Task<McpToolResult>> Run,
     bool Idempotent = true,
     bool Destructive = false,
-    bool RequiresInteraction = false);
+    McpToolRole? Role = null,
+    McpGrantKind GrantKind = McpGrantKind.None)
+{
+    /// <summary>The role, defaulted from <see cref="ReadOnly"/> when the tool names none: a write that forgets its role
+    /// is then hidden where the host only reads, and asked about on every call where it grants.</summary>
+    public McpToolRole EffectiveRole => Role ?? (ReadOnly ? McpToolRole.Read : McpToolRole.PerCallWrite);
+}
 
 /// <summary>What a tool returns: a JSON payload for the model, whether it is an error the model can act on, and an
 /// optional note shown beside it (a reconnect, a cut reply).</summary>
@@ -45,6 +53,10 @@ internal sealed class McpArgs(JsonObject? args)
     private readonly JsonObject _args = args ?? new JsonObject();
 
     public bool Has(string name) => _args[name] is not null;
+
+    /// <summary>An argument as given, for one whose type the tool reads itself (a value that is a number, a bool or a
+    /// name); null when absent.</summary>
+    public JsonNode? Node(string name) => _args[name];
 
     public string? Str(string name)
     {
@@ -85,6 +97,17 @@ internal sealed class McpArgs(JsonObject? args)
 
     /// <summary>An integer clamped to [min, max]; the schema advertises the same bounds.</summary>
     public int Int(string name, int def, int min, int max) => Math.Clamp(OptInt(name) ?? def, min, max);
+
+    /// <summary>An integer that must lie in [min, max]: refused outside, never clamped, for a value that changes the
+    /// game, where a silent clamp would do something the caller did not ask for.</summary>
+    public int IntIn(string name, int def, int min, int max)
+    {
+        int v = OptInt(name) ?? def;
+        if (v < min || v > max)
+            throw new McpToolError($"'{name}' must be from {min} to {max} ({v.ToString(CultureInfo.InvariantCulture)} "
+                                   + "given).");
+        return v;
+    }
 
     /// <summary>A finite number, or null when absent. A numeric string is read too.</summary>
     public double? OptDouble(string name)
@@ -247,6 +270,15 @@ internal static class McpSchema
     public static JsonObject Long(string description) => new() { ["type"] = "integer", ["description"] = description };
 
     public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
+
+    /// <summary>A number with the range its tool refuses outside of, so the model sees it before calling.</summary>
+    public static JsonObject Number(string description, double min, double max, bool exclusiveMin = false)
+    {
+        var o = Number(description);
+        o[exclusiveMin ? "exclusiveMinimum" : "minimum"] = min;
+        o["maximum"] = max;
+        return o;
+    }
 
     public static JsonObject Bool(string description, bool def) => new()
     {

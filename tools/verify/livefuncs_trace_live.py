@@ -215,9 +215,21 @@ def main() -> int:
         out["read"] = {"records": len(recs), "seconds": read_s, "wire_bytes": moved,
                        "mb_per_s": (moved / 1e6) / read_s if read_s > 0 else None}
         say(f"read {len(recs):,} records in {read_s:.2f} s ({moved / 1e6:.1f} MB on the wire)")
-        check("the pages hand back the whole kept window", len(recs) == written - first, f"{len(recs):,}")
-        seq_ok = all((r[0] & ~RET_BIT) == first + i for i, r in enumerate(recs))
-        check("every kept record is where its sequence number says", seq_ok)
+        # The DLL leaves out a slot written out of turn (a writer the ring lapped mid-write, [LINIE-SEQ-LAST]), so a
+        # LAPPED window can come back a few records short; dll_core_test's threads check takes the same view
+        # ([LINIE-THREADS-FLAKE]). Review wf_d3c2ec9a-d52 LIVE-RIG-GAPFREE. Without a lap no slot has two writers, so the
+        # window must come back whole and gap-free (review wf_a193c703-fe8).
+        window = written - first
+        seqs = [r[0] & ~RET_BIT for r in recs]
+        if lapped:
+            check("the pages hand back the kept window (at least 99%; out-of-turn slots are left out)",
+                  len(recs) <= window and len(recs) * 100 >= window * 99, f"{len(recs):,} of {window:,}")
+            seq_ok = all(first <= q < written for q in seqs) and all(b > a for a, b in zip(seqs, seqs[1:]))
+            check("every kept record's number lies in the window, rising", seq_ok, f"{window - len(recs)} left out")
+        else:
+            check("the pages hand back the whole window (no lap, nothing can be left out)", len(recs) == window,
+                  f"{len(recs):,} of {window:,}")
+            check("every kept record is where its sequence number says", seqs == list(range(first, written)))
         entries = {r[0] for r in recs if not r[0] & RET_BIT}
         rets = [r for r in recs if r[0] & RET_BIT]
         ret_ok = all(r[2] < (r[0] & ~RET_BIT) for r in rets)

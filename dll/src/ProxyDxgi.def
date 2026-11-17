@@ -56,6 +56,7 @@ EXPORTS
     ; --- UE5 Dumper C ABI exports (for CE Lua getAddress) ---
     UE5_Init
     UE5_Shutdown
+    UE5_YieldToLaterCopy
     UE5_GetVersion
     UE5_AutoStart
     UE5_GetGObjectsAddr

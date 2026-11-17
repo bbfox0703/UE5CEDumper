@@ -1887,8 +1887,9 @@ public class InvokeScriptTests
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(genau, @"bOffsetsProbeRan\.store\(true").Count);
 
         string cpp = DllSource("Frieren.cpp");
-        int at = cpp.IndexOf("void UE5_Shutdown() {", StringComparison.Ordinal);
-        Assert.True(at > 0, "UE5_Shutdown not found");
+        // UE5_Shutdown's body is ShutdownBody since a later copy's take-over shares it ([DUMPER-SECOND-COPY-AUTOSTART]).
+        int at = cpp.IndexOf("static void ShutdownBody(bool handingOver) {", StringComparison.Ordinal);
+        Assert.True(at > 0, "ShutdownBody not found");
         int end = cpp.IndexOf("\n}\n", at, StringComparison.Ordinal);
         Assert.Contains("DynOff::ResetOffsetsVerdict();", cpp.Substring(at, end - at));
     }
@@ -2462,8 +2463,23 @@ public class InvokeScriptTests
         // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
-        Assert.Contains("std::atomic_thread_fence(std::memory_order_seq_cst)",
-                        frieren[begin..frieren.IndexOf('\n', begin)]);
+        string beginApply = frieren[begin..frieren.IndexOf("\n}", begin, StringComparison.Ordinal)];
+        // Code only, so a fence inside a line or block comment, or under a preprocessor branch, is not taken for one
+        // (reviews wf_b0aa9098-dd5 and wf_2d9f83d5-21b).
+        beginApply = System.Text.RegularExpressions.Regex.Replace(beginApply, @"/\*.*?\*/", " ",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        beginApply = string.Join("\n", beginApply.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        Assert.DoesNotContain("#if", beginApply);
+        int raise = beginApply.IndexOf("g_initInProgress.store(true", StringComparison.Ordinal);
+        // A statement that starts its line.
+        var fullFence = System.Text.RegularExpressions.Regex.Match(
+            beginApply, @"\n[ \t]*std::atomic_thread_fence\(std::memory_order_seq_cst\);");
+        Assert.True(raise >= 0 && fullFence.Success && fullFence.Index > raise,
+                    "BeginApply raises the flag, then fences, before the publish");
     }
 
     [Fact]
@@ -2489,7 +2505,7 @@ public class InvokeScriptTests
             @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
         Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
         var verdict = System.Text.RegularExpressions.Regex.Match(body,
-            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(g_invokeMailbox\.paramsData\)\)\);");
+            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(Box\(\)\.paramsData\)\)\);");
         Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
         var refused = System.Text.RegularExpressions.Regex.Match(body,
             @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
@@ -2733,8 +2749,8 @@ public class InvokeScriptTests
         }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
-        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
-        int next = fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal);
+        int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
+        int next = fern.IndexOf("cmd == Renge::CMD_", start + "if (cmd == ".Length, StringComparison.Ordinal);
         Assert.True(start > 0 && next > start, "invoke_function's block not found -- re-point this pin");
         var invoke = fern[start..next];
         Assert.Contains("Aura::ResolveUserInstance(className)", invoke, StringComparison.Ordinal);
@@ -3005,8 +3021,9 @@ public class InvokeScriptTests
         }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
-        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
-        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
+        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + "if (cmd == ".Length,
+            StringComparison.Ordinal)];
         Assert.Contains("Aura::TemplateOf(instanceAddr)", invoke, StringComparison.Ordinal);
         Assert.Matches(@"Mimic::WarnNonStaticOnTemplate\([^;]*resolved,\s*fi\.functionFlags\)", invoke);
         Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);
@@ -3021,8 +3038,8 @@ public class InvokeScriptTests
         int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
         Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
             "the verdict is taken after the last refusal and published before the call");
-        int clearErr = mimic.IndexOf("g_invokeMailbox.errorMsg[0] = '\\0';", StringComparison.Ordinal);
-        int clearOut = mimic.IndexOf("g_invokeMailbox.cmdOutFlags = 0;", StringComparison.Ordinal);
+        int clearErr = mimic.IndexOf("Box().errorMsg[0] = '\\0';", StringComparison.Ordinal);
+        int clearOut = mimic.IndexOf("Box().cmdOutFlags = 0;", StringComparison.Ordinal);
         Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
             "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
 
@@ -3903,7 +3920,8 @@ public class InvokeScriptTests
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
         // or Frieren.cpp, so this pins their source; the generated scripts must claim the contract that carries the byte.
         var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("g_invokeMailbox.paramsData[178] = flags;", mimic, StringComparison.Ordinal);
+        // Box(): the mailbox the command came from, this copy's or one it took over ([DUMPER-SECOND-COPY-AUTOSTART]).
+        Assert.Contains("Box().paramsData[178] = flags;", mimic, StringComparison.Ordinal);
         Assert.Contains("writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);", mimic, StringComparison.Ordinal);
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown)", mimic,
             StringComparison.Ordinal);

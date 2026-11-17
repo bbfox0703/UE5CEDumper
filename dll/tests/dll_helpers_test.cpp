@@ -52,6 +52,7 @@
 #include <type_traits>         // the DynOff::RuntimeOffset pins beside Test_PropertyFamilyIsCoherent
 #include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
 #include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
+#include "../src/Land.h"       // Two copies in one process: which one a later copy retires ([DUMPER-SECOND-COPY-AUTOSTART])
 
 #include <Windows.h>
 
@@ -431,6 +432,150 @@ static void Test_Voll_ExtractCmdName() {
            Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
 }
 
+static void Test_Land_SecondCopy() {
+    // [DUMPER-SECOND-COPY-AUTOSTART] (maintainer, 2026-11-17: the later copy takes over, whichever build is newer).
+    Land::CopySeen c;
+    c.contract = true; c.mailbox = true; c.current = Mimic::MAILBOX_CONTRACT;
+    for (int32_t s : { Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_SKIPPED, Mimic::INIT_FAILED }) {
+        c.initState = s;
+        EXPECT("* : a copy that started (RUNNING / READY / SKIPPED / FAILED) is retired",
+               Land::Judge(c) == Land::Verdict::Retire);
+    }
+    c.initState = Mimic::INIT_IDLE;
+    EXPECT("* : an IDLE copy -- the passive proxy that never started, or one already shut down -- is left",
+           Land::Judge(c) == Land::Verdict::Leave);
+    c.initState = Mimic::INIT_READY;
+    c.contract = false;
+    EXPECT("* : no contract block, so no initState to read: left", Land::Judge(c) == Land::Verdict::Leave);
+    c.contract = true; c.mailbox = false;
+    EXPECT("* : no mailbox export: left", Land::Judge(c) == Land::Verdict::Leave);
+    c.mailbox = true; c.initState = 99;
+    EXPECT("* : an initState no build writes is not read as started", Land::Judge(c) == Land::Verdict::Leave);
+    c.initState = Mimic::INIT_READY;
+    c.current = Mimic::MAILBOX_CONTRACT + 1;
+    EXPECT("control: the contract NUMBER does not decide retirement", Land::Judge(c) == Land::Verdict::Retire);
+
+    // Review wf_67396083-685 MBX-1: one layout since contract 3, so an earlier copy whose accepted scripts this copy
+    // accepts too is served -- a stale contract-8 proxy beside a contract-9 injection is the likeliest double load.
+    constexpr int32_t kCur = Mimic::MAILBOX_CONTRACT, kMin = Mimic::MAILBOX_CONTRACT_MIN, kLay = Mimic::MAILBOX_LAYOUT_SINCE;
+    EXPECT("* : this build's own contract is served", Land::CanServeMailbox(kCur, kMin, kCur, kMin, kLay));
+    EXPECT("* MBX-1 : an older contract with this layout is served", Land::CanServeMailbox(kCur - 1, kMin, kCur, kMin, kLay));
+    EXPECT("* MBX-1 : the first contract with this layout is served", Land::CanServeMailbox(kLay, kMin, kCur, kMin, kLay));
+    EXPECT("* : a contract from before this layout -- a smaller struct -- is not served",
+           !Land::CanServeMailbox(kLay - 1, kMin, kCur, kMin, kLay));
+    EXPECT("* : a newer contract is not served: its scripts may send what this copy cannot answer",
+           !Land::CanServeMailbox(kCur + 1, kMin, kCur, kMin, kLay));
+    EXPECT("* : an earlier copy accepting older scripts than this copy does is not served",
+           !Land::CanServeMailbox(kCur, kMin, kCur, kMin + 1, kLay));
+    EXPECT("control: an earlier copy accepting only newer scripts is served",
+           Land::CanServeMailbox(kCur, kMin + 1, kCur, kMin, kLay));
+    static_assert(Mimic::MAILBOX_LAYOUT_SINCE <= Mimic::MAILBOX_CONTRACT, "the layout cannot postdate the contract");
+
+    // Review TEST-PUBLISHEDSTATE-SAMPLE: every state, both ways.
+    for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
+        EXPECT("* : served, the earlier mailbox says this copy's state, whatever it is",
+               Land::PublishedState(true, st) == st);
+        EXPECT("* : not served, it says SKIPPED whatever this copy's state", Land::PublishedState(false, st) == Mimic::INIT_SKIPPED);
+    }
+
+    // Review wf_08585a12-ddf R2-OLD-COPY-DOUBLE-SERVE: a served copy that forwards says this copy's every state; one
+    // that cannot says only READY or SKIPPED, so no CE inject script starts it again beside this copy.
+    for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
+        EXPECT("* R2 : a copy that forwards mirrors this copy's state", Land::MirroredState(st, true) == st);
+        const int32_t old = Land::MirroredState(st, false);
+        EXPECT("* R2 : a copy that cannot forward says only READY or SKIPPED",
+               old == Mimic::INIT_READY || old == Mimic::INIT_SKIPPED);
+    }
+    EXPECT("* R2 : ...READY while this copy is READY", Land::MirroredState(Mimic::INIT_READY, false) == Mimic::INIT_READY);
+    EXPECT("* R2 : ...SKIPPED while it is RUNNING", Land::MirroredState(Mimic::INIT_RUNNING, false) == Mimic::INIT_SKIPPED);
+    EXPECT("* R2 : ...SKIPPED once it stopped", Land::MirroredState(Mimic::INIT_IDLE, false) == Mimic::INIT_SKIPPED);
+    static_assert(Mimic::MAILBOX_LAYOUT_SINCE == 3, "review R2-LAYOUT-SINCE-UNPINNED: the value Mimic.h's layout pin names");
+
+    // Review LAND-MUTUAL-YIELD-CYCLE / LAND-EARLIER-RETIRES-LATER: only an earlier copy is taken over, so of two copies
+    // only one can take over from the other.
+    EXPECT("* : a copy before this one in the module list is earlier", Land::IsEarlier(0, 1));
+    EXPECT("* : a copy after this one is not earlier", !Land::IsEarlier(2, 1));
+    EXPECT("* : this copy is not earlier than itself", !Land::IsEarlier(1, 1));
+    EXPECT("* : a copy not in the list is not earlier", !Land::IsEarlier(-1, 1) && !Land::IsEarlier(0, -1));
+    bool oneWay = true;
+    for (int a = 0; a < 4; ++a)
+        for (int b = 0; b < 4; ++b)
+            if (Land::IsEarlier(a, b) && Land::IsEarlier(b, a)) oneWay = false;
+    EXPECT("* : no two copies are each earlier than the other", oneWay);
+
+    using Land::YieldState;
+    EXPECT("* : a later copy's ask is honoured by a copy that never yielded",
+           Land::ReplyToYield(YieldState::None, true) == Land::YIELD_DONE);
+    EXPECT("* : a copy already yielding says so", Land::ReplyToYield(YieldState::Yielding, true) == Land::YIELD_ALREADY);
+    EXPECT("* : a copy already yielded says so", Land::ReplyToYield(YieldState::Yielded, true) == Land::YIELD_ALREADY);
+    EXPECT("* : an ask from a copy that is not later is refused, whatever the state",
+           Land::ReplyToYield(YieldState::None, false) == Land::YIELD_NOT_LATER &&
+           Land::ReplyToYield(YieldState::Yielded, false) == Land::YIELD_NOT_LATER);
+
+    // Review FWD-FALLTHROUGH / LAND-FWD-CYCLE: a yielded copy forwards, refuses when it cannot, never runs its body.
+    EXPECT("* : a copy that never yielded runs the call", Land::RouteCall(YieldState::None, true, 0) == Land::Route::Local);
+    EXPECT("* : a yielding copy runs the call (its own teardown)",
+           Land::RouteCall(YieldState::Yielding, true, 0) == Land::Route::Local);
+    EXPECT("* : a yielded copy forwards", Land::RouteCall(YieldState::Yielded, true, 0) == Land::Route::Forward);
+    EXPECT("* : ...up to the hop cap", Land::RouteCall(YieldState::Yielded, true, Land::kMaxForwardHops - 1) == Land::Route::Forward);
+    EXPECT("* : a call forwarded kMaxForwardHops times on this thread is refused",
+           Land::RouteCall(YieldState::Yielded, true, Land::kMaxForwardHops) == Land::Route::Refuse);
+    EXPECT("* : a successor without the export: refused, not run here",
+           Land::RouteCall(YieldState::Yielded, false, 0) == Land::Route::Refuse);
+    EXPECT("* : a refused bool is false", Land::RefusalValue<bool>() == false);
+    EXPECT("* : a refused signed result is -1 (0 is success for several exports)",
+           Land::RefusalValue<int32_t>() == -1 && Land::RefusalValue<int>() == -1);
+    EXPECT("* : a refused address is null", Land::RefusalValue<uintptr_t>() == 0);
+    EXPECT("* : a refused unsigned result is 0", Land::RefusalValue<uint32_t>() == 0);
+    static_assert(std::is_void_v<decltype(Land::RefusalValue<void>())>, "a void export refuses with nothing");
+
+    EXPECT("* : a copy that never yielded starts as usual", !Land::RefusesStart(Land::YieldState::None));
+    EXPECT("* : a yielding copy starts nothing", Land::RefusesStart(Land::YieldState::Yielding));
+    EXPECT("* : a yielded copy starts nothing", Land::RefusesStart(Land::YieldState::Yielded));
+    EXPECT("* : its exports run here while it shuts down", !Land::Forwards(Land::YieldState::Yielding));
+    EXPECT("* : ...and in the successor once it has yielded", Land::Forwards(Land::YieldState::Yielded));
+    EXPECT("control: a copy that never yielded runs its own exports", !Land::Forwards(Land::YieldState::None));
+}
+
+static void Test_Voll_DuringInitNotes() {
+    // [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). Which commands read while an init or an
+    // apply_rescan holds g_initInProgress leave a trace: each name once per run, a run named by the serial its producer
+    // raised the flag with (g_initRun). Review wf_8f451d97-434 A-PIN-WEAK: the source pin alone passed with the log line
+    // deleted, the flag inverted and a refusal added, so the decision is pinned here by behaviour.
+    Voll::DuringInitNotes n;
+    EXPECT("no run in progress (serial 0): nothing is logged", !n.Note("walk_instance", 0));
+    EXPECT("run 1: a name is logged the first time", n.Note("walk_instance", 1));
+    EXPECT("run 1 * : ...and not again", !n.Note("walk_instance", 1));
+    EXPECT("run 1: another name is logged", n.Note("get_object", 1));
+    // Two runs back to back with no command read between them -- a cancelled init's waiter, an apply after an init. The
+    // first note forgot its names only when a command found the flag down, so run 2 said nothing of run 1's names.
+    // (review A-RESET-BOUNDARY)
+    EXPECT("run 2 * : a name run 1 logged is logged again, with nothing read between the runs", n.Note("walk_instance", 2));
+    EXPECT("run 2 * : ...once", !n.Note("walk_instance", 2));
+    // ExtractCmdName returns "" for a line with no readable "cmd" (review A-NAME-BEFORE-DISPATCH).
+    EXPECT_EQ_STR("* : a line with no readable cmd logs as (unparsed), never as a blank name",
+                  std::string(Voll::DuringInitNotes::Shown("")).c_str(), "(unparsed)");
+    EXPECT_EQ_STR("a name logs as itself", std::string(Voll::DuringInitNotes::Shown("get_object")).c_str(), "get_object");
+    EXPECT("an unparsed line is logged once per run too", n.Note("", 2) && !n.Note("", 2));
+    // Names come from the client: a run keeps at most kMaxDuringInitNames, so a client cannot grow the list without end.
+    Voll::DuringInitNotes cap;
+    size_t logged = 0;
+    for (size_t i = 0; i < Voll::kMaxDuringInitNames + 10; ++i)
+        if (cap.Note("c" + std::to_string(i), 7)) ++logged;
+    EXPECT("* : a run keeps at most kMaxDuringInitNames names", logged == Voll::kMaxDuringInitNames);
+    EXPECT("control: a new run starts a new list", cap.Note("c0", 8));
+    // A connection that read the serial during run N and reaches the note after run N+1 began. Its older serial must not
+    // wipe N+1's list, which logged a name twice in one run (review wf_b0aa9098-dd5, A-RUN-REGRESS); and its command is
+    // dispatched during N+1, so it is noted in N+1's list rather than dropped, which left no trace of it
+    // (wf_2d9f83d5-21b, R3-LATE-NOTE-DROPPED).
+    Voll::DuringInitNotes late;
+    EXPECT("late setup: run 2 logs a name", late.Note("get_pointers", 2));
+    EXPECT("late * : a note under the older run 1 is logged, in run 2's list", late.Note("walk_class", 1));
+    EXPECT("late * : ...so run 2 does not log that name again", !late.Note("walk_class", 2));
+    EXPECT("late * : ...and run 2's list stands: its own name is not logged again", !late.Note("get_pointers", 2));
+    EXPECT("late control: a late note of a name run 2 already logged is not logged", !late.Note("get_pointers", 1));
+}
+
 static void Test_Voll_Holders() {
     // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the pipe's connections, for pipe_clients and the at-capacity
     // log line a client that cannot connect reads.
@@ -567,6 +712,121 @@ static void Test_D23_InvokeOwnersAndDenyList() {
     EXPECT("a name only containing a listed one is allowed (whole names only)",
            InvokeRefusedForBackground("QuitGameMenuOpened", 0).empty()
            && InvokeRefusedForBackground("OnSaveGameToSlotDone", 0).empty());
+
+    // [INVOKE-DENY-INDIRECTION] Functions that reach the refused effects BY NAME, and online-service writes that
+    // FUNC_Net does not mark (names from UE's KismetSystemLibrary.h, GameplayStatics.h and OnlineSubsystemUtils).
+    for (const char* n : {"K2_SetTimer", "K2_SetTimerForNextTick", "K2_SetTimerDelegate", "K2_SetTimerForNextTickDelegate"})
+        EXPECT((std::string("a timer by name or event is refused: ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
+    for (const char* n : {"SetObjectPropertyByName", "SetIntPropertyByName", "SetStructurePropertyByName",
+                          "SetVector3fPropertyByName", "SetTextPropertyByName", "SetCollisionProfileNameProperty"})
+        EXPECT((std::string("a property setter by name is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
+    EXPECT("a Blueprint's ubergraph entry is refused (any suffix)",
+           !InvokeRefusedForBackground("ExecuteUbergraph_BP_PlayerCharacter", 0).empty()
+           && !InvokeRefusedForBackground("ExecuteUbergraph", 0).empty());
+    EXPECT("RemovePlayer is refused (bDestroyPawn destroys the pawn)", !InvokeRefusedForBackground("RemovePlayer", 0).empty());
+    for (const char* n : {"WriteProgress", "WriteLeaderboardInteger", "CreateProxyObjectForFlush",
+                          "CreateProxyObjectForInAppPurchase", "CreateProxyObjectForInAppPurchaseCheckout",
+                          "CreateProxyObjectForInAppPurchaseRestoreOwnedProducts"})
+        EXPECT((std::string("an online-service write is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
+    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's engine scan (UE 4.18-5.8 sources): names the list missed. UE4 and
+    // 5.0-5.6 write achievements through WriteAchievementProgress (WriteProgress is 5.5+); the save slot's
+    // local-player twins; RemoteEvent calls any function by name on the level scripts; SetBind binds a key to any
+    // console command; EditTextPropertySourceString and the timeline's AddInterp* write a property by name; a
+    // streaming level's load or unload invalidates addresses as a level change does.
+    for (const char* n : {"WriteAchievementProgress", "SaveGameToSlotForLocalPlayer",
+                          "AsyncSaveGameToSlotForLocalPlayer", "RemoteEvent", "SetBind", "EditTextPropertySourceString",
+                          "AddInterpFloat", "AddInterpVector", "AddInterpLinearColor", "LoadStreamLevel",
+                          "LoadStreamLevelBySoftObjectPtr", "UnloadStreamLevel", "UnloadStreamLevelBySoftObjectPtr"})
+        EXPECT((std::string("phase 1b's scan: refused ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
+    // Review: the same level load and unload under other names (UE 5.8: CheatManager's exec trio, ULevelStreaming's
+    // setters, ULevelStreamingDynamic's and ILevelInstanceInterface's level instances).
+    for (const char* n : {"StreamLevelIn", "StreamLevelOut", "OnlyLoadLevel", "SetShouldBeLoaded",
+                          "SetIsRequestingUnloadAndRemoval", "LoadLevelInstance", "LoadLevelInstanceBySoftObjectPtr",
+                          "UnloadLevelInstance"})
+        EXPECT((std::string("a level load or unload is refused: ") + n).c_str(),
+               !InvokeRefusedForBackground(n, 0).empty());
+    // An async action's Activate does the online-service write, the session join or the save its factory set up.
+    // Refused by the resolved full name: UActorComponent::Activate is an everyday function of the same name.
+    EXPECT("an async action's Activate is refused by its full name",
+           !InvokeRefusedForBackground("Activate", 0, "//Script/Engine/BlueprintAsyncActionBase.Activate").empty()
+           && !InvokeRefusedForBackground("Activate", 0, "//Script/Engine/OnlineBlueprintCallProxyBase.Activate").empty());
+    EXPECT("control: a component's Activate, or one with no full name read, is allowed",
+           InvokeRefusedForBackground("Activate", 0, "//Script/Engine/ActorComponent.Activate").empty()
+           && InvokeRefusedForBackground("Activate", 0).empty());
+    EXPECT("controls: reading a timer, an ordinary setter, a name merely containing a family are allowed",
+           InvokeRefusedForBackground("K2_GetTimerRemainingTime", 0).empty()
+           && InvokeRefusedForBackground("SetHealth", 0).empty()
+           && InvokeRefusedForBackground("OnTimerSet", 0).empty()
+           && InvokeRefusedForBackground("MyExecuteUbergraphHelper", 0).empty()
+           && InvokeRefusedForBackground("GetObjectPropertyByNameCount", 0).empty());
+}
+
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a parameter that hands the engine a function, an event or a property to reach
+// by name. Fields in Ubel::ParamField's shape, as CaptureParamLayout reads them.
+static Ubel::ParamField PF(const char* name, const char* type, const char* structType = "", const char* objClass = "",
+                           std::vector<Ubel::ParamField> sub = {}) {
+    Ubel::ParamField f;
+    f.name = name;
+    f.typeName = type;
+    f.structType = structType;
+    f.objClass = objClass;
+    f.sub = std::move(sub);
+    return f;
+}
+
+static void Test_Voll_InvokeParamIndirection() {
+    using Voll::InvokeParamIndirection;
+    // A latent function's LatentActionInfo names the function the engine calls on CallbackTarget when it finishes: any
+    // function, refused ones included. Refused for every background invoke, a grant or not.
+    const std::vector<Ubel::ParamField> delay = {
+        PF("WorldContextObject", "ObjectProperty", "", "Object"), PF("Duration", "FloatProperty"),
+        PF("LatentInfo", "StructProperty", "LatentActionInfo", "",
+           {PF("Linkage", "IntProperty"), PF("UUID", "IntProperty"), PF("ExecutionFunction", "NameProperty"),
+            PF("CallbackTarget", "ObjectProperty", "", "Object")})};
+    EXPECT("params * : a latent function is refused, per call", !InvokeParamIndirection(delay, false).empty());
+    EXPECT("params * : and under a grant", !InvokeParamIndirection(delay, true).empty());
+
+    // Under a grant only: the per-call prompt shows every argument, a grant's prompt none of the later ones.
+    const std::vector<Ubel::ParamField> clearTimer = {PF("Object", "ObjectProperty", "", "Object"),
+                                                      PF("FunctionName", "StrProperty")};
+    EXPECT("params * : a string naming a function is refused under a grant",
+           !InvokeParamIndirection(clearTimer, true).empty());
+    EXPECT("params: and allowed per call (K2_GetTimerRemainingTime's shape is a read)",
+           InvokeParamIndirection(clearTimer, false).empty());
+    for (const char* type : {"DelegateProperty", "MulticastDelegateProperty", "MulticastInlineDelegateProperty",
+                             "MulticastSparseDelegateProperty", "FieldPathProperty"})
+        EXPECT((std::string("params * : under a grant, refused: ") + type).c_str(),
+               !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF("Target", type)}, true).empty());
+    EXPECT("params * : a UFunction object parameter is refused under a grant",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF("Func", "ObjectProperty", "", "Function")}, true)
+                .empty());
+    for (const char* name : {"EventName", "PropertyName", "InFunctionName", "Command", "DelegateName", "CallbackName",
+                             "FuncToCall"})
+        EXPECT((std::string("params * : under a grant, a name-like parameter is refused: ") + name).c_str(),
+               !InvokeParamIndirection(std::vector<Ubel::ParamField>{PF(name, "NameProperty")}, true).empty());
+    EXPECT("params * : a struct member naming an event is refused under a grant (the members are walked)",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("Info", "StructProperty", "MyInfo", "", {PF("Inner", "StructProperty", "MyInner", "",
+                                                                {PF("EventName", "StrProperty")})})}, true).empty());
+    // Review: a struct that wraps a name (FGameplayTag EventTag: its one member is TagName) names an event by its
+    // parameter's name; SendGameplayEventToActor fires any gameplay event that way.
+    EXPECT("params * : under a grant, a struct parameter named for an event is refused",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("Actor", "ObjectProperty", "", "Actor"),
+               PF("EventTag", "StructProperty", "GameplayTag", "", {PF("TagName", "NameProperty")})}, true).empty());
+    EXPECT("params: and allowed per call", InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("EventTag", "StructProperty", "GameplayTag", "", {PF("TagName", "NameProperty")})}, false).empty());
+    // Controls: the everyday names (a socket, a bone, a level, a tag) and non-string types pass, granted or not.
+    const std::vector<Ubel::ParamField> everyday = {
+        PF("SocketName", "NameProperty"), PF("BoneName", "NameProperty"), PF("LevelName", "NameProperty"),
+        PF("Tag", "NameProperty"), PF("Description", "StrProperty"), PF("Health", "FloatProperty"),
+        PF("FunctionCount", "IntProperty"), PF("Target", "ObjectProperty", "", "Actor"),
+        PF("Where", "StructProperty", "Vector", "", {PF("X", "DoubleProperty")})};
+    EXPECT("params: everyday parameters pass under a grant", InvokeParamIndirection(everyday, true).empty());
+    EXPECT("params: and per call", InvokeParamIndirection(everyday, false).empty());
+    EXPECT("params: no parameters pass", InvokeParamIndirection(std::vector<Ubel::ParamField>{}, true).empty());
 }
 
 static void Test_Voll_HoldLedger() {
@@ -619,6 +879,24 @@ static void Test_Voll_HoldLedger() {
            == std::vector<std::string>({"force_field:A::x", "force_field:B::y"}));
     EXPECT("holds: a read changes none", changed(R"({"cmd":"get_protect_state"})").empty()
            && changed(R"({"cmd":"fly_get_state"})").empty());
+    // [MCP-WRITE-GRANTS-2026-11-14] review: the UI's Console panel runs ToggleDebugCamera through invoke_function. Missed
+    // by the ledger, the camera it turned on stayed named for whoever held it before -- an AI session, whose end then
+    // turned the user's camera off -- or for CE after CE's OFF.
+    const std::vector<std::string> camera{"debug_camera"};
+    EXPECT("holds * : an invoke of the debug camera's own functions changes the camera, whatever the case",
+           changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera"})") == camera
+           && changed(R"({"cmd":"invoke_function","func_name":"enabledebugcamera"})") == camera
+           && changed(R"({"cmd":"invoke_function","func_name":"DisableDebugCamera"})") == camera);
+    // Review round 2: a background client (the MCP server) is refused these before they run
+    // (InvokeRefusedForBackground, "use write_debug_camera"); as a hold change its if_free check answered first and
+    // the AI lost that pointer.
+    EXPECT("holds * : a background client's invoke of them names no hold: it never runs",
+           changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":true})").empty()
+           && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":false})") == camera);
+    EXPECT("holds: any other invoke changes none",
+           changed(R"({"cmd":"invoke_function","func_name":"Jump"})").empty()
+           && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCameraEx"})").empty()
+           && changed(R"({"cmd":"invoke_function"})").empty());
     EXPECT("holds: every toggle is covered",
            changed(R"({"cmd":"set_foreground_lock"})").size() == 1 && changed(R"({"cmd":"fly_set"})").size() == 1
            && changed(R"({"cmd":"set_debug_camera"})").size() == 1
@@ -671,6 +949,15 @@ static void Test_Voll_ClientOwnerKey() {
 static void Test_Schlacht_Owners() {
     using R = Schlacht::OwnerRelease;
     const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
+    {
+        // [MCP-WRITE-GRANTS-2026-11-14] seethrough_get_state's `you`: whether the asking client holds a claim.
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("a client that claimed holds a claim", Schlacht::HasOwner(o, ui) && Schlacht::HasOwner(o, ce));
+        EXPECT("a client that never claimed holds none", !Schlacht::HasOwner(o, rig));
+        EXPECT("no owner is never anyone's claim", !Schlacht::HasOwner(o, Schlacht::kOwnerNone));
+    }
     {
         std::vector<uint64_t> o;
         Schlacht::ClaimOwner(o, ce);
@@ -3965,6 +4252,34 @@ static void Test_NumericFamily_Filter() {
     EXPECT("parse empty->Any",   ParseNumericFamily("")             == NumericFamily::Any);
 }
 
+// [GROUP-DEEP-INDEX-TWICE] Review wf_72c53295-04c F5: the witness picker's term match reads the DISPLAYED name. A deep
+// leaf's descriptor is "...Leaves[]" and its slot match holds the index, so asking for "Leaves[26]" must pick the leaf
+// at element 26 -- against the raw name it matched nothing and fell to "any free leaf", the first one.
+static void Test_Radar_PickWitness_DeepDisplayedName() {
+    using namespace Radar;
+    FieldDescriptor d;
+    d.className = d.definingClassName = "DumperTestActor";
+    d.fieldName = "Deep_Buckets[29].Subs[29].Leaves[]";
+    d.fieldType = "IntProperty";
+    std::vector<FieldDescriptor> descs = { d };
+    auto leaf = [](int32_t elem, uintptr_t addr, int32_t value) {
+        GroupSlotMatch m;
+        m.descriptorIdx = 0;
+        m.elementIndex  = elem;
+        m.leafAddr      = addr;
+        std::memcpy(m.prevValue, &value, sizeof(value));
+        return m;
+    };
+    std::vector<SlotSpec> slots(1);
+    slots[0].dt = DataType::Int32; slots[0].st = ScanType::Changed;
+    std::vector<std::vector<GroupSlotMatch>> sm = { { leaf(0, 0x1000, 7), leaf(26, 0x1068, 9) } };
+    auto picked = PickGroupWitnessAssignment(sm, slots, descs, SplitFilterTerms("Leaves[26]"));
+    EXPECT("* GROUP-DEEP-INDEX-TWICE: the picker takes the leaf whose displayed name holds the asked index",
+           picked.size() == 1 && picked[0] == 1);
+    auto none = PickGroupWitnessAssignment(sm, slots, descs, {});
+    EXPECT("control: with no term the first free leaf is picked", none.size() == 1 && none[0] == 0);
+}
+
 // Which leaf each slot DISPLAYS. Reproduces the DumperTest sample exactly: a
 // Changed + Unchanged refine where slot 0 kept {Health.CurrentValue, TickCount}
 // and slot 1 kept {PrimaryActorTick.TickInterval, Health.BaseValue, FrozenInt}.
@@ -4520,6 +4835,23 @@ static void Test_GroupScan_ExcludeAndHistogram() {
     // Empty exclude keeps all three.
     auto vAll = BuildGroupOrderedView(cands, slots, descs, insts, "", SortKey::ScanOrder, false, {});
     EXPECT("group empty exclude keeps all", vAll.size() == 3);
+
+    // [GROUP-DEEP-INDEX-TWICE] A deep leaf's descriptor holds its array path with the "[]" placeholder and the slot
+    // match holds the index, so the filter must match what the row SHOWS (FieldDisplayName), as the single-value
+    // filter does -- the raw name "Leaves[]" never contains "Leaves[26]".
+    {
+        std::vector<FieldDescriptor> dd(1);
+        dd[0].className = "DumperTestActor"; dd[0].definingClassName = "DumperTestActor";
+        dd[0].fieldName = "Deep_Buckets[29].Subs[29].Leaves[]"; dd[0].fieldType = "FloatProperty";
+        std::vector<SlotSpec> one(1); one[0].dt = DataType::Float;
+        GroupSlotMatch m; m.descriptorIdx = 0; m.elementIndex = 26;
+        GroupCandidate gc; gc.instanceIdx = 0; gc.slotMatches = { { m } };
+        std::vector<GroupCandidate> cs = { gc };
+        auto hit  = BuildGroupOrderedView(cs, one, dd, insts, "Leaves[26]", SortKey::ScanOrder, false, {});
+        auto miss = BuildGroupOrderedView(cs, one, dd, insts, "Leaves[27]", SortKey::ScanOrder, false, {});
+        EXPECT("* GROUP-DEEP-INDEX-TWICE: the group filter matches the displayed element index", hit.size() == 1);
+        EXPECT("control: another index does not match", miss.empty());
+    }
 }
 
 // V2 (build 950) — scaling smoke for the server-side ordered view. The cap
@@ -4888,6 +5220,82 @@ static void Test_Denken_BasicAccesses() {
     const auto* r08 = FindAccess(r, 0x08);
     EXPECT("basic: @0x08 present (alias)", r08 != nullptr);
     if (r08) EXPECT("basic: @0x08 high-conf via rbx alias", r08->highConfidence);
+}
+
+static void Test_Denken_KeepsWriteSites() {
+    // [DENKEN-WRITE-SITES] Each write's instruction address is kept per offset; reads leave none.
+    //   B0+0: mov [rcx+0x10], eax   89 41 10   write
+    //   B0+3: mov eax, [rcx+0x18]   8B 41 18   read
+    //   B0+6: mov [rcx+0x10], edx   89 51 10   write
+    //   B0+9: ret                   C3
+    const uintptr_t B0 = 0x140000000ULL;
+    std::vector<DenkenRegion> regions = {{ B0, { 0x89, 0x41, 0x10, 0x8B, 0x41, 0x18, 0x89, 0x51, 0x10, 0xC3 } }};
+    auto r = Denken::Analyze(B0, MakeReader(&regions));
+    const auto* w = FindAccess(r, 0x10);
+    EXPECT("* WRITESITES: @0x10 keeps both writes, in decode order",
+           w && w->writeSites == std::vector<uintptr_t>({ B0, B0 + 6 }) && !w->writeSitesTruncated);
+    const auto* rd = FindAccess(r, 0x18);
+    EXPECT("* WRITESITES: a read keeps no site", rd && rd->writeSites.empty());
+
+    // A followed impl writes: the site is the impl's own address, and two calls into it keep it once.
+    //   thunk @ B0: mov rbx, rcx ; mov rcx, rbx ; call impl ; mov rcx, rbx ; call impl ; ret
+    //   impl  @ B1: mov [rcx+0x20], eax ; ret
+    const uintptr_t B1 = 0x140001000ULL;
+    const int32_t rel1 = static_cast<int32_t>(B1 - (B0 + 11));
+    const int32_t rel2 = static_cast<int32_t>(B1 - (B0 + 19));
+    auto le = [](int32_t v) {
+        return std::vector<uint8_t>{ static_cast<uint8_t>(v & 0xFF), static_cast<uint8_t>((v >> 8) & 0xFF),
+                                     static_cast<uint8_t>((v >> 16) & 0xFF), static_cast<uint8_t>((v >> 24) & 0xFF) };
+    };
+    std::vector<uint8_t> thunk = { 0x48, 0x89, 0xCB, 0x48, 0x89, 0xD9, 0xE8 };
+    for (uint8_t b : le(rel1)) thunk.push_back(b);
+    thunk.insert(thunk.end(), { 0x48, 0x89, 0xD9, 0xE8 });
+    for (uint8_t b : le(rel2)) thunk.push_back(b);
+    thunk.push_back(0xC3);
+    std::vector<DenkenRegion> twice = { { B0, thunk }, { B1, { 0x89, 0x41, 0x20, 0xC3 } } };
+    auto t = Denken::Analyze(B0, MakeReader(&twice));
+    const auto* w20 = FindAccess(t, 0x20);
+    EXPECT("WRITESITES setup: the impl was followed twice", t.callsFollowed == 2);
+    EXPECT("* WRITESITES: two calls count two writes", w20 && w20->writeCount == 2);
+    EXPECT("* WRITESITES: ...and keep the impl's one instruction once",
+           w20 && w20->writeSites == std::vector<uintptr_t>({ B1 }));
+
+    // More distinct sites than kMaxWriteSites: the first ones, and the flag.
+    std::vector<uint8_t> many;
+    for (int i = 0; i < 10; ++i) many.insert(many.end(), { 0x89, 0x41, 0x30 });   // mov [rcx+0x30], eax
+    many.push_back(0xC3);
+    std::vector<DenkenRegion> manyRegion = { { B0, many } };
+    auto m = Denken::Analyze(B0, MakeReader(&manyRegion));
+    const auto* w30 = FindAccess(m, 0x30);
+    EXPECT("* WRITESITES: ten write sites keep the first kMaxWriteSites",
+           w30 && w30->writeCount == 10 && w30->writeSites.size() == Denken::kMaxWriteSites &&
+           w30->writeSites.front() == B0 && w30->writeSites.back() == B0 + 3 * (Denken::kMaxWriteSites - 1));
+    EXPECT("* WRITESITES: ...and say more were dropped", w30 && w30->writeSitesTruncated);
+    EXPECT("* WRITESITES: the body's own writes are through this", w && w->writeSitesViaThis == 2);
+    EXPECT("* WRITESITES: ...and so is the followed impl's", w20 && w20->writeSitesViaThis == 1);
+
+    // Review wf_c87eff0e-53f DWS-DLL-1: a write through another base is kept, but after the ones through this, and
+    // counted apart -- an exec thunk's FFrame store must not be the site a "high" row offers first.
+    //   B0+0: mov [rdx+0x40], eax   89 42 40   write, base not this
+    //   B0+3: mov [rcx+0x40], eax   89 41 40   write through this
+    //   B0+6: ret                   C3
+    std::vector<DenkenRegion> mixed = { { B0, { 0x89, 0x42, 0x40, 0x89, 0x41, 0x40, 0xC3 } } };
+    auto x = Denken::Analyze(B0, MakeReader(&mixed));
+    const auto* w40 = FindAccess(x, 0x40);
+    EXPECT("* DWS-DLL-1: the write through this comes first, the other after",
+           w40 && w40->writeSites == std::vector<uintptr_t>({ B0 + 3, B0 }));
+    EXPECT("* DWS-DLL-1: ...one of them through this", w40 && w40->writeSitesViaThis == 1);
+
+    // The cap keeps a write through this over the others: eight through rdx, then one through rcx.
+    std::vector<uint8_t> crowd;
+    for (int i = 0; i < 8; ++i) crowd.insert(crowd.end(), { 0x89, 0x42, 0x48 });   // mov [rdx+0x48], eax
+    crowd.insert(crowd.end(), { 0x89, 0x41, 0x48, 0xC3 });                          // mov [rcx+0x48], eax ; ret
+    std::vector<DenkenRegion> crowdRegion = { { B0, crowd } };
+    auto cr = Denken::Analyze(B0, MakeReader(&crowdRegion));
+    const auto* w48 = FindAccess(cr, 0x48);
+    EXPECT("* DWS-DLL-1: a full list still takes a write through this, first",
+           w48 && w48->writeSites.size() == Denken::kMaxWriteSites && w48->writeSites.front() == B0 + 24 &&
+           w48->writeSitesViaThis == 1 && w48->writeSitesTruncated);
 }
 
 static void Test_Denken_ExcludesStackAndZeroDisp() {
@@ -8804,6 +9212,16 @@ static_assert(std::is_same_v<decltype(DynOff::FARRAYPROP_INNER), DynOff::Runtime
 static_assert(std::is_same_v<decltype(DynOff::FBOOLPROP_FIELDSIZE), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FBYTEPROP_ENUM), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FENUMPROP_ENUM), DynOff::RuntimeOffset>);
+// The other offsets measured lazily, by whichever walk first meets the evidence, while other threads read them: the
+// persistent-pointer envelopes (latched from an ElementSize), UEnum::Names' layout and UFunction's Func / flags.
+static_assert(std::is_same_v<decltype(DynOff::SOFTPTR_PATH), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::LAZYPTR_GUID), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_NAMES), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_VALUE_SIZE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UENUM_PAIR_STRIDE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_FUNC), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_FLAGS), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::UFUNCTION_TAIL_EXTRA), DynOff::RuntimeOffset>);
 // The proof that the family lock is held cannot be copied out of the scope that took the lock.
 static_assert(!std::is_copy_constructible_v<DynOff::FamilyWriteLock>);
 
@@ -11834,6 +12252,20 @@ static void Test_Lager_ClassifyWriteRegion() {
            WorseWriteTarget(WriteTarget::Writable, WriteTarget::NotWritable) == WriteTarget::NotWritable);
     EXPECT("read-only + unmapped is unmapped", WorseWriteTarget(WriteTarget::NotWritable, WriteTarget::Unmapped) == WriteTarget::Unmapped);
     EXPECT("writable + writable is writable", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Writable) == WriteTarget::Writable);
+
+    // [WRITEMEM-OWN-IMAGE] A background client's write_mem never lands in the DLL's own image.
+    constexpr uintptr_t kImg = 0x7FF600000000ull;
+    constexpr size_t kImgSize = 0x400000;
+    EXPECT("own image: a write inside it overlaps", RangeOverlapsImage(kImg + 0x1000, 8, kImg, kImgSize));
+    EXPECT("own image: a write straddling its start overlaps", RangeOverlapsImage(kImg - 4, 8, kImg, kImgSize));
+    EXPECT("own image: a write straddling its end overlaps", RangeOverlapsImage(kImg + kImgSize - 4, 8, kImg, kImgSize));
+    EXPECT("own image: a write covering all of it overlaps", RangeOverlapsImage(kImg - 0x10, kImgSize + 0x20, kImg, kImgSize));
+    EXPECT("own image: a write ending exactly at its start does not", !RangeOverlapsImage(kImg - 8, 8, kImg, kImgSize));
+    EXPECT("own image: a write starting exactly at its end does not", !RangeOverlapsImage(kImg + kImgSize, 8, kImg, kImgSize));
+    EXPECT("own image: an empty write overlaps nothing", !RangeOverlapsImage(kImg + 0x1000, 0, kImg, kImgSize));
+    EXPECT("own image: an empty image is overlapped by nothing", !RangeOverlapsImage(kImg, 8, kImg, 0));
+    EXPECT("own image: a range wrapping past the top still reaches an image above its start",
+           RangeOverlapsImage(kImg - 0x10, ~static_cast<size_t>(0), kImg, kImgSize));
 }
 
 static void Test_Lager_HolderCandidateReadable() {
@@ -12559,6 +12991,7 @@ int main() {
     RUN(Test_NumericFamily_Filter);
     RUN(Test_GroupScan_ExcludeAndHistogram);
     RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_PickWitness_DeepDisplayedName);
     RUN(Test_Radar_FormatCandidateOrigin);
     RUN(Test_Radar_GroupLeafBudget);
     RUN(Test_Radar_GroupSessionCarriesPerSlotCap);
@@ -12574,6 +13007,7 @@ int main() {
     RUN(Test_Denken_FollowedImplOutlivesItsAlias);
     RUN(Test_Denken_DoesNotFollowNonThisCall);
     RUN(Test_Denken_TerminatesAndGuards);
+    RUN(Test_Denken_KeepsWriteSites);
 
     // UE5.7+ packed FUObjectItem reconstruction (math-only; no live game exists)
     RUN(Test_Packed_RoundTrip_Basic);
@@ -12770,7 +13204,10 @@ int main() {
     RUN(Test_Voll_ProbeFoundServer);
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
+    RUN(Test_Voll_DuringInitNotes);
+    RUN(Test_Land_SecondCopy);
     RUN(Test_Voll_Holders);
+    RUN(Test_Voll_InvokeParamIndirection);
     RUN(Test_Voll_HoldLedger);
     RUN(Test_D23_InvokeOwnersAndDenyList);
     RUN(Test_Voll_OwedCameraRelease);

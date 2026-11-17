@@ -85,9 +85,23 @@ static std::mutex s_nameCacheMutex;
 static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
 
-// CorrectSubclassOffsets' once-per-process latch. At namespace scope so dll_core_test, which compiles this file into its
-// own translation unit, can re-arm it.
-static std::atomic<bool> s_subclassCalibrated{false};
+// [DYNOFF-LATCH-STALE] CorrectSubclassOffsets' latch: the family epoch at which it last found a struct in the slot,
+// tagged with bit 32 so "never" (0) cannot equal epoch 0. It was a once-per-process bool, so a family published after
+// it -- Genau's measured arm on a later UE5_Init, the defaults a re-run init applies first -- was never checked again,
+// and a derivation one pointer off (TQ2's 0x74, the struct at 0x78) stood for the session. A move bumps the epoch and
+// so re-arms this, and so does the end of an offset validation (DynOff::RetireFamilyEpoch); publishing the same base
+// again is not a move and leaves it set. Stored under DynOff::FamilyWriteLock, which ApplyPropertyFamily's signature
+// demands of a move and RetireFamilyEpoch takes itself, so the epoch it records cannot be overtaken before the store.
+// At namespace scope so dll_core_test, which compiles this file into its own translation unit, can re-arm it.
+static std::atomic<uint64_t> s_subclassCalibratedAt{0};
+static void LatchSubclassCalibration(uint32_t epoch) {
+    s_subclassCalibratedAt.store((uint64_t{1} << 32) | epoch, std::memory_order_release);
+}
+static bool IsSubclassCalibrated() {
+    const uint64_t v = s_subclassCalibratedAt.load(std::memory_order_acquire);
+    return (v >> 32) != 0
+        && static_cast<uint32_t>(v) == DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+}
 // [FRIEREN-PROBE-OVERRUN] The newest family epoch at which a real UScriptStruct was read out of the slot: proof that
 // DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (TQ2 derived 0x74 from measured offsets and the
 // struct sat at 0x78). Tagged with bit 32 so "never" (0) cannot equal epoch 0; a later family move changes the epoch
@@ -523,7 +537,7 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
 // are trying to stop trusting.
 // ============================================================
 static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
-                                       int taggedEnvelope, int& latched,
+                                       int taggedEnvelope, DynOff::RuntimeOffset& latched,
                                        const char* what) {
     const int envelope = DynOff::PersistentPtrEnvelopeFor(
         elemSize, payloadSize, taggedEnvelope, latched, g_cachedUEVersion);
@@ -1096,11 +1110,40 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
     }
 }
 
+namespace {
+// [WALKCLASS-MEMO-REUSE] Read from the address, not from the walk: the object's name (the FName's 8 bytes) and Outer,
+// the heads of the two property chains, and the super. A memo entry whose witness no longer reads back describes a
+// class that is gone. The name and Outer carry the identity: a data-only Blueprint adds no property and no function, so
+// two siblings have null chains and one super, and only their names differ (review wf_d3c2ec9a-d52). Unreadable reads
+// stay 0.
+struct ClassWitness { uint64_t name = 0; uintptr_t outer = 0, childProps = 0, children = 0, super = 0; };
+ClassWitness ReadClassWitness(uintptr_t cls) {
+    ClassWitness w;
+    if (!Macht::ReadBytesSafe(cls + Grimoire::OFF_UOBJECT_NAME, &w.name, sizeof(w.name))) w.name = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::UOBJECT_OUTER, &w.outer, sizeof(w.outer))) w.outer = 0;
+    if (DynOff::bUseFProperty && !Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDPROPS, &w.childProps, sizeof(w.childProps)))
+        w.childProps = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::USTRUCT_CHILDREN, &w.children, sizeof(w.children))) w.children = 0;
+    if (!Macht::ReadBytesSafe(cls + DynOff::USTRUCT_SUPER, &w.super, sizeof(w.super))) w.super = 0;
+    return w;
+}
+bool WitnessMatches(const ClassInfo& ci, const ClassWitness& w) {
+    return ci.WitnessName == w.name && ci.WitnessOuter == w.outer && ci.WitnessChildProps == w.childProps &&
+           ci.WitnessChildren == w.children && ci.WitnessSuper == w.super;
+}
+void StampWitness(ClassInfo& ci, const ClassWitness& w) {
+    ci.WitnessName = w.name; ci.WitnessOuter = w.outer;
+    ci.WitnessChildProps = w.childProps; ci.WitnessChildren = w.children; ci.WitnessSuper = w.super;
+}
+}  // namespace
+
 // Cache for WalkClass results — class/struct field metadata doesn't change at
 // runtime, so we cache by class address (within the property family's epoch,
 // DynOff::FamilyCacheKey [FAMILY-EPOCH]) to avoid re-reading the FField chain
 // on every WalkInstance call. This dramatically speeds up repeated drilldown/
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
+// A class can be freed and another object allocated at its address, though; each
+// entry's witness catches that and the class is walked again ([WALKCLASS-MEMO-REUSE]).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 
 // [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
@@ -1130,6 +1173,14 @@ static void TouchWalkLru(uintptr_t key) {
     auto it = s_walkLruPos.find(key);
     if (it == s_walkLruPos.end()) return;
     s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
+}
+
+// [WALKCLASS-MEMO-REUSE] Drop `key` (an entry whose class witness no longer reads back), LRU included. Legal for the
+// same reason eviction is: this cache hands out copies. Caller MUST hold s_walkClassCacheMutex.
+static void ForgetWalkClass(uintptr_t key) {
+    auto pos = s_walkLruPos.find(key);
+    if (pos != s_walkLruPos.end()) { s_walkLru.erase(pos->second); s_walkLruPos.erase(pos); }
+    s_walkClassCache.erase(key);
 }
 
 // Insert-or-refresh `key`, evicting the least recently used entries until the
@@ -1218,16 +1269,21 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // Check cache first. Return a copy so callers read lock-free; node-based
     // unordered_map keeps the entry alive regardless of later inserts.
     const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
+    const ClassWitness witness = ReadClassWitness(uclassAddr);  // [WALKCLASS-MEMO-REUSE]
     {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         auto cacheIt = s_walkClassCache.find(key);
         if (cacheIt != s_walkClassCache.end()) {
-            TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
-            return cacheIt->second;
+            if (WitnessMatches(cacheIt->second, witness)) {
+                TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
+                return cacheIt->second;
+            }
+            ForgetWalkClass(key);   // another object at this address since: walk what is there now
         }
     }
 
     info.Address = uclassAddr;
+    StampWitness(info, witness);
     info.Name = GetName(uclassAddr);
     info.FullPath = GetFullName(uclassAddr);
 
@@ -1303,6 +1359,11 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
             const uintptr_t superKey = DynOff::FamilyCacheKey(super);
             auto superCacheIt = s_walkClassCache.find(superKey);
+            // [WALKCLASS-MEMO-REUSE] A super freed and replaced at its address is walked below, not reused.
+            if (superCacheIt != s_walkClassCache.end() && !WitnessMatches(superCacheIt->second, ReadClassWitness(super))) {
+                ForgetWalkClass(superKey);
+                superCacheIt = s_walkClassCache.end();
+            }
             if (superCacheIt != s_walkClassCache.end()) {
                 // A base class is reused by every subclass, so it is exactly what must
                 // not be evicted for being "old" — the chain walk is a use.
@@ -1356,8 +1417,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // Fields vector. No reference into THIS map escapes (the hit at the top of this
     // function and the super-chain reuse below both COPY under s_walkClassCacheMutex);
     // it is s_walkClassExCache that hands out `const ClassInfo&`, and both maps follow
-    // the same rule so the two cannot drift. Node-based map + no erase/clear anywhere
-    // in dll/src ⇒ entries never move. (B10)
+    // the same rule so the two cannot drift. This by-value map erases (LRU eviction,
+    // ForgetWalkClass); the enriched memo never frees an entry, it parks a replaced one
+    // ([WALKCLASS-MEMO-REUSE]), so a reference into it never dangles. (B10)
     //
     // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
     // handing in a non-UStruct address poisoned the cache permanently — and the caller
@@ -1633,18 +1695,84 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields);
 // ParallelGObjectsScan worker at once. (B10)
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassExCache;
 static std::mutex s_walkClassExCacheMutex;
+// [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced. Extracted node handles keep their element where it was, so a
+// reference a caller got before the re-walk stays readable; they are never freed, like the memo. One per address reuse.
+static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkClassExParked;
+// The bounds on that, since a parked entry is never freed.
+//  * PER ADDRESS (memo key): an address whose witness keeps changing -- an engine whose witness offsets read something
+//    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
+//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY (review
+//    wf_a193c703-fe8: a match against the stopped entry, every other turn of an alternation, used to clear it).
+//  * Genuine reuse re-walks once and then HOLDS STILL: kHoldHitsToForgive matching hits in a row forgive an address
+//    that has not stopped, so many level changes at one address never reach the bound (review wf_d3c2ec9a-d52: one count
+//    for the whole process switched the check off everywhere after 4,096).
+//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers as before the
+//    witness, said once) -- the last word on memory, whatever pattern the witnesses follow.
+static constexpr uint32_t kMaxRewalksPerAddress = 8;
+static constexpr uint32_t kHoldHitsToForgive    = 3;
+static constexpr size_t   kMaxParkedBytes       = size_t(256) << 20;
+struct RewalkState { uint32_t rewalks = 0; uint32_t held = 0; bool stopped = false; };
+static std::unordered_map<uintptr_t, RewalkState> s_walkClassExRewalks;
+static size_t s_walkClassExStopped     = 0;   // distinct addresses
+static size_t s_walkClassExParkedBytes = 0;
+
+void GetParkedClassWalks(size_t& outParked, size_t& outStoppedAddresses) {
+    std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
+    outParked = s_walkClassExParked.size();
+    outStoppedAddresses = s_walkClassExStopped;
+}
+
 
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // Reference-return needs a stable object for the failure case too.
     static const ClassInfo s_emptyClassInfo{};
     if (!uclassAddr) return s_emptyClassInfo;
 
+    const ClassWitness witness = ReadClassWitness(uclassAddr);   // [WALKCLASS-MEMO-REUSE]
     {
         std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-        auto it = s_walkClassExCache.find(DynOff::FamilyCacheKey(uclassAddr));   // [FAMILY-EPOCH]
-        if (it != s_walkClassExCache.end()) return it->second;
+        const uintptr_t hitKey = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
+        auto it = s_walkClassExCache.find(hitKey);
+        if (it != s_walkClassExCache.end()) {
+            auto rs = s_walkClassExRewalks.empty() ? s_walkClassExRewalks.end() : s_walkClassExRewalks.find(hitKey);
+            if (WitnessMatches(it->second, witness)) {
+                // Holding still: enough matching hits in a row forgive an address that has not stopped.
+                if (rs != s_walkClassExRewalks.end() && !rs->second.stopped && ++rs->second.held >= kHoldHitsToForgive)
+                    s_walkClassExRewalks.erase(rs);
+                return it->second;
+            }
+            RewalkState& st = (rs != s_walkClassExRewalks.end()) ? rs->second : s_walkClassExRewalks[hitKey];
+            if (st.stopped) return it->second;
+            if (st.rewalks >= kMaxRewalksPerAddress) {
+                st.stopped = true;
+                if (++s_walkClassExStopped <= 16)
+                    Sein::Warn("WALK:safe", "WalkClassEx: 0x%llx changed class %u times running -- no longer re-walked; "
+                               "its last walk is answered", (unsigned long long)uclassAddr, kMaxRewalksPerAddress);
+                return it->second;
+            }
+            if (s_walkClassExParkedBytes >= kMaxParkedBytes) {
+                static bool s_saidFull = false;
+                if (!s_saidFull) {
+                    s_saidFull = true;
+                    Sein::Warn("WALK:safe", "WalkClassEx: %zu replaced class walks kept (~%zu MB) -- no more are kept; a "
+                               "class at a reused address is answered with the old walk from here on",
+                               s_walkClassExParked.size(), s_walkClassExParkedBytes >> 20);
+                }
+                return it->second;
+            }
+            ++st.rewalks;
+            st.held = 0;
+            const ClassInfo& old = it->second;
+            s_walkClassExParkedBytes += EstimateClassInfoBytes(old.Name.size(), old.FullPath.size(),
+                                                               old.SuperName.size(), old.Fields.size(), sizeof(FieldInfo));
+            // Another object at this address since the walk: park the old entry (callers hold references into it)
+            // and walk what is there now.
+            s_walkClassExParked.push_back(s_walkClassExCache.extract(it));
+        }
     }
 
+    // [DYNOFF-LATCH-STALE] Read before the plain walk, checked after the key below (DynOff::g_offsetValidations).
+    const uint32_t validations = DynOff::SettledOffsetValidations();
     bool readOk = true;
     ClassInfo info = WalkClassImpl(uclassAddr, readOk);
 
@@ -1693,10 +1821,13 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // nested-struct recursion in Aura::ScanForValue bails, and the user
     // gets 0 candidates on GAS / FGameplayAttributeData scans.
     //
-    // CorrectSubclassOffsets is idempotent (guarded by an atomic), so
-    // calling it on every WalkClassEx is a no-op after the first
-    // successful probe. The cost on cold call is bounded: at most 7
-    // probe-delta reads per StructProperty until one validates.
+    // CorrectSubclassOffsets returns at once while its latch names the
+    // current family epoch (the latch alone: a slot proof does not stop
+    // it), so calling it on every WalkClassEx costs a few atomic loads. It
+    // probes again under the family write lock after a family move or the
+    // end of an offset validation (DynOff::RetireFamilyEpoch), until one
+    // call latches. The cost of a probe is bounded: at most 7 probe-delta
+    // reads per StructProperty until one validates.
     CorrectSubclassOffsets(info.Fields);
 
     // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
@@ -1705,6 +1836,12 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // confirm keeps the plain walk's. Bounded -- every measured move keeps the true slot inside both probes' spreads,
     // and the classifier is strict (FieldSize 1, one mask bit) -- not "nothing predates this key".
     const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);
+    // [DYNOFF-LATCH-STALE] An offset validation ended, or is ending, between the plain walk and this key: the walk read
+    // field offsets it was still deriving, and this key may be the epoch its retire starts, so it is not published and
+    // the call starts over -- under the settled offsets once the retire has finished (DynOff::g_offsetValidations says
+    // what a restart during the retire itself can be served). A validation ends once per init, so this repeats only
+    // when one ends mid-walk.
+    if (DynOff::g_offsetValidations.load(std::memory_order_acquire) != validations) return WalkClassEx(uclassAddr);
 
     // Enrich each field with extended type metadata
     for (auto& fi : info.Fields) {
@@ -1837,8 +1974,10 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // have published an entry whose reference another thread is reading. The two
     // results are equal (the enrichment is a pure function of the same reads), so
     // keeping the existing one costs nothing and keeps every handed-out reference
-    // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
+    // valid. Node-based map, and the only removal parks the node rather than freeing
+    // it ([WALKCLASS-MEMO-REUSE]) ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
+    StampWitness(info, witness);
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     return s_walkClassExCache.try_emplace(key, std::move(info)).first->second;
@@ -2389,8 +2528,9 @@ static ParamField ParamFieldOf(const FieldInfo& f) {
 }
 
 // What a parameter's decode needs beyond its own entry, read now -- the function is alive -- and kept by value. No
-// cache is consulted: WalkClassEx's memo and s_enumCache are keyed by address and never erased, and under widget
-// reload churn a freed struct's or enum's address can hold another (the second design critic).
+// cache is consulted: s_enumCache is keyed by address and never erased, and under widget reload churn a freed struct's
+// or enum's address can hold another (the second design critic); WalkClassEx's memo now re-walks a class whose witness
+// changed ([WALKCLASS-MEMO-REUSE]), but a capture is taken at the call and stays independent of it.
 static void EnrichParam(uintptr_t prop, ParamField& p, int depth, int& leaves) {
     ReadParamSlotNames(prop, p);
     if (p.typeName == "StructProperty") {
@@ -5627,8 +5767,8 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 }
 
 // ============================================================
-// CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
-// and related subclass extension offsets.
+// CorrectSubclassOffsets — calibration of FSTRUCTPROP_STRUCT and
+// related subclass extension offsets, once per family epoch.
 //
 // The derivation formula (Offset_Internal + 0x2C) may be wrong for
 // newer UE versions (e.g., UE5.7 uses +0x30). We calibrate by probing
@@ -5636,12 +5776,16 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 // If a non-zero delta is found, all subclass offsets are updated.
 // ============================================================
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
-    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;  // fast path: already calibrated
+    // Fast path: calibrated for the current family. [DYNOFF-LATCH-STALE] The latch alone, not the slot proof as well:
+    // this function files the proof at the same epoch as the latch, so a fast path that also took the proof would make
+    // the latch decide nothing. After WalkInstance's own correction the latch is stale and this probes once more: on one
+    // engine the struct is then IN the new slot, so it latches there without moving anything.
+    if (IsSubclassCalibrated()) return;
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
     const DynOff::FamilyWriteLock lk;
-    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;
+    if (IsSubclassCalibrated()) return;
     // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
     // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
     // too. Until a struct is found in the slot the latch stays open, as it does for FProperty.
@@ -5676,11 +5820,13 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 // member alone, through DynOff::SetArrayInner, for exactly that reason.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected), lk);
                 // The corrected family's epoch, read after the move.
-                MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
+                const uint32_t moved = DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+                MarkSubclassSlotConfirmed(moved);
+                LatchSubclassCalibration(moved);
             } else {
                 MarkSubclassSlotConfirmed(epoch);
+                LatchSubclassCalibration(epoch);
             }
-            s_subclassCalibrated.store(true, std::memory_order_release);
             return;
         }
         // This StructProperty probe failed — try next one

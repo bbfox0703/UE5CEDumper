@@ -44,6 +44,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             ["Confidence"]  = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Confidence),
             ["Name"]        = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Name),
             ["Type"]        = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Type),
+            ["WriteSitesText"] = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.WriteSitesText),
         };
 
     private readonly IDumpService _dump;
@@ -54,6 +55,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private DataGrid _grid = null!;
     private Button _btnRefresh = null!;
     private Button _btnCopy = null!;
+    private Button _btnSiteInCe = null!;
+    private Button _btnCopySites = null!;
     private CheckBox _classFieldsOnly = null!;
     private DataGridColumn _confCol = null!;
     private List<FunctionPropRef> _allProps = new();
@@ -110,8 +113,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         _platform = platform;
 
         Title = $"Properties used by: {_funcName}";
-        Width = 760;
-        MinWidth = 520;
+        Width = 980;      // [DENKEN-WRITE-SITES] the Write sites column; review WS-UI-3
+        MinWidth = 720;
         Height = 520;
         MinHeight = 320;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -182,7 +185,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         DockPanel.SetDock(caveat, Dock.Bottom);
         root.Children.Add(caveat);
 
-        var btnRow = new StackPanel
+        // A WrapPanel: six buttons outgrow a narrow window, and a StackPanel cut the last ones off (review WS-UI-3).
+        var btnRow = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -210,6 +214,27 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         };
         _btnCopy.Click += OnCopyClicked;
         btnRow.Children.Add(_btnCopy);
+        // [DENKEN-WRITE-SITES] The selected field's native write sites: open the first in CE, or copy them all.
+        _btnSiteInCe = new Button
+        {
+            Content = Res.Get("str.FunctionProps.WriteSiteInCe"),
+            Padding = new Thickness(12, 6),
+            Margin = new Thickness(0, 0, 8, 0),
+            IsEnabled = false,
+        };
+        _btnSiteInCe.Click += OnSiteInCeClicked;
+        btnRow.Children.Add(_btnSiteInCe);
+        ToolTip.SetTip(_btnSiteInCe, Res.Get("str.Tip.FunctionProps.WriteSiteInCe"));
+        _btnCopySites = new Button
+        {
+            Content = Res.Get("str.FunctionProps.CopyWriteSites"),
+            Padding = new Thickness(12, 6),
+            Margin = new Thickness(0, 0, 8, 0),
+            IsEnabled = false,
+        };
+        _btnCopySites.Click += OnCopySitesClicked;
+        btnRow.Children.Add(_btnCopySites);
+        ToolTip.SetTip(_btnCopySites, Res.Get("str.Tip.FunctionProps.CopyWriteSites"));
         ToolTip.SetTip(_btnCopy, "Copy the selected property's name to the clipboard.");
         var btnClose = new Button { Content = "Close", Padding = new Thickness(14, 6) };
         btnClose.Click += (_, _) => Close();
@@ -292,6 +317,27 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                 }, supportsRecycling: false),
         };
         _grid.Columns.Add(_confCol);
+        var sitesHeader = new TextBlock { Text = Res.Get("str.FunctionProps.WriteSitesHeader") };
+        ToolTip.SetTip(sitesHeader, Res.Get("str.Tip.FunctionProps.WriteSitesHeader"));
+        _grid.Columns.Add(new DataGridTemplateColumn
+        {
+            Header = sitesHeader,
+            Width = new DataGridLength(150),
+            SortMemberPath = nameof(FunctionPropRef.WriteSitesText),
+            CellTemplate = new FuncDataTemplate<FunctionPropRef>(
+                (x, _) =>
+                {
+                    var cell = new TextBlock
+                    {
+                        Text = x?.WriteSitesText ?? "",
+                        FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(4, 0),
+                    };
+                    if (x is { WriteSites.Count: > 0 }) ToolTip.SetTip(cell, WriteSitesTip(x));
+                    return cell;
+                }, supportsRecycling: false),
+        });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
             Header = "Property",
@@ -325,7 +371,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         // clickable and inert in the shipped trimmed build. Same rule and same helper
         // as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
         _grid.WireSortComparers(XrefSortComparers);
-        _grid.SelectionChanged += (_, _) => _btnCopy.IsEnabled = _grid.SelectedItem is FunctionPropRef;
+        _grid.SelectionChanged += (_, _) => UpdateSelectionButtons();
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
         root.Children.Add(_grid);
 
@@ -379,7 +425,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         finally
         {
             _btnRefresh.IsEnabled = true;
-            _btnCopy.IsEnabled = _grid.SelectedItem is FunctionPropRef;
+            UpdateSelectionButtons();
         }
     }
 
@@ -421,6 +467,56 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                           + $"({writers} written){hiddenNote}{methodNote}{budgetNote}";
         _statusLabel.Foreground = new SolidColorBrush(Color.Parse(
             _lastBudgetHit ? "#E0A050" : shown.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
+    }
+
+    private void UpdateSelectionButtons()
+    {
+        var x = _grid.SelectedItem as FunctionPropRef;
+        _btnCopy.IsEnabled = x != null;
+        bool hasSites = x is { WriteSites.Count: > 0 };
+        _btnCopySites.IsEnabled = hasSites;
+        _btnSiteInCe.IsEnabled = hasSites && SharedAobMaker?.IsAvailable == true;
+    }
+
+    // [DENKEN-WRITE-SITES] The first write site in CE's disassembler, through the AOBMaker CE plugin.
+    private async void OnSiteInCeClicked(object? sender, RoutedEventArgs e)
+    {
+        var bridge = SharedAobMaker;
+        if (bridge == null || _grid.SelectedItem is not FunctionPropRef x || x.WriteSites.Count == 0) return;
+        _btnSiteInCe.IsEnabled = false;
+        try
+        {
+            // The shared helper: it strips the prefix, and names a busy or absent AOBMaker pipe ([W1-PIPEBUSY-STATUS]).
+            var (text, ok) = await AobMakerActions.MoveViewAsync(bridge, x.WriteSites[0], x.Name, null, disassembler: true);
+            _statusLabel.Text = text;
+            _statusLabel.Foreground = new SolidColorBrush(Color.Parse(ok ? "#4EC9B0" : "#F44747"));
+        }
+        finally
+        {
+            UpdateSelectionButtons();
+        }
+    }
+
+    // Every site, labelled by whether it writes through this object, and the shared-byte note.
+    private static string WriteSitesTip(FunctionPropRef x)
+    {
+        var lines = new List<string>();
+        for (int i = 0; i < x.WriteSites.Count; i++)
+            lines.Add(Res.Format(i < x.WriteSitesViaThis ? "str.FunctionProps.WriteSiteViaThis" : "str.FunctionProps.WriteSiteOtherBase",
+                                 x.WriteSites[i]));
+        if (x.SharedOffset > 1) lines.Add(Res.Format("str.FunctionProps.SharedOffsetNote", x.SharedOffset));
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private async void OnCopySitesClicked(object? sender, RoutedEventArgs e)
+    {
+        if (_grid.SelectedItem is not FunctionPropRef x || x.WriteSites.Count == 0) return;
+        string text = string.Join(Environment.NewLine, x.WriteSites);
+        bool copied = await _platform.CopyToClipboardAsync(text);
+        _statusLabel.Text = copied
+            ? Res.Format("str.FunctionProps.WriteSitesCopied", x.WriteSites.Count, x.Name)
+            : UE5DumpUI.Helpers.ClipboardConvenience.NotCopiedText(text);
+        _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 
     private async void OnCopyClicked(object? sender, RoutedEventArgs e)

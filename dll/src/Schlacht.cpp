@@ -945,7 +945,7 @@ void SetPierceCount(int32_t count) {
     s_state.pierceCount = count;
 }
 
-int32_t GetStatus(SeeThroughStatus& out) {
+int32_t GetStatus(SeeThroughStatus& out, uint64_t caller) {
     std::lock_guard<std::mutex> lk(s_mutex);
     out.code        = s_state.code;
     out.active      = s_state.active;
@@ -957,6 +957,7 @@ int32_t GetStatus(SeeThroughStatus& out) {
     out.restoreAbandoned = s_state.restoreAbandoned;
     out.claims    = static_cast<int32_t>(s_state.owners.size());
     out.ceClaimed = std::find(s_state.owners.begin(), s_state.owners.end(), kOwnerCe) != s_state.owners.end();
+    out.callerClaimed = HasOwner(s_state.owners, caller);
     // Under the same lock as hiddenCount, so a caller can never see a count that
     // disagrees with the list it came with.
     out.hiddenActors.assign(s_state.hiddenActors.begin(), s_state.hiddenActors.end());

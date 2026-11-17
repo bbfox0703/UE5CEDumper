@@ -42,11 +42,12 @@ internal static class AppComposition
         BookmarkStore? bookmarks,
         CoordinateLibraryStore? coordLibrary,
         ILogCompressionService? logCompression,
-        IAobMakerUiClient? aobMakerUi)
+        IAobMakerUiClient? aobMakerUi,
+        IAiWriteBlockGate? aiWriteBlock)
         => new MainWindowViewModel(
             pipeClient, dump, log, platform, aobUsage, aobMaker,
             proxyDeploy, experimentalGate, snapshotStore, globalHotkeys, bookmarks,
-            coordLibrary, logCompression, aobMakerUi);
+            coordLibrary, logCompression, aobMakerUi, aiWriteBlock);
 
     /// <summary>
     /// Build the dispatcher fault guard AND subscribe it, as one indivisible step.

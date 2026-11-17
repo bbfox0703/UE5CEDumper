@@ -16,6 +16,7 @@
 
 #include "Grimoire.h"   // IsUserspacePointer + DynOff::kDelegateDetectorPad, for the header-inline
                         // invocation-list predicate below. Header-only inline state, no cycle.
+#include "Denken.h"   // NativeFieldAccess, mapped onto properties by MapNativeAccesses
 #include "Ubel.h"   // For ::ClassInfo (defined at global scope in Ubel.h, despite the filename) used by WalkClassesBatch
 #include "Radar.h"
 #include "Orden.h"  // For Radar::Candidate / DataType / ScanType used by ScanForValue / RefineCandidates
@@ -236,7 +237,7 @@ TemplateInfo TemplateOf(uintptr_t obj);
 using TemplateOuterMemo = std::unordered_map<uintptr_t, uintptr_t>;
 TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo);
 
-// The template kind's name on the pipe (invoke_function's instance_template): "" for a live object.
+// The template kind's name on the pipe: "" for a live object.
 constexpr const char* TemplateKindWire(TemplateKind k) {
     switch (k) {
         case TemplateKind::ClassDefault: return "class_default";
@@ -1569,6 +1570,14 @@ struct FunctionPropRef {
     int32_t     offset     = -1;   // class-member offset the access mapped to (-1 = n/a)
     std::string confidence;        // "high" (base proven `this`) / "low" — disasm only;
                                    // empty for the exact bytecode path.
+    // [DENKEN-WRITE-SITES] disasm only: the native instructions that write this field, each once, in decode order
+    // (at most Denken::kMaxWriteSites; writeSitesTruncated when there were more). Empty for a read and for bytecode.
+    std::vector<uintptr_t> writeSites;
+    uint8_t     writeSitesViaThis = 0;   // the first this-many write through `this` (Denken's NativeFieldAccess)
+    bool        writeSitesTruncated = false;
+    // [DENKEN-WRITE-SITES] disasm: how many properties sit at this offset when more than one -- bitfield bools packed
+    // into one byte share it, and a write to that byte may be to any of them. 0 when the property is alone there.
+    int32_t     sharedOffset = 0;
 };
 
 struct FunctionPropRefResult {
@@ -1592,6 +1601,12 @@ struct FunctionPropRefResult {
 };
 
 FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr);
+
+// [DENKEN-WRITE-SITES] Path 2's mapping of Denken's [this+off] accesses onto the owning class's properties: one row per
+// property at an access's offset, sorted high-confidence first, then writers, frequency, name. Pure, so a test target
+// can feed it. Returns the rows; `unmapped` counts accesses at no property's offset.
+std::vector<FunctionPropRef> MapNativeAccesses(const std::vector<Denken::NativeFieldAccess>& accesses,
+                                               const std::vector<FieldInfo>& fields, int32_t& unmapped);
 
 // === Sparse Delegate Storage Walker ===
 //

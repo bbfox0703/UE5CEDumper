@@ -116,12 +116,46 @@ public class CallTraceBuilderTests
         var t = CallTraceBuilder.Build(new[]
         {
             Entry(10, 100, 0xA), Return(11, 110, 5), Entry(12, 120, 0xB),
-        }, Info);
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10 });
 
         Assert.Equal(1, t.ReturnsBeforeWindow);
         Assert.False(t.Returned[0]);
         Assert.Equal(-1, t.Parent[1]);
         Assert.Equal(new[] { 0, 1 }, t.Roots);
+    }
+
+    [Fact]
+    public void An_entry_dropped_inside_the_window_leaves_its_callers_open()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_d3c2ec9a-d52 UI-DROPPED-INWINDOW-ENTRY: the ring kept seq 10 on and DROPPED 11
+        // (a slot written out of turn, [LINIE-SEQ-LAST]). Its return at 12 is not a call from before the window: A at
+        // 10 is still open, and B at 13 is its child.
+        var t = CallTraceBuilder.Build(new[]
+        {
+            Entry(10, 100, 0xA), Return(12, 120, 11), Entry(13, 130, 0xB), Return(14, 140, 13), Return(15, 150, 10),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10 });
+
+        Assert.Equal(0, t.ReturnsBeforeWindow);
+        Assert.Equal(1, t.EntriesDropped);
+        Assert.Equal(0, t.Parent[1]);          // B is A's child
+        Assert.True(t.Returned[0]);
+        Assert.Equal(new[] { 0 }, t.Roots);
+    }
+
+    [Fact]
+    public void A_return_dropped_inside_the_window_is_counted()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the ring kept 10..15 and dropped 12 -- the RETURN of the call at
+        // 11. Nothing in the records says so, so it is counted from the window: 6 numbers kept, 5 records sent, no
+        // entry missing -> one return dropped.
+        var t = CallTraceBuilder.Build(new[]
+        {
+            Entry(10, 100, 0xA), Entry(11, 110, 0xB), Entry(13, 130, 0xC), Return(14, 140, 13), Return(15, 150, 10),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 16 });
+
+        Assert.Equal(0, t.EntriesDropped);
+        Assert.Equal(1, t.OtherDropped);
+        Assert.False(t.Returned[1]);           // B's return is the one missing
     }
 
     [Fact]

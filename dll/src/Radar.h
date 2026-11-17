@@ -791,7 +791,9 @@ struct Session {
 
 // Reconstruct a candidate's display field name from its descriptor +
 // element index: `fieldName` for a direct field, `fieldName[elementIndex]`
-// for a TArray/container element. Pure / std-only (unit-tested).
+// for a TArray/container element, and the index written at the name's "[]"
+// placeholder when it has one ("Items[].Count" -> "Items[3].Count"; a deep
+// group leaf's "...Leaves[]" -> "...Leaves[26]"). Pure / std-only (unit-tested).
 std::string FieldDisplayName(const FieldDescriptor& desc, int32_t elementIndex);
 
 // [A2-TOPTIONAL-VALUESCAN] V1c's TOptional gate is Ubel::V1cOptionalGate now, from the RESOLVED layout. The loose

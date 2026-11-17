@@ -1588,6 +1588,13 @@ void Fern::CloseConnOnce(Connection& conn) {
     }
 }
 
+// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). What the read loop reads while an init or
+// an apply_rescan holds g_initInProgress is dispatched like anything else; Voll::DuringInitNotes decides which of it
+// leaves a line in the pipe log, and why.
+extern std::atomic<bool> g_initInProgress;
+extern std::atomic<uint32_t> g_initRun;
+static Voll::DuringInitNotes s_duringInit;
+
 void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // Bind THIS thread to THIS connection's cancel flag for the whole handler, teardown
     // included. Safe by ownership: `conn` is a by-value shared_ptr (the accept thread
@@ -1635,6 +1642,13 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // The command's name, for the repeat-suppressed log, the diagnostics and pipe_clients. Whatever the client's JSON
         // spacing (Voll::ExtractCmdName).
         const std::string cmd = Voll::ExtractCmdName(line);
+        // [PIPE-WALK-DURING-INIT] Noted, never refused: it is dispatched below whatever the note decides.
+        if (g_initInProgress.load(std::memory_order_acquire)
+            && s_duringInit.Note(cmd, g_initRun.load(std::memory_order_relaxed))) {
+            const std::string shown(Voll::DuringInitNotes::Shown(cmd));
+            Sein::Info("PIPE:cmd", "PipeServer: %s arrived during an init or rescan apply -- offsets or pointers it read "
+                       "may not be final yet", shown.c_str());
+        }
 
         if (cmd == lastCmd && !cmd.empty()) {
             ++repeatCount;
@@ -2553,10 +2567,16 @@ json SnapValueToJson(const Ubel::SnapValue& v) {
     return a;
 }
 
+// A live object: its own InternalIndex leads back to it in GObjects. A freed one does not -- its index word reads the
+// allocator's fill, or another object took the slot.
+bool IsLiveObject(uintptr_t p) {
+    const int32_t idx = Ubel::GetIndex(p);
+    return idx >= 0 && Aura::GetByIndex(idx) == p;
+}
+
 // What an object pointer in a copy is NOW: the decoder marks it "now", never "at the call".
 bool SnapObjectNow(uintptr_t ptr, std::string& name, std::string& className) {
-    const int32_t idx = Ubel::GetIndex(ptr);
-    if (idx < 0 || Aura::GetByIndex(idx) != ptr) return false;
+    if (!IsLiveObject(ptr)) return false;
     name = Ubel::GetName(ptr);
     const uintptr_t cls = Ubel::GetClass(ptr);
     className = cls ? Ubel::GetName(cls) : std::string();
@@ -2633,6 +2653,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         struct HoldRecorder {
             const std::vector<std::string>& holds;
             uint64_t caller;
+            bool invoke;   // an invoke_function of the debug camera's own functions (Voll::HoldsChangedBy)
             ~HoldRecorder() {
                 for (const auto& h : holds) {
                     try {
@@ -2640,8 +2661,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         uint64_t joinedBy = 0;
                         if (HoldActive(h)) {
                             // [D2-3-INVOKE] The camera came on by this command's toggle, which a foreground client
-                            // joined while it was pending: the joiner was told it was its own, so it holds it.
-                            const bool joined = h == Grimoire::HOLD_DEBUG_CAMERA
+                            // joined while it was pending: the joiner was told it was its own, so it holds it. Only
+                            // set_debug_camera's toggles carry a join: an invoke sends none, and consuming one left
+                            // from before would hand the camera this invoke turned on to that old joiner.
+                            const bool joined = !invoke && h == Grimoire::HOLD_DEBUG_CAMERA
                                                 && FrierenDebugCamera::ConsumeJoin(caller, joinedBy);
                             Voll::Holds().SetOwner(h, joined ? joinedBy : caller);
                         } else if (HoldPending(h, sender)) {
@@ -2649,14 +2672,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             // was already queued) leaves the record as it is.
                             if (sender == caller) Voll::Holds().SetOwner(h, caller);
                         } else {
-                            Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);
+                            // An invoke's toggle may be queued behind a stalled game thread and turn the camera on
+                            // later, which FrierenDebugCamera's pending state does not track: it is the caller's then.
+                            // A hold that is off reads as free whoever is named.
+                            Voll::Holds().SetOwner(h, invoke ? caller : Voll::kHoldOwnerNone);
                         }
                     } catch (...) {
                         // A hold whose state cannot be read keeps the owner it had.
                     }
                 }
             }
-        } holdRecorder{holds, conn->ownerKey};
+        } holdRecorder{holds, conn->ownerKey, cmd == Renge::CMD_INVOKE_FUNCTION};
 
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
@@ -3088,6 +3114,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uintptr_t outer = Ubel::GetOuter(addr);
             data["outer"]      = outer ? Ubel::GetName(outer) : "";
             data["outer_addr"] = Renge::AddrToStr(outer);
+            // [MCP-WRITE-GRANTS-2026-11-14] Phase 2: whether this is a template ("" for a world object), so a client
+            // that writes what a grant covers can refuse a class default and an archetype -- a class default's
+            // subobject or a Blueprint component template is named like any component, and what it holds reaches
+            // every instance spawned later. TemplateOf reads safely, as get_object answers for any address.
+            data["template"]   = Aura::TemplateKindWire(Aura::TemplateOf(addr).kind);
 
             return Renge::MakeResponse(id, data).dump();
         }
@@ -3285,6 +3316,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
+            // [WALKCLASS-STALE-OK] Refused BEFORE the walk when the address is not a live object. A class a level travel
+            // freed either walks to nothing (painted as a blank class, no error, the panel's re-select refused as a
+            // duplicate) or, walked before it was freed, is answered from WalkClassEx's memo with its OLD fields.
+            // Every walk_class caller passes a class, struct or function, which GObjects always holds; refusing first
+            // also keeps a stale address out of the memo. An address ANOTHER object took since is live; WalkClassEx's
+            // witness check walks that one again ([WALKCLASS-MEMO-REUSE]).
+            if (!IsLiveObject(addr))
+                return Renge::MakeError(id, "Not a live class at " + addrStr +
+                                                " -- freed (a level travel?) or never a UObject").dump();
             const ClassInfo& ci = Ubel::WalkClassEx(addr);
 
             json data;
@@ -3517,6 +3557,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 e["code"] = code;
                 return e.dump();
             };
+            // [WRITEMEM-OWN-IMAGE] A background client (the MCP server) never writes the DLL's own image: its globals
+            // include the CE mailbox, and a write there hands an invoke to the CE-owned poller, past the background
+            // deny list. The UI's and CE's writes are not refused here.
+            if (conn->background.load() && Macht::RangeInOwnImage(addr, bytes.size()))
+                return refuse("is inside UE5Dumper's own image (the Cheat Engine mailbox and the DLL's state); an AI "
+                              "client never writes there", Grimoire::WRITE_MEM_OWN_IMAGE);
             switch (Macht::ClassifyWriteRange(addr, bytes.size())) {
                 case Lager::WriteTarget::Executable:
                     return refuse("is in executable memory (code); write_mem writes data only",
@@ -5711,6 +5757,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 cc["max_entries"]  = Ubel::kMaxWalkClassCacheEntries;
                 cc["fields"]       = ccFields;
                 cc["approx_bytes"] = ccBytes;
+                // [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced (kept, never freed) and addresses no longer checked.
+                size_t parked = 0, stopped = 0;
+                Ubel::GetParkedClassWalks(parked, stopped);
+                cc["parked_walks"]      = parked;
+                cc["stopped_addresses"] = stopped;
                 data["class_cache"] = cc;
             }
 
@@ -6897,6 +6948,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 rj["scope"]       = r.scope;
                 rj["offset"]      = r.offset;       // class-member offset (disasm; -1 = n/a)
                 rj["confidence"]  = r.confidence;   // "high"/"low" (disasm); "" (bytecode)
+                // [DENKEN-WRITE-SITES] disasm: the instructions that write this field, each once -- a native write site
+                // with no debugger. Absent for a read and for bytecode; an older DLL sends none.
+                if (!r.writeSites.empty()) {
+                    json sites = json::array();
+                    for (uintptr_t site : r.writeSites) sites.push_back(Renge::AddrToStr(site));
+                    rj["write_sites"] = sites;
+                    // The first this-many write through a proven `this`; the rest through another base.
+                    rj["write_sites_via_this"] = r.writeSitesViaThis;
+                    if (r.writeSitesTruncated) rj["write_sites_truncated"] = true;
+                }
+                // Bools packed into one byte share its offset: an access there may be to any of them.
+                if (r.sharedOffset > 1) rj["shared_offset"] = r.sharedOffset;
                 arr.push_back(rj);
             }
             data["props"] = arr;
@@ -7573,6 +7636,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a background client's call under an invoke grant, which its
+            // server sends with the resolved function's full name; checked below, for background clients only.
+            const bool underGrant = conn->background.load() && request.value("grant", false);
+            const std::string expectFull = request.value("expect_func_full", "");
+            auto refuseUnderGrant = [&](const std::string& why) {
+                auto e = Renge::MakeError(id, "Not invoked under the grant: " + funcName + " " + why);
+                e["code"] = Grimoire::INVOKE_REFUSED_UNDER_GRANT;
+                e["func_full"] = fi.fullName;
+                Sein::Info("PIPE:cmd", "invoke_function: %s refused under a grant", funcName.c_str());
+                return e.dump();
+            };
             // [D2-3-INVOKE] A background client (the MCP server) neither skips the game thread nor calls what the
             // maintainer's list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
             // could be an RPC. Decided before anything is allocated or queued; the UI and CE are never asked.
@@ -7584,19 +7658,49 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 else if (!resolved)
                     why = "has flags that could not be read, so it could be a network RPC";
                 else
-                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags);
+                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags,
+                                                           fi.fullName);
+                // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: what the parameters reach by name. A latent call is refused
+                // for every background client; the rest, and a layout that cannot be read whole, under a grant only.
+                Ubel::ParamLayout layout;
+                std::string layoutWhy;
+                const bool layoutRead = why.empty() && Ubel::CaptureParamLayout(ufuncAddr, layout, layoutWhy);
+                if (why.empty() && layoutRead)
+                    why = Voll::InvokeParamIndirection(layout.params, false);
                 if (!why.empty()) {
                     auto e = Renge::MakeError(id, "Not invoked: " + funcName + " " + why);
                     e["code"] = Grimoire::INVOKE_REFUSED_FOR_BACKGROUND;
                     Sein::Info("PIPE:cmd", "invoke_function: %s refused for a background client", funcName.c_str());
                     return e.dump();
                 }
+                if (underGrant) {
+                    // The grant names one function by its full name; the gate saw only func_name, so the function
+                    // resolved here must be that one, compared ordinally.
+                    if (expectFull.empty() || fi.fullName != expectFull)
+                        return refuseUnderGrant("is " + (fi.fullName.empty() ? std::string("unnamed") : fi.fullName)
+                                                + ", not the function the grant names (" + expectFull + ")");
+                    if (fi.functionFlags & Voll::FUNC_FLAG_UBERGRAPH)
+                        return refuseUnderGrant("is a Blueprint's event graph, entered at whatever entry point it is "
+                                                "given");
+                    if (!layoutRead && layoutWhy != "no parameters")
+                        return refuseUnderGrant("has parameters that could not be read (" + layoutWhy + ")");
+                    if (layoutRead && layout.truncated)
+                        return refuseUnderGrant("has parameters too deep to read whole");
+                    if (layoutRead) {
+                        const std::string param = Voll::InvokeParamIndirection(layout.params, true);
+                        if (!param.empty()) return refuseUnderGrant(param);
+                    }
+                }
             }
             // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
-            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
+            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused, except under
+            // an invoke grant: a call there can change the defaults of later spawns, and no prompt shows the object.
             const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
             const bool nonStaticOnTemplate =
                 Mimic::WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, resolved, fi.functionFlags);
+            if (underGrant && nonStaticOnTemplate)
+                return refuseUnderGrant("is not static, and the object is a class default or a template: a grant "
+                                        "never calls one there");
             const std::string tplOwnerName =
                 (tpl.kind == Aura::TemplateKind::Template && tpl.owner) ? Ubel::GetName(tpl.owner) : std::string();
             const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
@@ -7793,6 +7897,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (!tplOwnerName.empty()) data["template_owner_name"] = tplOwnerName;
             data["nonstatic_on_template"] = nonStaticOnTemplate;
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
+            data["func_full"]     = fi.fullName;   // [MCP-WRITE-GRANTS-2026-11-14] the function resolved, by full name
             data["parms_size"]    = (int)bufSize;
 
             // Return post-call buffer (may contain out-param values)
@@ -8232,7 +8337,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // ── fly_set / fly_get_state (Dunste) — no-gravity 3D flight ──
         // fly_set applies whichever of the fields read below are present, then
-        // returns the live status. Input (WASD/numpad/arrows) is sampled DLL-side
+        // returns the live status; a preset Dunste refuses answers an error and
+        // applies none of them. Input (WASD/numpad/arrows) is sampled DLL-side
         // by the fly worker (GetAsyncKeyState) — the pipe only toggles + configs,
         // so there is no per-frame IPC.
         auto flyStatusJson = [](const Dunste::FlyStatus& st) {
@@ -8251,10 +8357,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return data;
         };
         if (cmd == Renge::CMD_FLY_SET) {
+            // [CPP-HARDENING-2026-11-14] The preset first, the one setting Dunste can refuse: a refused one answers an
+            // error with nothing else changed, where it used to be dropped and the reply read as applied.
+            // Nothing changed, so nothing is recorded either: the hold recorder reads `holds` as this returns, and
+            // would name the refused caller as Fly's holder.
+            if (request.contains("preset") && Dunste::SetPreset(request.value("preset", 0)) < 0) {
+                holds.clear();
+                return Renge::MakeError(id, "fly_set: preset must be 0 (WASD), 1 (numpad) or 2 (arrows); nothing was "
+                                            "changed").dump();
+            }
             if (request.contains("speed"))
                 Dunste::SetSpeed(request.value("speed", 0.0));
-            if (request.contains("preset"))
-                Dunste::SetPreset(request.value("preset", 0));
             if (request.contains("noclip"))
                 Dunste::SetNoclip(request.value("noclip", false));
             int32_t state = -1;
@@ -8305,6 +8418,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds it on. Additive keys.
             data["claims"]     = st.claims;       // owners that turned it on and have neither left nor turned it off
             data["ce_claimed"] = st.ceClaimed;    // CE's mailbox record is one of them
+            data["you"]        = st.callerClaimed;   // [MCP-WRITE-GRANTS-2026-11-14] the asking client is one too
             // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
             // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
             data["restore_pending"]   = st.restorePending;
@@ -8312,6 +8426,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return data;
         };
         if (cmd == Renge::CMD_SEE_THROUGH_SET) {
+            // [MCP-WRITE-GRANTS-2026-11-14] An OFF with own_claim drops only the caller's claim, as its leaving would,
+            // and turns See-through off only with the last claim: an AI session's OFF then never ends the user's or
+            // CE's. Without it an OFF still means off, whoever else turned it on.
+            if (request.value("own_claim", false) && request.contains("enable") && !request.value("enable", true)) {
+                const auto r = Schlacht::Release(conn->ownerKey, nullptr);
+                Sein::Info("PIPE:cmd", "seethrough_set: own claim released (%d)", static_cast<int>(r));
+                Schlacht::SeeThroughStatus st{};
+                Schlacht::GetStatus(st, conn->ownerKey);
+                json data = seeThroughStatusJson(st);
+                data["state"]    = st.active ? 1 : 0;
+                data["released"] = r == Schlacht::OwnerRelease::NotHeld ? "not_held"
+                                 : r == Schlacht::OwnerRelease::TurnOff ? "off" : "still_held";
+                return Renge::MakeResponse(id, data).dump();
+            }
             if (request.contains("count"))
                 Schlacht::SetPierceCount(request.value("count", 1));
             int32_t state = -1;
@@ -8322,14 +8450,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                        haveEnable ? (request.value("enable", false) ? "1" : "0") : "-",
                        request.contains("count") ? request.value("count", 1) : -1);
             Schlacht::SeeThroughStatus st{};
-            Schlacht::GetStatus(st);
+            Schlacht::GetStatus(st, conn->ownerKey);
             json data = seeThroughStatusJson(st);
             data["state"] = haveEnable ? state : (st.active ? 1 : 0);
             return Renge::MakeResponse(id, data).dump();
         }
         if (cmd == Renge::CMD_SEE_THROUGH_GET_STATE) {
             Schlacht::SeeThroughStatus st{};
-            Schlacht::GetStatus(st);
+            Schlacht::GetStatus(st, conn->ownerKey);
             return Renge::MakeResponse(id, seeThroughStatusJson(st)).dump();
         }
 

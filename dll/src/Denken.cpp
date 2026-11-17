@@ -71,6 +71,11 @@ struct Accum {
     int32_t writeCount  = 0;
     uint8_t accessSize  = 0;
     bool    highConf    = false;
+    // [DENKEN-WRITE-SITES] Distinct write sites, decode order, at most kMaxWriteSites between them: through a proven
+    // `this`, and through any other base (review DWS-DLL-1).
+    std::vector<uintptr_t> thisSites;
+    std::vector<uintptr_t> otherSites;
+    bool    writeSitesTruncated = false;
 };
 
 struct Ctx {
@@ -81,12 +86,32 @@ struct Ctx {
     bool                                   budgetHit    = false;
 };
 
-// Record one [base+disp] access. highConf when base is a tracked this-alias.
-void RecordAccess(Ctx& ctx, int64_t disp, uint8_t sizeBytes, bool isWrite, bool highConf) {
+// Record one [base+disp] access by the instruction at `ip`. highConf when base is a tracked this-alias.
+void RecordAccess(Ctx& ctx, int64_t disp, uint8_t sizeBytes, bool isWrite, bool highConf, uintptr_t ip) {
     if (disp < 0 || disp >= kDispLimit) return;
     auto& a = ctx.byOffset[static_cast<uint32_t>(disp)];
     a.occurrences++;
-    if (isWrite) a.writeCount++;
+    if (isWrite) {
+        a.writeCount++;
+        // [DENKEN-WRITE-SITES] Each writing instruction once: an impl reached by two calls is decoded twice, and its
+        // write is one site however often it counts.
+        bool known = false;
+        for (uintptr_t s : a.thisSites) known = known || s == ip;
+        for (uintptr_t s : a.otherSites) known = known || s == ip;
+        if (!known) {
+            auto& list = highConf ? a.thisSites : a.otherSites;
+            if (a.thisSites.size() + a.otherSites.size() < kMaxWriteSites) {
+                list.push_back(ip);
+            } else if (highConf && !a.otherSites.empty()) {
+                // A write through `this` is worth more than one through some other base: it takes the last of those.
+                a.otherSites.pop_back();
+                list.push_back(ip);
+                a.writeSitesTruncated = true;
+            } else {
+                a.writeSitesTruncated = true;
+            }
+        }
+    }
     if (sizeBytes && !a.accessSize) a.accessSize = sizeBytes;
     a.highConf = a.highConf || highConf;
 }
@@ -164,7 +189,7 @@ void TraceBlock(Ctx& ctx, uintptr_t startAddr, ThisRegs tr, int depth) {
                 const bool isWrite =
                     (op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) != 0;
                 const uint8_t sz = static_cast<uint8_t>(op.size / 8);
-                RecordAccess(ctx, op.mem.disp.value, sz, isWrite, isThis);
+                RecordAccess(ctx, op.mem.disp.value, sz, isWrite, isThis, ip);
             }
 
             const ZydisInstructionCategory cat = instr.meta.category;
@@ -265,6 +290,10 @@ NativeAnalysisResult Analyze(uintptr_t startAddr, const MemReader& reader) {
         fa.occurrences    = a.occurrences;
         fa.writeCount     = a.writeCount;
         fa.highConfidence = a.highConf;
+        fa.writeSites = a.thisSites;
+        fa.writeSites.insert(fa.writeSites.end(), a.otherSites.begin(), a.otherSites.end());
+        fa.writeSitesViaThis = static_cast<uint8_t>(a.thisSites.size());
+        fa.writeSitesTruncated = a.writeSitesTruncated;
         result.accesses.push_back(fa);
     }
     return result;

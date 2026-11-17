@@ -17,7 +17,7 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/                        ← 32 .cpp + 42 .h (newest: Falsch, [MH-TRAMPOLINE-PREFLIGHT]; Frieren-themed; see naming-convention.md)
+│   └── src/                        ← 33 .cpp + 44 .h (newest: Land, [DUMPER-SECOND-COPY-AUTOSTART]; Frieren-themed; see naming-convention.md)
 │       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
 │       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
@@ -71,7 +71,10 @@ UE5CEDumper/
 │       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
-│       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
+│       ├── Frieren.cpp / .h        ← ExportAPI — 64 C ABI exports for CE Lua bridge
+│       ├── Land.cpp / .h           ← SecondCopy — two copies of the dumper in one process: the later one shuts the
+│       │                             earlier down, takes the pipe and serves its CE mailbox; a copy that handed over
+│       │                             passes its export calls on
 │       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (107 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
@@ -94,7 +97,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (273 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (279 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
@@ -170,7 +173,10 @@ UE5CEDumper/
 │       ├── Mcp/                    ← `UE5DumpUI.exe --mcp`: a stdio MCP server for an AI client, one more
 │       │                              client of the game's pipe, no window (docs/mcp.md). McpHost (entry,
 │       │                              branched in Program.Main before the single-instance mutex), McpServer
-│       │                              (JSON-RPC), McpTools (the read_* tools), McpGameLink (the connection)
+│       │                              (JSON-RPC), McpTools (the read_* tools), McpWriteTools / McpRawTools
+│       │                              (the write_* tools), McpGrants (which client writes, the grants, the
+│       │                              gate every send passes) and McpGrantTools (grant_*, read_grants,
+│       │                              revoke_grants), McpGameLink (the connection)
 │       ├── Converters/             ← Avalonia value converters
 │       ├── Assets/
 │       └── Resources/
@@ -288,6 +294,12 @@ All logs written to `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\`:
 | `walk-*.log` | Walk | UStructWalker field reads |
 
 8 MB max per file. UI mirrors to `ui-init`, `ui-pipe`, `ui-view` prefixed files.
+
+**A second writer logs beside the first** ([DUMPER-SECOND-COPY-AUTOSTART]): each live `-0.log` is held
+open deny-write, so while one copy of the DLL logs into `<ProcessName>\`, a second one -- a copy
+injected beside a proxy, or another instance of the same game -- writes `<ProcessName>.<module>.<pid>\`
+instead (`init-0.log` says why). After a take-over, the copy that serves the process is usually that
+second one. The UI's folder lookup does not follow it.
 
 **Retention is age-based (21 days), not a generation count.** `<cat>-0.log` is always the current
 run; at startup the previous one is renamed `<cat>-YYYYMMDD-HHMMSS.log` — stamped from the file's

@@ -212,15 +212,15 @@ inline int32_t MatchStealthField(const std::string& nameLower) {
 // representative restore base (bool value / numeric value) so RemoveForce can undo
 // it (object-null is not reversible). Applies once immediately + starts the
 // worker. Returns the live "N held" count (>= 0) or a negative ForceResult.
-int32_t AddForce(const char* className, const char* fieldName, int32_t kind, double value);
+[[nodiscard]] int32_t AddForce(const char* className, const char* fieldName, int32_t kind, double value);
 
 // Remove a hold-job (matched by className + fieldName); best-effort restores the
 // captured base on all currently-resolved instances (bool/numeric only). Stops
 // the worker when no job remains. Returns FR_OK or a negative ForceResult.
-int32_t RemoveForce(const char* className, const char* fieldName);
+[[nodiscard]] int32_t RemoveForce(const char* className, const char* fieldName);
 
 // Remove ALL hold-jobs (best-effort restore each). Stops the worker. FR_OK.
-int32_t ClearAll();
+[[nodiscard]] int32_t ClearAll();
 
 // Snapshot the active hold-jobs + their live held counts for the UI list.
 int32_t GetState(std::vector<ForcedFieldInfo>& out);
