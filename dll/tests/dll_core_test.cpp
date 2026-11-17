@@ -5066,6 +5066,11 @@ int main() {
         DynOff::bOffsetsValidated.store(true);   // a PREVIOUS run measured everything
         DynOff::bOffsetsProbeRan.store(true);
         DynOff::g_offsetsFallbackReason = "";
+        // [DYNOFF-LATCH-STALE] review B-INIT-WINDOW: calibrated before the run, as a walk during it leaves the latch.
+        const bool ofSvLatch = Ubel::IsSubclassCalibrated();
+        const int ofBase = DynOff::FSTRUCTPROP_STRUCT;
+        const uint32_t ofEpoch = DynOff::g_propertyFamilyEpoch.load();
+        Ubel::LatchSubclassCalibration(ofEpoch);
         const bool ofRet = Genau::ValidateAndFixOffsets(501);
         check("OFFSETS setup: a pool with no Guid / Vector takes the no-guid-or-vector give-up",
               !ofRet && std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct",
@@ -5074,6 +5079,16 @@ int main() {
               !DynOff::bOffsetsValidated.load());
         check("OFFSETS control: the give-up still marks detection as run (the &GEngine gates key on it)",
               DynOff::bOffsetsProbeRan.load());
+        // An init re-derives offsets outside the family as well (FPROPERTY_OFFSET, the FField layout), which the
+        // family-keyed caches read. A run that leaves the base where it was -- or where a walk during the run had already
+        // corrected it to -- is no move, so nothing retired what was cached mid-run, and it was served for the session.
+        check("OFFSETS ⭐: a run that leaves the family's base in place still retires its epoch",
+              DynOff::FSTRUCTPROP_STRUCT == ofBase && DynOff::g_propertyFamilyEpoch.load() != ofEpoch,
+              (std::to_string(ofEpoch) + " -> " + std::to_string(DynOff::g_propertyFamilyEpoch.load())).c_str());
+        check("OFFSETS ⭐: ...and with it the calibration latch, so the next walk checks the slot again",
+              !Ubel::IsSubclassCalibrated());
+        Ubel::s_subclassCalibratedAt.store(0);
+        if (ofSvLatch) Ubel::LatchSubclassCalibration(DynOff::g_propertyFamilyEpoch.load());
 
         DynOff::ResetOffsetsVerdict();
         check("OFFSETS ⭐: the shutdown reset forgets all three",
