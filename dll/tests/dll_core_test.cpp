@@ -8811,12 +8811,17 @@ int main() {
         };
         Ubel::g_beforeFamilyCachePublishForTest = retireOnce;
         s_retireArmed = true;
-        (void)Ubel::WalkClassEx(A(feStraddleCls));
+        const ClassInfo& straddleFirst = Ubel::WalkClassEx(A(feStraddleCls));
         const bool fired6 = !s_retireArmed;
-        const int straddleOff = offsetOf(Ubel::WalkClassEx(A(feStraddleCls)));
+        const ClassInfo& straddleNext = Ubel::WalkClassEx(A(feStraddleCls));
         check("FAMILYEPOCH straddle setup: the retire fired inside the WalkClassEx's plain walk", fired6);
-        check("FAMILYEPOCH straddle ⭐: a WalkClassEx straddling an offset validation's end is not served under the new epoch",
-              straddleOff == 0x40, std::to_string(straddleOff).c_str());
+        // The straddling call itself, not only the next one (review wf_2d9f83d5-21b, R3-STRADDLE-RETURN-UNPINNED): a
+        // refusal in place of the walk again leaves the cache right and hands every overlapping caller an empty class.
+        check("FAMILYEPOCH straddle ⭐: the straddling call gets the class walked under the settled offsets",
+              straddleFirst.Address == A(feStraddleCls) && offsetOf(straddleFirst) == 0x40,
+              std::to_string(offsetOf(straddleFirst)).c_str());
+        check("FAMILYEPOCH straddle ⭐: ...and that walk is the entry the next call is served",
+              &straddleNext == &straddleFirst && offsetOf(straddleNext) == 0x40, std::to_string(offsetOf(straddleNext)).c_str());
         DynOff::FPROPERTY_OFFSET = svPropOff;
 
         Ubel::g_beforeFamilyCachePublishForTest = nullptr;
