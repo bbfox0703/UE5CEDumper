@@ -13935,6 +13935,96 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // [RELAXED-D-PREALLOC-HALF] A base-anchored UE5-Extended FUObjectArray keeps ObjObjects.PreAllocatedObjects at +0x18,
+    // right after Objects, where a UE4-Extended or flat row reads Max / Num. UE's PreAllocate stores that block as
+    // Objects[0] (UObjectArray.h: Objects[ChunkIndex] = PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so a row
+    // whose count is half of it is told by its own table. Relaxed D read it with no floor; above 16 TB its high dword also
+    // passes the strict Flat-Base row's range, which reached it first.
+    {
+        blk("RELAXED-D-PREALLOC-HALF: no row reads PreAllocatedObjects' halves as Max / Num");
+        alignas(16) static uint8_t pa[0x40] = {};
+        auto put32 = [](int at, int32_t v) { memcpy(pa + at, &v, 4); };
+        auto putP  = [](int at, uintptr_t v) { memcpy(pa + at, &v, 8); };
+        const uintptr_t paAddr = reinterpret_cast<uintptr_t>(pa);
+        const size_t chunkBytes = pool.chunks[0].size();
+        // A chunk at a chosen address, so the pointer's halves are known: low dword 0x450000 (at least the high dword, at
+        // most the relaxed rows' 0x2000000 ceiling), high dword from the candidates. Its items are the pool's first chunk.
+        auto chunkAt = [&](std::initializer_list<uint32_t> highs) -> uint8_t* {
+            for (uint32_t hi : highs) {
+                void* p = VirtualAlloc(reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x00450000u),
+                                       chunkBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                if (p) { memcpy(p, pool.chunks[0].data(), chunkBytes); return static_cast<uint8_t*>(p); }
+            }
+            return nullptr;
+        };
+        static std::vector<uintptr_t> paTable(1, 0);
+        // A UE5-Extended array no strict row accepts (MaxChunks 1), PreAllocatedObjects = Objects[0] = `chunk`.
+        auto buildUe5Ext = [&](uint8_t* chunk) {
+            memset(pa, 0, sizeof(pa));
+            paTable[0] = reinterpret_cast<uintptr_t>(chunk);
+            putP(0x10, reinterpret_cast<uintptr_t>(paTable.data()));
+            putP(0x18, reinterpret_cast<uintptr_t>(chunk));
+            put32(0x20, 0x10000); put32(0x24, kCount); put32(0x28, 1); put32(0x2C, 1);
+        };
+        auto layoutText = [] {
+            return "count " + std::to_string(Aura::GetCount()) + ", objects +" + std::to_string(Aura::s_layout.objectsOffset)
+                 + ", count at +" + std::to_string(Aura::s_layout.numElementsOffset);
+        };
+        auto readByE = [] {
+            return Aura::GetCount() == kCount && Aura::s_layout.objectsOffset == 0x10
+                && Aura::s_layout.numElementsOffset == 0x24;
+        };
+
+        uint8_t* hiChunk = chunkAt({ 0x1F00, 0x2100, 0x2300, 0x2500 });
+        check("RELAXED-D-PREALLOC-HALF setup: a chunk above 16 TB", hiChunk != nullptr);
+        if (hiChunk) {
+            buildUe5Ext(hiChunk);
+            Aura::Init(paAddr);
+            check("RELAXED-D-PREALLOC-HALF ⭐: PreAllocatedObjects above 16 TB is not read as Max / Num -- relaxed E reads it whole",
+                  readByE(), layoutText().c_str());
+            VirtualFree(hiChunk, 0, MEM_RELEASE);
+        }
+        uint8_t* loChunk = chunkAt({ 0x00F0, 0x00E0, 0x00D0, 0x00C0 });
+        check("RELAXED-D-PREALLOC-HALF setup: a chunk below 16 TB, high dword under 0x1000", loChunk != nullptr);
+        if (loChunk) {
+            buildUe5Ext(loChunk);
+            Aura::Init(paAddr);
+            check("RELAXED-D-PREALLOC-HALF ⭐: PreAllocatedObjects below 16 TB is not read as Max / Num either",
+                  readByE(), layoutText().c_str());
+            VirtualFree(loChunk, 0, MEM_RELEASE);
+        }
+
+        // The floor on relaxed D alone: a D-shaped array with 2,048 objects, chunk slots plausible and no
+        // PreAllocatedObjects. No UE game runs with fewer than 0x1000 objects, the floor A/C and B already have.
+        memset(pa, 0, sizeof(pa));
+        putP(0x10, reinterpret_cast<uintptr_t>(pool.chunkTable.data()));
+        put32(0x18, 0x10000); put32(0x1C, 0x800); put32(0x20, 1); put32(0x24, 1);
+        Aura::Init(paAddr);
+        check("RELAXED-D-PREALLOC-HALF ⭐: relaxed D takes no count under 0x1000", Aura::s_layout.numElementsOffset != 0x1C,
+              layoutText().c_str());
+
+        // CONTROLS. A genuine UE4-Extended array that reaches relaxed D -- its count above Tier 3's 0x400000, the shape
+        // that reaches D at all -- is still read by it; and a genuine flat base-anchored array is still Flat-Base's.
+        memset(pa, 0, sizeof(pa));
+        putP(0x10, reinterpret_cast<uintptr_t>(pool.chunkTable.data()));
+        put32(0x18, 0x600000); put32(0x1C, 0x500000); put32(0x20, 0x60); put32(0x24, 0x50);
+        Aura::Init(paAddr);
+        check("RELAXED-D-PREALLOC-HALF control: a genuine UE4-Extended array is still read by relaxed D",
+              Aura::GetCount() == 0x500000 && Aura::s_layout.numElementsOffset == 0x1C, layoutText().c_str());
+        memset(pa, 0, sizeof(pa));
+        putP(0x10, reinterpret_cast<uintptr_t>(pool.chunks[0].data()));   // flat: Objects is the item array itself
+        put32(0x18, kCount); put32(0x1C, kCount);
+        Aura::Init(paAddr);
+        // s_presetIsFlat, not IsFlat(): the item probe that follows detection re-decides flat against the objects, and
+        // this fixture's objects are blank, so only the detection's own verdict says which row took the array.
+        check("RELAXED-D-PREALLOC-HALF control: a genuine flat base-anchored array is still Flat-Base's",
+              Aura::GetCount() == kCount && Aura::s_layout.objectsOffset == 0x10 && Aura::s_presetIsFlat,
+              layoutText().c_str());
+
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
