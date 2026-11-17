@@ -13941,8 +13941,8 @@ int main() {
     // whose count is half of it is told by its own table. Relaxed D read it with no floor; above 16 TB its high dword also
     // passes the strict Flat-Base row's range, which reached it first.
     {
-        // UE 5.8 moved PreAllocatedObjects past the counts; a preallocated 5.8 array that no strict row takes has no
-        // relaxed row of its own at all -- [UE58-PREALLOC-NO-ROW], not this block.
+        // UE 5.8 moved PreAllocatedObjects past the counts; a 5.8 array no strict row takes is relaxed F's
+        // ([UE58-PREALLOC-NO-ROW], its own block), not this block's.
         blk("RELAXED-D-PREALLOC-HALF: no row reads a base-anchored 4.20-5.7 array's PreAllocatedObjects halves as Max / Num");
         alignas(16) static uint8_t pa[0x40] = {};
         auto put32 = [](int at, int32_t v) { memcpy(pa + at, &v, 4); };

@@ -619,7 +619,8 @@ static bool ReadsAsChunkTable(uintptr_t table) {
 
 // [RELAXED-D-PREALLOC-HALF] Whether the count a row reads at numOff is half of ObjObjects.PreAllocatedObjects -- the
 // contiguous block UE 4.20-5.7 keep right after Objects (RE-UE4SS's TUObjectArray layouts: +0x08; 5.8 moved it past
-// the counts), which on a base-anchored array is where a UE4-Extended or flat row reads Max / Num. UE's PreAllocate
+// the counts). Any row whose count slot can overlap it asks: at ObjObjects +0x08, which is FUObjectArray +0x18 on a
+// base-anchored array (review wf_47eca989-bf9, UE58-HELPER-HEADER-ROWS). UE's PreAllocate
 // stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
 // PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so the 8 bytes holding the count are compared with the first
 // entry of the row's own table: equal, they are that pointer. A genuine Max / Num pair would have to equal a heap
