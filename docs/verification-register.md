@@ -11088,6 +11088,10 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
   parallel load rather than the assertion itself. **Not chased** — one observation is not a
   reproduction. If it recurs, capture whether `GroupCandidates` was non-empty or `GroupStatusText`
   empty, since those point at different halves. Effort **S** once reproducible.
+- **Not reproduced in 21 runs, 2026-11-18 on build 3733** (no game running): 7 full parallel runs of
+  `UE5DumpUI.Tests` (8,407 tests each, 0 failed; one of them the publish's run) and 14 runs of the class alone
+  (`--filter-class UE5DumpUI.Tests.SnapshotViewModelTests`, 42 tests each, 0 failed); logs `out/register/flaky/`.
+  Closing the row is the maintainer's call.
 
 
 ### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644 · FreezeOutcome
