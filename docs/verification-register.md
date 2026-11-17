@@ -7825,6 +7825,13 @@ demand), U7's sibling paths.
 > the derived `Actor` pool is **44**, not hundreds — no gameplay level is loaded, and 149,370 objects
 > are overwhelmingly classes and assets. 44 still refutes the `1/1` the defect produced, but a
 > hundreds-scale *Actor* count needs a title actually in play.
+>
+> ✅ **The hundreds-scale residue CLOSED 2026-11-17 on 3732** (DumperTest Shipping; `freezescope_step8.py spawn
+> --count 150`, then `aa2_class_witness.py DumperTest-Win64-Shipping --derived-class Actor`, PASS A-E, log
+> `out/register/freezescope_aa2.log`): `LIST_INSTANCES returned 64/367 (page 1/6) scope=derived classWitness=0x0` —
+> 367 live `Actor`-derived instances, past the 300 bar. The page's 64 entries span 27 concrete classes, each entry's
+> witness equal to that object's `ClassPrivate` read with ReadProcessMemory; the exact-scope control on
+> `DumperTestActor` returned 1/1 with a real witness, and `cmdFlags` read back cleared.
 
 > 🟡 **The Solide `capped` badge is only half-checked here.** `truncated=false` is *correct* at 58,
 > but the cap is 256, so this host never reaches it and the "held==256 AND truncated==true" assertion
