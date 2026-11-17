@@ -26,6 +26,7 @@ first (review wf_d3c2ec9a-d52 L49-RERUN-SAME-P-FALSE-FAIL).
 """
 import argparse
 import ctypes
+import glob
 import ctypes.wintypes as W
 import os
 import sys
@@ -108,16 +109,28 @@ def main():
             if not P:
                 print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
                 return 2
-            with open(walklog, "rb") as fh:
-                said = fh.read().decode("utf-8", "replace").lower()
-            if ("0x%x is not readable" % P) in said:
-                held = P   # this process already reported P once: hold it, so the next reservation is elsewhere
+            # Every address this game process already reported, from walk-0.log and the walk logs it rotated into
+            # (Sein rotates at 8 MB). A reported address is HELD, so the next reservation lands elsewhere; bounded
+            # (review wf_a193c703-fe8: one retry left a third run on the second run's region).
+            said = ""
+            for f in glob.glob(os.path.join(os.path.dirname(walklog), "walk-*.log")):
+                try:
+                    with open(f, "rb") as fh:
+                        said += fh.read().decode("utf-8", "replace").lower()
+                except OSError:
+                    pass
+            for _ in range(64):
+                if ("0x%x is not readable" % P) not in said:
+                    break
+                extra.append(P)
+                print("P 0x%X was reported by an earlier run in this process; reserving again" % P)
                 P = k.VirtualAllocEx(h, None, 0x10000, MEM_RESERVE, PAGE_NOACCESS)
-                extra.append(held)
-                print("P 0x%X was reported by an earlier run in this process; using 0x%X" % (held, P or 0))
                 if not P:
-                    print("FAIL: the second VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
+                    print("FAIL: VirtualAllocEx(MEM_RESERVE) err %d" % ctypes.get_last_error())
                     return 2
+            else:
+                print("FAIL: 64 reservations in a row were already reported by this process")
+                return 2
             Ps = "0x%X" % P
             print("reserved (uncommitted) P = %s" % Ps)
             start = os.path.getsize(walklog)
