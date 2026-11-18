@@ -17,8 +17,11 @@ The three traps from §2.6 are enforced here rather than left to the caller (tra
 its entry says), because each one produces a *confident wrong answer* rather than an error:
 
 1. **A fresh injection beside a deployed proxy does not test the proxy.** The injected copy takes the
-   game over, or, beside a proxy too old to export the mailbox contract, serves the game's own pipe
-   while the proxy serves only the old shared pipe name. Either way the copy that answers is the
+   game over: it scans, the proxy shuts down, and the injected copy serves the pipe. Until the
+   take-over the proxy still answers, so a connection opened during the scan talks to the proxy and
+   drops when the proxy shuts down. A proxy too old to export the mailbox contract is not taken
+   over, but it serves only the old shared pipe name, and the injected copy serves the game's own
+   pipe once its scan is done. Either way the copy that ends up answering the game's own pipe is the
    injected one, with its own build. `assert_build()` refuses to proceed unless the DLL's reported
    `build_number` matches `dist/build_number.txt`, which catches a stale proxy still answering; it
    cannot tell a proxy from an injected copy of the same build. Telling them apart is the caller's
