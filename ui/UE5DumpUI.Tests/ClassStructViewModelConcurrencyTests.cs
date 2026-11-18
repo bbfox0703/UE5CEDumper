@@ -99,6 +99,34 @@ public class ClassStructViewModelConcurrencyTests
     private static ClassInfoModel Class(string name) =>
         new() { Name = name, FullPath = "/Script/X." + name, Fields = new List<FieldInfoModel>() };
 
+    [Fact]
+    public async Task FailedInstancePick_DoesNotLeaveThePreviousClassUnderTheError()
+    {
+        // [CLASSSTRUCT-FAILED-KEEPS-OLD] An instance whose get_object fails never reaches the walk, so OnObjectSelected's
+        // own catch shows the error -- and the class shown before must go with it, as it does when the walk fails.
+        var dump = new GatedDumpService();
+        var withField = Class("ClassP");
+        withField.Fields.Add(new FieldInfoModel { Name = "Hp", TypeName = "IntProperty", Address = "0x1234" });
+        dump.RegisterClass("0xP", withField);
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        Assert.True(vm.HasClass);                    // precondition: something is painted
+        Assert.NotEmpty(vm.Fields);
+        vm.SelectedField = vm.Fields[0];
+
+        dump.GateObject("0xA").SetException(new InvalidOperationException("get_object failed"));
+        await vm.OnObjectSelected(Instance("0xA"));
+
+        Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));
+        Assert.False(vm.HasClass);
+        Assert.Empty(vm.Fields);
+        Assert.Equal("", vm.ClassName);
+        Assert.Equal("", vm.LoadedClassAddr);        // Find Class Funcs must not aim at the old class
+        Assert.Null(vm.SelectedField);
+        Assert.DoesNotContain("0xA", dump.WalkCalls);  // the failure came before any walk
+    }
+
     private static async Task WaitForGate<T>(ConcurrentDictionary<string, TaskCompletionSource<T>> gates, string key)
     {
         for (int i = 0; i < 200 && !gates.ContainsKey(key); i++)
