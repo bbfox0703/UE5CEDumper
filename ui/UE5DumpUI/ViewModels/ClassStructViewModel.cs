@@ -413,6 +413,7 @@ public partial class ClassStructViewModel : ViewModelBase
             _log.Error($"Failed to load class for object at {node.Address}", ex);
             if (gen != _loadId) return;   // stale failure — don't paint over a newer panel
             _shownNodeAddress = null;     // retryable: see the release in LoadClassCoreAsync
+            DropShownClass();             // [CLASSSTRUCT-FAILED-KEEPS-OLD] nothing old stays under this selection's error
             SetError(ex);
         }
     }
