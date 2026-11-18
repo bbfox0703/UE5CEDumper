@@ -117,7 +117,7 @@
     <sys:String x:Key="str.Dump.Compare.DoneOtherGame">Diff report written to {0}, but the two dumps come from different games ({1} and {2}), so most of it is noise.</sys:String>
     <sys:String x:Key="str.Dump.Compare.Failed">Compare failed: {0}</sys:String>
     <sys:String x:Key="str.Dump.SearchHint">Keyword — searches class / struct / enum / property / function / parameter names at once (space = AND)</sys:String>
-    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are type definitions (classes, structs, enums: metadata), not live instances — a type isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the owning class, struct or enum; 🔍 Instances (classes only) finds a live instance you can then Locate via Related.</sys:String>
+    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are type definitions (classes, structs, enums: metadata), not live instances — a type isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the owning class, struct or enum; 🔍 Instances (classes only) searches the Instances tab for the owning class name (class default objects and templates included); Locate and 🔗 Related work on an object you pick there.</sys:String>
     <sys:String x:Key="str.Dump.Cat.All">All</sys:String>
     <sys:String x:Key="str.Dump.Cat.Class">Classes</sys:String>
     <sys:String x:Key="str.Dump.Cat.Property">Properties</sys:String>
@@ -149,7 +149,7 @@
     <sys:String x:Key="str.Tip.Dump.Recheck">Scan the connected game's live classes, structs and enums and re-split results into “in current game” (matched by kind and name, restart-safe) vs. not. Requires a connected, scanned game.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Category">Limit results to a single kind (classes / properties / functions / structs / enums / enumerators), or show all.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Jump">Open the owning class's, struct's or enum's live object in the Live Walker.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.FindInstances">Classes only. Find live instances of the owning class in the Instances tab — the bridge to Related ▸ Locate in GWorld/GameEngine (which work on instances, not class definitions).</sys:String>
+    <sys:String x:Key="str.Tip.Dump.FindInstances">Classes only. Search the Instances tab for the owning class name: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included. Locate in GWorld/GameEngine and 🔗 Related work on an object you pick there, not on a class definition.</sys:String>
     <sys:String x:Key="str.Tip.Dump.CopyPath">Copy the owning type's object path to the clipboard.</sys:String>
 
     <!-- Related Objects panel -->
