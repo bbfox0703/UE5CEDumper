@@ -253,6 +253,20 @@ public sealed class McpToolsTests
         }
     }
 
+    /// <summary>[MCP-WRITE-SITES-DESC] Review wf_1b9e937b-a0d UI-2: read_function_props told the model every write_sites
+    /// entry writes the property. The DLL proves that only for the first write_sites_via_this (a store through the object
+    /// itself); the rest store through another pointer, and shared_offset says packed bools share the byte. The UI labels
+    /// both; the model was told neither, so it could offer an unproven site as the field's writer.</summary>
+    [Fact]
+    public void ReadFunctionProps_SaysWhichWriteSitesAreProven()
+    {
+        string d = Catalog().Single(t => t.Name == "read_function_props").Description;
+        Assert.Contains("write_sites_via_this", d);
+        Assert.Contains("write_sites_truncated", d);
+        Assert.Contains("shared_offset", d);
+        Assert.DoesNotContain("the instructions that write each one", d);
+    }
+
     [Fact]
     public void TheUserGuide_ListsExactlyTheToolsThereAre()
     {
