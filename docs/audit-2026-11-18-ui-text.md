@@ -41,7 +41,7 @@ beside them does not.
 | UT-28 | Console | text | `str.Tip.Con.CommandInput` / `str.Tip.Con.RunRow` show the internal class name `InvokeParamDialog`. | ✅ fixed 2026-11-18 (red `fafda81d`, then green) |
 | UT-29 | Value Search | behaviour | Group scan uses single mode's hidden **Game classes only** and **Max:** values, which group mode does not show; its truncation message names a result cap the user cannot see there. | ✅ fixed 2026-11-18 (red `f1b50ace`, then green) |
 | UT-30 | Value Search | text | `str.Tip.VS.Group.ScanType` lists only Exact / Bigger / Smaller for the first scan; Between is offered. The matching error omits it too. | ✅ fixed 2026-11-18 (red `a0f6e5ec`, then green) |
-| UT-31 | Classes and others | text | `str.Tip.GameClassFilter.FindInstances` (and **inst** elsewhere) says "live instances"; the search matches class names by substring and keeps templates. | ⬜ |
+| UT-31 | Classes and others | text | `str.Tip.GameClassFilter.FindInstances` (and **inst** elsewhere) says "live instances"; the search matches class names by substring and keeps templates. | ✅ fixed 2026-11-18 (red `b71f24d5`, then green) |
 | UT-32 | Classes | text | The batch Find Func partial clause uses the unit "rows"; Instances says "classes". | ⬜ |
 | UT-33 | Class Struct | behaviour | A failed instance pick keeps the old class under an error about another selection (the catch in `OnObjectSelected` does not call `DropShownClass`); `[CLASSSTRUCT-FAILED-KEEPS-OLD]` covered the walk path only. | ⬜ |
 | UT-34 | Snapshot / SPC | behaviour | **Addr** on an array-element row copies the owning object's base address while the status line names the element (`Class::Arr[3].Field`); HEX and +CE refuse the same row. | ⬜ |

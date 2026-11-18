@@ -93,7 +93,7 @@
     <sys:String x:Key="str.Tip.Detect.UseSnapshot">Cross-reference your two most-recent snapshots and boost fields whose value DECREASED. Workflow: capture a snapshot, take damage / spend in-game, capture again, then Detect. Needs ≥2 usable snapshots.</sys:String>
     <sys:String x:Key="str.Tip.Detect.Filter">Space-separated keywords are ANDed; each may match the property, class or category column (case-insensitive). Keywords that matched are remembered for this session.</sys:String>
     <sys:String x:Key="str.Tip.Detect.GWorld">Locate a live instance of this class in the GWorld object graph (opens Live Walker, where you can Copy CE Field).</sys:String>
-    <sys:String x:Key="str.Tip.Detect.Finder">Find all live instances of this class in the Instance Finder.</sys:String>
+    <sys:String x:Key="str.Tip.Detect.Finder">Search the Instances tab for this class name: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.Detect.Copy">Copy the property name to the clipboard.</sys:String>
 
     <!-- Dump Explorer panel — offline browser over a "Dump All" .jsonl file -->
@@ -169,7 +169,7 @@
     <sys:String x:Key="str.Tip.Related.GWorld">Locate in GWorld: find the shortest pointer path from GWorld down to this object and show it in Live Walker</sys:String>
     <sys:String x:Key="str.Tip.Related.GameEngine">Locate in GameEngine: find the shortest pointer path from the live UGameEngine down to this object. Reaches engine / GameInstance / LocalPlayer / engine-subsystem objects the GWorld graph can't — but NOT most world actors (use Locate in GWorld for those)</sys:String>
     <sys:String x:Key="str.Tip.Related.Walk">Open this object in Live Walker for field-by-field inspection</sys:String>
-    <sys:String x:Key="str.Tip.Related.Find">Find all live instances of this object's class (Instance Finder)</sys:String>
+    <sys:String x:Key="str.Tip.Related.Find">Search the Instances tab for this object's class name: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.Related.Copy">Copy this object's address to the clipboard</sys:String>
 
     <!-- Value Search -->
@@ -1143,7 +1143,7 @@
     <sys:String x:Key="str.Tip.IF.GameOnly">Skip /Script/Engine, /Script/CoreUObject, etc. Typically reduces the result set ~5x for shipping games. Recheck + re-Load to refresh.</sys:String>
     <sys:String x:Key="str.Tip.IF.Filter">Space-separated keywords are ANDed; each may match the function name or the class name (case-insensitive). e.g. "Money", or "PlayerCharacter Health" for Health functions on PlayerCharacter classes.</sys:String>
     <sys:String x:Key="str.Tip.IF.ClearFilters">Clear the name filter and the category, and turn off Show All and BP/Exec only (reset to defaults).</sys:String>
-    <sys:String x:Key="str.Tip.IF.OpenInst">Open this row's class in the Instance Finder tab — pre-fills the class name and runs the search to list its live instances.</sys:String>
+    <sys:String x:Key="str.Tip.IF.OpenInst">Open this row's class in the Instances tab — pre-fills the class name and runs the search: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.IF.Category">Filter by category. Each function takes the category of its strongest-scoring keyword bucket; a tie goes to the first of Stats &gt; Inventory &gt; Movement &gt; Combat &gt; Utility &gt; Gameplay. Gameplay appears only while Gameplay Actions is on; Other means no bucket scored enough.</sys:String>
     <sys:String x:Key="str.Tip.IF.ShowAll">When off, hide rows with score below the InterestingThreshold (currently 5). When on, show every UFunction regardless of score.</sys:String>
     <sys:String x:Key="str.Tip.IF.GameplayActions">Opt-in (default off). Fold an extra keyword pack into scoring for character-control + world-interaction + shop verbs the default buckets skip — Dash / Dodge / Roll / Slide / Climb / Interact / Use / Open / Buy / Sell / Shop / Vendor / Merchant / Trade / Purchase. Lets a plain OpenShop() / Dash() / Interact() clear the threshold and show up (tip: combine with a name filter like "shop" or "buy"). Re-scores the loaded set in place — no reload needed. Noisier by design; turn off to return to the cheat-value default.</sys:String>
@@ -2010,7 +2010,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.IP.GameOnly">Skip /Script/Engine, /Script/CoreUObject, etc. Recommended on — game-specific properties are the cheat-table targets.</sys:String>
     <sys:String x:Key="str.Tip.IP.Filter">Space-separated keywords are ANDed; each may match the property name or the class name (case-insensitive). e.g. "Health", or "PlayerState Score" for Score properties on PlayerState classes.</sys:String>
     <sys:String x:Key="str.Tip.IP.ClearFilters">Clear the name filter, category, and the Unusual-only / Show-all toggles (reset to defaults).</sys:String>
-    <sys:String x:Key="str.Tip.IP.OpenInst">Open this row's class in the Instance Finder tab — pre-fills the class name and runs the search to list its live instances.</sys:String>
+    <sys:String x:Key="str.Tip.IP.OpenInst">Open this row's class in the Instances tab — pre-fills the class name and runs the search: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.IP.Category">Filter by category. Stats / Combat / Resources / Movement / Utility / Timing / Other.</sys:String>
     <sys:String x:Key="str.Tip.IP.UnusualOnly">Show only properties whose owning class is in the Unusual Location list (LocalPlayer / GameViewportClient / HUD / CheatManager) — properties developers placed outside the conventional Character/Pawn/PlayerState containers.</sys:String>
     <sys:String x:Key="str.Tip.IP.ShowAll">When off, hide rows below the InterestingThreshold (currently 4). When on, show every property regardless of score.</sys:String>
@@ -2099,7 +2099,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.PropertySearch.ResultFilter">Filter the current result list locally: space-separated keywords are ANDed, and each may match the Class, Property, Type, Super or Preview column (case-insensitive). No DLL roundtrip.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.Deep">Also descend into nested struct members and struct-typed container elements (TArray/TSet/TMap of structs), so a field buried inside a struct/array (e.g. SaveSlotList[].MsTuneData.GP) becomes findable by name. Slower; matches show a dotted path and an owning class. Off = fast direct-field search only.</sys:String>
-    <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find in Instance Finder: switch to the Instance Finder tab, fill in this row's class name, and run the search to list all live instances of it.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Switch to the Instances tab, fill in this row's class name, and run the search: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.CopyOffset">Copy property offset to clipboard</sys:String>
 
     <!-- Tooltips: Game Class Filter -->
@@ -2108,7 +2108,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.GameClassFilter.SuperFilter">Filter by super/parent class</sys:String>
     <sys:String x:Key="str.Tip.GameClassFilter.PackageFilter">Filter by UE package name</sys:String>
     <sys:String x:Key="str.Tip.GameClassFilter.Clear">Clear all filters</sys:String>
-    <sys:String x:Key="str.Tip.GameClassFilter.FindInstances">Find live instances of this class</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.FindInstances">Search the Instances tab for this class name: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.GameClassFilter.WalkClass">Open class in the Class Struct tab to inspect its full property layout and offsets</sys:String>
     <sys:String x:Key="str.Tip.GameClassFilter.FindFunc">Find UFunctions that take this class as a parameter or return value (reflection scan — includes native functions, unlike the per-field bytecode xref)</sys:String>
 
@@ -2166,7 +2166,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.FindRefs">Find UObjects that hold a pointer to this one (true logical owner — Outer/Parent often only gives the naming-hierarchy package)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.AddressInput">Address to navigate to. Accepts plain hex (0x7FF… or 7FF…) or a CE module+offset such as Game.exe+1A2B3C. A CE-copied, quoted form like &quot;Game.exe&quot;+1A2B is accepted too — the surrounding quotes are stripped and module names containing spaces work. Press Enter or click Go.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Go">Navigate to the specified address</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.FieldInst">List live instances of this field's object class in the Instance Finder tab — pre-fills the class name and runs the search.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FieldInst">Search the Instances tab for this field's object class name (pre-fills it and runs the search): objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for the selected field(s) only (Ctrl/Shift-click to multi-select)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CancelExport">Abort the in-progress export (Copy CE XML / Copy CE Field / Export CSX) — stops resolving the object graph; the clipboard/file is left untouched</sys:String>
