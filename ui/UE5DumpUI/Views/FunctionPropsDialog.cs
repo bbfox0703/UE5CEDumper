@@ -188,7 +188,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         DockPanel.SetDock(caveat, Dock.Bottom);
         root.Children.Add(caveat);
 
-        // A WrapPanel: six buttons outgrow a narrow window, and a StackPanel cut the last ones off (review WS-UI-3).
+        // A WrapPanel: six buttons outgrow a narrow window, where a StackPanel would cut the last ones off.
         var btnRow = new WrapPanel
         {
             Orientation = Orientation.Horizontal,

@@ -45,9 +45,9 @@ internal static class CallTraceExport
         Int(sb, "written", (long)t.Info.Written);
         Int(sb, "buffer_bytes", t.Info.Bytes);
         Int(sb, "ticked", t.Info.Ticked);
-        // [LIVEFUNCS-STEP2] What was recorded: only inside the ticked calls (scoped, by address or by name), or every
-        // call; with snapshots and nothing ticked, only the chosen calls. A DLL from before names sends no scoped: its
-        // address ticks were the scope.
+        // [LIVEFUNCS-STEP2] What was recorded: inside the ticked calls (scoped, by address or by name) and, with rings
+        // for parameters or a stack, the chosen calls outside them; or every call; with snapshots and nothing ticked,
+        // only the chosen calls. A DLL from before names sends no scoped: its address ticks are the scope.
         Int(sb, "ticked_names", t.Info.TickedNames);
         Bool(sb, "scoped", t.Info.Scoped ?? t.Info.Ticked > 0);
         Bool(sb, "snapshots_only", t.Info.SnapOnly);
