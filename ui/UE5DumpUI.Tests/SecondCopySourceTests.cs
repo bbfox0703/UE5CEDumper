@@ -298,8 +298,15 @@ public sealed class SecondCopySourceTests
         string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
         string loop = FunctionBody(schlacht, "void PendingRestoreLoop() {");
         Assert.DoesNotContain("done = kept.empty();", loop);
-        InOrder(loop, "the pass", "RecordUnhideLeftoversLocked(kept);",
-                "done = s_state.active || s_state.hiddenActors.empty();", "if (done) s_pendingRunning.store(false);");
+        // Review wf_eec7e89a-a4a R9-2: each flag store INSIDE the section that decides the exit -- moved after its closing
+        // brace, or left to the store at the loop's end, the race is back. One regex per section, braces included.
+        Assert.Matches(@"std::lock_guard<std::mutex> lk\(s_mutex\);\s*nothingToDo = s_state\.active \|\| " +
+                       @"s_state\.hiddenActors\.empty\(\);\s*if \(nothingToDo\) s_pendingRunning\.store\(false\); \}", loop);
+        Assert.Matches(@"\{\s*std::lock_guard<std::mutex> lk\(s_mutex\);\s*RecordUnhideLeftoversLocked\(kept\);\s*" +
+                       @"done = s_state\.active \|\| s_state\.hiddenActors\.empty\(\);\s*left = s_state\.hiddenActors\.size\(\);\s*" +
+                       @"if \(done\) s_pendingRunning\.store\(false\);\s*\}", loop);
+        // R9-1: it gives up only on this pass's own failures; actors adopted while it ran were never tried.
+        Assert.Contains("if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS)", loop);
         InOrder(FunctionBody(schlacht, "bool StartPendingLocked() {"), "a new restore",
                 "if (Tot::ShutdownRequested()) return false;", "s_state.restoreAbandoned = false;",
                 "s_pendingWorker = std::thread(PendingRestoreLoop);");
