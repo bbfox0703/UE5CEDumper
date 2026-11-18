@@ -510,21 +510,17 @@ struct MemRegion { uintptr_t base = 0; size_t size = 0; bool image = false; uint
 template <class QueryFn, class IsDumperFn>
 bool RangeTouchesDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, QueryFn&& query,
                              IsDumperFn&& isDumperAt) {
-    (void)query; (void)isDumperAt;
-    return RangeOverlapsImage(addr, size, ownBase, ownSize);
-}
-
-/// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
-/// the image of another copy of the dumper among `modules` (each with `.base` and `.size`; `isDumper(module)` answers
-/// "a build of the dumper"). A later copy that took over serves the earlier copy's CE mailbox, which lives in the
-/// earlier copy's image, so a background client's write_mem is refused there as well as in its own.
-template <class Modules, class IsDumperFn>
-bool RangeOverlapsDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, const Modules& modules,
-                              IsDumperFn&& isDumper) {
     if (RangeOverlapsImage(addr, size, ownBase, ownSize)) return true;
-    // The question reads a module's export table, so it is asked only of a module the range overlaps.
-    for (const auto& m : modules)
-        if (RangeOverlapsImage(addr, size, m.base, m.size) && isDumper(m)) return true;
+    if (size == 0) return false;
+    const uintptr_t end = (addr + size < addr) ? UINTPTR_MAX : addr + size;
+    for (uintptr_t p = addr; p < end;) {
+        const MemRegion r = query(p);
+        if (r.size == 0) return false;
+        if (r.image && isDumperAt(r.allocationBase)) return true;
+        const uintptr_t next = r.base + r.size;
+        if (next <= p) return false;   // a region that does not move on: never loop
+        p = next;
+    }
     return false;
 }
 
