@@ -32,14 +32,13 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _isAobMakerAvailable;
 
     /// <summary>
-    /// Tooltip shown on the Freeze button when it's disabled, explaining
-    /// why. Refreshed alongside <see cref="IsAobMakerAvailable"/>.
-    /// Matches the existing LiveWalker / InterestingFuncs Notes-column UX.
+    /// The Freeze button's tooltip: what it does, or, while the plugin is out of reach, why, in
+    /// <see cref="AobMakerUnavailable"/>'s sentence for the bridge's last failure (a busy or refused pipe is not a
+    /// missing plugin). Repaints on the flag and on a new reason with the flag unchanged.
     /// </summary>
     public string FreezeUnavailableTooltip => IsAobMakerAvailable
         ? "Generate an AA Script that locks this property across all live instances"
-        : "AOBMaker CE Plugin not found — Freeze requires the plugin so the AA Script can be injected into the open CE table. " +
-          "Setup: copy AOBMaker DLL into Cheat Engine's autorun/ folder and restart CE.";
+        : AobMakerUnavailable.Text(_aobMaker) + " — Freeze adds its AA Script to the open CE table through the plugin.";
 
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(FreezeUnavailableTooltip));
@@ -286,6 +285,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     {
         if (e.PropertyName == nameof(AobMakerStatus.IsAvailable))
             IsAobMakerAvailable = _aobStatus.IsAvailable;
+        // The status repaints its own tip on every probe or push, a new reason with the flag unchanged included; the
+        // Freeze tooltip names the same reason.
+        else if (e.PropertyName == nameof(AobMakerStatus.DllTip))
+            OnPropertyChanged(nameof(FreezeUnavailableTooltip));
     }
 
     /// <summary>

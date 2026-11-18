@@ -34,7 +34,7 @@ beside them does not.
 | UT-21 | Proxy Deploy | design | Inject from the UI only connects when the game already holds any copy of the DLL, a stale proxy included; the second copy's take-over is reachable only through `inject-ue.ps1` or another injector. | ⬜ |
 | UT-22 | dev-log | doc | The build 3729 entry says "The UI and the MCP server reconnect" after a hand-off; the UI does not reconnect by itself (the user clicks Connect). | ⬜ |
 | UT-23 | Properties | text | `str.Tip.PropertySearch.MaxResults` says 'Raise it if you see "⚠ capped"'; the status line says "⚠ STOPPED at the N-row cap"; "⚠ capped" is the Forced-fields strip's label. | ✅ fixed 2026-11-18 (red `0311e256`, then green) |
-| UT-24 | Properties | behaviour | The Freeze tooltip says "AOBMaker CE Plugin not found" for every unavailable state, a busy or refused pipe included; `AobMakerUnavailable.Text` gives the real reason elsewhere. | ⬜ |
+| UT-24 | Properties | behaviour | The Freeze tooltip says "AOBMaker CE Plugin not found" for every unavailable state, a busy or refused pipe included; `AobMakerUnavailable.Text` gives the real reason elsewhere. | ✅ fixed 2026-11-18 (red `fd460226`, then green) |
 | UT-25 | Properties | text | The Freeze type refusal says "(numeric + bool only)"; enums are supported. | ⬜ |
 | UT-26 | Console | behaviour | A status message says "type the command and press Enter"; the command box does nothing on Enter (its tooltip says press Run). | ⬜ |
 | UT-27 | Find Class Funcs | comment | `PropertyXrefDialog`'s comment says the Disassemble button is hidden without AOBMaker; it is visible and disabled. | ⬜ |
