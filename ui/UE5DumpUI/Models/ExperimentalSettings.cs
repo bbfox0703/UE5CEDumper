@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// Persisted opt-in flag for the experimental analysis tabs (Snapshot /
-/// SPC Query / Class Pivot). Stored as a tiny JSON file under
+/// Persisted opt-in flag for the experimental features, and the settings kept
+/// beside it. Stored as a tiny JSON file under
 /// %LOCALAPPDATA%\UE5CEDumper\experimental.json so the choice survives
 /// restarts. See <see cref="Services.ExperimentalGate"/>.
 /// </summary>
