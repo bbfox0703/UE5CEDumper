@@ -24,7 +24,7 @@ beside them does not.
 | UT-11 | AOBMaker / ASM | comment | Comments in `Helpers/AobMakerActions.cs` and `dll/src/Fern.cpp` say ASM on a Blueprint function "lands on the interpreter"; the DLL returns no native address for a non-native function. | ✅ fixed 2026-11-18 |
 | UT-12 | System | text | The GWorld / &GEngine **SYM** tooltips omit that they register from the game's export when there is one; the GObjects tooltip says it. | ✅ fixed 2026-11-18 (red `3e1c93ae`, then green) |
 | UT-13 | System | comment | `Views/PointerPanel.axaml`'s comment on the experimental switch gives opacity 0.2 and a tooltip naming three tabs; the `ExperimentalEnabled` summary lists only three tabs. | ✅ fixed 2026-11-18 |
-| UT-14 | Live Walker | text | `str.Tip.StringLength` says it applies to Copy CE XML / Copy CE Field; String Len also sets the CSX string size and the +CE / +CE Field (flat) string records. | ⬜ |
+| UT-14 | Live Walker | text | `str.Tip.StringLength` says it applies to Copy CE XML / Copy CE Field; String Len also sets the CSX string size and the +CE / +CE Field (flat) string records. | ✅ fixed 2026-11-18 (red `94e401f4`, then green) |
 | UT-15 | Live Walker | text | A failed field edit shows "Write failed for X: DLL error: Not written: ... write_mem writes data only" -- the "DLL error:" prefix and the internal command name `write_mem`. | ⬜ |
 | UT-16 | Live Walker | text | `str.Tip.Toolbar.Options` says "Set once per session" though the settings persist, and lists only some of them (not String Len, Fabricate, Locate depth, the deep-scan cap). | ⬜ |
 | UT-17 | Live Walker | text | `str.Tip.LiveWalker.FuncFilter` says each keyword must match the function name; the filter also matches the interface name. | ⬜ |
