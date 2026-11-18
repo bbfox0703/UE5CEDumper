@@ -499,6 +499,21 @@ inline bool RangeOverlapsImage(uintptr_t addr, size_t size, uintptr_t imageBase,
     return addr < imageEnd && imageBase < end;
 }
 
+/// [WRITEMEM-ANY-COPY] One region of the address space, as VirtualQuery answers it (size 0: nothing could be read).
+struct MemRegion { uintptr_t base = 0; size_t size = 0; bool image = false; uintptr_t allocationBase = 0; };
+
+/// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
+/// touches an image region whose module is a build of the dumper (`isDumperAt(allocationBase)`), walked region by region
+/// with `query(p)`. No module list: one that could not be read (EnumProcessModules fails while a DLL loads or unloads)
+/// let the range through (review wf_bbd1bbfe-20d D7-6). A region that cannot be read ends the walk; write_mem's own
+/// classification refuses what is not committed.
+template <class QueryFn, class IsDumperFn>
+bool RangeTouchesDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, QueryFn&& query,
+                             IsDumperFn&& isDumperAt) {
+    (void)query; (void)isDumperAt;
+    return RangeOverlapsImage(addr, size, ownBase, ownSize);
+}
+
 /// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
 /// the image of another copy of the dumper among `modules` (each with `.base` and `.size`; `isDumper(module)` answers
 /// "a build of the dumper"). A later copy that took over serves the earlier copy's CE mailbox, which lives in the

@@ -12309,6 +12309,44 @@ static void Test_Lager_ClassifyWriteRegion() {
     asked = 0;
     (void)RangeOverlapsDumperImage(0x20000000ull, 64, kImg, kImgSize, mods, isDumper);
     EXPECT("any copy: no module asked when the range overlaps none", asked == 0);
+
+    // Review wf_bbd1bbfe-20d D7-6: the module list comes back EMPTY when EnumProcessModules fails (a DLL loading or
+    // unloading), and the earlier copy's image then went unchecked. The region walk asks VirtualQuery instead.
+    struct Reg { uintptr_t base; size_t size; bool image; uintptr_t alloc; };
+    const std::vector<Reg> regs = {
+        {0x20000000ull, 0x10000, false, 0x20000000ull},                // heap
+        {kEarlier, 0x1000, true, kEarlier},                            // the earlier copy's headers
+        {kEarlier + 0x1000, 0x2FF000, true, kEarlier},                 // ...and its .data (the adopted mailbox)
+        {kGameDll, 0x200000, true, kGameDll},                          // a game module
+    };
+    auto query = [&](uintptr_t p) {
+        for (const auto& r : regs)
+            if (p >= r.base && p < r.base + r.size) return MemRegion{r.base, r.size, r.image, r.alloc};
+        return MemRegion{};
+    };
+    int askedAt = 0;
+    auto dumperAt = [&](uintptr_t alloc) { ++askedAt; return alloc == kEarlier || alloc == 0x30001000ull; };
+    EXPECT("* regions: the earlier copy's .data (its adopted mailbox) is refused with no module list",
+           RangeTouchesDumperImage(kEarlier + 0x2000, 8, kImg, kImgSize, query, dumperAt));
+    // A heap page directly below a copy's image: a write across the boundary reaches the image's second region.
+    const std::vector<Reg> joined = { {0x30000000ull, 0x1000, false, 0x30000000ull},
+                                      {0x30001000ull, 0x1000, true, 0x30001000ull} };
+    auto joinedQuery = [&](uintptr_t p) {
+        for (const auto& r : joined)
+            if (p >= r.base && p < r.base + r.size) return MemRegion{r.base, r.size, r.image, r.alloc};
+        return MemRegion{};
+    };
+    EXPECT("* regions: a write running from the heap into a copy's image is refused",
+           RangeTouchesDumperImage(0x30000FFCull, 8, kImg, kImgSize, joinedQuery, dumperAt));
+    EXPECT("regions: this copy's own image is refused before any query",
+           RangeTouchesDumperImage(kImg + 8, 8, kImg, kImgSize, [](uintptr_t) { return MemRegion{}; }, dumperAt));
+    EXPECT("regions: a game module's image is not", !RangeTouchesDumperImage(kGameDll + 0x10, 8, kImg, kImgSize, query,
+                                                                            dumperAt));
+    askedAt = 0;
+    EXPECT("regions: the heap is not, and no module is asked about it",
+           !RangeTouchesDumperImage(0x20000000ull + 0x10, 8, kImg, kImgSize, query, dumperAt) && askedAt == 0);
+    EXPECT("regions: an unreadable region ends the walk (write_mem's own check refuses it)",
+           !RangeTouchesDumperImage(0x10000ull, 8, kImg, kImgSize, query, dumperAt));
 }
 
 static void Test_Lager_HolderCandidateReadable() {

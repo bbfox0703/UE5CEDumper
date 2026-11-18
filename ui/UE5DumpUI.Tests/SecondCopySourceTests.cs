@@ -286,6 +286,22 @@ public sealed class SecondCopySourceTests
         }
     }
 
+    /// <summary>[WRITEMEM-ANY-COPY] Review wf_bbd1bbfe-20d U7-5: the helper is tested, the call site was not -- Fern.cpp
+    /// is in no C++ test target. A background client's write_mem asks about every copy's image before it classifies the
+    /// range, so a write into the earlier copy's adopted mailbox never reaches the classification.</summary>
+    [Fact]
+    public void AnAiWriteMemIsRefusedInsideAnyCopysImage()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int at = fern.IndexOf("if (conn->background.load() && Macht::RangeInAnyDumperImage(addr, bytes.size()))",
+                              StringComparison.Ordinal);
+        Assert.True(at > 0, "write_mem's any-copy refusal not found -- re-point this pin");
+        int classify = fern.IndexOf("Macht::ClassifyWriteRange(addr, bytes.size())", at, StringComparison.Ordinal);
+        Assert.True(classify > at, "the any-copy refusal must precede the classification");
+        Assert.Contains("Grimoire::WRITE_MEM_OWN_IMAGE", fern[at..classify]);
+        Assert.DoesNotContain("RangeInOwnImage(addr", fern);
+    }
+
     /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: the hand-off's See-through OFF keeps on a stalled
     /// game thread what it could not un-hide, "for the next ON" -- which a copy that handed over never gets. The later
     /// copy takes that record after a hand-off it began, before anything else can take this copy over; the earlier copy
