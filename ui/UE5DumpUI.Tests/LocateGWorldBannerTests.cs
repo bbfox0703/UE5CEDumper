@@ -169,6 +169,24 @@ public class LocateGWorldBannerTests
         Assert.DoesNotContain("Instance Finder", forceText, StringComparison.Ordinal);
     }
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-54: the DLL's Current Target note for a player with no target-like
+    /// reference, which the Related tab shows as its status, names the tab it sends the user to by its label,
+    /// str.Tab.InstanceFinder. Read from Edel.cpp, which no C++ test target compiles.</summary>
+    [Fact]
+    public void CurrentTargetNoCandidateNote_NamesTheInstancesTabByItsLabel()
+    {
+        var tab = UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder");
+        Assert.False(string.IsNullOrEmpty(tab), "str.Tab.InstanceFinder is not in en.axaml");
+
+        var edel = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Edel.cpp")).Replace("\r\n", "\n");
+        const string head = "res.note = \"Player resolved but no target-like reference found.";
+        int at = edel.IndexOf(head, StringComparison.Ordinal);
+        Assert.True(at >= 0, "Edel.cpp no longer sets the no-candidate note");
+        var note = edel[at..edel.IndexOf('\n', at)];
+        Assert.DoesNotContain("Instance Finder", note, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("the " + tab + " tab", note, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task LocateInGWorld_LowDepth_ConfirmGate_SkipsSearchOnCancel_ThenQuietForSession()
     {
