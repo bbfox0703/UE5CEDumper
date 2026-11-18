@@ -742,9 +742,13 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// vector type. Hidden for Bool and the 3 string types (no fractional target to
     /// reduce). The rounding mode reduces a fractional float/double target to the
     /// displayed integer before compare.</summary>
-    public bool SupportsRoundingMode =>
-        SelectedDataType != ValueScanDataType.Bool
-        && !IsStringDataType(SelectedDataType);
+    public bool SupportsRoundingMode => SupportsRoundingModeFor(SelectedDataType);
+
+    /// <summary><see cref="SupportsRoundingMode"/> for a given data type, so a scan can ask about the type it read
+    /// before its awaits instead of the picker's current one.</summary>
+    public static bool SupportsRoundingModeFor(ValueScanDataType dt) =>
+        dt != ValueScanDataType.Bool
+        && !IsStringDataType(dt);
 
     /// <summary>True for the multi-numeric meta types (NumericNoByte /
     /// NumericAll) that fan out over a fixed member set instead of a
@@ -971,30 +975,37 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning) return;
 
-        if (!IsFirstScanType(SelectedScanType))
+        // The scan type, data type and values are read once, here: the checks, the progress text and the request take
+        // them from that one read, because the pickers and boxes stay editable across the awaits before the send.
+        var scanTypeSent = SelectedScanType;
+        var dataTypeSent = SelectedDataType;
+        var valueSent = Value;
+        var value2Sent = Value2;
+
+        if (!IsFirstScanType(scanTypeSent))
         {
             ErrorMessage = "First Scan supports targeted predicates only (Exact / " +
                            "Bigger / Smaller / Between / Contains / StartsWith / EndsWith). " +
                            "Use Next Scan for Changed / Unchanged / Increased / Decreased.";
             return;
         }
-        if (!IsScanTypeValidFor(SelectedDataType, SelectedScanType))
+        if (!IsScanTypeValidFor(dataTypeSent, scanTypeSent))
         {
-            ErrorMessage = $"Scan type '{SelectedScanType}' is not valid for {SelectedDataType}.";
+            ErrorMessage = $"Scan type '{scanTypeSent}' is not valid for {dataTypeSent}.";
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(Value))
+        if (string.IsNullOrWhiteSpace(valueSent))
         {
             ErrorMessage = "Value is required.";
             return;
         }
-        if (SelectedScanType == ValueScanType.Between && string.IsNullOrWhiteSpace(Value2))
+        if (scanTypeSent == ValueScanType.Between && string.IsNullOrWhiteSpace(value2Sent))
         {
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
-        if (Services.ValueTargetCheck.NonFiniteTargetError(SelectedDataType, SelectedScanType, Value, Value2) is { } nonFinite)
+        if (Services.ValueTargetCheck.NonFiniteTargetError(dataTypeSent, scanTypeSent, valueSent, value2Sent) is { } nonFinite)
         {
             ErrorMessage = nonFinite;   // [VALUESCAN-NONFINITE-TARGET]
             return;
@@ -1017,7 +1028,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         {
             IsScanning  = true;
             ErrorMessage = "";
-            StatusText  = $"Scanning {SelectedDataType} fields...";
+            StatusText  = $"Scanning {dataTypeSent} fields...";
 
             // If a session is already open (user changed mind without
             // clicking New Scan), retire it first so the DLL doesn't
@@ -1027,16 +1038,16 @@ public partial class ValueSearchViewModel : ViewModelBase
             // Rounding mode reduces a fractional float/double target to the displayed
             // integer before compare; only meaningful for numeric/vector types, but the
             // DLL ignores it for integer + string scans anyway.
-            var effRound = SupportsRoundingMode ? SelectedRoundingMode : FloatRoundMode.Round;
+            var effRound = SupportsRoundingModeFor(dataTypeSent) ? SelectedRoundingMode : FloatRoundMode.Round;
             // Case sensitivity only passes through for string types;
             // wire serializer enforces the same restriction.
-            bool effCase = SupportsCaseSensitive && CaseSensitive;
+            bool effCase = IsStringDataType(dataTypeSent) && CaseSensitive;
             // The truncation note names the Timeout this scan was sent with: the Timeout slider can change while the
             // scan runs.
             int timeoutSent = ScanTimeoutSeconds;
             var result = await _dump.BeginValueScanAsync(
-                SelectedDataType, SelectedScanType, Value,
-                SelectedScanType == ValueScanType.Between ? Value2 : null,
+                dataTypeSent, scanTypeSent, valueSent,
+                scanTypeSent == ValueScanType.Between ? value2Sent : null,
                 GameOnly, MaxResults, effRound, effCase, ParallelScan, BatchRead, DeepScan,
                 NativeCScan, NewestFirst, PageSize, timeoutSent * 1000,
                 PreFilterNoise, cts.Token);
@@ -1087,18 +1098,25 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning || !HasSession) return;
 
-        bool needsValue = !IsPrevValueScanType(SelectedScanType);
-        if (needsValue && string.IsNullOrWhiteSpace(Value))
+        // The scan type, data type and values are read once, here: the checks, the progress text, the refine and its
+        // status line take them from that one read, because the pickers and boxes stay editable across the awaits.
+        var scanTypeSent = SelectedScanType;
+        var dataType = SelectedDataType;
+        var valueSent = Value;
+        var value2Sent = Value2;
+
+        bool needsValue = !IsPrevValueScanType(scanTypeSent);
+        if (needsValue && string.IsNullOrWhiteSpace(valueSent))
         {
             ErrorMessage = "Value is required for this Scan Type.";
             return;
         }
-        if (SelectedScanType == ValueScanType.Between && string.IsNullOrWhiteSpace(Value2))
+        if (scanTypeSent == ValueScanType.Between && string.IsNullOrWhiteSpace(value2Sent))
         {
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
-        if (Services.ValueTargetCheck.NonFiniteTargetError(SelectedDataType, SelectedScanType, Value, Value2) is { } nonFinite)
+        if (Services.ValueTargetCheck.NonFiniteTargetError(dataType, scanTypeSent, valueSent, value2Sent) is { } nonFinite)
         {
             ErrorMessage = nonFinite;   // [VALUESCAN-NONFINITE-TARGET]
             return;
@@ -1113,17 +1131,14 @@ public partial class ValueSearchViewModel : ViewModelBase
         {
             IsScanning  = true;
             ErrorMessage = "";
-            StatusText  = $"Refining ({SelectedScanType})...";
+            StatusText  = $"Refining ({scanTypeSent})...";
 
-            var effRound = SupportsRoundingMode ? SelectedRoundingMode : FloatRoundMode.Round;
-            bool effCase = SupportsCaseSensitive && CaseSensitive;
-            // The status line names the scan type this refine was sent with: the Scan Type picker can change while
-            // the refine runs.
-            var scanTypeSent = SelectedScanType;
+            var effRound = SupportsRoundingModeFor(dataType) ? SelectedRoundingMode : FloatRoundMode.Round;
+            bool effCase = IsStringDataType(dataType) && CaseSensitive;
             var result = await _dump.RefineValueScanAsync(
                 SessionId, scanTypeSent,
-                needsValue ? Value : null,
-                scanTypeSent == ValueScanType.Between ? Value2 : null,
+                needsValue ? valueSent : null,
+                scanTypeSent == ValueScanType.Between ? value2Sent : null,
                 effRound, effCase, PageSize, cts.Token);
 
             // Refine prunes the existing set (no re-scan), so the histogram is exact
