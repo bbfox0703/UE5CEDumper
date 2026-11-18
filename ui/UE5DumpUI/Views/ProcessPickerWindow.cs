@@ -133,8 +133,8 @@ public sealed class ProcessPickerWindow : Window
                 };
                 var panel = new StackPanel { Margin = new Thickness(2, 3), Children = { title, path } };
                 // Amber "already loaded" line: our dumper DLL is active in this
-                // process (proxy / prior inject / CE .CT). Injecting again would
-                // double-load and fight over the pipe, so the VM just connects.
+                // process (proxy / prior inject / CE .CT). The VM connects to it rather
+                // than injecting a second copy, which would take the game over from it.
                 if (item.DumperLoaded)
                 {
                     panel.Children.Add(new TextBlock

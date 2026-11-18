@@ -147,9 +147,9 @@ public static class CeInjectScriptGenerator
         Line(sb);
 
         // ── 0.5. Already loaded? Two opposite reasons, and they need opposite handling ──
-        Line(sb, "-- Already present? Injecting again would double-map us and fight over the");
-        Line(sb, "-- pipe -- but 'already present' covers two cases that must NOT be treated");
-        Line(sb, "-- alike, and the mailbox's initState is what tells them apart:");
+        Line(sb, "-- Already present? Then it is not injected again -- but 'already present'");
+        Line(sb, "-- covers two cases that must NOT be treated alike, and the mailbox's");
+        Line(sb, "-- initState is what tells them apart:");
         // NB: never write the literal "[DISABLE]" in an ENABLE-block comment — the
         // tests (and CE) slice the script on that marker, so it would truncate the
         // block here.

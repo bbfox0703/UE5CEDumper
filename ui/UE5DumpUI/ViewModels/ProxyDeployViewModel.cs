@@ -1205,9 +1205,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
         if (target is null) return;   // cancelled
 
-        // Already loaded (proxy / prior inject / CE .CT): re-injecting would
-        // double-load UE5Dumper.dll and fight over the pipe. Skip straight to
-        // connecting to the DLL that's already running.
+        // Already loaded (proxy / prior inject / CE .CT): connect to the copy that is
+        // serving. Injecting a second copy would take the game over from it, and it
+        // would shut down.
         if (target.DumperLoaded)
         {
             _log.Info("ProxyDeploy",

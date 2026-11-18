@@ -109,9 +109,9 @@ public static class CeAutorunScriptGenerator
         Line(sb, "    return false");
         Line(sb, "  end");
         Line(sb);
-        // Re-injecting would double-map us and fight over the pipe. But "already
-        // loaded" splits two ways, and initState is what separates them — see the
-        // pushed-record twin in CeInjectScriptGenerator for the full reasoning.
+        // Already loaded: not injected again. "Already loaded" splits two ways, and
+        // initState is what separates them — see the pushed-record twin in
+        // CeInjectScriptGenerator for the full reasoning.
         Line(sb, "  local okGet, probe = pcall(getAddress, 'UE5_Init')");
         Line(sb, "  local alreadyLoaded = okGet and probe and probe ~= 0");
         Line(sb, "  if alreadyLoaded then");
