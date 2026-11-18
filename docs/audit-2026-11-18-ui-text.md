@@ -5,7 +5,7 @@ strings, and listed each place where the UI's text says something the program do
 session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
 UT-36 to UT-48 were found afterwards by a review of those fixes (workflow `wf_31921b9d-4a0`: four reviewers, each finding
 checked by a second agent that tried to refute it): places a fix left untouched or got partly wrong.
-UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`). UT-63 to UT-71 came from the third, of the UT-49 to UT-62 fixes (`wf_c7f1ac00-7e7`). UT-72 to UT-81 came from the fourth, of the UT-63 to UT-71 fixes (`wf_6b61eb19-451`).
+UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`). UT-63 to UT-71 came from the third, of the UT-49 to UT-62 fixes (`wf_c7f1ac00-7e7`). UT-72 to UT-81 came from the fourth, of the UT-63 to UT-71 fixes (`wf_6b61eb19-451`). UT-82 to UT-88 came from the fifth, which looked for regressions in the UT-72 to UT-81 fixes (`wf_b9bce568-10b`).
 
 **Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
 code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
@@ -95,3 +95,10 @@ beside them does not.
 | UT-79 | working-lessons | doc | Trap 1's check (compare `build_number` with the build just made) passes in the take-over it now describes; `get_pointers.load_mode` is what tells a proxy from an injected copy. | ✅ fixed 2026-11-18 |
 | UT-80 | handover | doc | `docs/handover.md`'s pipe section says a stale proxy answers while the fresh DLL sits inert; a fresh copy takes over, or serves its own pipe beside a pre-contract proxy. | ✅ fixed 2026-11-18 |
 | UT-81 | Classes | comment | A comment UT-71 rewrote says a copy built by string concatenation fails the test; only a copy keeping the phrase in one literal does. | ✅ fixed 2026-11-18 |
+| UT-82 | tools | doc | `tools/verify/pipe_client.py`'s new trap-1 text says the injected copy is the one that answers; until that copy has scanned, the deployed proxy still serves the pipe. | ⬜ |
+| UT-83 | handover | doc | `docs/handover.md`'s rewritten pipe paragraph has the same gap: a stale proxy also answers while a freshly injected copy is still scanning. | ⬜ |
+| UT-84 | Find Class Funcs | comment | `PropertyXrefDialog`'s sort-comparer comment carries a review id and tells a shipped build's bug (UT-73 fixed its twin). | ⬜ |
+| UT-85 | Find Class Funcs, Interesting Functions | comment | Both dialogs' `XrefSortComparers` summaries carry a review id, and `FunctionPropsDialog`'s says the table is shared with the twin; each dialog builds its own. | ⬜ |
+| UT-86 | Value Search | behaviour | First Scan and Next Scan validate the scan type (and First Scan the value) before an await, then read them again to build the request, so one request can carry a type its own checks never saw. | ⬜ |
+| UT-87 | Classes | behaviour | Log lines in `GameClassFilterViewModel` read Game classes only (or the query) after the load's await, so the log can record a value the request was not sent with. | ⬜ |
+| UT-88 | docs | doc | `docs/auto-verification-session-plan.md` still says a deployed proxy makes a fresh injection a silent no-op. | ⬜ |
