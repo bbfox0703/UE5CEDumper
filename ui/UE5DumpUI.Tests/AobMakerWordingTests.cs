@@ -529,7 +529,7 @@ public class AobMakerWordingTests
         Assert.Contains("\n        UpdateSelectionButtons();\n", Body("public FunctionPropsDialog(string funcName"),
                         StringComparison.Ordinal);
         foreach (var handler in new[] { "private async void OnAsmClicked(", "private async void OnSiteInCeClicked(" })
-            Assert.Matches(@"finally\s*\{\s*UpdateSelectionButtons\(\);\s*\}", Body(handler));
+            Assert.Matches(@"finally\s*\{\s*(?:_\w+ = false;\s*)?UpdateSelectionButtons\(\);\s*\}", Body(handler));
     }
 
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-36: the "Disassemble in CE" button of the property-xref / class-funcs

@@ -58,6 +58,11 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private Button _btnAsm = null!;
     private Button _btnSiteInCe = null!;
     private Button _btnCopySites = null!;
+    // Each flag is set while its Cheat Engine button's own push runs. UpdateSelectionButtons can run during that
+    // push, and it keeps the button off while the flag is set: a second click mid-push would push again, which
+    // for Disassemble in CE adds a second record to CE's table.
+    private bool _asmPushing;
+    private bool _sitePushing;
     private CheckBox _classFieldsOnly = null!;
     private DataGridColumn _confCol = null!;
     private List<FunctionPropRef> _allProps = new();
@@ -78,6 +83,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     {
         var bridge = SharedAobMaker;
         if (bridge == null || sender is not Button button) return;
+        _asmPushing = true;
         button.IsEnabled = false;
         try
         {
@@ -90,6 +96,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
         finally
         {
+            _asmPushing = false;
             UpdateSelectionButtons();
         }
     }
@@ -499,8 +506,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         bool hasSites = x is { WriteSites.Count: > 0 };
         _btnCopySites.IsEnabled = hasSites;
         bool up = SharedAobMaker?.IsAvailable == true;
-        _btnSiteInCe.IsEnabled = hasSites && up;
-        _btnAsm.IsEnabled = up && !string.IsNullOrEmpty(_funcAddr);
+        _btnSiteInCe.IsEnabled = hasSites && up && !_sitePushing;
+        _btnAsm.IsEnabled = up && !string.IsNullOrEmpty(_funcAddr) && !_asmPushing;
         ToolTip.SetTip(_btnAsm, up
             ? Res.Get(KeyAsmTip)
             : Res.Format(KeyAsmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
@@ -514,6 +521,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     {
         var bridge = SharedAobMaker;
         if (bridge == null || _grid.SelectedItem is not FunctionPropRef x || x.WriteSites.Count == 0) return;
+        _sitePushing = true;
         _btnSiteInCe.IsEnabled = false;
         try
         {
@@ -524,6 +532,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
         finally
         {
+            _sitePushing = false;
             UpdateSelectionButtons();
         }
     }
