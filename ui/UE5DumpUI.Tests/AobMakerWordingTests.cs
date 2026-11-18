@@ -376,6 +376,59 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-49: the Props dialog's two Cheat Engine buttons, Disassemble in CE and
+    /// Write site in CE, open their tooltips while greyed out, and while the plugin is out of reach each tooltip gives
+    /// the bridge's own reason. One method sets each button's state and tooltip, and it runs at construction and after
+    /// each push. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_buttons_say_why_the_plugin_is_unreachable_while_greyed_out()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from FunctionPropsDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        foreach (var (button, offKey, name) in new[]
+                 {
+                     ("_btnAsm", "str.Tip.FunctionProps.AsmOff", "Disassemble in CE"),
+                     ("_btnSiteInCe", "str.Tip.FunctionProps.WriteSiteInCeOff", "Write site in CE"),
+                 })
+        {
+            // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to.
+            Assert.Contains($"ToolTip.SetShowOnDisabled({button}, true);", src, StringComparison.Ordinal);
+
+            int tip = src.IndexOf($"ToolTip.SetTip({button},", StringComparison.Ordinal);
+            Assert.True(tip >= 0, $"{button}'s tooltip is missing from FunctionPropsDialog.cs");
+            Assert.True(src.IndexOf($"ToolTip.SetTip({button},", tip + 1, StringComparison.Ordinal) < 0,
+                        $"{button}'s tooltip is set in more than one place");
+            var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+            Assert.Contains("AobMakerUnavailable.Text(SharedAobMaker)", call, StringComparison.Ordinal);
+
+            // The greyed tooltip is the bridge's sentence, then what the button needs the plugin for.
+            Assert.Contains($"\"{offKey}\"", src, StringComparison.Ordinal);
+            var off = Res.Get(offKey);
+            Assert.StartsWith("{0} ", off, StringComparison.Ordinal);
+            Assert.Contains(name, off, StringComparison.Ordinal);
+
+            // State and tooltip are set in one method, so a push that drops the bridge's flag repaints both.
+            var setters = System.Text.RegularExpressions.Regex.Matches(src, $@"{button}\.IsEnabled = (?!false;)");
+            Assert.True(setters.Count == 1, $"{setters.Count} places enable {button}");
+            int from = Math.Min(setters[0].Index, tip), to = Math.Max(setters[0].Index, tip);
+            Assert.DoesNotContain("\n    }\n", src[from..to], StringComparison.Ordinal);
+        }
+
+        // At construction, so the tooltips exist before the first scan ends; and after each push.
+        Assert.Contains("\n        UpdateSelectionButtons();\n", Body("public FunctionPropsDialog(string funcName"),
+                        StringComparison.Ordinal);
+        foreach (var handler in new[] { "private async void OnAsmClicked(", "private async void OnSiteInCeClicked(" })
+            Assert.Matches(@"finally\s*\{\s*UpdateSelectionButtons\(\);\s*\}", Body(handler));
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-36: the "Disassemble in CE" button of the property-xref / class-funcs
     /// dialog opens its tooltip while greyed out, and the tooltip gives the bridge's own reason (a busy or refused pipe
     /// is not a missing plugin). Pinned in source because no unit test here can open a Window.</summary>
