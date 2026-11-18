@@ -411,6 +411,22 @@ public class BatchXrefCancelVsDisconnectTests
     private static GameClassFilterViewModel ClassVm(ClassXrefDump dump, NoopLog log)
         => new(dump, log, new NoopPlatform());
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-32: the Classes batch counts its units as classes, as its own confirm
+    /// prompt and the Instances batch do.</summary>
+    [Fact]
+    public async Task ClassFilter_batch_partial_and_cap_clauses_count_classes()
+    {
+        var partial = ClassVm(new ClassXrefDump { Deadline = true }, new NoopLog());
+        await partial.BatchFindFuncCommand.ExecuteAsync(new List<GameClassEntry> { ClassRow("A_C"), ClassRow("B_C") });
+        Assert.Contains("2 of 2 classes hit the scan deadline", partial.StatusText);
+        Assert.DoesNotContain("rows", partial.StatusText);
+
+        var capped = new GameClassFilterViewModel(new CappedDump(), new NoopLog(), new NoopPlatform());
+        await capped.BatchFindFuncCommand.ExecuteAsync(new List<GameClassEntry> { ClassRow("A_C"), ClassRow("B_C") });
+        Assert.Contains("2 of 2 classes reached the 200-result cap", capped.StatusText);
+        Assert.DoesNotContain("rows", capped.StatusText);
+    }
+
     /// <summary>
     /// AE17/AE18: a sweep that ran out of the DLL's 30 s budget must not be written as a
     /// bare "0" — that reads as "no function takes this class", the opposite of what a
