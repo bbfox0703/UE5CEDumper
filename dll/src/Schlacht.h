@@ -25,12 +25,11 @@
 namespace Schlacht {
 
 // ── Who holds See-through ([PIPE-PER-PROCESS-2026-11-06] Stage C) ─────────────
-// One switch, two kinds of client turn it on: a pipe client (the UI's card, a rig, MCP) and CE's mailbox record. The
-// last pipe client to disconnect used to turn it off for everyone -- a ticked CE record then showed on while it was
-// off, and its untick did nothing -- and while another pipe client stayed connected, a departed client's See-through
-// stayed on with nobody left to turn it off. Each enable now records who asked; a departing client process releases
-// only its own claim, and See-through goes off with the last claim. An explicit OFF from anyone still turns it off and
-// drops every claim: that is a user's untick or a card's OFF, which means "off", not "I no longer need it".
+// One switch, two kinds of client turn it on: a pipe client (the UI's card, a rig, MCP) and CE's mailbox record. Each
+// enable records who asked; a departing client process releases only its own claim, and See-through goes off with the
+// last claim. So a departure never turns it off under a ticked CE record (whose untick would then do nothing), and a
+// departed client's See-through never stays on with nobody left to turn it off. An explicit OFF from anyone still turns
+// it off and drops every claim: that is a user's untick or a card's OFF, which means "off", not "I no longer need it".
 //
 // An owner is a client process (Voll::ClientOwnerKey) or CE (kOwnerCe).
 constexpr uint64_t kOwnerNone = 0;      // names no owner: an explicit OFF, and a claim that records nothing
@@ -69,10 +68,10 @@ inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, 
 
 // ── The hidden record across a failed dispatch ([SHUTDOWN-SEETHRU-WAIT]) ──────
 // A game-thread invoke that did not run (a timeout, a wait cut by a shutdown on a stalled game thread, a hook that is
-// down) used to count as a clean answer twice over. A LineTrace that did not run read as "nothing occludes", so the
-// tick un-hid every recorded actor and dropped it; and an un-hide that did not run dropped its actor anyway. Each left an
-// actor hidden with nothing tracking it, out of the next enable's or disable's reach. A shutdown cutting such waits
-// makes both likely, so the record now keeps what a failed dispatch may have left hidden.
+// down) is not a clean answer. A LineTrace that did not run does not mean "nothing occludes", and an un-hide that did
+// not run leaves its actor hidden; dropping the actor from the record on either would leave it hidden with nothing
+// tracking it, out of the next enable's or disable's reach. A shutdown cutting such waits makes both likely, so the
+// record keeps what a failed dispatch may have left hidden.
 
 // Apply a tick's hide/un-hide diff only when every trace ran and no stop is under way: a trace that did not run says
 // nothing about what occludes.
@@ -89,7 +88,7 @@ constexpr int32_t kHideFaultedInCall = -4;
 
 // After an un-hide, does the actor stay in the record? Only when the call was attempted and did not run: it may still be
 // queued, and Stark::Shutdown answers a queued request without running it. Un-hiding twice is harmless, losing the
-// record is not. A call never attempted drops the actor, as before (it died, or the setter went away), and so does one
+// record is not. A call never attempted drops the actor (it died, or the setter went away), and so does one
 // that faulted inside the engine: kept, it would fault again on every 100 ms tick.
 inline bool UnhideLeftItHidden(int32_t code) {
     return code != 0 && code != kHideNotAttempted && code != kHideFaultedInCall;
@@ -133,8 +132,8 @@ enum SeeThroughResult {
 
 // STR_ERR_NO_HOOK: the worker traces the world by INVOKING LineTraceSingle, ~10x
 // a second. With the game-thread hook down those invokes would have to take the
-// direct-call-off-the-game-thread fallback, which the invoke path now refuses for
-// repeating worker calls (it is the historic crash shape). Rather than run a
+// direct-call-off-the-game-thread fallback, which the invoke path refuses for
+// repeating worker calls (a known crash shape). Rather than run a
 // worker whose every tick is refused, See-Through declines to enable and says so.
 // A later enable retries the hook first — a MinHook trampoline-allocation failure
 // is a VM-layout accident, not a permanent property of the game.
@@ -148,20 +147,18 @@ struct SeeThroughStatus {
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
     // [P1-SEETHRU-GIVEUP] The leftover-hidden record, split: a restore still WAITING for the game thread, and one that
     // GAVE UP after PENDING_RESTORE_MAX_MS. A record taken over from an earlier copy at a hand-off gets the same deferred
-    // restore ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false used to mean both, and the card
-    // promised "they reappear" for the one that never will.
+    // restore ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false alone cannot tell the two apart, and
+    // only the waiting one reappears by itself.
     bool    restorePending   = false;
     bool    restoreAbandoned = false;
 
     // WHICH actors are hidden, not merely how many.
     //
     // hiddenCount alone is the DLL's own tally of what it BELIEVES it hid, and an
-    // outside verifier had no way to audit it: a tick where SetActorHiddenInGame
-    // was invoked but did not take looks identical to a tick where it worked.
-    // Measured 2026-08-22 on DumperTest — hiddenCount reported 1 while not one of
-    // the 33 candidate actors an independent walk could reach had bHidden set, and
-    // there was no way to tell "my candidate set is wrong" from "the hide failed",
-    // because the DLL would not say who. [SEETHRUSET-2026-08-22]
+    // outside verifier cannot audit it: a tick where SetActorHiddenInGame was
+    // invoked but did not take looks identical to a tick where it worked. Naming
+    // the actors lets a verifier tell "my candidate set is wrong" from "the hide
+    // failed". [SEETHRUSET-2026-08-22]
     //
     // The set already exists (s_state.hiddenActors); this only publishes it. Its
     // size is hiddenCount by construction, so the two cannot drift.
@@ -191,7 +188,6 @@ OwnerRelease Release(uint64_t owner, const std::function<bool(uint64_t)>& stillL
 // count toward the pierce depth.
 void SetPierceCount(int32_t count);
 
-// Poll the live status (safe to call from the pipe thread).
 // Poll the live status (safe to call from the pipe thread). `caller` fills callerClaimed.
 int32_t GetStatus(SeeThroughStatus& out, uint64_t caller = kOwnerNone);
 
@@ -203,8 +199,7 @@ bool IsActive();
 void StopWorker();
 
 // [SEETHRU-HANDOFF-LEFTOVER] A tick judges a snapshot of the record and writes its result back; what was added while it
-// ran -- actors an earlier copy handed over (AdoptLeftovers) -- is kept for the next tick to judge, not overwritten
-// (review wf_bbd1bbfe-20d D7-2).
+// ran -- actors an earlier copy handed over (AdoptLeftovers) -- is kept for the next tick to judge, not overwritten.
 template <class Set>
 inline void KeepAddedDuringTick(Set& applied, const Set& now, const Set& snapshot) {
     for (const auto& a : now)

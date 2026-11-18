@@ -14,23 +14,19 @@ namespace UE5DumpUI.Services;
 ///     convention would put them. Those hits get a HIGHER bonus AND a
 ///     boolean flag so the UI can stamp a ⚠ "Unusual Location" badge.
 ///
-/// Substring match (case-insensitive) against the owning class name —
-/// same semantics the function-side scorer has had since build 597 (so
-/// "AnimCharacter" picks up both the Anim penalty AND the Character
-/// bonus, accurately reflecting that it's an animation event on a
-/// character).
+/// Every rule is a case-insensitive substring match against the owning
+/// class name (so "AnimCharacter" picks up both the Anim penalty AND the
+/// Character bonus, accurately reflecting that it's an animation event on
+/// a character).
 ///
-/// TWO PROPERTIES OF THIS TABLE THAT ITS ROW COMMENTS USED TO DENY
-/// (audit #5 AC7 / AC8 — the comments were wrong, the code was right):
+/// TWO PROPERTIES OF THIS TABLE THAT A ROW COMMENT MUST NOT DENY:
 ///
 /// 1. THERE IS NO KEYWORD GATE, and there structurally cannot be one:
 ///    both entry points take the class name and NOTHING else, so no rule
-///    can condition its bonus on the function/property name. Four rule
-///    blocks used to claim "keyword-gated so the +2 only lands when the
-///    name is itself relevant". Untrue — every bonus lands on the class
-///    name alone, whatever the member is called. Adding a gate would
-///    change the score of every row in every game, so it is a design
-///    change to argue for, not a comment to believe.
+///    can condition its bonus on the function/property name. Every bonus
+///    lands on the class name alone, whatever the member is called. Adding
+///    a gate would change the score of every row in every game, so it is a
+///    design change to argue for.
 ///
 /// 2. EVERY MATCHING ROW STACKS; none is a fallback for the rows above
 ///    it. "PlayerController" scores PlayerController(+3) + Player(+2) = 5,

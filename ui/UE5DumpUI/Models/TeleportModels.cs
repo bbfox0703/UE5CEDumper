@@ -30,25 +30,21 @@ public sealed class TeleportPose
     /// <summary>TRUE when the pawn is ATTACHED (vehicle / mount / moving platform) and
     /// the world-space invoke failed, so X/Y/Z are the raw RelativeLocation —
     /// <b>parent-relative numbers, not world coordinates</b>.</summary>
-    /// <remarks>docs/teleport-spec.md:218-220 required this flag when the fallback was
-    /// designed; the fallback shipped in 2026-07 and the flag did not, so a degraded
-    /// read arrived as the same <c>source = "raw"</c> as a healthy unattached one. The
-    /// XML above this property used to document exactly that wrong inverse. Those
-    /// numbers were displayed as world coordinates, saved into a marker that passes the
-    /// map guard, and later driven back into the pawn as a world-space destination.
-    /// [POSEATTACH-2026-09-10]</remarks>
+    /// <remarks>Without this flag a degraded read arrives as the same <c>source = "raw"</c>
+    /// as a healthy unattached one, and its numbers are displayed as world coordinates,
+    /// saved into a marker that passes the map guard, and later driven back into the pawn
+    /// as a world-space destination. [POSEATTACH-2026-09-10]</remarks>
     public bool ParentRelative { get; init; }
 
     /// <summary>The reply CARRIED <c>parent_relative</c> at all, true or false. The save reply has no <c>source</c>
-    /// key, so without this the card could not tell "healthy" from "an older DLL that never says". Review 5 of
-    /// 7490c24e.</summary>
+    /// key, so without this the card could not tell "healthy" from "an older DLL that never says".</summary>
     public bool ParentRelativeKnown { get; init; }
 
     /// <summary>TRUE when a move SUCCEEDED but the post-move pose re-read failed, so
     /// X/Y/Z carry nothing — <b>not</b> a landing at the origin.</summary>
     /// <remarks>The DLL leaves the Pose untouched when the re-read fails, and every
-    /// transport zero-initialises it, so a failed re-read used to be published as exactly
-    /// (0,0,0,0,0,0) and the panel overwrote its live readout with zeros the user could
+    /// transport zero-initialises it, so without this flag a failed re-read reads as exactly
+    /// (0,0,0,0,0,0) and the panel overwrites its live readout with zeros the user could
     /// copy or save as a marker. The move still worked — only the landing is unknown.
     /// [TPREL-ZEROPOSE-2026-09-10]</remarks>
     public bool LandingUnknown { get; init; }
@@ -56,7 +52,7 @@ public sealed class TeleportPose
     /// <summary>TRUE when the reply carried NO <c>map</c> key at all -- <c>teleport_relative</c> has
     /// none, nor does a save whose marker read-back failed. That is "not reported", NOT an empty map
     /// name, and the Teleport panel keeps its last-known map rather than blanking it.</summary>
-    /// <remarks>Blanking it re-flagged every Coordinate Library row as another map's, and let "Add
+    /// <remarks>Blanking it would re-flag every Coordinate Library row as another map's, and let "Add
     /// from fields" persist <c>map = ""</c> to disk. [W2-TPREL-MAP]</remarks>
     public bool MapAbsent { get; init; }
 

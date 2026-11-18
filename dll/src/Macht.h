@@ -122,8 +122,8 @@ uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);
 size_t GetModuleSize(const wchar_t* moduleName = nullptr);
 
 // True when `addr` points into a committed, executable page of a mapped module
-// image (MEM_IMAGE + PAGE_EXECUTE*). Used to validate UFunction::Func candidates
-// during Path-2 offset detection — a native exec thunk lives in a module's
+// image (MEM_IMAGE + PAGE_EXECUTE*). UFunction::Func candidates are validated with
+// it during Path-2 offset detection — a native exec thunk lives in a module's
 // .text, so the correct Func offset holds such a pointer for every native func.
 bool LooksLikeCodePointer(uintptr_t addr);
 
@@ -578,8 +578,7 @@ using StackWalker = WORD (NTAPI*)(DWORD framesToSkip, DWORD framesToCapture, PVO
 // (_AddressOfReturnAddress in the hook). At most `max` (clamped to kStackMaxFrames) go to `out`; `flags` says what
 // happened. `headroom` and `walk` are parameters for the tests; the hook goes through CaptureCallerStack.
 // The cost is per walked frame -- a .pdata search and an unwind in each frame's image -- and the walk always takes our
-// own frames too: measured 2026-10-08 at about 0.75 us a frame on DumperTest58 Shipping (14 us at depth 4, 22 us at
-// 16) and about a seventh of that on Avowed, on the same PC (docs/live-funcs-step3-items.md, "8.0 Results").
+// own frames too (the cost figures: docs/live-funcs-step3-items.md, "8.0 Results").
 uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
                               StackWalker walk);
 uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);

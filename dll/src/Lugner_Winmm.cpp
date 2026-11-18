@@ -237,18 +237,16 @@ static const char* const kWinmmExports[kWinmmExportCount] = {
 
 // Populate mProcs from the real System32 winmm.dll, once, on the FIRST forwarded call.
 //
-// NO LOCK, deliberately (audit #4 B43). This used to hold an EXCLUSIVE SRWLOCK across
-// LoadLibraryW AND a Sein log write. LoadLibraryW takes the loader lock, so a thunk
-// reached from a foreign DllMain -- which already holds it -- inverts the lock order
-// against any thread that took ours first. The dxgi original's safety argument was
-// explicitly CONDITIONAL on RHI init being the only entry point; this generator was
-// emitting that conclusion as a constant for every DLL, and it does not transfer --
-// winmm's timeGetTime family is callable from any thread at any time.
+// NO LOCK, deliberately. LoadLibraryW takes the loader lock, so a lock of ours held
+// across it (or across a Sein log write) inverts the lock order when a thunk is
+// reached from a foreign DllMain -- which already holds the loader lock -- against any
+// thread that took ours first. No "single entry point" argument rescues it: winmm's
+// timeGetTime family is callable from any thread at any time.
 //
 // A lock is not needed for correctness. mProcs[] entries are pointer-sized and
 // aligned, so a store cannot tear; two racing resolvers write IDENTICAL values (the
 // same GetProcAddress results from the same module), so the work is idempotent and
-// the worst case is doing it twice. What the lock DID buy -- nobody observes a
+// the worst case is doing it twice. What a lock would buy -- nobody observes a
 // half-populated table -- is preserved by the thunk itself, which tests its own slot
 // and calls back here while it is still null.
 //
@@ -271,9 +269,9 @@ extern "C" void WinmmProxy_EnsureResolved()
     // SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below can re-enter this function on this
     // very thread: on a game carrying a Windows AppCompat layer the loader raises
     // apphelp!SE_DllLoaded for the module being loaded, AcGenral resolves the proxied name
-    // back to US and calls our thunk again. Measured on OCTOPATH TRAVELER through the dxgi
-    // twin, where an SRWLOCK held across LoadLibraryW self-deadlocked (SRWLOCK is
-    // NON-RECURSIVE) and the loader lock was never released. See Lugner::ResolveReentry.
+    // back to US and calls our thunk again. An SRWLOCK held across LoadLibraryW would
+    // self-deadlock here (SRWLOCK is NON-RECURSIVE) and never release the loader lock.
+    // See Lugner::ResolveReentry.
     Lugner::ResolveReentry guard;
     if (guard.reentered) return;
 
@@ -283,12 +281,12 @@ extern "C" void WinmmProxy_EnsureResolved()
     // returns with the table populated. LoadLibraryW is refcounted; a duplicate is cheap.
 
     wchar_t realPath[MAX_PATH] = {};
-    // false => refuse. The old code discarded GetSystemDirectoryW's return and formatted
-    // an empty buffer into a drive-root-relative `\winmm.dll`. Refusing leaves mProcs
-    // null, which the logging below already reports as 0/N resolved. (AD18)
+    // false => refuse rather than load a drive-root-relative `\winmm.dll` (see
+    // Lugner::SystemDllPath). Refusing leaves mProcs null, which the logging below
+    // already reports as 0/N resolved.
     HMODULE real = Lugner::SystemDllPath(L"winmm.dll", realPath, MAX_PATH)
                  ? LoadLibraryW(realPath) : nullptr;
-    // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
+    // Captured AT the failure, before GetProcAddress/logging clobber it.
     const DWORD loadErr = real ? 0 : GetLastError();
     int resolved = 0;
     if (real) {

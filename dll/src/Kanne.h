@@ -4,14 +4,13 @@
 // sampling thread hands each sample to the connection that asked without either touching the
 // other -- the flow from game memory to the pipe, carried in a can.
 //
-// The watch thread used to write its own events to its connection's pipe. The pipes are
-// synchronous, and a synchronous handle lets one I/O through at a time, so that WriteFile waited
-// behind the owner's parked ReadFile -- holding the connection's write lock -- and every join of
-// the thread (an unwatch, a replace, the connection's teardown, Stop) waited with it for as long
-// as the owner sent nothing; an interval of minutes made the join wait minutes more. Now the
-// thread only reads memory and leaves the latest sample here, and the owner's own handler thread
-// sends it after each command, so each handle is touched by one thread and a join is bounded by
-// one interval wake plus one read of at most 64 KB.
+// The watch thread only reads memory and leaves the latest sample here; the owner's own handler
+// thread sends it after each command. The pipes are synchronous, and a synchronous handle lets one
+// I/O through at a time, so a WriteFile from the watch thread would wait behind the owner's parked
+// ReadFile -- holding the connection's write lock -- and every join of the thread (an unwatch, a
+// replace, the connection's teardown, Stop) would wait with it for as long as the owner sent
+// nothing. With each handle touched by one thread, a join is bounded by one interval wake plus one
+// read of at most 64 KB.
 //
 // Header-only and std-only, so dll_helpers_test exercises it; Fern.cpp, which uses it, is
 // compiled by no test target.

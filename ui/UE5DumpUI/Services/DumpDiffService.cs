@@ -212,8 +212,8 @@ public static class DumpDiffService
         a.ReturnType != b.ReturnType || a.NumParms != b.NumParms || a.ParmsSize != b.ParmsSize
         || a.Flags != b.Flags || ParamsDiffer(a, b);
 
-    /// <summary>Only when both sides carry parameters (Dump All from build 3622): an older file has none, and that is
-    /// not a change.</summary>
+    /// <summary>Only when both sides carry parameters: a file written without them has none, and that is not a
+    /// change.</summary>
     internal static bool ParamsDiffer(DumpDiffFunc? a, DumpDiffFunc? b)
     {
         if (a?.Params is not { } pa || b?.Params is not { } pb) return false;

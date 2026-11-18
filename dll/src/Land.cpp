@@ -115,7 +115,7 @@ int IndexOf(const std::vector<HMODULE>& copies, HMODULE h) {
 }
 
 // A copy loaded after this one that has started serves this process: this copy takes over from nothing then. It runs
-// beside that copy, as two copies did before Land, until that copy's own pass or a later one decides.
+// beside that copy until that copy's own pass or a later one decides.
 bool LaterCopyStarted(const std::vector<HMODULE>& copies, int own, HMODULE& which) {
     for (int i = own + 1; i < static_cast<int>(copies.size()); ++i) {
         Mimic::MailboxData* box = nullptr;
@@ -130,8 +130,8 @@ bool LaterCopyStarted(const std::vector<HMODULE>& copies, int own, HMODULE& whic
 void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract, bool forwards) {
     if (!box) return;
     // A copy that cannot forward was started again on its own between its shutdown and here (CE's UE5_AutoStart reached
-    // it; its shutdown left IDLE): it polls this mailbox itself now, and a second poller would run every command twice
-    // (review R2-OLD-COPY-DOUBLE-SERVE). It runs beside this copy, as before Land.
+    // it; its shutdown left IDLE): it polls this mailbox itself now, and a second poller would run every command twice.
+    // It runs beside this copy.
     if (!forwards) {
         int32_t now = Mimic::INIT_IDLE;
         if (Macht::ReadSafe(reinterpret_cast<uintptr_t>(&box->initState), now) && now != Mimic::INIT_IDLE) {
@@ -182,7 +182,7 @@ enum class HiddenAsk { Done, NotYet, Left };
 // [SEETHRU-HANDOFF-LEFTOVER] The actors the earlier copy's See-through left hidden become this copy's: that copy can
 // never run another un-hide. Under the start lock BeginYield takes, and only while this copy is not being taken over: a
 // copy that hands over never serves its record again, so the actors stay with the earlier copy for the copy taking over
-// to ask (review wf_bbd1bbfe-20d D7-1). Bounded, so a copy that kept answering could not hold the hand-off.
+// to ask. Bounded, so a copy that keeps answering cannot hold the hand-off.
 HiddenAsk AdoptHiddenActors(FARPROC handOver) {
     if (!handOver) return HiddenAsk::Done;
     std::vector<uint64_t> batch(static_cast<size_t>(Grimoire::LAND_HIDDEN_BATCH));
@@ -211,7 +211,7 @@ HiddenAsk AdoptHiddenActors(FARPROC handOver) {
 }
 
 // After "yielded" the earlier copy answers at once. After "already handing over" it is still handing over -- to a copy
-// this one took over or is taking over -- so it is asked again until it has, bounded (review wf_bbd1bbfe-20d D7-1).
+// this one took over or is taking over -- so it is asked again until it has, bounded.
 void PollHiddenActors(FARPROC handOver) {
     const ULONGLONG t0 = GetTickCount64();
     while (AdoptHiddenActors(handOver) == HiddenAsk::NotYet) {

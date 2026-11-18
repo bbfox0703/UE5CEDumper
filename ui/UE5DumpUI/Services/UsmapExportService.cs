@@ -7,29 +7,28 @@ namespace UE5DumpUI.Services;
 /// Generates USMAP binary mapping files compatible with FModel/CUE4Parse.
 /// Format: USMAP v4 (ExplicitEnumValues), uncompressed.
 ///
-/// <para><b>The declared version and the emitted layout must agree.</b> This writer used to stamp
-/// version 3 and emit the version-0 body: no <c>bHasVersionInfo</c>, a <c>uint8</c> enum member
-/// count, and a 2-byte ArrayDim. Each of those desynchronises the stream, and the first does it
-/// before a single name is read, so no consumer could ever open the output (audit #5 W1). The
-/// layout below is checked byte for byte against the two canonical writers vendored in this repo:
+/// <para><b>The declared version and the emitted layout must agree.</b> A v4 reader desynchronises on
+/// a body without <c>bHasVersionInfo</c>, with a <c>uint8</c> enum member count or with a 2-byte
+/// ArrayDim, and the first does it before a single name is read. The layout below is checked byte
+/// for byte against the two canonical writers vendored in this repo:
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
-/// <para>Two places used to differ, and both are fixed.
-/// (1) FIXED: both canonical writers write an enum's REAL underlying property, and so does this one now, from the
-/// walker's enum_underlying. Only when that is missing (an older DLL, a read that did not validate) or its width
+/// <para>Two places where this writer follows them.
+/// (1) An enum's REAL underlying property, as both canonical writers write it, from the walker's
+/// enum_underlying. Only when that is missing (an older DLL, a read that did not validate) or its width
 /// disagrees with the enum's size does it fall back to the size (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the
 /// width a consumer deserializes but not its signedness. [A4-USMAP-ENUM-UNDERLYING] [USMAP-ENUM-SIGNEDNESS]
-/// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
+/// (2) A container's TEnumAsByte inner (Array / Optional, Set, Map key and value) takes the canonical
 /// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
 /// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
-/// <para>(3) Where the two writers now DIFFER, and which one this follows. A top-level EnumProperty whose UEnum did
+/// <para>(3) Where the two writers DIFFER, and which one this follows. A top-level EnumProperty whose UEnum did
 /// not read (no EnumName, no enum_underlying) is written [26][size-derived int]["None"], as Dumper-7 writes it;
 /// RE-UE4SS (since 23e089e4, 2026-10) writes the bare integer instead. Both read in step: what a consumer needs at
 /// the top level is the integer's width. A CONTAINER's enum inner stays [26][Byte][name-or-None] on purpose, although
-/// RE-UE4SS's substitution now reaches inners too: UE saves a container's enum element BY NAME
+/// RE-UE4SS's substitution reaches inners too: UE saves a container's enum element BY NAME
 /// (FEnumProperty::SerializeItem writes an FName, NAME_None when the enum is null; an array of enums is never
-/// bulk-serialized), so an integer there would misalign the reader. Point (1)'s "so does this one now" is about the
+/// bulk-serialized), so an integer there would misalign the reader. Point (1) is about the
 /// top level; an inner's underlying stays Byte (arm 2 below). Do not align either case to RE-UE4SS. [VND9-DOC]</para>
 /// </summary>
 public static class UsmapExportService
@@ -149,21 +148,16 @@ public static class UsmapExportService
 
             foreach (var obj in page.Objects)
             {
-                // Mirrors the DLL-side `Aura::IsClassLikeMeta` whitelist (Class + the
-                // BPGC variants + DynamicClass), exactly as SdkExportService and
-                // DumpAllService already do. A bare `ClassName == "Class"` check
-                // silently dropped every BlueprintGeneratedClass /
-                // AnimBlueprintGeneratedClass / WidgetBlueprintGeneratedClass /
-                // DynamicClass — thousands of structs on a normal shipped title
-                // against a few hundred native ones, and the Blueprint classes are
-                // precisely the ones a .usmap consumer needs to parse saved games and
-                // network traffic. Same bug fixed in the DLL at build 673 and in the
-                // SDK exporter at build 1986; this was the last unfixed mirror
-                // (audit #5 W8). It drifted once more: the SDK exporter learned
-                // UserDefinedStruct -- a Blueprint struct type, whose schema a .usmap must carry
-                // like any other (Dumper-7's writer includes every UStruct that is not a function)
-                // -- and to skip class-default objects, which this collector wrote as empty
-                // `Default__*` structs. Both now share one predicate. [USMAP-UDS-MISSING]
+                // The whole-pool exports' one predicate, which mirrors the DLL-side
+                // `Aura::IsClassLikeMeta` whitelist. A bare `ClassName == "Class"` check
+                // would drop every Blueprint-generated class and DynamicClass — thousands
+                // of structs on a normal shipped title against a few hundred native ones,
+                // and the Blueprint classes are precisely the ones a .usmap consumer needs
+                // to parse saved games and network traffic. It also admits
+                // UserDefinedStruct -- a Blueprint struct type, whose schema a .usmap must
+                // carry like any other (Dumper-7's writer includes every UStruct that is not
+                // a function) -- and skips class-default objects, which would be written as
+                // empty `Default__*` structs. [USMAP-UDS-MISSING]
                 if (DumpAllService.IsExportedTypeRow(obj.ClassName, obj.Name))
                     structTargets.Add((obj.Address, obj.Name));
             }
@@ -236,8 +230,8 @@ public static class UsmapExportService
 
         // Every name the write pass can reference must exist BEFORE the table is serialised --
         // its length prefix is written once, up front. "None" is the fallback for an unresolved
-        // struct/enum reference and used to be added mid-write, landing at an index past the end
-        // of the table the file had already declared (audit #5 W7).
+        // struct/enum reference; added mid-write it would land at an index past the end of the
+        // table the file had already declared.
         nameTable.GetOrAdd(NoneName);
 
         // Build the payload (name table + enums + structs)
@@ -289,8 +283,8 @@ public static class UsmapExportService
         {
             w.Write(nameTable.IndexOf(e.Name));             // int32: name index
 
-            // uint16 count (LargeEnums). The old uint8 both desynced the stream and silently
-            // truncated any enum past 255 members.
+            // uint16 count (LargeEnums). A uint8 would both desync the stream and silently
+            // truncate any enum past 255 members.
             var count = (ushort)Math.Min(e.Entries.Count, ushort.MaxValue);
             w.Write(count);                                 // uint16: member count
             for (int i = 0; i < count; i++)
@@ -305,14 +299,11 @@ public static class UsmapExportService
     /// [USMAP-ENUM-NAME-QUALIFIED] An enumerator as a consumer expects it: BARE, not
     /// <c>EnumName::Member</c>.
     ///
-    /// <para>UE stores an <c>enum class</c>'s entries fully qualified, and this writer passed them
-    /// through, so a consumer that qualifies them AGAIN printed the name twice —
+    /// <para>UE stores an <c>enum class</c>'s entries fully qualified, and a consumer qualifies them
+    /// AGAIN, so a passed-through entry prints the name twice —
     /// <c>"EAngularDriveMode::EAngularDriveMode::TwistAndSwing"</c> where the canonical writer gives
     /// <c>"EAngularDriveMode::TwistAndSwing"</c>. Same VALUE, but nobody string-matching an enum in
-    /// a CE script, a diff or a search would find it. Measured on the DumperTest 5.4 fixture
-    /// 2026-09-17: <b>7,399 of 9,294</b> members carried the prefix, against <b>0 of 9,294</b> in
-    /// Dumper-7's export of the same game, and it accounted for all 331 of the exports whose
-    /// readings still differed after <c>[USMAP-INHERITED-DUPES]</c> was fixed.</para>
+    /// a CE script, a diff or a search would find it.</para>
     ///
     /// <para>⚠ The prefix is stripped ONLY when it is this enum's own name. A plain (unscoped)
     /// <c>enum</c> already arrives bare — <c>EBlendMode</c>'s entries are <c>BLEND_Opaque</c> in
@@ -373,12 +364,12 @@ public static class UsmapExportService
             // ties break on the field mask. Same ordering the SDK emitter already uses.
             var ordered = ci.Fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolFieldMask).ToList();
 
-            // [USMAP-INHERITED-DUPES] The DLL prepends the ENTIRE SuperStruct chain, and this
-            // writer used to emit all of it AND the super pointer -- so every child repeated its
-            // ancestry and every own-property schema index was shifted by the size of it. A
-            // consumer decodes an unversioned cooked object BY SCHEMA INDEX over the chain, so it
-            // then landed on a different property. Core/PropertyOwnership holds the boundary rule,
-            // shared with the SDK header emitter so there is one copy of it.
+            // [USMAP-INHERITED-DUPES] The DLL prepends the ENTIRE SuperStruct chain; emitting all of
+            // it AND the super pointer would repeat every child's ancestry and shift every
+            // own-property schema index by the size of it. A consumer decodes an unversioned cooked
+            // object BY SCHEMA INDEX over the chain, so it would land on a different property.
+            // Core/PropertyOwnership holds the boundary rule, shared with the SDK header emitter so
+            // there is one copy of it.
             var fields = ordered;
             if (superReachable)
             {

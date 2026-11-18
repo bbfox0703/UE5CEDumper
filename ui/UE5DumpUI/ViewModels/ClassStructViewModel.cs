@@ -133,14 +133,14 @@ public partial class ClassStructViewModel : ViewModelBase
     /// <c>ClassPivotViewModel._classLoadId</c>; plain <c>++</c> like all three,
     /// because every entry point is reached on the UI thread.
     ///
-    /// Why it is needed here, which is NOT guessable from the code (audit #5 AE2):
+    /// Why it is needed here, which is NOT guessable from the code:
     /// nothing upstream serializes this handler. <c>ObjectTreeViewModel</c> raises
     /// <c>SelectionChanged</c> as a bare <c>Action</c>, so MainWindowViewModel's
     /// <c>async</c> subscriber returns to the message loop at its first await and
     /// the next selection runs straight into <see cref="OnObjectSelected"/>.
     /// <c>AsyncRelayCommand</c> is no help either: <c>CanExecute</c> goes false
     /// while running (so a bound Button self-disables) but <c>ExecuteAsync</c>
-    /// runs anyway — measured build 3038, see <c>ProxyDeployConcurrencyTests</c>.
+    /// runs anyway — see <c>ProxyDeployConcurrencyTests</c>.
     ///
     /// The losing pair is specifically **instance-then-class-like**, and it loses
     /// by ORDERING rather than by timing: the two branches of
@@ -356,7 +356,7 @@ public partial class ClassStructViewModel : ViewModelBase
     /// same address. The key is claimed BEFORE the load, so a duplicate that
     /// arrives while the first walk is still in flight is caught too — and it
     /// is RELEASED by any path that ends up showing nothing new, so a failed
-    /// load can always be retried by re-selecting the same node (audit #5 AE3).
+    /// load can always be retried by re-selecting the same node.
     ///
     /// The <c>node == null</c> early return deliberately does NOT supersede an
     /// in-flight load. Contrast <c>InstanceFinderViewModel</c>, which does bump
@@ -367,14 +367,11 @@ public partial class ClassStructViewModel : ViewModelBase
     public async Task OnObjectSelected(UObjectNode? node)
     {
         if (node == null) return;
-        // Dedupe. `&& HasClass` used to be here; it was dropped with AE3, because
-        // its only job was keeping a COLD-start failure retryable and the key is
-        // now released on every failure instead. Keeping it preserved two defects:
-        // HasClass is assigned in exactly one place in all of ui/ and never reset,
-        // so after the first success it is permanently true and armed the pin; and
-        // while the FIRST walk is still in flight it is still false, so a
-        // node -> null -> node re-fire fell through and issued a second walk for
-        // the same class, whose earlier-finishing load then retired the spinner.
+        // Dedupe on the claimed key alone, never `&& HasClass`: the key is released
+        // on every failure, so a COLD-start failure stays retryable without it. And
+        // while the FIRST walk is still in flight HasClass is still false, so a
+        // node -> null -> node re-fire would fall through and issue a second walk for
+        // the same class, whose earlier-finishing load then retires the spinner.
         if (_shownNodeAddress == node.Address) return;
 
         // Claim the panel for THIS gesture, before any await. See _loadId — doing

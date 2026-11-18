@@ -345,8 +345,8 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
         catch (UnauthorizedAccessException denied)
             when (PipeTargets.ClassifyRefusal(denied, _platform.IsElevated()) == PipeDialRefusal.GameElevated)
         {
-            // Measured 2026-11-11: a game running as administrator creates its pipe owned by Administrators, and UAC
-            // refuses it to a non-elevated client. Listing the pipe needs no access, so the game still shows in
+            // A game running as administrator creates its pipe owned by Administrators, and UAC refuses it to a
+            // non-elevated client. Listing the pipe needs no access, so the game still shows in
             // read_games.
             throw new McpToolError($"Windows refused the connection to game {target}: the game runs as administrator "
                                    + "(elevated) and this server does not. Start the AI client elevated, or start the "

@@ -82,12 +82,12 @@ static fs::path GetCacheFilePath() {
 /// Get current UTC timestamp in ISO 8601 format.
 // Temp path for the write-then-rename. PER-PROCESS, and that is the whole point:
 // the four writers here and AobUsageService.SaveFileAsync on the C# side all target the
-// SAME cache file, from DIFFERENT processes, and used to build the byte-identical
-// "<file>.tmp". Each opens it with truncate. So the game's DLL could truncate the temp
-// file while the UI was mid-write, and whichever renamed last published a half-written
-// document over the real cache — losing, among other things, the user's
-// ueVersionUserOverride. The final rename is still last-writer-wins (that is the
-// existing, accepted semantics); what must not be shared is the staging file. (B39)
+// SAME cache file, from DIFFERENT processes, and each opens its temp file with truncate.
+// A shared "<file>.tmp" would let the game's DLL truncate it while the UI is mid-write,
+// and whichever renamed last would publish a half-written document over the real cache
+// — losing, among other things, the user's ueVersionUserOverride. The final rename is
+// still last-writer-wins (the accepted semantics); what must not be shared is the
+// staging file.
 static fs::path MakeTempPath(const fs::path& path) {
     auto tmp = path;
     tmp += L".tmp." + std::to_wstring(GetCurrentProcessId());

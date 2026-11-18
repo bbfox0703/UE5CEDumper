@@ -37,7 +37,7 @@ public enum PipeDialRefusal
 /// [PIPE-PER-PROCESS-2026-11-06] The pipe name per game process, \\.\pipe\UE5DumpBfx_&lt;pid&gt;, and what Connect
 /// makes of the names it finds. Pure: the listing itself comes from <see cref="IPlatformService.ListNamedPipes"/>.
 /// <para>A listed name is always a live server: a pipe leaves \\.\pipe\ the moment its server process dies, a killed
-/// one included (measured 2026-11-06). So a pid read from a name is a running game, never a stale entry.</para>
+/// one included. So a pid read from a name is a running game, never a stale entry.</para>
 /// </summary>
 public static class PipeTargets
 {

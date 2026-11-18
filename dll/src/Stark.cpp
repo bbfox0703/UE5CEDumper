@@ -236,13 +236,9 @@ struct OwnPeCallGuard {
 // Everything OUR hook does before handing control to the game's ProcessEvent. Split out
 // so the whole body sits inside one guard: this function is entered from GAME CODE on the
 // GAME'S OWN THREAD, so an exception escaping it unwinds into a frame that has no handler
-// for us and the process fast-fails (0xC0000409, FAST_FAIL_FATAL_APP_EXIT).
-//
-// That is not hypothetical — it is the DQ7R crash of 2026-08-04 (build 2622), captured in
-// a WER dump whose entire stack was inside our module. It allocates where it is reachable
-// while the game is tearing its object pool down: Linie's map insert, and (before D2-3 took
-// one request at a time) the drain's batch vector. Zero cost on x64 when nothing throws
-// (table-driven EH). (B14, scope corrected by in-game verification.)
+// for us and the process fast-fails (0xC0000409, FAST_FAIL_FATAL_APP_EXIT). It allocates
+// where it is reachable while the game is tearing its object pool down: Linie's map insert.
+// Zero cost on x64 when nothing throws (table-driven EH). (B14)
 static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint, bool onGameThread) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
@@ -1152,8 +1148,8 @@ int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
 
 // [A3-ST1-SUPER-DRAIN] A class's own ProcessEvent override, called under the same "inside our own PE
 // call" mark. The override is not the end of the call: AActor::ProcessEvent calls Super::ProcessEvent,
-// which IS the address MinHook patched, so an unmarked call re-entered our detour off the game thread
-// and its drain ran every queued request there.
+// which IS the address MinHook patched, so an unmarked call would re-enter our detour off the game thread
+// and its drain would run every queued request there.
 int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     // The guard in THIS (outer) frame, the __try in CallAddressSEH's (MSVC C2712), as CallOriginalSEH.
     OwnPeCallGuard guard;
@@ -1171,11 +1167,9 @@ uint64_t MsSinceLastHookFire() {
     return (now > last) ? (now - last) : 0;
 }
 
-// One decision, one place. The branches used to live here and the report used to be
-// `!IsGameThreadResponsive()`, which collapsed "measured responsive" and "no hook, so
-// cannot tell" into the same wire value. The classifier is pure and lives in Stark.h
-// so every branch is unit-testable; this reads the atomics and hands them over.
-// (STALLDEFAULT-2026-08-26)
+// One decision, one place, keeping "measured responsive" apart from "no hook, so cannot
+// tell". The classifier is pure and lives in Stark.h so every branch is unit-testable;
+// this reads the atomics and hands them over. (STALLDEFAULT-2026-08-26)
 GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs) {
     const uint64_t thr = (uint64_t)(thresholdMs > 0 ? thresholdMs : kStallThresholdMs);
     // NowMs() into a local: C++ leaves argument evaluation order unspecified, and the
@@ -1190,7 +1184,7 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs) {
 }
 
 bool IsGameThreadResponsive(int32_t thresholdMs) {
-    // Contract UNCHANGED: unknown counts as responsive, because the caller's invoke
+    // Contract: unknown counts as responsive, because the caller's invoke
     // is what lazily installs the hook. See IsResponsiveFromLiveness in Stark.h.
     return IsResponsiveFromLiveness(GetGameThreadLiveness(thresholdMs));
 }

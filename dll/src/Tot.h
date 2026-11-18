@@ -178,9 +178,8 @@ inline bool Requested() {
         return g_shutdown.load(std::memory_order_relaxed);
     // Bound to a connection: consult ONLY that connection's flag. This is the whole
     // point -- a FOREIGN client's death must not truncate this client's scan
-    // ([MULTIPIPE-CANCEL-2026-09-07], measured: 5,157 replies of 77 bytes where 720,793
-    // were due). Note it does NOT also OR in g_perCommand: doing so would leave the
-    // defect exactly as it was.
+    // ([MULTIPIPE-CANCEL-2026-09-07]). It does NOT also OR in g_perCommand: that flag
+    // is process-wide, raised by any client's mid-command disconnect.
     if (t_connCancel)
         return t_connCancel->load(std::memory_order_relaxed)
             || g_shutdown.load(std::memory_order_relaxed);
@@ -196,16 +195,14 @@ inline bool ShutdownRequested() { return g_shutdown.load(std::memory_order_relax
 // Is the per-command cancel still OWED, i.e. is at least one of the connections
 // that raised it still registered?
 //
-// The latch used to clear only when a fresh session connected into an EMPTY
-// registry ("firstConn"). That was right when there was one connection; with the
-// two-lane split it is not (audit #5 F2): if the bulk lane drops mid-scan while
-// the light lane stays up, the registry is never empty, firstConn never fires,
-// and the latch stays set FOREVER -- so every subsequent scan on the surviving
-// lane aborts instantly, for the life of the process.
+// Ownership is the question, not emptiness. With two lanes per client the bulk lane
+// can drop mid-scan while the light lane stays up: the registry is then never empty,
+// so a latch cleared only by a session connecting into an EMPTY registry would stay
+// set for the life of the process, and every later scan on the surviving lane would
+// abort instantly.
 //
-// Ownership is the right question, not emptiness. Pure and header-inline so the
-// decision is unit-tested rather than inferred from Fern's threading; Fern
-// supplies both lists and holds no policy.
+// Pure and header-inline so the decision is unit-tested rather than inferred from
+// Fern's threading; Fern supplies both lists and holds no policy.
 //
 // It must NOT clear early: an orphaned scan has to keep seeing the cancel until
 // it unwinds. That holds because a connection is erased from the live list

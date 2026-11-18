@@ -6,8 +6,8 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// Turns the UE property names of one struct into the C++ member names its SDK header declares.
 ///
-/// <para>A UE name is not a C++ identifier, and the header used to emit it verbatim. Each of these
-/// was measured against <c>cl.exe</c> (<c>tools/verify/compile_sdk_header.py</c>) and rejected: a
+/// <para>A UE name is not a C++ identifier. Emitted verbatim, each of these is rejected by
+/// <c>cl.exe</c> (<c>tools/verify/compile_sdk_header.py</c> compiles a header to check): a
 /// keyword (<c>class</c> C2236, <c>default</c> C2321), a second member with the same name (C2086), a
 /// Blueprint variable that kept the space it was typed with (C3646), a member that takes a generated
 /// <c>Pad_XXXX</c> name (C2040), and a member named after a type the same struct spells bare

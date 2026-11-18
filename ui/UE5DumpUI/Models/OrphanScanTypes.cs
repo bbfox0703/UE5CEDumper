@@ -148,9 +148,8 @@ public delegate DirSnapshot? DirProbe(string path);
 public delegate FileOwnership OwnedFileProbe(string fullPath);
 
 /// <summary>Does the volume holding this path have a working Recycle Bin? Asked at SCAN time so a
-/// row can be refused before the confirm dialog promises a recycle the volume cannot perform —
-/// the question used to be asked first inside the delete call, and as a drive-LETTER test rather
-/// than a recycler test. (B13/B41)</summary>
+/// row can be refused before the confirm dialog promises a recycle the volume cannot perform. It is
+/// a recycler test, not a drive-LETTER test.</summary>
 public delegate bool RecyclerProbe(string path);
 
 /// <summary>
@@ -183,12 +182,12 @@ public readonly record struct OrphanScanProgress(string CurrentPath, int Examine
 /// <param name="Cancelled">
 /// The pass was interrupted part-way through THIS row. [ORPHANCANCEL-2026-08-20]
 ///
-/// <para>Cancellation used to escape as an <see cref="System.OperationCanceledException"/> from
-/// inside the row, which threw away everything the row had already done: a run that recycled three
-/// files reported two, the interrupted row stayed ticked and still advertised "Recycle version.dll,
-/// then remove up to 4 folder(s)" for a DLL that was already in the Recycle Bin, and the
-/// half-pruned folder chain it left behind was invisible. Returning the partial counts instead of
-/// throwing them away is what lets the caller report what actually happened.</para>
+/// <para>Cancellation does not escape as an <see cref="System.OperationCanceledException"/> from
+/// inside the row, which would throw away everything the row had already done: a run that recycled
+/// three files would report two, the interrupted row would stay ticked and still advertise a recycle
+/// for a DLL already in the Recycle Bin, and the half-pruned folder chain it left behind would be
+/// invisible. Returning the partial counts is what lets the caller report what actually
+/// happened.</para>
 ///
 /// <para>⚠ <see cref="Success"/> stays <c>false</c> when this is set. An interrupted row is not a
 /// completed one — it must not be dropped from the list, because the chain it half-pruned is

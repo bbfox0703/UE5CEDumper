@@ -7,25 +7,22 @@ namespace UE5DumpUI.Core;
 /// <para>
 /// <b>Why this type exists.</b> The stride of a <c>TSparseArray&lt;TSetElement&lt;T&gt;&gt;</c> slot is
 /// <c>Align(Align(sizeof(T), alignof(T)) + 8, alignof(T))</c>. The alignments are engine-side facts
-/// that never cross the wire, so a client cannot derive the stride — it can only guess. Three
-/// independent copies of that guess used to live in this codebase
-/// (<c>LiveWalkerViewModel</c>, <c>CeXmlExportService</c>, <c>CsxExportService</c>), each carrying a
-/// comment claiming it mirrored the DLL. When the DLL's own formula was corrected to take
-/// <c>elemAlign</c>, all three silently went stale and every map element address the UI computed
-/// itself fell 4+ bytes short past index 0 (audit #5 finding V2).
+/// that never cross the wire, so a client cannot derive the stride — it can only guess, and a
+/// guess goes stale silently whenever the DLL's formula changes: every map element address the UI
+/// computes itself is then wrong past index 0.
 /// </para>
 /// <para>
-/// The fix is not a fourth copy of the arithmetic: the DLL now publishes the stride it actually
-/// used to read the elements (<c>map_stride</c> / <c>set_stride</c>), and everything here prefers
-/// that number. By construction the UI and the DLL can no longer disagree about where an element is.
+/// So the client keeps no copy of the arithmetic: the DLL publishes the stride it read the
+/// elements with (<c>map_stride</c> / <c>set_stride</c>), and everything here prefers that number.
+/// By construction the UI and the DLL cannot disagree about where an element is.
 /// </para>
 /// </summary>
 public static class ContainerGeometry
 {
     /// <summary>
-    /// The legacy client-side approximation, kept ONLY as a fallback for fields that carry no
-    /// DLL-supplied stride (a pre-<c>map_stride</c> DLL, or a field reconstructed offline where no
-    /// walk ever ran).
+    /// The client-side approximation, ONLY a fallback for fields that carry no DLL-supplied
+    /// stride (a DLL that does not send <c>map_stride</c>, or a field reconstructed offline where
+    /// no walk ever ran).
     /// <para>
     /// ⚠ This is <b>correct only when alignof(T) &lt;= 4</b>. It drops the trailing padding of an
     /// 8-aligned element: for a pair of size 12 containing a pointer it yields 20 where the engine

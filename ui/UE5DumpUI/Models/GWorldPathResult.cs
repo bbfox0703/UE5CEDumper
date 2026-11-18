@@ -27,7 +27,7 @@ public sealed class GWorldPathStep
     public int ElementIndex { get; init; } = -1;
 
     /// <summary>Element stride in the container's Data buffer (Map pairStride / Set stride /
-    /// interface-array 16-byte slot), used to split a container element hop into container +
+    /// interface-array 16-byte slot), which splits a container element hop into container +
     /// element CE derefs. 0 = not carried (object/class arrays use the implicit 8-byte pointer
     /// stride, hardcoded by the UI).</summary>
     public int ElemStride { get; init; }

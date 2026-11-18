@@ -5,14 +5,9 @@ namespace UE5DumpUI.Core;
 ///
 /// <para>
 /// The DLL prepends the <b>entire</b> SuperStruct chain to <c>ClassInfoModel.Fields</c>, so every
-/// exporter that must not re-emit inherited properties needs this boundary. Two of them needed it
-/// and only one had it: the SDK header emitter split correctly (audit #5 W2), while the USMAP
-/// writer emitted the flattened list AND the super pointer, so every child repeated its whole
-/// ancestry and every own-property schema index was shifted by the size of that ancestry
-/// (<c>[USMAP-INHERITED-DUPES]</c>). Measured on the DumperTest 5.4 fixture before the fix: of
-/// 27,543 properties present in both our export and the canonical writer's, the schema index
-/// differed on 12,316 across 2,230 of 7,684 shared classes, and 1,919 of 2,407 cooked exports
-/// (79.7%) parsed differently under our mapping than under Dumper-7's.
+/// exporter that must not re-emit inherited properties needs this boundary. A USMAP that emits
+/// the flattened list AND the super pointer repeats every child's whole ancestry and shifts every
+/// own-property schema index by the size of that ancestry (<c>[USMAP-INHERITED-DUPES]</c>).
 /// </para>
 ///
 /// <para>
@@ -28,7 +23,7 @@ namespace UE5DumpUI.Core;
 /// <para>
 /// ⚠ <b>A negative <c>ownPropsStart</c> must not enter the comparison.</b> It means "no
 /// information" (an older DLL) or "this class declares nothing of its own"; folding <c>-1</c> or
-/// <c>0</c> into a <c>min()</c> re-emits the entire inherited chain, which is audit #5 W2 again.
+/// <c>0</c> into a <c>min()</c> re-emits the entire inherited chain.
 /// </para>
 /// </summary>
 internal static class PropertyOwnership

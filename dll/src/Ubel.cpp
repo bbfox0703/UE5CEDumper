@@ -57,9 +57,9 @@ static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>
 // The key is an address the engine RECYCLES, so every hit is revalidated against the
 // FName bytes the string was decoded from (Ubel::NameWitness — see its comment in
 // Ubel.h for why those bytes, and not an (InternalIndex, SerialNumber) pair). Without
-// that, a level change made every name-bearing response serve the DESTROYED object's
-// name for the rest of the process, while the class was read fresh — so the two
-// disagreed with no error anywhere. (audit #5 U6 + F3's in-session half)
+// that, after a level change every name-bearing response would serve the DESTROYED
+// object's name for the rest of the process, while the class is read fresh — so the two
+// would disagree with no error anywhere. (audit #5 U6 + F3's in-session half)
 struct NameCacheEntry {
     Ubel::NameWitness witness;
     std::string       name;
@@ -86,12 +86,12 @@ static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
 
 // [DYNOFF-LATCH-STALE] CorrectSubclassOffsets' latch: the family epoch at which it last found a struct in the slot,
-// tagged with bit 32 so "never" (0) cannot equal epoch 0. It was a once-per-process bool, so a family published after
-// it -- Genau's measured arm on a later UE5_Init, the defaults a re-run init applies first -- was never checked again,
-// and a derivation one pointer off (TQ2's 0x74, the struct at 0x78) stood for the session. A move bumps the epoch and
-// so re-arms this, and so does the end of an offset validation (DynOff::RetireFamilyEpoch); publishing the same base
-// again is not a move and leaves it set. Stored under DynOff::FamilyWriteLock, which ApplyPropertyFamily's signature
-// demands of a move and RetireFamilyEpoch takes itself, so the epoch it records cannot be overtaken before the store.
+// tagged with bit 32 so "never" (0) cannot equal epoch 0. Keyed on the epoch, not latched once per process, so a family
+// published after it (a later UE5_Init, a re-run init) is checked again and a derivation one pointer off cannot stand
+// for the session. A move bumps the epoch and so re-arms this, and so does the end of an offset validation
+// (DynOff::RetireFamilyEpoch); publishing the same base again is not a move and leaves it set. Stored under
+// DynOff::FamilyWriteLock, which ApplyPropertyFamily's signature demands of a move and RetireFamilyEpoch takes itself,
+// so the epoch it records cannot be overtaken before the store.
 // At namespace scope so dll_core_test, which compiles this file into its own translation unit, can re-arm it.
 static std::atomic<uint64_t> s_subclassCalibratedAt{0};
 static void LatchSubclassCalibration(uint32_t epoch) {
@@ -103,9 +103,9 @@ static bool IsSubclassCalibrated() {
         && static_cast<uint32_t>(v) == DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
 }
 // [FRIEREN-PROBE-OVERRUN] The newest family epoch at which a real UScriptStruct was read out of the slot: proof that
-// DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (TQ2 derived 0x74 from measured offsets and the
-// struct sat at 0x78). Tagged with bit 32 so "never" (0) cannot equal epoch 0; a later family move changes the epoch
-// and so withdraws the proof. The epoch passed is the one loaded BEFORE the slot was read -- ApplyPropertyFamily
+// DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (a derivation from measured offsets can land one
+// pointer off the struct). Tagged with bit 32 so "never" (0) cannot equal epoch 0; a later family move changes the
+// epoch and so withdraws the proof. The epoch passed is the one loaded BEFORE the slot was read -- ApplyPropertyFamily
 // writes the family before it bumps the epoch, so evidence a move overtook is filed under a dead epoch, never under
 // the new one -- and a proof never goes back to an older epoch.
 static std::atomic<uint64_t> s_subclassSlotConfirmed{0};
@@ -138,17 +138,15 @@ static std::string ReadFName(uintptr_t fnameAddr) {
 
 // The same decode, from BYTES already in hand rather than from a live address.
 //
-// Three call sites open-coded this as `memcpy(&idx, p, 4); Serie::GetString(idx)` and
-// all three dropped FName::Number, so Slot_1 / Slot_2 / Slot_3 every rendered as "Slot"
-// — while ReadFNameAt, reading the same 8 bytes through the function above, returned the
-// suffix. The panel and value search disagreed about one field. (audit #5 U8)
+// Use it rather than open-coding `memcpy(&idx, p, 4); Serie::GetString(idx)`, which drops
+// FName::Number: Slot_1 / Slot_2 / Slot_3 would all render as "Slot" while ReadFNameAt,
+// reading the same 8 bytes through the function above, returns the suffix. (audit #5 U8)
 //
 // Number sits at DynOff::FNAME_NUMBER: +4, except on a case-preserving UE4 / 5.0 build, whose
-// FName is {ComparisonIndex, DisplayIndex, Number} and puts it at +8. [VND583-07] This comment
-// said "+4 in EVERY configuration", which is true only from 5.1, where the DisplayIndex moved
-// to the tail (NameTypes.h: origin/4.27 and 5.0.3 vs 5.1.0 and 5.4.0). `size` still gates the
-// Number read, because a caller holding only 4 bytes has no Number to decode and must keep the
-// old behaviour.
+// FName is {ComparisonIndex, DisplayIndex, Number} and puts it at +8. [VND583-07] From 5.1 the
+// DisplayIndex sits at the tail (NameTypes.h: origin/4.27 and 5.0.3 vs 5.1.0 and 5.4.0). `size`
+// gates the Number read, because a caller holding only 4 bytes has no Number to decode: it
+// gets the ComparisonIndex alone.
 static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
     if (!bytes || size < 4) return "";
     int32_t compIndex = 0, number = 0;
@@ -194,10 +192,8 @@ static bool ParseEnumTable(uintptr_t enumAddr, std::vector<std::pair<int64_t, st
             entries.push_back({val, std::move(name)});
         }
         tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
-        // Report what was STORED, not what was intended. This used to print
-        // layout.count unconditionally, so a truncated table logged as a full one —
-        // the report and the reality computed by different code paths (audit #4's
-        // own root cause), which is what hid this defect.
+        // Report what was STORED, not what was intended: a truncated table must not log
+        // as a full one, or the report and the reality are computed by different code paths.
         LOG_DEBUG("ParseEnumTable: UEnum 0x%llX — read %zu of %d entries (%s)%s",
             static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
             fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
@@ -215,12 +211,12 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     if (!enumAddr) return "";
 
     // Lazy init: trigger DetectUEnumNames on first call.
-    // bUEnumNamesFailed prevents retry storm (was causing 25-45 second delays).
+    // bUEnumNamesFailed prevents a retry storm.
     if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         Genau::DetectUEnumNames();
     if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
         return "";  // Detection failed — show raw int values instead
-    // [P1-ENUMNAMES] review 5: a CANCELLED detection sets neither flag. The Names offset and format are then still the
+    // [P1-ENUMNAMES] A CANCELLED detection sets neither flag. The Names offset and format are then still the
     // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this
     // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.
     if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
@@ -259,7 +255,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         // UEnum: values below the break point resolve, values above it render as raw
         // integers — in the Live Walker, the Property Grid and every CE export, for
         // the rest of the process, with no retry. Leaving it uncached costs a re-read
-        // per lookup and lets the next one recover. (audit #5, found while fixing U4)
+        // per lookup and lets the next one recover. (audit #5)
         if (!tableComplete) {
             for (const auto& [v, n] : entries)
                 if (v == value) return n;
@@ -288,18 +284,18 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
     auto it = s_enumCache.find(enumAddr);
     if (it == s_enumCache.end()) {
         // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes
-        // that. The line below claimed "retry pending" here, falsely, once per enum field per walk.
+        // that. The "retry pending" warning below would be false here, once per enum field per walk.
         if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
             return {};
-        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call
+        // [P1-ENUMNAMES] Nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call
         // retries it. Not a truncated table either.
         if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
             return {};
-        // ResolveEnumValue above ran and still published nothing, which since the
-        // truncation fix means exactly one thing: a mid-table read failed, so there
-        // is no trustworthy full list to hand CE. Say so — an empty DropDownList is
-        // otherwise indistinguishable from a member-less UEnum, and unlike the old
-        // behaviour (a silently partial list cached forever) the next call retries.
+        // ResolveEnumValue above ran and still published nothing, which means
+        // exactly one thing: a mid-table read failed (a truncated table is never
+        // cached), so there is no trustworthy full list to hand CE. Say so — an
+        // empty DropDownList is otherwise indistinguishable from a member-less
+        // UEnum — and the next call retries.
         Sein::Warn("WALK:safe",
             "GetEnumEntries: UEnum 0x%llx has no cached table — truncated read, retry pending",
             (unsigned long long)enumAddr);
@@ -499,13 +495,6 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         return assetPath + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
     } else {
         // UE4 / UE5.0: FName AssetPathName
-        //
-        // There used to be a "fallback: try UE5.1+ layout in case version was
-        // misdetected" block here. It could never run: its guard was the exact
-        // negation of the condition that reaches this branch, and it re-read the
-        // same `addr` the line above had already read. Deleted rather than
-        // repaired — a genuinely misdetected 5.1+ game returns above with a
-        // non-None PackageName and never arrives here at all.
         std::string assetPathName = ReadFName(addr);
         if (!assetPathName.empty() && assetPathName != "None")
             return assetPathName + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
@@ -548,8 +537,7 @@ static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
     const bool measured = (elemSize > payloadSize) && (elemSize - payloadSize == envelope);
     if (measured && latched != envelope) {
         // "DYNO" routes to offsets.log (Sein.cpp's category table), which is where a
-        // measured offset belongs and where this fix's verification row will look
-        // for its DLL-side observable.
+        // measured offset belongs.
         Sein::Info("DYNO:PersistPtr",
                    "%s payload envelope measured: +0x%02X "
                    "(ElementSize 0x%X - payload 0x%X, UEver=%u)%s",
@@ -591,7 +579,7 @@ static int LazyGuidOffset(int32_t elemSize) {
 // auto-detected by Utf8Helpers::DecodeFStringBuffer). Used by the FText reader,
 // where it carries a matching length ceiling (num > 8192) plus a Max-window and
 // heap-pointer gate the by-offset ReadFString cannot use (it has no header sibling
-// to corroborate). ReadFString now shares the same 8192-char bound
+// to corroborate). ReadFString shares the same 8192-char bound
 // (Ubel::kMaxFStringChars, audit #5 U10) so a long StrProperty resolves too.
 // Returns "" if `addr` does not hold a plausible, decodable FString.
 // ============================================================
@@ -615,11 +603,11 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
     // Data must also look like a user-space heap pointer, which rejects most
     // non-FString 16-byte regions cheaply.
     //
-    // ⚠ THIS COMMENT USED TO CLAIM the real discriminators were "the null-terminator
-    // position + content check inside DecodeFStringBuffer". Measured false 2026-09-06:
-    // a zero-filled heap page clears both — the terminator is found trivially and the
-    // content check counts only '?' markers. See DecodedLengthMatchesFString in Ubel.h
-    // for what actually discriminates, and why it lives there and not in Utf8Helpers.
+    // ⚠ The null-terminator position and the content check inside DecodeFStringBuffer do
+    // not discriminate either: a zero-filled heap page clears both — the terminator is
+    // found trivially and the content check counts only '?' markers. See
+    // DecodedLengthMatchesFString in Ubel.h for what does discriminate, and why it lives
+    // there and not in Utf8Helpers.
     if (!data || num < 2 || num > 8192) return "";
     if (cap < num || cap > num * 4 + 256) return "";
     if (data < 0x10000 || data >= 0x7FFFFFFFFFFFull) return "";
@@ -769,10 +757,10 @@ void ClearNameCache() {
     // capture / engine re-scan, and from Fern's last-connection teardown / Fern::Stop.
     // swap()-with-empty frees the bucket array too, not just the strings.
     //
-    // Two reasons remain, and STALENESS IS NO LONGER ONE OF THEM: every hit is now
+    // Two reasons to purge, and STALENESS IS NOT ONE OF THEM: every hit is
     // witnessed against the FName bytes it was decoded from, so a recycled address
     // cannot return a destroyed object's name even between purges (audit #5 U6/F3).
-    // What is left is (a) bounding growth — one entry per GObjects slot ever named,
+    // The reasons are (a) bounding growth — one entry per GObjects slot ever named,
     // millions of strings and ~150-200 MB on a 2M-object game — and (b) covering a
     // Serie::Init re-run, the one event that can remap a ComparisonIndex and so make
     // an unchanged witness decode to a different string.
@@ -896,11 +884,10 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     std::string name = ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
     // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY:
     // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object
-    // reference, and which 5.4 folded back into ClassProperty. No consumer knew the name -- DumperTest51's SDK export
-    // wrote 29 such members as raw bytes and its .usmap 30 slots of type Unknown, which an unversioned reader cannot
-    // size. The runtime readers of an FProperty's type name come through here and see the ClassProperty it is; Genau's
-    // discovery-time alignment probe reads the raw name before this module is set up, and lists ClassPtrProperty
-    // itself (review wf_b99fb861-680, INFO).
+    // reference, and which 5.4 folded back into ClassProperty. Under its own name the SDK export would write such
+    // members as raw bytes and the .usmap a slot of type Unknown, which an unversioned reader cannot size. The runtime
+    // readers of an FProperty's type name come through here and see the ClassProperty it is; Genau's discovery-time
+    // alignment probe reads the raw name before this module is set up, and lists ClassPtrProperty itself.
     if (name == "ClassPtrProperty") return "ClassProperty";
     return name;
 }
@@ -927,9 +914,8 @@ static std::string GetPropertyTypeNameForMode(uintptr_t propAddr) {
 
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
 // [A2-STRUCT-PREVIEW-BOOLMASK] [A3-BOOL-NATIVE-NOWRITE] Probe an FBoolProperty's layout bytes on
-// the UE5 FField walk. It never did: only WalkClassEx's enrichment read the mask, so everything that
-// walks a struct with plain WalkClass — the struct previews, the invoke dialog's sub-fields — saw
-// mask 0 and treated every packed bool as its whole byte.
+// the plain UE5 FField walk, not only in WalkClassEx's enrichment: whatever walks a struct with plain
+// WalkClass would otherwise see mask 0 and treat every packed bool as its whole byte.
 static void ProbeBoolLayout(uintptr_t prop, FieldInfo& fi) {
     uint8_t boolBytes[4] = {};
     int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
@@ -1114,8 +1100,7 @@ namespace {
 // [WALKCLASS-MEMO-REUSE] Read from the address, not from the walk: the object's name (the FName's 8 bytes) and Outer,
 // the heads of the two property chains, and the super. A memo entry whose witness no longer reads back describes a
 // class that is gone. The name and Outer carry the identity: a data-only Blueprint adds no property and no function, so
-// two siblings have null chains and one super, and only their names differ (review wf_d3c2ec9a-d52). Unreadable reads
-// stay 0.
+// two siblings have null chains and one super, and only their names differ. Unreadable reads stay 0.
 struct ClassWitness { uint64_t name = 0; uintptr_t outer = 0, childProps = 0, children = 0, super = 0; };
 ClassWitness ReadClassWitness(uintptr_t cls) {
     ClassWitness w;
@@ -1149,8 +1134,7 @@ static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 // [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
 // before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
 // to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
-// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
-// translation unit can set it.
+// filed under the new epoch. Not declared in the header, so nothing outside this translation unit can set it.
 static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
 
 // --- LRU bound for the cache above (audit #5 U5) ---
@@ -1235,8 +1219,8 @@ void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApprox
     }
 }
 
-// [A2-WALKCLASSEX-UNMAPPED] Once per address. An unreadable class is no longer memoized by WalkClassEx (that memo was
-// the defect), so every later caller re-walks it -- Aura's scans do so once per OBJECT of that class -- and a warning per
+// [A2-WALKCLASSEX-UNMAPPED] Once per address. An unreadable class is not memoized by WalkClassEx, so every later
+// caller re-walks it -- Aura's scans do so once per OBJECT of that class -- and a warning per
 // walk would flood walk-0.log. Bounded: past kMax distinct addresses it stays quiet, having said so once.
 static std::mutex                    s_unreadableClassWarnMutex;
 static std::unordered_set<uintptr_t> s_unreadableClassWarned;
@@ -1419,14 +1403,13 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // it is s_walkClassExCache that hands out `const ClassInfo&`, and both maps follow
     // the same rule so the two cannot drift. This by-value map erases (LRU eviction,
     // ForgetWalkClass); the enriched memo never frees an entry, it parks a replaced one
-    // ([WALKCLASS-MEMO-REUSE]), so a reference into it never dangles. (B10)
+    // ([WALKCLASS-MEMO-REUSE]), so a reference into it never dangles.
     //
-    // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
-    // handing in a non-UStruct address poisoned the cache permanently — and the caller
-    // that does exactly that is in-tree and shipped: WalkInstance walks the class FIRST
-    // and only then applies IsPlausiblePropertiesSize to decide the address is recycled, and
-    // UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its is-this-an-instance
-    // probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
+    // The publish is GATED: ungated, any caller handing in a non-UStruct address would
+    // poison the cache permanently — and callers do exactly that: WalkInstance walks the
+    // class FIRST and only then applies IsPlausiblePropertiesSize to decide the address is
+    // recycled, and UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its
+    // is-this-an-instance probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
     // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
     // Genau), never independently probed, so on a forked layout a pre-walk bail would
     // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
@@ -1436,10 +1419,8 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         PublishWalkClass(key, info);
     } else {
-        // Name the term that actually fired. The old text asserted a disjunction it
-        // had not measured ("not a UStruct, or recycled memory") about classes that
-        // demonstrably parsed — P3R's two SaveGame classes walked their fields on the
-        // very same line. (SANEPROPS-2026-08-26)
+        // Name the term that actually fired, and claim nothing beyond it: the walk may
+        // well have parsed this class's fields. (SANEPROPS-2026-08-26)
         Sein::Warn("WALK:safe",
             "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d is %s (read %s); "
             "the class pointer looks recycled",
@@ -1527,9 +1508,8 @@ static bool ClassChainHasName(uintptr_t cls, const char* name) {
 }
 
 // The engine's own metaclasses are recognised by NAME first, the SuperStruct chain walked only for any other subclass:
-// a give-up session never measures USTRUCT_SUPER (its default is wrong on 4.11-4.21), and there the chain alone
-// dropped every UserDefinedStruct, Blueprint class and UserDefinedEnum that the name-only check before build 3595 kept
-// (review of build 3596).
+// a give-up session never measures USTRUCT_SUPER (its default is wrong on 4.11-4.21), and there the chain alone would
+// drop every UserDefinedStruct, Blueprint class and UserDefinedEnum.
 static bool MetaclassIsKind(uintptr_t obj, const char* root, bool (*knownMetaName)(const std::string&)) {
     if (!obj || !Grimoire::IsUserspacePointer(obj)) return false;
     const uintptr_t meta = GetClass(obj);
@@ -1558,20 +1538,19 @@ bool IsStructKindObject(uintptr_t obj) {
 }
 
 // A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
-// there. [STRUCTCACHE-ENUM-UNCHECKED] fixed one reader that kept the pointer unchecked; [ENUMSLOT-ANY-NAME] found the
-// rest -- the enum names the exports write took any printable name -- and that the check itself matched two exact
-// class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
+// there, so a reader checks the pointer with this before taking a name through it; a printable name alone proves
+// nothing. [STRUCTCACHE-ENUM-UNCHECKED] [ENUMSLOT-ANY-NAME] Like the struct and class checks it walks the metaclass
+// chain, so an enum whose class is a UEnum subclass passes.
 bool IsUEnumObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
 }
 
-// [STRUCTPROBE-ANY-NAME] It accepted any object with a name other than "None", so on a shifted layout the first slot's
-// named neighbour won. [FRIEREN-PROBE-OVERRUN] It also tried eight slots whatever the slot itself held -- +-16 and three
-// misaligned ones among them -- so on EVERSPACE 2 a StructProperty's "PropertyClass" was the class at +0x80 of the
-// NEXT heap block, and a null PropertyClass would have been answered the same way. A proven slot answers alone. An
-// unproven one is tried one aligned pointer either side: the UE423 (0x78 -> 0x70) and DQ XI S (0x78 -> 0x80) moves.
-// The one misaligned move measured, TQ2's 0x74 -> 0x78, was a derivation defect [FPROP-FAMILY-ALIGN] removed -- the
-// family start is 8-aligned -- so a +-4 read can only land inside a pointer.
+// The named object in the subclass slot at `fieldAddr` that `isKind` accepts, or 0. [STRUCTPROBE-ANY-NAME] An object
+// that merely has a name other than "None" is not enough: on a shifted layout the first slot's named neighbour would
+// win. [FRIEREN-PROBE-OVERRUN] A proven slot answers alone; an unproven one is tried one aligned pointer either side
+// and no wider, because a wide probe that ignores what the slot holds can answer a StructProperty's "PropertyClass"
+// (or a null one) with a class from the NEXT heap block. The family start is 8-aligned [FPROP-FAMILY-ALIGN], so a +-4
+// read can only land inside a pointer.
 uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t)) {
     if (!fieldAddr) return 0;
     const bool proven = IsSubclassSlotConfirmed();
@@ -1684,7 +1663,7 @@ static bool IsObjectFamilyProperty(const std::string& tn) {
 
 // One slot's class names, the field's own or a container's: the plain slot read for the object family, overridden
 // by the validated PropertyClass -- and joined by the MetaClass -- for a class-valued one. A Map key / value and a Set
-// element used to get neither, so the SDK export wrote `class UObject*` for them. [SDK-CONTAINER-OBJCLASS]
+// element need them too, or the SDK export writes `class UObject*` for them. [SDK-CONTAINER-OBJCLASS]
 static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::string& objClass, std::string& metaClass) {
     if (IsObjectFamilyProperty(tn)) objClass = ReadPropertyClassName(prop);
     if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
@@ -1712,11 +1691,11 @@ static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkCl
 //  * PER ADDRESS (the address alone, not the memo's epoch key: a re-init's epoch bump must not un-stop an address or
 //    count it twice [WALKCLASS-STOP-EPOCH]): an address whose witness keeps changing -- an engine whose witness offsets read something
 //    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
-//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY (review
-//    wf_a193c703-fe8: a match against the stopped entry, every other turn of an alternation, used to clear it).
+//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY: a match against the
+//    stopped entry, every other turn of an alternation, must not clear it.
 //  * Genuine reuse re-walks once and then HOLDS STILL: kHoldHitsToForgive matching hits in a row forgive an address
-//    that has not stopped, so many level changes at one address never reach the bound (review wf_d3c2ec9a-d52: one count
-//    for the whole process switched the check off everywhere after 4,096).
+//    that has not stopped, so many level changes at one address never reach the bound. The count is per address: one
+//    count for the whole process would switch the check off everywhere.
 //  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers as before the
 //    witness, said once) -- the last word on memory, whatever pattern the witnesses follow.
 static constexpr uint32_t kMaxRewalksPerAddress = 8;
@@ -1802,14 +1781,12 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     bool readOk = true;
     ClassInfo info = WalkClassImpl(uclassAddr, readOk);
 
-    // Same memoization gate WalkClass applies, for the same reason (audit #5 U4) —
-    // this cache is the more widely consulted of the two (Property/Value Search,
-    // snapshot capture, CE export, Solitar, Solide), so leaving it poisonable while
-    // fixing only WalkClass would close the smaller half. [A2-WALKCLASSEX-UNMAPPED]
-    // This used to pass `true` for the read verdict, calling it "true by construction":
-    // but WalkClass's fault exit returns {Address, PropertiesSize 0}, which the value
-    // test ACCEPTS, so one transient fault was memoized forever and Aura's refusal gates
-    // (`Address != cls`) passed with it. The verdict is now WalkClassImpl's own.
+    // Same memoization gate WalkClass applies, for the same reason — this cache is the
+    // more widely consulted of the two (Property/Value Search, snapshot capture, CE
+    // export, Solitar, Solide). [A2-WALKCLASSEX-UNMAPPED] The read verdict is
+    // WalkClassImpl's own, never a constant `true`: WalkClass's fault exit returns
+    // {Address, PropertiesSize 0}, which the value test ACCEPTS, so a transient fault
+    // would be memoized forever and Aura's refusal gates (`Address != cls`) would pass with it.
     // Refusing to memoize means refusing to RETURN too — the signature is a
     // reference into this map — so a rejected class reads as empty rather than as
     // garbage fields. That trade is bounded: WalkInstance already hard-fails on this
@@ -1820,10 +1797,9 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     if (!ShouldPublishClassWalk(readOk, info.PropertiesSize)) {
         // Logged, because this refusal is INVISIBLE otherwise and it is not a cache
         // miss: the signature returns a reference into the map, so a refused class
-        // reads as a class with NO FIELDS to all ~26 external callers (Aura's
-        // container / ref caches treat `Address != cls` as the refusal signal). On
-        // P3R that silently hid both USaveGame classes from Value Search, Group Scan,
-        // snapshot capture, CE export, Solitar and Solide. WalkClass has already
+        // reads as a class with NO FIELDS to every external caller (Aura's
+        // container / ref caches treat `Address != cls` as the refusal signal), and
+        // drops out of every search and export without a word. WalkClass has already
         // warned for this same address on this same path, so this adds one line per
         // refused class, not a flood. (SANEPROPS-2026-08-26)
         // [A2-WALKCLASSEX-UNMAPPED] An UNREADABLE class is refused without this line: WalkClass has
@@ -1839,13 +1815,12 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     }
 
     // Calibrate FSTRUCTPROP_STRUCT (and the FProperty subclass extension
-    // offsets that share its slot) BEFORE reading them. Historically this
-    // calibration only ran inside WalkInstance -- which meant any caller
-    // that hit WalkClassEx without a prior WalkInstance (e.g. the Value
-    // Search tab's GObjects walk, build 738+) saw uncalibrated reads:
-    // ReadStructTypeName returns "" for every StructProperty, the
-    // nested-struct recursion in Aura::ScanForValue bails, and the user
-    // gets 0 candidates on GAS / FGameplayAttributeData scans.
+    // offsets that share its slot) BEFORE reading them -- here, not only in
+    // WalkInstance: a caller that reaches WalkClassEx without a prior
+    // WalkInstance (a value search's GObjects walk, for one) would otherwise
+    // read uncalibrated: ReadStructTypeName returns "" for every
+    // StructProperty, the nested-struct recursion in Aura::ScanForValue
+    // bails, and a GAS / FGameplayAttributeData scan finds 0 candidates.
     //
     // CorrectSubclassOffsets returns at once while its latch names the
     // current family epoch (the latch alone: a slot proof does not stop
@@ -2010,9 +1985,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 }
 
 // ============================================================
-// Shared reflection field lookup — see Ubel.h. Semantics preserved from
-// the original Frieren.cpp Debug Camera helper (DbgCam_FieldOffset):
-// case-insensitive exact match first, then the first contains/excluding
+// Shared reflection field lookup — see Ubel.h.
+// Case-insensitive exact match first, then the first contains/excluding
 // fuzzy match restricted to `typeFilter` (when given).
 // ============================================================
 
@@ -2126,7 +2100,7 @@ std::vector<int> FunctionFlagsCandidates(unsigned ver) {
     return cands;
 }
 
-// [UE-OVERRIDE-411] review: where the samples themselves keep NumParms / ParmsSize, whatever the version says. Every
+// [UE-OVERRIDE-411] Where the samples themselves keep NumParms / ParmsSize, whatever the version says. Every
 // base a reader can produce is weighed -- each candidate FunctionFlags offset plus a version shift of 0 or 2 and an
 // extra of 0 or 4 -- with the vote's own per-sample rule, so a wrong version cannot hide the right base the way it
 // hides it from the vote (which adds only its own version's shift). -1 when no base wins.
@@ -2210,7 +2184,7 @@ static void EnsureFunctionFlagsOffset() {
                  measured ? "keeping the measured primary" : "undecided, readers keep the table + sweep");
     }
 
-    // [UE-OVERRIDE-411] review. The vote adds only this version's shift, so under a version from the wrong side of
+    // [UE-OVERRIDE-411] The vote adds only this version's shift, so under a version from the wrong side of
     // 4.18 -- a persisted override, set before any scan could check it -- it cannot find the tail. The measurement
     // can, and the readers follow it (DynOff::FunctionTailReadBase); the version is still wrong for this game in
     // whatever else it keys, so say so.
@@ -2317,11 +2291,10 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
 
     // NumParms/ParmsSize/ReturnValueOffset follow FunctionFlags at +0x04 (uint8) / +0x06
     // (uint16) / +0x08 (uint16) -- EXCEPT on 4.11-4.17, where a uint16 RepOffset sits first and
-    // shifts all three by 2. This comment used to call the flat offsets "stable across all UE
-    // versions"; on 4.11-4.17 that read NumParms as ParmsSize and undersized every invoke buffer
-    // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
-    // on DynOff::FunctionTailShiftFor. Once the sampled UFunctions have measured the tail, that
-    // measurement decides instead, so a wrong version cannot move it ([UE-OVERRIDE-411] review 2).
+    // shifts all three by 2; read at the flat offsets there, NumParms would be taken as ParmsSize and
+    // every invoke buffer inside the game undersized. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the
+    // version, live on DynOff::FunctionTailShiftFor. Once the sampled UFunctions have measured the
+    // tail, that measurement decides instead, so a wrong version cannot move it [UE-OVERRIDE-411].
     if (funcFlagsOff >= 0) {
         const int tail = DynOff::FunctionTailReadBase(g_cachedUEVersion, funcFlagsOff,
                                                       decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,   // [VND583-01]
@@ -3240,7 +3213,7 @@ FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitne
     if (slotLive && witnessRead) {
         if (!ident.captured) return FuncState::Live;
         if (now.comparisonIndex != ident.nameIndex || now.number != ident.nameNumber) return FuncState::Recycled;
-        // The function's own name is not enough (review DLL-1): every Blueprint class has its own Construct,
+        // The function's own name is not enough (DLL-1): every Blueprint class has its own Construct,
         // ReceiveBeginPlay..., all one FName. Compared only when both reads have a class -- index 0 is "None",
         // which no class is called.
         if (ident.classIndex != 0 && nowClass.comparisonIndex != 0
@@ -3585,7 +3558,7 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
     // This MUST be dynamic, and it is MEASURED when it can be (FNameSize, [VND583-07] A9 step 1):
     // ResolveInnerSize returns this before it asks the engine, so a wrong value here is
-    // actively substituted for a right one. ValidateArrayElemSize no longer lets it override a
+    // actively substituted for a right one. ValidateArrayElemSize does not let it override a
     // plausible engine ElementSize (A9 step 7).
     // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
     // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
@@ -3597,11 +3570,9 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // sizeof(TLazyObjectPtr) = FWeakObjectPtr(8) + the persistent-ptr envelope + FGuid(16).
     // ⛔ NOT a fixed 0x20. FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so there is
     // no pad after the tag: 0x1C up to 5.2, and 0x18 from 5.3 where TagAtLastTest was deleted.
-    // 0x20 is the FWeakObjectPtr+Tag+pad+FGuid model audit A1 deleted, and it is wrong in EVERY
-    // era. Dynamic for exactly the reason NameProperty above is: ValidateArrayElemSize treats
-    // this as AUTHORITATIVE and overrides the engine's own ElementSize, so a wrong value here is
-    // actively substituted for a right one — and ResolveInnerSize returns it before it ever asks
-    // the engine, so nothing downstream could correct it.
+    // 0x20, the FWeakObjectPtr+Tag+pad+FGuid model (audit A1), is wrong in EVERY era. A caller
+    // that overrides the engine's size with this entry substitutes it for a right one, so it is
+    // the envelope LazyGuidOffset answers (latched, else the version default) + sizeof(FGuid).
     if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
@@ -3616,8 +3587,8 @@ static int32_t InferScalarSize(const std::string& typeName) {
 /// property has different metadata layout than top-level FField chain members.
 /// Returns the validated size (overridden for known types, capped for unknown).
 ///
-/// Logging: both branches log at Debug level. UE 5.7 + CasePreservingName
-/// (e.g. TQ2) firing this 194 times per session was just recovery noise —
+/// Logging: both branches log at Debug level. A layout that trips this on
+/// many arrays per session is recovery noise, not a fault —
 /// the override / zero-fallback path is well-tested and the next-line
 /// "FArrayProperty::Inner found ... elemSize=N" Info entry already shows the
 /// resolved size. Keep at Debug for developer diagnosis without polluting
@@ -3625,12 +3596,13 @@ static int32_t InferScalarSize(const std::string& typeName) {
 static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeName) {
     // [A2-LAZY-LATCH-GUESS] LazyObjectProperty ONLY: derive the size from the engine's RAW ElementSize. Its
     // InferScalarSize entry is a version guess, and overriding the engine with it -- then feeding that into the
-    // envelope latch -- wrote a false "measured" line on a version mis-resolved across 5.2/5.3. LazyGuidOffset accepts
-    // only the two real envelopes (0x0C / 0x08) and otherwise falls back exactly as the guess did. The entry itself
-    // stays: without it the generic arm below would pass any garbage size from 1 to 65536.
+    // envelope latch -- would write a false "measured" line on a version mis-resolved across 5.2/5.3. LazyGuidOffset
+    // accepts only the two real envelopes (0x0C / 0x08) and otherwise falls back as that entry does (the latch, else
+    // the version default). The entry itself stays: without it the generic arm below would pass any garbage size from
+    // 1 to 65536.
     if (typeName == "LazyObjectProperty")
         return LazyGuidOffset(readSize) + 0x10;
-    // [VND583-07, A9 step 7] NameProperty: our RULE no longer overrides the engine. sizeof(FName) is one
+    // [VND583-07, A9 step 7] NameProperty: our RULE does not override the engine. sizeof(FName) is one
     // number per process, so a MEASURED size (FNameSize) still beats a single read that disagrees with it --
     // that read is the misread. Unmeasured, a size this build's family can have is the engine's and is kept,
     // but only on validated offsets (a default FPROPERTY_ELEMSIZE can read anything). A plausible
@@ -3685,8 +3657,8 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
 // Returns 0 when undetermined.
 // ============================================================
 static int32_t ResolveInnerSize(uintptr_t innerProp, const std::string& innerTn) {
-    // [A2-LAZY-LATCH-GUESS] Not for a lazy inner: its "scalar size" is a version guess, and asking it first meant the
-    // engine's own ElementSize was never read. ValidateArrayElemSize below derives lazy from the raw value.
+    // [A2-LAZY-LATCH-GUESS] Not for a lazy inner: its "scalar size" is a version guess, and asking it first would leave
+    // the engine's own ElementSize unread. ValidateArrayElemSize below derives lazy from the raw value.
     int32_t es = innerTn == "LazyObjectProperty" ? 0 : InferScalarSize(innerTn);
     if (es > 0) return es;
 
@@ -3754,14 +3726,14 @@ int32_t GetSetElementStride(uintptr_t fieldAddr) {
 // it as int32 would pick up StructStateFlags on newer engines.
 //
 // Returns 0 when it cannot be read or is not a sane power of two, which every
-// caller treats as "unknown" and falls back to the previous behaviour.
+// caller treats as "unknown".
 //
 // Exists because Scharf::RequiredAlignment deliberately returns 0 for
 // StructProperty ("variable-layout ... skip validation") — it is a VALIDATION
-// helper, and using it as a LAYOUT ORACLE meant every struct-valued TMap silently
-// took ComputeMapValueOffset's size guess. That guess says "8 bytes or more =>
-// align 8", so TMap<int32, FVector> put the value at +8 when FVector is 4-aligned
-// and really sits at +4 — wrong for element 0, and wrong again in the stride.
+// helper, and used as a LAYOUT ORACLE it would leave every struct-valued TMap to
+// ComputeMapValueOffset's size guess. That guess says "8 bytes or more =>
+// align 8", so TMap<int32, FVector> would put the value at +8 when FVector is
+// 4-aligned and really sits at +4 — wrong for element 0, and wrong again in the stride.
 // ============================================================
 static int32_t GetStructAlignment(uintptr_t scriptStruct) {
     if (!scriptStruct || !Grimoire::IsUserspacePointer(scriptStruct)) return 0;
@@ -3977,20 +3949,17 @@ int32_t GetMapPairStride(uintptr_t fieldAddr) {
     return GetMapPairLayout(fieldAddr, layout) ? layout.pairStride : 0;
 }
 
-// === Reflected struct preview (audit U17) ===
+// === Reflected struct preview ===
 //
-// THE decoder for "what is inside this struct", and now the ONLY one. It reads
-// each member at its own offset with its OWN declared width, so a UE5 LWC FVector
-// (3 doubles) yields three real components instead of six float halves, and a
-// vtable needs no special case at all — there is no member at +0, so nothing
-// prints from there.
+// THE decoder for "what is inside this struct". It reads each member at its own
+// offset with its OWN declared width, so a UE5 LWC FVector (3 doubles) yields three
+// real components instead of six float halves, and a vtable needs no special case
+// at all — there is no member at +0, so nothing prints from there.
 //
-// This body used to be inline inside WalkInstance and nowhere else, which is why
-// every OTHER surface (TMap keys/values, TSet elements, the Property Search
-// preview column, DataTable rows) fell through to the byte-blind
-// InterpretValue("StructProperty", ...) despite already holding the
-// UScriptStruct*. Shared rather than copied on purpose: a second copy is how the
-// report and the reality end up computed by different code paths.
+// A surface that holds the UScriptStruct* decodes through here rather than through
+// the byte-blind InterpretValue("StructProperty", ...). Shared rather than copied on
+// purpose: a second copy is how the report and the reality end up computed by
+// different code paths.
 //
 // The width handling is pure and lives in Ubel.h (PreviewScalarValue), so it is
 // unit-pinned; only NameProperty and Object/ClassProperty need process state and
@@ -4129,10 +4098,10 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return DecodeFNameBytes(bytes, size);
     }
 
-    // StructProperty: byte-blind float hint, LAST RESORT ONLY (audit U3).
-    // The whole decode — including the vtable-skip decision that used to drop
-    // leading members silently — lives in Ubel.h::InterpretStructBytes so it is
-    // pure and unit-pinned in `dll_helpers_test`. Callers that can
+    // StructProperty: byte-blind float hint, LAST RESORT ONLY.
+    // The whole decode — including the vtable-skip decision — lives in
+    // Ubel.h::InterpretStructBytes so it is pure and unit-pinned in
+    // `dll_helpers_test`. Callers that can
     // resolve the UScriptStruct* must prefer the reflected-layout preview
     // (WalkInstance's "{Name=Value}"), which is width-correct and labelled.
     if (typeName == "StructProperty" && size >= 4) {
@@ -4142,13 +4111,9 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     return ""; // Unknown type — caller shows hex
 }
 
-// Prefer the reflected layout, fall back to the byte-blind hint.
-//
-// The four container surfaces (TMap key, TMap value, TSet element) and the
-// preview column all ALREADY resolve the UScriptStruct* a few lines above their
-// decode and then threw it away — that was the whole of U17. Struct-typed values
-// now decode as "{X=1.5, Y=-2, Z=90}" with each member read at its own declared
-// width; everything else is unchanged.
+// Prefer the reflected layout, fall back to the byte-blind hint. A struct-typed value
+// decodes as "{X=1.5, Y=-2, Z=90}" with each member read at its own declared width;
+// everything else goes to InterpretValue.
 static std::string PreferLayout(const uint8_t* buf, int32_t size,
                                 uintptr_t structAddr, const std::string& typeName) {
     if (typeName == "StructProperty" && structAddr) {
@@ -4183,15 +4148,15 @@ bool IsScalarArrayType(const std::string& innerTypeName) {
 
 // ============================================================
 // Phase L: FString-family arrays -- TArray<FString> / <FUtf8String> / <FAnsiString>.
-// [W5-STRARRAY-ELEMENTS] IsScalarArrayType admits no string type and no other phase read one, so the
-// walk sent such an array with its count and NO elements -- the Live Walker showed none, and CE XML's
-// per-element String leaves had nothing to iterate. Not by widening IsScalarArrayType: its reader
-// decodes RAW element bytes, and a string's bytes are a header, not its text.
+// [W5-STRARRAY-ELEMENTS] Reads the elements of a string array, which IsScalarArrayType admits no
+// type of and no other phase reads; without it the walk sends such an array with its count and NO
+// elements. Not by widening IsScalarArrayType: its reader decodes RAW element bytes, and a string's
+// bytes are a header, not its text.
 // ============================================================
 // The stride of every string-array element: the 16-byte FString / FUtf8String / FAnsiString header
 // { Data*, Num, Max }. Pinned -- never the inner's ELEMSIZE, which can read as garbage -- by the reader AND by
 // what the walk publishes, because the UI lays element rows out by the published size (Offset = i * size)
-// and hands it back to read_array_elements. Review 3 of 6b48e776: only the reader had it.
+// and hands it back to read_array_elements.
 constexpr int32_t kStringArrayStride = 16;
 
 bool IsStringArrayType(const std::string& innerTypeName) {
@@ -4264,8 +4229,7 @@ ReadArrayResult ReadStringArrayElements(
 }
 
 // ============================================================
-// Phase M: TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout and
-// the 2026-09-16 measurement that produced it.
+// Phase M: TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout.
 // ============================================================
 bool IsFieldPathArrayType(const std::string& innerTypeName) {
     return innerTypeName == "FieldPathProperty";
@@ -4638,9 +4602,8 @@ bool IsDestroyedPick(uintptr_t target, int32_t objectIndex) {
     return DynOff::IsDestroyedObject(g_cachedUEVersion, objectFlags, itemOk, itemFlags);
 }
 
-// [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
-// binding, and the tag was appended at four of them by hand -- the sparse-binding element loop was the fifth, the
-// exact "repaired two of them" shape DescribeScriptDelegate's own header warns about. Every site calls this.
+// [R7-B-04] The one delegate-binding label: DescribeScriptDelegate's ladder plus the [garbage] tag. Every reader that
+// renders a binding calls this, so none can add the tag by hand and drift from the others.
 // `garbageTag` is the engine's WeakTargetGarbageTag everywhere but the snapshot decoder, whose tests inject theirs.
 std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
                                     int32_t objIdx, int32_t serial, const std::string& funcName,
@@ -4787,7 +4750,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
     bool readOk = true;
     ClassInfo ci = WalkClassImpl(structAddr, readOk);
     // [A2-WALKCLASSEX-UNMAPPED] the twin: an UNREADABLE struct is served empty and NOT memoized. The publish below is
-    // permanent, so one transient fault used to pin "no fields" for the process. The next call re-walks it.
+    // permanent, so memoizing one transient fault would pin "no fields" for the process. The next call re-walks it.
     if (!readOk) {
         static const std::vector<CachedStructField> s_emptyStructFields;
         return s_emptyStructFields;
@@ -4810,16 +4773,9 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         //
         // The fallback fires ONLY when the engine's own number is implausible — the
         // hardcoded table is a garbage-ELEMSIZE backstop, NOT an authority over the
-        // engine. The two sibling interpreters in this file DO override
-        // unconditionally, and that is deliberately not copied here: at least one of
-        // InferScalarSize's constants is too large. TLazyObjectPtr is
-        // TPersistentObjectPtr<FUniqueObjectGuid>, and our own vendored UE 5.8 declares
-        // that as { FWeakObjectPtr WeakPtr; TObjectID ObjectID; } — 8 + 16 = 0x18, or
-        // 0x1C on the older layout that still carried `int32 TagAtLastTest`. Neither is
-        // the 0x20 InferScalarSize returns, and an inflated width pushes
-        // cf.offset + cf.size past the element buffer, silently DROPPING a sub-field
-        // the engine had sized correctly. (The 0x20 itself is a separate, pre-existing,
-        // still-unvetted question — see the audit doc; do not "fix" it from here.)
+        // engine. Overriding on a mere mismatch is deliberately not done here: a
+        // table width larger than the engine's pushes cf.offset + cf.size past the
+        // element buffer, silently DROPPING a sub-field the engine had sized correctly.
         //
         // The plausibility bound matches the one WalkInstance already uses for the
         // same judgement on a field size.
@@ -4968,13 +4924,11 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "StructProperty") {
                 sf.value = cf.nestedTypeName.empty() ? "{Struct}" : "{" + cf.nestedTypeName + "}";
             } else if (cf.typeName == "WeakObjectProperty") {
-                // Audit #5 U12: FWeakObjectPtr is { int32 ObjectIndex; int32
-                // SerialNumber } — two ints, NOT an address. This used to share the
-                // raw-pointer arm below, which memcpy'd both ints into a uintptr_t and
-                // published Serial<<32|Index as sf.ptrAddr. A null ref was right only
-                // by accident (both ints zero), and a STALE ref — live index, serial no
-                // longer matching — was reported as a live one. Resolve it the way the
-                // rest of this file already does; the bytes are already in buf.
+                // FWeakObjectPtr is { int32 ObjectIndex; int32 SerialNumber } — two
+                // ints, NOT an address. The raw-pointer arm below would publish
+                // Serial<<32|Index as sf.ptrAddr, and report a STALE ref — live index,
+                // serial no longer matching — as a live one. Resolve it the way the
+                // rest of this file does; the bytes are already in buf.
                 //
                 // Bounds are checked HERE against the 8 bytes actually read, not
                 // inherited from cf.size: the loop's guard uses the engine's declared
@@ -5005,16 +4959,15 @@ ReadArrayResult ReadStructArrayElements(
                     || cf.typeName == "InterfaceProperty") {
                 // Raw UObject* at field+0. InterfaceProperty belongs here (and only
                 // here): FScriptInterface is { UObject* +0x00; void* +0x08 } = 16 bytes,
-                // so the old `cf.size == 8` gate matched neither arm and reported every
+                // so a `cf.size == 8` gate would match neither arm and report every
                 // BOUND interface as "null" (audit #5 U14). The declared width is 16,
                 // the pointer is still 8 bytes at offset 0.
                 //
-                // The gate is now BOUNDS, not width: all three hold a UObject* at
+                // The gate is BOUNDS, not width: all three hold a UObject* at
                 // field+0, so the only question is whether those 8 bytes are inside the
-                // element buffer. That is also what makes the fix independent of
-                // cf.size, which the engine sometimes reports as garbage. The old
-                // 4-byte arm is gone — it claimed a 32-bit pointer case that does not
-                // exist on x64, and it fired only on a garbage width.
+                // element buffer. That also keeps it independent of cf.size, which the
+                // engine sometimes reports as garbage. There is no 4-byte arm: x64 has
+                // no 32-bit pointer case, and such an arm would fire only on a garbage width.
                 uintptr_t ptr = 0;
                 if (cf.offset + 8 <= readSize) {
                     memcpy(&ptr, buf.data() + cf.offset, 8);
@@ -5048,8 +5001,8 @@ ReadArrayResult ReadStructArrayElements(
                 sf.value = ReadFTextString(elemAddr + cf.offset);
                 if (sf.value.empty()) sf.value = "(empty)";
             } else if (StringPropertyWidth(cf.typeName)) {
-                // [VND9-04] The text, as a top-level string field shows it. This said "(str)" for an FString and,
-                // for UE 5.5's narrow strings, which had no arm, the hex of their Data pointer.
+                // [VND9-04] The text, as a top-level string field shows it -- never "(str)" or the hex of the Data
+                // pointer, UE 5.5's narrow strings included.
                 sf.value = ReadStringPropertyAt(cf.typeName, elemAddr, cf.offset);
                 if (sf.value.empty()) sf.value = "(empty)";
             } else if (cf.typeName == "ArrayProperty") {
@@ -5178,15 +5131,14 @@ ReadArrayResult ReadSoftObjectArrayElements(
                                          : ReadSoftObjectPath(elemAddr + softPathOff);
 
         // Surface the AssetPathName / PackageName ComparisonIndex so the CE XML
-        // exporter can build a shared DropDownList for the FName leaf. The
-        // exporter used to bake "+10"; it now takes softPathOff off the wire.
+        // exporter can build a shared DropDownList for the FName leaf; the
+        // exporter takes softPathOff off the wire.
         // 0 maps to "None" — leave rawIntValue=0 for those so the DropDown
         // dedup naturally drops them.
         // ⚠ MUST be softPathOff, not a literal 0x10. These keys are attached to the CE
         // leaf the exporter emits AT softPathOff, so reading them from anywhere else
-        // mismatches every entry in the DropDownList. Before the A1 fix both were 0x10
-        // and at least agreed with each other; splitting them is strictly worse than the
-        // original bug, and it is the CE table -- the artifact that ships.
+        // mismatches every entry in the DropDownList -- in the CE table, the artifact
+        // that ships.
         uint32_t pathFNameIdx = 0;
         if (!assetPtr && Macht::ReadSafe(elemAddr + softPathOff, pathFNameIdx) && pathFNameIdx != 0
             && pathFNameIdx != 0xFFFFFFFFu) {
@@ -5244,7 +5196,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
 // Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
 // Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
 // ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
-// and 5.3 deleted the tag outright. The old "= 0x20" here was the model audit A1 removed.
+// and 5.3 deleted the tag outright. 0x20 is the model audit A1 removed.
 // ============================================================
 bool IsLazyObjectArrayType(const std::string& innerTypeName) {
     return innerTypeName == "LazyObjectProperty";
@@ -5262,19 +5214,16 @@ ReadArrayResult ReadLazyObjectArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    // ⛔ DO NOT force a constant here. This read `elemSize = 0x20;` — the
-    // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 deleted — and it cost two things:
-    // element 0 read correctly while every index ≥1 drifted 4 bytes (≤5.2) or 8 (≥5.3), and
-    // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so the
-    // `TLazyObjectPtr payload envelope measured` line could never be emitted from THIS path —
-    // making an operator who reached lazy via an array (the obvious route) score a correct fix
-    // as FAILED. Route through the same envelope the scalar path uses: LazyGuidOffset MEASURES
-    // from a real ElementSize and latches it, and falls back to the version default on garbage,
-    // which is what the old forced constant was really guarding against.
+    // ⛔ DO NOT force a constant here. A forced 0x20 — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)
+    // model, audit A1 — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
+    // (≥5.3), and LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so
+    // the `TLazyObjectPtr payload envelope measured` line could not come from THIS path. Use the
+    // envelope arithmetic the scalar path uses: it takes the envelope from a real ElementSize and
+    // falls back to the version default on garbage.
     //
-    // [A2-LAZY-LATCH-GUESS] ...but not by re-measuring HERE. Both callers hand in a size ValidateArrayElemSize already
+    // [A2-LAZY-LATCH-GUESS] ...but do not re-measure HERE. The callers hand in a size ValidateArrayElemSize already
     // derived from the engine's RAW ElementSize, measuring and latching it when it was real. Re-measuring the handed
-    // size latched a FALLBACK as "measured" whenever the raw value was garbage. Same arithmetic, no latch.
+    // size would latch a FALLBACK as "measured" whenever the raw value was garbage. Same arithmetic, no latch.
     const int lazyGuidOff = DynOff::PersistentPtrEnvelopeFor(elemSize, 0x10, 0x0C, DynOff::LAZYPTR_GUID,
                                                              g_cachedUEVersion);
     elemSize = lazyGuidOff + 0x10;   // envelope + sizeof(FGuid)
@@ -5601,12 +5550,11 @@ ReadArrayResult ReadDelegateArrayElements(
         // Display: "TargetName::FunctionName"
         //
         // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- it says a target WAS bound and has since been
-        // collected. An element that was never bound must not make it. Found 2026-09-09 the
-        // moment `Arr_Delegates` gave this reader its first fixture: an untouched
+        // collected. An element that was never bound must not make it: an untouched
         // `FScriptDelegate` has `Object = {0, 0}` and `FunctionName = NAME_None`, and
-        // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
-        // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
-        // touched. The multicast element loop has an explicit unbound branch; this one did not.
+        // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so a bare
+        // `!funcName.empty()` test would claim `(stale)::None` for a slot nothing had ever
+        // touched.
         elem.value = DescribeDelegateBinding(target, elem.ptrName, objIdx, serial, funcName);   // [R7-B-04]
 
         result.elements.push_back(std::move(elem));
@@ -5640,13 +5588,10 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
     // UE 5.3+) an 8-byte access detector sits in FRONT of it, so the element is 24 bytes and
     // the header starts at +8. DynOff::kDelegateDetectorPad carries the full story.
     //
-    // ⛔ `elemSize` USED TO BE THE IGNORED PARAMETER `int32_t /*elemSize*/`, overridden by a
-    // local `constexpr int32_t elemSize = 16`. Both callers already pass the engine's own
-    // ElementSize and it is authoritative -- measured 24 on DumperTest Development (UE 5.4)
-    // while this function insisted on 16. At the wrong stride element [0] still reads
-    // correctly and every index >= 1 drifts, which is the exact fingerprint audit A1 found on
-    // the lazy row; the fixture could not show it only because both its elements are empty,
-    // so a right-stride and a wrong-stride read of zeros produce the same "(0 bindings)".
+    // ⛔ `elemSize` is the engine's own ElementSize and it is authoritative -- never a
+    // hard-coded 16. At the wrong stride element [0] still reads correctly and every
+    // index >= 1 drifts; an array whose elements are all empty cannot show it, since a
+    // right-stride and a wrong-stride read of zeros produce the same "(0 bindings)".
     constexpr int32_t kMcdBaseSize = 16;   // TArray<FScriptDelegate> header, FName-independent
     const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kMcdBaseSize);
     if (pad < 0) {
@@ -5709,7 +5654,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             // Data buffer has been freed -- and Macht::ReadTArray (Macht.h)
             // validates only Count and Max, never probing Data, so a garbage pointer
             // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
-            // told the UI and the CE exporters that a delegate provably HAS no
+            // would tell the UI and the CE exporters that a delegate provably HAS no
             // subscribers, over memory nobody could read. "???" is this file's unread
             // value sentinel, as in ReadInterfaceArrayElements; the hex sentinel takes the
             // element's own shape (DelegateHex), detector included, like a read element's.
@@ -5718,15 +5663,11 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             result.elements.push_back(std::move(elem));
             continue;
         }
-        // ⛔ THIS USED TO BE `if (innerCount < 0 || innerCount > 4096) innerCount = 0;`, and
-        // that is D4's defect spelled a second time. An implausible Num does not mean "no
-        // subscribers"; it means THIS IS NOT THE STRUCTURE I THINK IT IS, and clamping it to
-        // zero republishes that as the affirmative "(0 bindings)". The identical clamp
-        // (`invNum = 0`) was deleted from Aura on 2026-09-08 for lying, with a ⛔ comment
-        // saying never to restore it — while these two copies in Ubel survived the sweep.
-        // ⚠ And D4b's own fingerprint went straight through here: reading Num at the wrong
-        // offset produced 322437056, which is > the ceiling, so this line would have
-        // swallowed the symptom and printed "(0 bindings)" over a bound delegate.
+        // ⛔ Never clamp an implausible Num to zero. It does not mean "no subscribers"; it
+        // means THIS IS NOT THE STRUCTURE I THINK IT IS, and clamping it to zero
+        // republishes that as the affirmative "(0 bindings)". ⚠ A Num read at the wrong
+        // offset lands far above the ceiling, so a clamp here would swallow that symptom
+        // and print "(0 bindings)" over a bound delegate.
         if (innerCount < 0 || innerCount > Aura::kMaxPlausibleInvocationListNum) {
             Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: implausible inner Num=%d "
                                "at 0x%llX — reporting UNREADABLE, not zero bindings",
@@ -5762,9 +5703,9 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 uintptr_t btarget = ResolveWeakObjectPtr(bobjIdx, bserial);
                 std::string bfunc = ReadFName(bindAddr + 8);
 
-                // ⚠ Only NAMED bindings go into the preview, as before -- but "named" is now
-                // the shared test, so an untouched slot (FunctionName == NAME_None, which
-                // reads back as "None") is skipped instead of listed as "(stale)::None".
+                // ⚠ Only NAMED bindings go into the preview, and "named" is the shared
+                // test, so an untouched slot (FunctionName == NAME_None, which reads back
+                // as "None") is skipped instead of listed as "(stale)::None".
                 std::string bdesc = DescribeDelegateBinding(
                     btarget, btarget ? GetName(btarget) : std::string(),
                     bobjIdx, bserial, bfunc);   // [R7-B-04]
@@ -5813,8 +5754,8 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
     const DynOff::FamilyWriteLock lk;
     if (IsSubclassCalibrated()) return;
     // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
-    // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
-    // too. Until a struct is found in the slot the latch stays open, as it does for FProperty.
+    // never moved here -- but it is CHECKED, never latched without looking, so a UE4 session can be proven too. Until
+    // a struct is found in the slot the latch stays open, as it does for FProperty.
     const bool uprop = !DynOff::bUseFProperty;
     const uint32_t epoch = DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
 
@@ -5829,7 +5770,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             uintptr_t candidate = 0;
             if (!Macht::ReadSafe(fi.Address + tryOff, candidate) || !candidate) continue;
             // Validate: must be a UScriptStruct with a readable ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
-            // accepted any named object -- and at delta 0 it LATCHED the wrong family for the session.
+            // accepts any named object -- and at delta 0 it would LATCH the wrong family for the session.
             if (!IsScriptStructObject(candidate)) continue;
             std::string sname = GetName(candidate);
             if (!Utf8Helpers::IsPlausibleNameStart(sname)) continue;
@@ -5946,10 +5887,9 @@ static int IsLikelyDouble(double dVal) {
 
     // Normal-confidence magnitude band. Kept WIDER than float's [0.001, 1e6]
     // because doubles exist precisely to hold values beyond float precision
-    // (e.g. UE5 LWC large world coordinates), but the old 1e12 upper bound was
-    // far too permissive — random 8-byte patterns that land in [1e9, 1e12] as a
-    // double were getting flagged "Double?" as noise. Trimming to 1e9 keeps
-    // realistic large-world doubles while cutting that garbage tail.
+    // (e.g. UE5 LWC large world coordinates), but capped at 1e9: random 8-byte
+    // patterns that land above it as a double would be flagged "Double?" as
+    // noise. 1e9 keeps realistic large-world doubles while cutting that garbage tail.
     if (absVal >= 0.001 && absVal <= 1e9) return 1;
 
     return 0;
@@ -5960,14 +5900,13 @@ static int IsLikelyDouble(double dVal) {
 void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
                    std::vector<LiveFieldValue>& outFields)
 {
-    // Perf: read the WHOLE gap once into a reused buffer, then guess in-buffer.
-    // The old path did one SEH read per position PLUS a per-BYTE SEH read in the
-    // zero-run probe — pathologically slow when this runs over every hole of every
-    // object during a Native-C snapshot of a 433K-object game (FF7 Rebirth). One
-    // bulk read replaces all of them. On a faulting bulk read (e.g. a gap straddling
-    // an unmapped tail) or an over-large gap, `gb` stays null and the helpers fall
-    // back to the original per-read SEH path — so behavior (the guesses) is identical,
-    // only the source of the bytes changes. Output is byte-for-byte unchanged.
+    // Perf: read the WHOLE gap once into a reused buffer, then guess in-buffer,
+    // instead of one SEH read per position PLUS a per-BYTE SEH read in the
+    // zero-run probe — this runs over every hole of every object during a Native-C
+    // snapshot, which can be hundreds of thousands of objects. On a faulting bulk
+    // read (e.g. a gap straddling an unmapped tail) or an over-large gap, `gb`
+    // stays null and the helpers fall back to the per-read SEH path, which yields
+    // the same guesses: only the source of the bytes differs.
     const int32_t gapLen = gapEnd - gapStart;
     if (gapLen <= 0) return;
     // Hard safety bound, independent of any caller: a single object's gap can
@@ -6209,15 +6148,14 @@ void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
     }
 }
 
-// Format a struct-preview scalar (float/double) WITHOUT scientific notation
-// for human-range magnitudes. `%g` flips to scientific past a few digits (e.g.
-// 18328.64 -> "1.833e+04"), which is unreadable in the Value column preview;
-// the leaf drilldown already uses %f. We mirror that: %f for the broad
-// int32/int64-ish range with trailing zeros trimmed (2245.0000 -> "2245",
+// Struct-preview scalars (float/double) are formatted WITHOUT scientific notation
+// for human-range magnitudes by FormatPreviewNumber (Ubel.h; pure, unit-pinned),
+// shared with the reflected-struct preview so the two cannot drift apart (audit U17).
+// `%g` flips to scientific past a few digits (e.g. 18328.64 -> "1.833e+04"), which
+// is unreadable in the Value column preview; the leaf drilldown uses %f. So: %f for
+// the broad int32/int64-ish range with trailing zeros trimmed (2245.0000 -> "2245",
 // 129.7000 -> "129.7"), falling back to %g only for truly huge/tiny values
 // where a wall of digits would be worse.
-// FmtPreviewNum moved to Ubel.h as FormatPreviewNumber (pure, unit-pinned) so the
-// reflected-struct preview and this file cannot drift apart. Audit U17.
 
 InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit, int32_t previewLimit, bool fillGaps) {
     // Clamp arrayLimit to sane range [1, 16384]
@@ -6357,10 +6295,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     // kMaxPlausiblePropertiesSize). An implausible value means classAddr points at
     // recycled memory — the instance was freed and its slot reused while the
     // user was elsewhere (e.g. a long Snapshot/Class-Pivot pass), then Live
-    // Walker re-walked the stale address on return. Bail BEFORE the gap-fill:
-    // otherwise a bogus 827 MB PropertiesSize becomes one giant gap and
-    // GuessGapTypes spins ~8e8 per-byte SEH reads, wedging the single-threaded
-    // pipe worker (and the UI with it). propsSize is zeroed so the UI's
+    // Walker re-walks the stale address on return. Bail BEFORE the gap-fill:
+    // otherwise a bogus PropertiesSize becomes one giant gap to guess over on
+    // the single-threaded pipe worker (and the UI waits on it). propsSize is zeroed so the UI's
     // "0 fields + propsSize>0" fill_gaps auto-retry never fires.
     if (!IsPlausiblePropertiesSize(ci.PropertiesSize)) {
         Sein::Warn("WALK:safe",
@@ -6619,9 +6556,6 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // null interface -- an affirmative claim about memory nobody could read.
             // The correct shape is already in this file: ReadDelegateArrayElements builds its
             // hex INSIDE `if (Macht::ReadBytesSafe(...))` and leaves it empty otherwise.
-            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the sibling
-            // sites in that batch (`Aura.cpp` scriptNum, `Ubel.cpp` enumPtr) were CLEAN because
-            // their next statement guards on exactly the value a faulted read leaves.
             const bool okObj   = Macht::ReadSafe(instanceAddr + fi.Offset, objPtr);
             const bool okIface = Macht::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
 
@@ -6643,8 +6577,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.hexValue = buf;
             } else {
                 // Say which half could not be read rather than printing zeros for it.
-                // The "%X vs %d" lesson this line was born from now lives ONCE, on
-                // DescribeUnreadableField in Ubel.h — three more handlers below share it.
+                // The wording lives ONCE, on DescribeUnreadableField in Ubel.h, which
+                // other handlers below share.
                 fv.typedValue = DescribeUnreadableField("interface", fi.Offset);
             }
             result.fields.push_back(std::move(fv));
@@ -6848,15 +6782,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         Sein::Debug("WALK:ArrayP", "Delegate elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
                     } else if (!delResult.ok && !delResult.error.empty()) {
-                        // ⛔ THIS `error` USED TO BE DROPPED ON THE FLOOR. The reader refuses an
-                        // unrecognised stride rather than publishing elements read at a stride
-                        // nobody validated -- but the refusal reached the UI as NOTHING: an
-                        // ArrayProperty never sets typedValue, so the field rendered as a bare
-                        // header and the user saw a delegate array that simply had no elements,
-                        // which is indistinguishable from an empty one. The scalar arms have
-                        // always rendered their refusal; these two were silent.
-                        // Measured 2026-09-09 by sw6_stride_refusal.py, which could assert the
-                        // WALK warning but had nothing to assert on the wire's value side.
+                        // ⛔ Render the refusal. The reader refuses an unrecognised stride rather
+                        // than publishing elements read at a stride nobody validated -- and an
+                        // ArrayProperty never sets typedValue otherwise, so a dropped `error`
+                        // renders as a bare header: a delegate array that simply has no
+                        // elements, indistinguishable from an empty one. The scalar arms
+                        // render their refusal the same way.
                         fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
@@ -6871,13 +6802,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         Sein::Debug("WALK:ArrayP", "Multicast elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
                     } else if (!mcastResult.ok && !mcastResult.error.empty()) {
-                        // Same silent-refusal defect as the unicast arm just above.
+                        // Rendered for the same reason as the unicast arm just above.
                         fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
                     }
                 }
 
                 // Phase L: TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
-                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE.
                 if (innerFound && IsStringArrayType(fv.arrayInnerType))
                     fv.arrayElemSize = kStringArrayStride;
                 if (innerFound && IsStringArrayType(fv.arrayInnerType)
@@ -7085,7 +7016,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
                 // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
-                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE.
                 if (innerFound && IsStringArrayType(fv.arrayInnerType))
                     fv.arrayElemSize = kStringArrayStride;
                 if (innerFound && IsStringArrayType(fv.arrayInnerType)
@@ -7161,14 +7092,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.mapKeyType = keyTypeName;
                         fv.mapValueType = valueTypeName;
                         // Route through the SAME validator every ArrayProperty path uses.
-                        // This read is documented in this file to return garbage: the
-                        // observed 1073742336 is 0x40000200, the low dword of
-                        // EPropertyFlags — i.e. exactly what you get when
+                        // This read can return garbage: 1073742336 is 0x40000200, the low
+                        // dword of EPropertyFlags — i.e. exactly what you get when
                         // DynOff::FPROPERTY_ELEMSIZE lands on PropertyFlags (Genau derives
                         // it blind as bestProbe - 0x10 and can still report
-                        // bOffsetsValidated=true — audit #5 G1). Unvalidated it became a
+                        // bOffsetsValidated=true — audit #5 G1). Unvalidated it would become a
                         // per-element std::vector size: a ~1 GiB commit + zero-fill on every
-                        // iteration, plus a ~1 GiB stride that made every element wild.
+                        // iteration, plus a ~1 GiB stride that makes every element wild.
                         int32_t rawKeySize = 0, rawValSize = 0;
                         Macht::ReadSafe<int32_t>(keyProp + DynOff::FPROPERTY_ELEMSIZE, rawKeySize);
                         Macht::ReadSafe<int32_t>(valueProp + DynOff::FPROPERTY_ELEMSIZE, rawValSize);
@@ -7712,7 +7642,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Skip obvious garbage addresses to avoid SEH faults
                 if (!Grimoire::IsUserspacePointer(candidate)) continue;
                 // Validate: must be a UScriptStruct, with an ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
-                // stopped this probe at delta 0 on any named object, before the struct beyond it.
+                // would stop this probe at delta 0 on any named object, before the struct beyond it.
                 if (!IsScriptStructObject(candidate)) continue;
                 std::string sname = GetName(candidate);
                 if (Utf8Helpers::IsPlausibleNameStart(sname)) {
@@ -7728,15 +7658,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // class with no StructProperty, while this probes {0,±4,±8,±0x10} — so it
                         // is the only path that can land a ±0x10 layout.
                         //
-                        // ⛔ It used to write `DynOff::FSTRUCTPROP_STRUCT = tryOffset;` directly,
-                        // which Grimoire.h forbids in as many words ("Never assign a member of this
-                        // family directly"). Audit #5 G12 unified the writers and recorded that
-                        // "both writers now go through here" — it missed this THIRD one, so the
-                        // exact failure G12 exists to prevent stayed reachable: a split family, in
-                        // which TArray element descriptors and every enum-name read 8 bytes off
-                        // while struct reads look correct. Route it through the helper, under the
-                        // same mutex CorrectSubclassOffsets uses, so the five names move together
-                        // and the write is not a data race against the parallel walkers.
+                        // ⛔ Never write `DynOff::FSTRUCTPROP_STRUCT = tryOffset;` directly, which
+                        // Grimoire.h forbids in as many words ("Never assign a member of this
+                        // family directly"): it splits the family, so TArray element descriptors
+                        // and every enum-name read 8 bytes off while struct reads look correct.
+                        // Route it through the helper, under the same mutex CorrectSubclassOffsets
+                        // uses, so the five names move together and the write is not a data race
+                        // against the parallel walkers.
                         //
                         // Resetting FARRAYPROP_INNER to the base is intended and matches what
                         // CorrectSubclassOffsets already does: the ArrayProperty probe above is
@@ -7749,7 +7677,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         }
                     } else {
                         // [FRIEREN-PROBE-OVERRUN] A struct IN the slot is the same proof: on a family derived right --
-                        // the usual case -- nothing is ever corrected, and without this the slot stayed unproven.
+                        // the usual case -- nothing is ever corrected, and without this the slot would stay unproven.
                         MarkSubclassSlotConfirmed(probeEpoch);
                     }
                     found = true;
@@ -7770,9 +7698,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // cache HIT is a hash lookup plus a deep copy of the flattened super
                 // chain (Fields carries the whole inheritance chain — 100-300 FieldInfo
                 // x 14 std::string on an ordinary Actor subclass). This sits in a
-                // per-field loop, so the copy is paid once per struct field. The comment
-                // here used to read "just hash lookup", which is exactly the claim a
-                // reader checks before leaving a call inside a loop (audit #5 U18).
+                // per-field loop, so the copy is paid once per struct field.
                 // Not switched to WalkClassEx's by-reference form: the enclosing block
                 // is itself calibrating DynOff::FSTRUCTPROP_STRUCT, and WalkClassEx runs
                 // CorrectSubclassOffsets, which writes that same global.
@@ -7780,7 +7706,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 uintptr_t structBase = instanceAddr + fi.Offset;
 
                 // Bulk read struct bytes — single cross-process read for both
-                // preview AND hex display (was N individual ReadSafe calls).
+                // preview AND hex display.
                 int32_t readSize = fi.Size;
                 if (readSize <= 0 || readSize > 1024) {
                     readSize = si.PropertiesSize;
@@ -7855,9 +7781,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     boolInfoRead = true;
                     break;
                 }
-                // [A3-BOOL-NATIVE-NOWRITE] The native layout (FieldMask 0xFF) used to fall out of
-                // this loop unrecorded, indistinguishable from a missed probe — so the UI saw mask 0
-                // and its write was a no-op. Say it explicitly; Fern publishes `bool_native`.
+                // [A3-BOOL-NATIVE-NOWRITE] Record the native layout (FieldMask 0xFF) explicitly:
+                // unrecorded it is indistinguishable from a missed probe, so the UI sees mask 0 and
+                // its write is a no-op. Fern publishes `bool_native`.
                 if (ClassifyBoolLayout(fieldSize, byteOff, byteMask, fieldMask) == BoolLayout::Native) {
                     fv.boolNative = true;
                     break;
@@ -7901,12 +7827,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // ⛔ THE RETURN IS LOAD-BEARING, and 0 is the WORST possible default here. On a
             // faulted read rawVal stays 0, and 0 is not "unknown" to anything downstream:
             // `ResolveEnumValue(enumPtr, 0)` answers with the NAME of enumerator 0 — for a BP
-            // enum usually "None" or the first entry — and the hex below rendered "00". Both are
-            // affirmative claims about memory nobody could read, and both are indistinguishable
-            // from a field that genuinely holds 0. Exactly the InterfaceProperty defect above,
-            // and `BoolProperty` three blocks up has always had it right (it builds hex and
-            // typedValue INSIDE `if (Macht::ReadSafe(...))`). Adjudicated 2026-09-09 as slice C
-            // of the unadjudicated sweep claims.
+            // enum usually "None" or the first entry — and the hex below would render "00". Both
+            // are affirmative claims about memory nobody could read, and both are
+            // indistinguishable from a field that genuinely holds 0. The same hazard as the
+            // InterfaceProperty handler above; `BoolProperty` three blocks up builds hex and
+            // typedValue INSIDE `if (Macht::ReadSafe(...))`.
             int64_t rawVal = 0;
             bool okVal = false;
             if (enumSize == 1) { uint8_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
@@ -8062,11 +7987,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             const int32_t dPad =
                 DynOff::DelegatePadFromElementSize(fi.Size, 8 + fnameSize);
             if (dPad < 0) {
-                // ⛔ THIS SITE USED TO LOG NOTHING. All four delegate-stride refusals report the
-                // same decision, but only the two ARRAY ones warned -- so this row's stated
-                // acceptance ("DLL side: the WALK warning naming the size") was unsatisfiable on
-                // the scalar arms, and a refusal here left no trace in any log at all. Found
-                // 2026-09-09 while building sw6_stride_refusal.py.
+                // ⛔ Log the refusal with the WALK warning naming the size, as the array arms
+                // do: without it a refusal here leaves no trace in any log at all.
                 Sein::Warn("WALK", "DelegateProperty '%s': ElementSize=%d is neither %d nor %d "
                                    "(+detector) -- refusing to read the delegate",
                            fi.Name.c_str(), fi.Size, 8 + fnameSize,
@@ -8079,12 +8001,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             fv.delegatePad = dPad;    // exporters must add this before reading the leaf
             fieldAddr += dPad;
 
-            // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this pair sat four lines below the dPad
-            // line above — added by the very commit (2c1d54ff) that repaired this exact shape
-            // 480 lines further down. On a faulted read objIdx/serial stay 0, the weak pointer
-            // resolves to null, funcName comes back empty, and the field publishes the
-            // AFFIRMATIVE "(unbound)" — a claim that this delegate provably has no target,
-            // made over memory nobody could read. Same defect as D3/D5.
+            // ⛔ BOTH RETURNS ARE LOAD-BEARING. On a faulted read objIdx/serial stay 0, the
+            // weak pointer resolves to null, funcName comes back empty, and the field would
+            // publish the AFFIRMATIVE "(unbound)" — a claim that this delegate provably has no
+            // target, made over memory nobody could read.
             int32_t objIdx = 0, serial = 0;
             const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
             const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
@@ -8169,16 +8089,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             bool isSet = false;
             // ⛔ EVERY DISCRIMINATOR READ BELOW IS LOAD-BEARING, and the two directions are both
             // wrong. `(unset)` is an AFFIRMATIVE claim that this TOptional provably holds no
-            // value — the same claim `(unbound)` made for delegates in D3/D5 — and on a faulted
+            // value — the same claim `(unbound)` makes for a delegate (D3/D5) — and on a faulted
             // read the object/weak/text/flag arms all fall into it. The FString and FName arms
             // fail the OTHER way: their sentinels are -1 and 0xFFFFFFFF, so a faulted read's 0
             // reads as SET, and the field then publishes `""` or `(set)` for memory nobody
-            // could read. The hex block at the end of this handler has always gated on its own
-            // ReadBytesSafe, so before this fix the value column and the hex column disagreed —
-            // which is the tell, and the same one the InterfaceProperty handler above had.
-            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the ranker
-            // that found this flagged the isObjectLike read ONLY, because the other five feed a
-            // bare `isSet = (...)` its tiers score as no use at all.
+            // could read. The hex block at the end of this handler gates on its own
+            // ReadBytesSafe, so an ungated read here shows as the value column and the hex
+            // column disagreeing — the same tell as in the InterfaceProperty handler above.
             bool okProbe = true;
 
             // [A2-TOPTIONAL-INTRUSIVE] The discriminator is the LAYOUT's:
@@ -8541,7 +8458,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             std::string display;
-            // "0 bindings" is now only claimed when the list was actually READ. An
+            // "0 bindings" is claimed only when the list was actually READ. An
             // unreadable or implausible header says so instead of asserting emptiness
             // over a delegate whose bIsBound byte read 1.
             std::string state = Aura::DescribeSparseDelegateState(sr, fv.arrayElements.size());
@@ -8773,33 +8690,23 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         int32_t headerEnd = isRawStruct ? 0 : (DynOff::UOBJECT_OUTER + 8);
         int32_t scanEnd = ci.PropertiesSize;
 
-        // Collect known field intervals from the rendered reflected fields and
+        // Collect known field intervals from the reflected fields (ci.Fields) and
         // compute the complement within [headerEnd, scanEnd) via the shared
         // Ubel::ComputeHoles helper. ComputeHoles clamps each interval to the
         // window before merging — clamping the START to headerEnd is what makes
-        // the leading region [headerEnd, firstField) survive as a gap (the
-        // user-visible "gap before the first field never gets guessed rows" bug,
-        // fixed in commit 75ea723), and everything below headerEnd
-        // (vtable/flags/class/name/outer) stays excluded so the well-known
-        // UObject header is never turned into guessed rows. Clamping the END to
-        // scanEnd guards a field with a garbage-huge size from eating trailing
-        // gaps.
+        // the leading region [headerEnd, firstField) survive as a gap, and
+        // everything below headerEnd (vtable/flags/class/name/outer) stays
+        // excluded so the well-known UObject header is never turned into guessed
+        // rows. Clamping the END to scanEnd guards a field with a garbage-huge
+        // size from eating trailing gaps.
         //
         // ⛔ THIS USES ComputeClassHoles, NOT A LOCAL LOOP OVER result.fields.
-        // It used to build the intervals here from the rendered LiveFieldValue
-        // sizes, and a comment justified that as "element-size, not Size*ArrayDim
-        // — so its output is unchanged by the new ArrayDim field". The output was
-        // NOT unchanged; it was wrong, and had been since Guess? shipped. A static
-        // C-array `UPROPERTY Type Foo[N]` renders as ONE LiveFieldValue of ONE
-        // ELEMENT (WalkInstance never expands ArrayDim), so elements 1..N-1 looked
-        // unclaimed and Guess? invented a phantom row over each. Measured on the
-        // fixture 2026-09-07: `int32 FixedArr[8]` at 0x674 reported size 4, and the
-        // walk emitted SEVEN guessed rows `?0x678_i32` … `?0x690_i32` sitting on
-        // top of a real, reflected array.
-        //
-        // ⭐ The helper already had it right (Offset + Size * ArrayDim) and was
-        // used by the class-level Native-C path. Two implementations of one idea,
-        // one correct — so the fix is to delete the second, not to patch it.
+        // A static C-array `UPROPERTY Type Foo[N]` renders as ONE LiveFieldValue
+        // of ONE ELEMENT (WalkInstance never expands ArrayDim), so intervals built
+        // from the rendered sizes leave elements 1..N-1 unclaimed and Guess?
+        // invents a phantom row over each, on top of a real, reflected array. The
+        // helper counts Offset + Size * ArrayDim; one implementation of the idea,
+        // not two.
         // ci.Fields is the authoritative reflected set; if anything there failed to
         // RENDER, occupancy only grows, which suppresses guessed rows rather than
         // inventing them. Wrong in the safe direction.
@@ -8870,9 +8777,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     // real UE build — a UGameEngine alone has hundreds. When this fires, property TYPE
     // resolution is broken (FFieldClass::Name at the wrong offset), every field falls into
     // the classifier's catch-all Scalar branch, and the Live Walker shows no drill-down.
-    // This is the shape UE 5.8 presented before FFIELDCLASS_NAME became a probed offset:
-    // 279/279 Scalar on GameEngine, 29/29 on Level. Loud beats silent — the failure is
-    // otherwise invisible except as "the tree looks wrong".
+    // Loud beats silent — the failure is otherwise invisible except as "the tree looks wrong".
     if (nObj == 0 && nStruct == 0 && nArray == 0 &&
         static_cast<size_t>(nScalar) == result.fields.size() && result.fields.size() > 8) {
         Sein::Warn("WALK:perf",
@@ -8981,15 +8886,13 @@ void ResolvePropertyPreviews(
         }
 
         // --- WeakObjectProperty / LazyObjectProperty: FWeakObjectPtr at +0x00 ---
-        // Audit #5 U13. Both used to sit in the raw-pointer branch below, which read
-        // 8 bytes as a UObject* with NO size gate at all — so an FWeakObjectPtr
-        // { int32 ObjectIndex; int32 SerialNumber } was published as the address
-        // Serial<<32|Index and printed as a plausible-looking "0x…". TLazyObjectPtr
-        // begins with the same FWeakObjectPtr (then the envelope: +0x08 Tag and the FGuid at
-        // +0x0C up to 5.2, the FGuid straight at +0x08 from 5.3 — NOT a fixed +0x10, which is
-        // the model audit A1 deleted), so it resolves
+        // An FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber } is not a UObject*:
+        // the raw-pointer branch below would publish it as the address Serial<<32|Index
+        // and print a plausible-looking "0x…". TLazyObjectPtr begins with the same
+        // FWeakObjectPtr (then the envelope: +0x08 Tag and the FGuid at +0x0C up to 5.2,
+        // the FGuid straight at +0x08 from 5.3 — NOT a fixed +0x10), so it resolves
         // identically; its FGuid is the honest fallback when nothing is loaded, which
-        // is what ReadLazyObjectArrayElements already displays.
+        // is what ReadLazyObjectArrayElements displays.
         if (t == "WeakObjectProperty" || t == "LazyObjectProperty") {
             int32_t objIdx = 0, serial = 0;
             Macht::ReadSafe(inst + off,     objIdx);
@@ -9020,9 +8923,8 @@ void ResolvePropertyPreviews(
         // --- SoftObjectProperty / SoftClassProperty: FSoftObjectPath asset path ---
         // TSoftObjectPtr = FWeakObjectPtr(8) [+ Tag(4) + pad(4) on UE ≤ 5.2] +
         // FSoftObjectPath, so the readable value is the asset path at the measured
-        // envelope (+0x10 up to 5.2, +0x08 from 5.3), never a pointer.
-        // SoftClassProperty was read as a raw pointer here and SoftObjectProperty had
-        // no branch at all (so it silently got NO preview) — audit #5 U13. Display
+        // envelope (+0x10 up to 5.2, +0x08 from 5.3), never a pointer, for
+        // SoftClassProperty too (audit #5 U13). Display
         // order matches WalkInstance's own soft-pointer handler: path, then the
         // resolved target when the asset happens to be loaded, then "(none)".
         if (t == "SoftObjectProperty" || t == "SoftClassProperty" || IsAssetPtrProperty(t)) {
@@ -9044,9 +8946,8 @@ void ResolvePropertyPreviews(
         }
 
         // --- ObjectProperty / ClassProperty / InterfaceProperty: raw UObject* at +0 ---
-        // InterfaceProperty had no branch anywhere in this function, so it got no
-        // preview at all (audit #5 U13). FScriptInterface is { UObject* +0x00;
-        // void* +0x08 }, so its first 8 bytes ARE a genuine object pointer — the same
+        // InterfaceProperty gets a preview here too (audit #5 U13). FScriptInterface is
+        // { UObject* +0x00; void* +0x08 }, so its first 8 bytes ARE a genuine object pointer — the same
         // reason CeXmlExportService.IsRawObjectPtrSlot includes it and the weak-like
         // types above it does not.
         if (t == "ObjectProperty" || t == "ClassProperty" || t == "InterfaceProperty") {
@@ -9145,35 +9046,27 @@ void ResolvePropertyPreviews(
 // RowMap (TMap<FName, uint8*>) is NOT reflected — must scan memory.
 // Returns the byte offset of the TSparseArray within the DataTable, or -1 if not found.
 static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
-    // The scan is bounded BY THE OBJECT, and it covers the whole of it.
+    // The scan is bounded BY THE OBJECT, and it covers the whole of it
+    // [DTROWMAP-2026-08-23]. A scan that starts past RowMap and runs on past the
+    // object reports a NEIGHBOURING table's rows as this table's:
     //
-    // Two things were wrong here until 2026-08-23 [DTROWMAP-2026-08-23], and
-    // together they made this report a NEIGHBOURING table's rows as this table's:
+    //  (1) It cannot start at the end of the reflected fields. RowMap is declared
+    //      immediately after RowStruct, so in a COOKED build -- where the
+    //      WITH_EDITORONLY_DATA members between them are stripped -- it lands in
+    //      the hole between RowStruct and the bools, BEHIND the end of the
+    //      reflected fields, where no forward range can reach it.
     //
-    //  (1) It started at the end of the reflected fields and only went FORWARD.
-    //      RowMap is declared immediately after RowStruct, so in a COOKED build --
-    //      where the WITH_EDITORONLY_DATA members between them are stripped -- it
-    //      lands at +0x30, in the hole between RowStruct (+0x28..0x30) and the
-    //      bools (+0x80). Measured on UE 5.4: endReflected = 152, real RowMap = 48.
-    //      The target sat BEHIND the scan start, so no amount of forward range
-    //      could reach it. This was not a tuning problem.
-    //
-    //  (2) It ran +0..+256 from there with no bound tied to the object.
-    //      UDataTable's PropertiesSize is 176, so 232 of its 257 candidate offsets
-    //      were OUTSIDE the object. DataTables get allocated near each other, so
-    //      the overrun lands in another UDataTable and validates on a real RowMap:
-    //      real FName row names, real row pointers, a plausible count. Not an
-    //      error -- a confident wrong answer. Proven with ReadProcessMemory, with
-    //      this DLL out of the loop: Table_Big+240 and Table_Small+48 were the
-    //      same address and served the same eight rows for a 100-row table.
+    //  (2) It never reads past PropertiesSize. DataTables get allocated near each
+    //      other, so an overrun lands in another UDataTable and validates on a real
+    //      RowMap: real FName row names, real row pointers, a plausible count. Not
+    //      an error -- a confident wrong answer.
     //
     // So: walk every 8-aligned offset of THIS class's own storage and never past
     // PropertiesSize. Offsets a reflected field already claims are tried LAST --
     // RowMap is by definition not one of them, but preferring the holes keeps a
     // reflected TMap/TSet on some other class from being mistaken for it, and the
     // fallback means a wrong Size on a reflected field cannot hide the real thing.
-    // The validation below is unchanged: it was never the problem, and it is what
-    // keeps a whole-object scan honest.
+    // The validation below is what keeps a whole-object scan honest.
     constexpr int32_t kSparseArrayBytes = 0x38;   // Macht::ReadTSparseArray reads +0x00..+0x37
 
     int32_t scanBegin = (ci.SuperPropertiesSize > 0 ? ci.SuperPropertiesSize : 0);
@@ -9455,18 +9348,13 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                 } else if (fi.TypeName == "TextProperty") {
                     // Mirrors WalkInstance's TextProperty branch on
                     // purpose, including the "(empty)" typedValue: the two readers
-                    // must agree, and this is the pair that did not.
+                    // must agree. [DTTEXT-2026-08-23]
                     //
-                    // [DTTEXT-2026-08-23] Until now this branch did not exist, so an
-                    // FText column of a DataTable came back with NO value and NO
-                    // str_value at all -- while the SAME property on the SAME object
-                    // in the SAME build rendered fine through walk_instance. The row
-                    // still listed the field with its type and its raw hex, so the
-                    // column looked present and merely blank, which reads as "this
-                    // row has no caption" rather than as "we cannot decode FText
-                    // here". Found on a fixture whose FText column is deliberately
-                    // CJK, immediately after [DTROWMAP-2026-08-23] stopped the walk
-                    // reading the wrong table.
+                    // Without this branch an FText column of a DataTable would come
+                    // back with NO value and NO str_value while the row still listed
+                    // the field with its type and raw hex, so the column would look
+                    // present and merely blank -- "this row has no caption" rather
+                    // than "we cannot decode FText here".
                     fv.strValue = ReadFTextString(rowPtr + fi.Offset);
                     fv.typedValue = fv.strValue.empty() ? "(empty)" : fv.strValue;
                 }
@@ -9479,7 +9367,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                     else if (readSize == 8) { int64_t v = 0; memcpy(&v, p, 8); rawVal = v; }
                     fv.enumValue = rawVal;
                     // Resolve enum address and name
-                    // [ENUMSLOT-ANY-NAME] The TYPE's slot: a TEnumAsByte column used to be read at FENUMPROP_ENUM,
+                    // [ENUMSLOT-ANY-NAME] The TYPE's slot: a TEnumAsByte column is never read at FENUMPROP_ENUM,
                     // one pointer past the end of an FByteProperty.
                     const uintptr_t enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
                     if (enumAddr) {

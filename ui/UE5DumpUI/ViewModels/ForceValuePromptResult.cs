@@ -4,10 +4,9 @@ namespace UE5DumpUI.ViewModels;
 /// Outcome of the Property Search "Force → value…" prompt.
 ///
 /// <para>
-/// Three states, because collapsing them to two is the defect this type exists to remove
-/// (audit #5 AF6). The prompt used to return <c>double?</c>: null meant cancel, and a
-/// literal the dialog had ALREADY validated per-type but the caller could not convert
-/// returned null too — so a rejected value was reported to the user as "you pressed
+/// Three states, because two cannot tell a cancel from a rejected value: with a bare
+/// <c>double?</c>, a literal the dialog had ALREADY validated per-type but the caller could
+/// not convert would come back as null too — and be reported to the user as "you pressed
 /// Cancel", i.e. as nothing at all.
 /// </para>
 /// <list type="bullet">

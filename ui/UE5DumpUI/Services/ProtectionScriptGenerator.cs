@@ -68,7 +68,7 @@ public static class ProtectionScriptGenerator
         Line(sb, "  return");
         Line(sb, "end");
         // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
-        // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
+        // dbg()s and returns -- one EmitBlock writes both blocks, so it must not give the untick the tick's modal.
         var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
@@ -76,10 +76,9 @@ public static class ProtectionScriptGenerator
         Line(sb);
 
         // Mailbox round-trip: write op + value, trigger CMD_PROTECT=9, poll status.
-        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
-        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
-        // a toggle fired while another command was still in flight wrote straight
-        // over it. Above the OPERAND writes, not merely above the status clear:
+        // Bounded wait for IDLE before the FIRST write, so a toggle fired while
+        // another command is still in flight cannot write straight over it.
+        // Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
         CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "GodMode", bail);

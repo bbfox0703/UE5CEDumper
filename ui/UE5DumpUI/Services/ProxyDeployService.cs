@@ -425,13 +425,6 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// so <see cref="DetectedGame.UeVersion"/> has one documented origin if an offline
     /// heuristic is ever added. <c>ProxyDeployTests</c> asserts the null, which is what
     /// keeps this honest.</para>
-    ///
-    /// <para>audit #5 AC15 — this used to open <c>FileVersionInfo.GetVersionInfo(exePath)</c>
-    /// into a local named <c>info</c> and then unconditionally <c>return null</c> without
-    /// reading it. That is a full VERSIONINFO resource load per detected game, on every
-    /// Steam scan and every generic drive walk, for a value that was discarded — and the
-    /// property it fed is read by nothing in the app. The dead load is gone; the seam and
-    /// its (null) contract are not.</para>
     /// </summary>
     private static string? TryDetectUeVersion(string exePath) => null;
 
@@ -859,8 +852,8 @@ public sealed class ProxyDeployService : IProxyDeployService
             bool present = Directory.Exists(procDir);
             DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
             string display = ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
-            // [PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) A log folder games in different folders share: the load
-            // it shows may be another game's. Said only where there IS a load to attribute, by the leading tag.
+            // [PROXY-CONFIRM-SHARED-EXE] A log folder games in different folders share: the load it shows may be
+            // another game's. Said only where there IS a load to attribute, by the leading tag.
             return present && sharedLogFolders.Contains(folderName) ? SharedTag + display : display;
         }
         catch (Exception ex)
@@ -976,7 +969,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // not warn (otherwise switching tabs falsely flags every game
                 // that has a different single proxy installed). N-proxy-safe: no
                 // hardcoded type pair. deployedProxyNames was computed up front.
-                // [PROXY-PRODUCTNAME-UNREADABLE] (second review) A proxy-named file at ANOTHER name that cannot be read:
+                // [PROXY-PRODUCTNAME-UNREADABLE] A proxy-named file at ANOTHER name that cannot be read:
                 // said on the row, and a folder that is otherwise clean is Unreadable, not a clean NotDeployed -- it is
                 // the folder Deploy will skip.
                 var unreadableOthers = allProxyNames
@@ -1025,23 +1018,21 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// "The target could not be replaced because something else owns it" — the case the user
     /// can fix by closing the game, as opposed to a genuine fault.
     ///
-    /// ⚠ This must NOT be an <c>IOException</c> filter, and the reason is a measurement, not a
-    /// preference. The publish path changed from <c>File.Copy</c> to a staged <c>File.Move</c>,
-    /// and the two hit a mapped target through different kernel paths:
+    /// ⚠ This must NOT be only an <c>IOException</c> filter: the two write shapes hit a mapped
+    /// target through different kernel paths:
     ///
     /// <list type="table">
-    ///   <item><description>OLD <c>File.Copy(src, target, overwrite)</c> — opens the target for
+    ///   <item><description><c>File.Copy(src, target, overwrite)</c> — opens the target for
     ///     write → <c>ERROR_SHARING_VIOLATION (32)</c> → <c>IOException</c></description></item>
-    ///   <item><description>NEW <c>File.Move(stage, target, overwrite)</c> — a replacing rename
-    ///     must first DELETE the target, and a file carrying an image section refuses deletion
-    ///     with <c>STATUS_CANNOT_DELETE</c> → <c>ERROR_ACCESS_DENIED (5)</c> →
+    ///   <item><description><c>File.Move(stage, target, overwrite)</c>, the staged publish — a
+    ///     replacing rename must first DELETE the target, and a file carrying an image section
+    ///     refuses deletion with <c>STATUS_CANNOT_DELETE</c> → <c>ERROR_ACCESS_DENIED (5)</c> →
     ///     <c>UnauthorizedAccessException</c>, which is NOT an IOException</description></item>
     /// </list>
     ///
-    /// So the old filter silently stopped matching the moment the write shape changed, and the
-    /// user got a raw "Access to the path is denied." that does not even name the path
-    /// (<c>[STAGELOCK-2026-08-20]</c>). Measured at the OS level against a really-mapped DLL, with
-    /// a negative control: with nothing mapped, BOTH shapes succeed.
+    /// An IOException-only filter misses the staged rename, and the user gets a raw "Access to the
+    /// path is denied." that does not even name the path (<c>[STAGELOCK-2026-08-20]</c>). With
+    /// nothing mapped, BOTH shapes succeed.
     ///
     /// Kept deliberately narrow — a hand-built verification <c>IOException</c> from
     /// <see cref="CopyProxyStaged"/> is not one of these and must still fall through to
@@ -1096,7 +1087,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// catches a short write / truncation, and the ownership flag catches a copy whose
     /// PE version resource did not survive. `sourceBytes > 0` makes an unmeasurable or
     /// empty source a REFUSAL rather than a pass (pass -1 for "could not measure"), the
-    /// same rule Flamme's ShouldPublishAtomicWrite settled on DLL-side.
+    /// same rule as Flamme's ShouldPublishAtomicWrite on the DLL side.
     ///
     /// Ownership is compared to the SOURCE rather than asserted true: a dev build whose
     /// proxy carries no ProductName must still deploy, it just has to copy faithfully.
@@ -1120,13 +1111,13 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>
     /// Publish <paramref name="sourcePath"/> at <paramref name="targetPath"/> without ever
-    /// exposing a partial file (audit #5 AC11).
+    /// exposing a partial file.
     ///
-    /// The old code was a bare <c>File.Copy(overwrite: true)</c> straight onto the live
-    /// target, which TRUNCATES first and then streams. Any failure part-way — disk full,
-    /// source read error, the process being killed — left a truncated DLL sitting at the
-    /// real proxy path, and that state is worse than a failed deploy in three ways:
-    ///   • the game IMPORTS that name, so it now fails to start;
+    /// A bare <c>File.Copy(overwrite: true)</c> straight onto the live target TRUNCATES
+    /// first and then streams. Any failure part-way — disk full, source read error, the
+    /// process being killed — would leave a truncated DLL sitting at the real proxy path,
+    /// and that state is worse than a failed deploy in three ways:
+    ///   • the game IMPORTS that name, so it fails to start;
     ///   • a truncated PE has no version resource, so <see cref="IsOurProxyDll"/> is false
     ///     and the grid reports it as "Other proxy: unknown" — another program's DLL;
     ///   • and on that verdict BOTH removal paths refuse it (PlanUndeploy skips it as
@@ -1138,7 +1129,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// copy and the rename leaves one file that the next deploy of this type overwrites.
     /// IOExceptions are left to propagate so DeployAsync's SHARING_VIOLATION filter still
     /// classifies a locked target as "File locked (game running?)" — the rename raises the
-    /// same violation the direct copy used to.
+    /// same violation a direct copy would.
     /// </summary>
     internal static void CopyProxyStaged(string sourcePath, string targetPath)
     {
@@ -1229,7 +1220,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // Replacing a third party's DLL is irreversible and the same
                 // operation erases the row that said whose it was (a successful
                 // deploy clears StatusDetail), so record the identity FIRST —
-                // otherwise nothing anywhere says what used to be here.
+                // otherwise nothing anywhere says what was there before.
                 if (exists && !isOurs)
                 {
                     _log.Warn("ProxyDeploy",
@@ -1237,12 +1228,12 @@ public sealed class ProxyDeployService : IProxyDeployService
                         $"({DescribeForeignDll(targetDll)}) — foreign overwrite was explicitly allowed");
                 }
 
-                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal used
-                // to live here and rejected version.dll (the broadest-compatible flavour) on every
-                // game that loads it dynamically. Two independent risks, at most one of which
+                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal would
+                // reject version.dll (the broadest-compatible flavour) on every game that loads it
+                // dynamically. Two independent risks, at most one of which
                 // applies (they partition on whether the flavour is imported):
                 //   • BYPASS: the flavour IS imported, so an already-mapped System32 copy can
-                //     pre-empt ours — the [PROXYLOAD-2026-08-17] OCTOPATH failure; and
+                //     pre-empt ours ([PROXYLOAD-2026-08-17]); and
                 //   • NEVER-LOADS: a static-only flavour (dxgi/winmm) is absent, so nothing names
                 //     it and it cannot load at all.
                 // Both fail SILENTLY and TOTALLY when real (zero log, reads like "nothing
@@ -1360,7 +1351,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                     With($"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})"), false);
 
         // Not a success while an unreadable file is left: it may be ours (the contract is "true when nothing of ours
-        // is left behind"), and a success let the view model's refresh wipe this very note (second review).
+        // is left behind"), and a success would let the view model's refresh wipe this very note.
         if (cannotRead != null)
             return (ProxyDeployStatus.Unreadable,
                     foreignSkipped.Count > 0 ? With($"Left another program's {string.Join(", ", foreignSkipped)}")
@@ -1537,9 +1528,9 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// a Steam <c>appmanifest</c> still naming the install directory, or any executable surviving
     /// under the game root.
     ///
-    /// <para>The manifest check must be PER LIBRARY, not global — measured on a real machine, the
-    /// same <c>installdir</c> name existed in two libraries at once, one installed and one an
-    /// orphaned shell. A global name match would have refused the shell forever.</para>
+    /// <para>The manifest check must be PER LIBRARY, not global — the same <c>installdir</c> name
+    /// can exist in two libraries at once, one installed and one an orphaned shell, and a global
+    /// name match would refuse the shell forever.</para>
     ///
     /// <para>A manifest that exists but cannot be parsed counts as PRESENT. "Cannot tell" must fail
     /// closed, and no attempt is made to interpret <c>StateFlags</c>: mid-update bit patterns are
@@ -1696,15 +1687,10 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // are blocked for a reason worth telling the user about. A folder with nothing of
                 // ours in it is not this feature's business and must not appear.
                 //
-                // NotOnFixedDrive is the second kind, and it was being DROPPED — the filter kept
-                // only the two actionable verdicts, so the carefully-worded no-Recycle-Bin refusal
-                // was computed and thrown away. Measured end to end on 2026-08-12 (a real leftover
-                // version.dll on a fixed volume with NukeOnDelete=1): the scan reported "No leftover
-                // proxy DLLs found (23 folder(s) examined)" while the file sat there, and flipping
-                // that one registry value — nothing else — made the same folder surface as a row.
-                // So the user was told nothing was there precisely on the kind of volume where a
-                // hand-delete is unrecoverable. Every OTHER refusal means ClassifyLeaf found none of
-                // our files, which is the case this filter's comment is about.
+                // NotOnFixedDrive is the second kind: a filter that kept only the actionable verdicts
+                // would throw its no-Recycle-Bin refusal away and tell the user nothing is there
+                // precisely on the kind of volume where a hand-delete is unrecoverable. Every OTHER
+                // refusal means ClassifyLeaf found none of our files.
                 if (!OrphanVerdictRules.ShouldSurface(plan.Verdict)) continue;
 
                 rows.Add(BuildOrphanRow(dir, src, plan));
@@ -1757,8 +1743,8 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>
     /// Bounded search for <c>...\Binaries\Win64</c> under a Steam <c>common</c> root. Bounded, not a
-    /// full walk: only the game folder and up to two levels below it, which covers every layout
-    /// measured (<c>&lt;Game&gt;\Binaries\Win64</c>, <c>&lt;Game&gt;\&lt;Proj&gt;\Binaries\Win64</c>
+    /// full walk: only the game folder and up to two levels below it, which covers the known
+    /// layouts (<c>&lt;Game&gt;\Binaries\Win64</c>, <c>&lt;Game&gt;\&lt;Proj&gt;\Binaries\Win64</c>
     /// and the extra-wrapper <c>&lt;Game&gt;\Package\&lt;Proj&gt;\Binaries\Win64</c>).
     /// </summary>
     private static IEnumerable<string> EnumerateBinariesWin64Under(string common, CancellationToken ct)
@@ -1798,15 +1784,13 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// <para><b>Why this is not <c>File.ReadLines</c>.</b> That helper opens with
     /// <c>FileShare.Read</c>, which declares "other handles may only read" — so it fails with a
     /// sharing violation against a writer that already has the file open, which is exactly what our
-    /// own logger is doing to <c>view-0.log</c> while the app runs. Measured 2026-08-12: deploying a
-    /// proxy and then pressing "Find leftovers" in the SAME session found nothing, because the only
-    /// log line naming that folder was in the live <c>view-0.log</c>, the read threw, and the
-    /// caller's per-file <c>catch</c> swallowed it — so the whole file contributed zero candidates
-    /// and the folder was never examined. It only became visible after a restart rotated the log to
-    /// an archive. <c>FileShare.ReadWrite | FileShare.Delete</c> is what tolerates the live writer;
-    /// <c>Delete</c> additionally survives the file being rotated out from under us mid-read.</para>
+    /// own logger is doing to <c>view-0.log</c> while the app runs. The caller's per-file
+    /// <c>catch</c> would swallow that throw, so the live log — which may hold the only line naming a
+    /// folder deployed in this session — would contribute zero candidates. <c>FileShare.ReadWrite |
+    /// FileShare.Delete</c> is what tolerates the live writer; <c>Delete</c> additionally survives
+    /// the file being rotated out from under us mid-read.</para>
     ///
-    /// <para>Lazy, like the helper it replaces, so an open failure surfaces at the first
+    /// <para>Lazy, like <c>File.ReadLines</c>, so an open failure surfaces at the first
     /// <c>MoveNext</c> inside the caller's <c>try</c> rather than at the call site.</para>
     /// </summary>
     internal static IEnumerable<string> ReadLinesShared(string path)
@@ -1865,7 +1849,7 @@ public sealed class ProxyDeployService : IProxyDeployService
             // directory listing.
             //
             // liveBinariesDirs is threaded in from the row so the LiveGameFolder veto the SCAN applied
-            // is applied again here. Passing an empty set made the delete path strictly weaker than
+            // is applied again here. An empty set would make the delete path strictly weaker than
             // the scan that authorised it, which is the wrong direction for a re-check.
             PrunePlan plan = ProxyOrphanScanner.PlanPrune(
                 row.DllDirectory, commonRoots, liveBinariesDirs,
@@ -2051,8 +2035,8 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>[PROXY-CONFIRM-SHARED-EXE] Exe file names that games in DIFFERENT folders ship. The confirmed-working
     /// and injected records are keyed by the bare exe name -- so a record survives a reinstall -- and for such a name
-    /// a record cannot say which game it came from: it is used for none of them (maintainer's call, 2026-09-25: mark
-    /// it ambiguous, never apply one game's proxy type to another). Only the detected games can show it: a record
+    /// a record cannot say which game it came from: it is used for none of them (it is marked ambiguous; one game's
+    /// proxy type is never applied to another). Only the detected games can show it: a record
     /// from a game not listed here still applies to a listed one of the same name.</summary>
     internal static HashSet<string> SharedExeNames(IEnumerable<DetectedGame> games) =>
         games.Where(g => !string.IsNullOrEmpty(g.ExePath))
@@ -2061,7 +2045,7 @@ public sealed class ProxyDeployService : IProxyDeployService
              .Select(grp => grp.Key)
              .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>[PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) The per-process LOG folder names (Sein::ProcessFolderName
+    /// <summary>[PROXY-CONFIRM-SHARED-EXE] The per-process LOG folder names (Sein::ProcessFolderName
     /// of the exe) that games in DIFFERENT folders share -- the Load column's key, the third exe-keyed signal. By the
     /// folder name, not the exe name: 'Game .exe' and 'Game.exe' log into the same 'Game'.</summary>
     internal static HashSet<string> SharedLogFolders(IEnumerable<DetectedGame> games) =>
@@ -2074,9 +2058,9 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>The tag that LEADS a Load or Suggested text whose exe-keyed signal another listed game shares
     /// (<see cref="SharedLogFolders"/>, <see cref="SharedExeNames"/>). Leading, not trailing: a DataGrid column clips
-    /// the END of its text, and a trailing mark was clipped away (sixth review, R6-03). The Load column is sized for its
-    /// longest text, "shared · stale · loaded yyyy-MM-dd" (280 px, pinned by LoadColumn_HoldsTheLongestLoadText;
-    /// tenth review, R10-06). The columns' header tooltips say what the marks mean.</summary>
+    /// the END of its text, so a trailing mark would be clipped away. The Load column is sized for its longest text,
+    /// "shared · stale · loaded yyyy-MM-dd" (280 px, pinned by LoadColumn_HoldsTheLongestLoadText). The columns'
+    /// header tooltips say what the marks mean.</summary>
     internal const string SharedTag = "shared · ";
 
     /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
@@ -2084,7 +2068,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     internal const string SharedExeNote = "shared exe name: the confirmed-working record is not used";
 
     /// <summary>The Suggested column's note for a shared exe name: it names the record(s) that EXIST and are not used --
-    /// an injection-only name must not claim a confirmed-working record (fifth review, R5-01). Null when neither
+    /// an injection-only name must not claim a confirmed-working record. Null when neither
     /// exists: then there is nothing to say.</summary>
     internal static string? SharedExeNoteFor(bool hasConfirmed, bool hasInjected) => (hasConfirmed, hasInjected) switch
     {
@@ -2134,7 +2118,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 string? note = ambiguous
                     ? SharedExeNoteFor(confirmedByExe.ContainsKey(exeName), injectedExes.Contains(exeName))
                     : null;
-                if (note != null)   // the tag leads (sixth review, R6-03); what was not used follows
+                if (note != null)   // the tag leads; what was not used follows
                     display = SharedTag + (string.IsNullOrEmpty(display) ? note : $"{display} · {note}");
 
                 results.Add((game, suggestion.Type, display));
@@ -2145,8 +2129,8 @@ public sealed class ProxyDeployService : IProxyDeployService
 
         // Back on the caller's thread — see the threading contract above.
         // SuggestedProxy feeds a DataGrid column, so this pass is a visual-tree mutation
-        // exactly like the status one, and reading 29 PE import tables is slow enough that
-        // it used to land mid-render.
+        // exactly like the status one, and reading the PE import tables is slow enough that
+        // it would otherwise land mid-render.
         foreach (var (game, type, display) in suggestions)
         {
             game.SuggestedProxyType = type;
@@ -2258,7 +2242,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Whose <paramref name="dllPath"/> is: our ProductName -> Ours; another
     /// ProductName -> NotOurs; no ProductName -> open it: readable (no version resource, which ours always carry) is
     /// NotOurs, not readable (access denied, sharing violation) is Unreadable. The open is needed because
-    /// FileVersionInfo answers null for both, with no exception -- measured on .NET 10.</summary>
+    /// FileVersionInfo answers null for both, with no exception (.NET 10).</summary>
     internal static DllOwner ReadOwner(string dllPath)
     {
         string? product = null;
@@ -2269,8 +2253,8 @@ public sealed class ProxyDeployService : IProxyDeployService
         try
         {
             // Read|Delete sharing -- NOT Write: a file someone holds open for writing (a hex editor, a mod manager, a
-            // copy in flight) is not one we can vouch for, and FileVersionInfo returned null for it too (second
-            // review, measured). A mapped image (a running game's proxy) still opens.
+            // copy in flight) is not one we can vouch for, and FileVersionInfo answers null for it too. A mapped
+            // image (a running game's proxy) still opens.
             using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             return DllOwner.NotOurs;
         }
@@ -2299,12 +2283,12 @@ public sealed class ProxyDeployService : IProxyDeployService
         + $"cannot tell whether {(names.Count == 1 ? "it is" : "they are")} one of ours, so Deploy does not add a "
         + "second proxy next to it.";
 
-    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) <see cref="DescribeUnreadableSkip"/> for a row that
+    /// <summary>(UNREAD-NOTE-DOUBLED-OTHERNAME) <see cref="DescribeUnreadableSkip"/> for a row that
     /// already names the files as unreadable: only the skip.</summary>
     internal static string UnreadableSkipReason(int count) =>
         $"Skipped: Deploy does not add a second proxy next to {(count == 1 ? "a file that" : "files that")} may be ours.";
 
-    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) Whether <paramref name="detail"/> already says that every
+    /// <summary>(UNREAD-NOTE-DOUBLED-OTHERNAME) Whether <paramref name="detail"/> already says that every
     /// one of <paramref name="names"/> cannot be read. The refresh writes <see cref="DescribeUnreadable"/> for such a
     /// file at ANY proxy name on a row it rewrites -- and nothing on a row it preserves -- so a note appended after the
     /// refresh must decide from the row itself whether to name the files.</summary>

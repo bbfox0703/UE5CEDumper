@@ -126,7 +126,7 @@ uintptr_t ResolvePawn(uintptr_t pc) {
 
 // Walk obj's class → Super → Super…, comparing each class node's FName. Returns
 // "Pawn" (a Pawn/Character/DefaultPawn target — the prize), "Actor" (any other
-// AActor), "ActorComponent" (a component — never a target, but used to decide
+// AActor), "ActorComponent" (a component — never a target, but it decides
 // whether to descend into it), or "" (anything else). Bounded to 64 hops with a
 // self-loop break (mirrors Wirbel::FindFunc) so a corrupt super pointer can't
 // hang. Cheap: a class super-chain is ~5-10 deep.
@@ -147,8 +147,8 @@ const char* ClassifyBySuperChain(uintptr_t obj) {
 }
 
 // True when child's Outer chain reaches root within maxHops (a small read-only
-// analogue of Aura's internal IsOwnedBy — used to confirm a candidate component
-// is genuinely owned by the player object before descending into it).
+// analogue of Aura's internal IsOwnedBy — it confirms a candidate component is
+// genuinely owned by the player object before descending into it).
 bool OuterChainsBackTo(uintptr_t child, uintptr_t root, int maxHops) {
     uintptr_t o = child;
     for (int h = 0; h < maxHops; ++h) {

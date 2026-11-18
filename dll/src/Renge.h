@@ -75,13 +75,13 @@ constexpr const char* CMD_BEGIN_VALUE_SCAN         = "begin_value_scan";
 constexpr const char* CMD_REFINE_VALUE_SCAN        = "refine_value_scan";
 constexpr const char* CMD_END_VALUE_SCAN           = "end_value_scan";
 constexpr const char* CMD_QUERY_CANDIDATES         = "query_candidates";
-// Multiple values group scan (build 1276) — object-aware "group scan".
+// Multiple values group scan — object-aware "group scan".
 constexpr const char* CMD_BEGIN_GROUP_SCAN         = "begin_group_scan";
 constexpr const char* CMD_REFINE_GROUP_SCAN        = "refine_group_scan";
 constexpr const char* CMD_END_GROUP_SCAN           = "end_group_scan";
 constexpr const char* CMD_QUERY_GROUP_CANDIDATES   = "query_group_candidates";
-// Every leaf one slot of one candidate kept, BY NAME (build 2719). A group row
-// can only display one assignment; the rest existed on the wire solely as raw
+// Every leaf one slot of one candidate kept, BY NAME. A group row can only
+// display one assignment; otherwise the rest exist on the wire only as raw
 // integers in `matched_offsets`, which cannot tell a user that offset 1308 is
 // `FrozenInt`. Fetched on demand for the expanded row, never inlined into the
 // paged list (a page is up to 1000 candidates x N slots x per_slot_cap leaves).
@@ -276,11 +276,11 @@ inline std::string BytesToHex(const uint8_t* data, size_t len) {
 
 // Hex string to bytes, with a failure channel.
 //
-// The old version could not fail: `strtoul` maps any non-hex character to 0, and an
-// odd trailing nibble was silently dropped. `"DE AD BE EF"` — spaces and all, the way
-// a human writes a byte pattern — became `{DE,0A,0D,BE,0E}`, was WRITTEN INTO THE GAME,
-// and answered `ok:true`. Nothing in the pipe layer could tell the difference between
-// "wrote what you asked" and "wrote five bytes of nonsense at that address". (B46)
+// It must be able to fail: with `strtoul`, which maps any non-hex character to 0, and
+// an odd trailing nibble silently dropped, `"DE AD BE EF"` — spaces and all, the way a
+// human writes a byte pattern — would become `{DE,0A,0D,BE,0E}`, be WRITTEN INTO THE
+// GAME, and answer `ok:true`: "wrote five bytes of nonsense at that address" would be
+// indistinguishable from "wrote what you asked".
 //
 // Returns false on any non-hex character or an odd length; `out` is then untouched.
 inline bool TryHexToBytes(const std::string& hex, std::vector<uint8_t>& out) {
@@ -312,28 +312,23 @@ inline std::vector<uint8_t> HexToBytes(const std::string& hex) {
 
 // Splice a handler payload onto an envelope with plain per-key ASSIGNMENT.
 //
-// NOT nlohmann's merge_patch (RFC 7386), which both builders used to call. Two of
-// merge_patch's documented behaviours are wrong for an envelope, and neither is
-// what any call site meant (audit #5 F5):
+// NOT nlohmann's merge_patch (RFC 7386). Two of merge_patch's documented behaviours
+// are wrong for an envelope:
 //
 //   * a NULL value in the patch DELETES the key rather than setting it. A handler
-//     that answers {"value": null} therefore ships a response with no "value" key
-//     at all, and {"ok": null} would delete the envelope's own success flag. No
-//     handler emits a top-level null today, so this is a latent hazard rather than
-//     a live bug -- but it is one an ordinary `data["x"] = nullptr;` re-introduces
-//     silently, which is exactly the shape worth removing.
+//     that answers {"value": null} would ship a response with no "value" key at all,
+//     and {"ok": null} would delete the envelope's own success flag -- a hazard an
+//     ordinary `data["x"] = nullptr;` introduces silently.
 //   * a NON-OBJECT patch REPLACES the whole target, so `id` / `ok` /
-//     `game_thread_stalled` would vanish outright. All three payload-returning
-//     call sites build objects, so the `is_object()` guard below can only ever
-//     skip a payload that would have destroyed the envelope.
+//     `game_thread_stalled` would vanish outright. The `is_object()` guard below
+//     skips a payload that would destroy the envelope.
 //
 // It also MOVES each value out of an rvalue payload instead of deep-copying the
-// DOM, which is the half F5 was filed for: `snapshot_chunk` (8192 objects),
-// `find_instances` (50000 cap) and `list_all_functions` (100000 default) all
-// paid a full second copy inside the GAME process's heap.
+// DOM: a large payload (`snapshot_chunk`, `find_instances`, `list_all_functions`)
+// would otherwise pay a full second copy inside the GAME process's heap.
 //
 // Key ORDER is not affected: nlohmann's default object is a std::map, so the
-// serialized text is key-sorted either way and the wire bytes are unchanged.
+// serialized text is key-sorted either way.
 inline void ApplyPayload(nlohmann::json& res, nlohmann::json&& data) {
     if (!data.is_object()) return;
     for (auto it = data.begin(); it != data.end(); ++it)
@@ -342,9 +337,9 @@ inline void ApplyPayload(nlohmann::json& res, nlohmann::json&& data) {
 
 // Build a success response.
 //
-// `data` is taken BY VALUE deliberately: an lvalue argument costs exactly the one
-// copy merge_patch used to make, while a temporary (or an explicit std::move at a
-// heavy call site) is moved straight through ApplyPayload with no copy at all.
+// `data` is taken BY VALUE deliberately: an lvalue argument costs exactly one copy,
+// while a temporary (or an explicit std::move at a heavy call site) is moved straight
+// through ApplyPayload with no copy at all.
 inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json()) {
     nlohmann::json res;
     res["id"] = id;
@@ -361,9 +356,9 @@ inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json(
     // Emitted ONLY when it is a MEASUREMENT. When Stark cannot tell — no PE hook
     // installed yet, which is the NORMAL state of a fresh connection because the
     // hook installs lazily on the first invoke — the key is OMITTED rather than
-    // defaulted to false, which asserted a healthy game thread nobody had measured.
-    // Absence is not a new wire state: MakeError and MakeEvent below have never
-    // carried it, and the client has always tolerated its absence.
+    // defaulted to false, which would assert a healthy game thread nobody measured.
+    // Absence is a known wire state: MakeError and MakeEvent below do not carry it,
+    // and the client tolerates its absence.
     // (STALLDEFAULT-2026-08-26)
     const Stark::GameThreadLiveness live = Stark::GetGameThreadLiveness();
     if (live != Stark::GameThreadLiveness::Unknown)

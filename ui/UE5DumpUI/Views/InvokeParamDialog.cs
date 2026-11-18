@@ -134,12 +134,10 @@ public sealed class InvokeParamDialog : Window
         Width = 560;
         MinWidth = 420;
         // Default starting Height grows up to a sensible cap; on a small
-        // screen Avalonia clamps to the work area for us. The hard
-        // MaxHeight=700 cap from the previous version was the actual
-        // overflow bug -- on a 4K monitor a 12-param function still
-        // showed a tiny scrollable strip when there was room for the
-        // whole form. Bumping to 1100 lets the user see all params on
-        // typical 1080p+ displays without manual resize, while
+        // screen Avalonia clamps to the work area for us. A low cap leaves
+        // a many-param function in a tiny scrollable strip on a large
+        // monitor with room for the whole form; 1100 lets the user see all
+        // params on typical 1080p+ displays without manual resize, while
         // CanResize=true still lets them shrink it.
         Height = 480;
         MaxHeight = 1100;
@@ -630,24 +628,19 @@ public sealed class InvokeParamDialog : Window
                     {
                         // Struct param: validate EVERY sub-field first, then write them.
                         //
-                        // The validation used to live only in the scalar branch below, and
-                        // WriteParam's own comment asserts "TryValidateScalar refuses ahead of
-                        // this whenever the user actually typed something". That was true for a
-                        // top-level param and FALSE here: this branch called WriteStructParam
-                        // straight through, so a sub-field went to WriteParam unchecked. Two
-                        // things fell through the gap, both silent:
+                        // WriteStructParam hands each sub-field to WriteParam unchecked, so the
+                        // sub-fields are validated here, as the scalar branch below validates a
+                        // top-level param. Without it two things fall through, both silent:
                         //
                         //   * a sub-field that is ITSELF opaque (a nested struct such as
-                        //     FSlateBrush::ImageSize / ::Margin) hit WriteParam's
-                        //     IsUnwritableParam early-return, so the typed value was dropped and
-                        //     FIRE still reported "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
-                        //   * an out-of-range INTEGER sub-field masked to width exactly the way
-                        //     top-level params used to, i.e. the width family (W6/Y2/Y9/Y15/AE1)
-                        //     surviving in the one place its fix was not applied.
+                        //     FSlateBrush::ImageSize / ::Margin) hits WriteParam's
+                        //     IsUnwritableParam early-return, so the typed value is dropped and
+                        //     FIRE still reports "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
+                        //   * an out-of-range INTEGER sub-field is masked to width.
                         //
-                        // Refusing is deliberate and is what the row asks for. ⛔ Do NOT "fix"
-                        // this by writing the value instead: writing the user's text over a
-                        // structure's first pointer field is the original Y11 defect.
+                        // Refusing is deliberate. ⛔ Do NOT "fix" this by writing the value
+                        // instead: that writes the user's text over a structure's first pointer
+                        // field.
                         var subFields = subEdits.Select(se => se.sf).ToArray();
                         // A cleared string box is the empty string, not "0" -- which
                         // [P3-INVOKE-STRUCT-FSTRING]'s gate would read as the text "0".
@@ -686,11 +679,10 @@ public sealed class InvokeParamDialog : Window
                         var text = (_edits[i]?.Text ?? "0").Trim();
                         // Range-check BEFORE writing. Every integer write in
                         // ParamBufferBuilder masks to the field width, so an
-                        // out-of-range value used to reach the game truncated with
-                        // nothing said — 9999 into a 1-byte param fired 15. Refusing
+                        // out-of-range value would reach the game truncated with
+                        // nothing said — 9999 into a 1-byte param fires 15. Refusing
                         // the whole invoke is right here: a UFunction called with one
                         // silently-wrong argument is worse than one not called.
-                        // (audit #5, the width family on the FIRE path.)
                         if (!ParamBufferBuilder.TryValidateScalar(
                                 param.TypeName, param.Size, text, out var rangeErr))
                         {
@@ -802,10 +794,10 @@ public sealed class InvokeParamDialog : Window
                 {
                     // Use struct-aware decoding for known structs, then dynamic, then scalar
                     string decoded;
-                    // Trusted form: the same size cross-check the INPUT boxes have
-                    // used since Y7. Decoding the post-call buffer on a
-                    // size-contradicted layout renames and re-offsets every value
-                    // the user reads back (audit #5 AC2).
+                    // Trusted form: the same size cross-check the INPUT boxes use (Y7).
+                    // Decoding the post-call buffer on a size-contradicted layout
+                    // renames and re-offsets every value the user reads back
+                    // (audit #5 AC2).
                     var structLayout = ResolveTrustedLayout(
                         p.TypeName, p.StructName, p.Size, _ueVersion);
                     if (structLayout != null)
@@ -933,8 +925,8 @@ public sealed class InvokeParamDialog : Window
 
         try
         {
-            // Review of d8a7f44f: the gate FIRE runs, before anything is generated. Copy AA Script
-            // used to bake whatever the boxes held -- a typed TFieldPath / TOptional value as a raw
+            // Run FIRE's gate before anything is generated. Without it Copy AA Script would
+            // bake whatever the boxes hold -- a typed TFieldPath / TOptional value as a raw
             // int32, text in a struct's FString member -- all of which FIRE refuses.
             if (!TryValidateInputsForInvoke(out var gateError))
             {
@@ -968,7 +960,7 @@ public sealed class InvokeParamDialog : Window
             }
 
             // Params that could not be rendered as a Lua literal were baked as 0 with an
-            // --[[unparsed:…]] marker. Saying "N baked param(s)" over that reported a
+            // --[[unparsed:…]] marker. Saying "N baked param(s)" over that would report a
             // clean export of a script that will call the game with the wrong arguments
             // (audit #5 Y14), so name them instead — computed from the SAME renderer the
             // generator used, not from a second parse that could disagree.
@@ -993,10 +985,7 @@ public sealed class InvokeParamDialog : Window
             {
                 // Wrap as paste-able CE memory-record XML. A bare [ENABLE]/[DISABLE] AA
                 // body cannot be pasted into CE's address list on its own — it has to be a
-                // CheatEntry with VariableType = Auto Assembler Script. Every other
-                // clipboard fallback in the app went through WrapAaScriptXml at build
-                // 1986, including the no-arg Console sibling; this one was missed
-                // (audit #5 Y12).
+                // CheatEntry with VariableType = Auto Assembler Script (audit #5 Y12).
                 var xml = Services.CheatTableBuilder.WrapAaScriptXml(description, script);
                 bool copied = await _platform.CopyToClipboardAsync(xml);
                 if (!copied)
@@ -1101,11 +1090,11 @@ public sealed class InvokeParamDialog : Window
                 // Struct param: emit one BakedParamValue per sub-field
                 foreach (var (sf, edit) in subEdits)
                 {
-                    // [P3-INVOKE-STRUCT-FSTRING] review follow-up: a string MEMBER stays zeroed -- the
-                    // valid empty FString -- exactly as FIRE's WriteStructParam leaves it. Baking it
-                    // made the helper build a CE-allocated FString, into an OUT struct too, where the
-                    // callee's assignment frees memory UE never allocated. Typed text is refused
-                    // before this runs (TryValidateInputsForInvoke).
+                    // [P3-INVOKE-STRUCT-FSTRING] A string MEMBER stays zeroed -- the valid empty
+                    // FString -- exactly as FIRE's WriteStructParam leaves it. Baking it would make the
+                    // helper build a CE-allocated FString, into an OUT struct too, where the callee's
+                    // assignment frees memory UE never allocated. Typed text is refused before this
+                    // runs (TryValidateInputsForInvoke).
                     if (ParamBufferBuilder.IsStringType(sf.TypeName)) continue;
                     list.Add(new BakedParamValue(
                         ParamName:   $"{p.Name}.{sf.Name}",
@@ -1143,7 +1132,7 @@ public sealed class InvokeParamDialog : Window
     /// expanded struct through <see cref="ParamBufferBuilder.TryValidateStructSubFields"/>, a
     /// top-level string skipped (it is built for real), everything else through
     /// <see cref="ParamBufferBuilder.TryValidateScalar"/> -- the shared predicates, never a copied
-    /// type list. [P3-INVOKE-Y11-CEFORM] review follow-up.
+    /// type list. [P3-INVOKE-Y11-CEFORM]
     /// </summary>
     private bool TryValidateInputsForInvoke(out string error)
     {
@@ -1205,16 +1194,11 @@ public sealed class InvokeParamDialog : Window
                 => BinaryPrimitives.ReadDoubleLittleEndian(span).ToString(CultureInfo.InvariantCulture),
             "IntProperty" or "UInt32Property" when available >= 4
                 => BinaryPrimitives.ReadInt32LittleEndian(span).ToString(),
-            // EnumProperty is decoded at the width the ENGINE reported, never 4.
-            // It used to be grouped with IntProperty above, so UE's dominant shape
-            // — `enum class E : uint8` — was read as 4 bytes whenever 4 bytes of
-            // buffer remained: the returned value was the enum byte plus three
-            // bytes belonging to whatever followed it. The tell is that a 1-byte
-            // enum at the very END of the buffer decoded correctly (the guard
-            // failed and it fell through to the size switch) while the same enum
-            // mid-buffer did not. This is the READ side of the mistake Y2 fixed on
-            // the write side, in ParamBufferBuilder.WriteParam — found by the
-            // width-family grep.
+            // EnumProperty is decoded at the width the ENGINE reported, never 4, so it
+            // is not grouped with IntProperty above: UE's dominant shape
+            // — `enum class E : uint8` — read as 4 bytes would return the enum byte
+            // plus three bytes belonging to whatever follows it. This is the READ
+            // side of the same width rule ParamBufferBuilder.WriteParam keeps.
             "EnumProperty" => DecodeBySize(buf, p.Offset, available, p.Size),
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),
@@ -1294,7 +1278,7 @@ public sealed class InvokeParamDialog : Window
     /// post-call readout above and <see cref="Services.StructReturnDecoder"/>'s return grid, so
     /// the two cannot drift.
     ///
-    /// <para>[A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): a PACKED bool shares its
+    /// <para>[A3-FIRE-STRUCT-BOOLMASK], the READ side (B05): a PACKED bool shares its
     /// byte with sibling bools (FHitResult's bBlockingHit / bStartPenetrating), so it reads only
     /// its own bit. A mask that is not a single bit — 0 (unresolved) or 0xFF — keeps the
     /// whole-byte read, the same fallback <c>Ubel::PreviewScalarValue</c> uses DLL-side; a bare
@@ -1339,12 +1323,11 @@ public sealed class InvokeParamDialog : Window
     /// The hardcoded layout for a struct param, but ONLY when it agrees with the engine-reported
     /// size — plus this view's "is it even a StructProperty" test.
     ///
-    /// <para><b>The rule itself now lives on <see cref="KnownStructLayouts.GetTrustedLayout"/></b>,
-    /// beside the table it guards. It was written here as a private helper (Y7), which meant the
-    /// two consumers in <c>StructReturnDecoder</c> structurally could not reach it — a Service
-    /// cannot depend on a View — so this dialog refused a size-contradicted layout for its INPUT
-    /// boxes and accepted the same layout for the RESULT grid. That is audit #5 AC2. The name is
-    /// kept so existing callers and tests do not churn; the behaviour is defined in one place.</para>
+    /// <para><b>The rule itself lives on <see cref="KnownStructLayouts.GetTrustedLayout"/></b>,
+    /// beside the table it guards, where <c>StructReturnDecoder</c> can reach it too — a Service
+    /// cannot depend on a View — so the INPUT boxes and the RESULT grid refuse the same
+    /// size-contradicted layout (Y7, audit #5 AC2). This name stays so existing callers and tests do
+    /// not churn; the behaviour is defined in one place.</para>
     /// </summary>
     internal static KnownStructLayouts.StructLayout? ResolveTrustedLayout(
         string typeName, string? structName, int engineSize, int ueVersion)

@@ -105,9 +105,9 @@ public static class FreezeScriptGenerator
         Line(sb, "_ue5_freeze_handles[FREEZE_KEY] = handleOrErr");
         // `pcall` answers "did Lua raise", NEVER "did anything get frozen" -- and no
         // mailbox failure can raise, because they are all caught inside the helper's
-        // own pcall. So this used to report a clean success for a freeze that applied
-        // nothing, auto-close the Lua window over it, and leave the record ticked.
-        // start() now returns (ok, err, count); read it. (audit #5 AA12 + AA13)
+        // own pcall. Trusting pcall alone would report a clean success for a freeze that
+        // applied nothing, auto-close the Lua window over it, and leave the record ticked,
+        // so read what start() returns: (ok, err, count).
         Line(sb, "local sok, sok2, serr, scount, scapped = pcall(handleOrErr.start)");
         Line(sb, "if not sok then");
         Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
@@ -142,11 +142,9 @@ public static class FreezeScriptGenerator
         // ⚠ THESE MESSAGES READ CFG.className, NOT THE GENERATION-TIME NAME.
         // Both this script and the Freeze dialog TELL the user to edit `className` in the
         // CFG block to narrow the scope — the cap message below says so in as many words —
-        // and until 2026-08-22 every message then went on naming the class they had just
-        // replaced. Measured in CE: with CFG.className changed to a class that does not
-        // exist, the BEHAVIOUR followed the CFG (0 instances found) while the message said
-        // "no live instances of DumperTestActor", a class with plenty of them. The report
-        // and the reality were computed from different sources. [FREEZECFGNAME-2026-08-22]
+        // and the BEHAVIOUR follows the CFG, so a message that baked the generation-time
+        // name would report on a class the user has replaced. The report and the reality
+        // must come from the same source. [FREEZECFGNAME-2026-08-22]
         //
         // `[DISABLE]` is a SEPARATE Lua chunk with no CFG in scope, so its Stopped line
         // still bakes the name — it is dbg-gated and describes an action already taken.
@@ -293,8 +291,7 @@ public static class FreezeScriptGenerator
     /// unsigned writers of one width are the same function): UE's
     /// <c>enum class E : uint8</c> / <c>: uint16</c> are unsigned, while a 4-byte enum
     /// is a plain <c>enum</c> whose implementation-defined underlying type is signed
-    /// <c>int</c>. 4 also stays <c>int32</c> because that is what this mapping already
-    /// emitted — the only width it was ever right about.</para>
+    /// <c>int</c>.</para>
     /// </summary>
     public static string HelperTypeForSize(int size) => size switch
     {
@@ -302,7 +299,7 @@ public static class FreezeScriptGenerator
         2 => "uint16",
         4 => "int32",
         8 => "int64",
-        _ => "int32",   // unknown / unreported size → legacy default
+        _ => "int32",   // unknown / unreported size → the default
     };
 
     /// <summary>
@@ -313,7 +310,7 @@ public static class FreezeScriptGenerator
     ///
     /// <para>Size-less overload: every type whose width is fixed by its NAME maps
     /// identically, and <c>EnumProperty</c> — the one type whose width is not — falls
-    /// back to the legacy <c>int32</c>. Callers holding a real property should pass its
+    /// back to <c>int32</c>. Callers holding a real property should pass its
     /// size to <see cref="MapToHelperType(string,int)"/>; this form exists for the
     /// callers that only ask "is this type supported at all".</para>
     /// </summary>
@@ -335,12 +332,9 @@ public static class FreezeScriptGenerator
         "IntProperty"    => "int32",
         "UInt32Property" => "uint32",
         // EnumProperty stores the underlying integer, and UE's dominant shape is the
-        // 1-byte `enum class E : uint8`. This used to be a flat "int32" whose own
-        // comment admitted the gap ("if a future game has a 1-byte enum we'd want to
-        // surface the size") -- so freezing one emitted a 4-byte writeInteger that
-        // clobbered the three following bytes. The engine reported the real width all
-        // along; it was dropped at the FreezeScriptParams boundary. (audit #5 Y15 --
-        // third site of the family behind W6 and Y2.)
+        // 1-byte `enum class E : uint8`. Its width comes from the engine-reported size:
+        // a flat "int32" would emit a 4-byte writeInteger that clobbers the three
+        // following bytes of a 1-byte enum.
         "EnumProperty"   => HelperTypeForSize(propSize),
         "Int64Property"  => "int64",
         "UInt64Property" => "uint64",
@@ -353,13 +347,11 @@ public static class FreezeScriptGenerator
     /// The class a freeze will actually be keyed on: the DEFINING class when the DLL
     /// reported one, else the row's own class.
     ///
-    /// <para>One definition, called by both the ViewModel that builds the script and the
-    /// dialog that tells the user what is about to happen. They used to pick it
-    /// separately — the dialog showed <c>ClassName</c> while the generator emitted
-    /// <c>DefiningClassName</c> — which is the "report and reality computed by different
-    /// code paths" shape audit #4 named as a root cause, and it is exactly the kind of
-    /// mismatch that let a freeze on a pawn's field quietly become a freeze on
-    /// <c>Actor</c>.</para>
+    /// <para>One definition for the ViewModel that builds the script and the dialog that
+    /// tells the user what is about to happen, so the report and the reality cannot be
+    /// computed by different code paths: a dialog showing <c>ClassName</c> over a script
+    /// keyed on <c>DefiningClassName</c> would hide a freeze on a pawn's field quietly
+    /// becoming a freeze on <c>Actor</c>.</para>
     /// </summary>
     public static string HeldClassName(string? className, string? definingClassName)
         => !string.IsNullOrEmpty(definingClassName) ? definingClassName! : (className ?? "");
@@ -383,7 +375,7 @@ public static class FreezeScriptGenerator
     /// deliberately false and falls back to the plain whole-byte write:</para>
     /// <list type="bullet">
     /// <item><c>0</c> — the DLL reports no mask: a native bool, an UNRESOLVED layout, or a
-    /// pre-AA1 DLL. Only the DLL's <c>bool_native</c> makes that a whole-byte write; see
+    /// DLL that does not send one. Only the DLL's <c>bool_native</c> makes that a whole-byte write; see
     /// <see cref="IsUnresolvedBool"/>.</item>
     /// <item><c>0xFF</c> — UE's own marker for a native bool (<c>SetBoolSize</c> sets
     /// <c>FieldMask = 255</c> when <c>bIsNativeBool</c>), which owns its whole byte.</item>
@@ -419,10 +411,8 @@ public static class FreezeScriptGenerator
     /// </summary>
     public static string EscapeLua(string s) => CeLuaHygiene.EscapeLuaString(s);
 
-    // R2: the body used to live here, hand-copied. Its own comment said "keep them
-    // mirrors" — which is a divergence being maintained by hand, and there is no
-    // reason for two implementations of one escape table. The name stays so callers
-    // and tests do not churn; the behaviour is now defined in exactly one place.
+    // The escape table is defined once, in CeLuaHygiene; this name stays so callers and
+    // tests keep it.
 
     private static void Line(StringBuilder sb, string s = "") => sb.Append(s).Append('\n');
 }

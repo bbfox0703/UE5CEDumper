@@ -10,9 +10,9 @@
 #include "Grimoire.h"
 #include "Serie.h"
 
-// kMaxPlausibleInvocationListNum moved to Aura.h so IsBoundInvocationListHeader --
-// the predicate dll_helpers_test pins -- shares the one copy. Its rationale went
-// with it.
+// kMaxPlausibleInvocationListNum lives in Aura.h, with its rationale, so
+// IsBoundInvocationListHeader -- the predicate dll_helpers_test pins -- shares the
+// one copy.
 
 #include "Ubel.h"
 #include "Genau.h"
@@ -88,12 +88,12 @@ static int         s_hintItemObjOff = 0;
 // is *** UNVERIFIED *** (no shipping game uses it yet). Process-lifetime constant after
 // Init() → the GetByIndex Packed57 branch is perfectly predicted on the hot path.
 static Lineal::ItemLayoutMode s_layoutMode = Lineal::ItemLayoutMode::Classic;
-// [W4-STRIDE-TENTATIVE] How DetectItemSize arrived at s_itemSize -- see Aura.h's GetItemDetect. Published, where it
-// used to be spent on log lines; reset at the ENTRY of every detection run.
+// [W4-STRIDE-TENTATIVE] How DetectItemSize arrived at s_itemSize -- see Aura.h's GetItemDetect. Published, not only
+// logged; reset at the ENTRY of every detection run.
 static const char* s_itemDetect          = "undetected";
 static int         s_itemDetectValidated = 0;
 // How many items the winning pass PROBED: 200 in P1, 100 in a deep phase. The badge divides by it, so it is that pass's
-// own count, never the budget constant. [W4-STRIDE-TENTATIVE] review 4
+// own count, never the budget constant. [W4-STRIDE-TENTATIVE]
 static int         s_itemDetectProbes    = 0;
 // Calibratable packed reconstruction constants. ⭐ The defaults are DERIVED from the vendored
 // UE 5.7 source, not assumed — alignBits 3 and ptrMask 0x3FFF are read out of
@@ -136,10 +136,9 @@ namespace {
 // Threads one GObjects walk may use, from the CPU's shape. `coreClasses`: one EfficiencyClass per PHYSICAL core
 // (empty when the topology could not be read); `logical`: logical processors.
 //
-// [PIPE-PER-PROCESS-2026-11-06] The maintainer's rule (2026-11-10): the physical PERFORMANCE cores less 2, at least 1,
-// at most 16. Logical processors less 2 -- the rule before -- took every physical core of a 16C32T PC, put 14 threads
-// on an 8-core 9800X3D (8 of them SMT siblings), and counted a hybrid CPU's E-cores as full cores. The game's own
-// threads and background programs run meanwhile; threads beyond the cores only switch context more often.
+// [PIPE-PER-PROCESS-2026-11-06] The physical PERFORMANCE cores less 2, at least 1, at most 16. Physical, not logical:
+// SMT siblings share a core, and a hybrid CPU's E-cores are not full cores. The game's own threads and background
+// programs run meanwhile; threads beyond the cores only switch context more often.
 //   * Performance cores: those with the highest EfficiencyClass. A CPU without hybrid cores reports one class for all;
 //     an Intel with its E-cores disabled has only P-cores left.
 //   * Less 2: the game's main and render threads keep a core each.
@@ -204,15 +203,15 @@ int ScanThreadCount(int32_t workItems) {
 // [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
 // one budget for the whole process.
 //
-// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once, and each walk spawned
-// ScanThreadCount() - 1 workers with no limit across walks -- k walks put k times that many threads in the game, and
-// ScanThreadCount's "cores - 2" headroom held for one walk only. With the budget, the workers of all walks together
-// never exceed what one walk alone spawns. (Each walk also runs one chunk on its own thread, the connection's.)
+// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once. Without a limit across walks,
+// k walks would put k times ScanThreadCount() - 1 workers in the game, and ScanThreadCount's "cores - 2" headroom holds
+// for one walk only. With the budget, the workers of all walks together never exceed what one walk alone spawns.
+// (Each walk also runs one chunk on its own thread, the connection's.)
 //
 // A walk takes what is free and never waits for more: waiting would hold a connection's command behind another
 // connection's, and a walk on fewer threads finishes anyway. A walk that finds the budget spent runs serially on its
-// own thread, as Value Search's parallel toggle does when it is off. Chosen over a gate allowing one heavy command at a
-// time (maintainer, 2026-11-06): the DLL keeps no list of which commands are heavy, and one would drift.
+// own thread, as Value Search's parallel toggle does when it is off. Not a gate allowing one heavy command at a time:
+// the DLL keeps no list of which commands are heavy, and one would drift.
 class WorkerBudget {
 public:
     explicit WorkerBudget(int capacity) : capacity_(capacity < 0 ? 0 : capacity) {}
@@ -289,10 +288,10 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
     // std::thread callable — or an un-joined joinable thread during stack
     // unwinding — calls std::terminate, which would crash the host game. This
     // catch is that guard and must stay.
-    // ⛔ It used to claim the outcome was "exactly like a deadline hit". It was not:
-    // this handler sets NO flag and has none in scope, so a dropped chunk merged its
-    // partial results and the run reported COMPLETE. What a dropped chunk MEANS is the
-    // caller's call — ParallelGObjectsScan owns the atomics and records it there.
+    // ⛔ The outcome is NOT "like a deadline hit": this handler sets NO flag and has
+    // none in scope, so on its own a dropped chunk merges its partial results and the
+    // run reports COMPLETE. What a dropped chunk MEANS is the caller's call —
+    // ParallelGObjectsScan owns the atomics and records it there.
     auto runChunk = [&body](int tid, int32_t b, int32_t e) {
         try {
             body(tid, b, e);
@@ -426,12 +425,10 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
             body(perThread[tid], beginIdx, endIdx, deadlineHit);
         } catch (...) {
             workerFaulted.store(true, std::memory_order_relaxed);   // set BEFORE logging
-            // ⚠ SAY ONLY WHAT THIS WORKER KNOWS. This line used to end "results are partial",
-            // which is a claim about the WHOLE scan that a single worker cannot make -- and
-            // measured 2026-09-09 (sw1_worker_fault.py on EVERSPACE 2) it was wrong in the
-            // commonest case: with `parallel=false` there is ONE chunk covering the entire
-            // array, so the unwind discards everything and the caller returns an EMPTY set,
-            // total=0 scanned_objects=0, while the log insisted the results were "partial".
+            // ⚠ SAY ONLY WHAT THIS WORKER KNOWS. "Results are partial" is a claim about the
+            // WHOLE scan that a single worker cannot make, and it is wrong in the commonest
+            // case: with `parallel=false` there is ONE chunk covering the entire array, so the
+            // unwind discards everything and the caller returns an EMPTY set.
             // Whether anything survives depends on how many OTHER chunks completed, which is
             // known at the join, not here. `workerFaulted` -> `incomplete()` is what callers
             // act on; this line is for the human reading the log afterwards.
@@ -468,8 +465,8 @@ std::vector<ElemT> ConcatTruncate(std::vector<PerThreadT>& perThread,
 // [W3-XREF-CAP] True when a capped parallel scan's merged result MAY be a prefix: a worker reached its own
 // maxResults and stopped there, so its index range may be unfinished -- or the workers together found more
 // than maxResults and ConcatTruncate dropped some. It cannot tell a worker cut short from one whose last object
-// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist"
-// (review 3). Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
+// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist".
+// Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
 // ConcatTruncate, which moves the elements out.
 template <typename PerThreadT, typename ElemT>
 bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
@@ -520,15 +517,14 @@ struct LayoutPreset {
 
 // Upper bound on MaxElements. MaxElements is MaxChunks * elements-per-chunk, so it tracks
 // the title's gc.MaxObjectsInGame ceiling, NOT its live object count — generous
-// preallocation is normal, not corruption. This was 0x800000 (8,388,608) and DragonSword
-// Awakening (UE 5.3) rejected the CORRECT preset on it: MaxChunks=161, elements-per-chunk
-// 65536 -> MaxElements = 10,551,296. Every strict preset then failed and the relaxed tier
-// latched Layout B, whose numElementsOffset 0x04 is ObjLastNonGCIndex — a FROZEN count of
-// the startup disregard-for-GC set (37,099) instead of the live NumElements (317,810 and
-// climbing). GetCount() then reported 37,099 forever, so every GObjects walk — Value
-// Search, Instances, Property Search, snapshots — saw only startup CDOs and not one
-// runtime object. Raised to 33.5M: still far below the values seen when this slot actually
-// holds half of a pointer (MindsEye: 233M), which is what the bound exists to reject.
+// preallocation is normal, not corruption: a UE 5.3 title's MaxChunks=161 x 65536 per chunk
+// makes MaxElements = 10,551,296. A bound below a real ceiling rejects the CORRECT preset;
+// every strict preset then fails and the relaxed tier latches Layout B, whose
+// numElementsOffset 0x04 is ObjLastNonGCIndex — a FROZEN count of the startup
+// disregard-for-GC set instead of the live NumElements — so every GObjects walk sees only
+// startup CDOs and not one runtime object. 33.5M stays far below the values this slot shows
+// when it actually holds half of a pointer (hundreds of millions), which is what the bound
+// exists to reject.
 static constexpr int32_t kMaxElementsCeiling = 0x2000000;  // 33,554,432
 
 // All known chunked layouts. Order: default first, then game-specific.
@@ -560,8 +556,8 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
     // index->object accessors (e.g. RVA 0x0191AA10): `shr rcx,0x10 / movzx edx,bx /
     // shl rdx,5 / add rdx,[r9+rcx*8] / cmp qword [rdx+0x10],0`.
     { "MindsEye-Extended", { 0x28, 0x10, 0x24, 0x20, 0x14 }, { 32, 0x10 } },
-    // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter" (a508058): the chunk counts BEFORE Objects.
-    // Without it no strict row fit and the relaxed A/C row read NumElements out of the Objects pointer's high dword.
+    // [VND584-03] Dumper-7's UE5.7 Mistfall Hunter variant (a508058): the chunk counts BEFORE Objects. Without this
+    // row no strict row fits it, and the relaxed A/C row reads NumElements out of the Objects pointer's high dword.
     // Appended after the rows above for the same first-match reason; on a stock UE5-Extended array +0x04 is
     // ObjLastNonGCIndex, which fails ValidateChunkedLayout's maxChunks bound, so it cannot steal one.
     { "UE5.7-Mistfall",    { 0x10, 0x20, 0x24, 0x04, 0x08 } },
@@ -578,14 +574,12 @@ static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / s
 //                 (GOBJ_V10 / AV1 / AV2 / RE2 / V12) deliver, e.g. Octopath.
 //   "Flat-Base" — the FUObjectArray BASE, i.e. +0x10 further out, past
 //                 ObjFirstGCIndex / ObjLastNonGCIndex / MaxObjectsNotConsideredByGC /
-//                 OpenForDisregardForGC. Verified by disassembly on UE 4.11.0-preview7
-//                 (Nekopara, FUObjectItem = 16 B) and UE 4.13 (Fantasynth, 24 B): both do one
-//                 Malloc(Max * stride) with no chunk table, and EVERY pattern that hits them
-//                 resolves the base.
+//                 OpenForDisregardForGC. UE 4.11 (FUObjectItem = 16 B) and UE 4.13 (24 B)
+//                 both do one Malloc(Max * stride) with no chunk table, and EVERY pattern that
+//                 hits them resolves the base.
 //
 // Without the second row, a pre-4.21 title whose five ObjObjects-anchored patterns all miss is
 // unfixable by pattern work at ANY priority — nothing else can present the ObjObjects anchor.
-// That is the real reach argument here; the two old titles are just what exposed it.
 //
 // This tier runs BEFORE the relaxed tier on purpose: it pre-empts the Layout A/C and B
 // fallbacks, which would otherwise latch objectsOffset = 0x00 (reading the two GC index int32s
@@ -621,9 +615,8 @@ static bool ReadsAsChunkTable(uintptr_t table) {
 // contiguous block UE 4.20-5.7 keep right after Objects (RE-UE4SS's TUObjectArray layouts: +0x08; 5.8 moved it past
 // the counts). A row whose count slot can overlap it -- at ObjObjects +0x08, which is FUObjectArray +0x18 on a
 // base-anchored array -- asks, or refuses the block by a guard that cannot pass there: relaxed F's chunk size of at
-// least 0x8000 puts its max at or above 0x8000, past any user-space pointer's high dword (0x7FFF), so F does not ask
-// (reviews wf_47eca989-bf9 and wf_a2cdbbd9-859). UE's PreAllocate
-// stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
+// least 0x8000 puts its max at or above 0x8000, past any user-space pointer's high dword (0x7FFF), so F does not ask.
+// UE's PreAllocate stores that block as the table's first entry (UObjectArray.h: Objects[ChunkIndex] =
 // PreAllocatedObjects + ChunkIndex * NumElementsPerChunk), so the 8 bytes holding the count are compared with the first
 // entry of the row's own table: equal, they are that pointer. A genuine Max / Num pair would have to equal a heap
 // pointer exactly, so no real array is refused, at any heap height -- a floor holds only below 16 TB, and the
@@ -636,14 +629,13 @@ static bool CountIsHalfOfFirstEntry(uintptr_t addr, int numOff, uintptr_t firstE
 
 // [VND584-03-FLOOR-HIGH-HEAP] Whether the count a relaxed row reads at numOff is the high half of a chunk table pointer
 // -- the Objects pointer of a layout no strict row fit -- rather than a count. The relaxed rows' 0x1000 floor refuses
-// such a count only while the table sits below 16 TB; the AddressSanitizer build's heap sat at high dword 0x1222, and
-// real UE 5 heaps reach 0x7FEA. A real table pointer's high dword is under 0x8000 (user space ends at 128 TB), so
-// between the floor and that the 8 bytes under the count are FOLLOWED as a table, which reads memory rather than judging
-// the value's range (a range test refuses real arrays: the row's 2026-11-17 re-read).
+// such a count only while the table sits below 16 TB, and a heap can sit far higher. A real table pointer's high dword
+// is under 0x8000 (user space ends at 128 TB), so between the floor and that the 8 bytes under the count are FOLLOWED
+// as a table, which reads memory rather than judging the value's range (a range test refuses real arrays).
 // A genuine Max / Num pair read as one qword is Num x 4 GB + Max: past user space for a game of 32,768 objects or more,
 // and below that an address that can hold a heap pointer in a process whose heap sits there. So the row's OWN Objects
 // slot decides as well: a genuine array's own slot holds its table, and the count is refused only when that slot does
-// not read as one -- no array a row described before this check is refused by it (review wf_8fb9838c-132, F1).
+// not read as one -- so a genuine array is never refused by it.
 static bool CountIsHalfAChunkTablePointer(uintptr_t addr, int numOff, int objOff) {
     uintptr_t underCount = 0, own = 0;
     if (!Macht::ReadSafe(addr + numOff - 4, underCount)) return false;
@@ -716,7 +708,8 @@ static bool ValidateChunkedLayout(uintptr_t addr, const ArrayLayout& layout) {
     uintptr_t chunk0 = 0;
     if (!Macht::ReadSafe(objPtr, chunk0)) return false;
     // [RELAXED-D-PREALLOC-HALF] A count that is half of the table's first entry is PreAllocatedObjects: above 16 TB its
-    // high dword passed the Flat-Base row's range, which reached a strict-failing UE5-Extended array before relaxed D.
+    // high dword fits the Flat-Base row's range, and that row is tried on a strict-failing UE5-Extended array before
+    // relaxed D.
     if (CountIsHalfOfFirstEntry(addr, layout.numElementsOffset, chunk0)) return false;
 
     if (chunk0 == 0) {
@@ -873,16 +866,15 @@ static bool DetectLayout(uintptr_t addr) {
 
     // Layout F (UE 5.8 relaxed): Objects@+0x00, Num@+0x08, Max@+0x0C -- the strict "UE5.8" row's slots.
     //
-    // [UE58-PREALLOC-NO-ROW] UE 5.8 put ObjObjects first in FUObjectArray, with the counts right after Objects and
-    // PreAllocatedObjects past them, and this tier had no row for that shape: a 5.8 array the strict row's range or
-    // chunk-consistency checks refuse fell to D or E, which read an unreadable Objects, or to the default layout's
-    // MaxChunks. It reads the slots of Genau's relaxed "F", here ahead of D and E. It takes the 0x1000 floor; its own
+    // [UE58-PREALLOC-NO-ROW] UE 5.8 puts ObjObjects first in FUObjectArray, with the counts right after Objects and
+    // PreAllocatedObjects past them. Without this row a 5.8 array the strict row's range or chunk-consistency checks
+    // refuse would fall to D or E, which read an unreadable Objects, or to the default layout's MaxChunks. It reads
+    // the slots of Genau's relaxed "F", here ahead of D and E. It takes the 0x1000 floor; its own
     // chunk slots must hold together as UE's PreAllocate leaves them (MaxElements a whole number of chunks, 1 <=
     // NumChunks <= MaxChunks), which refuses a TArray<UObject*> decoy -- no chunk counts after it -- and an
     // ObjObjects-anchored 4.20-5.7 array, whose +0x08 / +0x0C are PreAllocatedObjects' halves: a chunk size of at least
     // 0x8000 puts max at or above 0x8000, past any user-space pointer's high dword (0x7FFF) -- the bound that lets F go
-    // without the first-entry check, so lowering it brings that check back; and its Objects must read as a chunk table
-    // (review wf_47eca989-bf9, UE58F-TARRAY-DECOY).
+    // without the first-entry check, so lowering it brings that check back; and its Objects must read as a chunk table.
     {
         int32_t num = 0, max = 0, numChunks = 0, maxChunks = 0;
         Macht::ReadSafe(addr + 0x08, num);
@@ -953,7 +945,7 @@ static bool DetectLayout(uintptr_t addr) {
     // [VND584-03-FLOOR-HIGH-HEAP] The default preset reads Objects at +0x00 and the count at +0x14 -- relaxed A/C's slots.
     // After A/C was refused because the 8 bytes under that count are a chunk table pointer, it would re-read the refused
     // count through a slot that is no table; the table is at +0x10, so the fallback is the UE5-Extended slots, which read
-    // Objects there. Its count is a guess either way, and the warning says so (review wf_8fb9838c-132, F1-DEFAULT).
+    // Objects there. Its count is a guess either way, and the warning says so.
     if (acCountWasHalfAPointer) {
         LOG_WARN("ObjectArray: Could not detect layout; a chunk table sits at +0x10, so falling back to the UE5-Extended "
                  "slots (Objects +0x10, count +0x24) -- the count is not verified");
@@ -1147,7 +1139,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     bestNull = 0;
     constexpr int MAX_ITEMS_PHASE1 = kStrideProbeBudget;
     // The deep phases probe half as many. Each phase OVERWRITES best*, so the counts returned are the last phase
-    // run's, and bestProbes follows it. [W4-STRIDE-TENTATIVE] review 4
+    // run's, and bestProbes follows it. [W4-STRIDE-TENTATIVE]
     constexpr int MAX_ITEMS_DEEP = 100;
     bestProbes = 0;
     bool detected = false;
@@ -1172,19 +1164,9 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
         // If the LAYOUT PRESET already said flat, believe it — do not re-derive flatness from
         // the object count. The chunk[1] heuristic below can only speak when the array is big
         // enough to need two chunks, so a flat array with fewer than OBJECTS_PER_CHUNK (65536)
-        // objects silently fell through to the CHUNKED probe, which then treats Item[0].Object
-        // as a chunk pointer and probes a UObject's own bytes as an item array.
-        //
-        // Measured on NEKOPALIVE (UE 4.11, Num=27016): "Layout 'Flat-Base' detected
-        // (flat, non-chunked)" was logged, then `P1 stride 16: good=1, named=1, null=51,
-        // bad=148` — 1 usable item in 200, and ~10% of names resolving downstream. Fantasynth
-        // (UE 4.13) has the identical layout but Num=80162, so it needed 2 chunks, the heuristic
-        // fired, and it scored `P0-flat stride 24: good=200, named=200, null=0, bad=0`. The only
-        // difference between the two was the object count.
-        //
-        // Pre-existing: this gate has always been count-based. It simply could not bite until a
-        // flat array smaller than 65536 objects reached it, which is what the Flat-Base preset
-        // made possible. Chunked titles are unaffected — s_isFlat is false for them.
+        // objects would silently fall through to the CHUNKED probe, which then treats
+        // Item[0].Object as a chunk pointer and probes a UObject's own bytes as an item array.
+        // Chunked titles are unaffected — s_isFlat is false for them.
         if (s_presetIsFlat) {
             mightBeFlat = true;
             LOG_INFO("ObjectArray: layout preset is flat (%d objects) — testing flat layout first",
@@ -1361,20 +1343,19 @@ static void LogPackedDiagnosticNegative() {
 // valid items. Use FNamePool-based name resolution (strong) if available, falling back
 // to ClassPrivate chain (weak) if not. Pick the best stride; tiebreaker prefers fewer bad.
 //
-// Two object-ptr-offset passes run in order: classic +0x00 FIRST so every previously
-// working game keeps its exact prior detection path and result, then UE5.7+ +0x08 ONLY
+// Two object-ptr-offset passes run in order: classic +0x00 FIRST, so a convincing
+// classic result is final, then UE5.7+ +0x08 ONLY
 // when the classic pass is unconvincing. On a reordered (UE5.7+) item, reading +0x00
 // yields the int64 FlagsAndRefCount; a stride-ALIGNED scan never resolves a name, but a
 // MIS-strided scan (e.g. stride 16 over a 24-byte item) lands on the real +0x08 Object
 // field ~1/3 of the time, so the classic pass can look weakly "valid" with named ≈ bad ≈
-// null ≈ 1/3 each (seen on Solarpunk, stock UE5.7). Hence the accept gate also requires
+// null ≈ 1/3 each (stock UE5.7). Hence the accept gate also requires
 // named > bad: a correct layout resolves nearly every non-null slot (bad ≈ 0), so a
 // bad-dominated pass is rejected and the +0x08 pass gets its turn.
 static void DetectItemSize() {
-    // [W4-STRIDE-TENTATIVE] Reset at ENTRY, BEFORE the early returns below. They used to fire before any of
-    // this was touched, so on a re-init (the heap-fallback loop, its restore, apply_rescan) a failed run
-    // kept publishing a PREVIOUS candidate's layout and stride as its own. Every exit below either sets a
-    // verdict or leaves this one: nothing validated, the default stride in use.
+    // [W4-STRIDE-TENTATIVE] Reset at ENTRY, BEFORE the early returns below, so a failed run on any re-init never
+    // publishes a PREVIOUS candidate's layout and stride as its own. Every exit below either sets a verdict or
+    // leaves this one: nothing validated, the default stride in use.
     s_itemDetect          = "undetected";
     s_itemDetectValidated = 0;
     s_itemDetectProbes    = 0;
@@ -1438,24 +1419,24 @@ static void DetectItemSize() {
         s_itemObjOffset = 0;
     }
 
-    // 32 is here because a stock UE 5.4 **Development** package uses it, and its absence
-    // was not a near-miss -- it was undetectable. A stride that DIVIDES the real one still
-    // lands on a genuine object every k-th probe, so 16 against a real 32 validated half
-    // the pool and the sweep settled there "tentatively". Downstream, exactly every other
-    // object was garbage: UE5_Init resolved obj[0], obj[2], obj[4] and the Object Tree
-    // reported 12,588 of 25,175 named -- 50.0% to the decimal (2026-08-05, DumperTest).
+    // 32 is here because a stock UE 5.4 **Development** package uses it, and without it that
+    // stride is undetectable, not a near-miss. A stride that DIVIDES the real one still
+    // lands on a genuine object every k-th probe, so without 32, 16 against a real 32 would
+    // validate half the pool and the sweep would settle there "tentatively". Downstream,
+    // exactly every other object would be garbage: UE5_Init would resolve obj[0], obj[2],
+    // obj[4] and half the pool would read as named.
     //
-    // 40 is here for the SAME bug, second occurrence, and it is the WORSE one. At 5.7.0
-    // Build.h's UE_BUILD_TEST block began defining ENABLE_STATNAMEDEVENTS =
+    // 40 is here for the SAME aliasing in its WORSE form. From 5.7.0 Build.h's UE_BUILD_TEST
+    // block defines ENABLE_STATNAMEDEVENTS =
     // (!FORCE_USE_STATS && !USE_STATS_WITHOUT_ENGINE) and ENABLE_STATNAMEDEVENTS_UOBJECT =
     // (ENABLE_STATNAMEDEVENTS) (Build.h:307-311 @5.7.0/5.8.2; absent at 5.6.1, where both
-    // fell to the global 0). With the shipping defaults that is 1, which admits BOTH
+    // fall to the global 0). With the shipping defaults that is 1, which admits BOTH
     // `TStatId StatID` and `PROFILER_CHAR* StatIDStringStorage` into FUObjectItem
     // (UObjectArray.h:103-108). STATS is 0 in that same build, so UE_USE_LIGHTWEIGHT_STATS
     // is 1 and TStatId is a single pointer -- 24 + 8 + 8 = 40, Object still at +0x08.
     //
-    // ⚠ Why worse than the 32 case: there, the off-boundary reads landed on garbage, so
-    // named ~= bad ~= half and the sweep at least settled TENTATIVELY. Here gcd(40,20)=20,
+    // ⚠ Why worse than the 32 case: there, the off-boundary reads land on garbage, so
+    // named ~= bad ~= half and the sweep at least settles TENTATIVELY. Here gcd(40,20)=20,
     // so stride 20 alternates between the real Object and StatID -- which is LAZILY NULL
     // ('0 if nobody asked for it yet'). ProbeStride counts a zero as `null`, not `bad`, so
     // the alias scores named ~= half with bad == 0, sails through `qualityOk`
@@ -1464,10 +1445,9 @@ static void DetectItemSize() {
     //
     // ORDERING: with the real stride present it wins outright (named ~= all, bad ~= 0).
     // But a stride and its MULTIPLE tie -- every probe reads maxItems items regardless of
-    // stride, so on a real 20-byte item both 20 and 40 read only valid objects. That was
-    // already true of the 16/32 pair before 40 existed, so the old claim that ordering
-    // cannot decide the winner was overstated. The tie-break is now explicit in
-    // ProbeAllStrides (smaller stride wins a tie) rather than resting on list order.
+    // stride, so on a real 20-byte item both 20 and 40 read only valid objects, as 16 and 32
+    // do on a real 16-byte item. The tie-break is explicit in ProbeAllStrides (smaller
+    // stride wins a tie) rather than resting on list order.
     int candidates[std::size(Lineal::kItemStrideCandidates)];
     std::copy(std::begin(Lineal::kItemStrideCandidates),
               std::end(Lineal::kItemStrideCandidates), candidates);
@@ -1562,13 +1542,13 @@ static void DetectItemSize() {
         s_layoutMode = (gObjOff != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                       : Lineal::ItemLayoutMode::Classic;
         const int validated = gHasNames ? gNamed : gCount;
-        s_itemDetect = "tentative";   // [W4-STRIDE-TENTATIVE] published -- it used to reach only the log
+        s_itemDetect = "tentative";   // [W4-STRIDE-TENTATIVE] published, not only logged
         s_itemDetectValidated = validated;
         s_itemDetectProbes = gProbes;
         LOG_WARN("ObjectArray: FUObjectItem size tentatively set to %d bytes, object-ptr offset +0x%02X (only %d items validated)",
                  gStride, gObjOff, validated);
-        // Say what "tentative" COSTS, because the previous wording read as routine and the
-        // scan carried on as though it were an answer. A validated count this far below the
+        // Say what "tentative" COSTS, so it does not read as routine while the scan carries
+        // on as though it were an answer. A validated count this far below the
         // probe budget is the signature of an ALIAS: the real item is a multiple of this
         // stride, so every k-th probe hits a real object and the rest are garbage — which
         // surfaces later as a suspiciously round "N% of objects named" and a scan that walks
@@ -1804,10 +1784,10 @@ int32_t GetSerialNumber(int32_t index) {
     const uintptr_t itemAddr = ItemAddrOf(index);
     if (!itemAddr) return 0;
 
-    // The whole offset rule lives in Lineal so it can be unit-pinned — no target
-    // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`
-    // silently returned 0x0C for the reachable 20-byte packed item, which reads
-    // ClusterRootIndex and made every weak reference look stale (audit #5 A1).
+    // The whole offset rule lives in Lineal so it can be unit-pinned. A size-only rule
+    // (`s_itemSize >= 24 ? 0x10 : 0x0C`) returns 0x0C for the reachable 20-byte packed
+    // item, which reads ClusterRootIndex and makes every weak reference look stale
+    // (audit #5 A1).
     const int serialOff = Lineal::SerialOffsetForLayout(
         s_layoutMode, s_itemSize, s_itemObjOffset, s_packedSerialOff);
 
@@ -1821,8 +1801,8 @@ bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:scan", "Aura::ForEach: aborted (client gone / shutdown)");
-            // [P1-ENUMNAMES] Say so: the callback did NOT see every object. Void, this let a cancelled
-            // DetectUEnumNames read "no known enum here" and latch FAILED for the process.
+            // [P1-ENUMNAMES] Say so: the callback did NOT see every object, and a cancelled
+            // DetectUEnumNames must not read that as "no known enum here" and latch FAILED for the process.
             return false;
         }
         uintptr_t obj = GetByIndex(i);
@@ -2245,8 +2225,8 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     if (totalOut) *totalOut = matchTotal;
     rset.templatesSkipped = templatesSkipped;
     // ONE source for "is this a page or the whole set". When an exact total was asked
-    // for, derive the flag from it — a second flag computed by a different code path is
-    // audit #4's own named root cause, and this handler's caller publishes `truncated`.
+    // for, derive the flag from it — a second flag computed by a different code path can
+    // disagree with the total (audit #4), and this handler's caller publishes `truncated`.
     rset.truncated = totalOut ? (matchTotal > maxResults)
                              : (static_cast<int>(rset.results.size()) >= maxResults);
 
@@ -2409,7 +2389,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         const std::string objName = Serie::GetString(nameIdx);
         if (objName.empty()) continue;
         // [INVOKE-NONSTATIC-ON-CDO] A TEMPLATE is never "live": a class-default object, and an archetype -- a CDO's
-        // default subobject, which every component-class lookup used to land on (measured), or a Blueprint's component
+        // default subobject, which a component-class lookup would otherwise land on, or a Blueprint's component
         // template. TemplateOf decides, so the pick and the invoke's template verdict never disagree on one object.
         const TemplateInfo tpl = TemplateOf(obj);
         const bool isCdo = tpl.kind == TemplateKind::ClassDefault;
@@ -2962,7 +2942,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // offset (parent struct offset + child field offset) and a dotted name
 // like "Stats.Levels".
 
-// ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
+// ContainerKind lives in Aura.h (audit #5 A4) so the coverage predicate
 // DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
 // Defined with the ref-meta entries below; the container walks above them check the same gate.
@@ -3093,7 +3073,7 @@ static void CollectContainersRecursive(
 // [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
 // before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
 // to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
-// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
+// filed under the new epoch. Not declared in the header, so nothing outside this
 // translation unit can set it.
 static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
 
@@ -3143,7 +3123,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     return ins->second;
 }
 
-// === Shared recursive container-leaf walker (build 1204) ===
+// === Shared recursive container-leaf walker ===
 //
 // Visits every scalar leaf reachable from a struct THROUGH containers (struct-
 // array elements, map keys/values, set elements, AND leaf-container elements
@@ -3165,13 +3145,12 @@ struct ContainerLeaf {
     const std::string& leafType;    // property type name ("IntProperty" / "NameProperty" / ...)
     int32_t            leafSize;    // byte width (0 for variable/string — caller resolves)
     uint8_t            boolMask;    // BoolProperty bit mask (0xFF otherwise)
-    // Placed immediately BEFORE `depth` deliberately (audit #5 A4): these leaves are
+    // Placed immediately BEFORE `depth` deliberately: these leaves are
     // aggregate-initialised positionally, so a site that forgets `kind` binds an
     // `int` to a scoped enum and fails to COMPILE. Appending it instead would
-    // value-initialise to the zero enumerator and pass silently, which is how the
-    // fix would reproduce the very defect it removes.
+    // value-initialise to the zero enumerator and pass silently.
     ContainerKind      kind;        // container shape this leaf was reached through
-    // audit #5 A12 — same placement rule, same reason, one step further: ONE sub-object
+    // Same placement rule, same reason, one step further: ONE sub-object
     // rather than four loose scalars. A site that omits it still binds `depth`'s `int` to
     // a class type with no converting constructor (C2440), and a partially-braced `{...}`
     // cannot swallow `depth`. Loose scalars would NOT be safe: `int -> int32_t` is an
@@ -3179,7 +3158,7 @@ struct ContainerLeaf {
     // silently becomes 0, and `deepVisitor`'s `if (lf.depth < 1) return;` then drops EVERY
     // deep group leaf — the feature reporting zero and reading as "this game has none".
     // (⚠ `int -> uintptr_t` narrowing is only a WARNING here — this repo builds /W4 with
-    // no /WX — so do not rely on it. Measured, not assumed.)
+    // no /WX — so do not rely on it.)
     Radar::LeafAnchor  anchor;      // container identity at scan time (see Radar.h)
     int                depth;       // recursion depth at which this leaf was emitted (>= 1)
 };
@@ -3194,7 +3173,7 @@ struct WalkLeafLimits {
     // top-level walk visits, so a single pathological object (e.g. a deep, wide
     // container graph) can't stall a snapshot chunk. Deterministic (walk order
     // is stable) so two captures of the same state truncate identically — SPC
-    // diff stays consistent, unlike a wall-clock deadline. (build 1211)
+    // diff stays consistent, unlike a wall-clock deadline.
     int64_t maxTotalElems = 0;
     std::function<bool()> aborted;   // cancel + wall-clock backstop poll (may be null)
 };
@@ -4010,10 +3989,10 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- TOptional<T> wrapping a pointer-shaped T ---
-        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but the old belief
-        // here -- "unset is encoded as null/zero" -- holds only for the INTRUSIVE one (a
-        // non-nullable object). A TRAILING-FLAG optional keeps its pointer after Reset(), so the
-        // entry carries its bIsSet offset and every scan checks it (OptionalGateOpen). A layout
+        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but "unset is
+        // encoded as null/zero" holds only for the INTRUSIVE one (a non-nullable object). A
+        // TRAILING-FLAG optional keeps its pointer after Reset(), so the entry carries its bIsSet
+        // offset and every scan checks it (OptionalGateOpen). A layout
         // that fits neither, or an intrusive one with no null state (weak/soft/lazy, interface),
         // is not bucketed: a reference we cannot prove is live is not reported.
         else if (f.TypeName == "OptionalProperty"
@@ -4093,9 +4072,8 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 }
             }
             else if (f.innerType == "DelegateProperty") {
-                // TArray<FScriptDelegate>. ⚠ This comment used to say "element layout matches
-                // the multicast bindings list" — it does NOT, and that is the
-                // two-types-one-spelling trap in Grimoire.h. An array's inner
+                // TArray<FScriptDelegate>. ⚠ Its element layout does NOT match the multicast
+                // bindings list — the two-types-one-spelling trap in Grimoire.h. An array's inner
                 // FDelegateProperty stores the STANDALONE
                 // TScriptDelegate<FNotThreadSafeDelegateMode>, which carries the 8-byte access
                 // detector in a checked build; a multicast's invocation list holds the
@@ -4273,8 +4251,6 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //     bCasePreservingName=false (FName=8):  TPair=24, +HashId 8 = 0x20
 //     bCasePreservingName=true  (FName=0xC, PADDED to 0x10 by the TSharedPtr): TPair=32,
 //                                           +HashId 8 = 0x28
-//   The numbers were always right; the stated REASON ('FName=16') was the sizeof myth,
-//   and this sentence two functions away is where it kept being copied from.
 //
 //   TSharedPtr<TMulticastScriptDelegate, ThreadSafe> (16B):
 //     +0x00  Object* (FMulticastScriptDelegate*)
@@ -4285,12 +4261,12 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //   contributes an 8-byte FMRSWRecursiveAccessDetector base):
 //     +0x00  [checked builds only] std::atomic<uint64> access-detector State
 //     +pad   TArray<FScriptDelegate> InvocationList { Data, Num, Max }
-//   ⛔ "16B, InvocationList at +0" was stated here as unconditional until 2026-09-09, and it
-//   is the reason a delegate with one live subscriber reported "(0 bindings, sparse)" on the
-//   Development fixture. There is no ElementSize to derive `pad` from on this path
-//   (a MulticastSparseDelegateProperty's is sizeof(FSparseDelegate) == 1), so
-//   LocateInvocationList below derives it from the object's own invariants instead.
-//   DynOff::kDelegateDetectorPad carries the measurement and the two-types-one-spelling ⚠.
+//   ⛔ "16B, InvocationList at +0" is NOT unconditional: read at +0 in a checked build, a
+//   delegate with one live subscriber reports "(0 bindings, sparse)". There is no ElementSize
+//   to derive `pad` from on this path (a MulticastSparseDelegateProperty's is
+//   sizeof(FSparseDelegate) == 1), so LocateInvocationList below derives it from the
+//   object's own invariants instead. DynOff::kDelegateDetectorPad carries the
+//   two-types-one-spelling ⚠.
 //
 //   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding).
 //   ⭐ This is the INVOCATION-LIST element type, which is never padded:
@@ -4783,13 +4759,12 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
             {
                 constexpr int32_t kOuterStride = 0x60;
                 constexpr int32_t kOuterValueOffset = 0x08;
-                // TWO DIFFERENT QUESTIONS, and they used to share one variable.
+                // TWO DIFFERENT QUESTIONS, each with its own variable.
                 // TPair<FName, TSharedPtr> is 8-aligned by the TSharedPtr, so a 0xC
                 // case-preserving FName is PADDED to 0x10 inside the pair -- the SLOT.
                 int fnamePairSlot = DynOff::FNameSlotIn8Aligned();
-                // + TSharedPtr(0x10) + HashNextId/HashIndex(8). DERIVED, not branched on the
-                // magic value `fnameSize == 0x10` -- that test silently dropped innerStride to
-                // the non-CPN 0x20 the moment the shared variable was revalued.
+                // + TSharedPtr(0x10) + HashNextId/HashIndex(8). DERIVED from the slot, never
+                // branched on a magic FName size.
                 int32_t innerStride = fnamePairSlot + 0x18;
                 // FScriptDelegate is alignof 4 -- no padding -- so this wants sizeof(FName).
                 int32_t scriptDelegateSize = 8 + (DynOff::SizeofFName());
@@ -5144,10 +5119,9 @@ void CollectOutgoingObjectPtrs(uintptr_t obj, std::vector<OutgoingPtr>& out,
 //   world →(world-level back-ref)→ ULevel → Actors[k] → actor [→ … → target]
 // The world→level hop is synthetic (fieldType "WorldLevel") because, by
 // construction, if the level were forward-reachable the actor would have been too
-// — so the plain BFS would already have found it. (That parenthetical used to read
-// "level → Actors → actor is a reflected chain". It is not: ULevel::Actors carries
-// no UPROPERTY, which is exactly what broke this recovery — audit #5 F8. Both hops
-// below are synthetic back-references.) Returns found=true / status "ok_via_level" on success, or a
+// — so the plain BFS would already have found it. The level → Actors → actor hop is
+// synthetic too: ULevel::Actors carries no UPROPERTY, so it is no reflected chain.
+// Returns found=true / status "ok_via_level" on success, or a
 // default {found=false} GraphPathResult to signal "no recovery available".
 // maxDepth is intentionally not a parameter: this recovery uses its own fixed bounds
 // (the Outer climb is capped at 8 hops; the actor→target tail BFS at a deliberate 6),
@@ -5185,22 +5159,20 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         if (Macht::ReadSafe(level + owOff, ow) && ow && ow != rootWorld) return res;
     }
 
-    // NO ULevel::Actors lookup, and that is the fix (audit #5 F8).
+    // NO ULevel::Actors lookup (audit #5 F8).
     //
     // `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO
-    // UPROPERTY, so FindFieldOffset cannot see it. It returned < 0 and this whole
-    // recovery bailed — which is why `ok_via_level` never fired: 18 sessions logged
-    // actor_count 0 and not one non-zero. Worse, the fuzzy name fallback could bind
-    // "Actors" to DestroyedReplicatedStaticActors, which IS reflected, and then scan
-    // the wrong array.
+    // UPROPERTY, so FindFieldOffset cannot see it: it returns < 0, and the fuzzy
+    // name fallback can bind "Actors" to DestroyedReplicatedStaticActors, which IS
+    // reflected -- the wrong array.
     //
-    // The membership it was proving is already guaranteed by construction: the Outer
-    // climb above exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own
-    // level. Re-deriving that from a reflected array added a hard failure mode and
-    // no information.
+    // The membership is already guaranteed by construction: the Outer climb above
+    // exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own level.
+    // Re-deriving that from a reflected array would add a hard failure mode and no
+    // information.
     //
-    // The element index goes with it. There is no reflected array to index INTO, so
-    // -1 is the honest answer, and it is the shape the UI already renders for the
+    // No element index either. There is no reflected array to index INTO, so -1 is
+    // the honest answer, and it is the shape the UI already renders for the
     // synthetic hop directly above.
 
     // --- Build the chain. ---
@@ -5362,7 +5334,7 @@ uintptr_t FindDefiningClass(uintptr_t classAddr, int32_t fieldOffset) {
     return cur;
 }
 
-// === Deep schema-leaf enumeration (build 1222) ===
+// === Deep schema-leaf enumeration ===
 //
 // Property Search "Deep" mode descends into nested struct + struct-typed
 // container-element schemas so a field like `GP` living at
@@ -5810,19 +5782,16 @@ PropertySearchResult SearchProperties(
         // ⚠ Keyed on the DEFINING class (`classAddr`), not on `previewClassAddr`.
         // [CDOSCOPE-2026-08-20]
         //
-        // `previewClassAddr` is whichever subclass had the biggest `PropertiesSize`, chosen
-        // with the comment "bias toward leaf classes that actually have live instances" —
-        // a PROXY for having live instances rather than a test of it, and the proxy is wrong
-        // often enough to matter. Measured on DumperTest: the `NiagaraComponent ·
-        // WarmupTickCount` row picked class 0x…797000, which has only a CDO, while
-        // `NiagaraComponent` itself (0x…797800) had two live `NiagaraComponent0` instances.
-        // The row therefore read `0 (CDO default)` — "nothing is live" — while Freeze on that
-        // same row reported `on 2 instance(s)`.
+        // `previewClassAddr` is whichever subclass had the biggest `PropertiesSize` — a PROXY
+        // for having live instances rather than a test of it, and the proxy can pick a class
+        // that has only a CDO while a class above it has live instances. The row would then
+        // read `0 (CDO default)` — "nothing is live" — while Freeze on that same row reports
+        // `on N instance(s)`.
         //
         // The defining class is what Force (Solide) and Freeze target, so keying on it is
         // what makes the preview and the actions answer the same question. Sampling any
-        // instance in that hierarchy is sound for the same reason the original comment gives:
-        // the property sits at the same offset on every subclass.
+        // instance in that hierarchy is sound because the property sits at the same offset
+        // on every subclass.
         //
         // Rows with no preview source (`previewClassAddr == 0`: the deep-descent nested
         // leaves) must still be skipped — that zero is load-bearing.
@@ -5834,19 +5803,19 @@ PropertySearchResult SearchProperties(
         //
         // A LIVE instance, not the class default object. The CDO is an instance of its own
         // class and is constructed at class-load time, so it sits near the front of GObjects
-        // and won this first-match-wins race essentially every time — the Preview column then
-        // showed the Blueprint default forever (Health = 100 while the player is at 37).
-        // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
+        // and would win this first-match-wins race essentially every time — the Preview column
+        // would then show the Blueprint default forever (Health = 100 while the player is at
+        // 37). `obj != cls` excludes only the UClass itself, never its CDO.
         //
         // [LISTINSTANCES-KEEPS-TEMPLATES] The rule the Force / Freeze pools apply (TemplateOf): a class default object,
-        // one of its default subobjects or a Blueprint component template is never a live sample. Before, only a
-        // Default__ name was passed over, so a component row previewed a class default's subobject as live while its
-        // Force held nothing. Tested only for objects whose class we actually want, a handful out of the pool.
-        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8, measured on 4.27 / 5.4 / 5.8), the one
+        // one of its default subobjects or a Blueprint component template is never a live sample, so a component row
+        // cannot preview a class default's subobject as live while its Force holds nothing. Tested only for objects
+        // whose class we actually want, a handful out of the pool.
+        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8), the one
         // UObject field here no probe confirms; a misread passes a live object over, which only costs the preview.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
-        // instance appearing later always wins — the whole point of the finding.
+        // instance appearing later always wins.
         std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
         std::unordered_map<uintptr_t, uintptr_t> previewOuterMemo;   // TemplateOfImpl's
 
@@ -5855,8 +5824,7 @@ PropertySearchResult SearchProperties(
         // Force and Freeze on a Property Search row are scoped to the class AND EVERY
         // SUBCLASS, so a preview that only looked for an exact-class instance could mark a
         // row `(CDO default)` — reading as "nothing is live" — while the action on that same
-        // row then reported `on 2 instance(s)`. Measured on DumperTest with
-        // NiagaraComponent::WarmupTickCount. Collected here and applied only where no exact
+        // row reports `on N instance(s)`. Collected here and applied only where no exact
         // instance was found, so an exact sample always wins.
         std::unordered_map<uintptr_t, uintptr_t> derivedMap;
 
@@ -5864,8 +5832,9 @@ PropertySearchResult SearchProperties(
         // Same reasoning as FindInstancesDerivedFrom's derivedCache — GObjects holds 10^5-10^6
         // objects over 10^3-10^4 distinct classes, so caching by UClass* turns a per-OBJECT
         // chain walk into a per-CLASS one, which is what makes this affordable at all.
-        // [A4-CDOSCOPE-ANCESTOR] The memo now holds EVERY preview class on the chain (Aura::PreviewAncestorsOf, pinned in
-        // dll_core_test), not the nearest one: crediting only the nearest left every ancestor row at "(CDO default)".
+        // [A4-CDOSCOPE-ANCESTOR] The memo holds EVERY preview class on the chain (Aura::PreviewAncestorsOf, pinned in
+        // dll_core_test), not the nearest one: crediting only the nearest would leave every ancestor row at
+        // "(CDO default)".
         std::unordered_map<uintptr_t, std::vector<uintptr_t>> ancestorsCache;
         auto previewAncestorsOf = [&](uintptr_t cls) -> const std::vector<uintptr_t>& {
             auto it = ancestorsCache.find(cls);
@@ -5882,10 +5851,10 @@ PropertySearchResult SearchProperties(
         int32_t cnt = GetCount();
         // ⚠ The early exit counts EXACT hits only. A class whose only live instance is a
         // subclass must not stop the sweep early — the derived sample it needs may still be
-        // ahead of us, and settling for the CDO there is the defect being fixed.
+        // ahead of us, and settling for the CDO there would set the preview against the row's actions.
         for (int32_t i = 0; i < cnt && instanceMap.size() < needPreviewClasses.size(); ++i) {
-            // Skipping CDOs means a class with no live instance no longer satisfies the
-            // early-exit condition, so this loop can now run the full pool. It is the same
+            // Skipping CDOs means a class with no live instance never satisfies the
+            // early-exit condition, so this loop can run the full pool. It is the same
             // sweep the search loop above already does, but it must stay abortable.
             if ((i & 0xFFF) == 0 && Tot::Requested()) break;   // partial previews, not a hang
 
@@ -5943,10 +5912,9 @@ PropertySearchResult SearchProperties(
             if (src != PreviewSource::None) previewSourceOf[pc] = src;
         }
 
-        // 2c. Read property values and fill previews. `instanceMap` is now keyed by the
-        // DEFINING class, which is what `ResolvePropertyPreviews` already looks matches up
-        // by — so the old swap of classAddr <-> previewClassAddr around the call is gone.
-        // It existed only to make the lookup use the size-picked subclass.
+        // 2c. Read property values and fill previews. `instanceMap` is keyed by the
+        // DEFINING class, which is what `ResolvePropertyPreviews` looks matches up by — so
+        // no swap of classAddr <-> previewClassAddr is needed around the call.
         if (!instanceMap.empty()) {
             // Resolve EnumProperty: read UEnum* from FField for matches that need it
             for (auto& m : result.results) {
@@ -6900,8 +6868,8 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
     // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau
     // derived behind Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
-    // DynOff::UPropertySubclassStart WalkFunctions uses. A flat +0x2C here left this mirror
-    // unable to match any 4.11-4.17 param ([A2-UFUNC-TAIL-4X] review follow-up).
+    // DynOff::UPropertySubclassStart WalkFunctions uses; a flat +0x2C would match no
+    // 4.11-4.17 param ([A2-UFUNC-TAIL-4X]).
     const int slot = DynOff::bUseFProperty
         ? DynOff::FSTRUCTPROP_STRUCT
         : DynOff::UPropertySubclassStart(::g_cachedUEVersion);
@@ -7122,9 +7090,8 @@ static void EnsureUFunctionFuncOffset() {
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.
 static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
-    // Shares DynOff::FunctionFlagsOffsetFor with Ubel::ReadFuncFlagsAndParams — these two
-    // drifting apart is how one of them kept a dead `>= 550 -> 0xC0` band while the other
-    // was fixed. One table, one sweep, one place to correct.
+    // Shares DynOff::FunctionFlagsOffsetFor with Ubel::ReadFuncFlagsAndParams so the two
+    // readers cannot drift apart. One table, one sweep, one place to correct.
     // [VND583-01] The vote's decision first (a zero read then IS zero); otherwise the measured
     // PropertiesSize relation, else the version table, and the sweep.
     uint32_t flags = 0;
@@ -7192,8 +7159,7 @@ static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
 // [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads: every function's, the FUNC_Native gate above left
 // out. A stack frame inside the interpreter is the reason. The CE code address refuses a script function because the
 // interpreter is not that function's code; the index wants exactly that entry, so the frame names one of the functions
-// entering there and says how many share it. Measured 2026-10-08 on DQ XI S: with the gate, 12,482 of 19,162
-// functions entered the index and no frame in the interpreter could be named.
+// entering there and says how many share it. With the gate, no frame inside the interpreter can be named.
 static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
     return FuncSlot(funcAddr);
 }
@@ -7204,8 +7170,8 @@ std::vector<FunctionPropRef> MapNativeAccesses(const std::vector<Denken::NativeF
                                                const std::vector<FieldInfo>& fields, int32_t& unmapped) {
     std::vector<FunctionPropRef> refs;
     // Every property at an offset: bitfield bools packed into one byte share Offset_Internal, and an access to that byte
-    // may be to any of them -- each gets the row, and says how many share it (review DWS-DLL-2: the first one used to
-    // take the access, and the bool actually written had no row).
+    // may be to any of them -- each gets the row, and says how many share it, so the bool actually written always has
+    // one.
     std::unordered_map<int32_t, std::vector<const FieldInfo*>> byOff;
     byOff.reserve(fields.size());
     for (const auto& f : fields) byOff[f.Offset].push_back(&f);
@@ -7263,14 +7229,13 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // selector in WalkFunctionPropertyRefs routes on `Script` alone and never consults
     // FunctionFlags — and we disassemble the INTERPRETER, then map ITS [this+off]
     // accesses against the function's owner class. Any interpreter displacement that
-    // collided with a real property offset would have been reported as a genuine
-    // reference by that function. GetFunctionCodeAddr's comment names the failure exactly:
+    // collides with a real property offset would be reported as a genuine reference by
+    // that function. GetFunctionCodeAddr's comment names the failure exactly:
     // "pushing the interpreter dispatcher and reporting a misleading success".
     //
-    // And the UI made it worse than silence: `method="disasm"` prints
+    // And the UI would make it worse than silence: `method="disasm"` prints
     // "[native disasm — heuristic, N unmapped]", i.e. it CLAIMS to have disassembled the
-    // function. Observed on DQ7R: `GetRemainingExpToNextLevel` (BC,BP,Const) reported
-    // "0 properties … 2 unmapped" on the native path.
+    // function.
     //
     // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
     // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
@@ -7340,9 +7305,9 @@ FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr) {
 
     std::vector<uint8_t> buf(static_cast<size_t>(scriptNum));
     if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) {
-        // [W3-BATCH-METHOD] review follow-up: the Script header looked plausible but its buffer did not
-        // read (a stale / freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this
-        // must not leave as "bytecode" with zero refs -- the batch renders that as a real "0".
+        // [W3-BATCH-METHOD] The Script header looked plausible but its buffer did not read (a stale /
+        // freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this must not
+        // leave as "bytecode" with zero refs -- the batch renders that as a real "0".
         out.method = "bytecode_unreadable";
         return out;
     }
@@ -7423,16 +7388,13 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
         return result;
     }
 
-    // Layout gate. This USED to be a version check (`UEVersion < 500 -> unsupported`) on the
-    // premise that "UE 4.23-4.27 keys the outer TMap by FObjectKey, not a raw pointer".
-    // That premise is wrong for 4.27: the DropIn 4.27.2 PDB gives the global's type as
+    // Layout gate -- a probe, not a version check. The DropIn 4.27.2 PDB gives the global's type as
     //   TMap<UObjectBase const*, TMap<FName, TSharedPtr<TMulticastScriptDelegate<...>,0>>>
     // — a raw pointer key, same as UE 5.x (and vendor/UnrealEngine 5.8 declares it
-    // identically). FObjectKey is also 8 bytes there, not the 16 the old note claimed.
-    // Every other constant below was checked against that PDB and matches exactly.
+    // identically), and every other constant below matches that PDB exactly.
     //
-    // The PDBs have since shown the same raw pointer key at 4.23, 4.24, 4.25 and 4.26 as
-    // well (tools/ghidra/GROUND-TRUTH.md), so no stock version needs a gate. The probe stays
+    // The PDBs show the same raw pointer key at 4.23, 4.24, 4.25 and 4.26 as well
+    // (tools/ghidra/GROUND-TRUTH.md), so no stock version needs a gate. The probe stays
     // for licensee forks: the first occupied outer slot must hold something that looks like
     // a userspace pointer. An FObjectKey-keyed build stores two small int32s there, which
     // fails the test and lands us back on the bIsBound fallback — i.e. unknown builds fail
@@ -7506,8 +7468,8 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // Phase 3: deref TSharedPtr, walk InvocationList: TArray<FScriptDelegate>.
     uintptr_t mcdAddr = 0;
     if (!Macht::ReadSafe(sharedPtrAddr, mcdAddr) || !mcdAddr) {
-        // Used to return SILENTLY, which put this state and a genuine layout failure in the
-        // same unlabelled bucket. The log is how D4b was diagnosed at all.
+        // Never silent: without the log this state and a genuine layout failure fall in the
+        // same unlabelled bucket.
         LOG_WARN("WalkSparseDelegateBindings: TSharedPtr at 0x%llX yielded no "
                  "FMulticastScriptDelegate — reporting UNREADABLE, not zero bindings",
                  static_cast<unsigned long long>(sharedPtrAddr));
@@ -7568,7 +7530,7 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 // True when a container's inner/element/key/value property type matches the
 // scan's accepted leaf types. For vector scans (acceptedStructNames non-empty)
 // a StructProperty inner must additionally match an accepted struct name —
-// mirrors the leaf + TArray-inner StructProperty filters. (V1a, build 927.)
+// mirrors the leaf + TArray-inner StructProperty filters.
 static bool ContainerInnerAccepted(
     const std::string& innerType,
     const std::string& innerStructType,
@@ -7694,12 +7656,12 @@ ValueScanResult ScanForValue(
     // size still refers to the field-level size (16B TArray header).
     // Which container a ScanField walks (None = direct scalar field).
     // Array/Set emit one value per element; MapKey/MapValue emit the key
-    // or value half of each TPair (build 927, V1a).
+    // or value half of each TPair.
     // StructArrayInner: a LEAF field that lives inside the element struct of a
     // TArray<FStruct> (e.g. SaveSlotList[1].GP). The TArray header is at `offset`
     // within the object; each element struct is `elemStride` bytes; the leaf sits
     // at `structInnerOffset` within the element. Scanned per element at
-    // arrayData + idx*elemStride + structInnerOffset. (build 1201)
+    // arrayData + idx*elemStride + structInnerOffset.
     enum class ScanContainer : uint8_t { None, Array, Set, MapKey, MapValue, StructArrayInner };
     struct ScanField {
         int32_t       offset;
@@ -7745,7 +7707,7 @@ ValueScanResult ScanForValue(
         // deep pass must not skip anything on that basis (audit #5 A4).
         bool                    fieldCapHit = false;
         std::vector<ScanField>  fields;
-        // Per-object batch-read plan (build 974). The body span covering this
+        // Per-object batch-read plan. The body span covering this
         // class's DIRECT fixed-width leaf fields (container == None) — the reads
         // that can be served from ONE object-body read instead of one SEH read
         // per field. String fields and container DATA live in separate heap
@@ -7754,7 +7716,7 @@ ValueScanResult ScanForValue(
         int32_t                 batchMin       = 0;   // min body-leaf offset from obj
         int32_t                 batchSpan      = 0;   // (max offset+16) - batchMin; 0 = none
         int32_t                 bodyFieldCount = 0;   // # of container==None leaves
-        // build 1206: this class has a struct-element container whose element
+        // This class has a struct-element container whose element
         // struct itself holds containers — so a value can live > 1 container
         // level deep (e.g. SaveSlotList[1]…Tunes[N]). When set, the per-instance
         // scan runs the recursive WalkContainerLeaves pass after the static
@@ -7790,7 +7752,7 @@ ValueScanResult ScanForValue(
 
     const int32_t count = GetCount();
 
-    // Per-object batch-read gate (build 974). Reading the object's leaf-field
+    // Per-object batch-read gate. Reading the object's leaf-field
     // span once and serving fields from the buffer only pays off when there are
     // enough fields to amortize the read AND they're packed densely enough that
     // the unused gaps don't out-cost the SEH reads they replace:
@@ -7812,7 +7774,7 @@ ValueScanResult ScanForValue(
     // Per-thread output of the parallel GObjects walk. Each thread owns its
     // own caches + candidate buffer (lock-free hot path); results merge in
     // ascending tid order so the global candidate list stays ascending by
-    // object index — identical ordering to the old serial walk.
+    // object index — identical ordering to a serial walk.
     struct ThreadResult {
         std::vector<Radar::Candidate>        candidates;   // indices are THREAD-LOCAL
         std::vector<Radar::FieldDescriptor>  descriptors;  // thread-local pool
@@ -7832,7 +7794,7 @@ ValueScanResult ScanForValue(
         // that cost is negligible vs. the GObjects walk and avoids any locking.)
         std::unordered_map<uintptr_t, ScanClassInfo> classCache;
 
-        // Reused per-object batch-read scratch (build 974). One buffer per
+        // Reused per-object batch-read scratch. One buffer per
         // worker thread, resized/overwritten per object — so the batch read
         // costs (threads x <= kMaxBatchSpan), independent of object count.
         std::vector<uint8_t> objBodyBuf;
@@ -7849,11 +7811,10 @@ ValueScanResult ScanForValue(
     // pattern is `UAttributeSet -> FGameplayAttributeData MaximumHealth ->
     // float BaseValue / float CurrentValue`. Without recursion the scan
     // sees only the outer StructProperty (which isn't a leaf type) and
-    // returns 0 candidates -- the original 2026-05-26 TQ2 repro that
-    // motivated this fix. Same applies to FVector / FRotator / FTransform
+    // returns 0 candidates. Same applies to FVector / FRotator / FTransform
     // members of any UObject.
     //
-    // Struct-array descent (build 1201): collect LEAF fields inside the element
+    // Struct-array descent: collect LEAF fields inside the element
     // struct of a TArray<FStruct> so a value held inside an element (e.g.
     // SaveSlotList[1].GP) is found by VALUE. Emits one StructArrayInner ScanField
     // per leaf, carrying the outer array field offset + the leaf's element-
@@ -7909,14 +7870,11 @@ ValueScanResult ScanForValue(
     //     data. The cap bounds worst-case CPU per class.
     //   - the guard set is scoped to the ACTIVE PATH (Aura::StructPathGuard),
     //     so a self-referential struct still terminates while two sibling
-    //     fields of the SAME struct type are both expanded. It used to be a
-    //     whole-walk set with no erase, which silently meant "only the first
-    //     FVector in a class is ever indexed" — Location found, Velocity /
-    //     Scale3D / Extent not, subtree and all (audit A3). The two walkers
-    //     that got this right are CollectSchemaLeaves and CollectGroupLeaves.
-    //   - kMaxScanFieldsPerClass, because path-scoping deliberately removes the
-    //     accidental bound the whole-walk set was providing. Without it the only
-    //     limit left is depth<=4 on a tree whose fan-out is (fields per struct)^4.
+    //     fields of the SAME struct type are both expanded (a whole-walk set
+    //     would index only the first FVector in a class, subtree and all).
+    //   - kMaxScanFieldsPerClass, because path-scoping removes the bound a
+    //     whole-walk set would provide. Without it the only limit left is
+    //     depth<=4 on a tree whose fan-out is (fields per struct)^4.
     //     Mirrors kMaxSchemaLeavesPerClass, which its sibling pairs with the same
     //     path-scoped guard for exactly this reason.
     constexpr size_t kMaxScanFieldsPerClass = 4000;
@@ -8043,7 +8001,7 @@ ValueScanResult ScanForValue(
                 // TArray<FStruct>: descend into the element struct's leaf fields
                 // so a value inside an element (SaveSlotList[1].GP) is found by
                 // value. Non-vector scans only (vectors want whole-struct matches,
-                // handled by the inner-name check above). (build 1201)
+                // handled by the inner-name check above).
                 if (acceptedStructNames.empty() && f.innerType == "StructProperty") {
                     uintptr_t innerStruct = Ubel::GetContainerInnerStructAddr(f.Address);
                     int32_t   stride      = Ubel::GetArrayInnerElemSize(f.Address);
@@ -8263,8 +8221,7 @@ ValueScanResult ScanForValue(
         expandFields(expandFields, classAddr, /*baseOffset=*/0,
                      /*namePrefix=*/"", sci.fields, visited, /*depth=*/0);
         // Never truncate silently. A missing leaf is indistinguishable from a
-        // value that is not there, which is precisely how A3 stayed invisible
-        // for ~2400 builds — the scan simply reported no match.
+        // value that is not there -- the scan simply reports no match (A3).
         sci.fieldCapHit = fieldCapHit;
         if (fieldCapHit) {
             LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
@@ -8299,7 +8256,7 @@ ValueScanResult ScanForValue(
             }
         }
 
-        // build 1206: does a value live > 1 container level deep? True when a
+        // Does a value live > 1 container level deep? True when a
         // top-level container's element struct itself has containers (one level
         // of look-ahead via the cached GetClassContainers). When false the deep
         // walk is skipped entirely — no per-instance cost for the common case.
@@ -8345,7 +8302,7 @@ ValueScanResult ScanForValue(
         std::unordered_map<DefKey, std::string, DefKeyHash> definingNameCache;
 
         // Thread-local deep-leaf descriptor pool index, keyed by
-        // (className \x01 full-display-path). Deep leaves (build 1206) have a
+        // (className \x01 full-display-path). Deep leaves have a
         // per-leaf path rather than a per-ScanField identity, so they can't use
         // the sf.descriptorIdx cache — they intern here instead (shared across
         // instances of the same class within this thread).
@@ -8449,7 +8406,7 @@ ValueScanResult ScanForValue(
         // inside IsSnapshotNoiseClass keeps player Pawn / components / AttributeSets.
         if (sci->noiseClass) continue;
 
-        // Per-object batch body read (build 974, default on via `batchRead`).
+        // Per-object batch body read (default on via `batchRead`).
         // Read the object's fixed-width-leaf span ONCE into the reused thread-
         // local buffer, then serve those field reads from it instead of one SEH
         // read per field. Gated so it only fires when it pays off (enough
@@ -8653,7 +8610,7 @@ ValueScanResult ScanForValue(
             }
         };
 
-        // Deep-walk descriptor + emit (build 1206). For a leaf found by the
+        // Deep-walk descriptor + emit. For a leaf found by the
         // recursive WalkContainerLeaves at container depth >= 2 (the static
         // StructArrayInner path covers depth 1; the TArray<leaf> branch covers
         // top-level leaf-containers), build a per-path descriptor and emit a
@@ -8789,7 +8746,7 @@ ValueScanResult ScanForValue(
                 continue;
             }
 
-            // Struct-array-inner path (build 1201): a leaf field INSIDE a
+            // Struct-array-inner path: a leaf field INSIDE a
             // TArray<FStruct> element (e.g. SaveSlotList[1].GP). Same TArray
             // header read as Array, but the value sits at
             // arrayData + idx*elemStride + structInnerOffset (an element-relative
@@ -8840,8 +8797,8 @@ ValueScanResult ScanForValue(
             // (like TArray) — refine re-anchors them via Radar::ValueAnchor::
             // SparseElement, which re-reads the header and re-tests THIS slot's
             // allocation bit rather than trusting the stored address (audit #5
-            // A11; the old "a realloc just drops the candidate" was wrong — a
-            // freed sparse slot is REUSED in place and reads as a live value).
+            // A11): a realloc does not just drop the candidate -- a freed sparse
+            // slot is REUSED in place and reads as a live value.
             if (sf.container == ScanContainer::Set
                 || sf.container == ScanContainer::MapKey
                 || sf.container == ScanContainer::MapValue) {
@@ -8886,9 +8843,10 @@ ValueScanResult ScanForValue(
             // so test that sentinel before the bytes are read as a value. An unreadable slot is skipped too.
             if (sf.optionalSentinel != Ubel::OptionalUnsetSentinel::None) {
                 // [A2-SENTINEL-OVERREAD] Read what the sentinel needs, never a flat 16: an intrusive optional is
-                // exactly sizeof(T), so 16 bytes ran past an 8-byte TOptional<FName>, and a read that crossed into
-                // an unmapped page failed -- indistinguishable from "unset", so a SET optional was dropped on some
-                // instances of a class and not others. sf.size is the field's own width (f.Size at emit time).
+                // exactly sizeof(T), so 16 bytes would run past an 8-byte TOptional<FName>, and a read that crossed
+                // into an unmapped page would fail -- indistinguishable from "unset", so a SET optional would be
+                // dropped on some instances of a class and not others. sf.size is the field's own width (f.Size at
+                // emit time).
                 uint8_t v16[16] = {};
                 int32_t need = Ubel::SentinelBytesNeeded(sf.optionalSentinel);
                 if (sf.size > 0 && sf.size < need) need = sf.size;
@@ -8964,7 +8922,7 @@ ValueScanResult ScanForValue(
             emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, readBuf, dtSize, nullptr);
         }
 
-        // Deeply-nested container values (build 1206). The static fields above
+        // Deeply-nested container values. The static fields above
         // reach depth-1 struct-array leaves (StructArrayInner) + top-level leaf-
         // containers (the TArray<leaf> branch); this recursive pass reaches a
         // value > 1 container level deep (e.g. SaveSlotList[1].MsTuneData.
@@ -8974,7 +8932,7 @@ ValueScanResult ScanForValue(
             WalkLeafLimits dlim;
             dlim.maxDepth = 4;
             dlim.maxElems = 256;
-            // Same deterministic per-object element cap as snapshot (build 1211):
+            // Same deterministic per-object element cap as snapshot:
             // a single deeply-nested wide object can't monopolise the global
             // scan budget. The 15s wall-clock deadline below remains the global
             // backstop across all objects.
@@ -9549,9 +9507,9 @@ ValueScanStats RefineCandidates(
              initialSize, static_cast<int>(candidates.size()),
              static_cast<long long>(dtms));
     // Only when it actually fired — a line that is always there stops being read.
-    // `repointed` is the half that is a GAIN: those candidates were lost outright
-    // before A11, because a grown container's realloc left every element address
-    // stale. (audit #5 A11)
+    // `repointed` is the half that is a GAIN: a grown container's realloc leaves
+    // every stored element address stale, and without the re-anchor those
+    // candidates would be lost outright. (audit #5 A11)
     if (reanchorDropped || reanchorRepointed) {
         LOG_INFO("Radar: Refine re-anchor: %d container element(s) repointed after a "
                  "realloc, %d dropped (slot freed / container shrank / header gone)",
@@ -9605,13 +9563,11 @@ std::string RenderInnerKey(const FieldInfo& kf, uintptr_t elemAddr) {
     return "";
 }
 
-// Capture struct-array elements of `obj` (Phase A1b). For each
-// TArray<StructProperty> field, resolve the inner UScriptStruct, pick an
-// inner-key field (reorder-immune join key) + its numeric inner fields, and
-// emit up to arrayCap elements.
-// Capture numeric leaves reachable through containers at ANY (bounded) depth
-// (build 1204), via the shared WalkContainerLeaves. The full nested path is
-// baked into SnapshotArray.field (e.g.
+// Capture the numeric leaves of `obj` reachable through containers at ANY
+// (bounded) depth, via the shared WalkContainerLeaves, up to arrayCap elements
+// per container; a struct element also carries an inner-key field
+// (reorder-immune join key) when it has one. The full nested path is baked into
+// SnapshotArray.field (e.g.
 // "SaveSlotList[1].MsTuneData.MsTunes[0].WeaponTuneList[0].Tunes") so SPC/Diff,
 // which key on array_field + elem_index, get deep support with no schema change.
 // Leaf-container elements (TArray<int> etc.) are captured too (leaf name "").
@@ -9633,10 +9589,9 @@ void CaptureStructArrays(uintptr_t obj, uintptr_t cls,
     WalkLeafLimits lim;
     lim.maxDepth = 4;
     lim.maxElems = arrayCap;
-    // Per-object budget (build 1211): the 256-elem × depth-4 caps still allow a
-    // pathological object (deeply-nested WIDE container graph) to visit billions
-    // of elements — on SEED a cluster of such objects stalled one chunk ~24s and
-    // the user cancelled (perceived hang). Bound each object DETERMINISTICALLY by
+    // Per-object budget: the 256-elem × depth-4 caps still allow a pathological
+    // object (deeply-nested WIDE container graph) to visit billions of elements,
+    // enough to stall a chunk for many seconds. Bound each object DETERMINISTICALLY by
     // total elements visited (reproducible → SPC diff stays consistent), with a
     // short wall-clock backstop for pathological per-element cost (huge structs /
     // slow reads). 50k is far above any real object yet caps the blow-up to tens
@@ -9653,15 +9608,15 @@ void CaptureStructArrays(uintptr_t obj, uintptr_t cls,
     WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, lim,
         [&](const ContainerLeaf& lf) {
             // Skip TOP-LEVEL leaf-containers (a TArray<int> directly on the object,
-            // depth==1) by default: the main capture loop never tracked those, and
+            // depth==1) by default: the main capture loop does not track those, and
             // capturing every object's scalar arrays would balloon the DB.
-            // EXCEPTION (build 1827): for GAMEPLAY classes (captureTopLevelScalarArrays
+            // EXCEPTION: for GAMEPLAY classes (captureTopLevelScalarArrays
             // — Actor/Pawn/component/PlayerState/... — the value carriers) keep these.
             // A Pawn's numeric stat-bank TArray<float> (e.g. SupportActionGauge[]) is
-            // exactly a hack target users hunt, and was previously invisible to Snapshot
-            // Diff / SPC / Pivot (Value Search already finds it via the live Array scan).
+            // exactly a hack target users hunt, and without this capture Snapshot Diff /
+            // SPC / Pivot do not see it (Value Search finds it via the live Array scan).
             // Struct-array element fields (e.g. SaveSlotList[1].GP, depth 1) ARE always
-            // captured, and nested leaf-containers (Tunes[N], depth >= 2) too. (build 1204)
+            // captured, and nested leaf-containers (Tunes[N], depth >= 2) too.
             if (lf.leafName.empty() && lf.depth < 2 && !captureTopLevelScalarArrays) return;
             // Snapshot tracks only numeric leaves within the configured scope.
             Radar::DataType ldt;
@@ -9726,7 +9681,7 @@ void CaptureStructArrays(uintptr_t obj, uintptr_t cls,
 // group/SPC/diff/pivot consumers treat it exactly like a top-level scalar (found even
 // without the "Deep" query toggle, which only folds in container rows). Bounded by
 // EmitStructDirectLeaves' kMaxStructDepth(4) + a per-object leaf cap. The numericScope +
-// family filter is applied per leaf, matching the top-level pass. (build 1648)
+// family filter is applied per leaf, matching the top-level pass.
 void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
                                Radar::DataType numericScope, Aura::NumericFamily family,
                                std::vector<Aura::SnapshotField>& out) {
@@ -9779,7 +9734,7 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
 } // namespace
 
 // ============================================================
-// Multiple values group scan (build 1276) — see Aura.h + Orden.h.
+// Multiple values group scan — see Aura.h + Orden.h.
 // ============================================================
 namespace {
 
@@ -9797,7 +9752,7 @@ struct GroupLeafMeta {
     uint8_t     boolMask     = 0xFF;
     bool        isNativeC    = false;  // P2: raw-hole leaf (unmanaged, non-UPROPERTY)
     std::string guessedType;           // P2: interpreted width label (e.g. "Int32"); "" for reflected
-    // audit #5 A12 — relayed verbatim to GroupSlotMatch so refine can re-anchor a
+    // Relayed verbatim to GroupSlotMatch so refine can re-anchor a
     // container element. Defaults to Unknown/-1, which the rule refuses to act on.
     Radar::LeafAnchor anchor;
 };
@@ -9805,12 +9760,12 @@ struct GroupLeafMeta {
 // The name a deep group leaf's descriptor carries, and the element index its slot match keeps. The index goes in the
 // slot, not the name: field_name is rendered as Radar::FieldDisplayName(descriptor, elementIndex), which puts it at the
 // "[]" placeholder -- the convention the value scan's struct-array descriptors already use. A name that held the index
-// as well showed it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix read as an
-// element row). [GROUP-DEEP-INDEX-TWICE]
+// as well would show it twice ("Leaves[26][26]", and "Items[3].Count[3]", which the UI's ParseElementIndexSuffix reads
+// as an element row). [GROUP-DEEP-INDEX-TWICE]
 struct GroupDeepLeafName { std::string fieldName; int32_t elementIndex; };
 // One slot match from a leaf's metadata, as the group scan records it: the descriptor it was interned under, the
 // element index (FieldDisplayName puts it at the name's "[]"), the owner and the container anchor. Pure, so the chain
-// meta -> slot -> displayed name is tested end to end (review wf_d3c2ec9a-d52 GROUP-TESTS-HELPER-ONLY).
+// meta -> slot -> displayed name is tested end to end.
 Radar::GroupSlotMatch GroupSlotMatchFromMeta(const GroupLeafMeta& meta, uint32_t descIdx, uintptr_t obj,
                                              const std::string& className, const uint8_t (&leafBytes)[8]) {
     Radar::GroupSlotMatch sm;
@@ -10693,7 +10648,7 @@ ValueScanStats RefineGroupCandidates(
                 // [W2-ORDEN-FINDENTRY] Two shapes, as in the single-value refine: a prev-value
                 // refine compares against the stored bytes, a targeted one against a target
                 // ENTRY whose verdict may be "every value of this width matches" (audit #5 AB4).
-                // Find() hid that verdict, so `Bigger -5` pruned every unsigned leaf.
+                // Find() cannot express that verdict: through it, `Bigger -5` would prune every unsigned leaf.
                 const Radar::NumericTargetSet::Entry* cmpEntry =
                     usePrev ? nullptr : slots[s].targets.FindEntry(width);
                 if (!usePrev && !cmpEntry) { ++dNoTarget; continue; }   // no value of this width can satisfy it
@@ -10734,8 +10689,8 @@ ValueScanStats RefineGroupCandidates(
     stats.scannedObjects = static_cast<int32_t>(candidates.size());
     stats.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    // Only when it actually fired. `repointed` is the half that is a GAIN: before A12 a
-    // grown container left every element address stale and those leaves were lost.
+    // Only when it actually fired. `repointed` is the half that is a GAIN: a grown container
+    // leaves every element address stale, and without the re-anchor those leaves would be lost (A12).
     if (reanchorDropped || reanchorRepointed) {
         Sein::Info("SCAN:grp",
                    "RefineGroup re-anchor: %d container element(s) repointed after a realloc, "
@@ -10835,12 +10790,12 @@ static bool IsSnapshotNoiseClass(uintptr_t cls, const std::string& classPath) {
 
 // True if `cls` is a GAMEPLAY class (Actor/component/Pawn/Character/Controller/
 // PlayerState/GameInstance-derived; see SnapshotGameplayKeepBases) — the usual
-// carriers of the values users hunt. Used to opt these classes into TOP-LEVEL
+// carriers of the values users hunt. Opts these classes into TOP-LEVEL
 // scalar-array capture (e.g. a Pawn's numeric stat-bank TArray<float>), which is
 // otherwise skipped for every object to keep the DB small (see the guard in
 // CaptureStructArrays). Thread-local memoized on the class pointer, mirroring
 // IsSnapshotNoiseClass's super-chain-walk amortization. Thread-safe: pure
-// read-only memory reads + a per-worker cache. (build 1827)
+// read-only memory reads + a per-worker cache.
 static bool IsSnapshotGameplayClass(uintptr_t cls) {
     thread_local std::unordered_map<uintptr_t, char> verdictCache;
     auto it = verdictCache.find(cls);
@@ -10965,15 +10920,14 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
             // Inner numeric leaves of PLAIN (non-container) struct members — GAS
             // FGameplayAttributeData (HP/MP BaseValue/CurrentValue), FVector/FRotator
             // (Location/Rotation), etc. Neither the scalar picks above (numeric leaves
-            // only) nor CaptureStructArrays (containers only) reach these. (build 1648)
+            // only) nor CaptureStructArrays (containers only) reach these.
             CaptureDirectStructFields(obj, cls, numericScope, family, so.fields);
 
             // Container-element leaves at any (bounded) depth — struct-array / map /
-            // set elements + nested leaf-containers (build 1204). Gameplay classes
+            // set elements + nested leaf-containers. Gameplay classes
             // (Actor/Pawn/component/... — the value carriers) additionally capture
             // their TOP-LEVEL numeric scalar arrays (e.g. a Pawn's stat-bank
             // TArray<float>); non-gameplay classes skip those to keep the DB small.
-            // (build 1827)
             CaptureStructArrays(obj, cls, numericScope, arrayCap, so.arrays, family,
                                 /*captureTopLevelScalarArrays*/ IsSnapshotGameplayClass(cls));
 
@@ -11006,8 +10960,7 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: cancelled (client gone / shutdown)");
     // A fault is NOT a cancellation, and saying "cancelled" for it would name a cause that
     // did not happen. Unlike the cancel case the C# side is still listening, so this chunk
-    // is about to be stored — with a hole in it. It used to stop at this log line, and the
-    // snapshot was finalised as complete and usable; now the fact travels with the chunk
+    // is about to be stored — with a hole in it. So the fact travels with the chunk
     // (`worker_faulted`) and the UI finalises the snapshot UNUSABLE. [W1-SNAP-FAULT]
     if (scan.workerFaulted) {
         result.workerFaulted = true;

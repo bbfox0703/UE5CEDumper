@@ -192,14 +192,13 @@ static bool ValidateCyclicClassChain(uintptr_t chunk0) {
 
 // Upper bound on MaxElements for the strict (Tier 1) presets. MaxElements is
 // MaxChunks * 64K, so it tracks the title's gc.MaxObjectsInGame, NOT its live object
-// count -- a game that preallocates generously is normal, not corrupt. The old cap was
-// 0x800000 (8,388,608) and DragonSword Awakening (UE 5.3) rejected the CORRECT preset on
-// it: MaxChunks=161 -> MaxElements = 161 * 65536 = 10,551,296. Tier 1 then fell through to
-// the relaxed tier, which picked a row that reads NumElements out of the frozen
-// ObjLastNonGCIndex -- so only the startup CDOs were ever enumerated (37,099 of 317,810
-// objects) and every runtime object was invisible to every scan. Raised to 33.5M: still
-// an order of magnitude below the values produced when the slot actually holds half of a
-// pointer (MindsEye: 233M), which is what this bound exists to reject.
+// count -- a game that preallocates generously is normal, not corrupt (MaxChunks=161 ->
+// MaxElements = 161 * 65536 = 10,551,296). A cap that rejects the CORRECT preset drops
+// Tier 1 to the relaxed tier, which can pick a row that reads NumElements out of the
+// frozen ObjLastNonGCIndex -- then only the startup CDOs are enumerated and every runtime
+// object is invisible to every scan. 33.5M is still an order of magnitude below the
+// values produced when the slot actually holds half of a pointer (hundreds of millions),
+// which is what this bound exists to reject.
 static constexpr uint32_t kStrictMaxCeiling  = 0x2000000;  // 33,554,432
 // Looser bound for the relaxed (Tier 2) fallback, deliberately weaker than Tier 1's.
 static constexpr uint32_t kRelaxedMaxCeiling = 0x4000000;  // 67,108,864
@@ -685,18 +684,18 @@ static bool IsCleanAsciiName(const std::string& s) {
 // of the standard 24 (0x18) — so we try several and report the one that decodes cleanly via
 // outStride (the winning stride, fed to Aura::InitWithExtendedLayout).
 //
-// [VND583-10] Nor are the array's geometry and the item's shape fixed, and both used to be.
+// [VND583-10] Nor are the array's geometry and the item's shape fixed.
 // UE 5.8 moved ObjObjects to the FRONT of FUObjectArray and reordered FChunkedFixedUObjectArray
 // (UObjectArray.h @5.8.3-release: Objects, NumElements, MaxElements, NumChunks, MaxChunks,
 // PreAllocatedObjects), so its Objects is at +0x00 and NumElements at +0x08, not +0x10 / +0x24.
 // And UE 5.7+ put FlagsAndRefCount first in the item, so the UObject* is at +0x08: read at +0x00,
-// a 24-byte item still "passed" at stride 16, whose every third read lands on an object -- and
-// the pool then vanished two in three (09-05 A5's failure, in this resolver). Every geometry x
-// object offset x stride is scored and the densest wins; outObjOff / outUE58 say which.
-// ⭐ And a geometry must be SELF-CONSISTENT, not merely point at a real chunk table: DumperTest58
-// (5.8 Shipping) showed a probe 0x10 below its array, read through the 5.0-5.7 geometry, finding
-// the real Objects pointer at +0x10 and the 5.8 MaxChunks (33) at +0x24 as "NumElements" --
-// 33 clean names, and the pool then held 33 objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
+// a 24-byte item still "passes" at stride 16, whose every third read lands on an object -- and
+// the pool then loses two objects in three. Every geometry x object offset x stride is scored and
+// the densest wins; outObjOff / outUE58 say which.
+// ⭐ And a geometry must be SELF-CONSISTENT, not merely point at a real chunk table: a probe 0x10
+// below a 5.8 array, read through the 5.0-5.7 geometry, finds the real Objects pointer at +0x10
+// and the 5.8 MaxChunks at +0x24 as "NumElements" -- as many clean names as there are chunks, and
+// a pool that holds only that many objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
 // and Num <= NumChunks * OBJECTS_PER_CHUNK, as a real array's counts always are.
 struct StaticArrayGeometry { int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; };
 static const StaticArrayGeometry kStaticGeometries[] = {
@@ -844,8 +843,8 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* 
             }
         }
         // [VND583-10] Unambiguous: a dense run of clean core objects -- but decided only once this
-        // target's WHOLE window is scored. Deciding inside it let a base 0x10 too low (33 clean, at
-        // the bar) return before the true one (64) was ever read, on DumperTest58.
+        // target's WHOLE window is scored. Deciding inside it would let a base 0x10 too low, just at
+        // the bar, return before the true one was ever read.
         if (bestScore >= 32) {
             publish();
             return bestBase;
@@ -898,14 +897,12 @@ struct ScanReport {
     bool                           cancelled    = false;
 };
 
-// The `*_method` label for a successful scan. Every caller used to hardcode "aob", which
-// was wrong for the ~6 symbol-export and CallFollow entries: they reported method="aob"
-// next to a pattern_id of "GWLD_EXP" and an empty AOB triple, three fields in the same
-// payload contradicting each other.
+// The `*_method` label for a successful scan, from the winner's resolve kind: a symbol-export or
+// CallFollow winner labelled "aob" would sit next to a pattern_id of "GWLD_EXP" and an empty AOB
+// triple, three fields in the same payload contradicting each other.
 //
-// winningSig is null only if a winner was recorded without its signature; "aob" is the
-// right answer there because it is what every such path used to report, and a guess that
-// changes behaviour is worse than a guess that preserves it.
+// winningSig is null only if a winner was recorded without its signature; "aob" is the answer
+// there, since a guess that changes behaviour is worse than a guess that preserves it.
 static const char* ScanMethodFor(const ScanReport& report) {
     return report.winningSig ? ScanMethodName(report.winningSig->resolve) : "aob";
 }
@@ -937,19 +934,16 @@ static uintptr_t ScanFunctionBodyForRipRef(
     // and its only stop condition is an unreadable page, which never fires inside a
     // module's .text — so on a short callee it reads straight into the next function
     // and can "succeed" on a reference that has nothing to do with the one we
-    // followed. That is not hypothetical: on UE 4.23 GNAM_V7 followed a 124-byte
-    // FName ctor and resolved GNames from a ref at +0x94, i.e. 132 bytes past the
-    // end, inside a DIFFERENT FName constructor's lazy-init prologue. It got the
-    // right answer for the wrong reason, and 17 of 19 callees in the corpus overrun.
+    // followed -- even the right answer for the wrong reason, from a neighbouring
+    // function's prologue. Most callees in the corpus are shorter than 256 bytes.
     //
     // Clamp with (end - funcAddr), NOT the entry length: funcAddr is frequently
     // mid-entry (6.8%-39.8% of call targets across the corpus), so the entry's own
     // length would over-run by exactly the part already behind us.
     //
     // A false return means LEAF or no exception directory — indistinguishable, and
-    // both keep the historical 256, so that path is bit-identical to today's
-    // behaviour and cannot regress anything. It is also the only path that can still
-    // overrun; measured leaf share is 12-17% of call targets.
+    // both keep the flat 256 window. It is also the only path that can still
+    // overrun; leaves are 12-17% of call targets across the corpus.
     int limit = scanBytes;
     uintptr_t fnBegin = 0, fnEnd = 0;
     const bool bounded = Macht::GetFunctionExtent(funcAddr, fnBegin, fnEnd)
@@ -989,11 +983,10 @@ static uintptr_t ScanFunctionBodyForRipRef(
 }
 
 // [VND583-07] The body scan, then ONE call deeper. On a modular EDITOR build the exported FName::ToString
-// holds no NamePoolData reference of its own. Measured on UnrealEditor-Core.dll (UE 5.4, case-preserving
-// names): ToString+0x18 `call` -> a resolver whose +0x15 is `lea rdi,[rip+..]` = NamePoolData (after a
-// `cmp [bNamePoolInitialized],0`). So GNAM_EXP_* found nothing, and on that host the multi-module AOB
-// fallback took EOSSDK-Win64-Shipping.dll's own, NON-case-preserving name pool instead: 0 of 10 UObject
-// names resolved. Up to four calls in the exported body are followed; the validator decides, as before.
+// holds no NamePoolData reference of its own: it `call`s a resolver whose body holds the
+// `lea rdi,[rip+..]` = NamePoolData (after a `cmp [bNamePoolInitialized],0`). Without that step GNAM_EXP_*
+// finds nothing, and the multi-module AOB fallback can take another module's own, NON-case-preserving name
+// pool instead. Up to four calls in the exported body are followed; the validator decides.
 // True when `addr` is in a committed, executable page (image OR private -- the unit test's code is
 // VirtualAlloc'd). A call target that is not is a false E8 decode inside some other instruction.
 static bool IsExecutablePage(uintptr_t addr) {
@@ -1123,31 +1116,25 @@ static uintptr_t TryResolveMatch(uintptr_t matchAddr, const AobSignature& sig, V
 // per batch instead of once per pattern.
 static constexpr int kBatchSize = 8;
 
-// ── Module anchor for the multi-module fallback (D1) ─────────────────────────
+// ── Module anchor for the multi-module fallback ──────────────────────────────
 //
 // GObjects resolves FIRST, so by the time GNames/GWorld/GEngine scan we know which
 // module the engine's globals actually live in. That fact is worth more than any list.
 //
-// THE BUG THIS EXISTS FOR (measured 2026-08-05, stock UE 5.4 Development package):
-// every in-executable GNames pattern missed — the tables are Shipping-tuned — so the
-// multi-module fallback ran and matched a data pattern inside
-// `Engine\Binaries\Win64\EOSSDK-Win64-Shipping.dll`, whose pointer happened to reach a
-// plausible name pool. ValidateGNames accepted it, and GObjects (in the exe, 0x7FF675…)
-// and GNames (0x7FFCEF…) ended up in different modules on a MONOLITHIC build, which
-// cannot be right. Everything downstream failed from that one address: no Guid/Vector
-// struct -> offsets fell back to defaults wrong for this build -> GWorld would not
-// deref -> Start-from-GWorld and Value Search both failed. One misresolution, four
-// symptoms, and the scan reported success throughout.
+// The hazard: when every in-executable GNames pattern misses, the multi-module fallback
+// can match a data pattern inside a bundled SDK DLL (`EOSSDK-Win64-Shipping.dll`) whose
+// pointer happens to reach a plausible name pool. ValidateGNames accepts it, and GObjects
+// and GNames end up in different modules on a MONOLITHIC build, which cannot be right.
+// Everything downstream fails from that one address — offsets fall back to defaults wrong
+// for the build, GWorld does not deref — while the scan reports success throughout.
 //
-// The rule is structural, NOT a denylist of SDK names. A denylist is a list, and this
-// repo has been bitten three times by fixes verified against their own list rather than
-// against the world (B34's CE filenames, B14's thread procs, B47's session). "The engine
-// globals are all in one module unless the build is modular" needs no maintenance and
-// cannot go stale.
+// The rule is structural, NOT a denylist of SDK names: a denylist covers only the modules
+// someone listed. "The engine globals are all in one module unless the build is modular"
+// needs no maintenance and cannot go stale.
 //
 // Multi-module support itself stays: a genuinely modular build puts GNames in
-// CoreUObject.dll, which is exactly why the pattern that won here is named GNAM_SAT425
-// (Satisfactory 4.25). When the anchor is a DLL we only REORDER; we refuse nothing.
+// CoreUObject.dll, which is what a pattern such as GNAM_SAT425 (Satisfactory 4.25) is
+// for. When the anchor is a DLL we only REORDER; we refuse nothing.
 static uintptr_t s_moduleAnchor = 0;
 
 using Macht::ModuleOfAddress;
@@ -1231,23 +1218,15 @@ static uintptr_t ScanForTarget(
                 g_validationDbgCount = 0;
 
                 // ⚠ AOBScanALL, not AOBScan. The hint fast path MUST NOT be weaker than the
-                // full scan that produced the hint, and it was: Macht::AOBScan returns the
-                // FIRST match only (ScanRegion returns on first hit, and AOBScan returns on
-                // the first section that hits), while the batch path this shortcuts hands
-                // Pass 1 EVERY match and walks them until one validates. So a pattern whose
-                // first match failed validation was logged as a MISS and then ERASED from the
-                // pattern set below — hiding it from the very path that would have found the
-                // later, valid match.
-                //
-                // Live-reproduced on the maintainer's own logs, same binary (PE 6A7EA6031...),
-                // five minutes apart: a cold run reported
-                //   "GNames: 31 patterns tried, 10 with hits, winner: GNAM_V1 -> 0x7FF63CD568C0"
-                // and the next run, using the hint that run had just saved, reported
-                //   "Hint MISS: 'GNAM_V1'" ... "GNames: 33 patterns tried, 12 with hits, NONE validated".
-                // GNAM_V1 had 166 matches on that image and the winner was not the first.
-                // GObjects showed the same shape and went 0.66 s -> 6.14 s. Worse, the false
-                // "not found" was then PERSISTED over a good hint, so the failure oscillates:
-                // fail -> hint destroyed -> cold scan succeeds -> hint saved -> fail again.
+                // full scan that produced the hint: Macht::AOBScan returns the FIRST match only
+                // (ScanRegion returns on first hit, and AOBScan returns on the first section
+                // that hits), while the batch path this shortcuts hands Pass 1 EVERY match and
+                // walks them until one validates. On the first match alone, a pattern whose
+                // first match fails validation would be logged as a MISS and then ERASED from
+                // the pattern set below — hiding it from the very path that would find the
+                // later, valid match — and the false "not found" PERSISTED over a good hint, so
+                // the failure oscillates: fail -> hint destroyed -> cold scan succeeds -> hint
+                // saved -> fail again.
                 auto hintT0 = std::chrono::high_resolution_clock::now();
                 std::vector<uintptr_t> hintHits = Macht::AOBScanAll(hintSig->pattern);
                 auto hintT1 = std::chrono::high_resolution_clock::now();
@@ -1255,9 +1234,8 @@ static uintptr_t ScanForTarget(
 
                 PatternScanResult pr;
                 pr.id = hintSig->id;
-                // The REPORTED count is the real one. It used to be `matchAddr ? 1 : 0`, so a
-                // 166-match pattern logged "hits=1" — the report and the reality computed by
-                // different code paths (audit #4 root cause #1), which is what hid this.
+                // The REPORTED count is the real one, every match, never `matchAddr ? 1 : 0`: the
+                // report and the reality must not be computed by different code paths.
                 pr.hitCount = static_cast<int>(hintHits.size());   // hitCount is int (see PatternScanResult)
 
                 // Same cap and the same "first validated match wins" rule as Pass 1, so the
@@ -1305,15 +1283,14 @@ static uintptr_t ScanForTarget(
                          report.targetName, hintPatternId, hintHits.size(),
                          static_cast<long long>(hintUs));
 
-                // NOTHING is erased. G10 established the invariant that the hint path must
-                // never be weaker than the scan that produced the hint, and this was the one
-                // axis it did not consider: Macht::AOBScanAll with no moduleBase answers "no
+                // NOTHING is erased: the hint path must never be weaker than the scan that
+                // produced the hint (G10). Macht::AOBScanAll with no moduleBase answers "no
                 // match in the MAIN module" (it defaults to GetModuleBase(nullptr)), while
                 // Pass 2 below exists precisely for patterns with zero main-module hits and
-                // re-scans them across every loaded module. Erasing on an empty result
-                // therefore removed the pattern before the only pass that could still find
-                // it — so a target living in another module was unresolvable on any run that
-                // had a hint, and resolvable on the cold run that had none (audit #5 AD3).
+                // re-scans them across every loaded module. Erasing on an empty result would
+                // remove the pattern before the only pass that could still find it — a target
+                // living in another module would be unresolvable on any run that had a hint,
+                // and resolvable on the cold run that had none (audit #5 AD3).
             } else {
                 LOG_INFO("[%s] Hint: pattern '%s' is non-AOB type (%d), skipping hint",
                          report.targetName, hintPatternId, static_cast<int>(hintSig->resolve));
@@ -1409,7 +1386,7 @@ static uintptr_t ScanForTarget(
     for (int batchIdx = 0; batchIdx < totalBatches; ++batchIdx) {
         // (MA1) Cancellation lives HERE, at the pattern boundary, and deliberately not
         // inside Macht: the largest indivisible unit below this line is one AOBScanBatch,
-        // measured at most 0.64 s on a 213 MB .text, against CE's 5000 ms ceiling. Polling
+        // short against CE's 5000 ms ceiling. Polling
         // inside Macht's AVX2 strides would cost a relaxed atomic load per 32 bytes, for
         // no measurable gain in responsiveness.
         if (Tot::Requested()) {
@@ -1461,13 +1438,11 @@ static uintptr_t ScanForTarget(
 
             // Try to validate each match.
             //
-            // Bounded (build 2404). Validation is not free — every candidate costs several
-            // SEH-guarded reads — and an over-generic pattern can produce five-figure match
-            // counts: the removed GNAM_D7_1 ("48 8D 0D ?? ?? ?? ?? E8", i.e. `lea rcx,[rip];
-            // call`, three literal bytes) took 27,001 matches on a UE4.20 title and 104,897
-            // on a UE4.27 one, ALL of which were validated before the scan could reach the
-            // patterns that actually work (pri 800/840 there). The cap keeps that failure
-            // mode bounded for any future pattern: if the correct site is not within the
+            // Bounded. Validation is not free — every candidate costs several SEH-guarded
+            // reads — and an over-generic pattern (`lea rcx,[rip]; call`, three literal
+            // bytes) can produce five- and six-figure match counts, ALL of which would be
+            // validated before the scan could reach the patterns that actually work. The
+            // cap keeps that failure mode bounded for any pattern: if the correct site is not within the
             // first kMaxValidatePerPattern matches, the pattern was not selective enough to
             // be trusted anyway. Logged loudly so it is visible rather than silent.
             constexpr size_t kMaxValidatePerPattern = 4096;
@@ -1533,8 +1508,8 @@ static uintptr_t ScanForTarget(
                 if (!batchResults[j].matches.empty()) continue; // processed in pass 1
 
                 // (MA1) The expensive half. One AOBScanAllModules re-enumerates every loaded
-                // module and scans each one it admits — measured 2.34 s on a 593-module title, and on that
-                // title 99.98% of the whole SparseDelegates phase was spent right here.
+                // module and scans each one it admits — seconds on a title with hundreds of modules, where it
+                // is nearly all of the SparseDelegates phase.
                 if (Tot::Requested()) {
                     report.cancelled = true;
                     LOG_WARN("[%s] multi-module fallback CANCELLED (client gone / shutdown) — "
@@ -1733,7 +1708,7 @@ static const char* s_gnamesMethod           = "not_found";
 static const char* s_gworldMethod           = "not_found";
 static const char* s_sparseDelegatesMethod  = "not_found";
 
-// File-scope ScanReports — promoted from local so FindAll() can read winningId + stats
+// File-scope ScanReports, so FindAll() can read winningId + stats
 static ScanReport s_gobjectsReport;
 static ScanReport s_gnamesReport;
 static ScanReport s_gworldReport;
@@ -2034,7 +2009,7 @@ static bool ValidateGNames(uintptr_t addr) {
 
     // Dump the first 128 bytes so we can diagnose the layout manually.
     // Own budget: a single candidate burns up to 14 per-offset lines above (7 block
-    // offsets x 2 header offsets), which used to exhaust the shared throttle before the
+    // offsets x 2 header offsets), which would exhaust a shared throttle before the
     // most diagnostic line in the whole GNames path could ever print.
     if (g_gnamesDumpCount++ < kMaxGNamesDumps) {
         char hexbuf[256];
@@ -2233,8 +2208,8 @@ static uintptr_t FindGNamesByPointerScan() {
             // joins the accept thread, so an unbounded sweep here freezes CE's UI for its
             // whole duration. Aura's idiom: poll cheaply every 4096 slots. (B18)
             if ((off & 0xFFF) == 0 && Tot::Requested()) {
-                // [A2-GNAMES-PTRSCAN-ABORT] This bail used to leave no log and no flag, so UE5_Init could latch
-                // with GNames missing. Recorded AT THE BAIL, in [P1-GENAU-ABORT]'s shape.
+                // [A2-GNAMES-PTRSCAN-ABORT] The bail leaves a log line and a flag, or UE5_Init could latch with
+                // GNames missing. Recorded AT THE BAIL, in [P1-GENAU-ABORT]'s shape.
                 s_gnamesReport.cancelled = true;
                 Sein::Warn("SCAN:GNam", "FindGNamesByPointerScan: aborted (client gone / shutdown)");
                 return 0;
@@ -2629,21 +2604,21 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
     if (arrayMax < 0 || arrayMax > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) return false;
     if (allocMaxBits < 0 || allocMaxBits > Grimoire::SANITY_MAX_SPARSE_BITS) return false;
 
-    // ── Content check (added build 2404) ────────────────────────────────
-    // Everything above is shape-only: it accepts ANY .data TMap-looking blob, which
-    // is why offline sweeps kept finding sparse patterns whose decoys resolve to
-    // unrelated 0x60-stride TSets. When the map is NON-EMPTY we can do far better,
+    // ── Content check ───────────────────────────────────────────────────
+    // Everything above is shape-only: it accepts ANY .data TMap-looking blob, so a
+    // sparse pattern's decoys can resolve to unrelated 0x60-stride TSets. When the
+    // map is NON-EMPTY we can do far better,
     // because we know exactly what a live key is: SparseDelegates is
     //   TMap<UObjectBase const*, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>
     // so the first 8 bytes of an occupied element are a real UObject pointer, and
     // *that* pointer's first qword is a vtable inside a loaded module. A TMap keyed
     // by FName/int/FString cannot satisfy both.
-    // [R7-X3] ANY loaded module, not the main one: a modular build (the UE 4.27 editor, measured) keeps every UObject
-    // vtable in a UE4Editor-*.dll, and the main-module test refused the real storage there.
+    // [R7-X3] ANY loaded module, not the main one: a modular build (the UE 4.27 editor) keeps every UObject
+    // vtable in a UE4Editor-*.dll, where a main-module test would refuse the real storage.
     //
     // Deliberately NOT applied when the map is empty: FindAll can legitimately run
     // before anything binds a sparse delegate, and rejecting there would lose the
-    // address entirely. Empty stays accepted on shape alone, exactly as before.
+    // address entirely. Empty stays accepted on shape alone.
     uintptr_t elemData = 0;
     int32_t   elemNum  = 0;
     if (!Macht::ReadSafe(addr + 0x00, elemData)) return false;
@@ -2684,9 +2659,7 @@ static std::atomic<bool>      s_sparseDelegatesScanned{false};
 // WalkSparseDelegateBindings (Aura.cpp) -- so two clients can enter it at once before
 // the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
 // file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
-// confused verdict. Found 2026-09-07 while checking whether the per-connection cancel
-// (bea9009c) had made the shared verdict inconsistent -- it had not, the `cancelled` flag is
-// consumed locally by the no-latch branch below, but the underlying race was real and older.
+// confused verdict. The `cancelled` flag is consumed locally by the no-latch branch below.
 // ⛔ NOT std::call_once: the MA1 branch below deliberately does NOT latch a cancelled scan so
 // the next call retries, and call_once would burn the one-shot on that cancelled attempt.
 static std::mutex             s_sparseScanMutex;
@@ -2868,10 +2841,9 @@ static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor
 
 // Read a UE version out of ONE file's VERSIONINFO resource.
 //
-// Split out of DetectVersionFromPEResource so CrashReportClient.exe is read by the SAME code as
-// the game exe. The alternative — a second reader with its own copy of the parse and its own
-// bounds — is the defect shape working-lessons.md 1.12 catalogues, and the version arithmetic had
-// already been written out four times in this one function before the split.
+// Its own function so CrashReportClient.exe is read by the SAME code as the game exe. The
+// alternative — a second reader with its own copy of the parse and its own bounds — is the
+// defect shape working-lessons.md 1.12 catalogues.
 //
 // What a file's VERSIONINFO said besides the code: a reading below the floor needs a second signal --
 // from the same exe's resource, or an agreeing CrashReportClient -- before it may refuse the scan, and
@@ -3010,19 +2982,15 @@ static uint32_t DetectVersionFromPEResource(const wchar_t* exePath, ResourceRead
 //
 // ⭐ Why it is worth a file probe: CrashReportClient ships WITH THE ENGINE and is not authored by
 // the game team, so unlike the game exe its version can never be the GAME's version. Its value is
-// not the hit rate but WHERE it hits — the SquareEnix HD-2D fork DQ I&II carried a misdetected
-// "UE5.05" in this repo's own docs for months, across the UE4/UE5 boundary, and its
-// CrashReportClient says 4.27.2.0.
+// not the hit rate but WHERE it hits — a licensee fork whose other signals land across the UE4/UE5
+// boundary.
 //
 // ⚠ It is a build-provenance signal, so it ranks with the static detectors and NOT above the
-// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503 and
-// detection 503. The CMC marker then raised it to 504 at init, and that was read here as a licensee
-// backport; it was not. Stock 5.3 already reflects GravityDirection, so the marker was wrong, and it
-// now keys on the 5.4-only SetGravityDirection UFUNCTION [R7-X4] -- DragonSword has only the
-// property. The ladder still keeps the last word; its 5.4 marker just has to BE a 5.4 marker.
+// runtime ladder in Frieren.cpp, which keeps the last word; the ladder's 5.4 marker keys on the
+// 5.4-only SetGravityDirection UFUNCTION [R7-X4], since stock 5.3 already reflects the
+// GravityDirection property.
 //
-// ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
-// one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.
+// ⚠ Absence is the COMMON case, not an error: most game folders ship no CrashReportClient.
 static uint32_t DetectVersionFromCrashReportClient(const wchar_t* exePath) {
     for (const std::wstring& cand : Grimoire::CrashReportCandidates(exePath)) {
         if (GetFileAttributesW(cand.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
@@ -3081,13 +3049,13 @@ static uint32_t DetectVersionFromCrashReportClient(const wchar_t* exePath) {
 constexpr int      kLastPreUE4CopyrightYear = 2013;
 constexpr int      kPreUE4MarkerCount       = 4;
 // 2-of-4. The threshold is conservative on purpose: a UE3 title that strips its markers falls
-// through to today's behaviour (full scan, no winner), which is the right direction to fail in.
+// through to the full scan (no winner), which is the right direction to fail in.
 constexpr int      kPreUE4MarkerThreshold   = 2;
 
 // Internal: does the PE VERSIONINFO carry an Epic Games copyright whose NEWEST year predates
 // UE4? Epic bumps the engine copyright year every release, and the year tracks the ENGINE
-// SNAPSHOT rather than the game's ship date — the UE3 title measured here shipped in 2015 and
-// still reads "Copyright 1998-2012 Epic Games, Inc.", because 2012 is the snapshot it licensed.
+// SNAPSHOT rather than the game's ship date — a UE3 title can ship years after 2012 and still
+// read "Copyright 1998-2012 Epic Games, Inc.", because 2012 is the snapshot it licensed.
 // That makes it a better engine-age proxy than a release date.
 //
 // The inference is ONE-DIRECTIONAL: year <= 2013 implies not-UE4/UE5, but year >= 2014 implies
@@ -3192,12 +3160,12 @@ static int CountPreUE4Markers() {
 // Internal: scan a window of memory for any of a set of UE-related anchor
 // substrings. Used by Tier 3 to require contextual evidence ("Engine",
 // "Unreal", "UE4", "UE5", "++UE") near a bare version pattern, so that
-// stray SDK strings like "PhysX 5.5.0" / "DirectX 12.5" can no longer
+// stray SDK strings like "PhysX 5.5.0" / "DirectX 12.5" cannot
 // fool the bare-pattern path.
-// HasUEAnchorNearby moved to VersionNeedleScan.h (audit #5 G2) so it can be unit-tested
-// and so the gated Tier 2/3 pass can share it. Behaviour is identical apart from a
-// first-byte reject inside the window, which matters because the fused pass no longer
-// returns the instant it sees a Tier 2 hit and so reaches more anchor calls.
+// HasUEAnchorNearby lives in VersionNeedleScan.h (audit #5 G2) so it can be unit-tested
+// and so the gated Tier 2/3 pass can share it. Its first-byte reject inside the window
+// matters because the fused pass does not return the instant it sees a Tier 2 hit and
+// so reaches more anchor calls.
 
 // Detection result. tier:
 //   1 = Tier 1 exact "++UE?+Release-X.Y" → highest confidence
@@ -3251,9 +3219,10 @@ static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFro
 // decide before any memory scan. `done` = the verdict stands at tier 1; otherwise `result` carries a sub-floor
 // reading at tier 3 (or nothing) for the memory scan to decide.
 // It takes the paths, rather than asking the process for its own, so dll_core_test runs it -- the readings and the
-// decision -- on resource-only DLLs built from dll/tests/res: the glue between the pinned helpers had no test, and a
-// refactor that dropped it would have reverted IS Defense to "scanned" [VER-410-GATE] review. The short-circuit itself
-// is DetectVersionDetailed's return on `done`, which takes the exe path and the image for the same reason.
+// decision -- on resource-only DLLs built from dll/tests/res, so a refactor that dropped the glue between the pinned
+// helpers would fail a test rather than turn a refused sub-floor title back into "scanned" [VER-410-GATE]. The
+// short-circuit itself is DetectVersionDetailed's return on `done`, which takes the exe path and the image for the
+// same reason.
 // `crcPath`: the CrashReportClient to read; nullptr looks above `exePath` the way the DLL does (dll/CMakeLists.txt lays
 // the fixtures out as an install so that lookup is run too), "" reads none.
 struct ResourcePhase {
@@ -3306,12 +3275,12 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
         // engine's own build string naming the same version (a licensee can edit that string's
         // branch, which is why Grimoire::EngineBuildStringCode is strict about it), or a
         // CrashReportClient agrees with the exe. The memory scan cannot do that job -- its needle table floors at "4.18.", so a
-        // genuine 4.0-4.10 title was never corroborated, stayed tier 3 and was scanned instead of
-        // refused, which is what IS Defense (4.10.2) hit [VER-410-GATE]. An uncorroborated reading
+        // genuine 4.0-4.10 title would never be corroborated, would stay tier 3 and be scanned instead of
+        // refused [VER-410-GATE]. An uncorroborated reading
         // still falls through to the memory scan; if that cannot agree, the terminal branch keeps
         // the value at tier 3, which sets bLowConfidence, which the refusal gate requires to be
-        // false. The cost of being wrong that way is a wasted sweep (~0.35 s since the G2 gate,
-        // was ~29 s); the cost of being wrong the other way is refusing to scan a game that works.
+        // false. The cost of being wrong that way is a wasted sweep (short, behind the G2 gate);
+        // the cost of being wrong the other way is refusing to scan a game that works.
         if (rv.tier == 1) {
             if (rv.version < Grimoire::MIN_SUPPORTED_UE_VERSION) {
                 std::string by;
@@ -3375,7 +3344,7 @@ static std::string Tier3ResourceNote(const ResourcePhase& rp) {
 
 // `exePath` and the image [`base`, `base` + `size`) are the process's own in production (the overload below); a test
 // hands a fixture install's exe and a buffer of its own, so a decided resource verdict's return before the memory scan
-// is run, not only the readings that decide it ([VER-410-GATE] second review).
+// is run, not only the readings that decide it. [VER-410-GATE]
 static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t base, size_t size) {
     Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
 
@@ -3397,34 +3366,28 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
     const uint8_t* scan = reinterpret_cast<const uint8_t*>(base);
 
     // === Tier 1 + Tier 2/3 — see VersionNeedleScan.h ==========================
-    // Both sweeps used to be written inline here as naive whole-image memcmp passes:
-    // 4 for Tier 1, 19 for Tier 2/3. MEASURED on Elliot-Win64-Shipping.exe (460.0 MiB,
-    // MSVC /O2 x64) that was 4.348 s + 24.465 s and 9,165,424,620 memcmp calls, all of
-    // it uninterruptible — which is what audit #5 G2 filed. Gated on the first needle
-    // byte the same cost is 0.2245 s + 0.0957 s and 39,351 compares, with identical
-    // results on 7 real binaries plus a unit oracle. (audit #5 G2)
+    // Each sweep is gated on the first needle byte: a naive whole-image memcmp pass per
+    // needle is tens of seconds of uninterruptible work on a large image.
     //
-    // The needle table, the tier rules and the anchor helper now live in the header so
-    // dll_helpers_test can compile them against a naive reference — nothing in
-    // dll/CMakeLists.txt compiles Genau.cpp, so this logic had no build-time check at all.
+    // The needle table, the tier rules and the anchor helper live in the header so
+    // dll_helpers_test can compile them against a naive reference.
     //
-    // Log lines below are deliberately byte-identical to the old inline versions:
-    // scan-0.log is the only instrument that can verify this function on a real game.
+    // Log lines below are deliberately kept byte-stable: scan-0.log is the only
+    // instrument that can verify this function on a real game.
     //
-    // ⚠ VERSION DETECTION IS DELIBERATELY NOT CANCELLABLE. Do not "finish G2" by pasting
-    // the (B18) `if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;` idiom in here.
+    // ⚠ VERSION DETECTION IS DELIBERATELY NOT CANCELLABLE. Do not paste the
+    // `if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;` idiom in here.
     // Three reasons, in order of severity:
     //   1. The verdict is PERSISTED. Flamme writes ueVersion / versionDetected /
     //      lowConfidence into UE5CEDumper.{Machine}.json keyed by PE hash, and FindAll
     //      skips detection entirely on every later launch ("skipped DetectVersion"). A
     //      cancelled sweep returning "nothing found" would therefore be memoized as the
-    //      fallback guess FOREVER for that game — the exact never-invalidated-cache shape
-    //      this audit just spent three commits removing from Ubel (U4/U16/U6).
+    //      fallback guess FOREVER for that game — a never-invalidated cache.
     //   2. CountPreUE4Markers below feeds the PRE-UE4 REFUSAL. A truncated marker count is
     //      not a smaller answer, it is a WRONG one, and in the direction that can refuse to
     //      scan a supported game.
-    //   3. After the gate the whole stretch is ~0.35 s on a 482 MB image, down from ~29 s.
-    //      There is nothing left worth interrupting.
+    //   3. With the first-byte gate the whole stretch is short; there is nothing worth
+    //      interrupting.
     // If it ever must become cancellable, the shape is: a `cancelled` flag on
     // VersionScanResult, plumbed through EnginePointers into Flamme::SaveResults so the
     // four version fields are SKIPPED rather than written, plus a distinguishable (not
@@ -3433,7 +3396,7 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
     // === Tier 1: Exact UE build strings "++UE5+Release-5.X" / "++UE4+Release-4.XX" ===
     // Run TWICE: once narrow, once UTF-16LE. Some builds keep the engine tag only as a wide
     // literal — DropIn 4.27.2 has four UTF-16 copies in .rdata/.rsrc and ZERO ASCII ones, so
-    // the narrow-only scan was blind to it (and Tier 2/3 miss too: the ASCII "4.27" strings
+    // a narrow-only scan is blind to it (and Tier 2/3 miss too: the ASCII "4.27" strings
     // in that image are build paths like "4.27\Engine\Source\...", with no trailing dot).
     {
         static const char* kPrefixNames[] = { "++UE5+Release-", "++UE4+Release-" };
@@ -3576,8 +3539,8 @@ static uintptr_t FindStructByName(const char* structName) {
     return 0;
 }
 
-// [VND583-02] Measure UField::Next in FProperty mode, where it used to be left at its default.
-// Walks the UFunction chain (UStruct::Children, now derived from the measured ChildProperties)
+// [VND583-02] Measure UField::Next in FProperty mode rather than leave it at its default.
+// Walks the UFunction chain (UStruct::Children, derived from the measured ChildProperties)
 // of a stock engine class at each candidate offset, default first, and returns the first that
 // chains >= 2 consecutive Function objects (DynOff::PickUFieldNextOffset). -1 = no class had a
 // chain to measure on.
@@ -3884,8 +3847,8 @@ static void DetectUPropertyMode(uint32_t ueVersion) {
 }
 
 // A give-up: DynOff is SETTLED (probeRan, which the &GEngine gates key on) but NOT measured, and says why.
-// [W5-OFFSETS-UNMEASURED] validated=false is stored EXPLICITLY. Both early returns used to rely on the flag's initial
-// false, so a re-init taking one after a validated run kept the old TRUE beside this very reason.
+// [W5-OFFSETS-UNMEASURED] validated=false is stored EXPLICITLY, never left to the flag's initial false: a re-init that
+// gives up after a validated run would otherwise keep the old TRUE beside this very reason.
 static bool PublishOffsetsGiveUp(const char* reason) {
     DynOff::g_offsetsFallbackReason = reason;
     DynOff::bOffsetsValidated.store(false, std::memory_order_release);
@@ -3921,10 +3884,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 DynOff::FPROPERTY_ELEMSIZE = 0x34;
                 DynOff::FPROPERTY_FLAGS    = 0x38;
                 DynOff::FPROPERTY_OFFSET   = 0x44;
-                // (G12) All FIVE members of the sizeof(FProperty) family, not two. This
-                // block used to set only STRUCT and BOOLSIZE, leaving FARRAYPROP_INNER /
-                // FBYTEPROP_ENUM at 0x78 and FENUMPROP_ENUM at 0x80 — a SPLIT family that
-                // any "keeping defaults" exit path then shipped for the whole session.
+                // All FIVE members of the sizeof(FProperty) family, never a subset: setting
+                // only some leaves a SPLIT family that any "keeping defaults" exit path then
+                // ships for the whole session.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET,
                                                                       DynOff::bCasePreservingName));   // [VND583-11]
                 Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.3+ defaults (FFieldVariant=0x08)");
@@ -3945,7 +3907,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // Below 4.18 (4.11-4.17 in the supported range): no default family, because the untouched one IS their stock
         // start (UPropertyHasDefaultFamily).
         // Record it all the same, or a give-up leaves the readers outside the family on the version formula over the
-        // 4.18+ Offset_Internal default -- 0x6C against this 0x78 (review of build 3596).
+        // 4.18+ Offset_Internal default -- 0x6C against this 0x78.
         DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
     if (!DynOff::bUseFProperty) {
@@ -4247,7 +4209,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET);
 
         // The probe RAN but gave up — DynOff holds unmeasured defaults. Say so, so the
-        // summary cannot claim validated=yes (it used to, three lines after this warning).
+        // summary cannot claim validated=yes.
         return PublishOffsetsGiveUp("no-guid-or-vector-struct");
     }
 
@@ -4292,7 +4254,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             // what discovers ChildProperties, a later phase cannot fix it — a wrong name
             // offset here means NO candidate matches at ANY probed struct offset, the whole
             // validation gives up on defaults, and the walker then types every property as
-            // Scalar. That is exactly what UE 5.8 did before this joint probe existed.
+            // Scalar. Hence the joint probe.
             const int fcNameOff = DynOff::PickFFieldClassNameOffset(
                 [&](int o) -> std::string {
                     uint32_t idx = 0;
@@ -4370,13 +4332,13 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         return PublishOffsetsGiveUp("childprops-probe-failed");
     }
 
-    // Which probes below GAVE UP and kept an unmeasured default (audit #5 G1).
+    // Which probes below GAVE UP and kept an unmeasured default.
     //
-    // Every "keeping default" branch from here on falls THROUGH to the success tail, which
-    // used to store bOffsetsValidated = true unconditionally. Per Grimoire.h's contract that
-    // flag means "the values were actually MEASURED", so a run that could not find
-    // FField::Next reported validated=yes over a version guess — and Ubel.cpp `WalkInstance` documents
-    // what a blind FPROPERTY_ELEMSIZE then costs downstream (audit #5 U1).
+    // Every "keeping default" branch from here on falls THROUGH to the success tail, so the
+    // tail cannot store bOffsetsValidated = true unconditionally. Per Grimoire.h's contract
+    // that flag means "the values were actually MEASURED": a run that could not find
+    // FField::Next must not report validated=yes over a version guess — and Ubel.cpp
+    // `WalkInstance` documents what a blind FPROPERTY_ELEMSIZE then costs downstream.
     //
     // A bitmask rather than a bool because the reason string has to name WHICH probe fell
     // back: a maintainer reading `validated=NO (DEFAULTS) reason=` needs to know where to look.
@@ -4641,7 +4603,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     if (propElemSizeOff < 0 && propOffsetOff > 0) {
         // Heuristic: ElementSize sits 0x10 bytes before Offset_Internal.
         // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.2 (0x3C vs 0x4C) and
-        // UE5.3+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
+        // UE5.3+ (0x34 vs 0x44); 0x14 would land on ArrayDim in both.
         // [VND583-DOC UEP-D3] Not on UE 4.11-4.17 (UProperty), where the delta is 0x1C: there the
         // guess fails the read-back below, and the kept default of 0x34 is the right value.
         int guess = propOffsetOff - 0x10;
@@ -4685,13 +4647,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     //   };
     //
     // ArrayDim is BEFORE ElementSize, not between ElementSize and Flags --
-    // the previous "+8" formula assumed the wrong order and read the high
-    // 32 bits of the 64-bit Flags instead of the low. CPF_ReturnParm
-    // (0x400), CPF_OutParm (0x100), and other parm flags all live in the
-    // low 32 bits, so IsReturn / IsOut / IsParm detection silently
-    // returned false for every UFunction param across every UE version.
-    // This in turn made baked AA Scripts emit ReturnValue as an INPUT
-    // param and the verify-mode print as "(void return)".
+    // a "+8" formula assumes the wrong order and reads the high 32 bits of
+    // the 64-bit Flags instead of the low. CPF_ReturnParm (0x400),
+    // CPF_OutParm (0x100), and other parm flags all live in the low 32
+    // bits, so that would make IsReturn / IsOut / IsParm detection silently
+    // return false for every UFunction param, and baked AA Scripts emit
+    // ReturnValue as an INPUT param and the verify-mode print as "(void return)".
     if (DynOff::bUseFProperty) {
         if (propElemSizeOff >= 0) {
             DynOff::FPROPERTY_FLAGS = propElemSizeOff + 4;
@@ -4732,19 +4693,17 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // default block from drifting apart again.
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff, DynOff::bCasePreservingName));   // [VND583-11]
     } else if (propOffsetOff >= 0) {
-        // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
-        // in this function with zero writers -- it kept its 0x70 default on every UE4
-        // <4.25 game, including shifted ones. On DQ XI S (4.18, +0x10 shift) the true
-        // value is 0x80 and Ubel's ±4/+8/-8 spread tops out at 0x78, so no probe reached
-        // it, boolFieldMask stayed 0, and the reader fell back to `byteVal != 0` -- which
-        // reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
+        // UProperty mode derives UBOOLPROP_FIELDSIZE too: on a shifted UE4 <4.25 game the true
+        // value can lie beyond Ubel's ±4/+8/-8 spread around the 0x70 default, so no probe would
+        // reach it, boolFieldMask would stay 0, and the reader would fall back to `byteVal != 0` --
+        // which reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
         //
         // The `>= 0` guard mirrors the FProperty arm: an unmeasured probe must leave the
         // default alone rather than derive from -1.
         //
         // [UPROP-SUBCLASS-SLOT] The start comes from the measured layout (DynOff::UPropertySubclassStartFromLayout:
         // the Offset_Internal - ElementSize gap tells the tail order), the version only when ElementSize was not
-        // measured -- and the whole family goes there with the bool slot, which used to be the only one derived here.
+        // measured -- and the whole family goes there with the bool slot.
         const int start = DynOff::UPropertySubclassStartFromLayout(propOffsetOff, propElemSizeOff, ueVersion,
                                                                    DynOff::bCasePreservingName);
         DynOff::UBOOLPROP_FIELDSIZE = start;
@@ -4756,8 +4715,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(start));
     } else if (!DynOff::bUseFProperty && DynOff::UPropertyHasDefaultFamily(ueVersion)) {
         // A run that entered UProperty mode AFTER Step 2.5 (the ChildProperties fallback flips it) and then failed the
-        // Offset_Internal probe would otherwise ship the FProperty default -- give it the UProperty one (review
-        // wf_b99fb861-680, F5).
+        // Offset_Internal probe would otherwise ship the FProperty default -- give it the UProperty one.
         DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
         DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
@@ -4766,7 +4724,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // FFieldVariant=0x08 (Next at 0x18) is the UE 5.3+ layout, which uses the tag-bit encoding.
     // If the version is unknown but the layout matches, enable tag-bit masking -- the
     // StripFFieldTag is a no-op when the bit is 0. [VND583-09] Only on a MEASURED Next: an
-    // unmeasured 0x18 is the version default chosen above, and it used to count as proof.
+    // unmeasured 0x18 is the version default chosen above, and proves nothing.
     if (DynOff::InferTaggedFFieldVariant(DynOff::bUseFProperty, DynOff::FFIELD_NEXT, DynOff::bTaggedFFieldVariant,
                                          (unmeasured & UNMEASURED_FFIELD_NEXT) == 0)) {
         DynOff::bTaggedFFieldVariant = true;
@@ -4775,8 +4733,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // A give-up recorded above means at least one DynOff value is a version GUESS, not a
     // measurement — so bOffsetsValidated must be false even though we reached the success
-    // tail (audit #5 G1: it used to be stored true here unconditionally, three lines after
-    // "keeping default"). Grimoire.h `PickFFieldClassNameOffset` is the contract; bOffsetsProbeRan stays true either
+    // tail. Grimoire.h `PickFFieldClassNameOffset` is the contract; bOffsetsProbeRan stays true either
     // way, which is what FindGEngineSlot / ResolveGEngineDeferred actually gate on.
     //
     // The table is indexed by the bitmask so the reason can name EVERY probe that fell back,
@@ -4806,9 +4763,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // G7: publish the validated verdict on EVERY run and flag a state CHANGE. The
     // one-time UE5_Init "DynOff: ... validated=..." scan-log summary goes stale the moment
-    // apply_rescan (Fern) re-runs this and flips NO->YES, so a maintainer following
-    // log-verification-checklist reads validated=NO while get_offsets on the live process
-    // returns validated=true (Solarpunk 2026-08-14). Re-emitting here — the single writer
+    // apply_rescan (Fern) re-runs this and flips NO->YES, so a reader following
+    // log-verification-checklist would read validated=NO while get_offsets on the live process
+    // returns validated=true. Re-emitting here — the single writer
     // of bOffsetsValidated, reached by BOTH the init and apply_rescan call sites — keeps
     // the log's last DynOff record honest.
     static int s_lastPublishedValidated = -1;   // -1 = never published, 0 = NO, 1 = YES
@@ -4994,11 +4951,9 @@ uintptr_t ExtraScanGObjects() {
 //                         name is UObjectBase::NamePrivate and the offset is
 //                         UProperty::Offset_Internal.
 //
-// Grimoire.h says it outright: USTRUCT_CHILDPROPS is "absent in UE4 <4.25". This function used to
-// walk only that one, so on every pre-4.25 title it read a non-existent member and returned -1 —
-// which quietly disabled EVERY caller: ValidateGEngineSlot (so no GEngine AOB could ever
-// validate), FindLiveGameEngine, and RecoverGWorldViaEngine. Seen on NEKOPALIVE 4.11, where
-// GENG_X1/X3/X4 all hit the correct address and all three were rejected.
+// Grimoire.h says it outright: USTRUCT_CHILDPROPS is "absent in UE4 <4.25". Walking only that one
+// would read a non-existent member on every pre-4.25 title and return -1 — which would quietly
+// disable EVERY caller (ValidateGEngineSlot among them, so no GEngine AOB could ever validate).
 static int FindPropertyOffsetByName(uintptr_t structPtr, const char* propName) {
     const bool useFField = DynOff::bUseFProperty;
     const int  chainHead = useFField ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN;
@@ -5424,18 +5379,13 @@ uintptr_t FindGEngineSlot() {
     // ValidateGEngineSlot asks the reflected class for a "GameViewport" property. That needs
     // BOTH the dynamic FField/UStruct offsets (DynOff) and a live FNamePool (Serie::GetString),
     // and neither exists yet while FindAll is running — ValidateAndFixOffsets and the FNamePool
-    // init both happen AFTER it. So every candidate is rejected and the ~0.2-0.7 s AVX2 pass is
-    // pure waste.
-    //
-    // This is not hypothetical. It made "&GEngine — AOB not found" the answer on EVERY game
-    // while the patterns themselves were fine: on Everspace 2 (UE 5.5) 14 of 15 candidates
-    // resolved to 0x7FF68ACC37B0, which is exactly the PDB's &GEngine (image VA 0x149DA37B0),
-    // and all 14 were thrown away here. Bail out cheaply instead, and let
-    // ResolveGEngineDeferred re-run the scan once the offsets land.
+    // init both happen AFTER it. So every candidate would be rejected and the ~0.2-0.7 s AVX2 pass
+    // would be pure waste -- and "&GEngine — AOB not found" would be the answer on every game while
+    // the patterns themselves are fine, their correct candidates all thrown away here. Bail out
+    // cheaply instead, and let ResolveGEngineDeferred re-run the scan once the offsets land.
     // Gate on PROBE-RAN, not on VALIDATED: this exists only to order us after offset
-    // detection. Using the strict flag would regress &GEngine on every build where
-    // detection gives up on defaults — e.g. UE 5.8 before the FFieldClass::Name fix,
-    // where the give-up path was the only reason the slot resolved at all.
+    // detection. Using the strict flag would lose &GEngine on every build where
+    // detection gives up on defaults.
     if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) {
         s_gengineMethod = "deferred";
         Sein::Info("SCAN:Eng", "FindGEngineSlot: deferred — dynamic offsets not validated yet "
@@ -5538,15 +5488,13 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     //   3. Fresh detection (PE VERSIONINFO + Tier 1/2 string scan + Tier 3 anchored fallback).
     //   4. Hard fallback (504 by default, or publisher-biased if we can identify the shipper).
     //
-    // DetectVersion() costs ~0.35 s on a 482 MB image since the needle gate (audit #5 G2);
-    // it was ~29 s before, so this cache used to be load-bearing and is now merely nice.
-    // (Measured on Elliot-Win64-Shipping.exe, 460.0 MiB, MSVC /O2 x64 — the conditions are
-    // part of the number.) The version is NOT used during
+    // DetectVersion() is cheap behind its needle gate, so this cache is a convenience, not
+    // load-bearing. The version is NOT used during
     // AOB scanning (completely version-agnostic), only post-scan for DynOff offset selection.
     // Structural findings (UE4 TNameEntryArray, hash-prefixed headers) override the version
     // later anyway, so a cached value is safe.
     //
-    // Cache-reuse policy (build 1521+): trust the cached version for ANY same-peHash game —
+    // Cache-reuse policy: trust the cached version for ANY same-peHash game —
     // including publisher-stripped ones (SquareEnix) and inferred/low-confidence results —
     // as long as it was stamped by the current detection-logic rev (kVersionDetectLogicRev).
     // DetectVersionDetailed scans the module's STATIC image, so the same binary always yields
@@ -5590,7 +5538,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         // thumbprint matched — DetectPublisherFromPE ran above (cheap, PE-only) and a publisher
         // match means unreliable version strings, so the badge must always nudge toward an override.
         // Applying it live (not just from cache) keeps the badge honest even if the publisher table
-        // gains a new shipper after this game was already cached (the old publisher gate was live too).
+        // gains a new shipper after this game was already cached.
         //
         // The >= MIN_SUPPORTED guard (inside Flamme::CachedLowConfidence) mirrors the identical
         // rule in the fresh-detection branch below, and it MUST be here too: this is the branch
@@ -5673,32 +5621,29 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     //      4.10.2 has no FUObjectItem; 4.11.0 introduces
     //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY through a VERSIONINFO reading —
     //      the memory needle table floors at "4.18." and can never go below it — and it is rare:
-    //      IS Defense (4.10.2, 2016) is the first installed title seen to report a 4.0-4.10 version.
+    //      IS Defense (4.10.2, 2016) is a title that reports a 4.0-4.10 version.
     //      The other 4.10 evidence is the two reference builds in the AOB corpus, see Himmel.h's
     //      provenance block.
     //
     //  (b) UEVersion == PRE_UE4_SENTINEL_VERSION — positively identified as pre-UE4 (UE3) by
     //      CountPreUE4Markers. A different object model, not an older version of this one: no
     //      FUObjectArray, no FNamePool, and UObject::Class/Name nowhere near the offsets the
-    //      validators hardcode. Before this case existed such a game fell through the gate
-    //      entirely (its PE version is a GAME version like 1.0.x, so detection returned 0 and
-    //      the fallback guessed 5.4 — above the floor), and paid a full 150-pattern sweep to
-    //      reach "no winner" plus a "set an override" nudge that could never help.
+    //      validators hardcode. Without this case such a game falls through the gate entirely
+    //      (its PE version is a GAME version like 1.0.x, so detection returns 0 and the
+    //      fallback guesses 5.4 — above the floor), and pays a full pattern sweep to reach
+    //      "no winner" plus a "set an override" nudge that can never help.
     //
     // Deliberately gated on a CONFIDENT detection only. A low-confidence or publisher-biased
     // version is a guess, and a user override is the user's call — misreading a working game as
     // "too old" and refusing to scan it is a far worse failure than wasting four seconds.
     //
-    // That gate is only as good as what counts as confident, and case (a) used to slip through:
-    // DetectVersionFromPEResource's `major == 4` branch returned tier 1 off a single
-    // uncorroborated VS_FIXEDFILEINFO field, so bLowConfidence was false and this refusal armed
-    // on one PE value (B25). Then for a while nothing below the floor could be confident at all,
-    // since the memory scan that was to corroborate it cannot read a version under 4.18, and a
-    // genuine 4.10 title was scanned instead of refused. Reaching here with case (a) now means the
-    // resources corroborated the reading — the exe's ProductVersion is the engine's own build
-    // string naming the same version, or a CrashReportClient agrees with the exe — see
-    // DetectVersionDetailed [VER-410-GATE]. Case (b) is unchanged: the pre-UE4 sentinel is a
-    // POSITIVE 2-of-4 marker identification and is deliberately tier 1.
+    // That gate is only as good as what counts as confident. A single uncorroborated
+    // VS_FIXEDFILEINFO field is not, and the memory scan cannot corroborate a version under
+    // 4.18; reaching here with case (a) means the resources corroborated the reading — the
+    // exe's ProductVersion is the engine's own build string naming the same version, or a
+    // CrashReportClient agrees with the exe — see DetectVersionDetailed [VER-410-GATE].
+    // Case (b): the pre-UE4 sentinel is a POSITIVE 2-of-4 marker identification and is
+    // deliberately tier 1.
     if (Grimoire::RefusedAsTooOld(out.UEVersion, out.bVersionDetected, out.bLowConfidence, out.bUserOverride)) {
         out.bVersionTooOld = true;
         if (out.UEVersion == Grimoire::PRE_UE4_SENTINEL_VERSION) {

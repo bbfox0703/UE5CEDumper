@@ -107,9 +107,9 @@ public class ClassListResult
     ///
     /// Why this is not a bare <c>FirstOrDefault</c>: list_classes returns at most
     /// <see cref="RequestedLimit"/> rows and the DLL stops the moment it has them, so
-    /// on a large title a perfectly real class simply is not in the page. Every caller
-    /// used to render that as "Class X not found", which reads as "X does not exist" —
-    /// the exact conclusion that costs a user the afternoon (audit #5 X2).
+    /// on a large title a perfectly real class simply is not in the page. Rendered as
+    /// "Class X not found", that miss reads as "X does not exist" —
+    /// the exact conclusion that costs a user the afternoon.
     /// </summary>
     public ClassAddrLookup FindClassAddr(string className)
     {

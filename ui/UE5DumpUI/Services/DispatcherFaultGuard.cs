@@ -7,13 +7,12 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// Keeps a failure in Avalonia's own input plumbing from killing the process.
 ///
-/// <para><b>The defect this exists for</b> (<c>[PASTECRASH-2026-08-18]</c>): a
-/// clipboard read that fails inside <c>TextBox.Paste()</c> surfaces through
-/// <c>Task.ThrowAsync</c> as an unobserved exception on the dispatcher. Nobody
-/// handles it, the dispatcher rethrows, and the app dies — losing a connected
-/// session with a loaded object tree because a paste did not work. Observed as
-/// <c>COMException 0x8007000E: EnumFormatEtc failed</c> 31 minutes into a live
-/// session.</para>
+/// <para><b>The hazard this exists for</b> (<c>[PASTECRASH-2026-08-18]</c>): a
+/// clipboard read that fails inside <c>TextBox.Paste()</c> (such as
+/// <c>COMException 0x8007000E: EnumFormatEtc failed</c>) surfaces through
+/// <c>Task.ThrowAsync</c> as an unobserved exception on the dispatcher. Unhandled,
+/// the dispatcher rethrows and the app dies — losing a connected session with a
+/// loaded object tree because a paste did not work.</para>
 ///
 /// <para><b>The scope is the whole risk.</b> Marking dispatcher exceptions handled
 /// is how a crash becomes an invisible corruption, so this class contains no
@@ -34,8 +33,8 @@ internal sealed class DispatcherFaultGuard
 
     internal DispatcherFaultGuard(ILoggingService log) => _log = log;
 
-    /// <summary>How many faults have been swallowed this session. Exposed for tests
-    /// and for a future diagnostics readout; never used to change behaviour.</summary>
+    /// <summary>How many faults have been swallowed this session. Exposed for tests;
+    /// nothing reads it to change behaviour.</summary>
     internal int SwallowedCount => Volatile.Read(ref _swallowedCount);
 
     /// <summary>Subscribe to a dispatcher's unhandled-exception event.</summary>
@@ -91,11 +90,11 @@ internal sealed class DispatcherFaultGuard
     ///
     /// <remarks>
     /// <b>The verdict does not depend on the logger.</b> The classify step and the
-    /// log step used to share one try/catch, so a logger that threw — which is the
-    /// NORMAL state after <c>ShutdownRequested</c> disposes it — turned a swallow
-    /// into a crash. Whether a clipboard fault kills the app must not be a function
-    /// of how far through teardown the process happens to be, so the decision is
-    /// made first and logging is best-effort afterwards.
+    /// log step never share a try/catch: a logger that throws — which is the
+    /// NORMAL state after <c>ShutdownRequested</c> disposes it — must not turn a
+    /// swallow into a crash. Whether a clipboard fault kills the app must not be a
+    /// function of how far through teardown the process happens to be, so the
+    /// decision is made first and logging is best-effort afterwards.
     /// </remarks>
     internal bool ShouldHandle(Exception? ex)
     {
@@ -103,8 +102,7 @@ internal sealed class DispatcherFaultGuard
         bool swallow = verdict == InputFaultVerdict.InputLayer;
 
         // Only now, with the decision fixed and unable to change below, does the
-        // counter move: it previously incremented BEFORE logging, so a throwing
-        // logger left a count of faults that were then rethrown anyway.
+        // counter move, so it counts only faults that are really swallowed.
         int n = swallow ? Interlocked.Increment(ref _swallowedCount) : 0;
 
         TryLog(swallow, verdict, detail, ex, n);

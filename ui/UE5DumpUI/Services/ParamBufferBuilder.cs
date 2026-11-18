@@ -58,7 +58,7 @@ public static class ParamBufferBuilder
 
     /// <summary>
     /// True when a parameter type is a pointer to a UObject-flavoured value
-    /// that benefits from the Stage 2 instance-picker UI (a button that opens
+    /// that benefits from the instance-picker UI (a button that opens
     /// the live-instance picker pre-filtered to the param's expected UClass).
     ///
     /// The pointer-flavoured types <see cref="WriteParam"/> writes as one 8-byte
@@ -148,16 +148,15 @@ public static class ParamBufferBuilder
     /// Validate every sub-field of a struct param, the way the top-level scalar path
     /// validates a param, and name the first one that fails.
     ///
-    /// <para>This exists because <see cref="WriteStructParam"/> forwards each sub-field
-    /// straight to <see cref="WriteParam"/>, whose opaque-type guard returns SILENTLY. The
-    /// dialog validated top-level params only, so a sub-field that is itself opaque — a
-    /// nested struct such as <c>FSlateBrush::ImageSize</c> — had its typed value dropped
-    /// while FIRE still reported <c>ProcessEvent OK</c>
-    /// (<c>[Y11-OPAQUEDROP-2026-08-22]</c>), and an out-of-range integer sub-field masked
-    /// to width, which is the W6/Y2/Y9/Y15/AE1 family surviving in the one place its fix
-    /// had not been applied.</para>
+    /// <para>Needed because <see cref="WriteStructParam"/> forwards each sub-field
+    /// straight to <see cref="WriteParam"/>, whose opaque-type guard returns SILENTLY and
+    /// whose integer writes mask to width. Unchecked, a sub-field that is itself opaque — a
+    /// nested struct such as <c>FSlateBrush::ImageSize</c> — has its typed value dropped
+    /// while FIRE still reports <c>ProcessEvent OK</c>
+    /// (<c>[Y11-OPAQUEDROP-2026-08-22]</c>), and an out-of-range integer sub-field is masked
+    /// to width (the W6/Y2/Y9/Y15/AE1 family).</para>
     ///
-    /// <para>Living here rather than in the dialog is the point: the check now sits beside
+    /// <para>Living here rather than in the dialog is the point: the check sits beside
     /// the write it guards, so the two cannot drift apart and it can be tested without an
     /// Avalonia window.</para>
     /// </summary>
@@ -172,9 +171,9 @@ public static class ParamBufferBuilder
         {
             var sf = subFields[i];
             // [P3-INVOKE-STRUCT-FSTRING] A string MEMBER has no encoding in this buffer. A
-            // top-level FString is built by value DLL-side (InvokeStringParam); a sub-field took
-            // the scalar route, TryValidateScalar has no width for 16 bytes and passed it, and
-            // WriteParam wrote the text as a raw integer over FString.Data -- a bogus pointer
+            // top-level FString is built by value DLL-side (InvokeStringParam); a sub-field would
+            // take the scalar route, which TryValidateScalar passes (it has no width for 16 bytes)
+            // and WriteParam writes as a raw integer over FString.Data -- a bogus pointer
             // handed to ProcessEvent. Refuse any typed text, compared UNTRIMMED (a space is a
             // string too); the empty box is the all-zero {null,0,0}, the valid empty FString.
             // (TryValidateScalar keeps accepting strings: its top-level callers build them.)
@@ -199,7 +198,7 @@ public static class ParamBufferBuilder
 
     /// <summary>
     /// Write a DLL-discovered dynamic struct's sub-field values into the buffer.
-    /// Phase B fallback for structs not in KnownStructLayouts.
+    /// Fallback for structs not in KnownStructLayouts.
     ///
     /// <para>⚠ Call <see cref="TryValidateStructSubFields"/> first — see its remarks.</para>
     /// </summary>
@@ -219,7 +218,7 @@ public static class ParamBufferBuilder
             if (IsStringType(sf.TypeName)) continue;
             // [A3-FIRE-STRUCT-BOOLMASK] A PACKED bool shares its byte with siblings (FHitResult's
             // bBlockingHit / bStartPenetrating): set or clear only its bit. A whole-byte write
-            // zeroed the sibling or landed on bit 0. Mask 0 / 0xFF keep the whole-byte write below.
+            // would zero the sibling or land on bit 0. Mask 0 / 0xFF keep the whole-byte write below.
             // (The KnownStructLayouts overload above has no bool fields, so it needs no twin.)
             if (sf.TypeName == "BoolProperty" && Core.FieldValueConverter.IsSingleBitMask(sf.BoolFieldMask))
             {
@@ -237,13 +236,13 @@ public static class ParamBufferBuilder
     ///
     /// <para>Exists so the FIRE path can range-check a value before writing it. Every write
     /// below silently masks — <c>(short)</c>, <c>(int)</c>, <c>unchecked((byte)u)</c> — so
-    /// typing 9999 for a 1-byte param sent 15 to the game with nothing said. That is the
-    /// width family again (W6/Y2/Y9/Y15/AE1), on the invoke dialog's FIRE path.</para>
+    /// unchecked, typing 9999 for a 1-byte param sends 15 to the game with nothing said
+    /// (the width family, W6/Y2/Y9/Y15/AE1).</para>
     ///
-    /// <para><b>The masking casts are deliberately kept.</b> They are Y5's fix: a signed
-    /// <c>-1</c> must reach the game as <c>0xFF</c>. The repair is a signedness-aware RANGE
-    /// CHECK in front of them (<see cref="FieldValueConverter.FitsInWidth"/>), not removing
-    /// the cast — remove it and Y5 comes straight back.</para>
+    /// <para><b>The masking casts are deliberate</b> (Y5): a signed <c>-1</c> must reach
+    /// the game as <c>0xFF</c>. Range is enforced by a signedness-aware RANGE CHECK in
+    /// front of them (<see cref="FieldValueConverter.FitsInWidth"/>), never by removing
+    /// the cast.</para>
     ///
     /// <para>This table mirrors the switch below, which is a drift risk by construction, so
     /// <c>ParamBufferBuilderWidthTests</c> pins them together: for every type named here it
@@ -277,7 +276,7 @@ public static class ParamBufferBuilder
     /// <c>TArray</c>/<c>TSet</c>/<c>TMap</c> <c>{Data=nullptr, Num=0, Max=0}</c>, an
     /// unbound <c>FScriptDelegate</c>, an empty <c>TFieldPath</c>, an unset
     /// <c>TOptional</c>, and a zeroed by-value struct. Without this,
-    /// <see cref="WriteParam"/> fell through to its size-driven default and wrote the
+    /// <see cref="WriteParam"/> would fall through to its size-driven default and write the
     /// user's textbox as a raw 4-byte integer over the structure's first pointer field —
     /// a bogus <c>Data</c> pointer handed straight to ProcessEvent (audit #5 Y11).</para>
     ///
@@ -285,9 +284,9 @@ public static class ParamBufferBuilder
     /// resolved sub-fields it writes them through <see cref="WriteStructParam"/> and never
     /// reaches this predicate.</para>
     ///
-    /// <para>This is the exact set the exported script's helper already refuses to
+    /// <para>This is the exact set the exported script's helper refuses to
     /// fabricate (<c>writeParams</c>' <c>tarray/tmap/tset/delegate</c> arm, audit #5
-    /// AA16), so the two invoke paths now answer the same input the same way.</para>
+    /// AA16), so the two invoke paths answer the same input the same way.</para>
     ///
     /// <para><c>LazyObjectProperty</c> too (<c>[VND584-01]</c>): a weak pointer plus a
     /// GUID nothing can make, so the DLL refuses a picked object in one; all-zero is
@@ -323,8 +322,8 @@ public static class ParamBufferBuilder
     /// all-zero <c>FText</c> is not an empty <c>FText</c>: it carries a
     /// <c>TSharedRef</c> the engine dereferences on use, so passing zeros is a crash
     /// rather than a default. The exported script's helper refuses it unconditionally for
-    /// exactly this reason; FIRE silently wrote 4 bytes of the textbox into it, so one
-    /// dialog input had two different wrong answers (audit #5 Y11).</para>
+    /// exactly this reason, and FIRE must too, so one dialog input gets one answer
+    /// (audit #5 Y11).</para>
     /// </summary>
     public static bool IsRefusedParam(string typeName) => typeName == "TextProperty";
 
@@ -432,26 +431,22 @@ public static class ParamBufferBuilder
         // Multi-word structures (FText / TArray / TMap / TSet / delegate / TFieldPath /
         // TOptional, and a StructProperty with no resolved layout) have no textbox
         // encoding. Leave the slot ZEROED instead of falling through to the size-driven
-        // default, which wrote 4 bytes of the user's text over the structure's first
-        // pointer field and handed ProcessEvent a bogus Data pointer (audit #5 Y11).
+        // default, which would write 4 bytes of the user's text over the structure's first
+        // pointer field and hand ProcessEvent a bogus Data pointer.
         //
         // ⚠ CALLERS MUST RUN TryValidateScalar FIRST — this early-return is silent by
         // design, so anything that skips the check drops the user's input and still
-        // reports success. This comment used to claim the check "refuses ahead of this"
-        // as though it were guaranteed; it was only ever true of the top-level scalar
-        // path, and InvokeParamDialog's STRUCT branch reached here unchecked, which is
-        // exactly [Y11-OPAQUEDROP-2026-08-22]. Both call sites validate now; a third one
-        // that forgets will reproduce the same silent drop.
+        // reports success [Y11-OPAQUEDROP-2026-08-22]. Nothing here enforces the check;
+        // a call site that forgets reproduces that silent drop.
         if (IsUnwritableParam(typeName)) return;
 
         switch (typeName)
         {
             case "BoolProperty":
             {
-                // Same spellings the exported script accepts (true/false/yes/no/on/off/1/0).
-                // This path used to run everything through ParseByte, so typing `true` made
-                // FIRE send 0 while Copy AA Script baked 1 -- one dialog, two opposite calls
-                // into a live game (audit #5 Y3).
+                // Same spellings the exported script accepts (true/false/yes/no/on/off/1/0),
+                // so FIRE and Copy AA Script never make two opposite calls into a live game
+                // from one dialog.
                 buf[offset] = BakedScriptGenerator.ParseBoolLiteral(text) == true ? (byte)1 : (byte)0;
                 break;
             }
@@ -518,10 +513,10 @@ public static class ParamBufferBuilder
             }
             case "EnumProperty":
             {
-                // An enum's width is whatever the engine reported, NOT 4. This case used to
-                // be grouped with IntProperty, so a 1-byte `enum class : uint8` param hit the
-                // `available >= 4` guard, wrote NOTHING, and the game received 0 while the
-                // exported script sent the user's value (audit #5 Y2).
+                // An enum's width is whatever the engine reported, NOT 4, so it is not
+                // grouped with IntProperty: there a 1-byte `enum class : uint8` param would hit
+                // the `available >= 4` guard and write NOTHING, and the game would receive 0
+                // while the exported script sends the user's value.
                 WriteBySize(buf, offset, available, size, text);
                 break;
             }
@@ -562,8 +557,8 @@ public static class ParamBufferBuilder
 
     /// <summary>
     /// One byte, accepting everything the exported script accepts: decimal, 0x hex, and
-    /// NEGATIVE values for a signed Int8 (-1 -> 0xFF). The old parser used
-    /// <c>byte.TryParse</c>, which rejects any negative outright and silently sent 0
+    /// NEGATIVE values for a signed Int8 (-1 -> 0xFF). Not <c>byte.TryParse</c>, which
+    /// rejects any negative outright, so the 0 fallback would silently send 0
     /// (audit #5 Y5).
     /// </summary>
     private static byte ParseByteOrSByte(string text)
@@ -577,8 +572,8 @@ public static class ParamBufferBuilder
     /// <para>
     /// <c>TryParse(text, IFormatProvider, out _)</c> defaults to
     /// <c>NumberStyles.Float | NumberStyles.AllowThousands</c> and ACCEPTS "NaN" / "Infinity",
-    /// so `1,5` fired as 15.0 while the baked script rendered it unparsed, and NaN reached the
-    /// game as a real float (audit #5 Y4).
+    /// so with it `1,5` would fire as 15.0 while the baked script renders it unparsed, and NaN
+    /// would reach the game as a real float (audit #5 Y4).
     /// </para>
     /// </summary>
     private static double ParseReal(string text)
@@ -597,16 +592,14 @@ public static class ParamBufferBuilder
     /// <summary>
     /// Parse an unsigned value the way the exported script does, INCLUDING negatives.
     ///
-    /// <para><c>ulong.TryParse("-1")</c> fails, and the old body then returned 0 — so typing
-    /// <c>-1</c> for a <c>UInt16Property</c> / <c>UInt64Property</c> / pointer param fired
-    /// <b>0</b> at the live game while "Copy AA Script" baked <c>0xFFFF…</c>, because
-    /// <see cref="BakedScriptGenerator.TryParseHexOrDecimal"/> reinterprets the sign bits.
-    /// One dialog, two opposite calls.</para>
+    /// <para><c>ulong.TryParse("-1")</c> fails, so a plain parse with a 0 fallback would fire
+    /// <b>0</b> at the live game for <c>-1</c> in a <c>UInt16Property</c> /
+    /// <c>UInt64Property</c> / pointer param while "Copy AA Script" bakes <c>0xFFFF…</c>,
+    /// because <see cref="BakedScriptGenerator.TryParseHexOrDecimal"/> reinterprets the sign
+    /// bits. One dialog, two opposite calls.</para>
     ///
-    /// <para>That is <b>exactly</b> the defect Y5 fixed — and Y5 fixed it only in
-    /// <see cref="ParseByteOrSByte"/>, leaving every unsigned path here with the original
-    /// bug. Root cause #4 ("a fix applied at only some of its sites"), found at fix time by
-    /// the width-family sweep rather than by a finder.</para>
+    /// <para>The same rule as <see cref="ParseByteOrSByte"/> (Y5), applied to every
+    /// unsigned width.</para>
     /// </summary>
     private static ulong ParseULong(string text)
     {

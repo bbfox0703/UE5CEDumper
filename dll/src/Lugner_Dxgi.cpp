@@ -25,13 +25,11 @@
 //
 // LAZY resolution: the real dxgi exports are resolved on the FIRST
 // forwarded dxgi call (from the asm thunks, via DxgiProxy_EnsureResolved
-// below) — NOT eagerly in DllMain. An earlier version resolved eagerly in
-// DllMain; that ran LoadLibrary(real dxgi.dll) under the loader lock while
-// the EXE's static imports were still being initialised, and crashed games
-// that import dxgi.dll directly and before d3d11.dll (e.g. Octopath
-// Traveler): the real dxgi was not yet mapped, so the eager load forced a
-// full recursive load of dxgi + its dependency tree under the lock, dying
-// before our logger even came up. The first real dxgi call
+// below) — NOT eagerly in DllMain. DllMain runs under the loader lock while
+// the EXE's static imports are still being initialised; in a game that
+// imports dxgi.dll directly and before d3d11.dll, the real dxgi is not yet
+// mapped there, so loading it forces a full recursive load of dxgi + its
+// dependency tree under the lock and dies before our logger is up. The first real dxgi call
 // (CreateDXGIFactory1 during RHI init) happens on a game thread AFTER
 // DllMain returns and the loader lock is released — the safe place to load,
 // exactly like the version.dll / dinput8.dll proxies.
@@ -101,15 +99,13 @@ static const char* const kDxgiExports[kDxgiExportCount] = {
 // asm forwarding thunks (ResolveAll in Lugner_Dxgi.asm) on the FIRST
 // forwarded dxgi call.
 //
-// SAFE to LoadLibrary here (unlike the old DllMain path): the first dxgi
+// SAFE to LoadLibrary here (unlike in DllMain): the first dxgi
 // call (CreateDXGIFactory1 during the game's RHI init) runs on a game
 // thread after the EXE entry point — i.e. after every static-import
 // DllMain has completed and the loader lock has been released.
 //
-// The SRWLOCK serialises concurrent first-callers: a second thread blocks
-// until the first finishes, so it never observes a half-populated mProcs[]
-// (would otherwise jump through a null slot). In practice the first dxgi
-// call is single-threaded RHI init, so the lock is essentially uncontended.
+// Takes no lock: see the re-entry gate below for why, and for what keeps
+// concurrent first-callers from forwarding through a half-populated mProcs[].
 //
 // Logging here is safe and immediate: Sein::Init + InitProcessMirror ran in
 // DllMain before any game code executed, so the logger is fully up. (In the
@@ -135,17 +131,16 @@ extern "C" void DxgiProxy_EnsureResolved()
     // very thread when the game carries an AppCompat layer — see Lugner::ResolveReentry for
     // the measured stack. Bail out and let the nested thunk answer 0 without forwarding.
     //
-    // ⚠ There is NO LOCK here any more, and that is the actual fix for the hang, not this
-    // guard. An SRWLOCK across LoadLibraryW self-deadlocked on exactly that re-entry. B43's
-    // argument for why winmm needs none applies verbatim: the stores are aligned and
-    // pointer-sized, racers write identical values, and the thunk's own null test is what
+    // ⚠ There is NO LOCK here: an SRWLOCK across LoadLibraryW self-deadlocks on exactly that
+    // re-entry. None is needed, for the same reason as in winmm (B43): the stores are aligned
+    // and pointer-sized, racers write identical values, and the thunk's own null test is what
     // stops anyone seeing a half-filled table.
     Lugner::ResolveReentry guard;
     if (guard.reentered) return;
 
     wchar_t realPath[MAX_PATH] = {};
-    // false => refuse. The old code discarded GetSystemDirectoryW's return and
-    // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
+    // false => refuse, rather than format an empty buffer into a drive-root-relative
+    // `\dxgi.dll`. (AD18)
     HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
                  ? LoadLibraryW(realPath) : nullptr;
     // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)

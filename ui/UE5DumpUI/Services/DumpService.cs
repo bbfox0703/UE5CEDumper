@@ -30,7 +30,7 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] This connection's DLL answered find_live_instance "Unknown command":
-    /// ask it the old lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
+    /// ask it the legacy lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
     private volatile bool _noLiveLookup;
 
     /// <summary>Counts connection changes, so an "Unknown command" that answers a request sent before a reconnect does
@@ -86,7 +86,7 @@ public sealed class DumpService : IDumpService
     /// <see cref="BuildEngineState"/> falls back to "validated", i.e. no warning. The
     /// alternative (letting this throw) would turn a missing diagnostic into a failed
     /// connect, which is a much worse trade for the thing it is diagnosing.
-    /// (audit #5 U3/X3 — the command shipped in the DLL with zero clients.)
+    /// (audit #5 U3/X3)
     /// </summary>
     private async Task<JsonObject?> TryGetOffsetsAsync(CancellationToken ct)
     {
@@ -236,7 +236,7 @@ public sealed class DumpService : IDumpService
             SparseDelegatesMethod = ptrs["sparse_delegates_method"]?.GetValue<string>() ?? "not_found",
             // AOB Usage Tracking
             PeHash = ptrs["pe_hash"]?.GetValue<string>() ?? "",
-            // Per-launch session token (build 1227+; older DLLs omit it → ""
+            // Per-launch session token (an older DLL omits it → ""
             // → GameSessionId degrades to "PeHash-" with no per-launch split).
             ProcessCreationTime = ptrs["process_creation_time"]?.GetValue<string>() ?? "",
             GObjectsPatternId = ptrs["gobjects_pattern_id"]?.GetValue<string>() ?? "",
@@ -257,13 +257,13 @@ public sealed class DumpService : IDumpService
             GWorldAob = ptrs["gworld_aob"]?.GetValue<string>() ?? "",
             GWorldAobPos = ptrs["gworld_aob_pos"]?.GetValue<int>() ?? 0,
             GWorldAobLen = ptrs["gworld_aob_len"]?.GetValue<int>() ?? 0,
-            // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name (build 3609+; older DLLs omit it -> "")
+            // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name (an older DLL omits it -> "")
             GWorldExport = ptrs["gworld_export"]?.GetValue<string>() ?? "",
-            GObjectsExport = ptrs["gobjects_export"]?.GetValue<string>() ?? "",   // [AOBM-EXPORT-SYM-REST] build 3610+
-            // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment (build 3614+; older DLLs omit it -> 0)
+            GObjectsExport = ptrs["gobjects_export"]?.GetValue<string>() ?? "",   // [AOBM-EXPORT-SYM-REST]
+            // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment (an older DLL omits it -> 0)
             GObjectsAdjustment = ptrs["gobjects_adjustment"]?.GetValue<int>() ?? 0,
             GNamesAdjustment = ptrs["gnames_adjustment"]?.GetValue<int>() ?? 0,
-            // GEngine slot + AOB metadata (build 2394+; older DLLs omit these → "" / 0)
+            // GEngine slot + AOB metadata (an older DLL omits these → "" / 0)
             GEngine = ptrs["gengine"]?.GetValue<string>() ?? "",
             GEngineMethod = ptrs["gengine_method"]?.GetValue<string>() ?? "not_found",
             GEnginePatternId = ptrs["gengine_pattern_id"]?.GetValue<string>() ?? "",
@@ -274,8 +274,8 @@ public sealed class DumpService : IDumpService
             GEngineExport = ptrs["gengine_export"]?.GetValue<string>() ?? "",
             // GameThreadDispatch invoke timeout (effective value)
             InvokeTimeoutMs = ptrs["invoke_timeout_ms"]?.GetValue<int>() ?? 5000,
-            // DLL build number — present in both init AND get_pointers responses
-            // (build 653+). Prefer the explicit caller-supplied value; fall back
+            // DLL build number — present in both init AND get_pointers responses.
+            // Prefer the explicit caller-supplied value; fall back
             // to ptrs so refreshes from get_pointers pick it up automatically.
             DllBuildNumber = dllBuildNumber != 0 ? dllBuildNumber
                                                  : (ptrs["build_number"]?.GetValue<int>() ?? 0),
@@ -440,9 +440,9 @@ public sealed class DumpService : IDumpService
             SuperName = classObj["super_name"]?.GetValue<string>() ?? "",
             PropertiesSize = classObj["props_size"]?.GetValue<int>() ?? 0,
             SuperPropertiesSize = classObj["super_props_size"]?.GetValue<int>() ?? 0,
-            // ⚠ The default is load-bearing. A pre-fix DLL sends no own_props_start, and -1
+            // ⚠ The default is load-bearing. An older DLL sends no own_props_start, and -1
             // means "no information" — a `?? 0` here would drive the min() in EmitStructBody to
-            // 0 and re-emit every inherited property (audit #5 W2), which is a far worse bug
+            // 0 and re-emit every inherited property, which is a far worse bug
             // than the one own_props_start exists to fix.
             OwnPropertiesStart = classObj["own_props_start"]?.GetValue<int>() ?? -1,
         };
@@ -722,7 +722,7 @@ public sealed class DumpService : IDumpService
                 // Per-chunk fallback (the walk_class_batch precedent): an older DLL
                 // that doesn't know the command, or any batch-level failure, degrades
                 // to the single path rather than losing the chunk. Each single call
-                // can fail independently, exactly as before batching existed.
+                // can fail independently.
                 chunk = new List<InstanceWalkResult>(len);
                 for (int i = start; i < start + len; i++)
                 {
@@ -852,7 +852,7 @@ public sealed class DumpService : IDumpService
         }, ct);
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] A proxy DLL left in a game folder outlives a UI upgrade, and one older than
         // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
-        // answers, with the old limits, and the answer is marked so the line can say them.
+        // answers, with the legacy limits, and the answer is marked so the line can say them.
         if (res["ok"]?.GetValue<bool>() == false
             && (res["error"]?.GetValue<string>() ?? "").StartsWith(Constants.DllErrorUnknownCommand, StringComparison.Ordinal))
         {
@@ -876,8 +876,8 @@ public sealed class DumpService : IDumpService
         };
     }
 
-    /// <summary>The "a live object of this class" lookup as it was made before find_live_instance existed: an exact class
-    /// name, five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
+    /// <summary>The "a live object of this class" lookup for a DLL without find_live_instance: an exact class name,
+    /// five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
     private async Task<LiveInstanceResult> LegacyLiveInstanceAsync(string className, CancellationToken ct)
     {
         var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
@@ -1003,7 +1003,6 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
-                // Emitted by the DLL since build 1194 and dropped here until Z8/Z12.
                 DeepScan       = scanNode["deep_scan"]?.GetValue<bool>() ?? false,
             };
         }
@@ -1504,8 +1503,7 @@ public sealed class DumpService : IDumpService
             // Default to "bytecode" for older DLLs that don't emit the field.
             Method       = res["method"]?.GetValue<string>() ?? "bytecode",
             Unmapped     = res["unmapped"]?.GetValue<int>() ?? 0,
-            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported",
-            // which is the same thing every caller assumed before the flag existed.
+            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported".
             BudgetHit    = res["budget_hit"]?.GetValue<bool>() ?? false,
             Props        = props,
         };
@@ -1626,8 +1624,8 @@ public sealed class DumpService : IDumpService
             ArrayElemDelegatePad = fo["array_elem_delegate_pad"]?.GetValue<int>() ?? 0,   // [A4-DELEGATE-ARRAY-PAD] additive
             SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
             SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
-            // Absent from a pre-fix DLL. 0x10 is the pre-fix behaviour, so it is the
-            // only fallback that cannot make an older pairing worse than it was.
+            // An older DLL omits it and assumes 0x10, so 0x10 is the only fallback
+            // that cannot make an older pairing worse.
             SoftArrayPathOffset = fo["soft_path_offset"]?.GetValue<int>() ?? 0x10,
             ArrayElements = ParseArrayElements(fo["elements"]),
             ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
@@ -1912,7 +1910,7 @@ public sealed class DumpService : IDumpService
             Total = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            // Absent on a pre-2818 DLL -> false: no truncation is reported.
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
             Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
@@ -1951,7 +1949,7 @@ public sealed class DumpService : IDumpService
                     // treated as unresolved -- never written whole. [BOOL-NATIVE-SEARCH]
                     BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
                     BoolNative        = obj["bool_native"]?.GetValue<bool>() ?? false,
-                    // Deep-mode synthetic dotted-path leaf (build 1222). Absent
+                    // Deep-mode synthetic dotted-path leaf. Absent
                     // on shallow rows + older DLLs → defaults false.
                     IsNested          = obj["is_nested"]?.GetValue<bool>() ?? false,
                 });
@@ -2006,7 +2004,7 @@ public sealed class DumpService : IDumpService
             Total          = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            // Absent on a pre-2818 DLL -> false: no abort is reported.
             Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
 
@@ -2343,7 +2341,7 @@ public sealed class DumpService : IDumpService
         CheckResponse(res);
     }
 
-    // --- Multiple values group scan (CE-style "group scan", build 1276) ---
+    // --- Multiple values group scan (CE-style "group scan") ---
 
     // Decode ONE leaf of a group slot. Shared by the row's representative (inside
     // `slots`) and by query_group_slot_leaves' full list — the DLL emits both
@@ -2499,7 +2497,7 @@ public sealed class DumpService : IDumpService
     }
 
     // Refine takes the NEW (value, scan_type) per slot (same count as the first
-    // scan). The per-slot width scope is fixed by the session. P2: a prev-value
+    // scan). The per-slot width scope is fixed by the session. A prev-value
     // scan type (Changed/Increased/...) carries no value — it compares against the
     // previous round — so the value is sent but ignored DLL-side for those.
     public async Task<GroupScanRefineResult> RefineGroupScanAsync(
@@ -2711,7 +2709,7 @@ public sealed class DumpService : IDumpService
             RxLogMs     = res["_t_rxlog_ms"]?.GetValue<long>() ?? 0,
             ParseMs     = res["_t_parse_ms"]?.GetValue<long>() ?? 0,
             // [W1-SNAP-FAULT] A DLL scan worker faulted on this chunk. Absent on an older DLL
-            // = false, the pre-fix behaviour (the fault then stays invisible, exactly as before).
+            // = false (the fault then stays invisible).
             WorkerFaulted = res["worker_faulted"]?.GetValue<bool>() ?? false,
         };
 
@@ -2875,17 +2873,12 @@ public sealed class DumpService : IDumpService
     /// before launching to lower the <c>list_all_functions</c> cap, so the TRUNCATION path can be
     /// reached on a title that is nowhere near 100,000 UFunctions.
     ///
-    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> needs the capped-census wording to be seen on
-    /// screen -- Console must stop claiming anything about the game
-    /// ("this scan did not finish, so it is not evidence the game has none") and both panels must
-    /// show the cap suffix. The DLL half is closed (<c>[Z8-TRUNCATED-2026-08-23]</c>), but the UI
-    /// half had no fixture: six titles were surveyed and the best, DQ7R, reaches **51 %** of the
-    /// cap, with the next under half of that. The row named FF7 REBIRTH and SEED; the former is an
-    /// empty folder here and the latter measured **10 %**. Reaching the cap would need a title
-    /// roughly 2x DQ7R and nothing installed is close.
+    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> capped-census wording has to be seen on screen -- Console
+    /// must stop claiming anything about the game ("this scan did not finish, so it is not evidence
+    /// the game has none") and both panels must show the cap suffix
+    /// (<c>[Z8-TRUNCATED-2026-08-23]</c>) -- and ordinary titles stay well short of the cap.
     ///
-    /// ⭐ So lower the cap instead of hunting a bigger game. The register's own conclusion for this
-    /// row was "stop predicting -- the screen IS the measurement"; this makes the screen reachable.
+    /// ⭐ So lower the cap instead of hunting a bigger game: this makes the screen reachable.
     ///
     /// ⚠ It overrides the caller's argument deliberately, because both UI call sites pass the
     /// default and the point is to reach them without a code change. Unparseable or non-positive
@@ -2949,8 +2942,8 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             TotalFunctions = res["total_functions"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete", which is the
-            // pre-existing behaviour rather than a new false alarm. (audit #5 Z8)
+            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete" rather than a
+            // false alarm. (audit #5 Z8)
             Truncated      = res["truncated"]?.GetValue<bool>() ?? false,
             Aborted        = res["aborted"]?.GetValue<bool>()   ?? false,
             Limit          = res["limit"]?.GetValue<int>()      ?? limit,
@@ -3547,7 +3540,7 @@ public sealed class DumpService : IDumpService
             {
                 if (item is not JsonObject obj) continue;
                 // JsonNum, not GetValue<T>: diagnostics must degrade, never throw.
-                // One out-of-range field (a UINT64_MAX sentinel) previously blanked
+                // One out-of-range field (a UINT64_MAX sentinel) must not blank
                 // the entire card. See JsonNum's remarks.
                 cmds.Add(new DiagnosticsCommandEntry
                 {
@@ -3591,7 +3584,7 @@ public sealed class DumpService : IDumpService
             {
                 HookActive      = JsonNum.B(g?["hook_active"]),
                 HookFireCount   = JsonNum.L(g?["hook_fire_count"]),
-                // -1 = never fired. A pre-fix DLL sends UINT64_MAX here, which
+                // -1 = never fired. An older DLL sends UINT64_MAX here, which
                 // JsonNum saturates to long.MaxValue — also > 0, so it still reads
                 // as "unknown" rather than as a plausible age.
                 MsSinceLastFire = JsonNum.L(g?["ms_since_last_fire"], -1L),
@@ -4328,7 +4321,7 @@ public sealed class DumpService : IDumpService
         State       = res?["state"]?.GetValue<int>() ?? -1,
         // Older DLLs don't send it; assume healthy so their behaviour is unchanged.
         HookActive  = res?["hook_active"]?.GetValue<bool>() ?? true,
-        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the old "still waiting" card.
+        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the "still waiting" card.
         RestorePending   = res?["restore_pending"]?.GetValue<bool>() ?? false,
         RestoreAbandoned = res?["restore_abandoned"]?.GetValue<bool>() ?? false,
         // Who has it on (DLL 3698+), and since 3714 whether this window is one of them: unknown before, never false.
@@ -4526,7 +4519,7 @@ public sealed class DumpService : IDumpService
         // Absent on a healthy read; the DLL only emits it when the pose degraded to a
         // parent-relative fallback. [POSEATTACH-2026-09-10]
         ParentRelative = res["parent_relative"]?.GetValue<bool>() ?? false,
-        // Review 5 of 7490c24e: false is an answer, absence (an older DLL) is not.
+        // false is an answer, absence (an older DLL) is not.
         ParentRelativeKnown = res["parent_relative"] is not null,
         // Emitted only when a move succeeded and its landing re-read did not.
         LandingUnknown = res["landing_unknown"]?.GetValue<bool>() ?? false,

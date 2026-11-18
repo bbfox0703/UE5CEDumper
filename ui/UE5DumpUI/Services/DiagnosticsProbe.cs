@@ -90,23 +90,21 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
         if (_dump == null || _before == null || _log == null) return;
 
         // Close the transport window HERE, before the closing get_diagnostics — the same
-        // boundary _sw.Stop() above uses. The old code snapshotted AFTER that call while
-        // the stopwatch had already stopped before it, so the probe's own round-trip
-        // (93-125 ms in this repo's own measurements) landed in transportMs but not in
-        // wallMs. On a 57.7 ms "Copy CE Field" that made transportMs > wallMs, uiMs clamp
-        // to 0, and ipcMs absorb the probe. These lines are the evidence
-        // docs/multipipe-eval.md reasons from, so the error was not cosmetic. (B35)
+        // boundary _sw.Stop() above uses. A snapshot AFTER that call would put the probe's
+        // own round-trip in transportMs but not in wallMs: on a short operation
+        // transportMs then exceeds wallMs, uiMs clamps to 0, and ipcMs absorbs the probe.
+        // These lines are the evidence docs/multipipe-eval.md reasons from, so the error
+        // would not be cosmetic.
         var txAfter = PipeTransportStats.Snapshot();
 
         DiagnosticsResult after;
         try { after = await _dump.GetDiagnosticsAsync(limit: 0); }
         catch { return; }   // disconnected mid-operation: nothing to report
 
-        // Nothing to subtract any more. _txBefore is a FIELD INITIALIZER, so it runs at
+        // Nothing to subtract. _txBefore is a FIELD INITIALIZER, so it runs at
         // construction — i.e. AFTER BeginAsync's opening get_diagnostics — and txAfter is
-        // now taken before the closing one. Neither probe call is inside the window, so
-        // the old `- 2` was wrong twice over: it discounted calls that were never counted
-        // and left in the milliseconds of one that was.
+        // taken before the closing one. Neither probe call is inside the window, so
+        // discounting probe calls here would discount calls that were never counted.
         double txMs = Math.Max(0, txAfter.Ms - _txBefore.Ms);
         long txCalls = Math.Max(0, txAfter.Calls - _txBefore.Calls);
 

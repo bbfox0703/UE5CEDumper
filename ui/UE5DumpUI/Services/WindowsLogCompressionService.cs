@@ -202,19 +202,16 @@ public sealed class WindowsLogCompressionService : ILogCompressionService
     /// One <c>compact.exe</c> invocation over a batch of paths, at idle CPU priority.
     ///
     /// <para><b>ArgumentList, never a joined string.</b> Per-game log folders are named
-    /// after the game EXE and contain spaces (<c>SEED BATTLE DESTINY REMASTERED</c>); the
-    /// eval's first hand-built command line split on those and silently skipped 23 files
-    /// while still reporting success. <c>ArgumentList</c> applies Windows quoting rules
-    /// itself, which removes the whole class of bug.</para>
+    /// after the game EXE and can contain spaces; a hand-built command line splits on those
+    /// and silently skips files while still reporting success. <c>ArgumentList</c> applies
+    /// Windows quoting rules itself, which removes the whole class of bug.</para>
     ///
     /// <para><b>Paths only, never a directory.</b> <c>compact /c &lt;dir&gt;</c> sets
     /// "compress new files here", which would route every future log WRITE through the
     /// compressor.</para>
     ///
-    /// <para>Idle priority is CPU only, and deliberately so: at 2.8 s for a 102 MB backlog
-    /// there is nothing to gain from I/O throttling, and this repo has already shipped that
-    /// reflex once — multipipe Phase 0 dropped a thread's priority, starved scans ~20×, and
-    /// was reverted (build 1840).</para>
+    /// <para>Idle priority is CPU only, and deliberately so: a backlog compresses in
+    /// seconds, so there is nothing to gain from I/O throttling.</para>
     /// </summary>
     private void RunCompact(IReadOnlyList<string> batch)
     {

@@ -22,10 +22,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     private readonly IAobMakerBridge? _aobMaker;
 
     /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The app's shared "is the plugin reachable" flag. Freeze follows it
-    /// and this panel probes through it: a flag of its own went stale whenever someone else learned the news
-    /// (measured on build 3682, the toolbar ⟳ said "connected" over a disabled Freeze), and a disabled button cannot
-    /// reach the probe its click would run. Probing through it also keeps one cooldown, and one probe in flight, for
-    /// every panel that follows it.</summary>
+    /// and this panel probes through it: a flag of its own would go stale whenever someone else learned the news, and
+    /// a disabled button cannot reach the probe its click would run. Probing through it also keeps one cooldown, and
+    /// one probe in flight, for every panel that follows it.</summary>
     private readonly AobMakerStatus _aobStatus;
     private readonly IPlatformService? _platform;
     private readonly IExperimentalGate? _experimentalGate;
@@ -414,9 +413,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     ///
     /// <para><c>internal static</c> so a test can assert the mapping directly, rather
     /// than needing the AOBMaker bridge and a modal dialog. It carries
-    /// <see cref="PropertySearchMatch.PropSize"/> through, which is the whole of audit
-    /// #5 Y15: the engine-reported width used to stop here, so an
-    /// <c>enum class : uint8</c> was frozen with a 4-byte writer. <paramref name="literal"/>
+    /// <see cref="PropertySearchMatch.PropSize"/> through, so the writer has the
+    /// engine-reported width (an <c>enum class : uint8</c> is one byte, not four). <paramref name="literal"/>
     /// was validated by <see cref="Views.FreezeValueDialog"/> against
     /// <see cref="Views.FreezeValueDialog.HelperTypeFor"/> of this same match, so the
     /// value and the writer agree only as long as this keeps passing the size.</para>
@@ -426,13 +424,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         {
             // Prefer the defining class — that's where the property is actually
             // declared. Note what that does and does NOT buy: the OFFSET is valid on
-            // every subclass, but the class NAME alone reaches only the declaring
-            // class, and until build 3262 the generated script asked the DLL for an
-            // exact-name pool. So an inherited field ("Actor") froze whichever stray
-            // Actor the level held and never the pawn — the claim that this "covers
-            // all subclasses" was the comment describing an intent the code did not
-            // implement. The script now sets the helper's `derived` scope, which is
-            // what makes the sentence true. (`[FREEZESCOPE-2026-08-18]`)
+            // every subclass, but the class NAME alone, as an exact-name pool, reaches
+            // only the declaring class's own instances. The script sets the helper's
+            // `derived` scope, so an inherited field ("Actor") is held on every
+            // subclass, the pawn included. (`[FREEZESCOPE-2026-08-18]`)
             //
             // Shared with FreezeValueDialog so the class the user is TOLD about and
             // the class the script is KEYED on cannot drift apart.
@@ -442,10 +437,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PropertyOffset = match.PropOffset,
             UeTypeName     = match.PropType,
             PropertySize   = match.PropSize,
-            // Audit #5 AA1: the FBoolProperty bit mask used to stop here too, so a
-            // packed `uint8 bFoo:1` was frozen by stamping the whole byte — wiping
-            // up to 7 sibling bools and, unless the mask was 0x01, never setting the
-            // intended one. Same dropped-field shape as PropertySize above.
+            // The FBoolProperty bit mask must reach the generator too: without it a
+            // packed `uint8 bFoo:1` is frozen by stamping the whole byte — wiping
+            // up to 7 sibling bools and, unless the mask is 0x01, never setting the
+            // intended one.
             BoolFieldMask  = match.BoolFieldMask,
             BoolNative     = match.BoolNative,
             ValueLiteral   = literal,
@@ -487,10 +482,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>View-injected numeric-value prompt (keeps the VM dialog-free / testable).
     /// <para>
-    /// Three outcomes, not two. It used to return <c>double?</c> where null meant "cancel",
-    /// so a literal the dialog had already accepted but the caller could not convert came
-    /// back indistinguishable from the user pressing Cancel — Force silently did nothing.
-    /// (audit #5 AF6)
+    /// Three outcomes, not two: a literal the dialog accepted but the caller could not
+    /// convert must come back as an error, distinguishable from the user pressing Cancel,
+    /// or Force silently does nothing.
     /// </para></summary>
     public Func<PropertySearchMatch, Task<ForceValuePromptResult>>? ForceValuePrompt { get; set; }
 
@@ -547,13 +541,12 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// one row rather than listing thousands of near-identical ones. The DLL therefore
     /// holds the field across the defining class <b>and every subclass of it</b>
     /// (<c>Aura::FindInstancesDerivedFrom</c>), which is what the row's own
-    /// "inherited by N" badge already claims. Before build 3036 it resolved an exact-name
-    /// pool, which for an inherited row was essentially empty and held nothing.
+    /// "inherited by N" badge already claims.
     /// </para>
     /// <para>
     /// The pool is capped (<c>SOLIDE_MAX_INSTANCES</c>), and a broad base class reaches
     /// it easily — so <c>Truncated</c> is not a rare edge case here and the status line
-    /// must keep saying it out loud. See audit #5 A6.
+    /// must keep saying it out loud.
     /// </para></summary>
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
@@ -701,22 +694,17 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
             var deepSuffix = DeepSearch ? " [deep]" : "";
-            // The cap/abort suffix is the whole point of D5/F4: without it a capped
-            // search reads as a completed sweep, the user filters these rows client-
-            // side, finds nothing, and concludes the field does not exist. The DLL
-            // now reports what it actually walked, so the counts no longer contradict
-            // the suffix. (Built here rather than in en.axaml to match the existing
-            // StatusText line it extends — every other clause of this same sentence is
-            // VM-composed, and Res.Get returns "" with no Application, which would make
-            // exactly this text untestable headless.)
+            // The cap/abort suffix matters: without it a capped search reads as a
+            // completed sweep, the user filters these rows client-side, finds nothing,
+            // and concludes the field does not exist. The DLL reports what it actually
+            // walked, so the counts agree with the suffix. (Built here rather than in
+            // en.axaml to match the existing StatusText line it extends — every other
+            // clause of this same sentence is VM-composed, and Res.Get returns "" with no
+            // Application, which would make exactly this text untestable headless.)
             //
-            // The advice used to read "narrow the query or raise Max" on a panel with no Max
-            // control — the string had been lifted from Instance Finder, which really does own
-            // one — so half of it pointed at a lever the user could not find, and audit #5 Z10
-            // removed that half. [PROPSEARCHCAP-2026-08-19] added the lever, so it is back —
-            // but ONLY while the cap can actually go higher. At the ceiling "raise Max" would
-            // be the same lie in a new place, which is the failure this pair of changes exists
-            // to avoid; the honest advice there is to narrow.
+            // "Raise Max" is offered ONLY while the cap can actually go higher: at the
+            // ceiling it would point at a lever with nowhere to go, so the advice there is
+            // to narrow. [PROPSEARCHCAP-2026-08-19]
             string advice = "narrow it with a longer property name or a Type filter";
             if (!GameClassesOnly)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
@@ -812,13 +800,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// Copy the matched property's offset.
     ///
-    /// <para>Routed through <see cref="IPlatformService.CopyToClipboardAsync"/> like
-    /// every other copy in the app. It used to reach into
-    /// <c>Application.Current…MainWindow.Clipboard</c> from the ViewModel and
-    /// fire-and-forget the returned <c>Task</c> — which broke the platform-abstraction
-    /// rule and, worse, discarded the failure: a clipboard that refused the write
-    /// produced an unobserved faulted task, so the button silently did nothing and
-    /// left no trace anywhere ([PASTECRASH-2026-08-18]).</para>
+    /// <para>Routed through <see cref="IPlatformService.CopyToClipboardAsync"/> and
+    /// awaited, never reaching into the window's clipboard from the ViewModel nor
+    /// fire-and-forgetting the write: a clipboard that refuses it is logged, not lost
+    /// in an unobserved faulted task ([PASTECRASH-2026-08-18]).</para>
     /// </summary>
     [RelayCommand]
     private async Task CopyOffsetAsync(PropertySearchMatch? match)

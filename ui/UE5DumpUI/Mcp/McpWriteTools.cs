@@ -5,19 +5,19 @@ using System.Text.Json.Nodes;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D2-2. The tools that change the game: the gameplay toggles, the force field and
-/// teleport, and the reads an AI needs around them. The maintainer's D2 decisions (2026-11-11) shape every one:
+/// [PIPE-PER-PROCESS-2026-11-06] The tools that change the game: the gameplay toggles, the force field and
+/// teleport, and the reads an AI needs around them. Every one keeps these rules:
 ///
 /// <para><b>Never over the user.</b> Each request that changes a hold carries <c>if_free</c>: the DLL refuses it, under
 /// the hold's own lock, when anyone else -- the UI, a Cheat Engine record, another AI session, or nobody recorded --
-/// holds it (D2-1, build 3704). The refusal comes back as a tool error naming the holder. Nothing here ever sends
+/// holds it. The refusal comes back as a tool error naming the holder. Nothing here ever sends
 /// <c>reset_all_fields</c> or touches the marker slots, and a teleport keeps the user's undo point
 /// (<c>keep_undo</c>).</para>
 ///
 /// <para><b>Who is asked</b> ([MCP-WRITE-GRANTS-2026-11-14]). Each tool here is named <c>write_*</c> and has a role
 /// and, for a granted write, the grant kind it needs; the host's decision does the rest (<see cref="McpGrants"/>).
 /// Under grants a covered write goes through on the user's grant for this game run, and an OFF or a reset needs none;
-/// on a host asked per call each one carries <c>requiresUserInteraction</c>, as before grants.</para>
+/// on a host asked per call each one carries <c>requiresUserInteraction</c>.</para>
 ///
 /// <para><b>Ends with the session.</b> The server marks its requests background, so the DLL releases what it holds when
 /// the server exits.</para>

@@ -5,14 +5,14 @@ namespace UE5DumpUI.Models;
 /// <summary>
 /// Pure formatter that turns the numeric bound(s) of a Between / ordering /
 /// absolute predicate into a LIVE "what will this actually match" preview
-/// string, under the active <see cref="FloatRoundMode"/> (build 1702).
+/// string, under the active <see cref="FloatRoundMode"/>.
 ///
-/// The rounding-mode switch (build 1672) reduces a fractional float/double to the
-/// integer the game DISPLAYS before compare, and coerces a fractional Between /
-/// absolute bound to an integer for INTEGER fields. The picker used to show only a
-/// static example ("Between 10.9–11.1 → 11~11"); this helper computes the real
-/// outcome for the values the user actually typed, e.g. Between 11.5~13.2 under
-/// Round → integer fields match <c>12~13</c> while float fields keep <c>11.5~13.2</c>.
+/// The rounding-mode switch reduces a fractional float/double to the integer the
+/// game DISPLAYS before compare, and coerces a fractional Between / absolute bound
+/// to an integer for INTEGER fields. This helper computes the real outcome for the
+/// values the user actually typed, rather than a static example, e.g. Between
+/// 11.5~13.2 under Round → integer fields match <c>12~13</c> while float fields keep
+/// <c>11.5~13.2</c>.
 ///
 /// <para><b>Two interpretations</b> (mirroring <c>SnapshotNumeric.BetweenMatch</c>):
 /// an INTEGER field coerces each bound via the mode (<c>CoerceIntTarget</c>) → the
@@ -73,7 +73,7 @@ public static class RoundModePreview
 
     /// <summary>[W2-BETWEEN-PREVIEW] What a bound may look like, per the parser that will actually read it. The preview
     /// must refuse exactly what that parser refuses, or it previews a number nobody will match: <c>NumberStyles.Any</c>
-    /// read an FVector's "1,2,3" as 123 and accepted "1,000" / "(5)" / "5-". Value Search bounds (single and group) go
+    /// reads an FVector's "1,2,3" as 123 and accepts "1,000" / "(5)" / "5-". Value Search bounds (single and group) go
     /// to the DLL -- <c>std::stod</c> / <c>std::stoll</c>, the whole string consumed: plain decimal, sign, exponent; no
     /// grouping, parentheses or trailing sign. A 0x-hex integer the DLL takes simply gets no preview, which misleads
     /// nobody.</summary>

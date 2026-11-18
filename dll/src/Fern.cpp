@@ -61,7 +61,7 @@ namespace {
 void JoinArmWorker();   // [LIVEFUNCS-STEP2] defined with the worker, beside TraceInfoToJson
 }
 
-// This DLL's own module handle (defined in Heiter.cpp DllMain). Used to self-report
+// This DLL's own module handle (defined in Heiter.cpp DllMain). It self-reports
 // the load path in the init response: for a proxy build g_hDllModule IS the proxy
 // DLL that the OS actually loaded (the mutex WINNER — a passive-forwarder second
 // proxy returns before init and never reports), for a manual inject / CE .CT it is
@@ -128,7 +128,7 @@ namespace {
 // fields side by side, so the scan decodes each field UP to the target's
 // precision rather than the target DOWN to a guessed width. Parsing through
 // double also stops a large coordinate losing precision before the compare
-// (std::stof of "1234567.8" already rounds).  Phase 2B; widened build 3035.
+// (std::stof of "1234567.8" already rounds).
 bool ParseVectorBytes(const std::string& raw, uint8_t out[Radar::VECTOR_CANON_BYTES]) {
     std::memset(out, 0, Radar::VECTOR_CANON_BYTES);
     if (raw.empty()) return false;
@@ -174,7 +174,7 @@ bool ParseValueBytes(Radar::DataType dt, const std::string& raw, uint8_t out[8],
         return str.size() > 2 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X');
     };
 
-    // Rounding-mode integer coercion (build 1672): a fractional input (e.g.
+    // Rounding-mode integer coercion: a fractional input (e.g.
     // "10.9") would throw in the integer stoll/stoull paths below. For an integer
     // type, reduce it to the displayed integer via the mode (Round 10.9->11,
     // Trunc->10, Ceil->11) and rewrite `s` to that integer string — the per-type
@@ -408,7 +408,7 @@ json GroupLeafToJson(const Radar::GroupSlotMatch& m,
     return lj;
 }
 
-// Build the wire JSON for one group-scan candidate (build 1276). A group hit is
+// Build the wire JSON for one group-scan candidate. A group hit is
 // OBJECT-level: one owning UObject + a nested `slots` array. Each slot carries
 // the user's target value, its converging matched offsets, a `locked` flag (the
 // field is identified once a single offset remains), and — for the
@@ -419,11 +419,10 @@ json GroupLeafToJson(const Radar::GroupSlotMatch& m,
 ///                   the leaf that MATCHED it rather than the first one kept.
 ///
 /// WHY THE PARAMETER EXISTS. The filter walks every leaf in every slot (className /
-/// definingClass / fieldName / value — Radar.cpp BuildGroupOrderedView), while this
-/// function reported `matches[0]`. So filtering for `424242` returned rows whose visible
-/// values contained no 424242 anywhere: the filter was right, the row was showing a
-/// different leaf of the same candidate. Two code paths answering the same question
-/// differently — and the user reasonably read it as a wrong result.
+/// definingClass / fieldName / value — Radar.cpp BuildGroupOrderedView). A row that
+/// showed `matches[0]` regardless would answer a filter for `424242` with values that
+/// contain no 424242 anywhere — a different leaf of the same candidate, which a user
+/// reasonably reads as a wrong result.
 json GroupCandidateToJson(const Radar::GroupCandidate& gc,
                           const std::vector<Radar::SlotSpec>&        slots,
                           const std::vector<Radar::FieldDescriptor>& descriptors,
@@ -478,10 +477,10 @@ json GroupCandidateToJson(const Radar::GroupCandidate& gc,
 
         // How many leaves this slot actually holds. `locked` already says "exactly
         // one"; this says how much the single displayed value is standing in for, so
-        // a row can no longer imply the candidate matched on one field when it
+        // a row cannot imply the candidate matched on one field when it
         // matched on thirty. `query_group_slot_leaves` returns the other thirty BY
-        // NAME — before it existed, `matched_offsets` was the only trace of them and
-        // a raw integer cannot tell a user that 1308 is `FrozenInt`.
+        // NAME — `matched_offsets` alone is a raw integer, which cannot tell a user
+        // that 1308 is `FrozenInt`.
         if (!matches.empty())
             sj["match_count"] = static_cast<int>(matches.size());
         slotsJson.push_back(std::move(sj));
@@ -541,10 +540,10 @@ bool Fern::Start() {
 void Fern::Stop(bool graceful) {
     if (!m_running.exchange(false)) return; // Already stopped
 
-    // ── Process-exit path (~Fern(), audit #5 D5/F1) ────────────────────────────
+    // ── Process-exit path (~Fern()) ────────────────────────────────────────────
     // Everything below this block is teardown that DLL_PROCESS_DETACH must not do,
-    // and Heiter.cpp's DETACH case already refuses to do for exactly these reasons —
-    // it just could not speak for a static destructor, which the CRT runs anyway
+    // and Heiter.cpp's DETACH case refuses to do it for exactly these reasons — but
+    // that case cannot speak for a static destructor, which the CRT runs anyway
     // (dllmain_crt_process_detach calls __scrt_dllmain_uninitialize_c()
     // unconditionally; `is_terminating` gates only __scrt_uninitialize_crt).
     //
@@ -552,10 +551,7 @@ void Fern::Stop(bool graceful) {
     //   1. ExitProcess has ALREADY terminated the accept, monitor and connection
     //      threads. A dead connection thread can never erase itself from m_conns, so
     //      the drain predicate below is unsatisfiable BY CONSTRUCTION and the whole
-    //      5 s budget burns on every exit. Measured 2026-08-14 on DumperTest: with a
-    //      client still registered, `conn drain TIMEOUT, 1 left (5030 ms, 49 cancel
-    //      re-asserts)` and 6,046 ms to exit; with it disconnected first, `satisfied,
-    //      0 left (0 ms)` and 1,105 ms. One variable, 5.5x apart.
+    //      5 s budget burns on every exit a client is still registered for.
     //   2. Worse than slow: this body takes m_connMutex, Sein's log mutex and both
     //      Radar session mutexes AFTER their holders were killed. MSDN is explicit
     //      that detach code taking a lock a terminated thread held deadlocks the
@@ -563,8 +559,7 @@ void Fern::Stop(bool graceful) {
     //
     // The OS reclaims the handles, threads and memory. That is the same reasoning
     // Heiter.cpp `DllMain` applies to its own DETACH body and Routine.h's `UE5_Shutdown`-is-not-called note applies
-    // to every feature worker; Fern::Stop's explicit join()/wait_for calls were
-    // simply not on that list.
+    // to every feature worker.
     //
     // Note this path deliberately takes NO lock — not even to report m_conns.size(),
     // which is the count a reader would most want. Reading it means m_connMutex, and
@@ -591,9 +586,8 @@ void Fern::Stop(bool graceful) {
         ~StoppingGuard() { f.store(false, std::memory_order_release); }
     } stoppingGuard{ m_stopping };
 
-    // Phase timings: reconstructing this teardown from the outside cost a full
-    // investigation because "Stopped" was the only line Stop() ever logged, and a
-    // 5 s stall was indistinguishable from the 5 s connection-drain TIMEOUT.
+    // Phase timings: without them a 5 s stall is indistinguishable from the 5 s
+    // connection-drain TIMEOUT.
     const auto tStart = std::chrono::steady_clock::now();
     auto elapsedMs = [&tStart] {
         return static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -619,19 +613,12 @@ void Fern::Stop(bool graceful) {
     // DispatchCommand exits via the m_running loop check after it returns;
     // Tot::RequestShutdown above makes a long scan bail first.
     //
-    // The listen instance is NOT closed here, and that is the whole point. This
-    // block used to call CloseHandle(m_listenPipe) under the comment "proven
-    // unblock". The logs disprove it: the listen instance is a SYNCHRONOUS handle
-    // (AcceptLoop's CreateNamedPipeW passes no FILE_FLAG_OVERLAPPED), so closing
-    // it does not abort the accept thread's parked ConnectNamedPipe — it BLOCKS
-    // until that call completes, i.e. until somebody connects. Under m_connMutex,
-    // which every connection thread needs to unregister itself.
-    //
-    // Measured on Elliot 2026-08-04: 9.4 s and 13.3 s for two disables where the
-    // user happened to reconnect the UI — and on the third, with the UI already
-    // disconnected, "PipeServer: Stopped" was NEVER logged at all. The teardown
-    // thread stayed wedged in the game process holding m_connMutex for the rest of
-    // the session. The delay was never a timeout; it was "until a client shows up".
+    // The listen instance is NOT closed here, and that is the whole point. It is a
+    // SYNCHRONOUS handle (AcceptLoop's CreateNamedPipeW passes no
+    // FILE_FLAG_OVERLAPPED), so closing it does not abort the accept thread's parked
+    // ConnectNamedPipe — it BLOCKS until that call completes, i.e. until somebody
+    // connects. Under m_connMutex, which every connection thread needs to unregister
+    // itself, that would wedge the teardown "until a client shows up".
     // Cancel every live connection's I/O. MUST be called with m_connMutex held:
     // a connection thread erases itself from m_conns (under this lock) BEFORE it
     // calls CloseConnOnce, so anything still in the registry has an open handle.
@@ -642,8 +629,7 @@ void Fern::Stop(bool graceful) {
     // server reads a byte at a time, so a 40-byte command is 40 chances to be in
     // the gap) and will issue a FRESH read that this one-shot cancel can never
     // reach. That is why the cancel is re-asserted in the drain loop below rather
-    // than fired once and trusted. Measured 2026-08-05: two connections idle in
-    // ReadFile survived the single cancel and burned the whole 5 s budget.
+    // than fired once and trusted.
     auto cancelLiveConns = [this](int& accepted, int& notFound) {
         accepted = notFound = 0;
         for (auto& c : m_conns) {
@@ -668,10 +654,9 @@ void Fern::Stop(bool graceful) {
         listenerParked = (m_listenPipe != INVALID_HANDLE_VALUE);
         cancelLiveConns(cancelAccepted, cancelNotFound);
     }
-    // One line per Stop — cold, and it is the line that was missing when the
-    // 2026-08-05 drain timeout could say the threads were "idle in ReadFile (the
-    // I/O cancel should have freed it)" but not whether the cancel had anything
-    // to free. Those are different bugs.
+    // One line per Stop — cold. A drain timeout can say the threads were "idle in
+    // ReadFile (the I/O cancel should have freed it)"; this line says whether the
+    // cancel had anything to free. Those are different bugs.
     if (cancelAccepted || cancelNotFound) {
         LOG_INFO("PipeServer: Stop cancel issued: %d accepted, %d had nothing pending",
                  cancelAccepted, cancelNotFound);
@@ -680,9 +665,8 @@ void Fern::Stop(bool graceful) {
     // Wake the accept thread by COMPLETING its ConnectNamedPipe instead of closing
     // its handle: connect to our own pipe and immediately drop it. m_running is
     // already false, so AcceptLoop takes its !m_running branch, closes its OWN
-    // handle and breaks — which also repairs a leak this function used to cause,
-    // since nulling m_listenPipe made AcceptLoop's `if (m_listenPipe == pipe)`
-    // guard fail and the instance was never closed by anyone.
+    // handle and breaks. Nulling m_listenPipe here instead would make AcceptLoop's
+    // `if (m_listenPipe == pipe)` guard fail and leave the instance closed by no one.
     //
     // Outside the lock on purpose: the connect can block briefly, and AcceptLoop
     // needs m_connMutex to finish. Gated on listenerParked so we do not poke a server
@@ -703,19 +687,19 @@ void Fern::Stop(bool graceful) {
 
     LOG_INFO("PipeServer: Stop cancels+wake done (%lld ms)", elapsedMs());
 
-    // Watch threads do no pipe I/O ([PIPE-PER-PROCESS-2026-11-06] Stage C), so each join here is one wake and at most
+    // Watch threads do no pipe I/O ([PIPE-PER-PROCESS-2026-11-06]), so each join here is one wake and at most
     // one read. m_running is already false, so no watch can start after this.
     StopAllWatches();
 
-    // Join the background scan jobs. These joins are UNBOUNDED — the comment here used
-    // to claim RunScan/RunRescan were "bounded AOB scans", but RunRescan runs Genau's
-    // Extra Scan, a full .data sweep. What actually bounds them is each job's own cancel
-    // token, raised by StopAndJoin, and Tot::RequestShutdown() above, read by the cancel
-    // polls Genau's loops carry; without those, and since UE5_Shutdown runs on the CE Lua
-    // caller's thread, CE's UI froze for the remainder of the sweep. (B18)
-    // No `running` is cleared first any more: that let a connection still dispatching
+    // Join the background scan jobs. These joins are UNBOUNDED — RunRescan is not a
+    // bounded AOB scan: it runs Genau's Extra Scan, a full .data sweep. What bounds them
+    // is each job's own cancel token, raised by StopAndJoin, and Tot::RequestShutdown()
+    // above, read by the cancel polls Genau's loops carry; without those, and since
+    // UE5_Shutdown runs on the CE Lua caller's thread, CE's UI would freeze for the
+    // remainder of the sweep. (B18)
+    // No `running` is cleared first: that would let a connection still dispatching
     // start a job and join the same thread beside this one. m_running is already false,
-    // so no job starts now. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    // so no job starts now. [PIPE-PER-PROCESS-2026-11-06]
     m_rescan.job.StopAndJoin();
     m_scan.job.StopAndJoin();
     LOG_INFO("PipeServer: Stop watches+scan joins done (%lld ms)", elapsedMs());
@@ -732,8 +716,7 @@ void Fern::Stop(bool graceful) {
         // Slice the 5 s budget and RE-ASSERT the cancel each slice instead of
         // waiting on one shot fired before the wait began. A thread parked in
         // ReadFile that the first cancel missed (it was between reads) is
-        // otherwise unreachable for the whole budget — which is exactly what the
-        // 2026-08-05 capture showed: 2 stragglers, both "idle in ReadFile", 5002 ms.
+        // otherwise unreachable for the whole budget.
         // Same write-on-drift shape as the re-assert workers: assert the state you
         // want repeatedly rather than assuming one assertion landed.
         //
@@ -755,10 +738,10 @@ void Fern::Stop(bool graceful) {
             LOG_WARN("PipeServer:   %zu connection(s) already unregistered are still releasing what they owned "
                      "(See-through, a recording -- possibly waiting on the game thread)", tearingLeft);
         // Name the stragglers while we still hold the registry lock. Without this the
-        // timeout says only "N left", which is not enough to act on — the 2026-08-04
-        // run burned the full 5 s budget and the log could not say whether the threads
-        // were parked in ReadFile (the cancel missed them) or stuck inside a command
-        // (the cancel cannot help until it returns). Those need opposite fixes.
+        // timeout says only "N left", which is not enough to act on: the log could not
+        // say whether the threads are parked in ReadFile (the cancel missed them) or
+        // stuck inside a command (the cancel cannot help until it returns). Those need
+        // opposite fixes.
         if (!drained) {
             long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -780,12 +763,12 @@ void Fern::Stop(bool graceful) {
         }
     }
     // Distinguish "satisfied" from "timed out" explicitly: a 5 s stall elsewhere
-    // and a 5 s expiry of THIS wait produce identical wall-clock, and telling them
-    // apart from the outside is what made the 2026-08-04 investigation expensive.
+    // and a 5 s expiry of THIS wait produce identical wall-clock, and they cannot be
+    // told apart from the outside.
     // The re-assert count is the ONLY externally visible difference between "the
     // first cancel worked" and "the first cancel missed and a later one caught it".
-    // Both print `satisfied`; without the count a fix for the missed-window case
-    // could not be told from it never having been needed.
+    // Both print `satisfied`; without the count the re-assert could not be told from
+    // it never having been needed.
     LOG_INFO("PipeServer: Stop conn drain %s, %zu left, %zu still tearing down (%lld ms, %d cancel re-assert%s)",
              drained ? "satisfied" : "TIMEOUT", connsLeft, tearingLeft, elapsedMs(),
              reasserts, reasserts == 1 ? "" : "s");
@@ -838,7 +821,7 @@ void Fern::ReevaluatePerCommandCancel() {
 }
 
 // ── Holds and their owners ─────────────────────────────────────────────────
-// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1. The ledger (Voll::HoldLedger) keeps who holds what; these read whether a
+// [PIPE-PER-PROCESS-2026-11-06] The ledger (Voll::HoldLedger) keeps who holds what; these read whether a
 // hold is active, and release one, from the module that runs it.
 
 namespace {
@@ -1116,16 +1099,16 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
             LOG_INFO("PipeServer: client pid %llu left -- its LiveFuncs recording is freed", (unsigned long long)owner);
     }
 
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11): what a background client (an AI session's MCP
+    // [PIPE-PER-PROCESS-2026-11-06] What a background client (an AI session's MCP
     // server) turned on ends with it. Each hold is released under its own lock and only while the ledger still names
-    // this owner, so a hold the UI or CE took over meanwhile stays. A foreground client's holds outlive it, as before.
+    // this owner, so a hold the UI or CE took over meanwhile stays. A foreground client's holds outlive it.
     if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;
     // [D2-3-INVOKE] Its invokes still queued go first: none runs after its session (a debug-camera toggle among them,
     // which then never turns the camera on).
     if (const int32_t dropped = Stark::DropQueuedInvokesOf(owner); dropped > 0)
         LOG_INFO("PipeServer: background client %llu left -- %d queued invoke(s) of it dropped, never run",
                  (unsigned long long)owner, dropped);
-    // [DBGCAM-RELEASE-STALLED] review: the release's reads answer to shutdown alone. A client that left mid-command
+    // [DBGCAM-RELEASE-STALLED] The release's reads answer to shutdown alone. A client that left mid-command
     // still has its connection's cancel flag raised, and this thread is bound to it: a read under it gives up (the
     // camera "unknown"), so nothing would be released, or owed.
     const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
@@ -1201,7 +1184,7 @@ void Fern::MonitorLoop() {
                     // BOTH lanes together so g_perCommand is reset (AcceptLoop
                     // firstConn) before the next session's scans.
                     // Record WHICH connection raised this, unconditionally. The
-                    // latch is now owned by its raisers (audit #5 F2), so a second
+                    // latch is owned by its raisers (audit #5 F2), so a second
                     // lane dropping while the flag is already set must still be
                     // recorded — otherwise clearing on the first one's exit would
                     // free a cancel the second still needs. Only the LOG stays
@@ -1225,7 +1208,7 @@ void Fern::MonitorLoop() {
                     // would silently make the unbound ones uncancellable, which is the
                     // failure Tot.h's t_connCancel note documents at length.
                     // ⚠ A bound thread never reads g_perCommand, so setting it here does
-                    // NOT reinstate the cross-connection truncation this change fixes.
+                    // NOT truncate another connection's scans.
                     Tot::RequestPerCommand();
                 }
             }
@@ -1313,9 +1296,8 @@ void Fern::AcceptLoop() {
         // PIPE_REJECT_REMOTE_CLIENTS: without it, anyone holding this user's (or an admin's)
         // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx_<pid> over SMB and drives a
         // DLL that writes game memory and invokes UFunctions. A local client is never refused
-        // by it. The security stays the default (nullptr below): an explicit "this user"
-        // DACL was measured and not shipped, because for an elevated game it would let a
-        // non-elevated process in. [PIPE-REJECT-REMOTE]
+        // by it. The security stays the default (nullptr below), never an explicit "this user"
+        // DACL: for an elevated game that would let a non-elevated process in. [PIPE-REJECT-REMOTE]
         HANDLE pipe = CreateNamedPipeW(
             Voll::OwnPipeName().c_str(),
             PIPE_ACCESS_DUPLEX,
@@ -1385,8 +1367,8 @@ void Fern::AcceptLoop() {
             }
             if (foreignLogged) LOG_INFO("PipeServer: the other process's instances are gone -- serving %s", name.c_str());
             // The limit in force is the name's first creator's: a create asking for more on a name another copy made
-            // succeeds and keeps the old limit (measured 2026-11-10). Read it from the handle, so the log says what a
-            // client will meet rather than what this build asked for. [PIPE-PER-PROCESS-2026-11-06] Stage B
+            // succeeds and keeps the old limit. Read it from the handle, so the log says what a
+            // client will meet rather than what this build asked for. [PIPE-PER-PROCESS-2026-11-06]
             DWORD inForce = 0;
             if (GetNamedPipeInfo(pipe, nullptr, nullptr, nullptr, &inForce)) {
                 m_capInForce.store(inForce);
@@ -1435,7 +1417,7 @@ void Fern::AcceptLoop() {
         auto conn = std::make_shared<Connection>();
         conn->pipe = pipe;
         // Who connected, before the connection is registered: every reader that finds it in m_conns sees this.
-        // [PIPE-PER-PROCESS-2026-11-06] Stage C
+        // [PIPE-PER-PROCESS-2026-11-06]
         {
             ULONG clientPid = 0;
             if (GetNamedPipeClientProcessId(pipe, &clientPid)) conn->clientPid = clientPid;
@@ -1457,19 +1439,18 @@ void Fern::AcceptLoop() {
             m_clientConnected = true;
             ReevaluatePerCommandCancel();
         }
-        // The old rule was `if (firstConn) Tot::ResetPerCommand();` — clear only when
-        // a session connects into an EMPTY registry. ReevaluatePerCommandCancel above
-        // subsumes it STRICTLY: an empty registry trivially has no live owner, so
-        // every case firstConn caught is still caught, plus the one it could not — a
-        // lane dropping while its sibling stays connected, which the two-lane split
-        // made the ordinary shape and which left the latch set for the life of the
-        // process (audit #5 F2).
+        // Not `if (firstConn) Tot::ResetPerCommand();` — clearing only when a session
+        // connects into an EMPTY registry. ReevaluatePerCommandCancel above covers that
+        // case (an empty registry trivially has no live owner) plus the one it cannot —
+        // a lane dropping while its sibling stays connected, the ordinary shape with two
+        // lanes, which would leave the latch set for the life of the process
+        // (audit #5 F2).
         (void)firstConn;
 
         LOG_INFO("PipeServer: Client connected (conns=%zu)", connCount);
-        // Guarded: only DispatchCommand inside HandleConnection had a handler, so a
-        // throw from ReadLine / the JSON pre-parse / WriteLine escaped a DETACHED
-        // thread — std::terminate, i.e. the game dies. (B14)
+        // Guarded: a throw from ReadLine / the JSON pre-parse / WriteLine, outside
+        // DispatchCommand's own handler, would escape a DETACHED thread —
+        // std::terminate, i.e. the game dies. (B14)
         std::thread([this, conn]() {
             Routine::RunThreadGuarded("PipeServer: connection",
                                       [&] { HandleConnection(conn); });
@@ -1539,8 +1520,8 @@ std::string Fern::ReadLine(HANDLE pipe) {
 
 bool Fern::WriteLine(Connection& conn, const std::string& line) {
     // Per-connection write mutex. Every write on a connection comes from its own
-    // handler thread (replies, and its watch events since Stage C), and so does
-    // CloseConnOnce, the mutex's other taker: it is uncontended today, and keeps a
+    // handler thread (replies, and its watch events), and so does
+    // CloseConnOnce, the mutex's other taker: it is uncontended, and keeps a
     // write off a just-closed handle should either ever move to another thread.
     // Writes to OTHER connections use their own mutex, so the two UI lanes never
     // contend.
@@ -1548,7 +1529,7 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     if (conn.closed.load(std::memory_order_relaxed) || conn.pipe == INVALID_HANDLE_VALUE)
         return false;
     // Payload and terminator go out as TWO WriteFile calls rather than through a
-    // `line + "\n"` temporary. The temporary was a full second copy of the
+    // `line + "\n"` temporary. The temporary would be a full second copy of the
     // serialized response — megabytes on snapshot_chunk / find_instances /
     // list_all_functions, in the GAME process's heap, purely to append one byte
     // (audit #5 F5).
@@ -1559,10 +1540,9 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     // events alike -- is written by its own handler thread, one line at a time, so
     // nothing can come between a payload and its '\n'.
     //
-    // Short writes are now treated as failures. A blocking byte-mode pipe writes
-    // everything or errors, so this only fires on a genuinely broken connection —
-    // which the caller already tears down. The old single write ignored `written`
-    // entirely, so a truncated response looked like a success.
+    // Short writes are treated as failures, so a truncated response never looks like a
+    // success. A blocking byte-mode pipe writes everything or errors, so this only fires
+    // on a genuinely broken connection — which the caller already tears down.
     DWORD written = 0;
     if (!line.empty()) {
         if (!WriteFile(conn.pipe, line.data(), static_cast<DWORD>(line.size()), &written, nullptr)
@@ -1588,7 +1568,7 @@ void Fern::CloseConnOnce(Connection& conn) {
     }
 }
 
-// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). What the read loop reads while an init or
+// [PIPE-WALK-DURING-INIT] Refuse nothing; log it. What the read loop reads while an init or
 // an apply_rescan holds g_initInProgress is dispatched like anything else; Voll::DuringInitNotes decides which of it
 // leaves a line in the pipe log, and why.
 extern std::atomic<bool> g_initInProgress;
@@ -1600,7 +1580,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // included. Safe by ownership: `conn` is a by-value shared_ptr (the accept thread
     // passes it that way at Fern.cpp `Fern::AcceptLoop`), so &conn->cancel cannot dangle while bound.
     // From here on Tot::Requested() on this thread answers for this connection ALONE --
-    // a foreign client's death no longer truncates this one's scans.
+    // a foreign client's death does not truncate this one's scans.
     Tot::ConnectionCancelScope cancelScope(&conn->cancel);
 
     HANDLE pipe = conn->pipe;
@@ -1666,8 +1646,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // Time exactly the inFlight window. That span is the CPU-bound,
         // pipe-free stretch during which this connection's dispatcher is
         // unavailable to any other command — i.e. precisely the head-of-line
-        // blocking docs/multipipe-eval.md blames for UI lag, which until now
-        // nothing measured. See Sense.h.
+        // blocking docs/multipipe-eval.md blames for UI lag. See Sense.h.
         // Record WHICH command, and when, BEFORE raising inFlight: a reader that sees the
         // command in flight (Stop's drain diagnostic, pipe_clients) must see its name,
         // not the previous command's. The name and its start are one pair, written under
@@ -1684,10 +1663,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         }
         conn->inFlight.store(true, std::memory_order_release);
         SetPhase(*conn, Connection::Phase::Dispatching);
-        // QPC, not GetTickCount64: its ~15.6 ms granularity floored every sub-tick
-        // dispatch to 0, so a live run of 1397 walk_instance calls reported
-        // "0 ms total, max 15 ms" — an artefact of which calls straddled a tick,
-        // not a measurement. Most pipe commands sit far below that granularity.
+        // QPC, not GetTickCount64: its ~15.6 ms granularity floors every sub-tick
+        // dispatch to 0, so a total reads as an artefact of which calls straddled a
+        // tick, not a measurement. Most pipe commands sit far below that granularity.
         const uint64_t dispatchStart = Sense::NowTicks();
         std::string response = DispatchCommand(conn, line);
         const uint64_t dispatchUs = Sense::TicksToUs(Sense::NowTicks() - dispatchStart);
@@ -1745,37 +1723,34 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         CloseHandle(th);
 
     // This connection's scan sessions go with it: no other connection can reach them (Radar's owner). Whoever stays
-    // connected keeps theirs. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    // connected keeps theirs. [PIPE-PER-PROCESS-2026-11-06]
     const size_t valueSessions = Radar::SessionManager::Instance().DropOwner(conn->seq);
     const size_t groupSessions = Radar::GroupSessionManager::Instance().DropOwner(conn->seq);
     if (valueSessions || groupSessions)
         LOG_INFO("PipeServer: connection #%llu left -- %zu value / %zu group scan session(s) dropped",
                  (unsigned long long)conn->seq, valueSessions, groupSessions);
 
-    // What this client process turned on goes with its last connection, and nothing else does. The last client to
-    // leave used to turn See-through off for everyone, CE's record included (it then showed ticked over a feature that
-    // was off), and to drop the LiveFuncs recording whoever had started it; a client that left while another stayed
-    // connected left both running for nobody. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    // What this client process turned on goes with its last connection, and nothing else does: See-through that CE's
+    // record or another client still claims stays on, a LiveFuncs recording another client started keeps running, and
+    // neither keeps running for nobody once its last owner is gone. [PIPE-PER-PROCESS-2026-11-06]
     ReleaseOwnedBy(conn->ownerKey);
 
     if (last) {
         Sense::Reset();   // restart diagnostics so the next session's numbers are its own
-        // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
-        // This teardown dropped every other per-session resource and left the one that
-        // could serve wrong data, so a UI reconnect is now a full reset. (audit #5 F3)
+        // Ubel's per-UObject name cache is keyed by a raw address the engine recycles,
+        // so a UI reconnect is a full reset, like every other per-session resource.
         //
-        // The IN-SESSION case (a level change while connected) is closed too, but not
-        // here: Ubel::GetName now revalidates every hit against the FName bytes the
-        // cached string was decoded from. The (InternalIndex, SerialNumber) witness
-        // this comment used to promise was evaluated and REJECTED — UE zeroes
-        // SerialNumber in FreeUObjectIndex and allocates it lazily on weak-pointer
+        // The IN-SESSION case (a level change while connected) is handled elsewhere:
+        // Ubel::GetName revalidates every hit against the FName bytes the cached string
+        // was decoded from. An (InternalIndex, SerialNumber) witness would not do — UE
+        // zeroes SerialNumber in FreeUObjectIndex and allocates it lazily on weak-pointer
         // creation, so most objects carry 0 for life and a stale (i, 0) matches a
-        // recycled (i, 0). See Ubel::NameWitness. (audit #5 U6)
+        // recycled (i, 0). See Ubel::NameWitness.
         //
-        // This call now earns its place on growth alone — one entry per GObjects slot
-        // ever named — plus a Serie::Init re-run, which the per-entry witness cannot
-        // see. Cost is a lazy repopulate on the next connect, which is what every
-        // other line in this block already accepts.
+        // So this call earns its place on growth — one entry per GObjects slot ever
+        // named — plus a Serie::Init re-run, which the per-entry witness cannot see.
+        // Cost is a lazy repopulate on the next connect, which is what every other line
+        // in this block already accepts.
         Ubel::ClearNameCache();
     }
 
@@ -1783,20 +1758,17 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     LOG_INFO("PipeServer: Client disconnected");
 }
 
-// (PushEvent removed in the Path A multi-connection refactor. Watch events are written by their own connection's
-// handler since [PIPE-PER-PROCESS-2026-11-06] Stage C; see FlushWatchEvents below.)
+// (Watch events are written by their own connection's handler [PIPE-PER-PROCESS-2026-11-06]; see FlushWatchEvents
+// below.)
 
 // ============================================================
 // FillPointerSnapshot — Populate a JSON object with the engine pointer state
 // (GObjects/GNames/GWorld + scan metadata + per-game settings).
 //
-// Shared by CMD_GET_POINTERS and CMD_SCAN_STATUS (completion). Without this
-// shared helper the two paths drift — sparse_delegates was added to GET_POINTERS
-// alone in the PR-#194 first iteration and the panel was empty post-trigger_scan
-// because the UI consumes scan_status, not get_pointers, after a fresh scan.
-// invoke_timeout_ms / is_user_override / is_low_confidence / publisher_thumbprint
-// hit the same trap (UI showed defaults instead of the real values until a manual
-// re-fetch). One helper, two call sites — bug class closed.
+// Shared by CMD_GET_POINTERS and CMD_SCAN_STATUS (completion), so the two paths
+// cannot drift: after a fresh scan the UI consumes scan_status, not get_pointers,
+// so a key added to only one would show defaults instead of the real values until
+// a manual re-fetch.
 // ============================================================
 static void FillPointerSnapshot(json& data) {
     extern uintptr_t   g_cachedGObjects;
@@ -1929,9 +1901,9 @@ static void FillPointerSnapshot(json& data) {
     data["module_base"] = Renge::AddrToStr(moduleBase);
     wchar_t moduleNameW[MAX_PATH] = {};
     GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
-    // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8. It used to turn every character >= 128 into '?', so the UI
-    // keyed the confirmed-working proxy, the teleport library and its log folder on a name no file has. The UI
-    // derives CE's own (ANSI) view of the name itself for anything it hands to Cheat Engine.
+    // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8: the UI keys the confirmed-working proxy, the teleport library
+    // and its log folder on it, so it must be a name a file has. The UI derives CE's own (ANSI) view of the name
+    // itself for anything it hands to Cheat Engine.
     data["module_name"] = Utf8Helpers::LeafUtf8(moduleNameW, wcslen(moduleNameW));
     // Which process answered. The pipe name carries the pid [PIPE-PER-PROCESS-2026-11-06], and
     // the UI compares the two after it connects: a process that created another game's name
@@ -1950,14 +1922,14 @@ static void FillPointerSnapshot(json& data) {
             std::wstring selfPath(selfPathW);
             auto ss = selfPath.find_last_of(L"\\/");
             std::wstring selfFile = (ss != std::wstring::npos) ? selfPath.substr(ss + 1) : selfPath;
-            // [PATH-MODULE-NAME-UTF8] Lower-cased, then UTF-8 (was '?' per non-ASCII character): the proxy names
-            // it is compared with are ASCII, and a "loaded:<name>" report now carries the real name.
+            // [PATH-MODULE-NAME-UTF8] Lower-cased, then UTF-8: the proxy names it is compared with are ASCII, and a
+            // "loaded:<name>" report carries the real name.
             for (wchar_t& wc : selfFile) wc = static_cast<wchar_t>(towlower(wc));
             selfName = Utf8Helpers::EncodeUtf16(selfFile.c_str(), selfFile.size());
         }
         std::string loadMode;
-        // [W1-WINMM-LOADMODE] All four proxies we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
-        // symmetry). winmm was missing, so its loads read "loaded:winmm.dll" and never earned a confirmed-proxy record.
+        // [W1-WINMM-LOADMODE] Every proxy we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
+        // symmetry): one missing here reads "loaded:<name>" and never earns a confirmed-proxy record.
         if (selfName == "version.dll" || selfName == "dinput8.dll" || selfName == "dxgi.dll"
             || selfName == "winmm.dll")
             loadMode = "proxy:" + selfName;
@@ -1975,7 +1947,7 @@ static void FillPointerSnapshot(json& data) {
     // when the EXE loads at a CONSTANT base (no effective ASLR, e.g. SEED) —
     // module_base alone could NOT distinguish launches on such games, so the
     // Snapshot/SPC stale-session gate (PeHash-CreationTime) folds this in. The
-    // DLL runs in-process, so GetCurrentProcess() is the game. (build 1227)
+    // DLL runs in-process, so GetCurrentProcess() is the game.
     FILETIME ftCreate{}, ftExit{}, ftKernel{}, ftUser{};
     std::string creationTimeHex = "0";
     if (GetProcessTimes(GetCurrentProcess(), &ftCreate, &ftExit, &ftKernel, &ftUser)) {
@@ -2021,8 +1993,8 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     fj["offset"] = fv.offset;
     fj["size"]   = fv.size;
 
-    // hex/value are the single biggest droppable pair (measured ~15% of the
-    // payload): a CE record is structural (description + offset + CE type), so
+    // hex/value are the single biggest droppable pair: a CE record is
+    // structural (description + offset + CE type), so
     // the live VALUE never reaches the XML.
     if (!lean && !fv.hexValue.empty())    fj["hex"]   = fv.hexValue;
     if (!lean && !fv.typedValue.empty())  fj["value"] = fv.typedValue;
@@ -2052,7 +2024,7 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     // [A3-BOOL-NATIVE-NOWRITE] A native (whole-byte) bool. ADDITIVE and pipe-only, like bool_bit:
     // emitted only when true, so older UIs and CSX are unaffected and no contract bump applies.
     // Without it the UI cannot tell a native bool (write 0x01 / 0x00) from an unresolved packed
-    // one (must refuse) — both used to arrive as "no mask".
+    // one (must refuse) — both would arrive as "no mask".
     if (fv.boolNative) fj["bool_native"] = true;
 
     // UE 5.3+ access-detector pad. Emitted only when NON-ZERO, so a Shipping title's wire is
@@ -2061,22 +2033,14 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     // address 0 on any checked build. Sent rather than re-derived downstream: see the note on
     // LiveFieldValue::delegatePad.
     //
-    // ⛔⛔ THIS BLOCK USED TO SIT INSIDE `if (fv.arrayCount >= 0)` -> `if (!arrayInnerType...)`.
-    // `fv.delegatePad` is set at exactly two sites, and only ONE of them survives that gate:
-    //   * WalkInstance's MulticastInline branch (Ubel.cpp) — reports an invocation list, so `arrayCount >= 0`
-    //     and `array_inner_type` is set. It emitted fine, and was never affected.
-    //   * WalkInstance's scalar `DelegateProperty` branch (Ubel.cpp) — has NO invocation list, so `arrayCount`
-    //     stays -1 ("not an array", Ubel.h `LiveFieldValue`) and the emission could never run. It set the
-    //     value on every checked build and the value never left the process.
-    // So the loss was exactly one field KIND, not the whole key. Measured on the wire
-    // 2026-09-09 (DumperTest 5.4 Development): `Multicast_Inline` carries `count:1` +
-    // `array_elem_size:16` + `delegate_pad:8`, while `Del_Unicast` carries no `count` at all.
-    // Found by `sw7_stale_arm.py`, whose scalar arm read `pad=0 (from the wire)` against the
-    // array's derived 8 — the two cannot differ, both being standalone FScriptDelegate.
-    // ⚠ `CeXmlDelegatePadTests` was GREEN throughout: it constructs `LiveFieldValue` in C# with
-    // `DelegatePad` already set, so it never crosses DLL -> wire -> C#. The consequence was
-    // live for that one kind — `CeXmlExportService.CeOffset` added 0 for a scalar
-    // DelegateProperty, which is precisely the "record pointing at address 0" above.
+    // ⛔⛔ THIS BLOCK MUST STAY OUTSIDE `if (fv.arrayCount >= 0)`. WalkInstance's MulticastInline
+    // branch (Ubel.cpp) reports an invocation list, so `arrayCount >= 0` there; but its scalar
+    // `DelegateProperty` branch (Ubel.cpp) sets `fv.delegatePad` with NO invocation list, so
+    // `arrayCount` stays -1 ("not an array", Ubel.h `LiveFieldValue`) and an emission inside
+    // that gate would never run for it — `CeXmlExportService.CeOffset` would then add 0 for a
+    // scalar DelegateProperty, precisely the "record pointing at address 0" above.
+    // ⚠ `CeXmlDelegatePadTests` cannot see this: it constructs `LiveFieldValue` in C# with
+    // `DelegatePad` already set, so it never crosses DLL -> wire -> C#.
     // ⛔ Do NOT also set this for an ARRAY of delegates (or a sparse one): the pad is
     // per-ELEMENT, inside the array data, while a CE offset built from it is added to the FIELD
     // offset (the TArray header). Array consumers get the per-ELEMENT `array_elem_delegate_pad`
@@ -2101,14 +2065,13 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)
                 fj["array_struct_class_addr"] = Renge::AddrToStr(fv.arrayInnerStructAddr);
-            // Phase G layout metadata for soft arrays — lets exporters lay out
+            // Layout metadata for soft arrays — lets exporters lay out
             // per-element FName leaves at FSoftObjectPath sub-offsets.
             if (fv.softArrayFNameSize > 0) {
                 fj["soft_fname_size"] = fv.softArrayFNameSize;
                 fj["soft_top_level_asset_path"] = fv.softArrayIsTopLevelAssetPath;
                 // The path is at +0x10 only up to UE 5.2; 5.3 deleted the
-                // TPersistentObjectPtr tag and it moved to +0x08. Exporters
-                // baked 0x10 before this was on the wire.
+                // TPersistentObjectPtr tag and it moved to +0x08.
                 fj["soft_path_offset"] = fv.softArrayPathOffset;
             }
         }
@@ -2116,27 +2079,27 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         // read_array_elements call — no exporter reads it.
         if (!lean && fv.arrayInnerFFieldAddr != 0)
             fj["array_inner_addr"] = Renge::AddrToStr(fv.arrayInnerFFieldAddr);
-        // Phase B/D: inline element values (scalar or pointer)
+        // Inline element values (scalar or pointer)
         if (!fv.arrayElements.empty()) {
             json elems = json::array();
             for (const auto& e : fv.arrayElements) {
                 json ej;
                 ej["i"] = e.index;
                 ej["v"] = e.value;
-                // Per-element raw hex: the largest single unused key measured
-                // (~9% of a whole export payload). Element LABELS come from "v".
+                // Per-element raw hex: a large key the CE XML export never reads,
+                // so lean drops it. Element LABELS come from "v".
                 if (!lean) ej["h"] = e.hex;
                 if (!e.enumName.empty())
                     ej["en"] = e.enumName;
                 if (e.rawIntValue != 0 || !e.enumName.empty())
                     ej["rv"] = e.rawIntValue;
-                // Phase D: pointer element fields
+                // Pointer element fields
                 if (e.ptrAddr != 0) {
                     ej["pa"] = Renge::AddrToStr(e.ptrAddr);
                     if (!lean) ej["pn"] = e.ptrName;   // display-only, as above
                     ej["pc"] = e.ptrClassName;
                 }
-                // Phase F: struct sub-fields
+                // Struct sub-fields
                 if (!e.structFields.empty()) {
                     json sfs = json::array();
                     for (const auto& sf : e.structFields) {
@@ -2592,7 +2555,7 @@ Ubel::SnapDecodeCtx LiveSnapDecodeCtx() {
     return c;
 }
 
-constexpr size_t kSnapPageBytes = 1u << 20;   // a reply line stays inside the size measured to pool no buffers
+constexpr size_t kSnapPageBytes = 1u << 20;   // a reply line stays small enough to pool no buffers
 
 }  // namespace
 
@@ -2616,17 +2579,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
     try {
         id  = request.value("id", 0);
         cmd = request.value("cmd", "");
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D: a request a client marks "background" (the MCP server marks every
+        // [PIPE-PER-PROCESS-2026-11-06] A request a client marks "background" (the MCP server marks every
         // one) walks GObjects on at most half of the free worker budget, so the user's own walk in the UI is never
         // left on one thread. For this dispatch only; a key an older client never sends reads false.
         const Aura::BackgroundWalkScope backgroundWalk(request.value("background", false));
         if (request.value("background", false)) MarkBackground(conn);
         // [D2-3-INVOKE] Every invoke this command queues is this client's, and an if_free one is refused while another
-        // client's invoke is outstanding (the maintainer, 2026-11-11: an AI's invoke reports a conflict rather than
-        // slip in beside the user's).
+        // client's invoke is outstanding: an AI's invoke reports a conflict rather than slip in beside the user's.
         const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value("if_free", false));
 
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a command that changes a hold runs under that hold's lock (the
+        // [PIPE-PER-PROCESS-2026-11-06] A command that changes a hold runs under that hold's lock (the
         // mailbox takes the same one), so an if_free check and the change it allows are one step. Locks in name order,
         // the one order every writer uses.
         std::vector<std::string> holds = Voll::HoldsChangedBy(
@@ -2745,10 +2707,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
             }
 
-            // [UE-OVERRIDE-411] review: a version from the other side of 4.18 puts the UFunction tail 2 off this game's
+            // [UE-OVERRIDE-411] A version from the other side of 4.18 puts the UFunction tail 2 off this game's
             // (NumParms / ParmsSize / ReturnValueOffset), so one the sampled UFunctions contradict is refused here,
-            // before anything is persisted or changed. KEPT, not advisory, since review 2 made the readers follow the
-            // measurement (DynOff::FunctionTailReadBase): the tail reads no longer need it, but the version keys more
+            // before anything is persisted or changed. A refusal, not advice, although the readers follow the
+            // measurement (DynOff::FunctionTailReadBase) and the tail reads do not need it: the version keys more
             // than the tail, and a version this game's UFunctions contradict is the wrong one for everything else it
             // keys. Clearing is always accepted -- what it hands back is a detection, never a pick -- and with nothing
             // measured, the override is applied as asked: DynOff::CheckTailForVersion says why.
@@ -2796,7 +2758,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION, whichever
             // way it moves. `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
-            // ever looks at ueVersion, so a latch taken under the OLD version outranks the
+            // ever looks at ueVersion, so a latch taken under the PREVIOUS version outranks the
             // new one for every call that cannot produce a fresh accepted measurement — and
             // several cannot: Ubel.cpp's `ReadSoftObjectArrayElements` passes a literal 0 elemSize, and a garbage
             // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The version would then
@@ -2819,12 +2781,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             Flamme::AutoRestore autoRestore = Flamme::AutoRestore::NotOverridden;
             if (newVersion == 0) {
-                // [UE-OVERRIDE-HINT-AUTO] Clearing used to change only the flag ("would require re-init"):
-                // the session kept the overridden version, the UI showed it unbadged as if detected, and
-                // a reconnect then recorded it in the hint cache as a detection, so the next launch
-                // reused it too. Auto now hands back what the next launch would start from -- the
+                // [UE-OVERRIDE-HINT-AUTO] Auto hands back what the next launch would start from -- the
                 // record's own detection, climbed up init's structural ladder (the record holds the
                 // version from before it) and refined by the lazy markers this session has seen.
+                // Clearing only the flag would keep the overridden version, shown unbadged as if
+                // detected, and a reconnect would record it in the hint cache as a detection.
                 const Flamme::ScanHints hints = Flamme::LoadHints(g_cachedPeHash);
                 const Flamme::AutoRestorePlan plan = Flamme::PlanAutoRestore(
                     g_cachedIsUserOverride, hints, Genau::kVersionDetectLogicRev,
@@ -2983,7 +2944,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump();
         }
 
-        // Snapshot capture (experimental — Phase A1a). begin returns the total
+        // Snapshot capture (experimental). begin returns the total
         // object count for progress; chunk streams numeric UPROPERTY values per
         // object. Stateless cursor pagination — advance "offset" by "scanned".
         if (cmd == Renge::CMD_BEGIN_SNAPSHOT) {
@@ -3039,7 +3000,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return arr;
             };
 
-            // Phase-0 telemetry: time the JSON DOM build (the bulk of the serialize
+            // Telemetry: time the JSON DOM build (the bulk of the serialize
             // cost — the final .dump() is one extra traversal). Reported as serialize_ms
             // so the C# side can show walk / serialize / parse / write per chunk.
             const auto serT0 = std::chrono::steady_clock::now();
@@ -3114,7 +3075,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uintptr_t outer = Ubel::GetOuter(addr);
             data["outer"]      = outer ? Ubel::GetName(outer) : "";
             data["outer_addr"] = Renge::AddrToStr(outer);
-            // [MCP-WRITE-GRANTS-2026-11-14] Phase 2: whether this is a template ("" for a world object), so a client
+            // [MCP-WRITE-GRANTS-2026-11-14] Whether this is a template ("" for a world object), so a client
             // that writes what a grant covers can refuse a class default and an archetype -- a class default's
             // subobject or a Blueprint component template is named like any component, and what it holds reaches
             // every instance spawned later. TemplateOf reads safely, as get_object answers for any address.
@@ -3173,7 +3134,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // pipe paths produce byte-identical instance objects, so the CE export
         // can switch to the batch without a field silently changing shape.
         // (Layer 2 of the walk_class_batch safety net.)
-        // LEAN contract (build 2351, measured in multipipe-eval.md §10.6):
+        // LEAN contract (multipipe-eval.md §10.6):
         // `lean: true` omits the keys a CE XML export provably never reads. It
         // is subtractive ONLY — a lean object is the full object minus keys, so
         // the UI parser needs no new branch (a missing key already falls back to
@@ -3378,13 +3339,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         if (cmd == Renge::CMD_LIST_ENUMS) {
             int total = Aura::GetCount();
             json enums = json::array();
-            // ⛔ A cooperative abort used to return a partial array indistinguishable from a
-            // complete one: same shape, `ok: true`, just fewer entries. Measured 2026-09-07
-            // (tools/verify/multipipe_cancel_isolation.py): a FOREIGN client dying mid-command
-            // trips the process-wide Tot::g_perCommand, and this loop then answered 77 bytes
-            // where 720,793 were due -- 5,157 times, every one of them `ok: true`. The caller
-            // cannot tell that from a real answer, so the flag below is the difference between
-            // silent data loss and a detectable one.
+            // ⛔ A cooperative abort (Tot::Requested) cuts this loop short and leaves a partial
+            // array with the same shape and `ok: true`, just fewer entries. The caller cannot
+            // tell that from a real answer, so the flag below is the difference between silent
+            // data loss and a detectable one.
             bool truncated = false;
 
             for (int i = 0; i < total; ++i) {
@@ -3477,7 +3435,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     pj["parm"]   = p.isParm;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
-                    // Stage 1 (Invoke param picker): an object-family param's
+                    // Invoke param picker: an object-family param's
                     // target UClass. Mirrors the field-side `obj_class` key used
                     // by walk_class. The UI's picker list is narrower: it offers
                     // a pick only where it can write one (ParamBufferBuilder).
@@ -3533,21 +3491,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Missing addr or bytes").dump();
             }
 
-            // STRICT parse (audit #5 AD19). StrToAddr collapses a malformed address to 0
-            // and the write then targets address 0 — refused by the OS, but reported as
-            // the generic "Write failed", which sends the user looking at permissions
+            // STRICT parse. StrToAddr collapses a malformed address to 0 and the write
+            // would then target address 0 — refused by the OS, but reported as the
+            // generic "Write failed", which sends the user looking at permissions
             // instead of at their address. The live case is an unsubstituted CE
             // placeholder, e.g. "0x[ply_base]" — TryStrToAddr's own comment names it.
-            // The BYTES half of this same handler already learned this (B46, just below);
-            // the address half did not.
             uintptr_t addr = 0;
             if (!Renge::TryStrToAddr(addrStr, addr)) {
                 return Renge::MakeError(id, "Invalid addr (need hex, optional 0x prefix): "
                                             + addrStr).dump();
             }
-            // Reject a malformed pattern instead of writing a silently-mangled one.
-            // strtoul mapped every non-hex character to 0x00, so "DE AD BE EF" used to
-            // be written as {DE,0A,0D,BE,0E} and answered ok:true. (B46)
+            // Reject a malformed pattern instead of writing a silently-mangled one: a
+            // strtoul parse maps every non-hex character to 0x00, so "DE AD BE EF" would
+            // be written as {DE,0A,0D,BE,0E} and answered ok:true.
             std::vector<uint8_t> bytes;
             if (!Renge::TryHexToBytes(hexBytes, bytes)) {
                 return Renge::MakeError(id,
@@ -3558,9 +3514,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Invalid write size (max 65536)").dump();
             }
 
-            // [D2-3-WRITEMEM] Data only, as it stands, for every client (maintainer, 2026-11-11): Macht::WriteBytes
-            // made any page READWRITE for the write, so this command patched code and read-only data, a code page lost
-            // execute while it ran, and a write across pages restored the first page's protection on all of them.
+            // [D2-3-WRITEMEM] Data only, as it stands, for every client: making a page READWRITE for the write would
+            // let this command patch code and read-only data, take execute from a code page while it ran, and restore
+            // the first page's protection on every page of a write across pages.
             auto refuse = [&](const std::string& why, int32_t code) {
                 auto e = Renge::MakeError(id, "Not written: " + addrStr + " " + why);
                 e["code"] = code;
@@ -3642,11 +3598,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // ── walk_instance_batch: N instance walks in ONE round-trip ──
         //
-        // MEASURED justification (build 2327, multipipe-eval.md §10.4): a Copy CE
-        // XML issued 20,357 single walk_instance calls, and the split was
-        // dll 30% / ipc 59-73% / ui ~0%. The per-call IPC (0.16-0.21 ms) is roughly
-        // TWICE the actual walk (0.08 ms) and is pure round-trip overhead — exactly
-        // what collapsing N calls into one removes.
+        // Justification (multipipe-eval.md §10.4): a Copy CE XML needs one walk per
+        // instance, and the per-call IPC outweighs the walk itself — pure round-trip
+        // overhead, exactly what collapsing N calls into one removes.
         //
         // Deliberately a trivial loop over the single-call path: that is a
         // STRUCTURAL guarantee of equivalence (layer 1 of the walk_class_batch
@@ -3700,7 +3654,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump();
         }
 
-        // === read_array_elements: Read scalar elements from a TArray (Phase B) ===
+        // === read_array_elements: Read scalar elements from a TArray ===
         if (cmd == Renge::CMD_READ_ARRAY_ELEMS) {
             std::string addrStr = request.value("addr", "");
             if (addrStr.empty())
@@ -3717,7 +3671,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // [W5-STRARRAY-ELEMENTS] A string inner is a 16-byte header per element, not a scalar:
             // ReadArrayElements would publish the header's bytes as the value. The Live Walker fetches
-            // the elements past the walked ones through here. Review 3 of 6b48e776: decided FIRST, because
+            // the elements past the walked ones through here. Decided FIRST, because
             // the elem_size checks below guard a SCALAR stride -- a string's is the fixed header, and a
             // zeroed or garbage elem_size is exactly what that pinned stride exists to survive.
             const bool stringInner = Ubel::IsStringArrayType(innerType);
@@ -3761,13 +3715,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     ej["en"] = e.enumName;
                 if (e.rawIntValue != 0 || !e.enumName.empty())
                     ej["rv"] = e.rawIntValue;
-                // Phase D: pointer element fields
+                // Pointer element fields
                 if (e.ptrAddr != 0) {
                     ej["pa"] = Renge::AddrToStr(e.ptrAddr);
                     ej["pn"] = e.ptrName;
                     ej["pc"] = e.ptrClassName;
                 }
-                // Phase F: struct sub-fields
+                // Struct sub-fields
                 if (!e.structFields.empty()) {
                     json sfs = json::array();
                     for (const auto& sf : e.structFields) {
@@ -3920,13 +3874,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // === The actor list is DERIVED from Outer, not read from ULevel::Actors ===
             //
             // `ULevel::Actors` is declared with NO UPROPERTY (Engine/Classes/Engine/
-            // Level.h:428-429), so the reflected field lookup this used to do could not
-            // ever have matched — `actor_count: 0` on 2 of 2 games, forever, and the
-            // fuzzy fallback could bind "Actors" to DestroyedReplicatedStaticActors,
-            // which IS reflected. There is no native offset to detect either: SpawnActor
+            // Level.h:428-429), so a reflected field lookup can never match it, and a
+            // fuzzy one could bind "Actors" to DestroyedReplicatedStaticActors, which IS
+            // reflected. There is no native offset to detect either: SpawnActor
             // outers every actor to the level it adds it to, so one GObjects pass over
             // "objects derived from AActor whose Outer is this level" reconstructs the
-            // list with no offset detection, no latch and no constant. (audit #5 F8/F9)
+            // list with no offset detection, no latch and no constant.
             //
             // Deriving from AActor is MANDATORY: ULevelActorContainer and UModelComponent
             // are outered to the level too, so an outer-only test would list them here.
@@ -3959,11 +3912,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
                 // Components, structurally — for the SAME reason. AActor::OwnedComponents
                 // is a private `TSet<TObjectPtr<UActorComponent>>` with no UPROPERTY
-                // (GameFramework/Actor.h:4331), so the old lookup was wrong twice over:
-                // the field is not reflected, and it is a TSet being asked for as an
-                // ArrayProperty. This never ran in production (actorsOffset was always
-                // -1), so it was never-run code being treated as known-good.
-                // Same shape Edel already uses for "owned components of the PC/Pawn".
+                // (GameFramework/Actor.h:4331), so a reflection lookup cannot find it:
+                // the field is not reflected, and it is a TSet, not an ArrayProperty.
+                // Same shape Edel uses for "owned components of the PC/Pawn".
                 std::vector<Aura::OutgoingPtr> edges;
                 Aura::CollectOutgoingObjectPtrs(sr.addr, edges, /*cap=*/64);
                 json comps = json::array();
@@ -4097,14 +4048,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string query = request.value("query", "");
             bool gameOnly = request.value("game_only", true);
             int limit = request.value("limit", 200);
-            // Clamp the now-configurable cap, same ceiling and same reason as
+            // Clamp the configurable cap, same ceiling and same reason as
             // CMD_FIND_INSTANCES above: <1 would return nothing, and 50000 bounds a
             // pathological broad query to one sane payload. The class walk is exhaustive
             // either way — this only bounds the returned list. [PROPSEARCHCAP-2026-08-19]
             //
             // ⚠ The DEFAULT stays 200. This is the wire default for an older client that
             // sends no "limit" at all, and raising it would silently change that client's
-            // behaviour; the UI now always sends one.
+            // behaviour; the UI always sends one.
             if (limit < 1) limit = 1;
             if (limit > 50000) limit = 50000;
             // Opt-in deep descent into nested struct + container-element schemas
@@ -4146,7 +4097,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // string so the uint64 high bits survive; omitted when 0.
                 if (m.propertyFlags != 0)
                     item["prop_flags"] = Renge::AddrToStr(m.propertyFlags);
-                // Inheritance-aware fields (build 610+) -- after dedup,
+                // Inheritance-aware fields -- after dedup,
                 // class_name == defining_class_name (we keep both for
                 // forward compat in case the dedup story changes).
                 item["defining_class_name"] = m.definingClassName;
@@ -4165,9 +4116,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // single-bit mask — so "present" means "packed bitfield, and the
                 // bit is in the byte at prop_offset".
                 //
-                // Freeze needs this: without it the generated script wrote a
+                // Freeze needs this: without it the generated script would write a
                 // whole byte over a bit-packed bool, clobbering up to 7 siblings
-                // and — when the mask was not 0x01 — never setting the intended
+                // and — when the mask is not 0x01 — never setting the intended
                 // bool at all. (audit #5 AA1)
                 //
                 // ⚠ ABSENT does not mean native: it is a native whole-byte bool OR
@@ -4192,9 +4143,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["total"]           = static_cast<int>(searchResult.results.size());
             data["scanned_classes"] = searchResult.scannedClasses;
-            // Now the objects actually walked, not the pool size (audit #5 D5/F4).
+            // The objects actually walked, not the pool size (audit #5 D5/F4).
             data["scanned_objects"] = searchResult.scannedObjects;
-            // Additive: a client that ignores these behaves as before. Without them
+            // Additive: a client that ignores these is unaffected. Without them
             // a capped search is indistinguishable from a complete one that found
             // everything, which is how "the scan missed my field" gets reported.
             data["truncated"]       = searchResult.truncated;
@@ -4321,11 +4272,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string val2Str = request.value("value2", "");
             bool gameOnly = request.value("game_only", true);
             int  maxResults = request.value("max_results", 50000);
-            // Displayed-integer rounding mode (build 1672, replaces the old
-            // tolerance slack): Float/Double values are reduced to the integer
-            // the game shows before comparing; integer types only consult it to
-            // coerce a fractional target/bound. Default Round (legacy half-away);
-            // unknown / absent (pre-1672 client) falls back to Round.
+            // Displayed-integer rounding mode: Float/Double values are reduced to
+            // the integer the game shows before comparing; integer types only
+            // consult it to coerce a fractional target/bound. Default Round
+            // (half-away); unknown / absent falls back to Round.
             Radar::RoundMode roundMode = Radar::RoundMode::Round;
             Radar::TryParseRoundMode(request.value("rounding_mode", "Round"), roundMode);
             // String scans only: opt-in case sensitivity. Default is
@@ -4510,7 +4460,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string stStr = request.value("scan_type", "");
             std::string valStr = request.value("value", "");
             std::string val2Str = request.value("value2", "");
-            // Displayed-integer rounding mode (build 1672, replaces tolerance).
+            // Displayed-integer rounding mode.
             Radar::RoundMode roundMode = Radar::RoundMode::Round;
             Radar::TryParseRoundMode(request.value("rounding_mode", "Round"), roundMode);
             bool caseSensitive = request.value("case_sensitive", false);
@@ -4724,10 +4674,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump();
         }
 
-        // === begin_group_scan: Multiple values group scan (build 1276). Find
+        // === begin_group_scan: Multiple values group scan. Find
         // objects that SIMULTANEOUSLY hold ALL of N user values (2..4) at
-        // DISTINCT numeric-property offsets, in any order. P1: each slot is a
-        // NumericNoByte/NumericAll exact match. Returns a session_id + first page
+        // DISTINCT numeric-property offsets, in any order. Returns a session_id + first page
         // of OBJECT-level candidates (nested per-slot matches). ===
         if (cmd == Renge::CMD_BEGIN_GROUP_SCAN) {
             bool gameOnly  = request.value("game_only", true);
@@ -4792,8 +4741,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     return Renge::MakeError(id, "group first-scan scan_type must be Exact / Bigger / Smaller / Between: " + stStr).dump();
                 }
                 Radar::SlotSpec sp;
-                // Per-slot displayed-integer rounding mode (build 1672, replaces
-                // tolerance). Parsed BEFORE BuildNumericTargets so a fractional
+                // Per-slot displayed-integer rounding mode. Parsed BEFORE
+                // BuildNumericTargets so a fractional
                 // group value/bound coerces to an integer via the slot's mode.
                 Radar::TryParseRoundMode(vj.value("rounding_mode", "Round"), sp.roundMode);
                 if (!Radar::BuildNumericTargets(dt, valStr, sp.targets, sp.roundMode, st)) {
@@ -4819,7 +4768,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const int slotCount = static_cast<int>(slots.size());
 
             // Opt-in leaf budget per slot. Clamped, not trusted: too small silently hides
-            // a derived class's own fields (the old fixed 8 did exactly that), too large
+            // a derived class's own fields (a fixed 8 does exactly that), too large
             // is a memory footgun on a 500-field object x 4 slots x every candidate.
             int perSlotCap = request.value("per_slot_cap", Orden::kDefaultPerSlotCap);
             if (perSlotCap < 8)    perSlotCap = 8;
@@ -4867,10 +4816,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Per-slot leaf-cap truncation. Distinct from deadline_hit: that one says
             // fewer OBJECTS were examined, this one says an examined object kept fewer
             // WITNESSES than it matched — so a slot's "All fields" list is a page, and a
-            // later Changed/Decreased refine can only re-read what was kept. It was
-            // computed and only LOG_WARN'd until audit #5 AE13. `per_slot_cap` is the
-            // EFFECTIVE cap after the 8..4096 clamp above, which the client cannot
-            // derive (it omits the key entirely when it equals its own default).
+            // later Changed/Decreased refine can only re-read what was kept
+            // (audit #5 AE13). `per_slot_cap` is the EFFECTIVE cap after the 8..4096
+            // clamp above, which the client cannot derive (it omits the key entirely
+            // when it equals its own default).
             data["per_slot_cap_hit"] = scanResult.perSlotCapHit;
             data["per_slot_cap"]     = perSlotCap;
             data["candidates"]      = candidates;
@@ -4910,7 +4859,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 [&](Radar::GroupSession& sess) {
                     if (valuesJson.size() != sess.slots.size()) { countMismatch = true; return; }
                     // Re-target each slot from the new (value, scan_type). The dt is
-                    // fixed by the first scan. P2: prev-value predicates carry NO
+                    // fixed by the first scan. Prev-value predicates carry NO
                     // value (they compare each leaf against its own prevValue), so
                     // only targeted types rebuild the numeric target set.
                     for (size_t s = 0; s < sess.slots.size(); ++s) {
@@ -4922,8 +4871,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             badScanType = stStr; return;
                         }
                         sess.slots[s].st        = st;
-                        // Per-slot displayed-integer rounding mode (build 1672,
-                        // replaces tolerance). Set before BuildNumericTargets so a
+                        // Per-slot displayed-integer rounding mode. Set before
+                        // BuildNumericTargets so a
                         // fractional refine value/bound coerces via the slot's mode.
                         Radar::TryParseRoundMode(valuesJson[s].value("rounding_mode", "Round"),
                                                  sess.slots[s].roundMode);
@@ -5070,15 +5019,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === query_group_slot_leaves: every leaf ONE slot of ONE candidate kept,
-        // BY NAME (build 2719).
+        // BY NAME.
         //
         // A group row can only display a single assignment, however many the
-        // candidate satisfies. On the DumperTest sample a `Changed` + `Unchanged`
-        // refine kept {Health.CurrentValue, TickCount} for slot 0 and 36 leaves
-        // including FrozenInt for slot 1 — two equally valid pairs, one row. The
-        // others existed on the wire only as raw integers in `matched_offsets`,
-        // and an integer cannot tell a user that 1308 is `FrozenInt`, so a correct
-        // match was reported as a miss four separate times.
+        // candidate satisfies. The others reach the wire in the row only as raw
+        // integers in `matched_offsets`, and an integer cannot tell a user that 1308
+        // is `FrozenInt`, so a correct match would read as a miss.
         //
         // On demand, per expanded row — never inlined into the paged list, which
         // carries up to 1000 candidates x N slots x per_slot_cap (<= 4096) leaves. ===
@@ -5223,7 +5169,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // (CLASSTOTAL) — this bounds only row materialization. [CLASSCAP]
             //
             // ⚠ The DEFAULT stays 5000: it is the wire default for a client that sends no
-            // "limit", and the UI now always sends one.
+            // "limit", and the UI always sends one.
             if (limit < 1) limit = 1;
             if (limit > 50000) limit = 50000;
 
@@ -5306,7 +5252,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ProcessEvent; the user performs an in-game action; Stop freezes the
         // table; Get resolves + ranks by fire count. Pipe-only. ===
         if (cmd == Renge::CMD_PE_PROFILE_START) {
-            // [PIPE-PER-PROCESS-2026-11-06] Stage C: one writer at a time (Fern.h, m_profileMu).
+            // [PIPE-PER-PROCESS-2026-11-06] One writer at a time (Fern.h, m_profileMu).
             std::lock_guard<std::mutex> profileLock(m_profileMu);
             // Force the game-thread PE hook up NOW so we count the game's own
             // calls without first issuing an invoke. hook_active=false means the
@@ -5315,8 +5261,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // [TRACE-UNLOADED-NAMES] Each function's identity is read at its first call, so one the game unloads before
             // Stop keeps its name. What the reader needs -- the flags offset, whose first decision can run a GObjects
-            // vote, and UMG's widget classes -- is decided here on the pipe thread, before the ring starts, so the
-            // calls traced before the table starts stay as few as before.
+            // vote, and UMG's widget classes -- is decided here on the pipe thread, before the ring starts, so that
+            // work does not lengthen the stretch traced before the table starts.
             const Ubel::FunctionCaptureSetup captureSetup = Ubel::PrepareFunctionCapture();
 
             // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
@@ -5485,7 +5431,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
                     }
                 }
-                // [TRACE-UNLOADED-NAMES] review UI-1. A tick is an address from an earlier fetch. A function unloaded
+                // [TRACE-UNLOADED-NAMES] UI-1. A tick is an address from an earlier fetch. A function unloaded
                 // since -- its row cut by the fetch limit, so the UI never learned -- would scope the trace on a freed
                 // address: nothing, or whatever function took it. Checked here against the previous recording's table,
                 // which StartRecording has not cleared yet: only a tick that still holds the function it named stays.
@@ -5577,10 +5523,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["hook_active"] = hookActive;
             if (!traceReply.is_null()) data["trace"] = traceReply;
             if (!hookActive) {
-                // THREE failure modes, three remedies. The old text collapsed the
-                // first two and told the user to "do any invoke first", which on the
-                // not-detected path was unreachable advice by construction: the
-                // invoke re-entered an already-satisfied one-time init and hit the
+                // THREE failure modes, three remedies, never collapsed: "do any invoke
+                // first" is unreachable advice on the not-detected path, where the
+                // invoke re-enters an already-satisfied one-time init and hits the
                 // same early return. ([PEHOOKONCE-2026-08-18])
                 const int peOffset = UE5_GetProcessEventOffset();
                 if (Stark::PeOffsetUsable(peOffset)) {
@@ -5598,8 +5543,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 } else if (peOffset == Stark::kPeOffsetNotDetected) {
                     // TWO causes reach this sentinel and the DLL does not narrow it
                     // here, so the text must not pick one. Naming only the
-                    // no-scan case would be a fresh version of the very defect
-                    // being fixed — advice that cannot work on the other path.
+                    // no-scan case would give advice that cannot work on the
+                    // other path.
                     data["hook_detail"] = std::string(
                         "ProcessEvent is not resolved yet, and detection is still ARMED — "
                         "this attempt changed nothing. Either no scan has run in this process "
@@ -5643,7 +5588,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
             }
             // A trace that wrote nothing has nothing to read: give its ring back now instead of leaving it in the game
-            // until the next Start (review DLL-5). The reply still reports it, empty, so the UI can say so.
+            // until the next Start (DLL-5). The reply still reports it, empty, so the UI can say so.
             const bool hadTrace = ti.allocated;
             if (hadTrace && Linie::ReleaseIfEmpty()) ti.allocated = false;
             Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen (trace: %llu records written, %llu kept%s)",
@@ -5660,9 +5605,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === pipe_clients: who holds this pipe's connections ===
-        // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
+        // [PIPE-PER-PROCESS-2026-11-06] No client is disconnected for
         // idling, but who holds the connections can be seen. The asking connection is marked self.
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: every hold, whether it is in force, and who holds it. "you" marks
+        // [PIPE-PER-PROCESS-2026-11-06] get_holds: every hold, whether it is in force, and who holds it. "you" marks
         // the asker's own, so a client can release only what it set.
         if (cmd == Renge::CMD_GET_HOLDS) {
             json arr = json::array();
@@ -5725,8 +5670,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // sub-millisecond, so an integer would round the interesting ones away.
             data["total_busy_ms"]    = busyMs;
             // The headline number: what fraction of wall-clock was a dispatcher
-            // occupied? A high value with a lagging UI is the evidence Phase 1
-            // (non-blocking dispatch) would help; a low one says look elsewhere.
+            // occupied? A high value with a lagging UI is the evidence non-blocking
+            // dispatch would help; a low one says look elsewhere.
             data["busy_percent"] = (uptimeMs > 0)
                 ? (busyMs * 100.0 / double(uptimeMs)) : 0.0;
 
@@ -5754,9 +5699,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             proc["cpu_percent"]       = ps.cpuPercent;   // -1 = needs a 2nd sample
             data["process"] = proc;
 
-            // Class-walk cache occupancy (audit #5 U5 Tier 0). The bound added with it
-            // was sized from ONE game's log extrapolation; these three numbers are what
-            // make it tunable per game instead. approx_bytes is deliberately rough --
+            // Class-walk cache occupancy (audit #5 U5 Tier 0). The cache's bound is a
+            // rough estimate; these three numbers are what make it tunable per game.
+            // approx_bytes is deliberately rough --
             // it counts the two owned strings and the field vector, and std::string's
             // SSO makes anything finer a lie about the allocator.
             {
@@ -5792,8 +5737,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             gt["ms_since_last_fire"]    = (msSinceFire == UINT64_MAX)
                                             ? int64_t(-1) : int64_t(msSinceFire);
             // `responsive` is the GATE predicate: Unknown counts as responsive, because
-            // "no hook yet" means "try". Kept unchanged so an older UI does not start
-            // rendering "Stalled" on a healthy game. `liveness` is the honest
+            // "no hook yet" means "try". Its meaning stays fixed so an older UI that reads
+            // it does not render "Stalled" on a healthy game. `liveness` is the honest
             // three-state answer, and is what the UI renders. (STALLDEFAULT-2026-08-26)
             gt["responsive"]            = Stark::IsGameThreadResponsive();
             gt["liveness"]              =
@@ -5877,7 +5822,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             json functions = json::array();
             int emitted = 0;
-            // Cadence diagnostic (Phase E): count + list the periodic-looking candidates
+            // Cadence diagnostic: count + list the periodic-looking candidates
             // (same band the UI's PeProfileEntry.IsPeriodic uses) so an idle-window
             // recording is verifiable from the log, not just the UI.
             int periodicCount = 0, periodicLogged = 0;
@@ -5929,9 +5874,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                                     : Aura::ClassDerivesFromAny(Ubel::GetOuter(snap[i].func), kWidgetBases);
                 if (gone) item["unloaded"] = true;
                 if (fd.state == Ubel::FuncState::Recycled) item["recycled"] = true;
-                // Review DLL-3: another function took this address during the recording; the count is both.
+                // DLL-3: another function took this address during the recording; the count is both.
                 if (snap[i].ident.reused) item["reused"] = true;
-                item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence (Phase E): inter-arrival mean
+                item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence: inter-arrival mean
                 item["cv"]             = snap[i].cv;             //   + coefficient of variation (regularity)
                 item["gap_samples"]    = snap[i].gapSamples;     //   + how many gaps measured
                 functions.push_back(item);
@@ -5995,7 +5940,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (maxRecs > kPageMax) maxRecs = kPageMax;
 
             // The state reported is the one the copy saw, under the same lock: a Start between a separate read and
-            // the copy would hand back another recording's state with this one's records (review DLL-1).
+            // the copy would hand back another recording's state with this one's records (DLL-1).
             Linie::TraceInfo ti;
             std::vector<Linie::TraceRecord> recs;
             uint64_t next = from;
@@ -6034,7 +5979,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["kind"] = kind;
             const bool have = Linie::TraceDistinct(funcs, objs, &gen, &idents);
             data["gen"] = gen;
-            // Asked for one recording's names while the DLL holds another: answer nothing and say so (review DLL-1).
+            // Asked for one recording's names while the DLL holds another: answer nothing and say so (DLL-1).
             if (have && request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
                 data["stale"] = true;
                 data["total"] = 0;
@@ -6085,7 +6030,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled)
                         it["unloaded"] = true;
                     if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
-                    // Review DLL-3: the address held another function during the recording; its calls are mixed.
+                    // DLL-3: the address held another function during the recording; its calls are mixed.
                     if (i < idents.size() && idents[i].reused) it["reused"] = true;
                     // [LIVEFUNCS-STEP2] F6: where a live native function's code is, for a CE address; "" for a script
                     // function (its Func is the interpreter) or one not found. Never for a dead address.
@@ -6108,7 +6053,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
         // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
-        // a reader sends for what it read never frees a newer recording (review DLL-1).
+        // a reader sends for what it read never frees a newer recording (DLL-1).
         // [LIVEFUNCS-STEP2] F5. pe_snap_layouts: every arm of the stopped trace -- one load of a chosen function --
         // with its layout, paged by arms; layouts shared by several arms are sent once per page. Read once per load.
         if (cmd == Renge::CMD_PE_SNAP_LAYOUTS) {
@@ -6425,7 +6370,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // a TMap value inside a struct element of a TArray, …) needs a
                 // recursive descent. Only run it when the shallow scan found
                 // nothing AND the caller opted in via container_depth > 1, so
-                // the common (fast) case is never slowed. (build 1194)
+                // the common (fast) case is never slowed.
                 int containerDepth = request.value("container_depth", 1);
                 int containerElemCap = request.value("container_elem_cap", 256);
                 bool deepRan = false;
@@ -6433,16 +6378,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     Aura::ContainerScanStats deepStats;
                     containerMatches = Aura::FindInContainersDeep(queryAddr, 8, containerDepth,
                                                                   containerElemCap, &deepStats);
-                    // Fold BOTH passes, unconditionally. This used to be
-                    // `if (containerMatches.empty()) stats = deepStats;` — so a deep
-                    // pass that SUCCEEDED reported the shallow pass's counters and
-                    // duration, i.e. the numbers described a pass that had nothing to
-                    // do with the answer, and the deep pass's own deadline flag was
-                    // dropped on the floor (a partial-but-successful deep scan then
-                    // read as complete). The whole stated purpose of this block is to
-                    // let the user tell a clean miss from a truncated scan, so the
-                    // deadline flag must be the OR of the two and the wall time the
-                    // SUM — the user waited for both. (audit #5 Z12)
+                    // Fold BOTH passes, unconditionally. Keeping only one pass's stats
+                    // would describe a pass that had nothing to do with the answer, or
+                    // drop the deep pass's own deadline flag (a partial-but-successful
+                    // deep scan would then read as complete). The whole stated purpose
+                    // of this block is to let the user tell a clean miss from a
+                    // truncated scan, so the deadline flag must be the OR of the two
+                    // and the wall time the SUM — the user waited for both.
                     //
                     // Guarded on objectsTotal: FindInContainersDeep zeroes `stats` and
                     // returns early when it cannot scan at all, and folding THAT in
@@ -6604,7 +6546,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === get_current_target: auto-detect the actor the player is targeting ===
-        // "Related Objects" Phase 2 (Edel): resolve GWorld -> PlayerController ->
+        // "Related Objects" (Edel): resolve GWorld -> PlayerController ->
         // Pawn, score the player's outgoing object-pointer fields, and return a
         // ranked candidate list (best-first) the UI feeds into the Related panel.
         if (cmd == Renge::CMD_GET_CURRENT_TARGET) {
@@ -7051,7 +6993,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // ABSOLUTE object address — valid for this session only — exactly as the
                 // packed branch above does. A restart-surviving flat chain would need the
                 // FFixedUObjectArray Objects-deref offset plumbed out and live verification
-                // on a flat title (none available here); tracked in the register.
+                // on a flat title; tracked in the register.
                 data["flat_layout"]   = true;
                 data["packed_layout"] = false;
                 data["warning"] =
@@ -7242,7 +7184,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
 
             // What to look for is decided from the published pointers, which a scan still running has not finished
-            // publishing. [PIPE-PER-PROCESS-2026-11-06] Stage C
+            // publishing. [PIPE-PER-PROCESS-2026-11-06]
             extern std::atomic<bool> g_initInProgress;
             if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {
                 return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
@@ -7348,9 +7290,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             bool applied = false;
 
-            // One copy, read under the lock the job writes them under. Each field used to be read twice, from fields
-            // a new run's reset clears, so the publish below could see a pointer and then publish 0 -- and call
-            // Aura::Init(0). [PIPE-PER-PROCESS-2026-11-06] Stage C
+            // One copy, read under the lock the job writes them under. A new run's reset clears the job's fields, so
+            // reading each one twice from there could see a pointer and then publish 0 -- and call Aura::Init(0).
+            // [PIPE-PER-PROCESS-2026-11-06]
             const RescanResult found = m_rescan.Results();
 
             if (found.gobjects && g_cachedGObjects == 0) {
@@ -7376,8 +7318,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // globals before probing and corrects them at the end, with no staging and no
             // reader fence. On this path that window is open while the UI is connected and
             // the bulk lane is serving, so a re-run republishes defaults over already-probed
-            // values. Measured on the retained logs: 1-3 ms, and only 3 of the family differ
-            // from their defaults on 1 of 16 targets — small, but free to avoid.
+            // values — a short window, but free to avoid.
             //
             // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
             // every reachable path here — CMD_RESCAN only scans pointers that are already 0
@@ -7467,7 +7408,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             json data;
             data["started"] = (started == Start::Started);
-            // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's choice (2026-11-10): a scan another client started
+            // [PIPE-PER-PROCESS-2026-11-06] A scan another client started
             // is a scan in progress, not a failure. Its result is the process's, and scan_status reports it to all.
             if (started == Start::AlreadyRunning) data["in_progress"] = true;
             return Renge::MakeResponse(id, data).dump();
@@ -7480,7 +7421,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const Routine::SingleFlightJob::Snapshot job = m_scan.job.Status();   // one answer: see Status()
             // The phase AFTER the snapshot: UE5_Init stores phase 7 before the job ends, so once the snapshot says "not
             // running, completed" this reads 7 -- the UI's completion test reads it. Read first, a poll stalled between
-            // the two reported a finished scan at phase 6.
+            // the two would report a finished scan at phase 6.
             int phase = SP::phase.load(std::memory_order_acquire);
             const bool running = job.running;
             data["running"]     = running;
@@ -7535,7 +7476,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 rows.push_back(rj);
             }
             data["rows"] = rows;
-            // [CEXPORT-ENUMNAMES-NOTE] review round 2: the rows' enum fields go out without entries under the latch, as
+            // [CEXPORT-ENUMNAMES-NOTE] The rows' enum fields go out without entries under the latch, as
             // a walk's do, so this reply says so too (additive).
             if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
@@ -7622,31 +7563,27 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Build parameter buffer (zero-filled, then overlay hex bytes).
             //
             // ⚠ THE SIZE IS NOT THE CALLER'S TO GET WRONG. `parms_size` arrives from the
-            // request and DEFAULTS TO 0, so a client that simply omits it used to allocate
-            // a ZERO-LENGTH buffer and hand it to ProcessEvent — which then writes the
+            // request and DEFAULTS TO 0, so trusting it would hand a client that simply
+            // omits it a ZERO-LENGTH buffer for ProcessEvent — which then writes the
             // return value past the end of a heap allocation IN THE GAME'S PROCESS. The
             // damage is silent; all the caller sees is `-4 (exception during call)` from
-            // the SEH net, if it is lucky enough for the write to fault at all.
-            //
-            // Measured 2026-08-24: every parameterised `DumperTestActor` UFunction failed
-            // this way (`parms=0` in the invoke log against a `parms_size=4` the very same
-            // DLL reports through `list_all_functions`), while zero-parameter ones passed —
-            // which reads like "parameterised invokes are broken" and is really a buffer
-            // the caller never sized.
+            // the SEH net, if it is lucky enough for the write to fault at all — which
+            // reads like "parameterised invokes are broken" and is really a buffer the
+            // caller never sized.
             //
             // The authoritative number is already in the process: we hold `ufuncAddr`, and
             // `Ubel::ResolveFunctionInfo` reads `UFunction::ParmsSize`. Take the LARGER of
             // the two rather than replacing the caller's value: a caller asking for MORE
             // is harmless slack (the hex overlay is already clamped to the buffer), while a
             // caller asking for less — or for nothing — is the overflow above.
-            // ParmsSize itself is read from the UFunction's tail, which a wrong version misplaced;
+            // ParmsSize itself is read from the UFunction's tail, which a wrong version misplaces;
             // Ubel::ParamBufferSize also reads the function's own parameter chain and never answers
             // less than where that ends. [UE-OVERRIDE-411]
-            // The chain is read at the address even when the tail does not resolve: that case used to
-            // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
+            // The chain is read at the address even when the tail does not resolve, so the caller's
+            // parms_size is never taken alone, unchecked (check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
-            // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a background client's call under an invoke grant, which its
+            // [MCP-WRITE-GRANTS-2026-11-14] A background client's call under an invoke grant, which its
             // server sends with the resolved function's full name; checked below, for background clients only.
             const bool underGrant = conn->background.load() && request.value("grant", false);
             const std::string expectFull = request.value("expect_func_full", "");
@@ -7658,7 +7595,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return e.dump();
             };
             // [D2-3-INVOKE] A background client (the MCP server) neither skips the game thread nor calls what the
-            // maintainer's list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
+            // deny list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
             // could be an RPC. Decided before anything is allocated or queued; the UI and CE are never asked.
             if (conn->background.load()) {
                 std::string why;
@@ -7670,7 +7607,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 else
                     why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags,
                                                            fi.fullName);
-                // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: what the parameters reach by name. A latent call is refused
+                // [MCP-WRITE-GRANTS-2026-11-14] What the parameters reach by name. A latent call is refused
                 // for every background client; the rest, and a layout that cannot be read whole, under a grant only.
                 Ubel::ParamLayout layout;
                 std::string layoutWhy;
@@ -7943,13 +7880,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // Stark::Shutdown draining the queue with set_value(-7) — and neither
                 // path reaches ProcessEvent by any route: the direct fallback lives on
                 // the other side of UE5_CallProcessEventEx's `if (Stark::IsHookActive())`
-                // and returns 0/-2/-3/-4/-8, never -7. The old text named an execution
-                // that provably did not happen, sending the user to inspect the function
-                // and the game state when the truth is that nothing was ever dispatched.
-                // (audit #5 D5/F7)
+                // and returns 0/-2/-3/-4/-8, never -7. So the text must never name an
+                // execution: that would send the user to inspect the function and the game
+                // state when nothing was ever dispatched. (audit #5 D5/F7)
                 else if (callResult == -7) errMsg += " (game-thread hook is down — the invoke was "
                                                      "never dispatched; re-enable the script and retry)";
-                // -8 had no mapping at all, so it fell through as a bare number.
+                // -8 gets its own text rather than falling through as a bare number.
                 else if (callResult == -8) errMsg += " (repeating worker invoke refused while the "
                                                      "hook is down)";
                 data["error"] = errMsg;
@@ -7974,8 +7910,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
             // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON], -17=ON not sent: no live CheatManager
-            // [DEBUGCAM-FORCEON-CDO]. Builds 3676-3681 also sent `nonstatic_on_template` for a toggle on the
-            // CheatManager's class default object; none is sent there now, so the key is gone.
+            // [DEBUGCAM-FORCEON-CDO]. No toggle goes to the CheatManager's class default object, so no
+            // `nonstatic_on_template` key is sent.
             data["state"] = state;
             // [D2-3-INVOKE] An if_free toggle (the MCP server's) met the queue's owner rule: nothing was sent. Answered
             // as a hold's refusal, naming the client whose invoke is outstanding; -27 as its own code.
@@ -8368,7 +8304,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         };
         if (cmd == Renge::CMD_FLY_SET) {
             // [CPP-HARDENING-2026-11-14] The preset first, the one setting Dunste can refuse: a refused one answers an
-            // error with nothing else changed, where it used to be dropped and the reply read as applied.
+            // error with nothing else changed, never a reply that reads as applied.
             // Nothing changed, so nothing is recorded either: the hold recorder reads `holds` as this returns, and
             // would name the refused caller as Fly's holder.
             if (request.contains("preset") && Dunste::SetPreset(request.value("preset", 0)) < 0) {
@@ -8425,12 +8361,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["hidden_actors"] = addrs;
             }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
-            // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds it on. Additive keys.
+            // [PIPE-PER-PROCESS-2026-11-06] Who holds it on. Additive keys.
             data["claims"]     = st.claims;       // owners that turned it on and have neither left nor turned it off
             data["ce_claimed"] = st.ceClaimed;    // CE's mailbox record is one of them
             data["you"]        = st.callerClaimed;   // [MCP-WRITE-GRANTS-2026-11-14] the asking client is one too
             // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
-            // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
+            // restore window, which hidden_count > 0 with active == false alone cannot tell apart. Additive keys.
             data["restore_pending"]   = st.restorePending;
             data["restore_abandoned"] = st.restoreAbandoned;
             return data;
@@ -8605,7 +8541,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["x"] = m.P.X;         data["y"] = m.P.Y;     data["z"] = m.P.Z;
                     data["pitch"] = m.P.Pitch; data["yaw"] = m.P.Yaw; data["roll"] = m.P.Roll;
                     data["map"] = m.MapName;
-                    // [W2-MARKER-PARENTREL] ALWAYS sent (review 5 of 7490c24e): this reply has no 'source' key, so only
+                    // [W2-MARKER-PARENTREL] ALWAYS sent: this reply has no 'source' key, so only
                     // a key present on a healthy save too lets the UI tell "healthy" from "an older DLL that never says".
                     data["parent_relative"] = m.ParentRelative;
                 }
@@ -8628,7 +8564,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 p.Pitch = request.value("pitch", 0.0);
                 p.Yaw   = request.value("yaw", 0.0);
                 p.Roll  = request.value("roll", 0.0);
-                // [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: keep_undo leaves the process-wide "last" slot alone (the
+                // [PIPE-PER-PROCESS-2026-11-06] keep_undo leaves the process-wide "last" slot alone (the
                 // MCP server sends it, so an AI's jump never replaces where the user's Recall last returns to).
                 code = Wirbel::RecallExplicit(p, hasRot, &tier, request.value("keep_undo", false));
                 Sein::Info("PIPE:cmd", "teleport_recall_marker: explicit -> %d", code);
@@ -8787,8 +8723,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["code"] = code;
             data["tier"] = tier;
-            // Publish the landing ONLY when it was actually observed. A failed re-read
-            // used to arrive as (0,0,0) and overwrite the panel's live readout.
+            // Publish the landing ONLY when it was actually observed: a failed re-read
+            // must not arrive as (0,0,0) and overwrite the panel's live readout.
             if (code == 0 && landingKnown) {
                 data["x"] = p.X;         data["y"] = p.Y;     data["z"] = p.Z;
                 data["pitch"] = p.Pitch; data["yaw"] = p.Yaw; data["roll"] = p.Roll;
@@ -8920,8 +8856,8 @@ std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t 
     entry->slot        = std::make_shared<Kanne::WatchSlot>();
     std::unique_ptr<WatchEntry> replaced;
     {
-        // One lock decides and replaces. The old StopWatch-then-relock let a second watch land in between, and the
-        // assignment then destroyed it while its thread ran.
+        // One lock decides and replaces. A StopWatch-then-relock would let a second watch land in between, and the
+        // assignment would then destroy it while its thread ran.
         std::lock_guard<std::mutex> lock(m_watchMutex);
         // StopAllWatches runs after Stop clears m_running, under this lock: a watch past it would be joined by nobody.
         if (!m_running.load()) return "the pipe server is stopping";
@@ -8933,7 +8869,7 @@ std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t 
                 return "too many watches in this game (at most " + std::to_string(Grimoire::PIPE_WATCH_MAX_TOTAL) + ")";
         }
         // The map slot before the thread: a throw after the thread started (an insert's allocation) would leave
-        // it detached, sampling for the life of the process (review, 2026-11-10). Nobody sees an empty slot: every
+        // it detached, sampling for the life of the process. Nobody sees an empty slot: every
         // reader of m_watches holds this lock.
         auto [slotIt, fresh] = m_watches.try_emplace(key);
         // The thread holds the slot and copies of what it reads -- nothing of this entry, this server or the

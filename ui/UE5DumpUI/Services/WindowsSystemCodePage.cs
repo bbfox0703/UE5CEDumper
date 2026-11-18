@@ -6,9 +6,8 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// [PATH-CE-MODULE-VIEW] <see cref="ISystemCodePage"/> on Windows: <c>WideCharToMultiByte(CP_ACP, 0)</c> then
 /// <c>MultiByteToWideChar(CP_ACP)</c>. Flags 0 on purpose: that is best fit ON, the conversion ANSI
-/// <c>Module32First</c> performs. Measured on this PC (ACP 950) against Module32First itself, for
-/// 遊戲 / ゲーム / Game™ / Café / Game® / Tony's: byte-identical in all six cases. <c>WC_NO_BEST_FIT_CHARS</c> would
-/// give <c>Caf?</c> where CE shows <c>Cafe</c>.
+/// <c>Module32First</c> performs, so the name reads as Module32First's does. <c>WC_NO_BEST_FIT_CHARS</c>
+/// would give <c>Caf?</c> where CE shows <c>Cafe</c>.
 ///
 /// The UI and CE both run with the system ANSI code page (neither manifest sets <c>activeCodePage</c>), so CP_ACP
 /// read here is CE's.
@@ -26,15 +25,15 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
 
     /// <summary>[PATH-CE-INJECT-ANSI] <see cref="ISystemCodePage.AnsiPathBytes"/> in an explicit code page, with the
     /// 8.3 lookup injectable, so tests do not depend on the machine's ACP or on the volume's 8.3 setting (8.3 names
-    /// exist on C: here but are OFF on D:). Exact narrowing only: best fit turns Café into Cafe, a folder that does
-    /// not exist.</summary>
+    /// can be on for one volume and OFF for another). Exact narrowing only: best fit turns Café into Cafe, a folder
+    /// that does not exist.</summary>
     internal static byte[]? AnsiPathBytes(string path, uint codePage, Func<string, string?> shortPath)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        // (second review, T-ALIAS-LEAF-UI -- measured) An ASCII path is never aliased: it already reads the same in
-        // every code page, and an alias of the FILE renames the loaded module (UE5DUM~1.DLL).
+        // (T-ALIAS-LEAF-UI) An ASCII path is never aliased: it already reads the same in every code page, and an
+        // alias of the FILE renames the loaded module (UE5DUM~1.DLL).
         if (IsAscii(path)) return System.Text.Encoding.ASCII.GetBytes(path);
-        // (skeptic CEINJ-4) The bytes are decoded in the GAME's code page, which is not the UI's under Locale
+        // (CEINJ-4) The bytes are decoded in the GAME's code page, which is not the UI's under Locale
         // Emulator; an ASCII 8.3 alias reads the same in every code page, so it wins when there is one -- but only
         // one that keeps the DLL's own name.
         string? sp = shortPath(path);
@@ -69,7 +68,7 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
     }
 
     /// <summary>The 8.3 alias of the FOLDER plus the file's own long name, or null. Never the file's alias: that
-    /// renames the loaded module (UE5DUM~1.DLL -- second review, measured). The folder unchanged is a legitimate
+    /// renames the loaded module (UE5DUM~1.DLL). The folder unchanged is a legitimate
     /// answer: a volume with 8.3 names off.</summary>
     private static string? ShortPath(string path)
     {
@@ -83,7 +82,7 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
     }
 
     /// <summary><see cref="ISystemCodePage.AnsiModuleName"/> in an explicit code page, so tests do not depend on the
-    /// machine's ACP. Any API failure returns the name unchanged: the same answer as before this existed.</summary>
+    /// machine's ACP. Any API failure returns the name unchanged: the answer with no conversion at all.</summary>
     internal static string AnsiModuleName(string text, uint codePage)
     {
         if (string.IsNullOrEmpty(text)) return text ?? "";

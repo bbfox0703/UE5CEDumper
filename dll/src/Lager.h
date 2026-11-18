@@ -453,7 +453,7 @@ inline std::vector<HolderCandidate> ChooseHolderTargets(const ImageLayout& img, 
 /// one would leave the lock taken for every later MinHook call. So a target is used only where every byte
 /// MinHook reads is readable. Its IsExecutableAddress accepts any PAGE_EXECUTE_* page, and a guard page faults on its
 /// first read. Execute-only PAGE_EXECUTE counts as readable: x86-64 has no user-mode execute-only pages, and a read of
-/// one succeeds (measured 2026-11-06, [MH-TRAMPOLINE-PREFLIGHT]); refusing it would cost a game whose protector maps
+/// one succeeds ([MH-TRAMPOLINE-PREFLIGHT]); refusing it would cost a game whose protector maps
 /// code that way its ProcessEvent hook. The SEH copy that follows these rules is the proof for each target.
 inline bool ProtectIsExecutable(uint32_t protect) {
     return (protect & (kPageExecute | kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
@@ -468,12 +468,12 @@ constexpr uint32_t kPageReadOnly  = 0x02;
 constexpr uint32_t kPageReadWrite = 0x04;
 constexpr uint32_t kPageWriteCopy = 0x08;
 
-/// [D2-3-WRITEMEM] What `write_mem` may write (maintainer, 2026-11-11, for every client): data that is writable as it
-/// stands. It used to make any page READWRITE for the write, so code and read-only data were writable, a code page lost
-/// execute while it ran (a game thread executing there faulted), and a write across pages restored the FIRST page's
-/// protection on all of them. Now nothing changes a page's protection: an executable page is code, a read-only one is a
-/// vtable or another image's constants, a guard page is a stack's tripwire, and each is refused. A copy-on-write page
-/// is data: writing it is how it gets its private copy.
+/// [D2-3-WRITEMEM] What `write_mem` may write, for every client: data that is writable as it stands. Nothing changes a
+/// page's protection -- making a page READWRITE for the write would make code and read-only data writable, take execute
+/// off a code page while it ran (a game thread executing there faults), and a write across pages would restore the
+/// FIRST page's protection on all of them. An executable page is code, a read-only one is a vtable or another image's
+/// constants, a guard page is a stack's tripwire, and each is refused. A copy-on-write page is data: writing it is how
+/// it gets its private copy.
 enum class WriteTarget : uint8_t { Writable = 0, NotWritable = 1, Unmapped = 2, Executable = 3 };
 
 inline WriteTarget ClassifyWriteRegion(uint32_t state, uint32_t protect) {
@@ -504,9 +504,9 @@ struct MemRegion { uintptr_t base = 0; size_t size = 0; bool image = false; uint
 
 /// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
 /// touches an image region whose module is a build of the dumper (`isDumperAt(allocationBase)`), walked region by region
-/// with `query(p)`. No module list: one that could not be read (EnumProcessModules fails while a DLL loads or unloads)
-/// let the range through (review wf_bbd1bbfe-20d D7-6). A region that cannot be read ends the walk; write_mem's own
-/// classification refuses what is not committed.
+/// with `query(p)`. No module list: one that cannot be read (EnumProcessModules fails while a DLL loads or unloads)
+/// would let the range through. A region that cannot be read ends the walk; write_mem's own classification refuses
+/// what is not committed.
 template <class QueryFn, class IsDumperFn>
 bool RangeTouchesDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, QueryFn&& query,
                              IsDumperFn&& isDumperAt) {

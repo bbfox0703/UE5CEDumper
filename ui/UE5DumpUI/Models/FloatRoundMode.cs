@@ -2,11 +2,10 @@ namespace UE5DumpUI.Models;
 
 /// <summary>
 /// How a fractional float/double is reduced to the integer the game DISPLAYS,
-/// before any numeric compare (build 1672) — the C# mirror of the DLL's
+/// before any numeric compare — the C# mirror of the DLL's
 /// <c>Radar::RoundMode</c> (dll/src/Radar.h). Games store HP/MP/progress as
 /// floats (513.36, 99.6) but show a rounded integer; the user searches and
-/// compares against what they SEE. This replaces the old implicit half-away
-/// round + the ± tolerance band across Value Search, Snapshot and SPC.
+/// compares against what they SEE.
 ///
 /// Applied to Float/Double values in EVERY numeric predicate (Exact / Bigger /
 /// Smaller / Between vs a WHOLE target, plus the temporal Changed / Unchanged /
@@ -16,8 +15,8 @@ namespace UE5DumpUI.Models;
 /// when a FRACTIONAL target/bound is coerced to an integer.
 ///
 /// Persisted per panel (Value Search / Snapshot / SPC) as the wire string
-/// "Round" / "Trunc" / "Ceil"; default <see cref="Round"/> = the historical
-/// half-away-from-zero behavior. Pure value enum (AOT-safe).
+/// "Round" / "Trunc" / "Ceil"; default <see cref="Round"/> (half-away-from-zero).
+/// Pure value enum (AOT-safe).
 /// </summary>
 public enum FloatRoundMode
 {

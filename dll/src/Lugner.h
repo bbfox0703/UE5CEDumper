@@ -66,30 +66,25 @@ inline LONG PreCrtCallCount()    { return g_preCrtCalls; }
 // US, because we are the module registered under that name — then `GetProcAddress` and
 // calls our thunk again, while our resolver is still inside `LoadLibraryW`.
 //
-// Measured on OCTOPATH TRAVELER, build 3364 (`out/hang-…-24836.dmp`, 2026-08-27): the main
-// thread sat in `ZwWaitForAlertByThreadId` on an SRWLOCK at `dxgi.dll+0x2ACC90` — our own
-// `s_lock` — with the `AcGenral`/`apphelp` notification frames appearing **twice** on the
-// stack. **SRWLOCK is documented NON-RECURSIVE**, so the second `AcquireSRWLockExclusive` on
-// that thread deadlocked; the loader lock was therefore never released, and all three
-// threads we create in DllMain stayed parked in `ZwWaitForSingleObject`. The game never drew
-// a frame. That lock is now gone — audit #4 B43 had already removed it from the winmm twin
-// for the sibling lock-order reason and left dxgi alone; this finishes it.
+// **SRWLOCK is documented NON-RECURSIVE**, so a lock held across the resolve deadlocks on
+// that nested call: the second `AcquireSRWLockExclusive` on the same thread never returns,
+// the loader lock is never released, and every thread we create in DllMain stays parked.
+// The game never draws a frame. That is why the resolver holds no lock.
 //
-// ⭐ What replaces it is NOT another lock. Correctness without one is B43's argument, and it
-// still holds: `mProcs[]` entries are pointer-sized and aligned so a store cannot tear, two
-// racing resolvers write IDENTICAL values, and "nobody observes a half-populated table" is
-// preserved by the thunk itself, which tests its own slot. The guard below only stops the
-// *nested* call from doing redundant work: it returns at once, its thunk then sees an
-// unresolved slot with `mResolveAttempted` still 0 and answers 0 WITHOUT forwarding — which
-// is precisely what ReShade's compat exports do, and ReShade boots this game. The outer call
-// completes the resolve and forwards for real.
+// ⭐ What replaces it is NOT another lock. Correctness does not need one: `mProcs[]` entries
+// are pointer-sized and aligned so a store cannot tear, two racing resolvers write IDENTICAL
+// values, and "nobody observes a half-populated table" is preserved by the thunk itself,
+// which tests its own slot. The guard below only stops the *nested* call from doing
+// redundant work: it returns at once, its thunk then sees an unresolved slot with
+// `mResolveAttempted` still 0 and answers 0 WITHOUT forwarding — which is precisely what
+// ReShade's compat exports do. The outer call completes the resolve and forwards for real.
 //
 // ⚠ Deliberately NOT a "first caller wins" mutual exclusion: a loser returning with its slot
 // still null would hand the GAME a null `CreateDXGIFactory1`. Only a same-thread re-entry
 // bails. A cross-thread race falls through and resolves too, which is safe because the work
 // is idempotent — and even if the rare interleaving below loses the guard, recursion still
 // terminates at depth 2 (the nested `LoadLibraryW` finds the module already in the loader's
-// list and returns without a fresh `SE_DllLoaded`). Removing the lock is what fixes the
+// list and returns without a fresh `SE_DllLoaded`). Holding no lock is what prevents the
 // hang; the guard is defence, not the cure.
 inline volatile LONG g_resolvingTid = 0;
 
@@ -116,24 +111,20 @@ struct ResolveReentry {
 // Returns false — leaving `out` an EMPTY STRING — if the directory could not be
 // obtained or the result does not fit. Callers must treat false as "do not load".
 //
-// ⚠ Why this is not four inline copies of `GetSystemDirectoryW` + `wsprintfW`:
+// ⚠ Why the proxies call this rather than `GetSystemDirectoryW` + `wsprintfW` inline:
 //
-//   * GetSystemDirectoryW's RETURN WAS DISCARDED in all four proxies. On failure it
-//     writes nothing, so the zero-initialised buffer stayed empty and the format
-//     produced `L"\dinput8.dll"` — a DRIVE-ROOT-RELATIVE path. LoadLibraryW then
-//     resolves it against the current drive, i.e. the proxy loads
-//     `<current drive>:\dinput8.dll` into the game process if anything is sitting
-//     there. That is a DLL-hijack shape reached by an ordinary API failure, no
-//     attacker access to System32 required. Returning 0 is not hypothetical: it is
-//     also what happens when the buffer is too small, in which case the return is the
-//     REQUIRED SIZE and, again, nothing is written.
+//   * GetSystemDirectoryW writes nothing on failure, so a caller that ignores its
+//     return formats the empty buffer into `L"\dinput8.dll"` — a DRIVE-ROOT-RELATIVE
+//     path. LoadLibraryW resolves it against the current drive, i.e. the proxy would
+//     load `<current drive>:\dinput8.dll` into the game process if anything is sitting
+//     there: a DLL-hijack shape reached by an ordinary API failure, no attacker access
+//     to System32 required. A buffer that is too small fails the same way: the return
+//     is the REQUIRED SIZE and nothing is written.
 //   * wsprintfW takes no destination size. It is capped at 1024 chars internally and
 //     will happily run past a MAX_PATH buffer.
 //
-// Mimic.cpp's timer-resolution loader already had this right (checked return +
-// wcsncat_s); the proxies are the copies that did not. Truncation is refused rather
-// than accepted — a silently shortened path is another unintended file to load, which
-// is the failure we are removing, not a milder version of it. (audit #5 AD18)
+// Truncation is refused rather than accepted — a silently shortened path is another
+// unintended file to load, not a milder version of the same failure.
 inline bool SystemDllPath(const wchar_t* dllName, wchar_t* out, size_t outCount)
 {
     if (!out || outCount == 0) return false;
@@ -141,8 +132,8 @@ inline bool SystemDllPath(const wchar_t* dllName, wchar_t* out, size_t outCount)
     if (!dllName || !dllName[0]) return false;
 
     // 0 = failed; >= outCount = buffer too small (the return is the required size and
-    // NOTHING was written). Both leave `out` empty, which is exactly the state that
-    // used to become a root-relative path.
+    // NOTHING was written). Both leave `out` empty, the state a format would turn
+    // into a root-relative path, so both refuse.
     const UINT n = GetSystemDirectoryW(out, static_cast<UINT>(outCount));
     if (n == 0 || n >= outCount) { out[0] = L'\0'; return false; }
 

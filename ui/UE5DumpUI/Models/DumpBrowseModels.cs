@@ -54,8 +54,8 @@ public sealed class DumpFuncLine
     [JsonPropertyName("addr")]        public string Addr       { get; set; } = "";
     [JsonPropertyName("return_type")] public string ReturnType { get; set; } = "";
     [JsonPropertyName("num_parms")]   public int    NumParms   { get; set; }
-    /// <summary>[EXTPR-539-540-2026-10-02] The parameters, the return included; null in a dump from before
-    /// build 3622, which recorded only the count.</summary>
+    /// <summary>[EXTPR-539-540-2026-10-02] The parameters, the return included; null in a dump that recorded
+    /// only the count.</summary>
     [JsonPropertyName("params")]      public List<DumpFuncParamLine>? Params { get; set; }
 }
 
@@ -111,7 +111,7 @@ public sealed class DumpMetaLine
 
 /// <summary>[EXTPR-539-540-2026-10-02] What the summary line says about the enum list: whether it was read,
 /// whether member names could be, and whether it was cut short. Null / false when the file has no such keys
-/// (a dump from before build 3621, or one cut off before its summary).</summary>
+/// (a dump written without them, or one cut off before its summary).</summary>
 public sealed class DumpSummaryLine
 {
     [JsonPropertyName("enums_listed")]      public bool? EnumsListed     { get; set; }

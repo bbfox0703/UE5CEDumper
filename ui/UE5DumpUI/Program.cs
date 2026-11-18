@@ -44,10 +44,8 @@ internal static class Program
         //
         // It catches far more than STARTUP: anything the dispatcher rethrows
         // during the message loop unwinds through StartWithClassicDesktopLifetime
-        // and lands here. The report used to hard-code the phrase "startup crash"
-        // anyway, which mislabelled a fault 31 minutes into a live session
-        // ([PASTECRASH-2026-08-18]); CrashReportFormatter now states the real
-        // phase and uptime.
+        // and lands here, so the report must not call every fault a "startup crash":
+        // CrashReportFormatter states the real phase and uptime ([PASTECRASH-2026-08-18]).
         try
         {
             // [LEAD-SECOND-UI-CRASHLOG] Single instance, decided before Avalonia starts. Decided inside

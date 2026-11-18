@@ -5,17 +5,13 @@
 // PipeServer: Named Pipe JSON IPC server (107 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
-// asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until
-// build 3262 — the seventh stale copy that gate was built for, and it survived because the
-// registry covered the docs but not the two SOURCE headers the docs derive from
-// (audit #5 AD7/AD22).
+// asserted by `tools/check_derived_counts.py` in CI (audit #5 AD7/AD22).
 //
 // Multi-connection model (Path A — docs/multipipe-eval.md §9): the server
 // accepts up to kMaxPipeInstances clients and serves EACH on its own thread
 // with its own handle, fully serial within itself (read→dispatch→write). Two
 // threads therefore never touch the same handle, so the synchronous pipe never
-// hits the WriteFile-while-ReadFile-parked deadlock that sank the single-handle
-// worker-pool attempt. The UI opens TWO connections (interactive + bulk lanes)
+// hits the WriteFile-while-ReadFile-parked deadlock. The UI opens TWO connections (interactive + bulk lanes)
 // and routes commands; the DLL itself is lane-agnostic — it only supports
 // concurrent connections. CE Lua stays on the Mimic mailbox (off-pipe).
 // ============================================================
@@ -60,16 +56,16 @@ public:
     }
 
 private:
-    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06] Stage B, 3 before):
+    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06] Stage B):
     // the UI's 2 lanes (interactive + bulk), a rig (tools/verify/pipe_client.py), an MCP
     // client, and 2 for a two-lane reconnect whose old instances are still unwinding (each
     // is closed by its own thread after its command returns). The listener is itself an
     // instance, so this is the most clients at once. Each costs a thread and two
     // PIPE_BUF_SIZE buffers; the scan workers several heavy commands could spawn at once
-    // are held by Aura's process-wide budget. It guards no race: [PIPEBUSY-2026-08-18] was
-    // a logging bug, fixed by Voll. CE uses the Mimic mailbox, not the pipe.
-    // ⚠ A name another copy of the DLL created first keeps THAT copy's limit (measured
-    // 2026-11-10); the accept loop logs the limit in force.
+    // are held by Aura's process-wide budget. It guards no race; the at-capacity logging is
+    // Voll's [PIPEBUSY-2026-08-18]. CE uses the Mimic mailbox, not the pipe.
+    // ⚠ A name another copy of the DLL created first keeps THAT copy's limit; the accept
+    // loop logs the limit in force.
     static constexpr DWORD kMaxPipeInstances = 6;
     // Windows takes 1..254; 255 is PIPE_UNLIMITED_INSTANCES.
     static_assert(kMaxPipeInstances >= 1 && kMaxPipeInstances < PIPE_UNLIMITED_INSTANCES,
@@ -77,9 +73,9 @@ private:
 
     // Per-connection state. Each accepted client gets one of these, served by
     // its own HandleConnection thread on its own handle. Every write on a
-    // connection comes from that thread -- replies, and since Stage C its watch
-    // events (Kanne.h) -- and so does CloseConnOnce, so writeMutex is uncontended
-    // today. Writes to DIFFERENT connections need no shared lock.
+    // connection comes from that thread -- replies, and its watch events
+    // (Kanne.h) -- and so does CloseConnOnce, so writeMutex is uncontended.
+    // Writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
         // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
@@ -104,10 +100,8 @@ private:
         // What that in-flight command IS, and when it started. Written just before
         // DispatchCommand (before inFlight goes up) and read by Stop's drain-timeout
         // diagnostic and by SnapshotHolders, so the hot path pays one small copy per
-        // command and the teardown can finally name the connection that would not leave. "2 left" is not actionable; "2 left: lane
-        // busy 4980 ms in 'walk_instance'" is. (2026-08-04: the first Stop ever logged
-        // with connections attached timed out at the full 5 s and the log could not say
-        // why.)
+        // command and the teardown can name the connection that would not leave. "2 left" is not
+        // actionable; "2 left: lane busy 4980 ms in 'walk_instance'" is.
         // diagMutex keeps cmdName and cmdStartMs one pair: both are written under it (HandleConnection) and read
         // under it (SnapshotHolders), so a name never comes with another command's start.
         std::mutex         diagMutex;
@@ -124,22 +118,16 @@ private:
         // CancelSynchronousIo on it. CancelIoEx cancels ASYNCHRONOUS requests; these
         // pipe instances are created without FILE_FLAG_OVERLAPPED, so a thread parked in
         // ReadFile has no pending IRP for CancelIoEx to find and it returns
-        // ERROR_NOT_FOUND. Measured 2026-08-05 on the first Stop that ever caught two
-        // idle connections: "0 accepted, 2 had nothing pending", then 49 re-asserts over
-        // the full 5 s budget, all reporting the same. CancelSynchronousIo is the API for
+        // ERROR_NOT_FOUND. CancelSynchronousIo is the API for
         // a synchronous operation blocking a known thread, and it needs the THREAD handle
         // -- which only the serving thread itself can hand us.
         std::atomic<HANDLE> servingThread{nullptr};
 
         // WHERE the serving thread actually is. `inFlight` only says "inside
-        // DispatchCommand", so everything else -- parked in ReadFile, blocked in
+        // DispatchCommand"; everything else -- parked in ReadFile, blocked in
         // WriteFile on a client that stopped reading, waiting on writeMutex, or joining
-        // watch threads during cleanup -- collapsed into one bucket that the drain
-        // diagnostic then LABELLED "idle in ReadFile". That label is an inference, and
-        // three fixes were aimed at it: "stuck inside a command" (wrong), "CancelIoEx
-        // missed the window" (wrong -- 49 re-asserts, all nothing-pending), and
-        // "CancelSynchronousIo is the right API" (wrong -- still timed out). Each one
-        // treated the label as an observation. This makes it one.
+        // watch threads during cleanup -- would be one bucket, and any label the drain
+        // diagnostic gave it would be an inference. This makes it an observation.
         enum class Phase : uint8_t {
             Reading,          // inside ReadLine's blocking ReadFile
             Dispatching,      // inside DispatchCommand
@@ -182,8 +170,8 @@ private:
     // game thread. Stop's drain waits for these too, so its own resets never run beside one.
     size_t                  m_tearingDown{0};
     // A connection's teardown counted in m_tearingDown for its whole length, a throw included: a count left raised
-    // made every later Stop wait out its full drain (review, 2026-11-10). Constructed with m_connMutex held; released
-    // on every way out, and Stop's drain told.
+    // would make every later Stop wait out its full drain. Constructed with m_connMutex held; released on every way
+    // out, and Stop's drain told.
     struct TeardownCount {
         Fern& f;
         explicit TeardownCount(Fern& fern) : f(fern) { ++f.m_tearingDown; }

@@ -47,8 +47,8 @@ public static class PivotKeyScorer
     }
 
     /// <summary>Interesting-to-project score (HP / Gold / Damage rank high) via
-    /// the shared <see cref="PropertyScoringTable"/>. Used to suggest/sort value
-    /// fields.</summary>
+    /// the shared <see cref="PropertyScoringTable"/>, for suggesting and sorting
+    /// value fields.</summary>
     public static int ValueScore(string className, string propName)
         => PropertyScoringTable.Score(
             new PropertySearchMatch { ClassName = className, PropName = propName }).FinalScore;

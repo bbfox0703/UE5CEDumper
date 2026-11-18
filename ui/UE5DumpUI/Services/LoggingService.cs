@@ -98,10 +98,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
         // per-file orphan sweep over whatever survived.
         //
         // These run AFTER the loggers exist so they can report what they did.
-        // CleanupOldLogFolders used to run before _initLogger was assigned, so its
-        // "Deleted old log folder" line dereferenced null, threw into the adjacent
-        // best-effort catch, and was never once written — the folders were being
-        // deleted silently.
+        // Run before _initLogger is assigned, CleanupOldLogFolders' "Deleted old log
+        // folder" line would dereference null and throw into the adjacent best-effort
+        // catch, and the folders would be deleted silently.
         CleanupOldLogFolders(Constants.LogMaxAgeDays);
         PurgeOrphanedLogs(Constants.LogMaxAgeDays);
 
@@ -530,11 +529,11 @@ public sealed class LoggingService : ILoggingService, IDisposable
     }
 
     /// <summary>The mirror folder for a game process: the SAME folder the DLL logs into (Sein::ProcessFolderName), so
-    /// one session's logs are not split. It used to be its own rule (".exe" only, no trim), which for a stem ending in
-    /// a space or dots named a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]
+    /// one session's logs are not split. A rule of its own (".exe" only, no trim) would, for a stem ending in a space
+    /// or dots, name a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]
     /// "unknown" only for an EMPTY name (no name given: never Logs\ itself). Not for white space: a stem of only
-    /// U+3000 / U+00A0 is a legal folder the DLL logs into, and treating it as blank split the session.
-    /// (second review, MIRROR-WS-DIVERGE)</summary>
+    /// U+3000 / U+00A0 is a legal folder the DLL logs into, and treating it as blank would split the session.
+    /// [MIRROR-WS-DIVERGE]</summary>
     internal static string SanitizeFolderName(string name)
     {
         string folder = ProxyImportAnalyzer.ProcessLogFolderName(name);

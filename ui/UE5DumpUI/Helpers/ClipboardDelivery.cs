@@ -83,13 +83,10 @@ internal static class ClipboardDelivery
     /// toolbar off-screen.
     /// </para>
     /// <para>
-    /// Measured 2026-09-09 (<c>[CLIPELLIPSIS-2026-09-09]</c>): the old wording put
-    /// "so do not paste" at character 135 of 206, and the toolbar truncated at roughly
-    /// character 50 — <c>"ERROR: could not write to the clipboard — the inject ..."</c>.
-    /// The one sentence the whole message exists to deliver was the one a user could not
-    /// see without hovering for the tooltip. Reordering costs nothing and fixes it for
-    /// every truncation width; widening the toolbar would have re-broken what the
-    /// MaxWidth was added for.
+    /// The 360-wide toolbar slot truncates at roughly character 50, so the one sentence the whole message
+    /// exists to deliver must lead, or a user cannot see it without hovering for the tooltip.
+    /// Leading with it holds at every truncation width; widening the toolbar would re-break
+    /// what the MaxWidth is for. <c>[CLIPELLIPSIS-2026-09-09]</c>
     /// </para>
     /// ⚠ Keep "do not paste" inside the first ~40 characters. <c>{what}</c> is
     /// caller-supplied and varies in length, so it must come AFTER the imperative or the

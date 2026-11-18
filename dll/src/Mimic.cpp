@@ -114,7 +114,7 @@ static int s_compoundDepth = 0;
 // copy's mailbox too: a CE script that resolved the earlier copy's export writes there. Handlers read and answer through
 // Box(); only the poller sets it, and every handler runs on the poller's thread. Per thread: a copy can run two
 // pollers for a while -- a stop that gave up waiting on a handler, then a restart -- and each must answer in the mailbox
-// its own command came from (review wf_2875eae9-da5, R3-SBOX-SHARED-POLLERS).
+// its own command came from.
 static thread_local MailboxData* s_box = &g_invokeMailbox;
 static MailboxData& Box() { return *s_box; }
 
@@ -273,14 +273,14 @@ static void PollingThreadBody();
 static void ServeOne(MailboxData* box, bool& warnedThrow) {
     s_box = box;
     // [DUMPER-SECOND-COPY-AUTOSTART] Another poller is mid-command on this mailbox -- the earlier copy's, still in a
-    // handler after its stop gave up waiting for it (review R2-STOPTHREAD-TIMEOUT-REPLAY). It answers that command
-    // itself; running it here too would run it twice.
+    // handler after its stop gave up waiting for it. It answers that command itself; running it here too would run it
+    // twice.
     const int32_t seen = Box().status;
     if (seen == STATUS_PROCESSING) return;
     int32_t cmd = Box().cmd;
     // ...or finishing one: its SetDone writes DONE and then cmd = IDLE, and a pass between the two stores would run that
     // command again. A sender clears status before it writes cmd, so DONE beside a live cmd is that window or a sender
-    // that did not; look again once the other poller has had its moment (R3-PROCESSING-SKIP-DONE-WINDOW).
+    // that did not; look again once the other poller has had its moment.
     if (cmd != CMD_IDLE && seen == STATUS_DONE) {
         Sleep(1);
         if (Box().cmd == CMD_IDLE) return;
@@ -292,11 +292,9 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
 
         // Clear the previous command's error text BEFORE dispatching this one.
         // SetError writes errorMsg; SetDone writes only `result` and never touches
-        // it -- so without this a SUCCESSFUL command inherited the last failure's
-        // message, and a caller reading errorMsg without checking `result` first saw
-        // a stale error on a command that worked. Measured 2026-08-23: after a handler
-        // threw, `GWORLD result=0` still carried "command handler threw ...".
-        // (MBERRSTALE-2026-08-23)
+        // it -- so without this a SUCCESSFUL command would inherit the last failure's
+        // message, and a caller reading errorMsg without checking `result` first would
+        // see a stale error on a command that worked. (MBERRSTALE-2026-08-23)
         //
         // Cleared HERE, not after the handler: a post-clear would wipe the message a
         // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
@@ -308,11 +306,11 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
 
         LOG_INFO("Mailbox: received cmd=%d", cmd);
 
-        // The state B4's immunity exists for is otherwise invisible: a UI client
-        // that died mid-command leaves the per-command cancel latched forever in a
-        // CE-only session, and the old code answered every lookup with an empty set
-        // while reporting scanned=<full pool>. Log the FIRST command that runs under
-        // a latched cancel — once per latch, so the whole session costs one line.
+        // The state this thread's cancel immunity exists for is otherwise invisible: a
+        // UI client that died mid-command leaves the per-command cancel latched in a
+        // CE-only session, and a thread that honoured it would answer every lookup with
+        // an empty set while reporting scanned=<full pool>. Log the FIRST command that
+        // runs under a latched cancel — once per latch, so the whole session costs one line.
         {
             static bool s_loggedCancelLatch = false;
             const bool latched = Tot::g_perCommand.load(std::memory_order_relaxed);
@@ -545,7 +543,7 @@ void StopThread(bool clearMailbox) {
     // [DUMPER-SECOND-COPY-AUTOSTART] Nobody serves the earlier copies' mailboxes now. Only initState is touched: a
     // command a script wrote there is its own. An untick says IDLE where the owner forwards (a revival reaches this
     // copy); a hand-off says SKIPPED, so the copy taking over from this one retires that owner too and takes its
-    // mailbox (review R2-MBX4-IDLE-ORPHAN); an owner that cannot forward says SKIPPED either way.
+    // mailbox; an owner that cannot forward says SKIPPED either way.
     for (int slot = 0; slot < Land::kMaxCopies; ++slot)
         if (MailboxData* box = s_adopted[slot].load(std::memory_order_acquire))
             box->initState = Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,
@@ -684,10 +682,9 @@ static void HandleFindFunction() {
         return;
     }
 
-    // Search the class AND ITS BASES. Only the class's own declared functions used to be
-    // considered, so every inherited UFunction was unreachable from CE Lua by name —
-    // [INVOKEINHERIT-2026-08-20]. Same resolver as UE5_FindFunctionByName, so the pipe and
-    // the mailbox cannot answer the same question differently.
+    // Search the class AND ITS BASES, so an inherited UFunction is reachable from CE Lua by
+    // name [INVOKEINHERIT-2026-08-20]. Same resolver as UE5_FindFunctionByName, so the pipe
+    // and the mailbox cannot answer the same question differently.
     FunctionInfo hit;
     int levels = 0;
     // [VND584-04] ...and then their implemented interfaces, as UClass::FindFunctionByName does.
@@ -806,8 +803,8 @@ static void HandleInvoke() {
     const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
 
     if (fi.functionFlags != Box().functionFlags) {
-        // The whole point of MB1, made greppable: the mailbox field disagreed with
-        // the function actually being invoked. Before the fix this decided the route.
+        // Made greppable: the mailbox field disagrees with the function actually being
+        // invoked, and the route follows the re-read value, never the mailbox's.
         LOG_WARN("Mailbox: INVOKE mailbox functionFlags=0x%08X is STALE — '%s' "
                  "really has 0x%08X; routing on the re-read value (MB1)",
                  Box().functionFlags, fi.name.c_str(), fi.functionFlags);
@@ -817,13 +814,10 @@ static void HandleInvoke() {
     // mistaken for a result.
     //
     // WHY: paramsData is a PERSISTENT global. Whatever the caller wrote for the INPUTS
-    // is still sitting in it, and on at least two titles the return slot came back
-    // holding a copy of an input -- ES2 showed Before/After identical (stale 0x49), and
-    // on DumperTest `Abs(-3.5)` came back with a buffer of `-3.5, 0, -3.5`. A slot that
-    // MIRRORS THE INPUT makes "the function ran and wrote this" indistinguishable from
-    // "the function never executed", which is not a cosmetic problem: it is what made a
-    // b636 latency measurement unpublishable on 2026-08-23 ([B636-NOACCIDENT-2026-08-23]).
-    // PointerPanelViewModel's own docstring states the same hazard in the same words.
+    // is still sitting in it, so an unwritten return slot can hold a copy of an input. A
+    // slot that MIRRORS THE INPUT makes "the function ran and wrote this" indistinguishable
+    // from "the function never executed". [B636-NOACCIDENT-2026-08-23]
+    // PointerPanelViewModel's own docstring states the same hazard.
     //
     // ZERO rather than a 0xCD-style sentinel, deliberately: a struct return that the
     // callee only partially fills reads sanely when the remainder is zero and reads as
@@ -836,9 +830,8 @@ static void HandleInvoke() {
     // and the route line logged just below. Pick a fixture with a non-zero expected
     // return when the question is whether the call happened.
     //
-    // The slot comes from the function's own chain ([FUNCPARM-CONSUMERS] review): fi is
-    // ResolveFunctionInfo's, which reads the tail only, so its params were always empty
-    // and the loop that used to stand here never ran.
+    // The slot comes from the function's own chain [FUNCPARM-CONSUMERS]: fi is
+    // ResolveFunctionInfo's, which reads the tail only, so its params are empty.
     int32_t retOff = -1, retSize = 0;
     if (flagsResolved && fi.returnValueOffset != 0xFFFF && Ubel::ReadReturnSlot(ufuncAddr, retOff, retSize)) {
         const size_t off = static_cast<size_t>(retOff);
@@ -1244,8 +1237,7 @@ static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
     return rc;
 }
 
-// As ChangeHoldAsCe, but never waits for the lock: busy, the change runs unrecorded, as a mailbox invoke always did
-// before build 3716. Returns whether it was recorded.
+// As ChangeHoldAsCe, but never waits for the lock: busy, the change runs unrecorded. Returns whether it was recorded.
 template <typename Change>
 static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {
     std::unique_lock<std::mutex> lock(Voll::Holds().LockFor(hold), std::try_to_lock);
@@ -1263,8 +1255,8 @@ static void HandleSetDebugCamera() {
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [&] { return UE5_SetDebugCamera(req != 0 ? 1 : 0); });
-    // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object any more (an ON there is -17),
-    // so this command leaves cmdOutFlags as the dispatcher cleared it; builds 3676-3681 set the template bit here.
+    // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object (an ON there is -17), so this
+    // command leaves cmdOutFlags as the dispatcher cleared it.
     if (state == -1) {
         // -1 is a state that did not read or a toggle that failed (-4 faulted inside it). Never the no-live-CheatManager
         // case: its read lands on the class default object and answers 0 or 1, and an ON there answers -17.

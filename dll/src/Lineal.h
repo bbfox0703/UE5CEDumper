@@ -14,10 +14,8 @@
 //     obj = ((FlagsAndRefCount >> 32) & PtrMask) << (32 + AlignBits)
 //         | (uint64(ObjectPtrLow) << AlignBits)
 //
-// ⭐ CONSTANTS: PINNED 2026-09-06, READ OUT OF THE VENDORED 5.7 SOURCE. They used to be
-// described here as "assumed" and "best-effort until a packed game exists", which conflated two
-// very different doubts. The constants were never the doubtful part — the engine source is IN
-// THIS TREE and states them, so they are DERIVED, with a citation each:
+// ⭐ CONSTANTS: READ OUT OF THE VENDORED 5.7 SOURCE. The constants are not the doubtful part — the
+// engine source is IN THIS TREE and states them, so they are DERIVED, with a citation each:
 //
 //   AlignBits = 3
 //       vendor/.../UObject/UObjectArray.h:84  `constexpr static int32 UObjectAlignment = 8;`
@@ -27,8 +25,8 @@
 //       :88  `PtrMask   = ~FlagsMask`
 //       and the index is not a comment's word — vendor/.../UObject/ObjectMacros.h:705 is
 //       `#define EInternalObjectFlags_MinFlagBitIndex 14`, so FlagsMask = 0xFFFFC000 and
-//       PtrMask = 0x3FFF. (UObjectArray.h:82 says "at the time of writing this is 14"; that
-//       sentence is what made this look like an assumption. Read the define, not the sentence.)
+//       PtrMask = 0x3FFF. (UObjectArray.h:82 says "at the time of writing this is 14"; read the
+//       define, not the sentence.)
 //   packed serial_off = 0x0C
 //       the packed struct is FlagsAndRefCount(int64)@+0x00, ObjectPtrLow(uint32)@+0x08,
 //       SerialNumber(int32)@+0x0C, ClusterRootIndex(int32)@+0x10 — UObjectArray.h:55/75/92/94.

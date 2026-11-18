@@ -5,7 +5,7 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// Per-session "remembered keywords" store for the Live Walker field search.
-/// Implements the requested rules:
+/// Its rules:
 ///   - LRU: most-recently-used first, capped at <see cref="MaxEntries"/>.
 ///     ⚠ New entries only. Re-using an entry that is ALREADY remembered does NOT
 ///     move it to the front — see the ⚠ block in <see cref="Remember"/>: these
@@ -64,11 +64,10 @@ public static class SearchKeywordHistory
         // new still mutates the list — but it cannot have come from the dropdown, so
         // there is no selection to revert.
         //
-        // The cost is deliberate: re-using a remembered keyword no longer moves it to
+        // The cost is deliberate: re-using a remembered keyword does not move it to
         // the front, so ordering is first-seen rather than strict LRU for entries that
         // already exist, and the first-seen casing is kept (which is what this class's
-        // own doc promises). Reported by the maintainer 2026-08-21 on Live Walker;
-        // all 20 keyword boxes shared it. `[LWFILTERREVERT-2026-08-21]`.
+        // own doc promises). `[LWFILTERREVERT-2026-08-21]`.
         for (int i = 0; i < history.Count; i++)
         {
             if (history[i].Length >= k.Length &&

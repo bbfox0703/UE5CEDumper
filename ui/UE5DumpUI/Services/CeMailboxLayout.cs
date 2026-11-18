@@ -108,8 +108,8 @@ internal static class CeMailboxLayout
     public const string OffContractMin   = "0x08";
 
     /// <summary>'UE5C'. Proves the symbol resolved to the DLL's real data and not to
-    /// a stale address from a previous injection — a failure mode measured on
-    /// 2026-08-06, where CE held a mailbox address the DLL no longer owned.</summary>
+    /// a stale address from a previous injection, where CE holds a mailbox address the
+    /// DLL no longer owns.</summary>
     public const long ContractMagic = 0x43354555L;
 
     // Mailbox status values (must match Mimic.h MailboxStatus). Emitted into the
@@ -126,36 +126,26 @@ internal static class CeMailboxLayout
     /// round-trip, in REAL milliseconds — measured with <c>getTickCount()</c>, not
     /// counted in loop iterations.
     ///
-    /// <para><b>Why that distinction is load-bearing.</b> The loop used to count one
-    /// <c>sleep(1)</c> per iteration and bail at 10000 of them, on the assumption that
-    /// <c>sleep(1)</c> sleeps 1 ms. **Measured in CE's Lua Engine on 2026-08-06
-    /// (Windows 11 26200): it sleeps 15.47 ms.** <c>sleep(1)</c> through
-    /// <c>sleep(10)</c> all cost the same ~15.47 ms — a hard floor at the default
-    /// Windows tick — and <c>sleep(16)</c> jumps to 30.3 ms, i.e. it quantises to
-    /// multiples of ~15.6 ms. CE does not raise the timer resolution for itself, and
+    /// <para><b>Why that distinction is load-bearing.</b> <c>sleep(1)</c> in CE's Lua
+    /// Engine does not sleep 1 ms: <c>sleep(1)</c> through <c>sleep(10)</c> all cost
+    /// ~15.5 ms — a hard floor at the default Windows tick — and longer sleeps quantise
+    /// to multiples of ~15.6 ms. CE does not raise the timer resolution for itself, and
     /// the DLL's own <c>timeBeginPeriod(1)</c> is per-process so it does not leak in.
-    /// So "10000" was really <b>~155 seconds</b>, and a user with a stale mailbox
-    /// address sat through two and a half minutes of a frozen Lua Engine window before
-    /// being told anything.</para>
+    /// A bound of 10000 <c>sleep(1)</c> iterations would be <b>~155 seconds</b> of a
+    /// frozen Lua Engine window before a user with a stale mailbox address is told
+    /// anything.</para>
     ///
-    /// <para><b>That floor is the Windows scheduler tick, NOT a per-machine constant</b>
-    /// — which is what makes it safe to bake <see cref="MailboxPollTimeoutIters"/> from
-    /// it. Measured on two deliberately different CPUs (a 9950X3D desktop and a 9955HX3D
-    /// laptop, very different TDP): every value below the floor matched to three
-    /// decimals — <c>sleep(1)</c> 15.470 on both, <c>sleep(5)</c> 15.630 on both. Only
-    /// the 15/16 ms readings differed (18.59 vs 17.50, 30.31 vs 29.53), which is one
-    /// tick of quantisation noise from a 15 ms timer measuring 15 ms events. The
-    /// hypothesis that this was a performance-dependent per-PC offset is refuted: it is
-    /// the ~64 Hz kernel tick, so EVERY user had the ~155 s timeout, not one machine.</para>
+    /// <para><b>That floor is the Windows scheduler tick (~64 Hz), NOT a per-machine
+    /// constant</b> — which is what makes it safe to bake
+    /// <see cref="MailboxPollTimeoutIters"/> from it.</para>
     /// </summary>
     public const int MailboxPollTimeoutMs = 10000;
 
     /// <summary>
     /// Fallback bound for a CE build with no <c>getTickCount</c>, counted in
-    /// <c>sleep(1)</c> iterations. Derived from the measurement above:
+    /// <c>sleep(1)</c> iterations. Derived from the tick above:
     /// 650 x 15.47 ms ~= 10.1 s, matching <see cref="MailboxPollTimeoutMs"/>.
-    /// Only reached if the probe fails — <c>getTickCount()</c> was verified present
-    /// and returning ms in CE's Lua Engine on 2026-08-06.
+    /// Only reached if the <c>getTickCount()</c> probe fails.
     /// </summary>
     public const int MailboxPollTimeoutIters = 650;
 
@@ -171,25 +161,18 @@ internal static class CeMailboxLayout
     /// Sampling <c>cmd</c> once would report "busy" and abandon the second query, so
     /// the wait is bounded rather than a single read.</para>
     ///
-    /// <para><b>Why 1500 and not the 100 this constant used to say.</b> The emitted loop
-    /// counted <c>sleep(1)</c> iterations against this number, and <c>sleep(1)</c> costs
-    /// 15.47 ms (see <see cref="MailboxPollTimeoutMs"/>), so the value that has actually
-    /// SHIPPED since this wait was introduced is 100 x 15.47 ms ~= 1.55 s — never the
-    /// 100 ms the comment claimed. Moving to a real deadline without moving the number
-    /// would have been a silent 15x tightening of a live timeout, so the number moves to
-    /// match the shipped behaviour instead. It is also the defensible one: the wait
-    /// covers not only the nanosecond publication gap but a previous command that is
-    /// genuinely still in flight, and mailbox commands are dispatched onto the GAME
-    /// thread — a frame at 30 fps is already 33 ms, and a loading screen or a stalled
-    /// game thread is far more. Every bail-out on this path is a soft "busy, try again",
-    /// so erring long costs a wait and erring short costs a spurious failure.</para></summary>
+    /// <para><b>Why 1500.</b> The wait covers not only the nanosecond publication gap but
+    /// a previous command that is genuinely still in flight, and mailbox commands are
+    /// dispatched onto the GAME thread — a frame at 30 fps is already 33 ms, and a
+    /// loading screen or a stalled game thread is far more. Every bail-out on this path
+    /// is a soft "busy, try again", so erring long costs a wait and erring short costs a
+    /// spurious failure.</para></summary>
     public const int MailboxIdleWaitMs = 1500;
 
     /// <summary>
     /// Fallback bound for the idle wait on a CE build with no <c>getTickCount</c>,
     /// counted in <c>sleep(1)</c> iterations. 100 x 15.47 ms ~= 1.55 s, matching
-    /// <see cref="MailboxIdleWaitMs"/> — and, not by coincidence, the exact iteration
-    /// count that shipped before the deadline became real.
+    /// <see cref="MailboxIdleWaitMs"/>.
     /// </summary>
     public const int MailboxIdleWaitIters = 100;
 }

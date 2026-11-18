@@ -98,10 +98,8 @@ FUObjectItem* GetItem(int32_t index);
 
 // Read the SerialNumber of the FUObjectItem at the given index.
 // The offset rule is Lineal::SerialOffsetForLayout, which covers every reachable
-// stride — 16 (@+0x0C), and 20/24/32 (@+0x10), plus the two UE5.7+ modes. The
-// comment here used to say "16-byte or 24-byte" and the code matched it, which
-// is why the reachable 20-byte packed item read ClusterRootIndex instead
-// (audit #5 A1).
+// stride — 16 (@+0x0C), and 20/24/32 (@+0x10), plus the two UE5.7+ modes. A
+// 20-byte packed item read at the 16-byte offset would answer ClusterRootIndex.
 int32_t GetSerialNumber(int32_t index);
 
 // [VND583-06] FUObjectItem::Flags (EInternalObjectFlags) of the item at `index`: an int32 at +0x08 on the
@@ -394,8 +392,8 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
 /// Live actors of `levelAddr`, DERIVED from the Outer back-reference.
 ///
 /// `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO UPROPERTY
-/// (Engine/Classes/Engine/Level.h:428-429), so reflection never sees it and the field
-/// lookup that used to drive walk_world could not ever have matched (audit #5 F8/F9).
+/// (Engine/Classes/Engine/Level.h:428-429), so reflection never sees it and no field
+/// lookup can find it.
 /// SpawnActor outers every actor to the level it then adds it to, so the Outer
 /// back-reference reconstructs the list without knowing any native offset.
 ///
@@ -531,7 +529,7 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
 // === Reverse Reference Search (logical-parent navigation) ===
 //
 // One match for a UObject that holds a pointer to the target UObject.
-// Used to answer "what owns this Item?" — UE's `OuterPrivate` is a
+// It answers "what owns this Item?" — UE's `OuterPrivate` is a
 // naming-hierarchy parent (often `/Engine/Transient` for runtime objects)
 // rather than the logical gameplay parent. Reverse-scanning all UObjects'
 // pointer fields and Object array elements gives the actual owner.
@@ -757,7 +755,7 @@ struct PropertyMatch {
     std::string structType;   // StructProperty -> inner struct name
     std::string innerType;    // ArrayProperty -> inner element type
 
-    // === Inheritance-aware fields (build 610+) ===
+    // === Inheritance-aware fields ===
     //
     // PropertySearch dedupes by (definingClass, propName, offset) so a
     // field declared on AActor and inherited by 4823 children only emits
@@ -803,7 +801,7 @@ struct PropertyMatch {
     std::string keyType;           // MapProperty: key type name
     std::string valueType;         // MapProperty: value type name
 
-    // === Deep / nested match (build 1222) ===
+    // === Deep / nested match ===
     //
     // True when this row is a synthetic dotted-path leaf discovered by the
     // deep descent into StructProperty members + struct-typed container
@@ -821,18 +819,15 @@ struct PropertyMatch {
 
 struct PropertySearchResult {
     int scannedClasses = 0;
-    // Objects ACTUALLY walked. This used to be assigned the full GObjects count
-    // before the loop started, so a search that stopped at the maxResults cap a
-    // few percent in still reported the whole pool as scanned — and the UI printed
-    // that as "scanned 1,204,338 objects". Measured on DumperTest 2026-08-14:
-    // "3 matches from 8 classes (scanned 24445 objects)". (audit #5 D5/F4)
+    // Objects ACTUALLY walked, never the full GObjects count: a search that stopped
+    // at the maxResults cap a few percent in must not report the whole pool as
+    // scanned.
     int scannedObjects = 0;
     // The walk stopped early. `truncated` = the maxResults cap was reached (there
     // are more matches); `aborted` = Tot::Requested() fired (client gone/shutdown).
     // Without these the reply cannot be told from a complete search that found
-    // everything there is — the exact shape behind four "the scan missed my field"
-    // reports. Both are additive on the wire; a client that ignores them is
-    // unchanged.
+    // everything there is. Both are additive on the wire; a client that ignores
+    // them is unchanged.
     bool truncated = false;
     bool aborted   = false;
     std::vector<PropertyMatch> results;
@@ -965,18 +960,15 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // ── Where a Property Search row's Preview value came from ───────────────────
 // [CDOSCOPE-2026-08-20]
 //
-// The preview used to look for an instance whose class is EXACTLY the row's class, and
-// fall back to the class default object marked `(CDO default)` when it found none. Every
-// ACTION on that same row — Force (Solide) and Freeze — is scoped to the class AND EVERY
-// SUBCLASS. So a row could read "CDO default", implying nothing is live, and freezing it
-// would then report `on 2 instance(s)`. Both halves were internally correct; they simply
-// disagreed about what "an instance of this class" means.
+// Every ACTION on a row — Force (Solide) and Freeze — is scoped to the class AND EVERY
+// SUBCLASS, so the preview searches derived instances too and falls back to the class
+// default object, marked `(CDO default)`, only when the whole hierarchy has none. A
+// preview that looked only for an instance of EXACTLY the row's class could read
+// "CDO default", implying nothing is live, while freezing that row reports
+// `on N instance(s)`: the two halves would disagree about what "an instance of this
+// class" means. The preview says which kind of sample it got.
 //
-// Measured on DumperTest: `NiagaraComponent · WarmupTickCount · IntProperty · 0x624`
-// previewed `0 (CDO default)` while the freeze on that row hit two live instances.
-//
-// The preview now searches derived instances too, so the two halves agree, and says which
-// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: the light
+// Keeping the rule here rather than in Aura.cpp is deliberate: the light
 // `dll_helpers_test` pins a header rule directly, while Aura.cpp reaches only `dll_core_test`.
 enum class PreviewSource {
     None,          // nothing to preview
@@ -988,9 +980,9 @@ enum class PreviewSource {
 // Preference order: a live exact-class sample, else a live subclass sample, else the CDO.
 //
 // ⚠ Derived beats the CDO but loses to exact, and both halves of that matter. Preferring
-// the CDO over a live subclass instance would re-create the original defect; preferring a
-// subclass over an exact-class instance would show a value from the wrong object while the
-// right one exists.
+// the CDO over a live subclass instance would set the preview against the row's actions;
+// preferring a subclass over an exact-class instance would show a value from the wrong
+// object while the right one exists.
 inline PreviewSource ChoosePreviewSource(bool hasExact, bool hasDerived, bool hasClassDefault) {
     if (hasExact) return PreviewSource::Exact;
     if (hasDerived) return PreviewSource::Derived;
@@ -1001,9 +993,8 @@ inline PreviewSource ChoosePreviewSource(bool hasExact, bool hasDerived, bool ha
 // The suffix appended to the preview text. Empty for an exact-class live reading, which is
 // the unremarkable case and must stay unmarked.
 //
-// ⚠ `(CDO default)` now carries a STRONGER claim than it used to: subclasses really were
-// searched and none was live, so the actions will find nothing either. That is the whole
-// point of the fix — before, it only meant "no instance of exactly this class".
+// ⚠ `(CDO default)` is a STRONG claim: subclasses really were searched and none was live,
+// so the actions will find nothing either -- not merely "no instance of exactly this class".
 inline const char* PreviewSourceSuffix(PreviewSource src) {
     switch (src) {
         case PreviewSource::Derived:      return " (subclass instance)";
@@ -1013,10 +1004,10 @@ inline const char* PreviewSourceSuffix(PreviewSource src) {
 }
 
 // [A4-CDOSCOPE-ANCESTOR] The preview classes a live instance of `cls` is a DERIVED sample for: EVERY one on its super
-// chain, nearest first, STARTING FROM THE SUPER (the object's own class is its exact sample, credited by the caller). The
-// CDOSCOPE walk stopped at the NEAREST preview class, and an exact hit skipped the walk, so an ancestor row read
-// "(CDO default)" -- "subclasses were searched and none was live" -- while Force and Freeze on that same row acted on
-// its live instances. `superOf` returns 0 when the chain ends or cannot be read; bounded, because a malformed or
+// chain, nearest first, STARTING FROM THE SUPER (the object's own class is its exact sample, credited by the caller). A
+// walk that stopped at the NEAREST preview class, or that an exact hit skipped, would leave an ancestor row reading
+// "(CDO default)" -- "subclasses were searched and none was live" -- while Force and Freeze on that same row act on its
+// live instances. `superOf` returns 0 when the chain ends or cannot be read; bounded, because a malformed or
 // mid-teardown SuperStruct can self-loop.
 template <class IsPreviewFn, class SuperOfFn>
 inline std::vector<uintptr_t> PreviewAncestorsOf(uintptr_t cls, IsPreviewFn isPreview, SuperOfFn superOf) {
@@ -1043,18 +1034,18 @@ bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::strin
 // header-inline so the lightweight DLL test can exercise it without linking the
 // whole DLL.
 // ============================================================
-// Deep-container leaf coverage (audit #5 A4)
+// Deep-container leaf coverage
 // ============================================================
 
 /// Which container shape a leaf was reached through. Lives in the header so the
 /// coverage predicate below can be unit-tested; the walker in Aura.cpp is the
 /// only producer.
 ///
-/// `Unknown` is FIRST, and that placement is the fix's own safety net. A leaf
-/// struct that gains this member and forgets to initialise it value-initialises
-/// to the zero enumerator — so if `Array` sat at 0, a missed wiring site would
-/// silently mean "statically covered" and reproduce A4 with no compile error and
-/// no failing test. Zero must mean "nobody said", and nobody-said is not covered.
+/// `Unknown` is FIRST, and that placement is a safety net. A leaf struct that
+/// gains this member and forgets to initialise it value-initialises to the zero
+/// enumerator — so if `Array` sat at 0, a missed wiring site would silently mean
+/// "statically covered", with no compile error and no failing test. Zero must
+/// mean "nobody said", and nobody-said is not covered.
 enum class ContainerKind {
     Unknown = 0,  // never a valid producer value — see above
     Array,        // TArray.Data buffer, stride = inner element size
@@ -1066,20 +1057,18 @@ enum class ContainerKind {
 /// Is this deep-walk leaf ALREADY reachable through Value Search's static scan
 /// index, and therefore safe for the deep pass to skip?
 ///
-/// The deep pass used to skip on `depth < 2` alone, i.e. "depth 1 is covered".
-/// That is only true for ARRAYS: `collectStructArrayInner` is reached solely from
-/// the ArrayProperty branch, so a struct-sided `TSet<FStruct>` or
-/// `TMap<K, FStruct>` element is covered by neither the static index nor the deep
-/// pass — an everyday `TMap<FName, FItemData>` inventory count was unfindable with
-/// Deep ON *and* OFF.
+/// "Depth 1 is covered" holds only for ARRAYS: `collectStructArrayInner` is reached
+/// solely from the ArrayProperty branch, so a struct-sided `TSet<FStruct>` or
+/// `TMap<K, FStruct>` element is not in the static index and the deep pass must walk
+/// it. A skip on `depth < 2` alone would leave an everyday `TMap<FName, FItemData>`
+/// inventory count unfindable with Deep ON *and* OFF.
 ///
 /// `leafIsWholeElement` is `leafName.empty()`: the leaf IS the element (a leaf
 /// container's element, or a scalar map side), which the static paths do cover
 /// for every kind.
 ///
-/// The sibling consumers already had the right shape and are what made the
-/// asymmetry visible: the snapshot path tests `leafName.empty() && depth < 2`,
-/// and the group scan uses `depth < 1`.
+/// The sibling consumers have the same shape: the snapshot path tests
+/// `leafName.empty() && depth < 2`, and the group scan uses `depth < 1`.
 inline bool DeepLeafCoveredByStaticScanIndex(int depth, ContainerKind kind,
                                              bool leafIsWholeElement) {
     if (depth < 1) return true;    // the object's own direct fields
@@ -1131,15 +1120,14 @@ inline bool IsEnginePackage(const std::string& rawPath) {
 // they can be compared. Pure / string-only (unit-tested); header-inline for the same
 // reason as IsEnginePackage above.
 //
-// Three spellings of the SAME object are in circulation, and this was measured on a
-// live UE 5.4 title (Elliot, 2026-08-16), not assumed:
+// Three spellings of the SAME object are in circulation:
 //   1. `Ubel::GetFullName` emits  "//Script/Engine/Actor"  — DOUBLE leading slash,
 //      '/' between package and object. This is what our own DLL produces.
 //   2. UE itself (and every doc, .CT and Lua caller) writes "/Script/Engine.Actor"
 //      — single leading slash, '.' before the object name.
 //   3. UE's fully-qualified form prepends the class: "Class /Script/Engine.Actor".
-// Comparing (1) against (2) with == is false for every object in the process, which
-// is exactly why find-by-path found nothing at all before build 3157.
+// Comparing (1) against (2) with == is false for every object in the process, so a
+// path compare must canonicalize both sides first.
 //
 // Canonical form = leading slash run collapsed to one, '.' and ':' (subobject
 // separator) rewritten to '/', any leading "ClassName " qualifier dropped.
@@ -1517,7 +1505,7 @@ struct PropertyXrefResult {
 
 // Scan every UFunction's bytecode for references to `propAddr` (an FProperty*).
 // gameOnly skips functions whose owning class is an engine package. Parallel
-// GObjects walk (relies on Ubel's mutex-guarded caches, build 792).
+// GObjects walk (relies on Ubel's mutex-guarded caches).
 PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
                                      int32_t maxResults = 200);
 
@@ -1641,9 +1629,9 @@ struct SparseDelegateResult {
     bool ownerFound = false;     // outer key matched
     bool nameFound  = false;     // inner key matched
     // The InvocationList header {Data, Num} was actually READ and looked plausible.
-    // `nameFound && !listRead` is the state that used to render as "(0 bindings, sparse)":
-    // the delegate was located and its subscriber list could NOT be read. Reporting that
-    // as zero subscribers is an affirmative claim over memory nobody could see.
+    // `nameFound && !listRead`: the delegate was located and its subscriber list could NOT
+    // be read. Reporting that as zero subscribers ("(0 bindings, sparse)") would be an
+    // affirmative claim over memory nobody could see.
     bool    listRead = false;
     int32_t listNum  = 0;        // InvocationList.Num() as read. May exceed bindings.size(),
                                  // which is capped by maxBindings; this one is the truth.
@@ -1652,11 +1640,9 @@ struct SparseDelegateResult {
 
 // A multicast delegate's InvocationList is a per-object subscriber list; even
 // pathological actor/UMG fan-out stays in the low hundreds. A HEADER PLAUSIBILITY ceiling
-// ("is this really a TArray?"), NOT a display cap — maxBindings is the display cap. Named
-// per the 2b9ffac9 convention. Both sparse-delegate readers use it —
-// WalkSparseDelegateBindings and FindReferencesToUObject's sparse pass, which carried the
-// same bare 4096 independently — and it moved here from Aura.cpp so the predicate below,
-// which the tests pin, can share the one copy.
+// ("is this really a TArray?"), NOT a display cap — maxBindings is the display cap. It
+// lives here so every sparse-delegate reader and the predicate below, which the tests
+// pin, share the one copy.
 inline constexpr int32_t kMaxPlausibleInvocationListNum = 4096;
 
 /// Is `{data, num, max}` a coherent `TArray<FScriptDelegate>` header for a delegate we
@@ -1854,7 +1840,7 @@ ValueScanStats RefineCandidates(
     const uint8_t*                               target2Bytes,
     std::vector<Radar::Candidate>&           candidates,
     const std::vector<Radar::FieldDescriptor>& descriptors,
-    // audit #5 A11 — needed to re-derive a container HEADER address
+    // Needed to re-derive a container HEADER address
     // (instanceAddr + descriptor.fieldOffset) so a container-element candidate can
     // be re-anchored instead of re-read at a possibly stale absolute address.
     const std::vector<Radar::InstanceRecord>&  instances,
@@ -1865,7 +1851,7 @@ ValueScanStats RefineCandidates(
     const Radar::NumericTargetSet*           multiTargets2 = nullptr);
 
 // ------------------------------------------------------------------
-// Multiple values group scan (build 1276). Object-aware "group scan": find
+// Multiple values group scan. Object-aware "group scan": find
 // objects (blocks) that SIMULTANEOUSLY hold ALL of N user values at DISTINCT
 // numeric-property offsets, in any order. The pure SDR match is
 // Orden::MatchGroup; this layer enumerates each object's numeric leaves
@@ -1965,13 +1951,13 @@ ValueScanStats RefineGroupCandidates(
     const std::vector<Radar::InstanceRecord>&  instances);
 
 // ------------------------------------------------------------------
-// Numeric type-family filter (build 1600+). An ORTHOGONAL narrowing applied
+// Numeric type-family filter. An ORTHOGONAL narrowing applied
 // ON TOP of the numericScope meta type (NumericNoByte / NumericAll): the scope
 // decides which widths are eligible, the family decides whether to keep the
 // integer leaves, the float leaves, or both. Cuts a huge game's snapshot DB at
 // the source when the hunt is type-specific (HP/MP/coords -> floats; counts/
-// flags/IDs -> integers). Default Any keeps every eligible numeric (the prior
-// behaviour). Bool is never in a numeric meta scope, so it is unaffected.
+// flags/IDs -> integers). Default Any keeps every eligible numeric. Bool is
+// never in a numeric meta scope, so it is unaffected.
 enum class NumericFamily : uint8_t {
     Any          = 0,   // keep every eligible numeric (integer + float/double)
     IntegersOnly = 1,   // keep Int8/16/32/64 + UInt8/16/32/64; drop Float/Double
@@ -2070,7 +2056,7 @@ struct SnapshotChunkResult {
 // Actor/component/Pawn-derived classes (see SnapshotGameplayKeepBases), so a
 // player Pawn's X/Y/Z is never dropped. Single-pass: no histogram pre-scan.
 //
-// family (build 1600+, default Any): orthogonal type-family narrowing applied to
+// family (default Any): orthogonal type-family narrowing applied to
 // EVERY numeric leaf (top-level scalar, struct-array element, Native-C raw hole).
 // IntegersOnly drops Float/Double; FloatsOnly drops every integer width. Cuts the
 // DB at the source for type-specific hunts (floats = HP/MP/coords; integers =
@@ -2083,29 +2069,23 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
                                          bool skipNoiseClasses = false,
                                          NumericFamily family = NumericFamily::Any);
 
-// === Path-scoped cycle guard (audit A3, build 3168) ===
+// === Path-scoped cycle guard ===
 //
 // A recursive struct walk needs to refuse to re-enter a UScriptStruct it is
 // ALREADY INSIDE (FFoo holding a TArray<FFoo> would recurse forever). It must
 // NOT refuse a struct type it merely visited EARLIER on a different branch —
 // those are sibling fields and both are real.
 //
-// The distinction is the whole of A3. `ScanForValue`'s index builder threaded
-// one `unordered_set` through the entire per-class walk and never erased, which
-// turns "am I inside this?" into "have I ever seen this?" — so only the FIRST
-// field of a given struct type in a class contributed leaves, and every later
-// one was dropped SUBTREE AND ALL, across unrelated branches. An ordinary actor
-// yielded `Location` but never `Velocity`/`Scale3D`/`Extent`; inside a single
-// FTransform, `Translation` blocked `Scale3D`. Silent, and total for the session.
-//
-// The two walkers that got it right (`CollectSchemaLeaves` — Property Search
-// Deep — and `CollectGroupLeaves` — Group Scan) both scope to the active path,
-// which is why those surfaces find `MaxHealth` while single-value Value Search
-// did not. That asymmetry is a distinct in-the-scanner cause for the
+// That distinction is the point. One set threaded through a whole per-class walk
+// and never erased turns "am I inside this?" into "have I ever seen this?" — so
+// only the FIRST field of a given struct type in a class contributes leaves, and
+// every later one is dropped SUBTREE AND ALL, across unrelated branches: an actor
+// yields `Location` but never `Velocity`/`Scale3D`/`Extent`; inside a single
+// FTransform, `Translation` blocks `Scale3D`. Silently — one cause of the
 // "Value Search can't find field X" family in working-lessons §5.
 //
-// RAII because the fix is otherwise one `erase` per `return` in a lambda with
-// many early exits, and the first one anybody forgets silently restores the bug.
+// RAII because the scope is otherwise one `erase` per `return` in a lambda with
+// many early exits, and the first one anybody forgets silently drops subtrees.
 // Header-inline and dependency-free so `dll_helpers_test` can compile it: Aura.cpp
 // reaches only `dll_core_test`, whose fake object pool this guard does not need.
 class StructPathGuard {
@@ -2146,9 +2126,8 @@ size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uin
 // One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction whose Func is code --
 // a script function's too, the interpreter -- sorted. False when a cancel cut the pass short (the index is then partial).
 // Is `p` in executable image memory -- Macht::LooksLikeCodePointer's test -- asked of the kernel once per memory region,
-// not once per address. Measured 2026-10-08: a VirtualQuery cost about 300 µs while the game ran uncapped, so one per
-// function made the index take 3.9 s for 13,179 functions; native entries cluster in a few modules' code, so the
-// regions seen are few. `queries` counts the kernel calls.
+// not once per address: a VirtualQuery is costly while the game runs, so one per function makes the index slow, and
+// native entries cluster in a few modules' code, so the regions seen are few. `queries` counts the kernel calls.
 struct CodeRangeCache {
     struct Range { uintptr_t lo = 0, hi = 0; bool code = false; };
     std::vector<Range> ranges;

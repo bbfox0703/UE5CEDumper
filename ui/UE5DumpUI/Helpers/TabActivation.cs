@@ -2,7 +2,7 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// Whether a <c>SelectionChanged</c> that reached the main TabControl actually
-/// represents a TAB SWITCH (audit #5 AF5).
+/// represents a TAB SWITCH.
 ///
 /// <para><b>Avalonia's SelectionChanged is a bubbling routed event.</b> A
 /// ComboBox or ListBox inside the selected tab raises it, and it travels up the
@@ -12,7 +12,7 @@ namespace UE5DumpUI.Helpers;
 /// cancelling in-flight work and rebuilding lists — in response to the user
 /// merely picking an item inside the tab they are already on.</para>
 ///
-/// <para>Measured against the pinned Avalonia version in a headless harness:
+/// <para>With the pinned Avalonia version
 /// the TabControl <i>is</i> a visual ancestor of the tab's content (chain
 /// StackPanel → ContentPresenter → Panel → DockPanel → Border → TabControl);
 /// <b>ComboBox and ListBox</b> re-fire the handler this way, while
@@ -20,8 +20,8 @@ namespace UE5DumpUI.Helpers;
 /// <c>e.Source</c> being the TabControl itself.</para>
 ///
 /// <para>So the discriminator is <c>e.Source</c>, not <c>sender</c> — sender is
-/// the TabControl in every case, which is exactly why the old code could not
-/// tell the two apart. <c>e.Handled</c> is not the answer either: the TabControl
+/// the TabControl in every case, so it cannot tell the two apart.
+/// <c>e.Handled</c> is not the answer either: the TabControl
 /// is the end of the route, so setting it suppresses nothing.</para>
 ///
 /// <para>Kept as a pure static, parameters typed <c>object?</c>, so it is

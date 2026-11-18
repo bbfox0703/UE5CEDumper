@@ -162,8 +162,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     //   Script dialog (or fast-path no-arg generation). classAddr comes
     //   straight off the row (list_all_functions supplies it) so the
     //   handler never has to re-derive it from the CAPPED list_classes
-    //   page, which used to fail the whole action for any class past the
-    //   cap (audit #5 X2).
+    //   page, which would fail the whole action for any class past the
+    //   cap.
     // ------------------------------------------------------------------
 
     public event Action<string, string>? NavigateToFunction;
@@ -181,8 +181,6 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// <summary>Engine-rooted counterpart of <see cref="LocateInGWorld"/> (path search
     /// rooted at the live UGameEngine). Payload = class name.</summary>
     public event Action<string>? LocateInGameEngine;
-
-    /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
 
     /// <summary>Raised when the user clicks "Generate Cheat Table" on
     /// the multi-select toolbar. Subscribers (MainWindow) open the
@@ -635,18 +633,15 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         if (generation != Volatile.Read(ref _rescoreGeneration)) return;
 
         // Published together on purpose — `_scoredWithGameplayActions` means "what `_allRows` is
-        // scored with", so it must not be moved ahead of the rows it describes. It used to be set
-        // before the await, which is what let a superseded run leave the field claiming a mode the
-        // rows had never been scored in.
+        // scored with", so it must not be moved ahead of the rows it describes: set before the
+        // await, a superseded run would leave the field claiming a mode the rows had never been
+        // scored in.
         _scoredWithGameplayActions = includeActions;
         _allRows = rows;
         ApplyFilter();
         // Re-scoring MOVES the threshold count — that is the entire point of the
-        // Gameplay-Actions pack — so the status line must follow it. It used to be
-        // written only by LoadAsync, so a toggle re-scored every row and left the
-        // panel reporting the PREVIOUS mode's "above threshold: N" underneath the new
-        // grid. Distinct from Z1 (the re-score not running at all); this is the
-        // re-score running and the report not following. (audit #5 Z15)
+        // Gameplay-Actions pack — so the status line must follow it, or the panel reports the
+        // PREVIOUS mode's "above threshold: N" underneath the new grid.
         StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
     }
 

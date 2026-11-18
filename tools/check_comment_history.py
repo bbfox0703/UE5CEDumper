@@ -42,6 +42,21 @@ HISTORY = [
     re.compile(r"\b[Mm]easured (?:on [A-Z]|20\d\d|in build)"),               # "Measured on DumperTest", "measured 2026-..."
     re.compile(r"\bbuilds? \d{4}\b", re.IGNORECASE),                       # "since build 3713", "builds 3728-3730"
     re.compile(r"\b(?:pre-fix|before the fix|after the fix|was fixed|the old (?:code|version))\b", re.IGNORECASE),
+    # Pass 2: narrative shapes the first set missed, each measured for few false hits before it was added.
+    re.compile(r"\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|"
+               r"\d+(?:st|nd|rd|th)) review\b", re.IGNORECASE),                # "(tenth review, R10-02)"
+    re.compile(r"\breview \d+ of\b|\breview follow-up\b|\breview finding\b", re.IGNORECASE),
+    re.compile(r"(?:^\s*|[.;:(]\s*)Previously\b"),                           # a sentence that opens on the past
+    re.compile(r"\b[Tt]he old (?:\w+ ){0,2}(?:was|were|did|said|read|used|collapsed|matched|took|had)\b"),
+    re.compile(r"\b(?:PROMOTED|DEMOTED|promoted|demoted|moved) \d+\s*(?:->|→)\s*\d+"),   # a pattern's old priority
+    re.compile(r"\b[Tt]he (?:first|original|previous) version (?:of|was|were|did|required|matched|had)\b"),
+    re.compile(r"(?:^\s*|[.;]\s+)Until now\b|\buntil (?:this|the) fix\b"),
+    re.compile(r"\bturned out\b", re.IGNORECASE),
+    re.compile(r"\bcommit [0-9a-f]{7,10}\b", re.IGNORECASE),
+    re.compile(r"\bmaintainer\b[^.\n]{0,60}\b20\d\d-\d\d-\d\d\b", re.IGNORECASE),   # a decision's provenance
+    re.compile(r"\b(?:[Oo]bserved|[Ss]een|[Rr]eproduced|[Ff]ound|[Rr]eported) (?:on|in|by)\b[^.\n]{0,40}"
+               r"\b20\d\d-\d\d-\d\d\b"),
+    re.compile(r"\b(?:before|until|since) 202[6-9]-\d\d-\d\d\b"),             # this project's own dates
 ]
 
 
@@ -125,6 +140,21 @@ SELFTEST = [
     ("/* a block\n   that used to say more */", 1),                    # a block comment's later line
     ("x = 'a'; // char literal, then a plain comment", 0),
     ('s = "a // b"; // no history here', 0),                           # // inside a string opens no comment
+    ("// (tenth review, R10-02) Test seam: called after the pin", 1),
+    ("// [W2-MARKER-PARENTREL] ALWAYS sent (review 5 of 7490c24e)", 1),
+    ("// Previously each entry point did an unsynchronized check", 1),
+    ("// the previously selected row stays selected", 0),              # an adverb of the present
+    ("// The old rule was `if (firstConn) reset;`", 1),
+    ("// leaving the field blank while the old value is still shown", 0),
+    ("// PROMOTED 210 -> 101. The most successful GWorld pattern", 1),
+    ("// The first version required ByteMask 0xFF", 1),
+    ("// a latch taken under the PREVIOUS version outranks the new one", 0),   # a UE version, not ours
+    ("// Until now this branch did not exist", 1),
+    ("// The maintainer's decision (2026-10-06): HTML only", 1),
+    ("// Observed on Elliot 2026-08-07: closing the game", 1),
+    ("// found in the storage map, and UE erases that entry", 0),
+    ("// set unconditionally until 2026-09-09", 1),
+    ("// on by default since 2022-03-30 (WeakObjectPtr.h @5.1.0-release)", 0),  # an engine fact, its own date
 ]
 
 

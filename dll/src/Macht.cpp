@@ -283,7 +283,7 @@ static const uint8_t* ScanRegionScalar(
 // Compares 32 bytes at a time against the anchor byte using AVX2 intrinsics.
 // For each SIMD match, falls back to scalar verification of the full pattern.
 //
-// Key improvements over the previous memchr approach:
+// What it gives over a memchr scan:
 //  1. Anchor at ANY position  — handles wildcard-prefixed patterns
 //     (e.g., "?? ?? 48 8B 05") that memchr(byte[0]) cannot accelerate.
 //  2. Batch processing        — finds ALL anchor matches in a 32-byte
@@ -528,7 +528,7 @@ static void ScanRegionAll(
 // Public: AOBScanAll
 // ============================================================
 
-// (tenth review, R10-02) Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
+// (R10-02) Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
 // in the product. dll_core_test, which #includes this file, sets it to drop the test's own reference mid-scan -- the
 // only way to prove the pin HOLDS the image and is released exactly once. Not declared in Macht.h, so nothing outside
 // this translation unit can set it.
@@ -552,12 +552,12 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
 
     // [SCAN-EARLY-TRIGGER-CONTAINED] Hold a reference on any module other than the exe for the length of the scan.
     // AOBScanAllModules takes its module list from EnumProcessModules and scans afterwards; a DLL the process frees
-    // in between (a booting engine loads and frees many) was read after it was unmapped -- an access violation that
-    // only RunThreadGuarded's catch(...) stopped, ending the scan (measured on 3555, a trigger_scan ~1 s after launch).
+    // in between (a booting engine loads and frees many) would be read after it was unmapped -- an access violation
+    // that only RunThreadGuarded's catch(...) stops, ending the scan.
     // GetModuleHandleExW from the base adds a reference, so the image stays mapped until FreeLibrary below; if the
     // module is already gone the call fails, and if another module now sits at that address its handle differs from
     // the base -- either way this module has nothing left to scan.
-    // (tenth review, R10-03) The trade, measured: while pinned, the owner's own FreeLibrary returns without unloading,
+    // (R10-03) The trade: while pinned, the owner's own FreeLibrary returns without unloading,
     // so OUR FreeLibrary may be the last one -- the module's DLL_PROCESS_DETACH then runs on this scan thread, and its
     // unload waits one module scan. A module already part-way through unloading is not pinnable (GetModuleHandleExW
     // fails at once, error 126) and takes the skip above. An SEH guard alone would not do instead: it cannot tell an
@@ -635,8 +635,8 @@ std::vector<ModuleInfo> GetLoadedModules() {
 bool IsDumperModule(HMODULE h) {
     if (!h) return false;
     // The handle comes from the walk's module snapshot and may have gone stale since. GetProcAddress resolves it
-    // through the loader, not by reading the address: measured 2026-10-13 (Windows 11), a freed and unmapped DLL's
-    // handle answers NULL with error 126 and no fault. The magic is read under SEH all the same.
+    // through the loader, not by reading the address: a freed and unmapped DLL's handle answers NULL with error 126
+    // and no fault. The magic is read under SEH all the same.
     const FARPROC sym = GetProcAddress(h, Grimoire::DUMPER_IDENTITY_EXPORT);
     uint32_t magic = 0;
     if (sym && ReadSafe(reinterpret_cast<uintptr_t>(sym), magic) && magic == Mimic::MAILBOX_CONTRACT_MAGIC) return true;
@@ -956,7 +956,7 @@ std::vector<BatchScanResult> AOBScanBatch(
 
 // [LIVEFUNCS-STEP3] S3-M1: the capture. Plain C inside: a __try may not share a function with a C++ object that needs
 // unwinding (the test target builds with /EHsc), the CallProcessEventSEH pattern. Not inlined, so `here` -- its own
-// return slot -- always lies below the caller's `retSlot` (the design review's M5).
+// return slot -- always lies below the caller's `retSlot` (M5).
 __declspec(noinline) uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags,
                                                    uintptr_t headroom, StackWalker walk) {
     flags = 0;

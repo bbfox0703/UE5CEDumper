@@ -10,8 +10,7 @@ namespace UE5DumpUI.Views;
 
 public partial class SnapshotPanel : UserControl
 {
-    // AOT-safe sort comparers. Found by the repo-wide DataGrid sweep behind audit #5
-    // AF16-AF23; no finding named this panel. Each column below renders one property
+    // AOT-safe sort comparers, as for audit #5 AF16-AF23. Each column below renders one property
     // and sorts on another, so no column binding roots the sort path and the
     // reflection sort is trimmed (Helpers/DataGridSortComparers.cs class doc).
     private static readonly IReadOnlyDictionary<string, IComparer> SnapshotsSortComparers =
@@ -40,9 +39,9 @@ public partial class SnapshotPanel : UserControl
         };
 
     // [UI-SPACE-2026-09-25] Floors for the two star rows -- the saved list (row 3) keeps a header and ~3 rows, the
-    // diff / group area (row 5) the mode switch + the Compare expander + a header and ~4 rows. (ninth review, R9-01)
-    // Fixed floors pushed the Auto rows below the window: opening the Noise picker overflowed by 299 DIP on a 1067-DIP
-    // screen (measured). So the floors are capped at the room the Auto rows leave, and shrink first.
+    // diff / group area (row 5) the mode switch + the Compare expander + a header and ~4 rows. Fixed floors would push
+    // the Auto rows below the window (opening the Noise picker, on a short screen), so the floors are capped at the
+    // room the Auto rows leave, and shrink first.
     private const int SavedRow = 3;
     private const int LowerRow = 5;
     private const double SavedFloor = 110;

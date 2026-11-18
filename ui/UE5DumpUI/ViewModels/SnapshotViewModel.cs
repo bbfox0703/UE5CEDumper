@@ -43,7 +43,7 @@ public partial class SnapshotViewModel : ViewModelBase
     // seconds and looks hung. A UI-thread timer ticks the elapsed clock + an
     // animated indicator while capturing — the UI thread is free during the
     // chunk's await, so the user always sees life even when the object count is
-    // frozen between chunk completions. (build 1212)
+    // frozen between chunk completions.
     private DispatcherTimer? _captureHeartbeat;
     private DateTime _captureStart;
     private DateTime _lastChunkAt;
@@ -784,10 +784,10 @@ public partial class SnapshotViewModel : ViewModelBase
             return CaptureOutcome.DiskLow;
         }
 
-        // Probe opened AFTER the guard: a refused capture used to cost two get_diagnostics
-        // round-trips and file a "Snapshot capture" sample for a capture that never started.
-        // Worse here than elsewhere because the AUTO loop retries on a timer, so a full disk
-        // produced a steady stream of fake samples. (audit #5 AE8, sibling site)
+        // Probe opened AFTER the guard, so a refused capture costs no get_diagnostics
+        // round-trips and files no "Snapshot capture" sample for a capture that never started.
+        // It matters most here because the AUTO loop retries on a timer: a full disk would
+        // produce a steady stream of fake samples.
         await using var _perf = await Services.DiagnosticsProbe.BeginAsync(
             _dump, _log, isAuto ? "Snapshot capture (auto)" : "Snapshot capture");
 

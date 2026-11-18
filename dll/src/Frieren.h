@@ -5,16 +5,11 @@
 // ExportAPI: 65 C ABI exports for CE Lua bridge
 //
 // ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
-// export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
-// "~30" against a real 59 until build 3262, because this header was the one claim site
-// the gate did not cover — the registry listed four DOCS and not the file those docs
-// derive FROM (audit #5 AD7). Add an export and the check fails, printing the number to
-// paste in here.
+// export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). Add an
+// export and the check fails, printing the number to paste in here.
 //
-// ⚠ Do NOT spell the export macro in prose anywhere in this file. The check used to count
-// every line merely CONTAINING it, so the first draft of this very comment pushed 59 to
-// 60. The deriver was tightened to match real declarations instead; keeping prose clear of
-// the token costs nothing and removes the second half of the trap.
+// ⚠ Do NOT spell the export macro in prose anywhere in this file: the deriver counts every
+// LINE that contains the full declaration token, a comment line included.
 // ============================================================
 
 #include <cstdint>
@@ -45,7 +40,7 @@ __declspec(dllexport) int32_t  UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bu
 // Combined init + pipe server start — called by CEPlugin's InjectDLL
 // so that a single entry point activates everything in the game process.
 //
-// ASYNCHRONOUS since build 2932 (audit #5 AB2): it SPAWNS the work and returns
+// ASYNCHRONOUS: it SPAWNS the work and returns
 // immediately, because one of its callers is Cheat Engine's injection stub, which
 // frees the remote page after a hard 10 s (or 1 s on the APC path) whether we
 // finished or not — and the `ret` onto that freed page crashes the GAME.
@@ -136,8 +131,8 @@ __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, cons
 //   -5  ⚠ game-thread invoke TIMED OUT — and the request IS STILL QUEUED.
 //   -7  the game-thread hook was not active when the request was enqueued
 //   -8  refused: the caller is a background worker thread, which must not take the
-//       unsafe off-thread fallback (a re-assert worker calling ~10x/s is the historic
-//       crash shape)
+//       unsafe off-thread fallback (a re-assert worker calling it ~10x/s off the game
+//       thread is a crash shape)
 //
 // ⛔ -5 IS NOT A FAILURE YOU CAN CLEAN UP AFTER. The timeout abandons the RESULT, not the
 // request: the game thread may still drain and execute it at any later point. This 3-arg
@@ -147,7 +142,6 @@ __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, cons
 // allocated AND unmodified for the life of the process.
 // Callers that cannot promise that must use UE5_CallProcessEventEx with a non-zero
 // paramsSize, which makes the request own a copy; -5 is then merely a lost result.
-// (The doc used to stop at -4, so a caller following it leaked or double-freed — audit #5 AD8.)
 __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 // Direct ProcessEvent call from the calling thread, bypassing
@@ -275,10 +269,9 @@ __declspec(dllexport) int32_t   UE5_GetGodMode();
 // reconnect), *outLive = observed state (1/0, -1 if no pawn), *outResolvable =
 // could the live pawn be read (1/0). All params nullable. Returns 0.
 //
-// Consumed by the UI via the `get_protect_state` pipe command since build 3203
-// (audit #5 AD4). It had shipped with zero clients while the badge read the
-// collapsed UE5_GetGodMode tri-state, which cannot tell "never enabled" from
-// "enabled and waiting for a pawn" or from "engaged and drifted this instant".
+// The UI badge reads it through the `get_protect_state` pipe command, because the
+// collapsed UE5_GetGodMode tri-state cannot tell "never enabled" from "enabled and
+// waiting for a pawn" or from "engaged and drifted this instant".
 // The wire name for *outLive is `godmode`, not `live` — see Fern.cpp.
 __declspec(dllexport) int32_t   UE5_GetProtectState(int32_t* outWant,
                                     int32_t* outLive, int32_t* outResolvable);

@@ -100,7 +100,7 @@ static std::atomic<bool> s_initialized{false};
 static std::mutex  s_initMutex;
 // [A3-MIMIC-INIT-FASTPATH] True, under s_initMutex, for the whole body of an init that is actually scanning -- from before
 // FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
-// the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
+// the globals alone read as "initialized" before Serie / Aura init and ValidateAndFixOffsets have run.
 std::atomic<bool> g_initInProgress{false};
 // [PIPE-WALK-DURING-INIT] Which run raised g_initInProgress: bumped just before each raise, so a reader that sees the flag
 // up (acquire) reads that run's serial or a later one; the first run is 1. Fern's pipe loop logs what it read during a
@@ -109,8 +109,8 @@ std::atomic<bool> g_initInProgress{false};
 std::atomic<uint32_t> g_initRun{0};
 
 // [R7-C-05] apply_rescan is a SECOND producer of the init globals: it publishes g_cachedGObjects, then runs Aura::Init
-// and (the first time) ValidateAndFixOffsets, exactly the tail A3 fenced inside UE5_Init. It holds this for that span;
-// UE5_Init's already-initialised return waits on the mutex while the flag is up, so a mailbox command's
+// and (the first time) ValidateAndFixOffsets, the same tail g_initInProgress fences inside UE5_Init (A3). It holds this
+// for that span; UE5_Init's already-initialised return waits on the mutex while the flag is up, so a mailbox command's
 // EnsureInitialized runs after the apply, not on a half-applied pool.
 namespace FrierenInit {
 // [R7-S9] The fence: the flag must be visible BEFORE the GObjects publish that follows in Fern.cpp. A release store
@@ -167,13 +167,13 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
     f.flatObjectArray     = Aura::IsFlat();
     f.taggedFFieldVariant = DynOff::bTaggedFFieldVariant;
     f.userOverride        = userOverride;
-    // The UE5.7 reordered FUObjectItem: the Object* moved to +0x08 (e.g. Solarpunk, the stock-UE5.7 repro). Detected
+    // The UE5.7 reordered FUObjectItem: the Object* moved to +0x08. Detected
     // during the GObjects scan, so reliable even in a menu. The item SIZE grows with the build configuration -- 24
     // Shipping, 32 Development (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
     // ENABLE_STATNAMEDEVENTS_UOBJECT, appending TStatId + StatIDStringStorage; see Lineal::kItemStrideCandidates) --
-    // and pinning 24 alone silently excluded every stripped 5.7+ Development or Test build. Avowed's custom 20-byte
-    // packed layout (UE5.3, not a version signal) keeps its Object at +0x00 (docs/avowed-gobjects-fix.md), so the
-    // offset test excludes it on its own and the size guard is belt-and-braces. The "unverified" packed
+    // and pinning 24 alone would silently exclude every stripped 5.7+ Development or Test build. Avowed's custom
+    // 20-byte packed layout (UE5.3, not a version signal) keeps its Object at +0x00 (docs/avowed-gobjects-fix.md), so
+    // the offset test excludes it on its own and the size guard is belt-and-braces. The "unverified" packed
     // reconstruction (IsPacked, never seen in a real game) would also be 24 bytes at +0x00; the offset test stays
     // specific to the reorder.
     const int itemSz      = Aura::GetItemSize();
@@ -181,14 +181,14 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
     // UE 5.8 made ~FFieldClass() VIRTUAL (5.7.4 Field.h `COREUOBJECT_API ~FFieldClass();` -> 5.8.0/5.8.1/5.8.2
     // `COREUOBJECT_API virtual ~FFieldClass();`), unconditionally -- the `#if UE_WITH_CONSTINIT_UOBJECT` block begins
     // after it -- and FFieldClass has no base class with `FName Name` first, so the vfptr takes +0x00 and Name moves
-    // to +0x08. Without it the ladder topped out at 507 and a string-stripped 5.8 title badged as UE 5.7: the 507
+    // to +0x08. Without it a string-stripped 5.8 title would badge as UE 5.7: the 507
     // predicate is satisfied by a 5.8 binary too, because FUObjectItem did not change between them. FFIELDCLASS_NAME
     // defaults to 0x00 and is latched ONLY on a successful PickFFieldClassNameOffset, so 0x08 is always a probe that
     // chose it against the stricter LooksLikeFieldClassName suffix test, never a leftover default.
     f.virtualDtor58       = DynOff::IsVirtualDtorFFieldClass58(DynOff::FFIELDCLASS_NAME);
 
     // CharacterMovementComponent markers [R7-X4]: the reflected UFUNCTION SetGravityDirection means UE5.4+, the
-    // FVector GravityDirection PROPERTY only 5.3+ -- stock 5.3 already has it, and treating it as 5.4 raised every
+    // FVector GravityDirection PROPERTY only 5.3+ -- stock 5.3 already has it, so treating it as 5.4 would raise every
     // stock 5.3 title with a CMC to 504. The rule and its measurements are DynOff::CmcMarkerVersion. Best-effort and
     // bounded: one CMC answers it.
     bool cmcProp = false, cmcFunc = false;
@@ -276,7 +276,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
                          "Overriding to %u (flat=%s)", who, from, to, f.flatObjectArray ? "yes" : "no");
             break;
         case DynOff::VersionRung::TaggedFieldVariant:
-            // Heavily-stripped games (e.g. The Adventures of Elliot) lose every version string and fall back to 4.27,
+            // Heavily-stripped games lose every version string and fall back to 4.27,
             // yet are really UE5 -- the probes already proved it (tagged FFieldVariant = UE5.3+; FProperty mode).
             LOG_WARN("%s: structural marker (tagged FFieldVariant = UE5.3+) but "
                      "version=%u — raising floor to 503 (UE5).", who, from);
@@ -476,8 +476,8 @@ bool UE5_Init() {
 
         // --- Decoy recovery (Avowed / Obsidian UE5.x) ---
         // A relaxed structural match can validate a .data structure that passes
-        // ValidateGObjects yet yields 0 usable objects (observed on Avowed: the
-        // real FUObjectArray lives on the heap and is only reachable via the
+        // ValidateGObjects yet yields 0 usable objects (when the real
+        // FUObjectArray lives on the heap and is only reachable via the
         // data-section scan, which the AOB winner pre-empts). When the chosen
         // GObjects produced no objects, re-resolve from the data-scan candidate
         // set. The data scan surfaces MULTIPLE validatable candidates — several
@@ -605,9 +605,9 @@ bool UE5_Init() {
 
         // &GEngine, second pass. FindAll runs BEFORE the FNamePool and the DynOff offsets exist,
         // and ValidateGEngineSlot needs both to resolve the reflected "GameViewport" property —
-        // so the slot can only be validated here. Skipping this step is what made the System tab
-        // report "&GEngine — AOB not found" on every title while the patterns were in fact
-        // landing on the right address.
+        // so the slot can only be validated here. Skip this step and the System tab reports
+        // "&GEngine — AOB not found" on every title even while the patterns land on the right
+        // address.
         Genau::ResolveGEngineDeferred(ptrs);
         g_cachedGEngine          = ptrs.GEngine;
         g_cachedGEngineMethod    = ptrs.gengineMethod;
@@ -643,8 +643,8 @@ bool UE5_Init() {
     // (RecoverGWorldViaEngine, a live engine-updated UWorld* field). Needs a working GObjects +
     // offsets, so it runs after the GObjects recovery + offset validation above. Gated on a real
     // object array, so titles with a correct GWorld are unaffected. NOT gated on
-    // ptrs.GWorld != 0: the hardened ValidateGWorldBasic now REJECTS a decoy during the
-    // scan, so GWorld can legitimately be 0 here (no valid AOB, e.g. Avowed) and still
+    // ptrs.GWorld != 0: ValidateGWorldBasic REJECTS a decoy during the
+    // scan, so GWorld can legitimately be 0 here (no valid AOB) and still
     // needs recovery — the guarded ReadSafe below leaves gworldOk=false → recovery runs.
     if (ptrs.GObjects && ptrs.GNames && Aura::GetCount() > 0) {
         bool gworldOk = false;
@@ -721,15 +721,15 @@ bool UE5_Init() {
     // whole session on them. Refuse the latch instead; the next enable re-scans. Safe
     // against a false positive: UE5_AutoStart calls Tot::ResetShutdown() before this.
     //
-    // (MA1) The same argument now covers a PER-COMMAND cancel — a pipe client dropping
-    // mid-scan — which this guard could not see, because it tests g_shutdown only.
-    // ⚠ Do NOT "simplify" the added term to Tot::Requested(). g_perCommand stays latched
+    // (MA1) The same argument covers a PER-COMMAND cancel — a pipe client dropping
+    // mid-scan — which g_shutdown alone does not show.
+    // ⚠ Do NOT "simplify" `ptrs.bScanCancelled` to Tot::Requested(). g_perCommand stays latched
     // until Fern::ReevaluatePerCommandCancel finds no connection that raised it still
     // registered, so a flag from an EARLIER disconnect can still be set here and would make the auto-start UE5_Init refuse the latch on a scan that
     // completed perfectly — permanently disabling the DLL for that process. The note above
     // about ResetShutdown protecting against a false positive has no g_perCommand
     // equivalent; that asymmetry is the trap. `ptrs.bScanCancelled` says "THIS run actually
-    // aborted", which is the predicate the guard wanted all along.
+    // aborted", which is the predicate the guard needs.
     if (Tot::ShutdownRequested() || ptrs.bScanCancelled) {
         LOG_WARN("UE5_Init: scan was cancelled (%s) — results are partial, "
                  "NOT latching initialized so the next enable re-scans",
@@ -753,10 +753,9 @@ bool UE5_Init() {
                 static_cast<unsigned long long>(ptrs.GNames),
                 static_cast<unsigned long long>(ptrs.GWorld),
                 Aura::GetCount());
-    // validated= is now HONEST: it used to be stored true on the give-up paths too, so a
-    // run could print validated=yes three lines after "Offset validation failed — using
-    // default offsets". When it is no, say WHY, because the offsets below are then
-    // unmeasured defaults rather than probe results.
+    // validated= is yes only for measured offsets, never on a give-up path. When it is no,
+    // say WHY, because the offsets below are then unmeasured defaults rather than probe
+    // results.
     const bool offValidated = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
     LOG_SUMMARY("DynOff: CPN=%s FProp=%s TagFFV=%s Outer=+0x%02X validated=%s%s%s",
                 DynOff::bCasePreservingName ? "yes" : "no",
@@ -770,16 +769,15 @@ bool UE5_Init() {
                 DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDREN,
                 DynOff::USTRUCT_CHILDPROPS, DynOff::USTRUCT_PROPSSIZE);
     if (DynOff::bUseFProperty) {
-        // FCName is here because its absence from every diagnostic channel is what made the
-        // UE 5.8 drill-down failure cost a full RE session — it was the only UE offset
-        // neither probed nor printed.
+        // FCName is printed too, so a wrong one shows in the summary rather than only as a
+        // failed drill-down.
         LOG_SUMMARY("  FField: Next=+0x%02X Name=+0x%02X | FProp: Offset=+0x%02X ElemSize=+0x%02X StructProp=+0x%02X | FCName=+0x%02X",
                     DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME,
                     DynOff::FPROPERTY_OFFSET, DynOff::FPROPERTY_ELEMSIZE,
                     static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), DynOff::FFIELDCLASS_NAME);
     } else {
-        // The subclass slot is printed here too: its absence from every summary is what kept [UPROP-SUBCLASS-SLOT]
-        // invisible -- a UE 4.23 log showed Offset=+0x44 and nothing that said the struct reads used +0x78.
+        // The subclass slot is printed here too, so the slot the struct reads use shows beside Offset
+        // [UPROP-SUBCLASS-SLOT].
         LOG_SUMMARY("  UProperty: Next=+0x%02X Offset=+0x%02X ElemSize=+0x%02X SubclassStart=+0x%02X",
                     DynOff::UFIELD_NEXT, DynOff::UPROPERTY_OFFSET, DynOff::UPROPERTY_ELEMSIZE,
                     static_cast<int>(DynOff::FSTRUCTPROP_STRUCT));
@@ -820,12 +818,12 @@ static void ShutdownBody(bool handingOver) {
     Stark::Shutdown();
     s_pipeServer.Stop();
     // Deliberately NOT under s_initMutex: taking it here would make a Disable block for
-    // the full remaining scan, re-creating the wedged-teardown shape B49 just fixed.
+    // the full remaining scan, a wedged teardown.
     // Tot::RequestShutdown() above is the interlock — a scan still running past this
     // point sees it and refuses to latch (see UE5_Init).
     s_initialized.store(false, std::memory_order_release);
     // [W5-OFFSETS-UNMEASURED] ...and forget the offsets verdict: the next init re-derives it, and until then nothing
-    // may read this run's "validated" (a give-up used to keep a previous TRUE, over default offsets).
+    // may read this run's "validated".
     DynOff::ResetOffsetsVerdict();
     // The pipe is gone, so stop advertising READY — a CE Lua re-enable after a
     // Disable must wait for the fresh auto-start rather than read a stale flag.
@@ -875,9 +873,9 @@ uint32_t UE5_GetVersion() {
     // structural ladder ran at init; these two can surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (this
-    //     is the layout whose enum bug the Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
-    //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
+    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (the
+    //     layout the Neu reader handles). [VND583-12] DynOff::RefineVersionFromLazyMarkers
+    //     holds the rule and its citations.
     // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
     // user browses.
     const uint32_t refined = DynOff::RefineVersionFromLazyMarkers(
@@ -892,8 +890,8 @@ uint32_t UE5_GetVersion() {
 
 int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
     LAND_FORWARD(UE5_GetOffsetsVerdict, reasonBuf, bufLen);
-    // [W5-OFFSETS-UNMEASURED] The pipe's get_offsets carried this verdict and nothing CE reads did -- while
-    // ue5_dissect.lua builds CE structures from these very offsets. 1 = MEASURED; 0 = not, and reasonBuf says why.
+    // [W5-OFFSETS-UNMEASURED] get_offsets' verdict, for CE: ue5_dissect.lua builds CE structures from these very
+    // offsets. 1 = MEASURED; 0 = not, and reasonBuf says why.
     const bool ran       = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
     const bool validated = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
     CopyToBuffer(DynOff::OffsetsVerdictReason(ran, validated, DynOff::g_offsetsFallbackReason), reasonBuf, bufLen);
@@ -952,10 +950,8 @@ uintptr_t UE5_GetObjectOuter(uintptr_t obj) {
 uintptr_t UE5_FindObject(const char* fullPath) {
     LAND_FORWARD(UE5_FindObject, fullPath);
     if (!fullPath) return 0;
-    // The parameter has always been named `fullPath`, but this called FindByName —
-    // a bare-FName match — so every path-shaped argument returned 0. That is what
-    // made `ue5_dissect.lua`'s createFromPath("/Script/Engine.Actor") report
-    // "Object not found" on a live game (measured on Elliot, 2026-08-16).
+    // A path, not only a bare FName: `ue5_dissect.lua`'s createFromPath sends one
+    // ("/Script/Engine.Actor"), which a bare-name match would answer with 0.
     return Aura::FindByNameOrPath(fullPath);
 }
 
@@ -983,7 +979,7 @@ uintptr_t UE5_FindClass(const char* className) {
 
 int32_t UE5_WalkClassBegin(uintptr_t uclassAddr) {
     // [DUMPER-SECOND-COPY-AUTOSTART] A new walk in a copy that handed over runs in its successor: close any walk left
-    // open here first, or GetField would keep answering from this copy's old class (review R2-WALK-STALE-FLAG).
+    // open here first, or GetField would keep answering from this copy's old class.
     if (Land::Forwards(Land::State())) {
         std::lock_guard<std::mutex> lock(s_walkMutex);
         s_walkCache = ClassInfo{};
@@ -1041,10 +1037,9 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
 
 // ── Auto-start: the WORK, and the two ways to reach it ──────────────────────
 //
-// This used to be the body of UE5_AutoStart(), which every caller ran to
-// completion. That is a multi-second job (DllMain + Sein::Init + a 2-8 s AOB
-// scan + pipe start), and one of the callers is Cheat Engine's remote injection
-// stub — which does not wait that long (audit #5 AB2):
+// The work is a multi-second job (DllMain + Sein::Init + a 2-8 s AOB scan + pipe
+// start), and one caller of the exported UE5_AutoStart is Cheat Engine's remote
+// injection stub — which does not wait that long:
 //
 //   CEFuncProc.pas:1346-1360   createremotethread, then a wait loop of
 //                              `counter := 10000 div 10` × 10 ms = a HARD,
@@ -1056,10 +1051,11 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
 //                              injectionlocation, 0, MEM_RELEASE)` — UNCONDITIONAL
 //                              on both paths.
 //
-// So the stub page is released while our function is still running on it, and
-// the eventual `ret` lands on freed memory. **The victim is the GAME process**,
-// not CE — and note AB1's module pin does not help: that protects our image in
-// our address space, whereas this is CE's own VirtualAllocEx page in the game.
+// So a stub that ran the work to completion would have its page released while our
+// function is still running on it, and the eventual `ret` would land on freed memory.
+// **The victim is the GAME process**, not CE — and our module pin does not help: that
+// protects our image in our address space, whereas this is CE's own VirtualAllocEx
+// page in the game.
 //
 // The same shape reaches us a second way: generated CE Lua calls
 // `callDLL('UE5_AutoStart')`, which goes through executeCodeEx — a
@@ -1067,20 +1063,19 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
 // timeout path sets `dontfree := true` and leaks the stub permanently
 // (docs/ce-plugin-sdk-notes.md §13).
 //
-// The fix is to make the exported entry point SPAWN AND RETURN, so the remote
-// thread is long gone before either deadline. Readiness was already published
-// through Mimic::InitState and the emitted scripts already poll it
-// (CeReadinessLua::AppendPollLoop), so no caller loses information — the Lua
-// inject path never passed a function name to injectDLL in the first place and
-// has always relied on that poll.
+// So the exported entry point SPAWNS AND RETURNS, and the remote thread is long
+// gone before either deadline. Readiness is published through Mimic::InitState and
+// the emitted scripts poll it (CeReadinessLua::AppendPollLoop), so no caller loses
+// information — the Lua inject path passes no function name to injectDLL and relies
+// on that poll.
 static bool AutoStartWork() {
     LOG_INFO("UE5_AutoStart: entry");
 
     // Re-arm after a CE Disable. UE5_Shutdown latches Tot::RequestShutdown() and
     // joins the mailbox poller, and Mimic::StartThread's only other caller is
     // DllMain — which never runs twice — so without these two lines a re-enable
-    // came back with no mailbox at all and the session was unrecoverable without
-    // restarting the game (audit #4 B1(b)).
+    // would come back with no mailbox at all, unrecoverable without restarting the
+    // game.
     //
     // Both must happen HERE, not later. Tot::ResetShutdown is otherwise only
     // reached from Fern::Start, which runs *after* UE5_Init below: a re-enable
@@ -1096,12 +1091,12 @@ static bool AutoStartWork() {
         return false;
     }
     Tot::ResetShutdown();
-    // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
+    // Same argument, other flag.
     // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
     // latch, which Tot deliberately keeps set until no connection that raised it is
     // still registered (Fern::ReevaluatePerCommandCancel), so an orphaned scan keeps
     // aborting. That reset can therefore run AFTER this scan, exactly like ResetShutdown's. Genau's
-    // recovery sweeps now honour Tot::Requested(), so without this line a stale latch
+    // recovery sweeps honour Tot::Requested(), so without this line a stale latch
     // from a previous session's UI disconnect would abort a healthy game's GObjects/
     // GNames recovery at offset 0 — a scan that never ran, reported as one that found
     // nothing. No-op on a first start.
@@ -1111,11 +1106,8 @@ static bool AutoStartWork() {
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
-    // UE5_Init CAN fail. The "Always succeeds" comment this replaces was correct
-    // when it was written (af7ff3a deleted the old `if (!UE5_Init()) return false;`
-    // for Extra Scan), but audit #4's B49 added a real `return false` to `UE5_Init` five
-    // months later — a shutdown landing during the multi-second scan bails with
-    // NOTHING latched — and this call site was never revisited. (audit #5 D5/FR1)
+    // UE5_Init CAN fail: a shutdown landing during the multi-second scan bails with
+    // NOTHING latched.
     const bool inited = UE5_Init();
     if (!inited) {
         LOG_WARN("UE5_AutoStart: UE5_Init ABORTED (shutdown landed mid-scan) — "
@@ -1143,7 +1135,7 @@ static bool AutoStartWork() {
     bool ok = UE5_StartPipeServer();
     // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over while the pipe started: its hand-off already published this
     // mailbox's state (SKIPPED, then that copy's), and nothing here may replace it. Under the start lock, so the
-    // take-over cannot fall between this check and the write (review R2-AUTOSTART-PUBLISH-AFTER-YIELD).
+    // take-over cannot fall between this check and the write.
     std::unique_lock<std::mutex> publishLock = Land::LockStart();
     if (Land::RefusesStart(Land::State())) {
         LOG_WARN("UE5_AutoStart: a later copy of the dumper took over while this copy's pipe started -- publishing "
@@ -1151,10 +1143,9 @@ static bool AutoStartWork() {
         return false;
     }
     // Publish only AFTER StartPipeServer returns — a poller that sees READY must
-    // be able to connect immediately. READY now also requires init to have
-    // COMPLETED: the enum defines it as "init finished AND the pipe server is up",
-    // and publishing it over an aborted scan told every CE feature row it was safe
-    // to proceed.
+    // be able to connect immediately. READY also requires init to have COMPLETED:
+    // the enum defines it as "init finished AND the pipe server is up", and READY
+    // over an aborted scan would tell every CE feature row it was safe to proceed.
     g_invokeMailbox.initState = (ok && inited) ? Mimic::INIT_READY : Mimic::INIT_FAILED;
     LOG_INFO("UE5_AutoStart: pipe server %s, init %s -> initState=%d",
              ok ? "started" : "FAILED to start",
@@ -1165,9 +1156,9 @@ static bool AutoStartWork() {
 
 // One auto-start at a time. Both entry points funnel through here, and they DO
 // overlap in the ordinary CE-plugin flow: LoadLibrary spawns DllMain's auto-start
-// thread, and CE's stub then calls the export a moment later. Before, that raced
-// two full scans past each other and was survived only incidentally (UE5_Init's
-// s_initialized latch plus the pipe-exists probe). Now the second caller returns
+// thread, and CE's stub then calls the export a moment later. Unguarded, that races
+// two full scans past each other, survived only incidentally (UE5_Init's
+// s_initialized latch plus the pipe-exists probe); guarded, the second caller returns
 // at once instead of duplicating a multi-second scan.
 static std::atomic<bool> s_autoStartInFlight{false};
 
@@ -1296,25 +1287,20 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
 // traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
 //
 // ⚠ `extern "C++"` is REQUIRED here, and the reason is easy to miss: this file wraps
-// everything from line ~124 to ~2314 in one big `extern "C" {` for the UE5_* exports,
-// so a helper declared in the middle of it inherits **C language linkage** even though
-// it is `static`. Returning `std::vector<FunctionInfo>` from a C-linkage function is
-// MSVC warning C4190 ("has C-linkage specified, but returns UDT which is incompatible
-// with C") — emitted on every clean build, and invisible on an incremental one because
-// Frieren.cpp only recompiles when it is touched. That is why it looked new after a
-// sync: nothing changed, the object cache had simply been hiding it.
+// the UE5_* exports in one big `extern "C" {`, so a helper declared in the middle of
+// it inherits **C language linkage** even though it is `static`. Returning
+// `std::vector<FunctionInfo>` from a C-linkage function is MSVC warning C4190 ("has
+// C-linkage specified, but returns UDT which is incompatible with C") — emitted on
+// every clean build, and invisible on an incremental one because Frieren.cpp only
+// recompiles when it is touched.
 //
-// The twin of this function in Mimic.cpp `ChainListFuncs` is byte-for-byte the same and does NOT
-// warn, because Mimic uses per-declaration `extern "C"` and never opens a block. That
-// asymmetry between two identical helpers IS the diagnosis.
+// The twin of this function in Mimic.cpp `ChainListFuncs` is the same and does NOT
+// warn, because Mimic uses per-declaration `extern "C"` and never opens a block.
 //
-// Nothing was ever broken at runtime — these are `static`, used only as function
-// pointers inside this translation unit, never called from C. But language linkage is
-// part of a function's TYPE in C++, so leaving it wrong is the kind of thing that
-// breaks on a compiler upgrade or under /permissive-, not the kind that stays cosmetic.
-//
-// Negative control 2026-08-24: removing this `extern "C++"` brings C4190 straight back
-// on the next Frieren.cpp recompile; restoring it silences it. Both directions observed.
+// These are `static`, used only as function pointers inside this translation unit,
+// never called from C. But language linkage is part of a function's TYPE in C++, so
+// leaving it wrong is the kind of thing that breaks on a compiler upgrade or under
+// /permissive-, not the kind that stays cosmetic.
 extern "C++" {
 static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
     return Ubel::WalkFunctions(cls);
@@ -1328,13 +1314,11 @@ static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintpt
 }
 }  // extern "C++"
 
-// Resolve a UFunction by name on a class OR ANY OF ITS BASES.
+// Resolve a UFunction by name on a class OR ANY OF ITS BASES. [INVOKEINHERIT-2026-08-20]
 //
-// ⚠ It used to search only the class's OWN declared functions, which is what
-// [INVOKEINHERIT-2026-08-20] was: `SetActorHiddenInGame` on a StaticMeshActor returned
-// "not found" for a function the tool's own listing had just produced, and every one of
-// AActor's 140 functions was unreachable on every derived instance. Ubel::WalkFunctions is
-// still per-class — that is correct for LISTING, which attributes each function to its
+// ⚠ The class's OWN declared functions are not enough: every function a base declares
+// (`SetActorHiddenInGame` on a StaticMeshActor, say) must resolve too. Ubel::WalkFunctions
+// is per-class — that is correct for LISTING, which attributes each function to its
 // declaring class — so the climb belongs here, in the resolver, and NOT in the walker.
 uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
     LAND_FORWARD(UE5_FindFunctionByName, classAddr, funcName);
@@ -1374,9 +1358,8 @@ uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
 // ============================================================================
 
 // Resolve an ObjectProperty field offset by name within a class (inherited
-// fields included). Thin wrapper over the shared Ubel::FindFieldOffset
-// (extracted from here, build 1015) — the fuzzy branch stays
-// ObjectProperty-only so DebugCameraControllerRef never matches the
+// fields included). Thin wrapper over the shared Ubel::FindFieldOffset —
+// the fuzzy branch stays ObjectProperty-only so DebugCameraControllerRef never matches the
 // always-non-null DebugCameraControllerClass TSubclassOf slot.
 // Returns -1 if not found.
 static int DbgCam_FieldOffset(uintptr_t classAddr, const char* exact,
@@ -1406,14 +1389,14 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     outCm = 0; outDcc = 0;
     // Derivation-gated, never a class-name substring: the stock engine has UCheatManagerExtension (4.27+) and GAS's
     // UAbilitySystemCheatManagerExtension, which contain "CheatManager" and are no UCheatManager -- a live extension at
-    // a lower GObjects index, or the extension's CDO when no CheatManager is live, was taken over the real one.
+    // a lower GObjects index, or the extension's CDO when no CheatManager is live, would be taken over the real one.
     // FindLiveOrDefaultOf, not the user-facing ResolveUserInstance: a STATE read must never take the Debug Camera's
     // own CheatManager, where an invoke takes it when nothing else is live. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
-    // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
-    // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
+    // below: when its CDO sits first, it has no OriginalControllerRef, so the state would read -1 and a Force ON
+    // refuse (L83). [SEETHRU-PROBE-SUBSTRING]
     // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
-    // non-Shipping builds), and on UE 5.8 a toggle there never enables the camera -- measured, the second Force ON a
-    // no-op once slot reuse put that CheatManager below the player's. The player's toggles in both directions on 5.8,
+    // non-Shipping builds), and on UE 5.8 a toggle there never enables the camera -- once slot reuse puts that
+    // CheatManager below the player's, a second Force ON is a no-op. The player's toggles in both directions on 5.8,
     // and on older engines its OFF is the no-op the swap-back below already finishes.
     uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
     outCm = cm;   // may be 0 (some titles spawn it lazily)
@@ -1427,7 +1410,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
         if (refOff >= 0) dcc = DbgCam_ReadPtr(cm, refOff);
     }
     // Fallback: DebugCameraControllerRef can be null even with the camera live —
-    // some titles don't populate it (DQIII HD-2D), or there are several
+    // some titles don't populate it, or there are several
     // CheatManagers and the one above is not the one that spawned it. Find the DCC by
     // instance scan; its OriginalControllerRef is the authoritative active flag.
     if (!dcc) {
@@ -1504,11 +1487,11 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
                                       bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut = nullptr);
 
 // [DBGCAM-OFF-OVER-QUEUED-ON] The toggle a Set left queued, until it has run, and the one a Set is dispatching now.
-// A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF read "already
-// OFF" and reported a clean OFF that a queued ON then undid. Both directions: a queued OFF changes nothing on stock UE
-// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; everything a Set does runs under
-// the lock except a game-thread wait (the invoke), which a CE untick behind another Set would otherwise sit through
-// past its own deadline.
+// A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF that read
+// "already OFF" would report a clean OFF that a queued ON then undoes. Both directions: a queued OFF changes nothing
+// on stock UE 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; everything a Set
+// does runs under the lock except a game-thread wait (the invoke), which a CE untick behind another Set would
+// otherwise sit through past its own deadline.
 static std::mutex s_dbgCamMutex;
 static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
@@ -1536,10 +1519,10 @@ static void JoinPendingToggle(int32_t answer, bool queued) {
 }
 
 // [D2-3-INVOKE] Fern's hold recorder and if_free check: an ON still queued or being dispatched turns the camera on when
-// it runs, so the client that sent it holds the camera from now -- and nobody else does. Recording nobody let the
-// camera come on ownerless (its sender could not turn it off with if_free, and an AI session's end did not release
-// it); recording whoever called last let an AI's no-op Set take over the user's queued ON. C++ linkage inside this
-// file's extern "C" block, as FrierenInvoke below: Fern declares it as a C++ function.
+// it runs, so the client that sent it holds the camera from now -- and nobody else does. Recording nobody would let
+// the camera come on ownerless (its sender could not turn it off with if_free, and an AI session's end would not
+// release it); recording whoever called last would let an AI's no-op Set take over the user's queued ON. C++ linkage
+// inside this file's extern "C" block, as FrierenInvoke below: Fern declares it as a C++ function.
 extern "C++" {
 namespace FrierenDebugCamera {
 bool PendingOn(uint64_t& owner) {
@@ -1911,23 +1894,20 @@ int32_t UE5_SetFlyNoclip(int32_t enable) {
 }
 
 // ============================================================================
-// ProcessEvent vtable detection (build 648+)
+// ProcessEvent vtable detection
 //
-// Background: the pre-build-648 detector picked the vtable byte offset purely
-// from a hardcoded UE-version table and "validated" the slot only by reading
-// 1 byte to confirm it pointed to *some* code. Every UObject virtual passes
-// that check, so on Geri (UE 4.27) and ES2 (UE 5.5) we silently hooked an
-// adjacent virtual — the invoke queue never drained, KismetMathLibrary
-// returns sat at 0, and the bug slept for 600+ builds because verify mode
-// (the first reader of the return slot) only landed in build 637.
+// Why not a UE-version table alone: reading 1 byte to confirm a table slot
+// points to *some* code validates nothing, since every UObject virtual passes
+// that check. A wrong slot silently hooks an adjacent virtual — the invoke
+// queue never drains and KismetMathLibrary returns sit at 0.
 //
-// New approach (cribbed from Dumper-7 vendor/Dumper-7/Dumper/Engine/Private/
+// Approach (cribbed from Dumper-7 vendor/Dumper-7/Dumper/Engine/Private/
 // OffsetFinder/Offsets.cpp:15-74): iterate the UObject vtable slot-by-slot,
 // fetch each candidate function's body, and look for two `TEST [reg+disp32],
 // imm32` instructions that ProcessEvent uniquely checks against:
 //   1) imm32 = 0x00000400  (FUNC_Native)         — within first 0x400 bytes
 //   2) imm32 = 0x00400000  (FUNC_HasOutParms /
-//                           FUNC_NetServer mask) — within first 0xF00 bytes
+//                           FUNC_NetServer mask) — within kBodySize bytes
 // Both `disp32` operands point at UFunction::FunctionFlags (~0x88..0xC0 across
 // UE versions). We don't need to know the exact FunctionFlags offset — just
 // that *some* `TEST DWORD PTR [reg+disp32], imm32` pair exists with the right
@@ -1961,35 +1941,23 @@ namespace {
     // one position early, and the pattern misses a ProcessEvent that is otherwise
     // textbook.
     //
-    // MEASURED, DumperTest UE 5.4 **Development** (the sample that failed in the
-    // field), at ProcessEvent+0x36F:
+    // For example:
     //     41 F7 84 24 B0 00 00 00 00 04 00 00
     //     REX.B  F7  ModRM=84  SIB=24  disp32=0xB0  imm32=0x400
     //   = test dword ptr [r12+0xB0], 0x400        (r12 holds the UFunction*)
-    // versus the same test in the Shipping build of the same project:
+    // versus the same test with the UFunction* in a low register:
     //     F7 82 B0 00 00 00 00 04 00 00
     //   = test dword ptr [rdx+0xB0], 0x400        (matched by kPePat1 as-is)
     // Same flag, same field (+0xB0 = UFunction::FunctionFlags), same structure —
-    // only the register allocation differs. Ground truth for the slot came from
-    // the paired PDB: UObject::ProcessEvent is vtable entry 77, i.e. **+0x268**,
-    // and the version-table fallback's 0x220 is entry 68,
-    // UObject::GetSubobjectsWithStableNamesForNetworking — a replication callback
-    // that never runs in a single-player sample, which is exactly "fired 0 times".
+    // only the register allocation differs.
     //
-    // Note the 0x400000 test in the SAME function had no SIB (it used rsi), so
-    // only pattern 1 actually failed; pattern 2's variant is added for symmetry
-    // because nothing makes rsi special.
+    // Pattern 2 gets the same variant: nothing pins the register either test uses.
     //
     // A relaxed pattern can only regress by matching an EARLIER slot on a binary
-    // that already worked, so that was measured rather than argued: over the 22
-    // shipped UE games in the local corpus plus both DumperTest configs (60
-    // candidate vtables each, harvested from .rdata), **not one binary changed a
-    // first match it already had**. The sole behaviour change is DumperTest
-    // Development going from no match at all to exactly one, at 0x268.
+    // the strict one already answers.
     //
-    // Deliberately NOT covered, because no sample exercises them: a disp8 form
-    // (structurally impossible while FunctionFlags sits at +0xB0 > 0x7F), and the
-    // register forms A9 / F7 C0 (absent from every sample disassembled).
+    // Deliberately NOT covered: a disp8 form (structurally impossible while
+    // FunctionFlags sits at +0xB0 > 0x7F), and the register forms A9 / F7 C0.
     constexpr uint8_t kPePat1SibBytes[11] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
     constexpr char    kPePat1SibMask[12] =   "x???xxxxxxx";   // 11 chars + NUL
     constexpr uint8_t kPePat2SibBytes[11] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };
@@ -2015,7 +1983,7 @@ namespace {
     // garbage CDOs with NULL or torn vtable pointers — walk a window of 200.
     //
     // Returns DISTINCT vtables rather than the first one, because the pattern scan is not
-    // guaranteed to work on an arbitrary class. Measured on the DropIn 4.27.2 PDB:
+    // guaranteed to work on an arbitrary class:
     // AActor::ProcessEvent is a thin override that contains the FUNC_Native test but NOT
     // the high-flag test, so the two-pattern scan returns -1 for any Actor vtable and we
     // would drop to the version table. Sampling several classes makes that a non-event.
@@ -2036,13 +2004,12 @@ namespace {
 // offset whose function body contains both Dumper-7 TEST patterns. -1 = miss.
 static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
     // Vtable window: every UE version we support places PE between 0x100 and
-    // 0x300. Step 8 = pointer stride. ~64 slots × ~0xF00 byte read is fast.
+    // 0x300. Step 8 = pointer stride. ~64 slots × a kBodySize read is fast.
     constexpr int kMinOffset   = 0x100;
     constexpr int kMaxOffset   = 0x300;
-    // 0x2000, not the original 0xF00. Measured on the DropIn UE 4.27.2 PDB:
-    // UObject::ProcessEvent is 5182 bytes and pattern 2 sits at byte 3537 — only 303 bytes
-    // (7.9%) inside the old 3840-byte window. Any build that inlines a little more ahead of
-    // the high-flag test would silently push it out and drop us onto the version table.
+    // 0x2000: UObject::ProcessEvent runs to several KB (UE 4.27.2: 5182 bytes, pattern 2
+    // at byte 3537). A window that ends close behind the high-flag test loses it on any
+    // build that inlines a little more ahead of it, and drops us onto the version table.
     constexpr size_t kBodySize = 0x2000;
 
     uint8_t body[kBodySize];
@@ -2074,8 +2041,8 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
     }
 
     // [VND584-05] A clang build narrows both tests to byte tests (Stark::NarrowedFlagTestsFunctionFlags), so the pass
-    // above never matches it and the version table answered -- right on Avowed only because its slot is stock, wrong on
-    // a licensee vtable (RE-UE4SS's configs: TOW2 +0x278, Conan +0x268, Dune +0x2A8). A SECOND pass, run only when the
+    // above never matches it, and the version table is right only where the slot is stock -- not on a licensee vtable
+    // (RE-UE4SS's configs: TOW2 +0x278, Conan +0x268, Dune +0x2A8). A SECOND pass, run only when the
     // first found nothing, so no binary the first pass answers can get a different answer.
     for (int off = kMinOffset; off <= kMaxOffset; off += 8) {
         uintptr_t funcAddr = 0;
@@ -2092,26 +2059,23 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
 
 // Legacy version-based detection — kept as a fallback for cases where the
 // pattern scanner whiffs (unusual compiler output, heavily-optimised LTO,
-// custom publisher fork). Not authoritative anymore: a "success" return
-// here will be cross-checked by post-install hook-fire-count validation
-// in TryInstallGameThreadHook below.
+// custom publisher fork). Not authoritative: a "success" return here is
+// cross-checked by post-install hook-fire-count validation in
+// TryInstallGameThreadHook below.
 static int DetectProcessEventVTableOffsetByVersion(uintptr_t vtable) {
     // The per-version slot table, and the evidence for it, live on
     // Grimoire's DynOff::ProcessEventVTableSlotFor — in the header so the test target
     // can pin every row (the tests link headers, not this .cpp).
     //
-    // The old ladder here was `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is not a
-    // producible version, so EVERY UE5 game silently took 0x220 — off by 0x38..0x58.
-    // 4.27 = 0x220 is retained and is now corroborated by the PDB oracle; the note it
-    // carried is worth keeping: 0x218 is slot 67, UObject::OverridePerObjectConfigSection,
-    // one slot BEFORE ProcessEvent, and hooking it is exactly the build-647 failure
-    // (invokes time out, static fast path returns 0).
+    // 4.27 = 0x220, corroborated by the PDB oracle. 0x218 is slot 67,
+    // UObject::OverridePerObjectConfigSection, one slot BEFORE ProcessEvent: hooking it
+    // makes invokes time out and the static fast path return 0.
     int primary = DynOff::ProcessEventVTableSlotFor(g_cachedUEVersion);
     bool extrapolated = false;
     if (primary == 0) {
         // No measurement for this version: below the 4.11 floor, or a future 5.9+.
         // Take the nearest measured neighbour rather than a blanket constant, and say
-        // out loud that it is a guess — this is the arm that used to lie quietly.
+        // out loud that it is a guess.
         primary = (g_cachedUEVersion >= 500) ? DynOff::ProcessEventVTableSlotFor(508)
                                              : DynOff::ProcessEventVTableSlotFor(411);
         extrapolated = true;
@@ -2174,7 +2138,7 @@ static int DetectProcessEventVTableOffset(bool* fromVersionTable) {
         // ("proxy DLL mode — starting pipe server only (no scan)"), so GObjects is
         // unset until a scan runs and there is simply no UObject to read a vtable
         // from yet. Logged ONCE: detection is re-armed on the ordinary invoke path,
-        // so an ERROR here became one log line per invoke, forever.
+        // so logging every time would write one line per invoke, forever.
         static std::atomic<bool> s_loggedNoVtable{false};
         if (!s_loggedNoVtable.exchange(true, std::memory_order_relaxed)) {
             LOG_INFO("DetectProcessEvent: no UObject vtable available yet (GObjects is "
@@ -2220,11 +2184,9 @@ static std::atomic<bool> s_peOffsetFromVersionTable{false};
 /// the slot from the TARGET instance's own vtable, which stays right even for a class
 /// that overrides ProcessEvent.
 ///
-/// Pure resolver: it does NOT detect. The ad-hoc `if (offset == -2) detect;` that
-/// used to sit here was the one detection site outside the serialized path, i.e.
-/// two threads could run the scan concurrently and race the store. Detection now
-/// has exactly one entry point (RunPeDetection), which owns the lock and the
-/// retry budget.
+/// Pure resolver: it does NOT detect. Detection has exactly one entry point
+/// (RunPeDetection), which owns the lock and the retry budget, so two threads
+/// cannot run the scan concurrently and race the store.
 static uintptr_t ResolveProcessEventAddr() {
     const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
     if (!Stark::PeOffsetUsable(peOffset)) return 0;
@@ -2252,22 +2214,19 @@ static uintptr_t ResolveProcessEventAddr() {
 /// Called lazily on first UE5_CallProcessEvent invocation.
 ///
 /// After a successful MinHook install, spawns a detached validator thread
-/// (build 648+) that waits 1500ms and confirms Stark::GetHookFireCount() is
+/// that waits 1500ms and confirms Stark::GetHookFireCount() is
 /// non-zero. UObject::ProcessEvent fires many times per second under normal
 /// gameplay (every tick, every input dispatch, every anim notify), so a zero
 /// reading after 1.5s is strong evidence we hooked an adjacent virtual
-/// rather than PE itself. Logs ERROR loudly when that happens — silent
-/// vtable-misdetection is the whole reason the bug at builds 1..647
-/// stayed buried, so we now refuse to keep that failure mode silent.
-// Hook-install RETRY policy (live finding, Elliot 2026-07-23).
+/// rather than PE itself. Logs ERROR loudly when that happens — a vtable
+/// misdetection must never be silent.
+// Hook-install RETRY policy.
 //
 // `MH_CreateHook` can fail with MH_ERROR_MEMORY_ALLOC — MinHook could not place a
 // trampoline within reach of ProcessEvent, which depends on the process's VM
-// layout at that instant. Observed intermittently: the same address hooked fine
-// 19 minutes earlier in the same game. The old code latched a one-shot
-// `s_hookAttempted` BEFORE attempting and never cleared it, so one unlucky
-// allocation forced every later invoke in the process onto the unsafe direct
-// call — 552 of them in 19 s, driven by a 10 Hz worker.
+// layout at that instant, so the same address can hook fine later in the same
+// game. A one-shot latch would let one unlucky allocation force every later
+// invoke in the process onto the unsafe direct call.
 //
 // So: bounded, rate-limited retries instead of a permanent latch. Cheap enough to
 // sit on the lazy invoke path (a 10 Hz worker adds at most one attempt per
@@ -2279,7 +2238,7 @@ static std::atomic<uint64_t> s_lastHookAttemptMs{0};
 // Did the PREVIOUS install attempt fail? Set on any failed attempt, cleared on success -- the one signal that a
 // success is a RECOVERY. The automatic counter cannot stand in: a forced attempt does not spend it (B24) and a
 // recovery that skips the cooldown's automatic attempt leaves it at 1, so gating RECOVERED on `attempts > 1` drops
-// the FFRS case (two Starts fail, the third succeeds). ([MH-PRERESERVE-PROXY])
+// the case where two Starts fail and the third succeeds. ([MH-PRERESERVE-PROXY])
 static std::atomic<bool>     s_lastInstallFailed{false};
 
 // ---------------------------------------------------------------------------
@@ -2294,8 +2253,7 @@ static std::atomic<int>      s_peDetectAttempts{0};    // REAL runs only (see St
 static std::atomic<uint64_t> s_lastPeDetectMs{0};
 // CONSECUTIVE validation failures, not a lifetime tally — reset by the next
 // validation that passes. A lifetime tally would let three UNRELATED idle windows
-// across a long session terminally condemn an offset that was right every time,
-// which is the defect this whole change exists to remove, one layer down.
+// across a long session terminally condemn an offset that was right every time.
 static std::atomic<int>      s_peValidationFailures{0};
 // Is the CURRENT offset known not to be ProcessEvent? Set when the validator
 // condemns, cleared the moment a validation passes. This is deliberately a STATE,
@@ -2339,9 +2297,8 @@ static void RunPeDetection(bool force) {
     if (Stark::PeOffsetRetryable(off)) return;
 
     // Only the AUTOMATIC path spends the budget — the same rule TryInstallGameThreadHook
-    // uses 60 lines down, and for the same reason (finding B24): a forced attempt
-    // already skips the cap, so counting it there burns the automatic retries on the
-    // user's behalf.
+    // uses, and for the same reason: a forced attempt already skips the cap, so
+    // counting it there burns the automatic retries on the user's behalf.
     const int spent = force ? s_peDetectAttempts.load(std::memory_order_relaxed)
                             : s_peDetectAttempts.fetch_add(1, std::memory_order_relaxed) + 1;
     // Provenance FIRST, then the offset with RELEASE. The validator reads the pair
@@ -2377,11 +2334,11 @@ static void TryInstallGameThreadHook(bool force = false) {
         if (now - last < kHookRetryCooldownMs) return;   // too soon — stay quiet
     }
     // Only the AUTOMATIC path spends the budget. A forced attempt already skips the
-    // cap and the cooldown, so counting it there just burned the automatic retries on
-    // the user's behalf: two clicks of a feature that forces a hook (Live Funcs,
-    // See-through) exhausted kMaxHookAttempts and the lazy retry went silent for the
-    // rest of the session. The timestamp IS still stamped for both — a forced attempt
-    // is a real attempt, and the cooldown should measure from it. (B24)
+    // cap and the cooldown, so counting it there would burn the automatic retries on
+    // the user's behalf: two clicks of a feature that forces a hook would exhaust
+    // kMaxHookAttempts and silence the lazy retry for the rest of the session. The
+    // timestamp IS still stamped for both — a forced attempt is a real attempt, and
+    // the cooldown should measure from it.
     if (!force) {
         s_hookAttempts.fetch_add(1, std::memory_order_relaxed);
         attempts += 1;
@@ -2415,13 +2372,12 @@ static void TryInstallGameThreadHook(bool force = false) {
 
     // Detached validator: don't block the caller — UE5_Init must keep running.
     //
-    // It used to only OBSERVE. Nothing acted on the verdict, so a game whose slot
-    // was mis-detected logged one ERROR and then behaved as if the hook were fine
-    // for the rest of the session — every invoke timing out, the panel reporting
-    // "PE hook off · never fired", and the UI advising a re-deploy that cannot
-    // help. ([PEHOOK-2026-08-17])
+    // It ACTS on the verdict: a game whose slot was mis-detected must not go on as
+    // if the hook were fine — every invoke timing out, the panel reporting "PE hook
+    // off · never fired", and the UI advising a re-deploy that cannot help.
+    // ([PEHOOK-2026-08-17])
     //
-    // It now acts, but only on the version-TABLE path — see
+    // It acts only on the version-TABLE path — see
     // Stark::ShouldActOnValidationFailure for why a zero means something
     // different per detector. "Acting" never means MH_RemoveHook: unhooking while
     // a game thread may be inside the trampoline is a guaranteed crash (see
@@ -2465,8 +2421,8 @@ static void TryInstallGameThreadHook(bool force = false) {
 
         if (!Stark::ShouldActOnValidationFailure(fromTable)) {
             // Pattern-scan offset: the trusted detector. A zero here reads as an
-            // idle game thread, and disabling a correct hook over that would be a
-            // worse bug than the one being fixed. Report, keep the hook.
+            // idle game thread, and disabling a correct hook over that is worse
+            // than the mis-detection it would guard against. Report, keep the hook.
             LOG_WARN("GameThreadDispatch: hook at 0x%llX (vtable+0x%X) fired 0 times in "
                      "1500ms, but the offset came from the PATTERN scan — the detector "
                      "that fingerprints ProcessEvent's own body. Most likely the game "
@@ -2519,23 +2475,19 @@ static void TryInstallGameThreadHook(bool force = false) {
 // First-time ProcessEvent bring-up (vtable-offset detection + game-thread hook
 // install) MUST run exactly once even when the Mimic mailbox polling thread and
 // one or more Fern pipe-lane threads issue their FIRST invoke at the same moment.
-// Previously each entry point did an unsynchronized `if (s_processEventOffset ==
-// -2) { detect; TryInstall; }`, so two threads could both detect and both reach
-// Stark::InstallHook — a double MH_CreateHook on the same address can corrupt
-// MinHook's state (and races the s_originalPE write the game thread reads),
-// risking a crash (audit #3). std::call_once serializes the pair; late arrivals
+// Two threads that both detect and both reach Stark::InstallHook would make a
+// double MH_CreateHook on the same address, which can corrupt MinHook's state (and
+// races the s_originalPE write the game thread reads), risking a crash (audit #3).
+// std::call_once serializes the pair; late arrivals
 // block until it finishes, then observe the fully-written offset via call_once's
 // happens-before. Diagnostic: the arrival counter surfaces whether the race
-// window was actually contended in this game (proof the guard earns its keep).
+// window was actually contended in this game.
 static std::once_flag s_peInitOnce;
 static std::atomic<int> s_peInitArrivals{0};
 // Arrival ordinal at the moment init FINISHED. Anything numbered above it turned
-// up after the once was already satisfied and contended nothing. Without this the
-// test was `arrivals > 1` — true for EVERY invoke the process ever makes: a live
-// See-Through session (one invoke per ~100 ms tick) logged 437 of these WARNs in
-// four minutes on a run whose own INFO line said "1 caller(s) arrived before init
-// began". Every one a false positive, and the diagnostic worthless precisely
-// because it always fired.
+// up after the once was already satisfied and contended nothing. `arrivals > 1`
+// alone is true for EVERY invoke the process ever makes (a See-Through session
+// invokes every ~100 ms tick), and a diagnostic that always fires is worthless.
 static std::atomic<int> s_peArrivalsAtInitEnd{0};
 static void EnsureProcessEventReady() {
     int arrivals = s_peInitArrivals.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2559,10 +2511,10 @@ static void EnsureProcessEventReady() {
     //
     // (1) DETECTION. The offset is re-armable when the first attempt had no UObject
     //     to read (proxy mode before a scan) or when the validator condemned a
-    //     version-table guess. Without this the very first attempt decided the
-    //     process's fate forever: `pe_profile_start` before a scan left -1, every
-    //     retry path was gated against it, and no scan/click/invoke could ever
-    //     install the hook again. ([PEHOOKONCE-2026-08-18])
+    //     version-table guess. Without this the very first attempt would decide the
+    //     process's fate forever: `pe_profile_start` before a scan would leave -1,
+    //     and no later scan/click/invoke could install the hook.
+    //     ([PEHOOKONCE-2026-08-18])
     RunPeDetection(/*force=*/false);
     // (2) INSTALL — bounded, rate-limited retry of a FAILED install (its own policy,
     //     see the note above; a transient MinHook alloc failure is not a detection
@@ -2573,8 +2525,8 @@ static void EnsureProcessEventReady() {
     }
 
     // Warn ONLY for arrivals that were genuinely in flight while init ran — that
-    // is the historic double-install crash window, and it is what this line
-    // claims to be evidence of.
+    // is the double-install crash window, and it is what this line claims to be
+    // evidence of.
     if (arrivals > 1 &&
         arrivals <= s_peArrivalsAtInitEnd.load(std::memory_order_relaxed)) {
         LOG_WARN("ProcessEvent: concurrent first-invoke #%d serialized behind the "
@@ -2631,8 +2583,7 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
     }
 
     // Hook is down. Log the fallback ONCE per state transition, not once per
-    // invoke: the per-invoke version produced 552 identical WARN+INFO triplets in
-    // 19 s on a live run and buried everything else in the log.
+    // invoke: a line per invoke buries everything else in the log.
     ReportHookState(false);
 
     // A MIS-DETECTED offset must never reach the direct call. ([PEHOOK-2026-08-17])
@@ -2644,11 +2595,10 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
     // offset does not receive the game's own traffic, because then we have positive
     // evidence it is some other UObject virtual.
     //
-    // Without this guard the fix would have made that case WORSE, not better: a
-    // condemned offset is re-armed and re-detected on the very next invoke, but the
-    // INSTALL retry has a 5 s cooldown, so for those 5 s the offset is usable while
-    // the hook is down — exactly the shape that reaches the code below. Before, the
-    // hook stayed up and the invoke merely timed out.
+    // The window is real: a condemned offset is re-armed and re-detected on the very
+    // next invoke, but the INSTALL retry has a 5 s cooldown, so for those 5 s the
+    // offset is usable while the hook is down — exactly the shape that reaches the
+    // code below.
     //
     // It is a STATE, not a history: a lifetime "have we ever failed" tally would
     // refuse this path forever after one idle-game false positive, even once the
@@ -2658,7 +2608,7 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
     // (c) A REPEATING worker invoke must not take the unsafe path. A user's
     // one-shot invoke accepting that risk is their call; a re-assert / feature
     // worker calling ProcessEvent off the game thread ~10x/s for minutes is not a
-    // trade anyone opted into — and it is the historic crash shape. Refuse, and
+    // trade anyone opted into — and it is the shape that crashes. Refuse, and
     // let the feature surface "unavailable" instead of quietly gambling.
     if (Tot::IsBackgroundWorker()) return -8;
 
@@ -2851,8 +2801,7 @@ extern "C" bool UE5_EnsureGameThreadHook() {
 
     // Detection first: the offset can be re-armable because the process had no
     // UObject yet (proxy mode before a scan). Forcing a fresh attempt here is what
-    // makes "run a scan, then press Start again" real advice rather than the
-    // unreachable instruction it used to be. ([PEHOOKONCE-2026-08-18])
+    // makes "run a scan, then press Start again" real advice. ([PEHOOKONCE-2026-08-18])
     RunPeDetection(/*force=*/true);
     if (!Stark::PeOffsetUsable(s_processEventOffset.load(std::memory_order_relaxed))) {
         return false;   // still unknown, or terminally failed — nothing to install
@@ -2880,13 +2829,12 @@ extern "C" int UE5_GetProcessEventOffset() {
 // Mimic::HandleInvoke) that have independently verified the function is safe to
 // call off-thread.
 //
-// It used to say "never goes through GameThreadDispatch", and that was FALSE
-// (audit #5 ST1): MinHook patches ProcessEvent's prologue, so calling the
-// address read out of the vtable lands in HookedProcessEvent — on a pipe lane or
-// the Mimic polling thread — and its drain then executed queued requests that
-// were queued precisely because they are NOT safe off-thread. Now true again,
-// on BOTH branches below: the patched address goes through the trampoline, and
-// an override's fail-open call runs under Stark::CallAddressAsOwnSEH's own-PE-call
+// It never drains GameThreadDispatch's queue. MinHook patches ProcessEvent's
+// prologue, so calling the address read out of the vtable would land in
+// HookedProcessEvent — on a pipe lane or the Mimic polling thread — and its drain
+// would execute requests that were queued precisely because they are NOT safe
+// off-thread. So on BOTH branches below the patched address goes through the
+// trampoline, and an override's fail-open call runs under Stark::CallAddressAsOwnSEH's own-PE-call
 // mark -- so when AActor::ProcessEvent calls Super::ProcessEvent, which IS the
 // patched address, the detour sees InOwnPeCall() and does not drain
 // ([A3-ST1-SUPER-DRAIN]). The SEH frame and that mark live in Stark's helper pair
@@ -2895,7 +2843,7 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
     LAND_FORWARD(UE5_CallProcessEventDirect, instance, ufunc, params);
     if (!instance || !ufunc) return -1;
 
-    // Lazy, race-safe one-time detection + hook install (audit #3).
+    // Lazy, race-safe one-time detection + hook install.
     EnsureProcessEventReady();
     const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
     if (!Stark::PeOffsetUsable(peOffset)) return -3;
@@ -3019,7 +2967,7 @@ bool UE5_StartPipeServer() {
         return false;
     }
     // [DUMPER-SECOND-COPY-AUTOSTART] An earlier copy of the dumper here gives way before the probe below asks who holds
-    // the pipe: the later copy always takes over (maintainer, 2026-11-17). Here rather than before the scan, so the
+    // the pipe: the later copy always takes over. Here rather than before the scan, so the
     // earlier copy keeps serving while this one scans; its mailbox is then served by this copy (Land).
     Land::RetireEarlierCopies();
     if (Land::RefusesStart(Land::State())) {
@@ -3028,9 +2976,9 @@ bool UE5_StartPipeServer() {
         return false;
     }
 
-    // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
-    // skipped for good on a yes — which on a self-relaunching title meant deferring to the
-    // process that was in the middle of dying, and never serving again. [RELAUNCHPIPE-2026-08-19]
+    // Who, if anyone, already owns the pipe? Not merely whether it EXISTS: skipping for good on
+    // a yes would, on a self-relaunching title, defer to the process that is in the middle of
+    // dying and never serve again. [RELAUNCHPIPE-2026-08-19]
     // The name is this process's own, so a holder is a second copy of the DLL here, or a
     // process that created this process's name.
     HANDLE testPipe = CreateFileW(
@@ -3082,9 +3030,8 @@ bool UE5_StartPipeServer() {
         default:
             // ⚠ Still returns TRUE, deliberately. Both callers map this straight onto
             // g_invokeMailbox.initState, so a false here would publish INIT_FAILED while a pipe
-            // server IS up in this process (another copy's) — a worse and much more visible
-            // regression than the one being fixed. What changes is that the deferral is no
-            // longer permanent: the watcher claims the pipe as soon as the holder lets go.
+            // server IS up in this process (another copy's). The deferral is not permanent:
+            // the watcher claims the pipe as soon as the holder lets go.
             LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu (0: every instance busy, holder "
                      "unknown) — deferring, and watching for it to free (this copy has no server "
                      "until then)",

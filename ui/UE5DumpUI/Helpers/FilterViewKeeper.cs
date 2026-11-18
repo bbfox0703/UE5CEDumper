@@ -28,13 +28,13 @@ public sealed record FilterViewState(IReadOnlyList<object> Selected, object? Top
 /// [KEYWORD-BOX-VIEW-KEEP].
 /// </summary>
 /// <remarks>
-/// <para>Every client-side filter box rebuilt its bound collection on every edit, and a
-/// <c>Clear()</c> (or a new collection) throws a DataGrid back to row 0 and drops the selection:
-/// the first character typed, a trailing space, and a clear all lost the user's place. The
-/// maintainer's rules (2026-09-27): a rebuild that would show the SAME rows does not happen; a
-/// rebuild keeps the rows that are still selected and keeps them visible; and a keyword cleared
-/// from 2+ characters to empty brings the first selected row to the top, or, with nothing
-/// selected, keeps the filtered list's top row at the top.</para>
+/// <para>A client-side filter box rebuilds its bound collection on an edit, and a
+/// <c>Clear()</c> (or a new collection) throws a DataGrid back to row 0 and drops the selection,
+/// so the first character typed, a trailing space or a clear would lose the user's place. The
+/// rules: a rebuild that would show the SAME rows does not happen; a rebuild keeps the rows that
+/// are still selected and keeps them visible; and a keyword cleared from 2+ characters to empty
+/// brings the first selected row to the top, or, with nothing selected, keeps the filtered
+/// list's top row at the top.</para>
 /// <para>The selection and the scroll position live in the View (a column sort, a
 /// multi-selection), so the View supplies <see cref="CaptureView"/> and <see cref="RestoreView"/>
 /// (see <c>Views/FilterViewBinding</c>). They are PROPERTIES, not events: a panel that is

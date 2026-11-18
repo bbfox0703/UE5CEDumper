@@ -6,19 +6,16 @@ namespace UE5DumpUI.Helpers;
 /// Builds the one-line headline that opens <c>%LOCALAPPDATA%\UE5CEDumper\crash.log</c>.
 ///
 /// <para><b>Why this is not a string interpolation at the call site.</b> The
-/// handler used to write the literal phrase <c>"UE5DumpUI startup crash"</c> for
-/// EVERY crash. A clipboard fault 31 minutes into a connected session was filed
-/// as a startup crash and read as one — the phrase is the first thing a triage
-/// pass sees, and it was wrong in the most misleading direction available
-/// (field report <c>[PASTECRASH-2026-08-18]</c>).</para>
+/// headline is the first thing a triage pass sees, so a fixed phrase such as
+/// <c>"UE5DumpUI startup crash"</c> would mislabel every fault past startup in the
+/// most misleading direction available (<c>[PASTECRASH-2026-08-18]</c>).</para>
 ///
-/// <para>The headline now carries both facts the reader actually needs — WHICH
+/// <para>The headline carries both facts the reader actually needs — WHICH
 /// phase and HOW LONG the process had been alive — and it cross-checks them
 /// against each other, because a phase marker is only as honest as the code that
 /// advances it. If the phase still says <see cref="AppPhase.Startup"/> after
 /// minutes of uptime, that is itself a defect (the marker was never advanced),
-/// and the headline says so rather than repeating the old lie in a new
-/// format.</para>
+/// and the headline says so.</para>
 /// </summary>
 internal static class CrashReportFormatter
 {

@@ -118,7 +118,7 @@ public static class CoordLuaParser
         int blockOffset = start.Index + start.Length;
 
         // One issue, on the line of block offset `at`, and nothing imported: a stray quote is
-        // an error, never a guess at where its field ends (the maintainer's rule, 2026-10-28).
+        // an error, never a guess at where its field ends.
         CoordCsvParseResult Stop(int at, string reason)
         {
             int sol = source.LastIndexOf('\n', Math.Min(at, source.Length - 1)) + 1;
@@ -666,9 +666,6 @@ public static class CoordLuaParser
             return outer;
         }
 
-        /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
-        /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
-        /// import on its own line.</summary>
         /// <summary>The statements above the table, up to token <paramref name="until"/> (its
         /// <c>local</c>). A value that runs past it swallowed the table's own opening.</summary>
         public void ReadHead(int until)
@@ -686,6 +683,9 @@ public static class CoordLuaParser
             }
         }
 
+        /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
+        /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
+        /// import on its own line.</summary>
         private void ReadStatements(int from, int until, string unreadable)
         {
             _statementIndex = from;

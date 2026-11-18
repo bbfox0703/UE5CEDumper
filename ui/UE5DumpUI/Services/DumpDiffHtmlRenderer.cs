@@ -7,7 +7,7 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// [DUMPDIFF-UI] The HTML report of Dump Explorer's Compare: the sections and wording of <c>diff_dumps.py</c>'s
-/// Markdown report, as one self-contained page (the maintainer chose HTML only: most users never open a .md file).
+/// Markdown report, as one self-contained page (HTML only: most users never open a .md file).
 /// Every name comes from a game and is escaped. No script runs in the page.
 /// </summary>
 public static class DumpDiffHtmlRenderer
@@ -79,7 +79,7 @@ public static class DumpDiffHtmlRenderer
         if (diff.StructsSkipped.Length == 0) Structs(sb, diff, minimal);
         if (diff.EnumsSkipped.Length == 0) Enums(sb, diff, minimal);
 
-        // The maintainer's request (2026-10-06): say once where the same diff lives for someone with the repository.
+        // Say once where the same diff lives for someone with the repository.
         sb.Append("<footer><p class=\"muted\">Repository users can run the same diff from the command line: " +
                   "<code>scripts/analysis/diff_dumps.py</code>, a Python CLI that only a clone of the repository has " +
                   "(release builds do not include it).</p></footer>\n</body>\n</html>\n");

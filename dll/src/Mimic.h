@@ -56,9 +56,8 @@ enum Cmd : int32_t {
                               //           -17 = an ON not sent: no CheatManager is live, and the toggle does
                               //           nothing on its class default object (DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
                               //           an OFF is never refused). [DEBUGCAM-FORCEON-CDO]
-                              //           cmdOutFlags: builds 3676-3681 set INV_OUT_NONSTATIC_ON_TEMPLATE for a toggle
-                              //           sent to that class default object [INVOKE-NONSTATIC-ON-CDO]; since -17 no
-                              //           toggle goes there, so this command leaves the word 0.
+                              //           cmdOutFlags: no toggle goes to that class default object, so this
+                              //           command leaves the word 0 [INVOKE-NONSTATIC-ON-CDO].
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR
@@ -275,10 +274,10 @@ enum ProtectOp : uint64_t {
 // LI_IN_DERIVED is what makes a class-wide freeze cover the pool the user is
 // actually looking at. A Property Search row for an INHERITED field is keyed to
 // the class that DECLARES it (`bCanBeDamaged` presents as `Actor`), so an
-// exact-name pool held one incidental debug actor while every AActor subclass in
-// the level — the player's pawn included — went untouched. Same failure Solide
-// already fixed for Force (audit #5 A6); the two sit on the same panel row and
-// must not scope oppositely. (`[FREEZESCOPE-2026-08-18]`)
+// exact-name pool can hold one incidental debug actor while every AActor subclass in
+// the level — the player's pawn included — goes untouched. Solide's Force scopes the
+// same way (audit #5 A6); the two sit on the same panel row and must not scope
+// oppositely. (`[FREEZESCOPE-2026-08-18]`)
 //
 // The bit DEFAULTS OFF, and that is the whole backward-compatibility story: a
 // contract-1/2 script never writes cmdFlags, reads 0, and gets contract-2's exact
@@ -293,8 +292,7 @@ enum ListInstancesFlag : uint32_t {
 };
 
 // cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+). CMD_SET_DEBUG_CAMERA
-// published the bit too in builds 3676-3681, for a toggle it sent to the CheatManager's class default object; it now
-// refuses that toggle (-17, [DEBUGCAM-FORCEON-CDO]), so it never sets the bit -- what the bit means is unchanged.
+// refuses a toggle on the CheatManager's class default object (-17, [DEBUGCAM-FORCEON-CDO]), so it never sets the bit.
 // [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {
@@ -576,17 +574,16 @@ constexpr DbgCamForceStep DebugCameraForceStep(bool want, bool noLiveCheatManage
          : want ? DbgCamForceStep::RefuseNoLiveCheatManager : DbgCamForceStep::SwapBackOnly;
 }
 
-/// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
+/// [UE-OVERRIDE-411] What CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
 /// Negative and apart from ProcessEvent's own codes (Frieren.h lists them) and the mailbox's -10 / -11; like
 /// MB_ERR_HANDLER_THREW in Mimic.cpp, not a contract change, because every script treats a non-zero result as a
 /// failure and shows errorMsg.
 constexpr int32_t MB_ERR_INVOKE_UNRESOLVED = -12;   // ufuncAddr is not a live UFunction
 constexpr int32_t MB_ERR_INVOKE_TOO_LARGE  = -13;   // its parameter block ends past the slab
 /// [VND584-01] A weak / soft / lazy parameter holds an object the engine could not turn into one (errorMsg names it).
-/// What paramsData MEANS did move, additively: a picked object's address in such a slot is now swapped for the
-/// engine's own value before ProcessEvent, where it used to reach the engine raw and resolve to null. No bump, on
-/// purpose: no generated script changed -- each writes exactly the bytes it always wrote -- and an older DLL answers
-/// them exactly as before the fix, so a script on an older DLL is no worse off than it already was, while a bump would
+/// A picked object's address in such a slot is swapped for the engine's own value before ProcessEvent: an additive
+/// change in what paramsData MEANS, and no bump, on purpose. Every generated script writes the same bytes either way,
+/// an older DLL hands the raw address to the engine (where it resolves to null) as it always did, and a bump would
 /// refuse every new script there, the many with no such slot included. Like -12 / -13, the code itself is additive.
 constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 /// [VND584-06] ufuncAddr is a live UFunction, but not one of the instance's class chain: a cached address a reloaded
@@ -602,7 +599,7 @@ constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
 /// ProcessEvent writes each parameter where the function's own chain puts it, out parameters and the return
 /// value included, so the slab must reach the chain's END (`bufferBytes`, Ubel::ParamBufferSize), never just the
 /// ParmsSize the tail read gave: under a wrong UE version that read is another field (NumParms, ReturnValueOffset),
-/// and a small one let an out parameter past 1 KB run through cmdFlags / cmdOutFlags and out of g_invokeMailbox.
+/// and a small one would let an out parameter past 1 KB run through cmdFlags / cmdOutFlags and out of g_invokeMailbox.
 /// A function that does not resolve cannot be sized, and the queued path's owned copy is only the slab's size, so
 /// routing it anyway risks the same overrun.
 constexpr int32_t InvokeSlabRefusal(bool resolved, uint32_t bufferBytes, uint32_t slabBytes) {
@@ -627,12 +624,11 @@ constexpr bool InitFastPathOk(bool haveGObjects, bool haveGNames, bool initInPro
 /// exemption list is deliberately tiny — an over-broad exemption turns a clean
 /// "-10 DLL not initialized" into a null deref inside a handler.
 ///
-/// CMD_FOREGROUND is the only exemption the header's own command documentation
-/// justifies: Grausam is a pure Win32 MinHook + WndProc subclass that never reads
-/// a UObject, and the pipe path (`Fern`, `set_foreground_lock`) already services
-/// it with no init gate at all. Gating it meant that on a game whose scan fails,
-/// the CE-Lua Keep-Foreground toggle was refused with -10 while the UI's identical
-/// button worked. (audit #5 MB2)
+/// CMD_FOREGROUND is exempt: Grausam is a pure Win32 MinHook + WndProc subclass
+/// that never reads a UObject, and the pipe path (`Fern`, `set_foreground_lock`)
+/// services it with no init gate at all. Gated, the CE-Lua Keep-Foreground toggle
+/// would be refused with -10 on a game whose scan fails while the UI's identical
+/// button works.
 ///
 /// Counter-examples that look exempt and are NOT: CMD_QUERY_PTR is "read-only and
 /// thread-agnostic" but reads the caches the scan fills and iterates GObjects;
@@ -704,8 +700,8 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //   every generated block reports a negative result it has no message for and keeps
 //   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE), the invoke
 //   family (MB_ERR_INVOKE_* -12..-15) and CMD_SET_DEBUG_CAMERA's -17, which only an ON gets: every [ENABLE] reports
-//   a state it has no branch for and keeps its window open (records since 2026-08-21 also untick; older ones stay
-//   ticked, as they did for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
+//   a state it has no branch for and keeps its window open (current records also untick; older saved ones stay
+//   ticked, as for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
 //   receive it, because an OFF is never refused. Check the generators first: some [DISABLE]
 //   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
 //   reads any negative state as "armed", so a new code there IS a change.
@@ -720,7 +716,7 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 namespace Mimic {
 
 /// Current contract revision. Bump when any item 1-5 above changes.
-/// 2 (build 2926, audit #5 AA2/AA3): CMD_LIST_INSTANCES additionally publishes the
+/// 2: CMD_LIST_INSTANCES additionally publishes the
 ///   enumerated UClass* in `instanceAddr` and the UObject::ClassPrivate byte offset
 ///   in `ufuncAddr`. ADDITIVE — both fields were unused outputs for this command, so
 ///   no contract-1 script referenced them and MAILBOX_CONTRACT_MIN stays at 1.
@@ -772,8 +768,8 @@ namespace Mimic {
 ///   dispatcher now clears it before every command, so a set bit is always this command's. The new enum is layout,
 ///   so the surface hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged
 ///   RF_ArchetypeObject -- a
-///   class-default object's default subobject, which every component-class lookup landed on (measured on DumperTest
-///   5.4) -- is passed over like a class-default object. Both ADDITIVE in the sense version 6 set out: no field moved,
+///   class-default object's default subobject, which a component-class lookup otherwise lands on -- is passed over
+///   like a class-default object. Both ADDITIVE in the sense version 6 set out: no field moved,
 ///   no result code changed, and the old pick a script could have relied on was an accident (a template taken for a
 ///   live object). MAILBOX_CONTRACT_MIN stays at 1. A script claiming less than MAILBOX_CONTRACT_INVOKE_OUT reads
 ///   0x72C only from a DLL that publishes at least that; the embedded invoke helper keeps claiming 1 and gates its read
@@ -819,7 +815,7 @@ constexpr int32_t MAILBOX_CONTRACT_MIN = 1;
 /// hash fail too, and say nothing of this).
 constexpr int32_t MAILBOX_LAYOUT_SINCE = 3;
 // Unconditional: moving MAILBOX_LAYOUT_SINCE fails here until this pin is restated for the new layout, and a pin that
-// switched itself off when the value moved would guard nothing after (review R3-LAYOUT-PIN-SELF-DISABLING).
+// switched itself off when the value moved would guard nothing after.
 static_assert(MAILBOX_LAYOUT_SINCE == 3 &&
               (sizeof(MailboxData) == 0x730 && offsetof(MailboxData, cmd) == 0x000 &&
                offsetof(MailboxData, status) == 0x004 && offsetof(MailboxData, result) == 0x008 &&
@@ -833,9 +829,8 @@ static_assert(MAILBOX_LAYOUT_SINCE == 3 &&
               "with this layout and restate this pin for it (contracts 1 and 2 had a smaller struct)");
 
 /// 'UE5C' — proves the symbol resolved to OUR data rather than to a stale
-/// address left behind by a previous injection. That is not hypothetical: a
-/// 2026-08-06 session showed CE holding a mailbox address the DLL no longer
-/// owned, and the script wrote into it for ~155 s before giving up.
+/// address left behind by a previous injection: CE can hold a mailbox address
+/// the DLL no longer owns.
 constexpr uint32_t MAILBOX_CONTRACT_MAGIC = 0x43354555u;
 
 /// Published for CE Lua as its own exported symbol, NOT as a field inside

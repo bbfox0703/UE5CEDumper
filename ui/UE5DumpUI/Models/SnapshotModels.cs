@@ -152,7 +152,7 @@ public sealed class SnapshotChunkResult
     // DOM-build wall-times. Default 0 keeps older DLLs / test stubs back-compatible.
     public long WalkMs      { get; set; }
     public long SerializeMs { get; set; }
-    // C#-side split of the old "parse+pipe" bucket, so a capture pinpoints exactly which
+    // C#-side split of the JSON round-trip, so a capture pinpoints exactly which
     // stage of the JSON round-trip costs the seconds: pipe read of the response line, the
     // "Pipe RX" debug-log of that line, the JsonNode DOM parse, and the model-build loop.
     public long ReadMs      { get; set; }   // _reader.ReadLineAsync (pipe I/O of the response)
@@ -162,7 +162,7 @@ public sealed class SnapshotChunkResult
     // [W1-SNAP-FAULT] A DLL scan worker FAULTED while walking this chunk, so part of its index
     // range was never captured (the DLL still reports the whole window as `Scanned`, so the
     // pager can step past the hole). The capture finalises the snapshot UNUSABLE on it.
-    // Absent on an older DLL = false, the pre-fix behaviour.
+    // Absent on an older DLL = false.
     public bool WorkerFaulted { get; set; }
     public List<SnapshotCapturedObject> Objects { get; set; } = new();
 }

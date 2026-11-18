@@ -112,7 +112,7 @@ public sealed class LaneRoutingPipeClient : IPipeClient
         // land in different games.
         // Reset the combined stall level so the first observation after a
         // (re)connect always raises, even if the game was already paused before
-        // this connection (mirrors the per-lane reset PipeClient used to do).
+        // this connection.
         _stalled.Reset();
         try
         {

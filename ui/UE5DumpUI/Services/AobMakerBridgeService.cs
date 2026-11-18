@@ -800,7 +800,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         {
             // ConnectAsync's own deadline. [W1-PIPEBUSY-LOG] That is NOT only "nothing is listening": .NET waits for a
             // FREE instance until the deadline, and the AOBMaker server has one, so a pipe another client holds (a second
-            // Cheat Engine with the plugin -- measured 2026-09-10, its loser retry-spamming err=231 -- or another tool)
+            // Cheat Engine with the plugin, or another tool)
             // times out exactly the same way. Ask whether the pipe exists before blaming Cheat Engine.
             if (_pipeExists(_pipeName))
             {

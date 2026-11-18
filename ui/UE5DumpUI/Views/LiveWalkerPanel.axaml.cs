@@ -140,9 +140,9 @@ public partial class LiveWalkerPanel : UserControl
     {
         // Cleanup when the panel leaves the visual tree — NOT final. A TabControl detaches
         // and re-attaches the panel on every tab switch, and re-attaching does not raise
-        // DataContextChanged (the VM is the same object), so this used to be a one-way door:
-        // after one round trip through another tab, scroll-to-field, scroll-to-match and the
-        // bookmark view restore were all silently dead. OnAttached re-subscribes. (audit #5 AF4)
+        // DataContextChanged (the VM is the same object), so OnAttached re-subscribes: without
+        // it, after one round trip through another tab, scroll-to-field, scroll-to-match and the
+        // bookmark view restore would all be silently dead.
         UnsubscribeVm();
 
         if (_shineTimer != null)
@@ -152,7 +152,7 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
-    // --- Empty-state logo "specular shine" easter-egg (build 1846) ----------
+    // --- Empty-state logo "specular shine" easter-egg ----------
     // A rare, one-shot diagonal glint sweeps across the idle logo, like light
     // reflecting from one corner to the opposite. Kept deliberately low-odds: a
     // slow timer rolls a small probability, and only while the logo is showing.
@@ -166,7 +166,7 @@ public partial class LiveWalkerPanel : UserControl
     private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
     {
         // Re-wire the VM callbacks OnDetached tore down. Idempotent, so the common case
-        // (DataContextChanged already ran) costs a reference compare. (audit #5 AF4)
+        // (DataContextChanged already ran) costs a reference compare.
         SubscribeVm();
 
         _shineTimer ??= new DispatcherTimer

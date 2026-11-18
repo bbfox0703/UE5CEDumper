@@ -480,11 +480,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InstanceFinder.PreviewLimit = value;
     }
 
-    // NOTE: the on-tab-switch AOBMaker re-check used to live here as an
-    // OnSelectedTabIndexChanged switch keyed on magic tab indices, which
-    // silently drifted when tabs were inserted (Pointers ended up checking
-    // the wrong tab). It now lives in MainWindow.axaml.cs's
-    // MainTabs_SelectionChanged, routed by TabItem.Tag so it can't drift.
+    // NOTE: the on-tab-switch AOBMaker re-check lives in MainWindow.axaml.cs's
+    // MainTabs_SelectionChanged, routed by TabItem.Tag rather than by tab index,
+    // so inserting a tab cannot make it check the wrong one.
 
     public MainWindowViewModel(
         IPipeClient pipeClient,
@@ -3232,9 +3230,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// The fallback path exists for callers with no address, and it is the reason this
     /// helper exists: <c>list_classes</c> returns at most <c>limit</c> rows and the DLL
     /// stops walking GObjects the moment it has them, so on a large title a real class is
-    /// simply not in the page. Every one of these handlers used to re-derive the address
-    /// from that page and abort with "Class X not found" — about the class whose own row
-    /// the user had just clicked (audit #5 X2). A miss now says WHICH kind of miss it was.
+    /// simply not in the page — a handler that re-derived the address from that page would
+    /// abort with "Class X not found" about the class whose own row the user had just
+    /// clicked. A miss says WHICH kind of miss it was.
     /// </summary>
     /// <returns>The class address, or "" when it could not be resolved (StatusText set).</returns>
     private async Task<string> ResolveClassAddrAsync(string className, string rowClassAddr = "")
@@ -3653,7 +3651,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 {
                     // CE lives under %ProgramFiles% for most installs, so the auto-place
                     // needs elevation and throws here. That is exactly when the manual
-                    // fallback is needed — the old code skipped it and reported failure (X12).
+                    // fallback is needed, so this falls through to it rather than reporting failure.
                     _log.Warn(Constants.LogCatInit,
                         $"CE autorun auto-place denied ({ex.Message}); falling back to manual save dialog");
                 }
@@ -3919,7 +3917,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Stream a full classes-and-properties dump to a JSON-Lines file
-    /// for offline analysis. Used to feed the
+    /// for offline analysis. Feeds the
     /// <c>scripts/analysis/analyze_dumps.py</c> aggregator that derives
     /// keyword tables / class bonuses from real-game data instead of
     /// hand-curated guesses.

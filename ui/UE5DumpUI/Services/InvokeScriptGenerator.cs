@@ -75,7 +75,7 @@ public static class InvokeScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Invoke", MailboxTimeout.UntickAndReturn);
         Line(sb);
 
-        // [A3-CEFORM-4X-STALESLAB] review follow-up: a param at or past the slab's end cannot
+        // [A3-CEFORM-4X-STALESLAB] A param at or past the slab's end cannot
         // be written through the mailbox. Refuse before the first round-trip; nothing is applied.
         long required = RequiredSpan(func);
         if (required > CeMailboxLayout.ParamsDataBytes)
@@ -136,22 +136,20 @@ public static class InvokeScriptGenerator
         Line(sb, "    bytes[#bytes+1] = 0");
         Line(sb, "    writeBytes(mb + offset, bytes)");
         Line(sb, "end");
-        // ONE emitted helper for the idle wait, called from all three round-trips,
-        // rather than four inline copies of the loop. Four hand-placed copies of a rule
-        // is the failure mode this whole area keeps hitting: R3 reached Teleport /
-        // CoordLibrary / PointerQuery and never reached here, and the wait loop's three
-        // defects reached all seven of its hand-rolled copies at once. The BODY comes
+        // ONE emitted helper for the idle wait, called from every round-trip, rather
+        // than an inline copy of the loop per call site: hand-placed copies of a rule
+        // drift apart (R3). The BODY comes
         // from CeLuaHygiene so it stays byte-identical with the other generators; only
         // the bail differs per call site, which is why the helper returns a boolean
         // instead of deciding for its callers.
         Line(sb, "local function waitIdle()");
         // Two DIFFERENT failures, and they need different words. onBusy is a real
         // mailbox still holding a command; onUnreadable is `readInteger(mb) == nil`,
-        // which means the process is GONE. Folding them into one `return false` made
+        // which means the process is GONE. Folding them into one `return false` would make
         // every caller print "another CE script is still mid-command" over a game that
-        // had exited -- and CLAUDE.md's CE-Lua rule names exactly that: "never report a
+        // has exited -- and CLAUDE.md's CE-Lua rule names exactly that: "never report a
         // mailbox failure by guessing: status already says which failure it is".
-        // Invoke needs this where the two Teleport call sites do not: their
+        // Invoke needs this where the Teleport call sites do not: their
         // AppendContractCheck is emitted immediately before their idle wait and catches
         // a dead process first, while ours runs once in [ENABLE] and waitIdle() is
         // called later from btnFire.OnClick.
@@ -162,21 +160,18 @@ public static class InvokeScriptGenerator
             + "most likely exited (re-inject UE5Dumper.dll if it is still running)'");
         Line(sb, "    return true");
         Line(sb, "end");
-        // The shared wait. Hand-rolled until now, with all three of the defects build
-        // 2743 fixed in the other seven copies: it counted sleep(1) iterations against a
-        // millisecond constant (15.47 ms each, so the "10 s" bound was ~155 s of frozen
-        // Lua Engine), and it reported the mailbox's errorMsg string -- which on a
-        // TIMEOUT the DLL never wrote, so the text was either empty or stale from the
-        // previous command. `status` is what actually distinguishes "the DLL never saw
-        // it" from "it took the command and wedged".
+        // The shared wait, from CeLuaHygiene: a real getTickCount() deadline, never a count
+        // of sleep(1) iterations, and a report read from `status`, never the mailbox's
+        // errorMsg string -- which the DLL does not write on a TIMEOUT, so it is empty or
+        // stale from an earlier command. `status` is what actually distinguishes "the DLL
+        // never saw it" from "it took the command and wedged".
         //
         // RaiseError, not the toggles' UntickAndReturn: waitDone is called from two
         // different frames -- the [ENABLE] chunk itself and, on the param-form path,
         // btnFire.OnClick -- so a `return` would leave only waitDone and let both
         // callers carry on as though the round-trip had completed. A raise is the one
         // bail that aborts both, and it is the contract these call sites already have.
-        // The `timeoutMs` parameter is gone: no emitted call site ever passed one, and
-        // the deadline now lives in the shared emitter.
+        // waitDone takes no timeout: the deadline lives in the shared emitter.
         Line(sb, "local function waitDone()");
         CeLuaHygiene.AppendMailboxWait(sb, "Invoke", MailboxTimeout.RaiseError, indent: "    ");
         Line(sb, "end");
@@ -191,12 +186,11 @@ public static class InvokeScriptGenerator
         // getAddressSafe, NOT getAddress. celua.txt: getAddress "returns the address of a
         // symbol"; getAddressSafe "returns the address of a symbol, OR NIL IF NOT FOUND".
         // The bare form RAISES on a missing symbol, which is the case this whole block exists
-        // to handle -- so when the DLL was not loaded the first call aborted the chunk and took
-        // three things with it: the module-prefixed fallback below (never reached), the
-        // diagnostic showMessage (never shown, leaving CE's raw Lua error instead), and the
-        // cleanup timer -- so the memory record stayed TICKED after a bail-out that applied
-        // nothing, against CLAUDE.md's untick rule. This was the last bare getAddress the repo
-        // emitted (audit #5 Y8).
+        // to handle -- with the DLL not loaded, the first call would abort the chunk and take
+        // with it the module-prefixed fallback below, the diagnostic showMessage (leaving CE's
+        // raw Lua error instead), and the cleanup timer -- so the memory record would stay
+        // TICKED after a bail-out that applied nothing, against CLAUDE.md's untick rule
+        // (audit #5 Y8).
         //
         // Both spellings are mandatory and the order is not a preference: depending on how CE
         // picked the module up, an export is reachable bare or only as "<module>.<name>", and
@@ -268,13 +262,13 @@ public static class InvokeScriptGenerator
     /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
     /// clears only the return slot itself. So every byte the callee reads, and every out-param
     /// slot it assigns into, must be zeroed here: an out-FString assignment frees whatever Data
-    /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
-    /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
+    /// pointer it finds. ParmsSize alone is not enough: an older DLL on UE 4.11-4.17 reads NumParms
+    /// into it ([A2-UFUNC-TAIL-4X]).</para>
     ///
-    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from a DLL older than
-    /// build 3622 the parameters are the leading NumParms entries, another tail read older DLLs have
-    /// misread, and this span must not depend on one ([FUNCPARM-CONSUMERS] review). A Blueprint
-    /// local's bytes are zeroed too, which costs nothing: ProcessEvent never copies them.</para>
+    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from an older DLL the
+    /// parameters are the leading NumParms entries, another tail read older DLLs have misread, and
+    /// this span must not depend on one [FUNCPARM-CONSUMERS]. A Blueprint local's bytes are zeroed
+    /// too, which costs nothing: ProcessEvent never copies them.</para>
     ///
     /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
     /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
@@ -293,8 +287,8 @@ public static class InvokeScriptGenerator
     /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
     /// parameter, the return slot included, UNclamped. More than
     /// <see cref="CeMailboxLayout.ParamsDataBytes"/> cannot go through the mailbox at all -- see
-    /// <see cref="AppendSlabRefusal"/>. (Review of 9abc03c8: the clamp alone covered only the
-    /// zero-fill, and a param past the slab was still written and the call fired.)
+    /// <see cref="AppendSlabRefusal"/>. The clamp in <see cref="ZeroFillSpan"/> covers only the
+    /// zero-fill; this unclamped span is what keeps a param past the slab from being written.
     ///
     /// <para>A Blueprint function's locals do not count ([FUNCPARM-CONSUMERS]): ProcessEvent copies
     /// only ParmsSize bytes of the caller's buffer and builds the locals in its own frame, so a local
@@ -314,7 +308,7 @@ public static class InvokeScriptGenerator
     }
 
     /// <summary>
-    /// [A3-CEFORM-4X-STALESLAB] review follow-up: the function's params do not fit Mimic's
+    /// [A3-CEFORM-4X-STALESLAB] The function's params do not fit Mimic's
     /// paramsData slab, so the call cannot be made through the mailbox. Say so -- a real failure,
     /// so the print is ungated and nothing auto-closes -- and untick through the deferred cleanup:
     /// nothing was sent, and a ticked record would claim otherwise.
@@ -421,7 +415,7 @@ public static class InvokeScriptGenerator
         for (int i = 0; i < inputParams.Count; i++)
         {
             var p = inputParams[i];
-            // Stage 1: surface expected UClass for pointer params (mirrors the
+            // Surface expected UClass for pointer params (mirrors the
             // in-app InvokeParamDialog label) so the CE-side form is just as
             // self-documenting.
             var objClassSuffix = !string.IsNullOrEmpty(p.ObjectClassName)
@@ -519,13 +513,13 @@ public static class InvokeScriptGenerator
                 continue;
             }
             // A struct param has no scalar spelling, and this form has one edit box per
-            // param. It used to fall through GetMailboxWriteStatement's size switch to
-            // writeInteger, so an FVector (12 B on UE4, 24 on UE5) got FOUR bytes written from
-            // math.floor(tonumber(text)) and the rest left zero -- i.e. the call went out with a
-            // garbage vector and nothing said so. The params buffer is already zero-filled
-            // above, so skipping the write sends a well-defined zeroed struct instead, which is
-            // at least a value the callee can survive. Use the app's Invoke dialog (which
-            // expands sub-fields) to pass a real one (audit #5 Y6).
+            // param. Through GetMailboxWriteStatement's size switch it would reach
+            // writeInteger, so an FVector (12 B on UE4, 24 on UE5) would get FOUR bytes written
+            // from math.floor(tonumber(text)) and the rest left zero -- a garbage vector, and
+            // nothing said so. The params buffer is already zero-filled above, so skipping the
+            // write sends a well-defined zeroed struct instead, which is at least a value the
+            // callee can survive. Use the app's Invoke dialog (which expands sub-fields) to pass
+            // a real one.
             if (p.TypeName == "StructProperty")
             {
                 Line(sb, $"    -- {p.Name}: struct ({p.Size} B) left ZEROED - this form cannot edit a struct");
@@ -534,8 +528,8 @@ public static class InvokeScriptGenerator
             // [P3-INVOKE-Y11-CEFORM] Every other type FIRE's WriteParam will not write either. The
             // gate at the top of this handler refused a typed value (and an FText outright), so
             // the zero-fill above IS the value sent -- the empty TArray, the unbound delegate.
-            // These used to fall through GetMailboxWriteStatement's size switch and write the
-            // textbox as a raw int32 over the structure's first pointer.
+            // Through GetMailboxWriteStatement's size switch these would write the textbox as a
+            // raw int32 over the structure's first pointer.
             if (ParamBufferBuilder.IsUnwritableParam(p.TypeName))
             {
                 Line(sb, $"    -- {p.Name}: {ShortTypeName(p.TypeName)} ({p.Size} B) left ZEROED - no textbox encoding");
@@ -631,7 +625,7 @@ public static class InvokeScriptGenerator
     /// <c>0x0</c> (any case), trimmed. The TYPE decision is never made in Lua -- only this text
     /// test, because the text is what the user types into the form at FIRE time.
     /// <c>InvokeScriptTests.CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling</c> pins this
-    /// exact spelling, which was run through a Lua interpreter against that predicate's cases.
+    /// exact spelling against that predicate's cases.
     /// </summary>
     private const string ZeroDefaultLua =
         "local function _isZeroDefault(e) local t = ((e and e.Text) or ''):match('^%s*(.-)%s*$'); " +
@@ -640,8 +634,8 @@ public static class InvokeScriptGenerator
     /// <summary>
     /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate (audit #5 Y11), emitted into the CE
     /// form's own FIRE handler. Every invoke path builds its ProcessEvent params from the same
-    /// <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refused
-    /// these, and this form wrote them.
+    /// <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refuse
+    /// these, so this form must too.
     ///
     /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
     /// <see cref="ParamBufferBuilder.IsEmptyOnlyParam"/> -- the predicates FIRE calls -- never
@@ -756,12 +750,11 @@ public static class InvokeScriptGenerator
                 or "WeakObjectProperty" or "LazyObjectProperty"
                 or "InterfaceProperty"
                 => "writeQword",
-            // EnumProperty is DELIBERATELY absent here (audit #5 Y16, the enum-width
-            // family's fourth finding). UE sizes an enum by its underlying type --
-            // 1 byte for the common TEnumAsByte / uint8 enum class -- so writing 4
-            // clobbers the next parameter in params_data. The `_ => size switch`
-            // fallback below already maps 1/2/8 correctly; letting enums reach it is
-            // the whole fix. `size` was a parameter here the entire time.
+            // EnumProperty is DELIBERATELY absent here (audit #5 Y16). UE sizes an enum
+            // by its underlying type -- 1 byte for the common TEnumAsByte / uint8 enum
+            // class -- so writing 4 clobbers the next parameter in params_data. The
+            // `_ => size switch` fallback below maps 1/2/8 correctly, so enums must
+            // reach it.
             "IntProperty" or "UInt32Property"
                 => "writeInteger",
             _ => size switch
@@ -835,13 +828,12 @@ public static class InvokeScriptGenerator
         //
         // The prefix MUST be stripped before tonumber(s, 16). Lua's base form rejects any
         // character that is not a digit of that base, and 'x' is not a hex digit, so
-        // tonumber('0x1F2A3B4C5D0', 16) is nil -- the old code detected the "0x" and then
-        // handed the still-prefixed string straight to it, so `or 0` wrote a NULL POINTER
-        // for every address the user actually pasted. The app formats every address as
-        // "0x" + uppercase hex (Renge::AddrToStr), so that was every real input; only the
-        // '0x0' default parsed "correctly", which is why it went unnoticed (audit #5 Y1).
+        // tonumber('0x1F2A3B4C5D0', 16) is nil -- and with the still-prefixed string `or 0`
+        // writes a NULL POINTER for every address the user actually pastes. The app formats
+        // every address as "0x" + uppercase hex (Renge::AddrToStr), so that is every real
+        // input; only the '0x0' default would parse "correctly", so the failure hides.
         //
-        // Verified in Cheat Engine's own lua53-64.dll: 0x1F2A3B4C5D0 -> 2141640246736,
+        // In Cheat Engine's own lua53-64.dll: 0x1F2A3B4C5D0 -> 2141640246736,
         // bare hex 1F2A3B4C5D0 -> the same, decimal 1234 -> 1234, junk -> 0, and every
         // result is a Lua *integer* (math.type), which writeQword requires.
         //
@@ -869,9 +861,8 @@ public static class InvokeScriptGenerator
     }
 
     /// <summary>Escape for a Lua single-quoted literal. Forwards to the one
-    /// implementation (R2). This copy was the WEAKEST of the three: it handled only
-    /// backslash / quote / newline, so CR and TAB survived verbatim and — the real
-    /// hazard — so did a closing long bracket, which would terminate AOBMaker's
-    /// <c>[==[ … ]==]</c> wrapper around the whole script.</summary>
+    /// implementation (R2), which escapes CR, TAB and a closing long bracket too -- the
+    /// last would otherwise terminate AOBMaker's <c>[==[ … ]==]</c> wrapper around the
+    /// whole script.</summary>
     private static string EscapeLua(string s) => CeLuaHygiene.EscapeLuaString(s);
 }

@@ -222,8 +222,6 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// tab. Payload = instance address.</summary>
     public event Action<string>? NavigateToRelatedObjects;
 
-    /// <summary>True when GWorld is available — gates the "Locate in GWorld" button.</summary>
-
     /// <summary>Per-container element probe cap for the recursive deep container
     /// scan (the find_by_address fallback that locates values in deeply-nested,
     /// separately-allocated containers). Set from the top Options flyout.</summary>
@@ -365,15 +363,15 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// selected instance survives the filter — so toggling a noise class doesn't
     /// wipe what the user is inspecting.
     /// <para>
-    /// That promise used to be false in both halves. <see cref="UiCollection.Reset"/>
-    /// calls its detach callback UNCONDITIONALLY, so <c>SelectedInstance = null</c>
-    /// fired <see cref="OnSelectedInstanceChanged"/> and cleared
-    /// <see cref="Fields"/>; the restore at the bottom then re-entered the same handler
-    /// and issued a FRESH <c>walk_instance</c> for the address already loaded. Every
-    /// 200 ms keystroke pause blanked the field grid and refetched it, and one
-    /// class-noise tick cost TWO walks because this method runs immediately and again
-    /// when the server re-run lands. <see cref="_suppressSelectionSideEffects"/> makes
-    /// the detach/restore pair the pure bookkeeping the doc always described. (Z7)
+    /// <see cref="UiCollection.Reset"/> calls its detach callback UNCONDITIONALLY, so
+    /// a bare <c>SelectedInstance = null</c> would fire
+    /// <see cref="OnSelectedInstanceChanged"/> and clear <see cref="Fields"/>, and the
+    /// restore at the bottom would re-enter the same handler and issue a FRESH
+    /// <c>walk_instance</c> for the address already loaded: every 200 ms keystroke
+    /// pause would blank the field grid and refetch it, and one class-noise tick would
+    /// cost TWO walks because this method runs immediately and again when the server
+    /// re-run lands. <see cref="_suppressSelectionSideEffects"/> keeps the
+    /// detach/restore pair pure bookkeeping.
     /// </para>
     /// <para><c>internal</c> so a test can drive it deterministically, bypassing the
     /// 200 ms debounce — the same seam <c>PropertySearchViewModel.ApplyResultFilter</c>
@@ -977,8 +975,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     {
         var bound = new List<(string Name, int Loaded, int Total)>();
         // [R7-X8] Every walked container, for the truncation advice: lowering the slider shrinks EVERY container longer
-        // than the new limit, not only one bound by the current limit. Measured on DumperTest's NestedBag: two whole
-        // 16,000-pair maps at 16384 truncated with "no toolbar setting", and the same copy at 8192 was complete.
+        // than the new limit, not only one bound by the current limit.
         var containers = new List<(string Name, int Loaded)>();
         foreach (var f in fields)
         {

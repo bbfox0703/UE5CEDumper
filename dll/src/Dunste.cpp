@@ -175,14 +175,11 @@ constexpr int32_t kMaxSaneParmsSize = 0x4000;
 // Find a UFunction by name, walking class → Super (engine setters live on base classes
 // above the concrete pawn).
 //
-// This file had the ONLY correct super-chain climb in the tree; the two general resolvers
-// were built straight on the per-class walker and could not see an inherited function at
-// all ([INVOKEINHERIT-2026-08-20]). The climb has moved to Ubel::ResolveFunctionInChain so
-// there is one copy rather than three. ⚠ One deliberate semantic change here: that helper
-// prefers an EXACT name match anywhere in the chain over a case-insensitive one, where this
-// used to take the first case-insensitive hit. It differs only when two functions in one
-// chain have names differing purely in case, and preferring the exact one is the better
-// answer. The parmsSize sanity gate stays — it is this caller's, not the resolver's.
+// The climb is Ubel::ResolveFunctionInChain, so there is one copy of it
+// ([INVOKEINHERIT-2026-08-20]). It prefers an EXACT name match anywhere in the chain over a
+// case-insensitive one, which differs from the first case-insensitive hit only when two
+// functions in one chain have names differing purely in case. The parmsSize sanity gate
+// stays here — it is this caller's, not the resolver's.
 bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
     FunctionInfo hit;
     if (!Ubel::ResolveFunctionInChain(
@@ -207,9 +204,9 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
 // transform refresh — unlike a per-tick teleport, which only moved the root and
 // jittered / desynced the mesh across games.
 //
-// Returns what ACTUALLY happened. It used to return "the setter was found" — a bool the
-// callers all read as "collision changed" — while discarding the dispatcher's int32_t
-// entirely, so a refusal committed the record and logged "invoked" (D1).
+// Returns what ACTUALLY happened, from the dispatcher's int32_t — never merely "the setter
+// was found", which a caller reads as "collision changed": a refusal must not commit the
+// record and log "invoked".
 [[nodiscard]] CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
     // A null pawn is TRANSIENT — it re-resolves on the next tick — so it is Refused,
     // not Absent. Committing here would record a disable that never happened.
@@ -738,18 +735,14 @@ int32_t SetEnabled(bool enable) {
             s_state.tick = 0;
             s_state.driftCount = 0;
             uint8_t fly = Grimoire::MOVE_FLYING;
-            // ⛔ THIS WRITE *IS* THE EFFECT, and its result used to be dropped. Everything
-            // above it -- active, baseCaptured, capturedPawn -- is BOOKKEEPING; the pawn only
-            // flies because this byte changed. Macht::WriteBytes returns false when
-            // VirtualProtect refuses (a freed or unmapped page: a pawn destroyed between
-            // ResolveCtx and here) or the memcpy faults, and dropping that made SetEnabled
-            // return 1, log "Fly: ENABLED" and start the worker over a pawn that never left
-            // its old MovementMode -- a claim made from the ATTEMPT.
-            // ⭐ FR_ERR_WRITE ("raw write failed") was ALREADY in the FlyResult enum with no
-            // producer, which is what a dropped status usually looks like from the outside.
-            // ⭐ AND THE EXEMPLAR IS IN THIS FILE: the worker's drift correction writes the
-            // same byte as `if (Macht::WriteBytes(...)) ++s_state.driftCount;`. Adjudicated
-            // 2026-09-09 as slice B of the unadjudicated sweep claims.
+            // ⛔ THIS WRITE *IS* THE EFFECT. Everything above it -- active, baseCaptured,
+            // capturedPawn -- is BOOKKEEPING; the pawn only flies because this byte changed.
+            // Macht::WriteBytes returns false when VirtualProtect refuses (a freed or unmapped
+            // page: a pawn destroyed between ResolveCtx and here) or the memcpy faults, and
+            // dropping that would make SetEnabled return 1, log "Fly: ENABLED" and start the
+            // worker over a pawn that never left its old MovementMode -- a claim made from the
+            // ATTEMPT. The worker's drift correction checks the same byte's write the same way
+            // (`if (Macht::WriteBytes(...)) ++s_state.driftCount;`).
             if (c.modeOff >= 0
                 && !Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &fly, 1)) {
                 s_state.active       = false;
@@ -772,8 +765,8 @@ int32_t SetEnabled(bool enable) {
     //
     // Clear `active` FIRST, then join, THEN decide about collision. The worker's tick
     // early-outs on !active, so after the join nothing can re-disable collision behind
-    // the restore below. The old order (decide → restore → join) let an in-flight tick
-    // turn collision back off after we had just turned it on. (B8, Schlacht M1 shape.)
+    // the restore below. The order decide → restore → join would let an in-flight tick
+    // turn collision back off after we had just turned it on.
     uintptr_t restoreCollPawn = 0;
     bool modeRestoreFailed = false;
     {
@@ -784,11 +777,11 @@ int32_t SetEnabled(bool enable) {
                 if (c.modeOff >= 0 && s_state.baseCaptured) {
                     uint8_t base = s_state.baseMode;
                     // ⛔ THE RESTORE IS THE EFFECT TOO, and this is the WORSE half of the
-                    // pair: a dropped result here cleared `active`, stopped the worker and
-                    // logged "Fly: DISABLED" while the pawn stayed in MOVE_Flying -- the
-                    // feature reported OFF over a pawn still flying, with nothing tracking it.
-                    // That is the [FREEZESTUCK-2026-08-18] shape, and the collision restore
-                    // forty lines below already treats its own failure exactly this carefully.
+                    // pair: a dropped result here would clear `active`, stop the worker and
+                    // log "Fly: DISABLED" while the pawn stays in MOVE_Flying -- the feature
+                    // reported OFF over a pawn still flying, with nothing tracking it. That is
+                    // the [FREEZESTUCK-2026-08-18] shape, and the collision restore below
+                    // treats its own failure as carefully.
                     if (!Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff),
                                            &base, 1)) {
                         modeRestoreFailed = true;
@@ -819,8 +812,7 @@ int32_t SetEnabled(bool enable) {
     }
     if (restoreCollPawn) {
         // Both halves are kept separately so the message below can name the CAUSE.
-        // Reporting a refusal as "game thread unresponsive" would be the same class
-        // of defect D1 exists to fix.
+        // Reporting a refusal as "game thread unresponsive" would misname it.
         const bool responsive = Stark::IsGameThreadResponsive();
         const bool restored   = responsive
             && ShouldCommitCollision(InvokeSetCollision(restoreCollPawn, true), /*restoring*/ true,
@@ -830,17 +822,13 @@ int32_t SetEnabled(bool enable) {
             s_state.collisionOff  = false;
             s_state.collisionPawn = 0;
         } else {
-            // ⛔ A REFUSED restore falls into the SAME branch as an unresponsive thread,
-            // and that is the whole point of D1. This site used to invoke, ignore the
-            // answer and clear the record unconditionally — so a refusal left the pawn
-            // ghosted with NOTHING tracking it, which is precisely the failure audit #4 B8
-            // describes as "what made the pawn fall through the world".
+            // ⛔ A REFUSED restore falls into the SAME branch as an unresponsive thread.
             // The pawn is non-colliding and we cannot fix that right now. Wiping the
-            // record here is what made the pawn fall through the world: nothing tracked
-            // it, and re-enabling Fly without Noclip never restored it either. KEEP the
-            // record and poll for the game thread — the restore then lands the instant
-            // the user clicks back into the game. (B8; Schlacht's PendingRestoreLoop is
-            // the shipped precedent for exactly this.)
+            // record here would leave the pawn ghosted with NOTHING tracking it: it falls
+            // through the world, and re-enabling Fly without Noclip never restores it
+            // either. KEEP the record and poll for the game thread — the restore then
+            // lands the instant the user clicks back into the game, as Schlacht's
+            // PendingRestoreLoop does.
             LOG_WARN("Fly: DISABLED but the pawn's collision is still OFF (%s) - keeping "
                      "the record and polling to restore it",
                      responsive ? "the dispatcher REFUSED the restore"

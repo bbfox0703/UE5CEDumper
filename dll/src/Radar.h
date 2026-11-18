@@ -16,8 +16,8 @@
 //                        against cached candidates, pruning in place
 //   end_value_scan     → SessionManager::End drops the session
 //
-// Idle sessions are reaped by an ACTIVITY-TRIGGERED lazy sweep, not a wall clock
-// (audit #5 AB17): every Begin / RefineWith / End sweeps its OWNER's sessions idle
+// Idle sessions are reaped by an ACTIVITY-TRIGGERED lazy sweep, not a wall clock:
+// every Begin / RefineWith / End sweeps its OWNER's sessions idle
 // past kScanSessionIdleExpiry (a Refine/End protects its own session first). A
 // session is its connection's (kMaxSessionsPerOwner), so the backstop for a client
 // that goes fully quiet is its own disconnect, when Fern drops that connection's
@@ -29,13 +29,13 @@
 // the lock holding a reference to the candidates vector — typical refine reads ~50K
 // addresses via ReadSafe which is fast enough that a coarse lock is acceptable).
 //
-// Scope (build 738 MVP + Phase 2 expansion 2026-05-26):
-//   Numeric (MVP, build 738):
+// Scope:
+//   Numeric:
 //     - Types:      Int8/16/32/64, UInt8/16/32/64, Float, Double, Bool
 //                   (BoolProperty supports both whole-byte and bitfield)
 //     - First scan: Exact / Bigger / Smaller / Between
 //     - Next scan:  + Changed / Unchanged / Increased / Decreased
-//   String (Phase 2A, build 750):
+//   String:
 //     - Types:      FString (StrProperty), FName (NameProperty), FText
 //                   (TextProperty — best-effort: cooked FText often
 //                   has the display string at a probed offset; the
@@ -45,7 +45,7 @@
 //     - Next scan:  + Changed / Unchanged
 //                   (Bigger/Smaller/Between/Increased/Decreased rejected
 //                    DLL-side for string types — no natural ordering)
-//   Vector (Phase 2B, build 750):
+//   Vector:
 //     - Types:      FVector / FRotator / FTransform (translation only).
 //                   FVector / FRotator are 3 floats (X,Y,Z) or
 //                   (Pitch,Yaw,Roll). FTransform scans the Translation
@@ -54,12 +54,12 @@
 //     - First scan: Exact / Bigger / Smaller (component-wise; Between
 //                   takes a single second vector for upper bound)
 //     - Next scan:  + Changed / Unchanged / Increased / Decreased
-//   Containers:     TArray<T> (Phase 2C, build 757) + TSet<T> / TMap<K,V>
-//                   key|value (V1a, build 927) are all walked element-wise
-//                   for any supported leaf DataType. Sparse containers
-//                   iterate allocated slots only. Element addresses are raw,
-//                   so refine degrades on a container reallocation (SEH-safe
-//                   read drops the candidate). TOptional is still deferred (V1c).
+//   Containers:     TArray<T> + TSet<T> / TMap<K,V> key|value (V1a) are all
+//                   walked element-wise for any supported leaf DataType. Sparse
+//                   containers iterate allocated slots only. Element addresses
+//                   are raw, so a container change can move them: see the
+//                   container-element refine anchoring (A11) below. TOptional
+//                   is still deferred (V1c).
 //   Excluded:       Native C++ fields (non-UPROPERTY) — UI must show banner
 //
 
@@ -80,22 +80,14 @@
 
 namespace Radar {
 
-// Data types supported by the scan engine. Numeric primitives are the
-// MVP; string types (FString/FName/FText) and vector types (FVector/
-// FRotator/FTransform) are Phase 2 extensions (build 750).
-//
-// audit #5 AB22 — this banner used to end "TArray<T> scan remains deferred", 28
-// lines below a file header that already recorded TArray<T> as SHIPPED in build 757
-// (and TSet/TMap in 927). The header is the one that is right: `Container` is a
-// DataType below and Aura walks it element-wise. What is still deferred is TOptional
-// (V1c), which the file header states in the same breath — so the deferral was real
-// once and simply outlived the feature it referred to.
-//
-// It also pointed at "memory project_value_search_caveats", an assistant memory file
-// git does not carry (working-lessons §7.1); the durable references are
-// docs/native-c-value-scan-spec.md and docs/group-value-scan-spec.md.
+// Data types supported by the scan engine: numeric primitives, string types
+// (FString/FName/FText), vector types (FVector/FRotator/FTransform) and the
+// multi-numeric meta types. Containers (TArray / TSet / TMap) are walked
+// element-wise by Aura for any leaf type here; TOptional is still deferred (V1c).
+// The references are docs/native-c-value-scan-spec.md and
+// docs/group-value-scan-spec.md.
 enum class DataType : uint8_t {
-    // Numeric primitives (MVP, build 738)
+    // Numeric primitives
     Int8 = 0,
     Int16,
     Int32,
@@ -108,13 +100,13 @@ enum class DataType : uint8_t {
     Double,
     Bool,
 
-    // String types (Phase 2A, build 750). prevValue array unused;
+    // String types. prevValue array unused;
     // candidate's prevStr holds the resolved UTF-8 string.
     FString,
     FName,
     FText,
 
-    // Vector types (Phase 2B, build 750). The candidate's prevValue array
+    // Vector types. The candidate's prevValue array
     // holds the CANONICAL form — 3 little-endian doubles (24 bytes) — no
     // matter whether the game's field was 3xfloat or 3xdouble, so one
     // comparison and one renderer serve both. The SOURCE width is a
@@ -128,7 +120,7 @@ enum class DataType : uint8_t {
     FRotator,
     FTransform,
 
-    // Multi-numeric "meta" type (build 794). Unlike CE's raw "All" scan
+    // Multi-numeric "meta" type. Unlike CE's raw "All" scan
     // (which reinterprets the same untyped bytes as multiple widths),
     // our structured property walk knows each field's DECLARED type, so
     // NumericNoByte means: accept every word/dword/qword/float/double
@@ -142,7 +134,7 @@ enum class DataType : uint8_t {
     // TryDataTypeFromPropertyTypeName + a pre-built NumericTargetSet.
     NumericNoByte,
 
-    // Multi-numeric "meta" type WITH 1-byte fields (build 796). Same
+    // Multi-numeric "meta" type WITH 1-byte fields. Same
     // structured per-width compare as NumericNoByte, but additionally
     // includes Int8 (Int8Property) + UInt8 (ByteProperty). Bool is still
     // excluded (it has its own single-type scan). Members: Int8/UInt8,
@@ -173,18 +165,17 @@ enum class ScanType : uint8_t {
 };
 
 // How a fractional float/double is reduced to the integer the game DISPLAYS,
-// before any numeric compare (build 1672). Games store HP/MP/progress as floats
+// before any numeric compare. Games store HP/MP/progress as floats
 // (513.36, 99.6) but show a rounded integer; the user searches/compares against
-// what they SEE. This replaces the old implicit half-away round + the ± tolerance
-// band: every Float/Double operand (scalar and vector axis) is reduced via this
+// what they SEE. Every Float/Double operand (scalar and vector axis) is reduced via this
 // mode, in both targeted (Exact/Bigger/Smaller/Between vs a WHOLE target) and
 // prev-value (Changed/Unchanged/Increased/Decreased — reduce cur AND prev)
 // predicates. A FRACTIONAL target keeps exact-literal compare (precise intent —
 // no reduce). Integer fields are reduce-invariant (an integer reduces to itself),
 // so integer compares stay strict; the mode only affects them when the user types
 // a FRACTIONAL target/bound on an integer width (then the target is coerced to an
-// integer via this mode — see BuildNumericTargets). Default Round = the historical
-// half-away-from-zero behavior.
+// integer via this mode — see BuildNumericTargets). Default Round =
+// half-away-from-zero.
 enum class RoundMode : uint8_t {
     Round = 0,  // half-away-from-zero (std::round) — e.g. 11.6 -> 12, 11.4 -> 11
     Trunc,      // toward zero        (std::trunc) — e.g. 11.6 -> 11, -11.6 -> -11
@@ -195,7 +186,7 @@ enum class RoundMode : uint8_t {
 // variable-width families — string types (the scan engine reads on demand via
 // Ubel::ReadFStringAt / ReadFNameAt / ReadFTextStringAt), the multi-numeric
 // meta types, and the VECTOR types (12 or 24 per field — see VectorWidth
-// below; it used to answer a flat 12 and every UE5 LWC scan read junk).
+// below).
 size_t SizeOf(DataType dt);
 
 // --- Vector width (LWC) ---
@@ -236,7 +227,7 @@ void StoreVectorCanonical(const double v[3], uint8_t* dst);
 const char* NameOf(DataType dt);
 
 // Wire string for a ScanType ("Exact" / "Bigger" / "Increased" / ...). Inverse
-// of TryParseScanType; used to echo a session's stored per-slot predicate back
+// of TryParseScanType; it echoes a session's stored per-slot predicate back
 // to the UI (the group scan persists ScanType as an enum, not the raw string).
 const char* NameOf(ScanType st);
 
@@ -245,11 +236,11 @@ bool TryParseDataType(const std::string& s, DataType& out);
 bool TryParseScanType(const std::string& s, ScanType& out);
 
 // Wire string for a RoundMode ("Round" / "Trunc" / "Ceil"). Inverse of
-// TryParseRoundMode; used to echo a group session's stored per-slot mode back.
+// TryParseRoundMode; it echoes a group session's stored per-slot mode back.
 const char* NameOf(RoundMode rm);
 // Parse the wire rounding-mode string; returns true on match. Unknown / empty
-// maps to false (caller defaults to RoundMode::Round — backward compatible with
-// pre-build-1672 clients that send no rounding_mode field).
+// maps to false (caller defaults to RoundMode::Round, which a client that sends
+// no rounding_mode field also gets).
 bool TryParseRoundMode(const std::string& s, RoundMode& out);
 
 // Reduce a value to the integer-valued double the game DISPLAYS, per the mode:
@@ -337,7 +328,7 @@ std::vector<SnapshotFieldPick> SelectSnapshotNumericFields(
 // + field names (parallel vectors). Prefers a NameProperty (FName) whose name
 // looks like an id/name/tag/key/row; then any NameProperty; then the first
 // integer field. Returns -1 if none (caller falls back to the element index).
-// Pure / std-only. Used to give cargo/inventory rows a reorder-immune key
+// Pure / std-only. It gives cargo/inventory rows a reorder-immune key
 // (e.g. FCargoSlot.ItemID) so the same logical slot joins across snapshots.
 int SelectArrayInnerKey(const std::vector<std::string>& typeNames,
                         const std::vector<std::string>& fieldNames);
@@ -351,18 +342,18 @@ int SelectArrayInnerKey(const std::vector<std::string>& typeNames,
 // field's resolved DataType — a missing entry means "value can't fit
 // this width" and the field is skipped (no candidate / pruned).
 struct NumericTargetSet {
-    // Why an entry can exist without a usable byte pattern (audit #5 AB4).
+    // Why an entry can exist without a usable byte pattern.
     //
     // "Does the target fit this width" is the right question for Exact and the
     // WRONG one for the ordered predicates. Every Int8 field is smaller than 500,
-    // but 500 has no int8 encoding, so the old set emitted no Int8 entry and the
-    // engines skipped every 1-byte field — a Smaller/Bigger scan silently lost a
-    // whole width class, with no marker anywhere.
+    // but 500 has no int8 encoding, so a set that emitted no Int8 entry would make
+    // the engines skip every 1-byte field — a Smaller/Bigger scan would silently
+    // lose a whole width class, with no marker anywhere.
     //
-    // Clamping is NOT the fix and looks like it is: `Smaller 500` clamped to 127
+    // Clamping is NOT the answer and looks like it is: `Smaller 500` clamped to 127
     // becomes `cur < 127` (ApplyOrdered's Smaller is a STRICT <), which drops the
-    // field holding exactly 127. It restores almost all the missing rows and
-    // re-introduces the same silent single-row loss in a form far harder to see.
+    // field holding exactly 127 — a silent single-row loss in a form far harder to
+    // see.
     // There is no int8 byte pattern meaning "cur <= 127", so the answer cannot
     // live in a fixed-width buffer at all — it has to be a verdict.
     enum class Fit : uint8_t {
@@ -386,7 +377,7 @@ struct NumericTargetSet {
     // that only ever deal with encoded targets; anything on the scan/refine path
     // must use FindEntry so the verdict survives the lookup. Returning `bytes`
     // for an AlwaysTrue entry would compare against a zeroed buffer, which is
-    // wrong in a new and quieter way than the bug this fixes.
+    // quietly wrong.
     const uint8_t* Find(DataType dt) const {
         for (const auto& e : entries) {
             if (e.dt == dt && e.fit == Fit::Encoded) return e.bytes;
@@ -411,16 +402,16 @@ struct NumericTargetSet {
 // unsigned, and floating interpretations are each attempted and gated:
 //   - negative values produce no unsigned entries
 //   - hex (0x..) values produce integer entries only
-// `roundMode` (build 1672): a NON-integral value (e.g. "10.9") no longer skips
-// integer widths — it is reduced to an integer via the mode (Round 10.9->11,
+// `roundMode`: a NON-integral value (e.g. "10.9") does not skip integer
+// widths — it is reduced to an integer via the mode (Round 10.9->11,
 // Trunc->10, Ceil->11) so integer fields can still match a fractional target/
 // bound. Float/Double members always keep the exact fractional value. A clean
 // integer string is unaffected (the integer parse wins; the mode is a no-op).
-// `st` decides what a value that does NOT fit a member's width means (audit #5 AB4):
+// `st` decides what a value that does NOT fit a member's width means:
 // for Exact it means "no field of this width can match" and the member is dropped;
 // for Smaller/Bigger it may instead mean "EVERY field of this width matches", which
-// is emitted as a Fit::AlwaysTrue entry. Defaulted to Exact so the existing callers
-// and every Exact/Changed/Unchanged path keep byte-identical behaviour.
+// is emitted as a Fit::AlwaysTrue entry. Defaulted to Exact, the rule every
+// Exact/Changed/Unchanged path needs.
 // Between is NOT handled here: its two bounds are built JOINTLY by BuildNumericBetweenTargets
 // below ([A4-AB4-BETWEEN]), which clamps each into every width instead of dropping the width.
 bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
@@ -456,30 +447,25 @@ const std::vector<std::string>& PropertyTypeNames(DataType dt);
 // for non-vector data types.
 const std::vector<std::string>& VectorStructNames(DataType dt);
 
-// ---- Interned candidate metadata (build 924, V3-A) -------------------
+// ---- Interned candidate metadata (V3-A) -------------------------------
 //
-// A First Scan can return tens of thousands of candidates. Each used to
-// carry six std::strings (class / defining-class / field name / field
-// type / instance name) copied BY VALUE, which is almost entirely
-// redundant: className / definingClassName / fieldName / fieldType /
-// boolFieldMask / fieldOffset are functions of the (class, field) pair —
-// identical across every candidate of that class+field — and instanceName
-// is shared by every field that matches on the same object. Interning
-// them into two session-level pools shrinks the per-candidate record from
-// ~240 B (+ up to 5 heap strings) to ~72 B (+ 0 heap strings for numeric
-// scans). That is what lets a session hold a large candidate set inside
-// the injected DLL without bloating the target process (the precondition
-// for any later maxResults-cap increase — see todo.md V2/V3).
+// A First Scan can return tens of thousands of candidates. className /
+// definingClassName / fieldName / fieldType / boolFieldMask / fieldOffset are
+// functions of the (class, field) pair — identical across every candidate of
+// that class+field — and instanceName is shared by every field that matches on
+// the same object. So they live in two session-level pools, not BY VALUE in
+// each candidate, which keeps the per-candidate record small (no heap strings
+// for numeric scans). That is what lets a session hold a large candidate set
+// inside the injected DLL without bloating the target process.
 
 // Per-(class, field) display metadata. One entry per distinct field the
 // scan emits a candidate for; shared via Candidate::descriptorIdx.
 // ============================================================
-// Container-element refine anchoring (audit #5 A11)
+// Container-element refine anchoring (A11)
 //
 // A candidate remembers its value's ABSOLUTE address, and refine (Next Scan)
 // re-reads that address. For a DIRECT field that is stable for the object's life.
-// For a CONTAINER ELEMENT it is not, and the comment that used to sit on
-// `Candidate::addr` claimed the failure was a clean drop. It is not:
+// For a CONTAINER ELEMENT it is not, and the failure is not a clean drop:
 //
 //   * TArray::RemoveAt does RelocateConstructItems on everything after the
 //     removal point (Array.h RemoveAtImpl), so the pinned address stays perfectly
@@ -501,7 +487,7 @@ const std::vector<std::string>& VectorStructNames(DataType dt);
 /// How a candidate's value is reached from its owning object.
 ///
 /// `Unknown` is NOT "no container" — it is "nobody said", and refine falls back to
-/// the pre-A11 address-only behaviour for it. The deep-container and group paths
+/// re-reading the address alone for it. The deep-container and group paths
 /// carry `Unknown` today, deliberately and visibly, rather than being given a
 /// `Direct` all-clear they have not earned.
 enum class ValueAnchor : uint8_t {
@@ -510,13 +496,13 @@ enum class ValueAnchor : uint8_t {
     ArrayElement,    // TArray slot:      data + idx*elemStride + elemIntra
     SparseElement,   // TSet/TMap slot:   same, and gated on the slot's OWN alloc bit
     // A container element at depth >= 2, i.e. one whose container HEADER lives inside
-    // an OUTER container's heap buffer. Treated exactly like `Unknown` (pre-A11
-    // behaviour), but NAMED so it is distinguishable from a hop that dropped the stamp.
+    // an OUTER container's heap buffer. Treated exactly like `Unknown` (the address
+    // alone), but NAMED so it is distinguishable from a hop that dropped the stamp.
     //
     // The honest reason it is not anchored: validating a depth-2 header first requires
     // proving the depth-1 element did not move — that is an anchor CHAIN, not one
     // anchor. (It is NOT that re-reading a freed header is uniquely dangerous; the
-    // pre-A11 path already reads a stale leaf address, so anchoring could not be worse
+    // address-only path already reads a stale leaf address, so anchoring could not be worse
     // on that axis. Recording the real reason so nobody "fixes" the wrong thing.)
     UnverifiableNested,
 };
@@ -552,11 +538,11 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
                                                     uintptr_t nowData,
                                                     int32_t   nowNum,
                                                     bool      slotAllocated) {
-    // Not a container candidate, or nobody stamped one: pre-A11 behaviour.
+    // Not a container candidate, or nobody stamped one: the address alone.
     if (anchor != ValueAnchor::ArrayElement && anchor != ValueAnchor::SparseElement)
         return RefineAnchorVerdict::KeepAddress;
     // Stamped as a container but missing the data to act on it — degrade to the
-    // old behaviour rather than dropping a candidate on our own bookkeeping.
+    // address alone rather than dropping a candidate on our own bookkeeping.
     // These three are OUR failures to record something, not facts about the game.
     if (elementIndex < 0 || numAtScan < 0 || !dataAtScan)
         return RefineAnchorVerdict::KeepAddress;
@@ -814,11 +800,11 @@ std::string FieldDisplayName(const FieldDescriptor& desc, int32_t elementIndex);
 std::string FormatCandidateValue(const Candidate& c, DataType dt,
                                  const FieldDescriptor& desc);
 
-// The "Origin" column exactly as the UI renders it (audit #5 AB16): "Native-C
-// (Int32)" for a raw-hole hit, "Native-C" when the width guess is empty, else
-// "Reflected". Kept byte-identical to the C# `ScanCandidate.Origin` so the
-// server-side keyword filter can match a column the user can see — filtering for
-// "native" used to return zero rows over candidates visibly reading "Native-C".
+// The "Origin" column exactly as the UI renders it: "Native-C (Int32)" for a
+// raw-hole hit, "Native-C" when the width guess is empty, else "Reflected". Kept
+// byte-identical to the C# `ScanCandidate.Origin` so the server-side keyword
+// filter can match a column the user can see — filtering for "native" must find
+// the candidates visibly reading "Native-C".
 // Pure / std-only (unit-tested).
 std::string FormatCandidateOrigin(const FieldDescriptor& desc);
 
@@ -1006,8 +992,7 @@ public:
 
     // Drop `owner`'s sessions whose lastUse is older than kExpirySeconds. Called lazily
     // from Begin / RefineWith / End, so an owner's value-scan activity reaps the sessions
-    // it abandoned (audit #5 AB17 — it used to fire ONLY from Begin, so a client that
-    // scanned once and went quiet never triggered it).
+    // it abandoned.
     void ExpireOldSessions(uint64_t owner);
 
     // Drop every session `owner` began, and return how many -- its connection is gone.
@@ -1051,7 +1036,7 @@ private:
 };
 
 // ============================================================
-// Multiple values group scan (build 1276) — object-aware "group scan".
+// Multiple values group scan — object-aware "group scan".
 //
 // A group scan looks for objects (blocks) that SIMULTANEOUSLY hold ALL of N
 // user values (2..4) at DISTINCT numeric-property offsets, in any order. The
@@ -1076,12 +1061,12 @@ private:
 
 // One input value slot of a group scan. `targets` is the pre-parsed multi-width
 // target set (BuildNumericTargets); `value` is the raw user string echoed back
-// on the wire. P2: `st` is the per-slot predicate — a first-scan targeted type
+// on the wire. `st` is the per-slot predicate — a first-scan targeted type
 // (Exact / Bigger / Smaller) on begin, plus the prev-value types (Changed /
 // Unchanged / Increased / Decreased) on refine, where the compare is against
 // each matched leaf's stored prevValue and `targets` is unused. `roundMode` is
-// the float displayed-integer reduction (build 1672, replaces the old tolerance
-// band); only meaningful for Float/Double leaves + fractional-target coercion.
+// the float displayed-integer reduction; only meaningful for Float/Double
+// leaves + fractional-target coercion.
 struct SlotSpec {
     DataType         dt = DataType::NumericNoByte;  // per-slot meta or concrete width
     ScanType         st = ScanType::Exact;
@@ -1155,23 +1140,21 @@ size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candid
 // realistic scan (tens of thousands of leaves) yet well under an OOM. It bounds the
 // retained session even when an unclamped max_results asked for the entire object pool.
 //
-// ⚠ audit #5 AB23 — this used to justify itself with "~120 B per GroupSlotMatch, so
-// 4,000,000 leaves is roughly half a GB". That was an UNDER-count in a direction that
-// matters, because `GroupSlotMatch::ownerClass` is a by-value `std::string`: the record
-// size below covers the string OBJECT, not the heap block it points at. UE class names
-// routinely exceed the small-string buffer ("BP_PlayerCharacter_C" is 20 chars), so a
-// worst-case session adds one allocation PER LEAF on top of the figure — call it another
-// 30-50% including allocator overhead, none of which the budget sees. The real ceiling
-// is therefore meaningfully above "half a GB", and a future raise of this constant
-// should be made against that, not against the record size alone.
+// ⚠ The record size below UNDER-counts in a direction that matters, because
+// `GroupSlotMatch::ownerClass` is a by-value `std::string`: it covers the string OBJECT,
+// not the heap block it points at. UE class names routinely exceed the small-string
+// buffer ("BP_PlayerCharacter_C" is 20 chars), so a worst-case session adds one
+// allocation PER LEAF on top of the figure — call it another 30-50% including allocator
+// overhead, none of which the budget sees. A raise of this constant must be made against
+// that, not against the record size alone.
 //
 // The proper fix is to intern ownerClass the way V3-A interns the per-candidate metadata
 // (GroupSession already carries `descriptors` and `instances` pools for exactly this).
-// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp;
-// Fern.cpp reaches no test target and Aura.cpp only `dll_core_test`'s fake pool, so it is a
+// Not done here: the producers live in Aura.cpp and the reader in Fern.cpp. Fern.cpp is
+// compiled by no test target; Aura.cpp reaches only `dll_core_test`'s fake pool. So it is a
 // change that can only be verified end to end in-game. Tracked in docs/todo.md.
 //
-// Derived from sizeof rather than restated as a literal, so it cannot go stale again.
+// Derived from sizeof rather than restated as a literal, so it cannot go stale.
 inline constexpr size_t kGroupSlotMatchBytes = sizeof(GroupSlotMatch);
 inline constexpr size_t kMaxGroupSessionLeaves = 4'000'000;
 
@@ -1220,10 +1203,10 @@ struct GroupSession {
 // Object-level keys (ClassName / InstanceName / InstanceIndex) plus slot-0's
 // Offset / Value are supported; unsupported keys fall back to scan order. Pure /
 // std-only. Returns candidate indices in display order.
-// Exposed so the row RENDERER can agree with the FILTER. BuildGroupOrderedView walks
-// every leaf of every slot; the JSON row used to show slotMatches[0]. Filtering for a
-// value therefore returned rows that did not visibly contain it. Same helpers, one
-// answer. `needleLower` must already be lower-cased (ToLowerAscii).
+// Exposed so the row RENDERER can agree with the FILTER: BuildGroupOrderedView walks
+// every leaf of every slot, and a row rendered any other way would match a value it
+// does not visibly contain. Same helpers, one answer. `needleLower` must already be
+// lower-cased (ToLowerAscii).
 bool GroupTextContainsCI(const std::string& hay, const std::string& needleLower);
 std::string GroupSlotValueString(const GroupSlotMatch& sm, const SlotSpec& spec,
                                  const std::vector<FieldDescriptor>& descriptors);
@@ -1438,8 +1421,8 @@ private:
 // For prev-value scan types (Changed / Unchanged / Increased / Decreased)
 // targetBytes is the candidate's prevValue snapshot.
 //
-// `roundMode` is the displayed-integer reduction applied to Float/Double only
-// (build 1672, replaces the old ± tolerance slack). Let r(x) = reduce(x, mode)
+// `roundMode` is the displayed-integer reduction applied to Float/Double only.
+// Let r(x) = reduce(x, mode)
 // (Round/Trunc/Ceil); `a` = target, `b` = target2, `c` = cur:
 //   Exact      a whole: r(c) == a              (513 finds 513.36; Ceil-> 514 finds it)
 //              a fractional: c == a             (precise intent — exact, no reduce)
@@ -1463,7 +1446,7 @@ bool ComparePredicate(DataType dt, ScanType st,
                       const uint8_t* target2Bytes = nullptr,
                       RoundMode      roundMode     = RoundMode::Round);
 
-// Entry-taking overload — the one the scan/refine engines must use (audit #5 AB4).
+// Entry-taking overload — the one the scan/refine engines must use.
 //
 // It exists so the AlwaysTrue verdict is honoured in ONE place, here in Radar,
 // rather than at each consumer. That split is deliberate: `Radar.cpp` is compiled
@@ -1502,13 +1485,12 @@ bool CompareStringPredicate(ScanType           st,
 // (Between only; may be null). All three are 3 doubles — decode the field's
 // own bytes with DecodeVectorBytes(src, FieldDescriptor::vectorWidth, ...)
 // first. Taking doubles rather than raw bytes is deliberate: the three buffers
-// no longer share a width once LWC is in play (a 24-byte field compared against
+// do not share a width once LWC is in play (a 24-byte field compared against
 // a target typed as text), so a byte-level predicate would need a width per
 // argument and would silently mis-read if any of them drifted.
 //
 // Each axis runs the SAME displayed-integer-reduction compare as the scalar
-// ComparePredicate (build 1672 — replaces the old per-axis ± tolerance), so a
-// whole target axis matches the reduced axis value and a fractional target axis
+// ComparePredicate, so a whole target axis matches the reduced axis value and a fractional target axis
 // compares literally (positions typed as decimals keep full precision). The
 // combine across axes:
 //   Exact / Bigger / Smaller / Between / Unchanged  ALL three axes satisfy

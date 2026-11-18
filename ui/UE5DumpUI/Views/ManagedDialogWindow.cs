@@ -147,9 +147,9 @@ public abstract class ManagedDialogWindow : Window
             return;
         // Returning to Normal: re-apply the snapshot so the dialog lands where it was.
         // DEFER the re-apply to a Background dispatcher tick (after the OS's own un-maximize
-        // placement has settled) rather than fighting it synchronously mid-transition. The
-        // synchronous set used to emit a maximized-origin position transient that latched
-        // into the snapshot — the "second restore jumps to 0,0" bug. Background priority
+        // placement has settled) rather than fighting it synchronously mid-transition: a
+        // synchronous set emits a maximized-origin position transient that latches into the
+        // snapshot, and the second restore then jumps to 0,0. Background priority
         // runs FIFO after the current Win32 message burst, so it lands after any stray
         // transient and OnRestoreReapplied re-seeds the stash to the rect we just applied.
         if (newState == WindowState.Normal && oldState != WindowState.Normal)

@@ -10,10 +10,8 @@ namespace UE5DumpUI.Helpers;
 /// Ctrl+Home / Ctrl+End, or a page key) is pressed with text selected [TEXTBOX-HOMEEND-CARET].
 /// </summary>
 /// <remarks>
-/// <para>Measured on build 3574 in the Interesting Funcs keyword box: a click on the box's padding
-/// selects its whole text (AutoCompleteBox does that on focus), End then put the caret at the
-/// START, and what was typed next went in front: "spawn" and " act" became " actspawn", a keyword
-/// with no rows.</para>
+/// <para>With the whole text selected (AutoCompleteBox selects it on focus), End puts the caret at
+/// the START, and what is typed next goes in front of the old text.</para>
 /// <para>Cause, read from Avalonia 12.1.3's <c>TextBox.OnKeyDown</c>: each of the four plain moves
 /// sets <c>CaretIndex</c> to its target and then calls <c>ClearSelection()</c>, which puts the
 /// caret at <c>SelectionStart</c>. Moving the caret normally collapses the selection onto it
@@ -21,14 +19,14 @@ namespace UE5DumpUI.Helpers;
 /// nothing collapses, and the caret lands on the selection's start — End jumps to the start of a
 /// select-all, and Home to SelectionStart when the caret already sits at its line's start — Ctrl+A
 /// in a multi-line box with the caret at the start of line 2 sends it to the document start, and
-/// a Shift+double-click reaches the same shape in a single-line box (both found by review). The page
+/// a Shift+double-click reaches the same shape in a single-line box. The page
 /// keys share the sink and never move the caret at all, so with a selection they ALWAYS land on
-/// its start (found by review, confirmed on a real TextBox).</para>
+/// its start.</para>
 /// <para>So the selection is collapsed BEFORE the TextBox handles the key; its own move then lands
 /// on the target whether the caret moves or not. It collapses onto the ACTIVE end,
 /// <c>SelectionEnd</c> — where the caret shows — not onto <c>CaretIndex</c>: keyboard selection
 /// (Shift+arrows) leaves <c>CaretIndex</c> at the anchor, so in a multi-line box a selection made
-/// down across lines would otherwise move on the anchor's line (found by review, pinned by the
+/// down across lines would otherwise move on the anchor's line (pinned by the
 /// headless tests). Every TextBox gets it — the inner boxes of AutoCompleteBox and NumericUpDown,
 /// and every window — through one tunnelling class handler registered at startup
 /// (<see cref="Register"/>).</para>

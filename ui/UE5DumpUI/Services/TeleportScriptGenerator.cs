@@ -17,9 +17,9 @@ namespace UE5DumpUI.Services;
 /// Mimic mailbox directly, no helper-Lua dependency.
 ///
 /// Hotkeys: bind a CE <b>record-level</b> hotkey to a record (reliable), or use
-/// the app's own OS-level global hotkeys on the Teleport tab. The old
-/// <c>createHotkey</c> Lua "hotkey bundle" was REMOVED (build 1111) — it never
-/// reliably fired in CE and had been unsurfaced (no UI button) since build 1038.
+/// the app's own OS-level global hotkeys on the Teleport tab. No
+/// <c>createHotkey</c> Lua "hotkey bundle" is generated: it does not
+/// reliably fire in CE.
 /// </summary>
 public static class TeleportScriptGenerator
 {
@@ -111,14 +111,12 @@ public static class TeleportScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Teleport");
         Line(sb);
         Line(sb, "local hadError = false");
-        // Bounded wait for IDLE before sampling cmd. This is the R3 fix, and it reached
-        // GenerateClearAll (below) and CoordLibrary but never got applied HERE — where
-        // back-to-back firing is the ORDINARY use: hotkey-spamming "TP facing direction",
-        // or Save immediately followed by Recall. A single sample meant the whole
-        // round-trip below was skipped with no else branch: nothing written, no message,
-        // hadError still false — so the deferred timer closed the window as if it were a
-        // clean success. A silent no-op that looks like it worked is the worst outcome
-        // this file can produce, and it affected 16 of the 17 shipped rows.
+        // Bounded wait for IDLE before sampling cmd (R3). Back-to-back firing is the
+        // ORDINARY use here: hotkey-spamming "TP facing direction", or Save immediately
+        // followed by Recall. With a single sample the whole round-trip below would be
+        // skipped with no else branch: nothing written, no message, hadError still false —
+        // so the deferred timer would close the window as if it were a clean success. A
+        // silent no-op that looks like it worked is the worst outcome this file can produce.
         // hadError is set AT the break, not only in the else below: a bare `then break end`
         // is exactly the silent-timeout shape CeLuaHygieneTests forbids, and the rule is
         // right — the flag has to be true from the moment the wait gives up. The message
@@ -150,17 +148,16 @@ public static class TeleportScriptGenerator
         Line(sb, $"  writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {op})             -- op");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)             -- clear status");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdTeleport})  -- CMD_TELEPORT (write LAST)");
-        // A timeout is an ERROR (CLAUDE.md's CE-Lua hygiene rule). A bare `break` fell
-        // straight through to the auto-close, so the Lua Engine window shut on the one
-        // outcome the user needed to see. A bare `return` would be wrong too — it would
-        // strand the record ticked — so set hadError, say so, and leave the loop. (B15)
+        // A timeout is an ERROR (CLAUDE.md's CE-Lua hygiene rule). A bare `break` would
+        // fall straight through to the auto-close, so the Lua Engine window would shut on
+        // the one outcome the user needs to see. A bare `return` would be wrong too — it
+        // would strand the record ticked — so set hadError, say so, and leave the loop. (B15)
         //
         // That reasoning is why this passes FlagAndBreak rather than the toggles'
         // UntickAndReturn: these rows are MOMENTARY, and the deferred timer below both
-        // unticks and suppresses the close. What the shared emitter adds is the half
-        // B15 did not cover — a real getTickCount deadline instead of a count of
-        // sleep(1) calls (measured 15.47 ms each, so the old bound was ~155 s), and a
-        // message that reads `status` rather than guessing at the cause.
+        // unticks and suppresses the close. The shared emitter also gives a real
+        // getTickCount deadline rather than a count of sleep(1) calls (sleep(1) is nowhere
+        // near 1 ms), and a message that reads `status` rather than guessing at the cause.
         CeLuaHygiene.AppendMailboxWait(sb, "Teleport", MailboxTimeout.FlagAndBreak, indent: "  ");
         Line(sb, $"  local code = readInteger(mb + {CeMailboxLayout.OffResult}, true)");
         Line(sb, $"  dbg('[Teleport] {label} -> code=' .. code)");
@@ -216,9 +213,9 @@ public static class TeleportScriptGenerator
                  "Use the UI Force button.')");
         if (op == 10)
         {
-            // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. A record from
-            // before this fix reports it through the generic branch below, which is enough to see it; this one says
-            // why, and what to do instead.
+            // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. An older
+            // generated record, without this branch, reports it through the generic branch below, which is enough
+            // to see it; this one says why, and what to do instead.
             // Invariant: a negative int in the user's culture can carry U+2212 (ICU's sv-SE), which Lua cannot parse.
             Line(sb, $"  elseif not hadError and code == {TeleportCodes.ParentRelative.ToString(CultureInfo.InvariantCulture)} then");
             Line(sb, "    hadError = true");
@@ -287,7 +284,6 @@ public static class TeleportScriptGenerator
         Line(sb, "{$lua}");
         Line(sb, "if syntaxcheck then return end");
         CeLuaHygiene.AppendDebugPreamble(sb);
-        // This generator had no hadError at all, so its close was unconditional. (B15)
         Line(sb, "local hadError = false");
         Line(sb, "-- ================================================================");
         Line(sb, "-- Teleport: Clear all markers -- Generated by UE5CEDumper");
@@ -307,14 +303,14 @@ public static class TeleportScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Teleport");
         Line(sb);
         Line(sb, "for slot = 0, 2 do");
-        // R3: this used to sample cmd ONCE and silently SKIP the slot when it was
-        // non-zero — clearing 2 of 3 markers and reporting "all markers cleared". And
+        // Wait for an idle mailbox per slot rather than sample cmd once: skipping a slot
+        // that is merely busy would clear 2 of 3 markers and report "all markers cleared". And
         // three back-to-back round-trips is precisely the shape that trips the
         // status-before-cmd publication order.
         CeLuaHygiene.AppendIdleWait(sb, "mb",
             "hadError = true; showMessage('[Teleport] mailbox busy -- markers not cleared'); break", "  ");
-        // Both waits' `break` leaves only their OWN while-loop, so the slot loop ran on: a wedged mailbox raised a
-        // dialog per slot, three for one click. A flag tested at the top of the loop is not enough
+        // Both waits' `break` leaves only their OWN while-loop, so the slot loop would run on: a wedged mailbox would
+        // raise a dialog per slot, three for one click. A flag tested at the top of the loop is not enough
         // ([TRACKB-A4-2026-09-10]): the DLL drains the mailbox on its own thread while CE sits in the modal, so the
         // re-read below could pass after OK and clear this slot under "markers not cleared". So leave the slot loop
         // right after each wait -- `break`, never `return`, which would skip the deferred untick and strand the
@@ -329,22 +325,20 @@ public static class TeleportScriptGenerator
         // Same shape as the single-op wait above: momentary row, so flag and break.
         CeLuaHygiene.AppendMailboxWait(sb, "Teleport", MailboxTimeout.FlagAndBreak, indent: "    ");
         AppendLeaveSlotLoopOnError(sb, "    ");
-        // ⛔ AND RE-READ THE RESULT, which this arm did not until 2026-09-09 while the
-        // single-op arm above (`:165`) always has. STATUS_DONE IS NOT A SUCCESS SIGNAL:
+        // ⛔ AND RE-READ THE RESULT, as the single-op arm above does. STATUS_DONE IS NOT A SUCCESS SIGNAL:
         // `Mimic.cpp`'s SetError writes the negative code to `result` and THEN sets
         // `status = STATUS_DONE`, so a failed command satisfies the shared wait exactly like a
         // successful one — and AppendMailboxWait polls `OffStatus` only. Without this the row
-        // auto-closed the Lua Engine window (this repo's documented clean-success-ONLY signal)
-        // and unticked silently on a command the DLL had rejected.
+        // would auto-close the Lua Engine window (this repo's documented clean-success-ONLY signal)
+        // and untick silently on a command the DLL rejected.
         //
         // ⚠ LATENT RATHER THAN LIVE, and worth saying so: `Wirbel::ClearMarker` returns TP_OK
         // for every slot in [0, TELEPORT_SLOTS) and this loop is `for slot = 0, 2`, so the op
         // cannot currently fail; and the one pre-handler error that could fire here,
         // SetError(-10, "DLL not initialized"), gates every CMD_TELEPORT including the SAVE
         // that is the only writer of `s_markers` — so whenever it fires there are no markers to
-        // clear and "all markers cleared" is vacuously true. None of that is enforced anywhere.
-        // The claim is being made from the ATTEMPT, and it is three lines to make it from the
-        // EFFECT instead.
+        // clear and "all markers cleared" is vacuously true. None of that is enforced anywhere,
+        // so the claim is made from the EFFECT, not from the ATTEMPT.
         Line(sb, $"    local code = readInteger(mb + {CeMailboxLayout.OffResult}, true)");
         Line(sb, "    if not hadError and code ~= 0 then");
         Line(sb, "      hadError = true");

@@ -101,12 +101,12 @@ public static class NumericInput
     /// either infinity, and any magnitude above ~7.9e28. The doubles behind the Teleport
     /// coordinate boxes are read out of the running game, so all three are reachable — and the
     /// throw would land in a property getter during rendering, which is a far worse failure than
-    /// the blank field this whole fix is about. NaN becomes an empty box, since "not a number" is
-    /// exactly what an empty box means; the infinities saturate.</para>
+    /// a blank field. NaN becomes an empty box, since "not a number" is exactly what an empty box
+    /// means; the infinities saturate.</para>
     ///
-    /// <para>Precision is unchanged by this: the control's value has always been
-    /// <c>decimal</c>, so the double→decimal narrowing to ~15 significant digits already happened
-    /// inside the binding. This only decides what to do at the edges it used to throw on.</para>
+    /// <para>Precision is unchanged by this: the control's value is <c>decimal</c>, so the
+    /// double→decimal narrowing to ~15 significant digits happens inside the binding anyway.
+    /// This only decides what to do at the edges where a plain cast throws.</para>
     /// </summary>
     public static decimal? ToControlValue(double v)
     {

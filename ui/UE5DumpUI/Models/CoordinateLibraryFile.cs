@@ -176,8 +176,7 @@ public static class CoordText
     /// <summary>Cap for the entry uid. Generous next to the 6-char minted value and the
     /// 12-char pathological fallback, because an imported uid only has to be a stable
     /// token — but it is a text field read from a user-editable file, so it goes through
-    /// the same Normalize gate as every other one. It used to be the ONE field that
-    /// skipped it entirely. (B7)</summary>
+    /// the same Normalize gate as every other one.</summary>
     public const int MaxUidLength = 32;
 
     /// <summary>True when <paramref name="s"/> contains a character that cannot survive

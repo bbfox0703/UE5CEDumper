@@ -79,7 +79,7 @@ public partial class PropertySearchMatch : ObservableObject
 
     /// <summary>
     /// True when this row is a synthetic dotted-path leaf found by the
-    /// opt-in deep descent (build 1222) into nested struct members + struct-
+    /// opt-in deep descent into nested struct members + struct-
     /// typed container elements. For these <see cref="PropName"/> is a dotted
     /// path (e.g. "SaveSlotList[].MsTuneData.GP"), <see cref="ClassName"/> is
     /// the OWNING class (so Find Instances works), and <see cref="FieldAddr"/>

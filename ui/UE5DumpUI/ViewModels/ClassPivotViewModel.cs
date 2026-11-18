@@ -90,14 +90,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     // and leave Fields holding a mix of two classes.
     private int _classLoadId;
     private int _fieldLoadId;
-    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. It used to take _classLoadId, so a class click in Array
-    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A
+    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. Sharing _classLoadId would let a class click in Array
+    // source supersede the class-list load in flight and leave the previous snapshot's classes in the picker. A
     // source or snapshot switch bumps it too: the class it was loading for belongs to the list being replaced, and a
     // late result would auto-pick an array field whose prop load wipes the new source's Fields. Never the class load,
     // and never on a Refresh that keeps the snapshot: there the class can stay selected, and nothing would re-run it.
     private int _arrayFieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
-    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
+    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load must not cancel an in-flight CLASS load, which
     // nothing restarts, leaving the previous snapshot's classes in the picker.
     private CancellationTokenSource? _classLoadCts;   // class list loads (GROUP BY over ~1.7M rows)
     private CancellationTokenSource? _fieldLoadCts;   // field list loads
@@ -117,8 +117,6 @@ public partial class ClassPivotViewModel : ViewModelBase
     [ObservableProperty] private bool   _isBusy;
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private PivotResultRow? _selectedResult;
-    /// <summary>GWorld availability (gates the result 🌍 Locate button; ⚙ Engine is not
-    /// GWorld-gated). Set from the engine state on connect.</summary>
     /// <summary>Client-side substring filter over the results grid (key + values).</summary>
     [ObservableProperty] private string _resultFilter = "";
 
@@ -188,8 +186,8 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// <summary>[W1-PIVOT-SESSION] A result row is selected AND the results belong to the CURRENT live
     /// session, so the row's ObjAddr is still an address in the running game. Gates all four row
     /// handoffs (Open in Live Walker, Copy Address, both Locates), as Snapshot Diff and SPC gate theirs.
-    /// Class Pivot shipped before that gate and never got it: right after a reconnect its DEFAULT
-    /// snapshot is a previous launch's, and the handoffs gave the running game a dead process's address.</summary>
+    /// Without it, right after a reconnect the DEFAULT snapshot is a previous launch's, and the handoffs
+    /// would give the running game a dead process's address.</summary>
     public bool CanUseResultRowActions =>
         SelectedResult != null
         && !string.IsNullOrEmpty(_currentSessionId)
@@ -198,7 +196,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     public bool CanLocateResult => CanUseResultRowActions;
     /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
     /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
-    /// flag disabled this button on games where GWorld WAS resolved (audit #5 AE10).</summary>
+    /// flag would disable this button on games where GWorld IS resolved (audit #5 AE10).</summary>
     public bool CanLocateResultInGWorld => CanUseResultRowActions;
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX button reads. Never null:
@@ -474,9 +472,9 @@ public partial class ClassPivotViewModel : ViewModelBase
 
             if (!await SelectClassAndTickPropAsync(className, propName, propOffset))
             {
-                // Review 3 of c294e314: a class whose captured objects hold ONLY struct arrays has no scalar row,
-                // so it is missing from the class list -- and the helper's "not in the selected snapshot" was
-                // false for it. Its arrays pivot under the Snapshot Array source.
+                // A class whose captured objects hold ONLY struct arrays has no scalar row, so it is missing from
+                // the class list -- and the helper's "not in the selected snapshot" is false for it. Its arrays
+                // pivot under the Snapshot Array source.
                 var onlyArrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
                 if (onlyArrays.Count > 0)
                     StatusText = ArraysOnlyStatus(className, propName, onlyArrays.Select(a => a.ArrayField).ToList());
@@ -484,17 +482,16 @@ public partial class ClassPivotViewModel : ViewModelBase
             }
             if (!string.IsNullOrEmpty(propName))
             {
-                // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
-                // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
-                // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
+                // [W1-DISCOVER-ARRAY] The helper ticks nothing for a prop that is not a captured numeric field --
+                // right-click hands off any field -- and "Ready" would then read like the handoff had worked.
+                // (A prop that IS the key field exists but is not ticked: still Ready.)
                 if (HandedOffField(propName, propOffset) is { } handed)
                     StatusText = $"Ready: {className} · {handed.Label} — press Run Pivot.";
                 else
                 {
-                    // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
-                    // Array source -- the scalar field list just never shows it. Review 3 of c294e314: Value
-                    // Search hands off a struct-array inner value by its display name ("Cargo[3].Quantity"),
-                    // which names its array before the '['.
+                    // A captured STRUCT ARRAY is pivotable too, under the Snapshot Array source -- the scalar
+                    // field list just never shows it. Value Search hands off a struct-array inner value by its
+                    // display name ("Cargo[3].Quantity"), which names its array before the '['.
                     var arrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
                     var arrayName = ArrayFieldOf(propName);
                     var what = arrayName == propName ? "a struct array" : "an element of the struct array " + arrayName;
@@ -514,7 +511,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     /// <summary>The struct-array field a handoff prop belongs to: "Cargo" for "Cargo", "Cargo[3].Quantity" or
-    /// "Cargo[].Quantity" -- Value Search names an array element's inner value that way. Review 3 of c294e314.</summary>
+    /// "Cargo[].Quantity" -- Value Search names an array element's inner value that way.</summary>
     internal static string ArrayFieldOf(string propName)
     {
         int i = propName.IndexOf('[');
@@ -522,9 +519,8 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     /// <summary>The hint for a class whose captured objects hold ONLY struct arrays (<paramref name="arrays"/>, by
-    /// name). Review 4 of c5511519: it named the first array whatever was handed off, so "Cargo[3].Quantity" was sent
-    /// to "Ammo", and a prop that is no array at all was never told it is not pivotable. It now reads the prop the
-    /// way the class-found branch does.</summary>
+    /// name). It reads the prop the way the class-found branch does: an array or its element points at that array
+    /// ("Cargo[3].Quantity" at "Cargo"), and a prop that is no array at all is told it is not pivotable.</summary>
     internal static string ArraysOnlyStatus(string className, string? propName, IReadOnlyList<string> arrays)
     {
         if (string.IsNullOrEmpty(propName))
@@ -574,9 +570,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         var pending = PendingLoad;
         if (pending != null) { try { await pending; } catch { /* surfaced via SetError */ } }
 
-        // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
-        // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
-        // under a "Ready" status.
+        // [W1-DISCOVER-ARRAY] Only in FIELD mode is the key pick the grouping key. In Identity mode it groups
+        // nothing, so skipping it there would leave the handed-off prop out of the pivot under a "Ready" status.
         // The key pick holds a label, so a shadowed copy is compared as one.
         var pick = HandedOffField(propName, propOffset);
         if (pick != null && !(IsFieldKeyMode && SelectedKeyField == pick.Label))
@@ -587,9 +582,9 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// <summary>
     /// [PIVOT-HANDOFF-SHADOWED] The field a handoff names: the copy of <paramref name="propName"/> at
     /// <paramref name="propOffset"/> when the class carries one there, else the first field of that name. A class can
-    /// shadow a property name ([SNAPDIFF-SHADOWED-PROP]) and the picker lists each copy apart, so the name alone ticked
-    /// the first copy whichever one the user picked. The name still decides: an offset that matches no copy (a source
-    /// with none, -1, or one measured from another base) falls back to it.
+    /// shadow a property name ([SNAPDIFF-SHADOWED-PROP]) and the picker lists each copy apart, so the name alone would
+    /// tick the first copy whichever one the user picked. The name still decides: an offset that matches no copy (a
+    /// source with none, -1, or one measured from another base) falls back to it.
     /// </summary>
     private PivotFieldPick? HandedOffField(string? propName, int propOffset)
     {
@@ -620,13 +615,13 @@ public partial class ClassPivotViewModel : ViewModelBase
             .Where(m => m.IsUsable).ToList();
 
         // Capture what the user had chosen BEFORE the rebuild throws the objects
-        // away (audit #5 AF5). SnapshotMeta is a class and UiCollection.Reset
-        // repopulates with NEW instances, so this must round-trip by Id — never by
-        // reference or index. A refresh used to hard-reset the picker to "newest"
-        // plus the two-newest ticks, silently discarding a deliberate choice.
+        // away, or a refresh resets the picker to "newest" plus the two-newest ticks and
+        // silently discards a deliberate choice. SnapshotMeta is a class and
+        // UiCollection.Reset repopulates with NEW instances, so this must round-trip by
+        // Id — never by reference or index.
         //
         // [A4-PIVOT-CROSSGAME-ID] ...but only within ONE game: after a reconnect to a different game the same Id names
-        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick (AF5), so
+        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick, so
         // the test is "did the game change", not "was there a connect".
         bool sameGame = pe == _listedPe;
         long? keepSnapshotId = sameGame ? SelectedSnapshot?.Id : null;
@@ -799,10 +794,10 @@ public partial class ClassPivotViewModel : ViewModelBase
         // "CharacterAttributeSet") — the shared Object Tree filter semantics. The picker
         // binds this filtered Classes collection to a plain ListBox — its Text box is an
         // AutoCompleteBox whose Text ONLY (never SelectedItem) is bound, so the internal
-        // Text<->SelectedItem reconciliation that oscillated SelectedClass and froze the UI
+        // Text<->SelectedItem reconciliation that oscillates SelectedClass and freezes the UI
         // never happens. Rebuild via UiCollection.Reset, which DETACHES SelectedClass before
         // mutating the collection — that detach is what makes a per-keystroke rebuild safe
-        // (the old Clear()/Add() without the detach is what dropped clicks). Typing here sets
+        // (a Clear()/Add() without it drops clicks). Typing here sets
         // SelectedClass=null → no field load, no DB — so filtering never touches the DB.
         var terms = ObjectTreeFilter.SplitTerms(ClassFilter);
         var view = (terms.Length == 0
@@ -813,8 +808,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Skip the rebuild when the filtered set is identical to what's already shown. A spurious
         // re-filter (same text — e.g. fired again right after a click) must NOT Clear()/Add() the
         // collection: the UiCollection.Reset detach below would null SelectedClass and wipe the
-        // just-picked class. That detach firing post-click is the "click flickers then clears, no
-        // selection" bug seen with BOTH the ComboBox and the ListBox.
+        // just-picked class: the click would flicker, then clear, leaving no selection.
         if (Classes.Count == view.Count && Classes.SequenceEqual(view)) return;
 
         // Genuine filter change: rebuild (the detach is required for Avalonia selection-model
@@ -1091,7 +1085,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// <summary>The composite Field-mode group key: the primary key field
     /// (<see cref="SelectedKeyField"/>) first, then every additionally-ticked
     /// <see cref="PivotFieldPick.IsKey"/> field in grid order, de-duplicated. A single
-    /// entry reproduces the legacy single-key grouping exactly.</summary>
+    /// entry is plain single-key grouping.</summary>
     private List<string> CollectKeyFields()
     {
         var keys = new List<string>();
@@ -1105,7 +1099,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// fire on one run: the GROUP cap (PivotEngine: the top N groups of a COMPLETE input, every count exact) and the row
     /// FETCH cap (SnapshotStore: the pivot was built over a PREFIX in gobjects_index order, so the instance count, the
     /// group count and every group's count are undercounts -- and a mid-instance break can make a bogus "(missing)"
-    /// group). The fetch cap used to fold into the group cap's "(capped at 5,000)", presenting the prefix as totals.
+    /// group). Folding the fetch cap into the group cap's "(capped at 5,000)" would present the prefix as totals.
     /// "Tick only the fields you need", not "fewer": with NO value field ticked every prop is fetched.</summary>
     internal static string PivotRunStatus(PivotResult r, int maxGroups, string groupsNoun, string instancesNoun, string tail)
     {
@@ -1146,8 +1140,8 @@ public partial class ClassPivotViewModel : ViewModelBase
                 var valueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList();
                 var res = DataTablePivotEngine.Build(_dataTable!, valueFields);
                 SetResults(res.Rows, runSession);
-                // [W1-DT-TRUNC] The load said "(showing N of M)" for a capped page; the Run used to print a bare row
-                // count over it. Same wording as the load, 17 lines above an array branch that gets it right.
+                // [W1-DT-TRUNC] The load says "(showing N of M)" for a capped page, so the Run must not print a bare
+                // row count over it. Same wording as the load.
                 var dtTrunc = _dataTable!.RowCount > _dataTable.Rows.Count
                     ? $" (showing {_dataTable.Rows.Count:N0} of {_dataTable.RowCount:N0})" : "";
                 StatusText = $"{res.GroupCount:N0} rows{dtTrunc} · key = RowName · {_dataTable!.RowStructName}";
