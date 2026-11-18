@@ -310,11 +310,21 @@ public sealed class SecondCopySourceTests
     public void TheLaterCopyTakesOverTheActorsSeeThroughLeftHidden()
     {
         string land = CodeOnly(DllSrc("Land.cpp"));
-        InOrder(FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {"), "the hand-off thread",
-                "reply == YIELD_NOT_LATER", "if (reply == YIELD_DONE) AdoptHiddenActors(call->hidden);",
+        // Review wf_bbd1bbfe-20d D7-1: asked after "already handing over" too -- that copy is still handing over, to a copy
+        // this one took over -- and asked again until it has, bounded.
+        string retire = FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {");
+        InOrder(retire, "the hand-off thread", "reply == YIELD_NOT_LATER", "PollHiddenActors(call->hidden);",
                 "RefusesStart(State())", "TakeMailbox(");
+        Assert.DoesNotContain("reply == YIELD_DONE) AdoptHiddenActors", retire);
         Assert.Contains("call->hidden = GetProcAddress(h, Grimoire::DUMPER_HAND_OVER_HIDDEN_EXPORT);", land);
-        Assert.Contains("Schlacht::AdoptLeftovers(", FunctionBody(land, "void AdoptHiddenActors(FARPROC handOver) {"));
+        // Under the start lock BeginYield takes, and only while this copy is not being taken over: a copy that hands
+        // over never serves its record again, so it leaves the actors with the earlier copy for the copy taking over.
+        InOrder(FunctionBody(land, "HiddenAsk AdoptHiddenActors(FARPROC handOver) {"), "the adoption",
+                "LockStart()", "if (RefusesStart(State())) return HiddenAsk::Left;", "handOver)(",
+                "Schlacht::AdoptLeftovers(");
+        InOrder(FunctionBody(land, "void PollHiddenActors(FARPROC handOver) {"), "the poll",
+                "AdoptHiddenActors(handOver) == HiddenAsk::NotYet", "Grimoire::LAND_HIDDEN_WAIT_MS",
+                "Tot::ShutdownRequested()", "Sleep(Grimoire::LAND_HIDDEN_POLL_MS)");
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
                 "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
