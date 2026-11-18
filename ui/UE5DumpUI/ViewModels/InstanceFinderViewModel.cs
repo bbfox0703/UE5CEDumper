@@ -629,7 +629,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var result = await _dump.FindByAddressAsync(addrStr, DeepScanElemCap);
+            // The deep-descent caveat names the element cap this lookup was sent with: the Options slider can change
+            // the cap while the lookup runs.
+            int elemCapSent = DeepScanElemCap;
+            var result = await _dump.FindByAddressAsync(addrStr, elemCapSent);
 
             SelectedInstance = null;   // detach before clearing the bound collection
             Instances.Clear();
@@ -662,7 +665,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             string scanSuffix = result.ContainerScan is { } cs
                 ? PartialResultNotice.ScanSuffix(
                       cs.ObjectsScanned, cs.ObjectsTotal, cs.DurationMs,
-                      cs.DeadlineHit, cs.DeepScan, DeepScanElemCap,
+                      cs.DeadlineHit, cs.DeepScan, elemCapSent,
                       anyContainerMatch: result.ContainerMatches.Count > 0)
                 : "";
 
