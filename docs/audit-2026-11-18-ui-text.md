@@ -86,7 +86,7 @@ beside them does not.
 | UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ✅ fixed 2026-11-18 |
 | UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ✅ fixed 2026-11-18 |
 | UT-72 | Find Class Funcs | behaviour | `PropertyXrefDialog`'s Disassemble button has no in-flight flag: a row selection, a scan ending or the open probe re-enables it while its own push runs, and a second click pushes a duplicate record to Cheat Engine (UT-63's defect in the twin dialog). | ✅ fixed 2026-11-18 (red `7249bde7`, then green) |
-| UT-73 | Interesting Functions | comment | `FunctionPropsDialog`'s sort-comparer comment counts six headers (the grid has seven) and tells a shipped build's bug. | ⬜ |
+| UT-73 | Interesting Functions | comment | `FunctionPropsDialog`'s sort-comparer comment counts six headers (the grid has seven) and tells a shipped build's bug. | ✅ fixed 2026-11-18 |
 | UT-74 | Properties | behaviour | Property Search's status line reads Game classes only and Deep after the search's await, not the values the search was sent (UT-67 moved only the Max). | ⬜ |
 | UT-75 | Instances | behaviour | Instance Finder's address Lookup names the deep descent's element cap read after the await, not the cap the lookup was sent. | ⬜ |
 | UT-76 | Classes | comment | The comment UT-67 added says both of the Classes cap note's numbers are the cap sent; only the raise-Max clause is pinned by a test. | ⬜ |
