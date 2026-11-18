@@ -1327,7 +1327,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     };
 
     /// <summary>Per-slot scan-type choices for group mode (P2). First-scan types
-    /// (Exact / Bigger / Smaller) compare against the row's value; prev-value types
+    /// (Exact / Bigger / Smaller / Between) compare against the row's value; prev-value types
     /// (Changed / Unchanged / Increased / Decreased) compare against the previous
     /// round and need a session, so they're only valid on a refine — the value box
     /// hides for them.
@@ -1445,7 +1445,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             // targeted type) first, then refines with Increased/etc.
             if (firstScan && prevValue)
             {
-                error = $"Scan type '{g.ScanType}' needs a previous scan — First Scan with Exact / Bigger / Smaller, then Next Scan with it.";
+                error = $"Scan type '{g.ScanType}' needs a previous scan — First Scan with Exact / Bigger / Smaller / Between, then Next Scan with it.";
                 return false;
             }
             // A targeted predicate needs a value; a prev-value one doesn't.
