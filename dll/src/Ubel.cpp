@@ -1709,7 +1709,8 @@ static std::mutex s_walkClassExCacheMutex;
 // reference a caller got before the re-walk stays readable; they are never freed, like the memo. One per address reuse.
 static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkClassExParked;
 // The bounds on that, since a parked entry is never freed.
-//  * PER ADDRESS (memo key): an address whose witness keeps changing -- an engine whose witness offsets read something
+//  * PER ADDRESS (the address alone, not the memo's epoch key: a re-init's epoch bump must not un-stop an address or
+//    count it twice [WALKCLASS-STOP-EPOCH]): an address whose witness keeps changing -- an engine whose witness offsets read something
 //    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
 //    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY (review
 //    wf_a193c703-fe8: a match against the stopped entry, every other turn of an alternation, used to clear it).
@@ -1723,7 +1724,7 @@ static constexpr uint32_t kHoldHitsToForgive    = 3;
 static constexpr size_t   kMaxParkedBytes       = size_t(256) << 20;
 struct RewalkState { uint32_t rewalks = 0; uint32_t held = 0; bool stopped = false; };
 static std::unordered_map<uintptr_t, RewalkState> s_walkClassExRewalks;
-static size_t s_walkClassExStopped     = 0;   // distinct addresses
+static size_t s_walkClassExStopped     = 0;   // distinct addresses, whatever the epoch
 static size_t s_walkClassExParkedBytes = 0;
 
 void GetParkedClassWalks(size_t& outParked, size_t& outStoppedAddresses) {
@@ -1744,14 +1745,14 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         const uintptr_t hitKey = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
         auto it = s_walkClassExCache.find(hitKey);
         if (it != s_walkClassExCache.end()) {
-            auto rs = s_walkClassExRewalks.empty() ? s_walkClassExRewalks.end() : s_walkClassExRewalks.find(hitKey);
+            auto rs = s_walkClassExRewalks.empty() ? s_walkClassExRewalks.end() : s_walkClassExRewalks.find(uclassAddr);
             if (WitnessMatches(it->second, witness)) {
                 // Holding still: enough matching hits in a row forgive an address that has not stopped.
                 if (rs != s_walkClassExRewalks.end() && !rs->second.stopped && ++rs->second.held >= kHoldHitsToForgive)
                     s_walkClassExRewalks.erase(rs);
                 return it->second;
             }
-            RewalkState& st = (rs != s_walkClassExRewalks.end()) ? rs->second : s_walkClassExRewalks[hitKey];
+            RewalkState& st = (rs != s_walkClassExRewalks.end()) ? rs->second : s_walkClassExRewalks[uclassAddr];
             if (st.stopped) return it->second;
             if (st.rewalks >= kMaxRewalksPerAddress) {
                 st.stopped = true;
