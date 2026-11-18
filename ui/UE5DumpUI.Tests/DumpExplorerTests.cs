@@ -772,6 +772,27 @@ public class DumpExplorerTests
         Assert.DoesNotContain("Instance Finder", tip, StringComparison.Ordinal);
     }
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-37: 🔍 Instances hands the owning class to
+    /// <see cref="InstanceFinderViewModel.SearchForClassAsync"/>, a class-name match that keeps class default objects and
+    /// templates, so neither its tooltip nor the panel's note may promise a live instance of the class.</summary>
+    [Fact]
+    public void FindInstances_TipAndMetaNote_DescribeAClassNameSearch_NotLiveInstances()
+    {
+        var tip = Res.Get("str.Tip.Dump.FindInstances");
+        Assert.False(string.IsNullOrEmpty(tip), "str.Tip.Dump.FindInstances is not in en.axaml");
+        Assert.DoesNotContain("live instance", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("class name contains", tip, StringComparison.Ordinal);
+        Assert.Contains("templates", tip, StringComparison.Ordinal);
+
+        // The note's first sentence rightly says the ROWS are not live instances; the button's clause starts at its label.
+        var note = Res.Get("str.Dump.MetaNote");
+        int at = note.IndexOf(Res.Get("str.Dump.FindInstances"), StringComparison.Ordinal);
+        Assert.True(at >= 0, "str.Dump.MetaNote does not name the 🔍 Instances button");
+        var clause = note[at..];
+        Assert.DoesNotContain("live instance", clause, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("templates", clause, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Vm_Header_CountsStructsAndEnums()
     {
