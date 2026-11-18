@@ -736,7 +736,8 @@ function ue5_inject()
     -- 0.5. Skip injection if our DLL or proxy DLL is already loaded.
     -- Common case: user has version.dll deployed in the game folder, then
     -- tries to inject via CE — without this guard we'd map a duplicate
-    -- copy into VA before Heiter.cpp's runtime pipe-existence guard bails.
+    -- copy into VA, and that copy would take the game over from the one
+    -- already serving, which then shuts down.
     local INIT_IDLE, INIT_RUNNING = 0, 1
     local INIT_READY, INIT_FAILED, INIT_SKIPPED = 2, 3, 4
     local MAILBOX_INITSTATE_OFF = 0x0C   -- MailboxData.initState

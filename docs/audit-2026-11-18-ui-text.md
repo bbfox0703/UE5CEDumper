@@ -58,6 +58,6 @@ beside them does not.
 | UT-43 | System | comment | `ExperimentalSettings`' summary still lists three tabs; `IExperimentalGate` says every holder hears `Changed` (one holder never subscribes), and its `IsEnabled` doc still says tabs. | ✅ fixed 2026-11-18 |
 | UT-44 | AOBMaker / ASM | comment | `Aura::GetFunctionCodeAddr`'s declaration comment in `Aura.h` still says a Blueprint function gives the interpreter; UT-11 corrected four other copies. | ✅ fixed 2026-11-18 |
 | UT-45 | AOBMaker | comment | `AobMakerUnavailable`'s header (rewritten with UT-24) says every place that reports the bridge unreachable takes its sentence from it; several still build their own. | ✅ fixed 2026-11-18 |
-| UT-46 | CE inject | comment | `scripts/UE5CEDumper.CT` and `dll/src/Methode.cpp` say a duplicate copy would be stopped by Heiter's pipe-existence guard; a later copy takes the game over (UT-21's reason). | ⬜ |
+| UT-46 | CE inject | comment | `scripts/UE5CEDumper.CT` and `dll/src/Methode.cpp` say a duplicate copy would be stopped by Heiter's pipe-existence guard; a later copy takes the game over (UT-21's reason). | ✅ fixed 2026-11-18 |
 | UT-47 | Classes | comment | `PartialResultNotice`'s `unit` doc ties the unit "class" to a loop that dedups by class; the Classes batch counts classes without deduping. | ⬜ |
 | UT-48 | this register | doc | UT-03 is filed as *behaviour* and "fixed (red, then green)"; the behaviour is kept by design (D4) and only the text changed. | ⬜ |

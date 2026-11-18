@@ -303,8 +303,8 @@ static void __stdcall OnInjectAndConnect()
     // 1.5. Check if UE5CEDumper is already loaded in the target process.
     // Common scenario: user has version.dll proxy in the game folder and
     // then clicks the inject menu — we should bail out before mapping a
-    // duplicate copy. Heiter.cpp's pipe-existence guard is a fallback;
-    // detecting here avoids loading the DLL into VA at all.
+    // duplicate copy: a later copy takes the game over from the one already
+    // serving and shuts it down (Land.h).
     HANDLE hTarget = g_CE.OpenedProcessHandle ? *g_CE.OpenedProcessHandle : nullptr;
     {
         std::string presentName, presentPath;
