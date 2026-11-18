@@ -468,6 +468,16 @@ public class LiveFuncsSnapshotTests
 
     // ---- U8 ----
 
+    /// <summary>A parameter copy shows in Call Trace's Parameters tab and, as segments or raw, in its Bytes tab: the
+    /// Params? box's tooltip names both, by the tabs' own headers.</summary>
+    [Fact]
+    public void The_Params_tooltip_names_both_Call_Trace_tabs_that_show_the_copies()
+    {
+        string tip = Line("str.Tip.LF.Snap.Choose");
+        Assert.Contains(Line("str.CT.Tab.Params"), tip, StringComparison.Ordinal);
+        Assert.Contains(Line("str.CT.Tab.Bytes"), tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_view_hides_the_Snapshot_column_with_Trace_never_sorts_it_and_keeps_the_buffer_slider()
     {
