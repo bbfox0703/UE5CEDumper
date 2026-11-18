@@ -2,7 +2,7 @@
 
 // ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist) ◅(´⌯⩊⌯`)▻
-// ExportAPI: 64 C ABI exports for CE Lua bridge
+// ExportAPI: 65 C ABI exports for CE Lua bridge
 //
 // ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
 // export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
@@ -27,9 +27,13 @@ __declspec(dllexport) bool     UE5_Init();
 __declspec(dllexport) void     UE5_Shutdown();
 // [DUMPER-SECOND-COPY-AUTOSTART] Called by a later copy of the dumper in the same process as it takes over (Land): this
 // copy shuts down, starts nothing again, and from then on passes its export calls to `successor` -- all but UE5_Shutdown
-// and UE5_StopPipeServer, which do nothing in it. Returns Land::YieldReply: 1 handed over now, 0 a hand-off had
-// already begun, -1 refused because `successor` is not loaded after this copy.
+// and UE5_StopPipeServer, which do nothing in it, and UE5_HandOverHiddenActors. Returns Land::YieldReply: 1 handed over
+// now, 0 a hand-off had already begun, -1 refused because `successor` is not loaded after this copy.
 __declspec(dllexport) int32_t  UE5_YieldToLaterCopy(HMODULE successor);
+// [SEETHRU-HANDOFF-LEFTOVER] Called by the later copy once this copy has handed over: moves the actors this copy's
+// See-through left hidden (its shutdown could not un-hide them) into `out`, at most `cap`, and returns how many; -1 in
+// a copy that has not handed over, whose record is its own still. Answered here, never forwarded.
+__declspec(dllexport) int32_t  UE5_HandOverHiddenActors(uint64_t* out, int32_t cap);
 __declspec(dllexport) uint32_t UE5_GetVersion();
 
 // [W5-OFFSETS-UNMEASURED] Were the UE property offsets MEASURED? 1 = yes; 0 = no, and reasonBuf (nullable) says why --

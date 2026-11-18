@@ -1,6 +1,6 @@
 ﻿// ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: 64 C ABI exports for CE Lua bridge
+// ExportAPI: 65 C ABI exports for CE Lua bridge
 // ============================================================
 
 #include "Frieren.h"
@@ -847,6 +847,12 @@ void UE5_Shutdown() {
 // on the later copy's thread). This copy refuses to start anything from here on, shuts down, and then passes its C ABI
 // calls to the later copy -- all but UE5_Shutdown and UE5_StopPipeServer, which do nothing here, and the class walk's
 // GetField / End while a walk begun here is open. Its own teardown runs here: it calls some of those exports.
+int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {
+    // Not forwarded: the record is this copy's, and the copy asking is the one it would be forwarded to.
+    if (Land::State() != Land::YieldState::Yielded) return -1;
+    return Schlacht::TakeLeftovers(out, cap);
+}
+
 int32_t UE5_YieldToLaterCopy(HMODULE successor) {
     const Land::YieldReply reply = Land::BeginYield(successor);
     if (reply == Land::YIELD_NOT_LATER) {

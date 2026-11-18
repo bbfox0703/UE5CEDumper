@@ -897,6 +897,26 @@ static int32_t ApplyLocked(bool enable) {
     return 0;
 }
 
+int32_t TakeLeftovers(uint64_t* out, int32_t cap) {
+    if (!out || cap <= 0) return 0;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (s_state.active) return 0;
+    const int32_t n = TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap);
+    s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+    if (s_state.hiddenActors.empty()) s_state.restoreAbandoned = false;
+    return n;
+}
+
+void AdoptLeftovers(const uint64_t* actors, int32_t n) {
+    if (!actors || n <= 0) return;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    for (int32_t i = 0; i < n; ++i)
+        if (actors[i]) s_state.hiddenActors.insert(static_cast<uintptr_t>(actors[i]));
+    s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+    // Off: say so the way a deferred restore that gave up does, so the status shows actors left hidden.
+    if (!s_state.active) s_state.restoreAbandoned = true;
+}
+
 int32_t SetEnabled(bool enable, uint64_t owner) {
     // lock order: s_workerMutex (outer) → s_mutex (inner).
     std::lock_guard<std::mutex> wlk(s_workerMutex);

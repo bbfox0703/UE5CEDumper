@@ -57,6 +57,7 @@ EXPORTS
     UE5_Init
     UE5_Shutdown
     UE5_YieldToLaterCopy
+    UE5_HandOverHiddenActors
     UE5_GetVersion
     UE5_AutoStart
     UE5_GetGObjectsAddr

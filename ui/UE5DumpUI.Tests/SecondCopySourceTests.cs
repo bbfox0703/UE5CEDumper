@@ -64,8 +64,10 @@ public sealed class SecondCopySourceTests
 
     /// <summary>The exports a copy that handed over does NOT forward: the yield itself begins the hand-off, and its
     /// shutdown and pipe stop do nothing there -- a CE untick reaching it must not stop the copy that took over, which
-    /// that record never started (B30's rule; review wf_67396083-685 FWD-SHUTDOWN-B30).</summary>
-    private static readonly string[] NotForwarded = { "UE5_YieldToLaterCopy", "UE5_Shutdown", "UE5_StopPipeServer" };
+    /// that record never started (B30's rule; review wf_67396083-685 FWD-SHUTDOWN-B30). The hidden-actor hand-over is
+    /// answered from this copy's own record, for the copy it would be forwarded to (review wf_1b9e937b-a0d DLL-2).</summary>
+    private static readonly string[] NotForwarded =
+        { "UE5_YieldToLaterCopy", "UE5_Shutdown", "UE5_StopPipeServer", "UE5_HandOverHiddenActors" };
 
     /// <summary>The class walk's state is the copy's own, so a walk begun here finishes here (FWD-WALK-SPLIT).</summary>
     private static readonly string[] ForwardedUnlessWalkOpen = { "UE5_WalkClassGetField", "UE5_WalkClassEnd" };
@@ -75,7 +77,7 @@ public sealed class SecondCopySourceTests
     /// match let LAND_FORWARD(UE5_AutoStartBlocking) inside UE5_AutoStart pass, which never forwards
     /// (PIN-FWD-PREFIX).</summary>
     [Fact]
-    public void EveryExportForwardsOnceYielded_ButTheThreeThatMustNot()
+    public void EveryExportForwardsOnceYielded_ButTheFourThatMustNot()
     {
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         var exports = DeclaredExports();
@@ -278,6 +280,31 @@ public sealed class SecondCopySourceTests
     public void EveryProxyListsTheYield()
     {
         foreach (string def in new[] { "ProxyVersion.def", "ProxyDinput8.def", "ProxyDxgi.def", "ProxyWinmm.def" })
+        {
             Assert.Matches(@"(?m)^\s*UE5_YieldToLaterCopy\s*$", DllSrc(def));
+            Assert.Matches(@"(?m)^\s*UE5_HandOverHiddenActors\s*$", DllSrc(def));
+        }
+    }
+
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: the hand-off's See-through OFF keeps on a stalled
+    /// game thread what it could not un-hide, "for the next ON" -- which a copy that handed over never gets. The later
+    /// copy takes that record after a hand-off it began, before anything else can take this copy over; the earlier copy
+    /// answers only once it has handed over, from its own record.</summary>
+    [Fact]
+    public void TheLaterCopyTakesOverTheActorsSeeThroughLeftHidden()
+    {
+        string land = CodeOnly(DllSrc("Land.cpp"));
+        InOrder(FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {"), "the hand-off thread",
+                "reply == YIELD_NOT_LATER", "if (reply == YIELD_DONE) AdoptHiddenActors(call->hidden);",
+                "RefusesStart(State())", "TakeMailbox(");
+        Assert.Contains("call->hidden = GetProcAddress(h, Grimoire::DUMPER_HAND_OVER_HIDDEN_EXPORT);", land);
+        Assert.Contains("Schlacht::AdoptLeftovers(", FunctionBody(land, "void AdoptHiddenActors(FARPROC handOver) {"));
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
+                "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
+        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
+        InOrder(FunctionBody(schlacht, "int32_t TakeLeftovers(uint64_t* out, int32_t cap) {"), "the record's move",
+                "std::lock_guard<std::mutex> lk(s_mutex);", "if (s_state.active) return 0;",
+                "TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap)");
     }
 }

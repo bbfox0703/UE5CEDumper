@@ -95,6 +95,20 @@ inline bool UnhideLeftItHidden(int32_t code) {
     return code != 0 && code != kHideNotAttempted && code != kHideFaultedInCall;
 }
 
+// ── The record across a hand-off ([SEETHRU-HANDOFF-LEFTOVER]) ────────────────
+// A copy that hands over to a later copy (Land) turns See-through off in its shutdown. On a game thread that is not
+// firing then, the un-hides cannot run and the record is kept "for the next See-through ON" -- but a copy that handed
+// over never gets another ON: its exports run in the later copy, whose own record does not know these actors. The later
+// copy therefore takes the record over (UE5_HandOverHiddenActors), and its next ON or OFF restores them.
+
+// Moves up to `cap` actors out of `hidden` -- and out of `queued`, the un-hides that may still run -- into `out`;
+// returns how many. What does not fit stays for the next call.
+template <class Set>
+inline int32_t TakeHiddenRecord(Set& hidden, Set& queued, uint64_t* out, int32_t cap) {
+    (void)hidden; (void)queued; (void)out; (void)cap;
+    return 0;
+}
+
 // A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
 // un-hide may still be queued, and when it runs the actor shows while the record says hidden. Such an actor is hidden
 // again (the queue runs the hide after the un-hide). Hiding twice is harmless.
@@ -181,5 +195,12 @@ bool IsActive();
 // Stop + join the worker, leaving the hidden record as it is. Idempotent. UE5_Shutdown does not use it: it turns
 // See-through off, so the occluders are un-hidden while the hook can still dispatch.
 void StopWorker();
+
+// [SEETHRU-HANDOFF-LEFTOVER] This copy's leftover record, moved into `out` (at most `cap`; see TakeHiddenRecord). Nothing
+// while See-through is on: a running worker owns its record.
+int32_t TakeLeftovers(uint64_t* out, int32_t cap);
+// [SEETHRU-HANDOFF-LEFTOVER] Actors an earlier copy's See-through left hidden, recorded as this copy's: its next ON (on a
+// responsive game thread) or OFF restores them, and a running worker's next tick un-hides those no longer in the way.
+void AdoptLeftovers(const uint64_t* actors, int32_t n);
 
 } // namespace Schlacht

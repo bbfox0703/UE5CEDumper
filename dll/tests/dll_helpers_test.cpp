@@ -57,6 +57,7 @@
 #include <Windows.h>
 
 #include <thread>
+#include <unordered_set>   // [SEETHRU-HANDOFF-LEFTOVER] the hidden record's shape
 
 #include <algorithm>
 #include <cstdio>
@@ -946,6 +947,26 @@ static void Test_Voll_ClientOwnerKey() {
 }
 
 // [PIPE-PER-PROCESS-2026-11-06] Stage C: a departing client releases only its own claim on See-through.
+// [SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: a copy that handed over could never restore the actors its
+// shutdown's OFF left hidden on a stalled game thread. The later copy takes the record: every actor moves, in batches,
+// and an un-hide that may still run leaves the queued set with it.
+static void Test_Schlacht_HandOverRecord() {
+    std::printf("Test_Schlacht_HandOverRecord\n");
+    std::unordered_set<uintptr_t> hidden = { 0x1000, 0x2000, 0x3000 }, queued = { 0x2000 };
+    uint64_t out[4] = {};
+    EXPECT("* hand-over: a batch of 2 moves 2 actors", Schlacht::TakeHiddenRecord(hidden, queued, out, 2) == 2);
+    EXPECT("* hand-over: ...and leaves 1 in the record", hidden.size() == 1);
+    const int32_t last = Schlacht::TakeHiddenRecord(hidden, queued, out + 2, 2);
+    EXPECT("* hand-over: the next call moves the rest", last == 1 && hidden.empty());
+    std::unordered_set<uint64_t> got(out, out + 3);
+    EXPECT("* hand-over: every actor moved, none twice", got.size() == 3 && got.count(0x1000) && got.count(0x2000)
+                                                         && got.count(0x3000));
+    EXPECT("* hand-over: a moved actor's queued un-hide leaves with it", queued.empty());
+    EXPECT("hand-over: an empty record moves nothing", Schlacht::TakeHiddenRecord(hidden, queued, out, 4) == 0);
+    std::unordered_set<uintptr_t> one = { 0x4000 }, none;
+    EXPECT("hand-over: a batch of 0 moves nothing", Schlacht::TakeHiddenRecord(one, none, out, 0) == 0 && one.size() == 1);
+}
+
 static void Test_Schlacht_Owners() {
     using R = Schlacht::OwnerRelease;
     const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
@@ -13237,6 +13258,7 @@ int main() {
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
     RUN(Test_Schlacht_FailedDispatchKeepsTheRecord);
+    RUN(Test_Schlacht_HandOverRecord);           // [SEETHRU-HANDOFF-LEFTOVER] the record a later copy takes over
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
     RUN(Test_Kanne_WatchKeyAndSlot);
