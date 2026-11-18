@@ -1860,6 +1860,21 @@ public sealed class McpToolsTests
     /// See-through, Keep Foreground and the Stealth card's hold, not it) kept running and the AI could not end it --
     /// against "turning off or resetting what this server holds still works". A release ends only what this server
     /// holds (the gate checks that at the send), so the switch lets it through.</summary>
+    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_bbd1bbfe-20d U7-1: write_fly's description still said Fly is
+    /// refused while experimental features are off, so a model told the user it could not turn its own Fly off. Each
+    /// experimental tool with an OFF says the OFF still works.</summary>
+    [Theory]
+    [InlineData("write_fly")]
+    [InlineData("write_foreground_lock")]
+    [InlineData("write_see_through")]
+    [InlineData("write_force_field_reset")]
+    public void AnExperimentalToolWithARelease_SaysTheReleaseStillWorks(string tool)
+    {
+        string d = Catalog().Single(t => t.Name == tool).Description;
+        Assert.DoesNotContain("or while the UI's experimental features are off.", d);
+        Assert.Matches(@"(is not|also while the UI's experimental features are off)", d);
+    }
+
     [Theory]
     [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
     [InlineData("write_fly", """{"enable":false}""", "fly_set")]
