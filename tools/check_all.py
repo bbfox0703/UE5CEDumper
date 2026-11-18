@@ -154,6 +154,12 @@ GATES = [
      "a NEW one (code-behind Text / Content / Title / ToolTip, a ConfirmDialog / SetError / SetOperationResult / "
      "Complete message, ErrorMessage) belongs in en.axaml; a removed one means 'py tools/check_ui_literals.py --update'", False),
 
+    ("check_comment_history",
+     ["tools/check_comment_history.py"],
+     "a file's count of history lines in comments moved off the baseline ([COMMENT-NO-HISTORY-2026-11-18]) -- a NEW "
+     "one (a fix narrative, a review id, 'used to', a measurement, a build number) goes to dev-log.md under a [TAG] and "
+     "the comment keeps the tag and its date; a removed one means 'py tools/check_comment_history.py --update'", False),
+
     ("check_mailbox_contract",
      ["tools/check_mailbox_contract.py"],
      "the CE Lua mailbox contract changed without a version bump, or "
