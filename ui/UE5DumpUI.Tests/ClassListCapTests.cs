@@ -116,11 +116,9 @@ public class ClassListCapTests
 }
 
 /// <summary>
-/// The Z10 rule, now in ONE place. Three panels own a Max control and each had written the
-/// "or raise Max" guard separately; the third rewrite in a single day is where a rule stops
-/// being a rule, so it moved into <c>PartialResultNotice.RaiseMaxClause</c> — beside the
-/// sentence it guards rather than beside each control. These pin the clause, and that all
-/// three callers actually go through it.
+/// The Z10 rule, in ONE place: <c>PartialResultNotice.RaiseMaxClause</c> holds the "or raise
+/// Max" guard beside the sentence it guards rather than beside each control. These pin the
+/// clause, and that each panel listed below actually goes through it.
 /// </summary>
 public class RaiseMaxClauseTests
 {
@@ -162,6 +160,7 @@ public class RaiseMaxClauseTests
                      @"ui\UE5DumpUI\ViewModels\InstanceFinderViewModel.cs",
                      @"ui\UE5DumpUI\ViewModels\PropertySearchViewModel.cs",
                      @"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs",
+                     @"ui\UE5DumpUI\ViewModels\ValueSearchViewModel.cs",
                  })
         {
             string src = File.ReadAllText(RepoFile(vm));

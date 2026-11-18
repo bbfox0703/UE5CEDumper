@@ -53,16 +53,16 @@ public static class PartialResultNotice
     /// The ", or raise Max above N" clause — <b>empty at the ceiling</b>, where raising is not
     /// possible and saying so would be the Z10 lie in a new place.
     ///
-    /// <para>⚠ <b>Shared on purpose.</b> Three panels own a Max control (Instance Finder,
-    /// Property Search, Classes) and this rule was written three separate times in one day; the
-    /// third rewrite is where a rule stops being a rule. The Z10 family is specifically the
+    /// <para>⚠ <b>Shared on purpose.</b> A panel with a Max control calls this rather
+    /// than writing the rule again; <c>RaiseMaxClauseTests</c> checks the panels it lists.
+    /// The Z10 family is specifically the
     /// failure of ADVICE drifting from the CONTROLS a panel actually has, so its guard belongs
     /// beside the sentence it guards, not beside each control.</para>
     ///
     /// <para>Returns "" — never null — so a caller can concatenate it unconditionally.</para>
     /// </summary>
     /// <param name="currentCap">The cap in force, i.e. what the panel's NumericUpDown reads.</param>
-    /// <param name="ceiling">The highest that control will accept (<c>Constants.MaxSearchCap</c>).</param>
+    /// <param name="ceiling">The highest that control will accept: its NumericUpDown's Maximum.</param>
     public static string RaiseMaxClause(int currentCap, int ceiling)
         => currentCap < ceiling ? $", or raise Max above {currentCap:N0}" : "";
 

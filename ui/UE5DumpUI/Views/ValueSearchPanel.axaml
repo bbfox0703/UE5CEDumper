@@ -56,9 +56,11 @@
                  Foreground="#CCCCCC" FontSize="12"
                  VerticalAlignment="Center"
                  ToolTip.Tip="{StaticResource str.Tip.VS.MaxResults}"/>
-      <!-- Default 50k: a broad scan should not collect a million by default, and the
-           truncation note says when to raise it. The ceiling is 1M because the DLL keeps
-           the lean set and the UI only ever pages it. -->
+      <!-- Default 50k: a broad scan should not collect a million by default. A group
+           First Scan's truncation note offers raising it while it is below Maximum.
+           The ceiling is 1M because the DLL keeps the lean set and the UI only ever
+           pages it; it equals Constants.ScanSessionMaxResultsCeiling, the bound that
+           note compares Max against. -->
       <NumericUpDown Value="{Binding MaxResultsValue}"
                      Minimum="100" Maximum="1000000" ClipValueToMinMax="True" Increment="10000"
                      ToolTip.Tip="{StaticResource str.Tip.VS.MaxResults}"
