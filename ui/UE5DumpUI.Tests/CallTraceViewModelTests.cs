@@ -1545,6 +1545,18 @@ public class CallTraceViewModelTests
 
     // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
 
+    /// <summary>The Object line names the object the function was called on (ProcessEvent's receiver, the record's
+    /// object), never the code that called it, which a word like "calling" suggests: the callers are the tree's parents.</summary>
+    [Fact]
+    public void The_object_lines_say_the_function_was_called_on_the_object()
+    {
+        foreach (var key in new[] { "str.CT.Detail.Object", "str.CT.Detail.ObjectStale" })
+        {
+            Assert.DoesNotContain("calling", En(key), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("called on", En(key), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     /// <summary>en.axaml's strings, read as the app shows them: Res has no Avalonia application in a unit test, so
     /// the view model is handed these and the tests read the sentences a user reads.</summary>
     private static readonly Lazy<Dictionary<string, string>> EnStrings = new(() =>
