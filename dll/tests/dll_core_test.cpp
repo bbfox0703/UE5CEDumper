@@ -4031,6 +4031,25 @@ int main() {
             check("* WALKCLASS-MEMO-REUSE: ...counted as ONE stopped address, with its 8 walks parked",
                   stopped1 - stopped0 == 1 && parked1 - parked0 == 8,
                   (std::to_string(stopped1 - stopped0) + " stopped, " + std::to_string(parked1 - parked0) + " parked").c_str());
+            // [WALKCLASS-STOP-EPOCH] Review wf_1b9e937b-a0d R6-6: the memo is keyed by (family epoch, address), and the
+            // stop was too, so an epoch bump (any re-init's offset validation) gave the stopped address a fresh count --
+            // 8 more re-walks and a second stop. The first call after the bump is a memo miss (one fresh walk); the stop
+            // then holds, and the address is still one stopped address.
+            DynOff::RetireFamilyEpoch();
+            int afterBump = -1;   // the miss's fresh walk is not a re-walk
+            last = nullptr;
+            for (int i = 0; i < 20; ++i) {
+                put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
+                const ClassInfo* now = &Ubel::WalkClassEx(C);
+                if (!last || now != last) ++afterBump;
+                last = now;
+            }
+            size_t parked2 = 0, stopped2 = 0;
+            Ubel::GetParkedClassWalks(parked2, stopped2);
+            check("* WALKCLASS-STOP-EPOCH: a stopped address stays stopped across a family-epoch bump",
+                  afterBump == 0, std::to_string(afterBump).c_str());
+            check("* WALKCLASS-STOP-EPOCH: ...and is still ONE stopped address",
+                  stopped2 == stopped1, (std::to_string(stopped2 - stopped1) + " more").c_str());
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 7);
             const bool okFirst = Ubel::WalkClassEx(K).Name == "Items";
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 8);
@@ -5020,7 +5039,7 @@ int main() {
             {
                 std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
                 check("WALKCLASSEXUNMAPPED ⭐: ...and GetCachedStructFields, the twin, memoizes nothing for it",
-                      sf1.empty() && Ubel::s_structFieldCache.count(wcS) == 0);
+                      sf1.empty() && Ubel::s_structFieldCache.count(DynOff::FamilyCacheKey(wcS)) == 0);
             }
 
             // The page comes back, holding a plausible class at each subject.
@@ -5036,7 +5055,9 @@ int main() {
             {
                 std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
                 check("WALKCLASSEXUNMAPPED control: ...and the twin memoizes a readable struct",
-                      Ubel::s_structFieldCache.count(wcS) == 1);
+                      // The memo's key, not the bare address: they agree only while the family epoch is 0, and an earlier
+                      // block bumps it ([WALKCLASS-STOP-EPOCH]).
+                      Ubel::s_structFieldCache.count(DynOff::FamilyCacheKey(wcS)) == 1);
             }
             // Deliberately NOT released: the memos now hold this address for the process, which ends soon.
         }
