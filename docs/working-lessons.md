@@ -1515,7 +1515,12 @@ explicitly in the register, since it correspondingly proves nothing about the pa
   (`g_mailboxContract`) is not taken over, but it serves only the old shared pipe name (`UE5DumpBfx`,
   no pid), which the UI and `pipe_client.py` do not connect to: the injected copy answers on the
   game's own pipe. **Read `get_pointers.build_number` and compare it against what you just built,
-  before believing any result.** To test a new build in proxy mode, replace the proxy in the game's
+  before believing any result**: it catches a stale proxy still answering. It does not catch an
+  injected copy answering in the proxy's place when that copy is the build you just made, so **a
+  proxy-mode row also reads `get_pointers.load_mode`, which must say `proxy:<name>.dll`** (`proxy:`
+  and the answering copy's own file name, lower-cased, such as `proxy:version.dll`); an injected
+  `UE5Dumper.dll` says `injected`. `pipe_client.assert_build()` checks the build only. To test a
+  new build in proxy mode, replace the proxy in the game's
   `Binaries\Win64` (`tools/verify/proxy_swap.py`) and restart the game.
 - **Proxy mode does not scan on load, and `init` does not make it.** A proxy is loaded long before
   the engine exists, so it deliberately starts the pipe server only
