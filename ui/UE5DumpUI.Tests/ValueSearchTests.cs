@@ -2058,6 +2058,41 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-87: the Classes tab logs a load with the Game classes only value the
+    /// load was sent with, not one the box was switched to while the load ran (the box stays clickable during a
+    /// load).</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClassesLoadLog_NamesTheGameOnlyTheLoadWasSent(bool gameOnly)
+    {
+        var svc = MakeService(out var pipe);
+        var log = new MockLoggingService();
+        var vm = new GameClassFilterViewModel(svc, log, new MockPlatformService(Path.GetTempPath()))
+        {
+            GameClassesOnly = gameOnly,
+        };
+        bool wired = !gameOnly;
+        bool flippedWhileLoading = false;
+        // The pipe answers from inside the load call, so the box flips while the load is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "list_classes") return new JsonObject { ["ok"] = true };
+            wired = req["game_only"]!.GetValue<bool>();
+            flippedWhileLoading = vm.IsLoading;
+            vm.GameClassesOnly = !gameOnly;
+            return new JsonObject { ["ok"] = true, ["total"] = 0 };
+        });
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Equal(gameOnly, wired);
+        Assert.True(flippedWhileLoading, "the box did not flip while the load ran");
+        Assert.Equal(!gameOnly, vm.GameClassesOnly);
+        var line = Assert.Single(log.Messages, m => m.Contains("ListClasses: ", StringComparison.Ordinal));
+        Assert.Contains($"(gameOnly={gameOnly},", line, StringComparison.Ordinal);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-86: a First Scan or Next Scan request is built from the scan type, data
     /// type and values its own checks passed, not ones picked while the diagnostics probe opens between those checks
     /// and the send (the pickers and boxes stay editable then).</summary>
