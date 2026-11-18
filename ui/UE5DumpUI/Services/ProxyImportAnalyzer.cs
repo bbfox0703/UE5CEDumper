@@ -9,9 +9,10 @@ namespace UE5DumpUI.Services;
 /// which of our proxy DLLs can actually be loaded by that process, and to build
 /// a per-game proxy suggestion for the Proxy Deploy panel.
 ///
-/// WHAT AN IMPORT PROVES, AND WHAT IT DOES NOT. A name in the import table proves
-/// the proxy WILL load: the loader resolves it from the .exe directory at process
-/// start. Its ABSENCE proves nothing, because a run-time <c>LoadLibrary</c> searches
+/// WHAT AN IMPORT PROVES, AND WHAT IT DOES NOT. A name in the import table makes the
+/// loader resolve it at process start, from the .exe directory unless a copy already
+/// mapped in the process satisfies the import first (<see cref="DescribeImportBypassRisk"/>).
+/// Its ABSENCE proves nothing, because a run-time <c>LoadLibrary</c> searches
 /// that same directory — and for <c>version.dll</c> that is the normal case, not the
 /// exception (GetFileVersionInfo / COM / manifest parsing pull it in later). So
 /// <c>version.dll</c> stays the safe universal default no matter what the table says;
@@ -40,8 +41,9 @@ internal static class ProxyImportAnalyzer
         public bool ImportsNone => !ImportsVersion && !ImportsDinput8 && !ImportsDxgi && !ImportsWinmm;
 
         /// <summary>Does this PE STATICALLY (or delay-) import the DLL a given proxy flavour
-        /// hijacks? True means the proxy is GUARANTEED to load — the loader resolves the name
-        /// from the .exe directory at process start.
+        /// hijacks? True means the loader resolves the name at process start, from the .exe
+        /// directory unless an already-mapped copy satisfies it first
+        /// (<see cref="DescribeImportBypassRisk"/>).
         ///
         /// <para>False does NOT mean the opposite: a run-time <c>LoadLibrary</c> reaches the
         /// same directory. Do not turn a false here into a refusal — see
@@ -316,8 +318,8 @@ internal static class ProxyImportAnalyzer
         // already folded in by Merge. "Names nothing" there means "cannot tell", not "no".
         if (info.ImportsNone) return null;
 
-        // Statically imported → the loader resolves it from the .exe directory at process
-        // start. Guaranteed; nothing to say.
+        // Statically imported → the loader asks for it at process start, so it does not
+        // "never load"; whether an early copy pre-empts it is DescribeImportBypassRisk's to say.
         if (info.Imports(type)) return null;
 
         // Loaded dynamically by virtually every process — the normal, working case.
@@ -331,7 +333,7 @@ internal static class ProxyImportAnalyzer
     }
 
     /// <summary>The flavours OTHER than <paramref name="exclude"/> worth suggesting: the ones
-    /// this .exe actually names (guaranteed to load), plus <c>version</c>, which loads
+    /// this .exe actually names (the loader asks for them at process start), plus <c>version</c>, which loads
     /// dynamically nearly everywhere and is the broadest-compatible fallback. Extension
     /// trimmed to match <see cref="DescribeImportable"/>.</summary>
     private static string DescribeAlternatives(ProxyImportInfo imports, ProxyType exclude)

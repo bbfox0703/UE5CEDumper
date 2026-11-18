@@ -1491,7 +1491,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             $"Created CE symbol script '{symbolName}' ({detail}); the plugin did not report activation");
     }
 
-    /// <summary>The red line, as <see cref="ReportSymbolRegistration(bool, string, string)"/> uses it.</summary>
+    /// <summary>The red line, as <see cref="ReportSymbolRegistration(bool, string, string, string)"/> uses it.</summary>
     private void FailSymbolRegistration(string symbolName, string detail, string message)
     {
         SymbolStatusText = "";
