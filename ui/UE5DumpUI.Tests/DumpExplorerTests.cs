@@ -736,6 +736,25 @@ public class DumpExplorerTests
     }
 
     [Fact]
+    public void FindInstancesTip_NamesTheTabItOpens()
+    {
+        // FindInstances hands the class to the tab str.Tab.InstanceFinder names; the tip must name that tab.
+        var en = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        static string Get(string axaml, string key)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(axaml,
+                "x:Key=\"" + System.Text.RegularExpressions.Regex.Escape(key) + "\">(.*?)</sys:String>",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            Assert.True(m.Success, key + " is missing from en.axaml");
+            return System.Net.WebUtility.HtmlDecode(m.Groups[1].Value);
+        }
+
+        var tip = Get(en, "str.Tip.Dump.FindInstances");
+        Assert.Contains("the " + Get(en, "str.Tab.InstanceFinder") + " tab", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("Instance Finder", tip, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Vm_Header_CountsStructsAndEnums()
     {
         var path = await WriteTempAsync(TypesJsonl);
