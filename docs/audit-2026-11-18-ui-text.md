@@ -29,7 +29,7 @@ beside them does not.
 | UT-16 | Live Walker | text | `str.Tip.Toolbar.Options` says "Set once per session" though the settings persist, and lists only some of them (not String Len, Fabricate, Locate depth, the deep-scan cap). | ✅ fixed 2026-11-18 (red `06cf22a0`, then green) |
 | UT-17 | Live Walker | text | `str.Tip.LiveWalker.FuncFilter` says each keyword must match the function name; the filter also matches the interface name. | ✅ fixed 2026-11-18 (red `aebccfec`, then green) |
 | UT-18 | Live Walker | text | `str.Tip.CollapsePointers` says "in CE XML export"; it applies to Copy CE Field too. (`MainWindowViewModel`'s comment gives Fabricate as 2..512; the slider goes to 4096.) | ✅ fixed 2026-11-18 (red `4b27863f`, then green) |
-| UT-19 | Dump Explorer | text | `str.Tip.Dump.FindInstances` says "in the Instance Finder"; the tab is **Instances**. | ⬜ |
+| UT-19 | Dump Explorer | text | `str.Tip.Dump.FindInstances` says "in the Instance Finder"; the tab is **Instances**. | ✅ fixed 2026-11-18 (red `a8fb137a`, then green) |
 | UT-20 | Dump Explorer | behaviour | "Live match: N class(es) ... (M of T rows matched)" counts class rows only in N, while structs and enums also match and count in M. | ⬜ |
 | UT-21 | Proxy Deploy | design | Inject from the UI only connects when the game already holds any copy of the DLL, a stale proxy included; the second copy's take-over is reachable only through `inject-ue.ps1` or another injector. | ⬜ |
 | UT-22 | dev-log | doc | The build 3729 entry says "The UI and the MCP server reconnect" after a hand-off; the UI does not reconnect by itself (the user clicks Connect). | ⬜ |

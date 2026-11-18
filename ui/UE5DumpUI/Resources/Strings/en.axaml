@@ -149,7 +149,7 @@
     <sys:String x:Key="str.Tip.Dump.Recheck">Scan the connected game's live classes, structs and enums and re-split results into “in current game” (matched by kind and name, restart-safe) vs. not. Requires a connected, scanned game.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Category">Limit results to a single kind (classes / properties / functions / structs / enums / enumerators), or show all.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Jump">Open the owning class's, struct's or enum's live object in the Live Walker.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.FindInstances">Classes only. Find live instances of the owning class in the Instance Finder — the bridge to Related ▸ Locate in GWorld/GameEngine (which work on instances, not class definitions).</sys:String>
+    <sys:String x:Key="str.Tip.Dump.FindInstances">Classes only. Find live instances of the owning class in the Instances tab — the bridge to Related ▸ Locate in GWorld/GameEngine (which work on instances, not class definitions).</sys:String>
     <sys:String x:Key="str.Tip.Dump.CopyPath">Copy the owning type's object path to the clipboard.</sys:String>
 
     <!-- Related Objects panel -->
