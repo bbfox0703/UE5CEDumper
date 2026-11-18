@@ -196,6 +196,7 @@
                      Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
         <Button Content="{StaticResource str.LF.Snap.Clear}"
                 Command="{Binding ClearSnapshotsCommand}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Clear}"
                 IsEnabled="{Binding !IsRecording}"
                 Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
         <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"

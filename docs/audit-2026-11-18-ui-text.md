@@ -13,7 +13,7 @@ beside them does not.
 |----|------|------|---------|--------|
 | UT-01 | Live Funcs | text | `str.Tip.LF.Unloaded` says an unloaded row "cannot be ticked for the trace"; a row with a name key can be ticked and chosen for Params? / Stack? (`LiveFuncsViewModel` `Tickable`). | ✅ fixed 2026-11-18 (red `ec198c96`, then green) |
 | UT-02 | Live Funcs | text | `str.Tip.LF.Trace.Ticked` says "with none ticked, every call"; with Params? / Stack? choices and no ticks, only the chosen calls are recorded (`str.LF.Trace.RecordingSnapOnly`). | ✅ fixed 2026-11-18 (red `df1b460e`, then green) |
-| UT-03 | Live Funcs | behaviour | The Parameters row's **Clear** has no tooltip and also clears the stack choices, while `str.Tip.LF.ClearChoices` says each Clear empties only its own. | ⬜ |
+| UT-03 | Live Funcs | behaviour | The Parameters row's **Clear** has no tooltip and also clears the stack choices, while `str.Tip.LF.ClearChoices` says each Clear empties only its own. | ✅ fixed 2026-11-18 (red `db228bb0`, then green) |
 | UT-04 | Live Funcs | text | `str.Tip.LF.Snap.Choose` names only the Parameters view; the copies also show in the Bytes tab. | ⬜ |
 | UT-05 | Live Funcs | behaviour | The Δ label formats `Delta` with the current culture, so some locales show `−N` instead of `-N` (`PeProfileResult`). | ⬜ |
 | UT-06 | System | design | The experimental switch is an unlabelled check box at Opacity 0.1; "Enable advanced experimental features" is only its tooltip. | ⬜ |
