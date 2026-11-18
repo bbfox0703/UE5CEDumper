@@ -4050,6 +4050,27 @@ int main() {
                   afterBump == 0, std::to_string(afterBump).c_str());
             check("* WALKCLASS-STOP-EPOCH: ...and is still ONE stopped address",
                   stopped2 == stopped1, (std::to_string(stopped2 - stopped1) + " more").c_str());
+            // [WALKCLASS-STOP-OFFSETS] Review wf_bbd1bbfe-20d D7-5: a stop reached while the witness read wrong offsets
+            // (a give-up's guesses) must not outlive their correction -- a later genuine reuse would be answered with
+            // the old walk. A re-init that re-derives the SAME offsets keeps it (above); one that changes a witness
+            // offset lifts it: the address is re-walked again up to the bound, and still counted once.
+            const int savedOuter = DynOff::UOBJECT_OUTER;
+            DynOff::UOBJECT_OUTER = savedOuter + 8;
+            int afterFix = 0;
+            last = nullptr;
+            for (int i = 0; i < 20; ++i) {
+                put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
+                const ClassInfo* now = &Ubel::WalkClassEx(C);
+                if (last && now != last) ++afterFix;
+                last = now;
+            }
+            DynOff::UOBJECT_OUTER = savedOuter;
+            size_t parked3 = 0, stopped3 = 0;
+            Ubel::GetParkedClassWalks(parked3, stopped3);
+            check("* WALKCLASS-STOP-OFFSETS: a witness offset that changed lifts the stop (8 more re-walks)",
+                  afterFix == 8, std::to_string(afterFix).c_str());
+            check("* WALKCLASS-STOP-OFFSETS: ...and the address is still counted once",
+                  stopped3 == stopped1, (std::to_string(stopped3 - stopped1) + " more").c_str());
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 7);
             const bool okFirst = Ubel::WalkClassEx(K).Name == "Items";
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 8);
