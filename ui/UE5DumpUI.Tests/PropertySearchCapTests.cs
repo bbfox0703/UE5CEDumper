@@ -116,4 +116,22 @@ public class PropertySearchCapTests
         string call = vm.Substring(at, Math.Min(400, vm.Length - at));
         Assert.Contains("limit: PropertySearchCap", call);
     }
+
+    [Fact]
+    public void TheMaxTipQuotesTheMarkerTheStatusLinePrintsAtTheCap()
+    {
+        // The tip says when to raise Max, so the marker it quotes must be the one this panel's status line prints at
+        // the cap (PartialResultNotice.RowCap); "⚠ capped" is the Forced fields strip's label.
+        string en = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\Resources\Strings\en.axaml"));
+        var m = Regex.Match(en, @"x:Key=""str\.Tip\.PropertySearch\.MaxResults"">(.*?)</sys:String>",
+            RegexOptions.Singleline);
+        Assert.True(m.Success, "str.Tip.PropertySearch.MaxResults is missing from en.axaml");
+        string tip = System.Net.WebUtility.HtmlDecode(m.Groups[1].Value);
+
+        // The marker as RowCap prints it, N standing for the cap the user set.
+        string printed = UE5DumpUI.Core.PartialResultNotice.RowCap(200, "matches", "narrow it").Trim();
+        string marker = printed[..printed.IndexOf(" —", StringComparison.Ordinal)].Replace("200", "N");
+        Assert.Contains("\"" + marker + "\"", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("⚠ capped", tip, StringComparison.Ordinal);
+    }
 }
