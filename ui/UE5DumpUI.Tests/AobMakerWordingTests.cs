@@ -376,6 +376,42 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-50: the two AOBMaker dialogs probe the bridge once as they open and then
+    /// re-set their Cheat Engine buttons, and each greyed tooltip says reopening the dialog checks again: the modal
+    /// dialog keeps the main window's refresh out of reach. Pinned in source because no unit test here can open a
+    /// Window.</summary>
+    [Fact]
+    public void AobMaker_dialogs_probe_the_bridge_as_they_open_and_their_greyed_tooltips_say_reopen()
+    {
+        const string reopen =
+            "This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.";
+        foreach (var (file, resync) in new[]
+                 {
+                     ("ui/UE5DumpUI/Views/PropertyXrefDialog.cs", "SyncDisasmButton();"),
+                     ("ui/UE5DumpUI/Views/FunctionPropsDialog.cs", "UpdateSelectionButtons();"),
+                 })
+        {
+            var src = File.ReadAllText(NumericInputCoercionTests.RepoFile(file)).Replace("\r\n", "\n");
+            Assert.Contains("Opened += async (_, _) => await ProbeAobMakerAsync();", src, StringComparison.Ordinal);
+            int at = src.IndexOf("private async Task ProbeAobMakerAsync()", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{file} has no ProbeAobMakerAsync");
+            var body = src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            int probe = body.IndexOf("await bridge.CheckAvailabilityAsync()", StringComparison.Ordinal);
+            Assert.True(probe >= 0, $"{file}'s open probe does not ask the bridge");
+            Assert.True(body.IndexOf(resync, probe, StringComparison.Ordinal) > probe,
+                        $"{file} does not re-set its buttons after the open probe");
+        }
+
+        var xref = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+        int tip = xref.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        var call = xref[tip..xref.IndexOf(");", tip, StringComparison.Ordinal)];
+        Assert.Contains(reopen, call, StringComparison.Ordinal);
+        foreach (var key in new[] { "str.Tip.FunctionProps.AsmOff", "str.Tip.FunctionProps.WriteSiteInCeOff" })
+            Assert.EndsWith(reopen, Res.Get(key), StringComparison.Ordinal);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-49: the Props dialog's two Cheat Engine buttons, Disassemble in CE and
     /// Write site in CE, open their tooltips while greyed out, and while the plugin is out of reach each tooltip gives
     /// the bridge's own reason. One method sets each button's state and tooltip, and it runs at construction and after
