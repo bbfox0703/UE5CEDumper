@@ -55,6 +55,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private DataGrid _grid = null!;
     private Button _btnRefresh = null!;
     private Button _btnCopy = null!;
+    private Button _btnAsm = null!;
     private Button _btnSiteInCe = null!;
     private Button _btnCopySites = null!;
     private CheckBox _classFieldsOnly = null!;
@@ -70,6 +71,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
 
     internal const string KeyAsmLabel = "str.FunctionProps.AsmInCe";
     internal const string KeyAsmTip = "str.Tip.AobMaker.FuncAsm";
+    internal const string KeyAsmOffTip = "str.Tip.FunctionProps.AsmOff";
+    internal const string KeySiteOffTip = "str.Tip.FunctionProps.WriteSiteInCeOff";
 
     private async void OnAsmClicked(object? sender, RoutedEventArgs e)
     {
@@ -87,7 +90,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
         finally
         {
-            button.IsEnabled = bridge.IsAvailable;
+            UpdateSelectionButtons();
         }
     }
 
@@ -192,19 +195,20 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 8, 0, 0),
         };
-        // [AOBM-FUNC-DISASM] The dialog is about ONE function, so this button needs no selection. Its state is read once:
-        // the dialog is modal, so nothing can re-probe the bridge while it is open, and a click on a stale "on" reports
-        // the failure rather than vanishing.
-        var btnAsm = new Button
+        // [AOBM-FUNC-DISASM] The dialog is about ONE function, so this button needs no selection.
+        // UpdateSelectionButtons sets its state and tooltip, and a click on a stale "on" reports the failure
+        // rather than vanishing. The tooltip opens on the greyed-out button too: while the plugin is out of
+        // reach, it says why.
+        _btnAsm = new Button
         {
             Content = Res.Get(KeyAsmLabel) is { Length: > 0 } label ? label : "Disassemble in CE",
             Padding = new Thickness(12, 6),
             Margin = new Thickness(0, 0, 8, 0),
-            IsEnabled = SharedAobMaker?.IsAvailable == true && !string.IsNullOrEmpty(_funcAddr),
+            IsEnabled = false,
         };
-        btnAsm.Click += OnAsmClicked;
-        btnRow.Children.Add(btnAsm);
-        ToolTip.SetTip(btnAsm, Res.Get(KeyAsmTip));
+        _btnAsm.Click += OnAsmClicked;
+        btnRow.Children.Add(_btnAsm);
+        ToolTip.SetShowOnDisabled(_btnAsm, true);
         _btnCopy = new Button
         {
             Content = "Copy property name",
@@ -224,7 +228,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         };
         _btnSiteInCe.Click += OnSiteInCeClicked;
         btnRow.Children.Add(_btnSiteInCe);
-        ToolTip.SetTip(_btnSiteInCe, Res.Get("str.Tip.FunctionProps.WriteSiteInCe"));
+        // UpdateSelectionButtons sets its tooltip, which says why the button is greyed out, so it opens then too.
+        ToolTip.SetShowOnDisabled(_btnSiteInCe, true);
         _btnCopySites = new Button
         {
             Content = Res.Get("str.FunctionProps.CopyWriteSites"),
@@ -372,6 +377,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         // as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
         _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) => UpdateSelectionButtons();
+        UpdateSelectionButtons();
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
         root.Children.Add(_grid);
 
@@ -469,13 +475,25 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             _lastBudgetHit ? "#E0A050" : shown.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
     }
 
+    // The buttons that follow the selection, and the Cheat Engine buttons, which push through the AOBMaker plugin and
+    // so need the bridge up. Their tooltips say what the button does or, while the plugin is out of reach, why, in the
+    // bridge's own sentence for its last failure (a busy or refused pipe is not a missing plugin). State and tooltip
+    // are set together because a push re-learns the bridge's flag while the dialog is open.
     private void UpdateSelectionButtons()
     {
         var x = _grid.SelectedItem as FunctionPropRef;
         _btnCopy.IsEnabled = x != null;
         bool hasSites = x is { WriteSites.Count: > 0 };
         _btnCopySites.IsEnabled = hasSites;
-        _btnSiteInCe.IsEnabled = hasSites && SharedAobMaker?.IsAvailable == true;
+        bool up = SharedAobMaker?.IsAvailable == true;
+        _btnSiteInCe.IsEnabled = hasSites && up;
+        _btnAsm.IsEnabled = up && !string.IsNullOrEmpty(_funcAddr);
+        ToolTip.SetTip(_btnAsm, up
+            ? Res.Get(KeyAsmTip)
+            : Res.Format(KeyAsmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
+        ToolTip.SetTip(_btnSiteInCe, up
+            ? Res.Get("str.Tip.FunctionProps.WriteSiteInCe")
+            : Res.Format(KeySiteOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
     }
 
     // [DENKEN-WRITE-SITES] The first write site in CE's disassembler, through the AOBMaker CE plugin.
