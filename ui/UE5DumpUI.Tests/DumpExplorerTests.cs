@@ -710,6 +710,30 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-40: the live match indexes class, struct and enum objects
+    /// (<c>LiveTypeKind</c>), so the status shown while that index is built names all three kinds, as the final status
+    /// and the Re-check tooltip do.</summary>
+    [Fact]
+    public async Task Vm_LiveMatch_ProgressStatus_NamesEveryKindTheIndexScans()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            var shown = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            vm.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(DumpExplorerViewModel.StatusText)) shown.Enqueue(vm.StatusText);
+            };
+            await vm.LoadFromPathAsync(path);
+
+            var scanning = Assert.Single(shown, s => s.StartsWith("Scanning the live game", StringComparison.Ordinal));
+            Assert.Contains("classes, structs and enums", scanning, StringComparison.Ordinal);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [InlineData(4, DumpEntryKind.Struct, 1)]
     [InlineData(5, DumpEntryKind.Enum, 1)]
