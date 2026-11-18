@@ -27,7 +27,7 @@ beside them does not.
 | UT-14 | Live Walker | text | `str.Tip.StringLength` says it applies to Copy CE XML / Copy CE Field; String Len also sets the CSX string size and the +CE / +CE Field (flat) string records. | ✅ fixed 2026-11-18 (red `94e401f4`, then green) |
 | UT-15 | Live Walker | text | A failed field edit shows "Write failed for X: DLL error: Not written: ... write_mem writes data only" -- the "DLL error:" prefix and the internal command name `write_mem`. | ✅ fixed 2026-11-18 (red `7079223e`, then green) |
 | UT-16 | Live Walker | text | `str.Tip.Toolbar.Options` says "Set once per session" though the settings persist, and lists only some of them (not String Len, Fabricate, Locate depth, the deep-scan cap). | ✅ fixed 2026-11-18 (red `06cf22a0`, then green) |
-| UT-17 | Live Walker | text | `str.Tip.LiveWalker.FuncFilter` says each keyword must match the function name; the filter also matches the interface name. | ⬜ |
+| UT-17 | Live Walker | text | `str.Tip.LiveWalker.FuncFilter` says each keyword must match the function name; the filter also matches the interface name. | ✅ fixed 2026-11-18 (red `aebccfec`, then green) |
 | UT-18 | Live Walker | text | `str.Tip.CollapsePointers` says "in CE XML export"; it applies to Copy CE Field too. (`MainWindowViewModel`'s comment gives Fabricate as 2..512; the slider goes to 4096.) | ⬜ |
 | UT-19 | Dump Explorer | text | `str.Tip.Dump.FindInstances` says "in the Instance Finder"; the tab is **Instances**. | ⬜ |
 | UT-20 | Dump Explorer | behaviour | "Live match: N class(es) ... (M of T rows matched)" counts class rows only in N, while structs and enums also match and count in M. | ⬜ |

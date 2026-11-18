@@ -2203,7 +2203,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.ExpandInlineStruct">Expand inline struct</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ViewContainerElements">View container elements</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyPointerTargetAddress">Copy pointer target address</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.FuncFilter">Space-separated keywords are ANDed; each must match the function name (case-insensitive). e.g. "get health" for functions whose name holds both.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncFilter">Space-separated keywords are ANDed; each must match, case-insensitively, the function name or — for a function an interface brings — the interface named in its (via …). e.g. "get health" for functions whose name holds both.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncFilterClear">Clear filter</sys:String>
 
     <!-- Tooltips: Pointer Panel -->
