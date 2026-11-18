@@ -23,8 +23,9 @@ namespace UE5DumpUI.Mcp;
 /// the server exits.</para>
 ///
 /// <para><b>The experimental opt-in binds the AI too.</b> Fly, See-through, Keep Foreground and the force field refuse
-/// while the UI's experimental switch is off: an AI-started feature would otherwise run behind a card the user cannot
-/// see. The switch is read on every call, so the UI's change takes effect at once.</para>
+/// to turn on or change while the UI's experimental switch is off: an AI-started feature would otherwise run behind a
+/// card the user cannot see. Ending what this server holds still works ([MCP-RELEASE-EXPERIMENTAL-OFF]). The switch is
+/// read on every call, so the UI's change takes effect at once.</para>
 ///
 /// <para><b>A DLL older than <see cref="Constants.McpMinDllBuildForWrites"/></b> ignores if_free and keep_undo, so a
 /// write there could replace what the user holds: every write tool refuses it.</para>
@@ -161,7 +162,8 @@ internal static class McpWriteTools
 
         yield return Write(game, experimentalEnabled, grants, "write_fly", "Fly",
             "Experimental. Turns flying on or off and sets its speed, key preset (0 WASD, 1 numpad, 2 arrows) and "
-            + "noclip. Refused when someone else holds fly, or while the UI's experimental features are off.",
+            + "noclip. Refused when someone else holds fly; turning it on or changing a setting is refused while the "
+            + "UI's experimental features are off, turning this server's Fly off is not.",
             [("enable", McpSchema.Bool("On or off.", false), false),
              ("speed", McpSchema.Number("Speed in units per second, 50 to 20000.", Constants.McpFlySpeedMin,
                  Constants.McpFlySpeedMax), false),
@@ -182,7 +184,7 @@ internal static class McpWriteTools
         yield return Write(game, experimentalEnabled, grants, "write_foreground_lock", "Keep Foreground",
             "Experimental. Makes the game believe it is the foreground window, so it keeps running (and game-thread "
             + "work keeps answering) while another window has the focus. Refused when someone else holds it; turning it "
-            + "on is refused while the UI's experimental features are off.",
+            + "on is refused while the UI's experimental features are off, turning this server's off is not.",
             [("enable", McpSchema.Bool("On or off.", false), true)],
             (a, r) => r["enable"] = ReqBool(a, "enable"), "set_foreground_lock", experimental: true,
             kind: McpGrantKind.Toggles);
