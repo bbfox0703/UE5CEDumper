@@ -5,6 +5,7 @@ strings, and listed each place where the UI's text says something the program do
 session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
 UT-36 to UT-48 were found afterwards by a review of those fixes (workflow `wf_31921b9d-4a0`: four reviewers, each finding
 checked by a second agent that tried to refute it): places a fix left untouched or got partly wrong.
+UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`).
 
 **Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
 code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
@@ -61,3 +62,17 @@ beside them does not.
 | UT-46 | CE inject | comment | `scripts/UE5CEDumper.CT` and `dll/src/Methode.cpp` say a duplicate copy would be stopped by Heiter's pipe-existence guard; a later copy takes the game over (UT-21's reason). | ✅ fixed 2026-11-18 |
 | UT-47 | Classes | comment | `PartialResultNotice`'s `unit` doc ties the unit "class" to a loop that dedups by class; the Classes batch counts classes without deduping. | ✅ fixed 2026-11-18 |
 | UT-48 | this register | doc | UT-03 is filed as *behaviour* and "fixed (red, then green)"; the behaviour is kept by design (D4) and only the text changed. | ✅ fixed 2026-11-18 |
+| UT-49 | Interesting Functions | behaviour | `FunctionPropsDialog`'s **⚙ Disassemble in CE** and **⚙ Write site in CE** grey out while the AOBMaker bridge is down, and neither opens a tooltip then (no `ShowOnDisabled`) nor says why -- UT-36's defect, in the twin dialog. | ⬜ |
+| UT-50 | Find Class Funcs | text | The greyed Disassemble tooltip (UT-36) reads the bridge state cached at the last probe anywhere in the app; nothing in the modal dialog probes, so its remedy ("open Cheat Engine ...", Busy's "press ⟳") cannot take effect while it is open, and ⟳ is behind it. | ⬜ |
+| UT-51 | Find Class Funcs | comment | `PropertyXrefDialog`'s push guard comment says nothing can re-probe while the dialog is open (the push does) and justifies the guard with a killed Cheat Engine, which leaves the flag true and never reaches the guard. | ⬜ |
+| UT-52 | Find Class Funcs | test | UT-36's test pins that the button's state and tooltip are set in one method, not that the method runs at construction and after a push. | ⬜ |
+| UT-53 | Interesting Functions | comment | A comment in `InterestingFunctionsViewModel` still says the sentence "every other surface shows" (the claim UT-45 removed from `AobMakerUnavailable`) and carries a fix narrative. | ⬜ |
+| UT-54 | Related | text | The DLL's Current Target note with no candidate ends "-- or use Instance Finder." (`Edel.cpp`), shown word for word in the Related tab; the tab is **Instances** (UT-39 missed it). | ⬜ |
+| UT-55 | Live Funcs, Call Trace | text | `str.LF.Trace.RecordingTicked`, `str.CT.Status.Scoped` and `str.CT.Status.ScopedNames` say the trace runs inside the ticked functions; with Params? / Stack? choices the chosen calls outside them are recorded too (UT-38's correction, not carried to the status lines). | ⬜ |
+| UT-56 | Value Search | behaviour | The group truncation note reads the live Max after the scan's await, not the Max that scan was sent; the box stays editable during a scan, so the note can name a cap that was never applied. | ⬜ |
+| UT-57 | this register | doc | UT-42's row reads "fixed" for the whole finding; its single-mode half was kept by the settled `[P5-GROUP-ADVICE]` decision, which the row does not say. | ⬜ |
+| UT-58 | Classes | comment | A `ClassListCapTests` comment says Instance Finder was the last panel saying "raise Max" unconditionally; Value Search's group note did until UT-42 (and the sentence is history). | ⬜ |
+| UT-59 | Value Search | comment | `Constants.ScanSessionMaxResultsCeiling`'s comment says "the truncation notes" compare against it; only the group note does. | ⬜ |
+| UT-60 | CE inject | comment | Another `Methode.cpp` comment says a copy injected again finds the pipe in use and does not serve; it takes the game over (UT-46 corrected the other). | ⬜ |
+| UT-61 | AOBMaker / ASM | comment | The definition comment of `Aura::GetFunctionCodeAddr` in `Aura.cpp` keeps the old wording (a Blueprint function points at the interpreter, two zero cases, one caller) and sits above `ReadFunctionFlags` instead (UT-44 fixed the declaration's). | ⬜ |
+| UT-62 | System | comment | `ExperimentalGate`'s comment says re-opening any experimental tab locks the opt-in; four of the five do. | ⬜ |
