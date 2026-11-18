@@ -22,7 +22,8 @@ docstrings, which are prose the scripts print):
               does not exist; a finding `[TAG-WITH-HYPHENS]` that no doc under docs/ (archive included) records.
               A line that names another repository (AOBMaker, cheat-engine, RE-UE4SS, Dumper-7, UEPseudo,
               patternsleuth, CrimsonAtomtic) or points under out/ is out of scope for the .md check.
-  CSDOC       `/// </summary>` directly followed by `/// <summary>`: two doc blocks stacked on one member, so
+  CSDOC       a `///` line ending in `</summary>` (alone or after the text) directly followed by a `/// <summary>`
+              line: two doc blocks stacked on one member, so
               the first documents something else (a type was inserted between a comment and its target).
 """
 from __future__ import annotations
@@ -196,10 +197,17 @@ def run(root):
                 s = l.strip()
                 if not s:
                     continue
-                if prev == "/// </summary>" and s == "/// <summary>":
+                if csdoc_stacked(prev, s):
                     findings.append(("CSDOC", f, n, "a second <summary> block right after one: the first documents another member"))
                 prev = s
     return findings
+
+
+def csdoc_stacked(prev, line):
+    """Two C# doc blocks stacked on one member: a /// line that ends a <summary> -- on its own line or after the text
+    -- directly followed by a /// line that opens another."""
+    return (prev is not None and prev.startswith("///") and prev.endswith("</summary>")
+            and line.startswith("///") and line[3:].lstrip().startswith("<summary>"))
 
 
 def selftest():
@@ -241,6 +249,14 @@ def selftest():
         if got != want:
             bad += 1
             print(f"SELFTEST FAILED: {check} on {text!r}: expected {want}, got {got}")
+    for prev, line, want in [("/// </summary>", "/// <summary>", True),
+                             ("/// <summary>Says what it does.</summary>", "/// <summary>The next one.", True),
+                             ("/// <summary>One line.</summary>", "public int X { get; }", False),
+                             ("/// </summary>", "/// <remarks>", False),
+                             ("/// the text, still inside", "/// <summary>", False)]:
+        if csdoc_stacked(prev, line) != want:
+            bad += 1
+            print(f"SELFTEST FAILED: CSDOC on {prev!r} then {line!r}: expected {want}")
     return bad
 
 
