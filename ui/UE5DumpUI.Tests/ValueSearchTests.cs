@@ -2037,6 +2037,20 @@ public class ValueSearchTests
     // ---- P4: cross-object (owned sub-objects) ----
 
     [Fact]
+    public void GroupFirstScan_GameOnlyAndMax_RenderInGroupMode()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-29: a group First Scan sends GameOnly and MaxResults, so neither control may sit
+        // inside a panel that only one mode shows.
+        var doc = System.Xml.Linq.XDocument.Parse(ReadProjectFile(Path.Combine("Views", "ValueSearchPanel.axaml")));
+        foreach (var (attr, binding) in new[] { ("IsChecked", "{Binding GameOnly}"), ("Value", "{Binding MaxResultsValue}") })
+        {
+            var control = Assert.Single(doc.Descendants(), e => e.Attribute(attr)?.Value == binding);
+            Assert.DoesNotContain(control.Ancestors(), a => a.Attribute("IsVisible")?.Value == "{Binding IsSingleMode}");
+            Assert.DoesNotContain(control.Ancestors(), a => a.Attribute("IsVisible")?.Value == "{Binding IsGroupMode}");
+        }
+    }
+
+    [Fact]
     public async Task BeginGroupScanAsync_AttachesCrossObject_WhenEnabled_OmitsByDefault()
     {
         var svc = MakeService(out var pipe);
