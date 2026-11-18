@@ -1993,6 +1993,19 @@ public class ConsoleViewModelTests
     // meaningless to every user. The text now lives only in en.axaml and the panel binds
     // it with StaticResource; these pin the key, its wording and the binding.
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-28: the Console's tooltips name the parameter dialog by the title the user
+    /// sees, not by its C# class.</summary>
+    [Theory]
+    [InlineData("str.Tip.Con.CommandInput")]
+    [InlineData("str.Tip.Con.RunRow")]
+    public void Console_tooltips_do_not_name_the_dialog_class(string key)
+    {
+        var tip = Res.Get(key);
+        Assert.False(string.IsNullOrEmpty(tip), key + " is not in en.axaml");
+        Assert.DoesNotContain("InvokeParamDialog", tip, StringComparison.Ordinal);
+        Assert.Contains("Invoke dialog", tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void CheatManagerHint_wording_is_a_Shipping_caveat_without_internal_references()
     {
