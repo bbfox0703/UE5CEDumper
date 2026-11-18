@@ -153,9 +153,11 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public bool IsNew { get; set; }
 
     /// <summary>Δ-column label: "NEW" (absent from baseline) / "+N" (fired more) /
-    /// "" (unchanged, or not in diff mode) / "-N" (fired less).</summary>
+    /// "" (unchanged, or not in diff mode) / "-N" (fired less). The number is written invariantly: a culture whose
+    /// minus sign is U+2212 would show and copy "−N" beside the ASCII "+".</summary>
     public string DeltaLabel =>
-        IsNew ? "NEW" : Delta > 0 ? $"+{Delta}" : Delta < 0 ? Delta.ToString() : "";
+        IsNew ? "NEW" : Delta > 0 ? $"+{Delta}"
+        : Delta < 0 ? Delta.ToString(System.Globalization.CultureInfo.InvariantCulture) : "";
 }
 
 /// <summary>

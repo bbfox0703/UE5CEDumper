@@ -15,7 +15,7 @@ beside them does not.
 | UT-02 | Live Funcs | text | `str.Tip.LF.Trace.Ticked` says "with none ticked, every call"; with Params? / Stack? choices and no ticks, only the chosen calls are recorded (`str.LF.Trace.RecordingSnapOnly`). | ✅ fixed 2026-11-18 (red `df1b460e`, then green) |
 | UT-03 | Live Funcs | behaviour | The Parameters row's **Clear** has no tooltip and also clears the stack choices, while `str.Tip.LF.ClearChoices` says each Clear empties only its own. | ✅ fixed 2026-11-18 (red `db228bb0`, then green) |
 | UT-04 | Live Funcs | text | `str.Tip.LF.Snap.Choose` names only the Parameters view; the copies also show in the Bytes tab. | ✅ fixed 2026-11-18 (red `53ff1388`, then green) |
-| UT-05 | Live Funcs | behaviour | The Δ label formats `Delta` with the current culture, so some locales show `−N` instead of `-N` (`PeProfileResult`). | ⬜ |
+| UT-05 | Live Funcs | behaviour | The Δ label formats `Delta` with the current culture, so some locales show `−N` instead of `-N` (`PeProfileResult`). | ✅ fixed 2026-11-18 (red `c27825cc`, then green) |
 | UT-06 | System | design | The experimental switch is an unlabelled check box at Opacity 0.1; "Enable advanced experimental features" is only its tooltip. | ⬜ |
 | UT-07 | docs/mcp.md | doc | Two troubleshooting rows quote texts the server does not send ("Not invoked: ... still queued or running", `McpRawTools`). | ⬜ |
 | UT-08 | Teleport | text | `str.TP.HkHint` omits the Gravity Dir toggle and Get POV, which the hotkey list has. | ⬜ |
