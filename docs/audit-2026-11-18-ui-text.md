@@ -5,7 +5,7 @@ strings, and listed each place where the UI's text says something the program do
 session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
 UT-36 to UT-48 were found afterwards by a review of those fixes (workflow `wf_31921b9d-4a0`: four reviewers, each finding
 checked by a second agent that tried to refute it): places a fix left untouched or got partly wrong.
-UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`).
+UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`). UT-63 to UT-71 came from the third, of the UT-49 to UT-62 fixes (`wf_c7f1ac00-7e7`).
 
 **Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
 code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
@@ -76,3 +76,12 @@ beside them does not.
 | UT-60 | CE inject | comment | Another `Methode.cpp` comment says a copy injected again finds the pipe in use and does not serve; it takes the game over (UT-46 corrected the other). | ✅ fixed 2026-11-18 |
 | UT-61 | AOBMaker / ASM | comment | The definition comment of `Aura::GetFunctionCodeAddr` in `Aura.cpp` keeps the old wording (a Blueprint function points at the interpreter, two zero cases, one caller) and sits above `ReadFunctionFlags` instead (UT-44 fixed the declaration's). | ✅ fixed 2026-11-18 |
 | UT-62 | System | comment | `ExperimentalGate`'s comment says re-opening any experimental tab locks the opt-in; four of the five do. | ✅ fixed 2026-11-18 |
+| UT-63 | Interesting Functions | behaviour | Since UT-49, `FunctionPropsDialog.UpdateSelectionButtons` sets the Disassemble button's state, and a scan ending, a row selection or the open probe re-enables it while its own push is still running, so a second click pushes a duplicate record to Cheat Engine. | ⬜ |
+| UT-64 | Find Class Funcs | text | UT-50's new sentence in `PropertyXrefDialog`'s greyed tooltip is a C# literal, not an en.axaml key; the same sentence is in en.axaml for the twin dialog. | ⬜ |
+| UT-65 | Interesting Functions | test | No test ties `FunctionPropsDialog`'s greyed tooltips to their Off templates: dropping the template from the code would lose the clause and UT-50's sentence with every test green. | ⬜ |
+| UT-66 | Value Search | behaviour | Both truncation notes print the Timeout read after the scan's await, not the one the scan was sent; the slider stays movable during a scan (UT-56 fixed only Max). | ⬜ |
+| UT-67 | Instances, Properties, Classes | behaviour | Instance Finder, Property Search and Classes build their raise-Max advice (and Instance Finder its "of max N") from the live cap after the await, not the cap the search was sent -- UT-56's defect in the three other panels. | ⬜ |
+| UT-68 | Instances, Properties, Classes, Value Search | comment | `PartialResultNotice.RaiseMaxClause`'s `currentCap` doc says "what the panel's NumericUpDown reads"; the right value is the cap the operation was sent with. | ⬜ |
+| UT-69 | Interesting Functions | comment | `FunctionPropsDialog`'s WrapPanel comment counts six buttons; the row holds five. | ⬜ |
+| UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ⬜ |
+| UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ⬜ |
