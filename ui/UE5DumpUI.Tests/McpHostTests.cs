@@ -210,6 +210,12 @@ public sealed class McpHostTests
         }
         Assert.DoesNotContain("| The AI has no `write_*` tools | Its client is not Claude Code 2.1.246 or later.",
             Source("docs/mcp.md"));
+        // Review wf_bbd1bbfe-20d U7-3: each cause gets its own remedy. Under --writes=off Claude Code reads only too
+        // (DecideFor), and a second --writes= stops the server (TryParseArgs), so "add --writes=any-host" fixes neither.
+        Assert.Equal(McpHostDecision.ReadOnly, McpGrants.DecideFor(McpWriteMode.Off, Constants.McpClaudeCodeClientName, "9.9.9"));
+        string row = Source("docs/mcp.md").Split('\n').Single(l => l.StartsWith("| The AI has no `write_*` tools |"));
+        Assert.Contains("remove it", row);
+        Assert.Contains("only one `--writes=`", row);
     }
 
     [Theory]
