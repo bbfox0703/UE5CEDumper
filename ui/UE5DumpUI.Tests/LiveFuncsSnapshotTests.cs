@@ -403,6 +403,28 @@ public class LiveFuncsSnapshotTests
 
     // ---- U9 ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-38: nothing ticked, but a function chosen for parameters: the Start traces
+    /// only the chosen calls, and the Trace check box's tooltip says what a traced Start records in the words the ticked
+    /// count's tooltip uses, rather than "every call", or "only their calls" once something is ticked.</summary>
+    [Fact]
+    public async Task The_trace_check_box_tooltip_says_ticks_and_choices_decide_what_is_recorded()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Contains(Line("str.LF.Trace.RecordingSnapOnly", vm.TraceBufferMb, 1), vm.StatusText);
+
+        string tip = Line("str.Tip.LF.Trace.Enable");
+        Assert.DoesNotContain("record every call", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("only their calls", tip, StringComparison.Ordinal);
+        Assert.Contains("chosen for parameters or a stack", tip, StringComparison.Ordinal);
+        string ticked = Line("str.Tip.LF.Trace.Ticked");
+        Assert.Contains(ticked[ticked.IndexOf("With none ticked", StringComparison.Ordinal)..], tip, StringComparison.Ordinal);
+    }
+
     /// <summary>Nothing ticked, but a function chosen for parameters: the Start traces only the chosen calls, and the
     /// ticked count's tooltip says so rather than "every call".</summary>
     [Fact]
