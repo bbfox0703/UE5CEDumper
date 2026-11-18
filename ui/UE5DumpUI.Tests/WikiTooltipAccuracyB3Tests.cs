@@ -158,6 +158,19 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-17. The Functions filter matches the interface a function comes through as well as
+    // its name (FilterBoxViewKeepTests pins the matcher); the tip says so, in the words the Name column shows it with.
+    [Fact]
+    public void Function_filter_tip_says_it_matches_the_interface_too()
+    {
+        var via = EnString("str.LiveWalker.ViaInterface");   // "{0}  (via {1})"
+        var shown = via[via.IndexOf('(')..via.IndexOf("{1}", StringComparison.Ordinal)].TrimEnd();
+        var tip = EnString("str.Tip.LiveWalker.FuncFilter");
+        Assert.Contains(shown, tip, StringComparison.Ordinal);
+        Assert.Contains("interface", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ANDed", tip, StringComparison.Ordinal);
+    }
+
     // [UI-TEXT-AUDIT-2026-11-18] UT-16. The Options tip names every setting its flyout holds and says they are kept;
     // each control the flyout binds is in the window's persisted sets.
     [Fact]
