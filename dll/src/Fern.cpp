@@ -3531,10 +3531,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                               "client never writes there", Grimoire::WRITE_MEM_OWN_IMAGE);
             switch (Macht::ClassifyWriteRange(addr, bytes.size())) {
                 case Lager::WriteTarget::Executable:
-                    return refuse("is in executable memory (code); write_mem writes data only",
+                    return refuse("is in executable memory (code); only data memory is written",
                                   Grimoire::WRITE_MEM_EXECUTABLE);
                 case Lager::WriteTarget::NotWritable:
-                    return refuse("is not writable as it stands (a read-only, guard or no-access page); write_mem "
+                    return refuse("is not writable as it stands (a read-only, guard or no-access page); a write "
                                   "never changes page protection", Grimoire::WRITE_MEM_NOT_WRITABLE);
                 case Lager::WriteTarget::Unmapped:
                     return refuse("is not committed memory", Grimoire::WRITE_MEM_NOT_WRITABLE);
@@ -6858,8 +6858,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === get_function_code_addr: UFunction->Func (native code entry point) ===
-        // For the xref dialog's "Disassemble in CE" — resolves the .text address
-        // CE should jump its disassembler to (native funcs) / interpreter (BP).
+        // The .text address CE's disassembler jumps to for a native function; "" for one
+        // not known to be native (a script / Blueprint function's Func is the shared
+        // interpreter, not its own code) or whose Func cannot be read (Aura::GetFunctionCodeAddr).
         if (cmd == Renge::CMD_GET_FUNCTION_CODE_ADDR) {
             std::string addrStr = request.value("func_addr", "");
             if (addrStr.empty()) return Renge::MakeError(id, "Missing func_addr").dump();

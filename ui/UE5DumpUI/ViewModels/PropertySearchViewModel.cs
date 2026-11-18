@@ -32,14 +32,13 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _isAobMakerAvailable;
 
     /// <summary>
-    /// Tooltip shown on the Freeze button when it's disabled, explaining
-    /// why. Refreshed alongside <see cref="IsAobMakerAvailable"/>.
-    /// Matches the existing LiveWalker / InterestingFuncs Notes-column UX.
+    /// The Freeze button's tooltip: what it does, or, while the plugin is out of reach, why, in
+    /// <see cref="AobMakerUnavailable"/>'s sentence for the bridge's last failure (a busy or refused pipe is not a
+    /// missing plugin). Repaints on the flag and on a new reason with the flag unchanged.
     /// </summary>
     public string FreezeUnavailableTooltip => IsAobMakerAvailable
         ? "Generate an AA Script that locks this property across all live instances"
-        : "AOBMaker CE Plugin not found — Freeze requires the plugin so the AA Script can be injected into the open CE table. " +
-          "Setup: copy AOBMaker DLL into Cheat Engine's autorun/ folder and restart CE.";
+        : AobMakerUnavailable.Text(_aobMaker) + " — Freeze adds its AA Script to the open CE table through the plugin.";
 
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(FreezeUnavailableTooltip));
@@ -286,6 +285,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     {
         if (e.PropertyName == nameof(AobMakerStatus.IsAvailable))
             IsAobMakerAvailable = _aobStatus.IsAvailable;
+        // The status repaints its own tip on every probe or push, a new reason with the flag unchanged included; the
+        // Freeze tooltip names the same reason.
+        else if (e.PropertyName == nameof(AobMakerStatus.DllTip))
+            OnPropertyChanged(nameof(FreezeUnavailableTooltip));
     }
 
     /// <summary>
@@ -312,7 +315,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         }
         if (!FreezeScriptGenerator.IsTypeSupported(match.PropType))
         {
-            StatusText = $"Freeze v1 does not support {match.PropType} (numeric + bool only)";
+            StatusText = $"Freeze does not support {match.PropType} (numbers, bools and enums only)";
             return;
         }
         // A bool with neither the DLL's bool_native nor a single-bit mask has an UNRESOLVED
@@ -668,12 +671,17 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             IsSearching = true;
             StatusText = "Searching...";
 
+            // The search is sent with these values and its status line reads them, not the controls, which stay
+            // editable while the search runs.
+            int capSent = PropertySearchCap;
+            bool gameOnlySent = GameClassesOnly;
+            bool deepSent = DeepSearch;
             var result = await _dump.SearchPropertiesAsync(
                 trimmedQuery,
                 types: types.Length > 0 ? types : null,
-                gameOnly: GameClassesOnly,
-                deep: DeepSearch,
-                limit: PropertySearchCap);
+                gameOnly: gameOnlySent,
+                deep: deepSent,
+                limit: capSent);
 
             // Cache the full set so the client-side ResultFilter can refine
             // without another DLL roundtrip.
@@ -693,7 +701,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             ApplyResultFilter();
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
-            var deepSuffix = DeepSearch ? " [deep]" : "";
+            var deepSuffix = deepSent ? " [deep]" : "";
             // The cap/abort suffix matters: without it a capped search reads as a
             // completed sweep, the user filters these rows client-side, finds nothing,
             // and concludes the field does not exist. The DLL reports what it actually
@@ -706,9 +714,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // ceiling it would point at a lever with nowhere to go, so the advice there is
             // to narrow. [PROPSEARCHCAP-2026-08-19]
             string advice = "narrow it with a longer property name or a Type filter";
-            if (!GameClassesOnly)
+            if (!gameOnlySent)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
-            advice += PartialResultNotice.RaiseMaxClause(PropertySearchCap, Constants.MaxSearchCap);
+            advice += PartialResultNotice.RaiseMaxClause(capSent, Constants.MaxSearchCap);
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled()
                 : result.Truncated

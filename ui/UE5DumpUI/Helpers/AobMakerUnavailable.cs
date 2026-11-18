@@ -3,15 +3,14 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Helpers;
 
 /// <summary>
-/// [W1-PIPEBUSY-STATUS] The one user-facing sentence for "the AOBMaker bridge is not reachable", chosen by
+/// [W1-PIPEBUSY-STATUS] The shared user-facing sentence for "the AOBMaker bridge is not reachable", chosen by
 /// <see cref="IAobMakerBridge.LastFailure"/>.
 ///
-/// <para><b>Why this type exists.</b> 62f1596b taught the bridge to LOG a busy pipe as busy, but every status line
-/// still said "open Cheat Engine with the AOBMaker plugin loaded" — live-verified on L64 (2026-09-22), where the
-/// toolbar ⟳ gave that remedy for a pipe that existed and was held by another client. Opening Cheat Engine cannot
-/// help there: the AOBMaker server is single-instance, so a second CE's plugin fails <c>CreateNamedPipe</c> (231)
-/// and never serves. Shared so the toolbar, the Tools-menu injects, Live Walker and Teleport cannot disagree about
-/// the same failure.</para>
+/// <para><b>Why this type exists.</b> A busy or refused pipe is not a missing plugin, and the remedy differs: the
+/// AOBMaker server is single-instance, so a second Cheat Engine's plugin fails <c>CreateNamedPipe</c> (231) and never
+/// serves -- "open Cheat Engine with the AOBMaker plugin loaded" cannot help a pipe another client holds. A caller
+/// that takes its sentence from here reports the bridge's last failure; text written elsewhere for the same state can
+/// call a busy or refused pipe a missing plugin. [W1-PIPEBUSY-STATUS]</para>
 ///
 /// <para>⚠ The toolbar status is a fixed 360-wide slot with an ellipsis (about 50 characters visible, see
 /// <see cref="ClipboardDelivery.FailureText"/>), so each sentence puts its discriminating word ("not connected" /

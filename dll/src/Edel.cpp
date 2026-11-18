@@ -361,7 +361,7 @@ CurrentTargetResult DetectCurrentTarget(int32_t maxCandidates) {
     } else if (!res.candidates.empty()) {
         res.note = "No clear current target (multiple / weak candidates). Showing best guesses — click one to inspect; verify before trusting.";
     } else {
-        res.note = "Player resolved but no target-like reference found. Lock onto / click an enemy, then Detect again — or use Instance Finder.";
+        res.note = "Player resolved but no target-like reference found. Lock onto / click an enemy, then Detect again — or search the Instances tab for the enemy's class.";
     }
     LOG_INFO("Edel: DetectCurrentTarget resolved=%d pc=0x%llX pawn=0x%llX candidates=%zu",
              res.resolved ? 1 : 0, (unsigned long long)pc, (unsigned long long)pawn,

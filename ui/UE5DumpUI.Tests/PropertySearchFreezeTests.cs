@@ -61,6 +61,22 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task CopyFreezeScript_UnsupportedType_NamesEnumsAmongTheSupportedTypes()
+    {
+        // IsTypeSupported takes EnumProperty (at its engine-reported width), so the refusal names enums beside
+        // numbers and bools.
+        Assert.True(FreezeScriptGenerator.IsTypeSupported("EnumProperty"));
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("StrProperty"));
+
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Contains("StrProperty", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("enums", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CopyFreezeScript_DialogCancel_DoesNotCreateAaScript()
     {
         var bridge = new RecordingBridge { NextAvailability = true };
@@ -347,6 +363,41 @@ public class PropertySearchFreezeTests
         // async + cooldown-guarded; the public flag is the contract).
         vm.GetType().GetProperty("IsAobMakerAvailable")!.SetValue(vm, true);
         Assert.DoesNotContain("not found", vm.FreezeUnavailableTooltip);
+    }
+
+    [Fact]
+    public void FreezeUnavailableTooltip_SaysWhyThePluginIsUnreachable_AndRepaintsOnANewReason()
+    {
+        // A busy or refused pipe is not a missing plugin: the tooltip takes the bridge's own sentence, as the Freeze
+        // status line does, and a new reason with the flag unchanged repaints it.
+        var bridge = new ScriptedAobMakerBridge { Available = false, Failure = AobMakerFailure.Busy };
+        var status = new AobMakerStatus(bridge);
+        status.Apply(false);
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge, aobStatus: status);
+
+        Assert.Contains(AobMakerUnavailable.Text(bridge), vm.FreezeUnavailableTooltip, StringComparison.Ordinal);
+        Assert.DoesNotContain("not found", vm.FreezeUnavailableTooltip, StringComparison.Ordinal);
+
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        bridge.Failure = AobMakerFailure.Denied;
+        status.Apply(false);
+
+        Assert.Contains(nameof(PropertySearchViewModel.FreezeUnavailableTooltip), raised);
+        Assert.Contains(AobMakerUnavailable.Text(bridge), vm.FreezeUnavailableTooltip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFreezeButton_OpensItsTooltipWhileGreyedOut()
+    {
+        // Avalonia opens no tooltip on a disabled control unless told to, and the button is disabled exactly while
+        // its tooltip says why.
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertySearchPanel.axaml"));
+        int btn = panel.IndexOf("Content=\"{StaticResource str.PropertySearch.Freeze}\"", StringComparison.Ordinal);
+        Assert.True(btn >= 0, "the Freeze button is missing from PropertySearchPanel.axaml");
+        var element = panel[btn..panel.IndexOf("/>", btn, StringComparison.Ordinal)];
+        Assert.Contains("FreezeUnavailableTooltip", element, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.ShowOnDisabled=\"True\"", element, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------

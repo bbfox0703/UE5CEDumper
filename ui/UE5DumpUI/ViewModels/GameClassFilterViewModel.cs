@@ -126,7 +126,10 @@ public partial class GameClassFilterViewModel : ViewModelBase
             IsLoading = true;
             StatusText = "Loading...";
 
-            var result = await _dump.ListClassesAsync(gameOnly: GameClassesOnly,
+            // The log line names the Game classes only value this load was sent with: the box stays clickable while
+            // the load runs.
+            bool gameOnlySent = GameClassesOnly;
+            var result = await _dump.ListClassesAsync(gameOnly: gameOnlySent,
                                                       limit: ClassListCap);
 
             _allResults = result.Classes;
@@ -146,12 +149,14 @@ public partial class GameClassFilterViewModel : ViewModelBase
             // user cannot reach), found while live-checking CLASSTOTAL on Avowed, where it read
             // "5,000 classes shown of 7,409 total … or raise the cap" with nothing to raise. The
             // control exists now; at the ceiling the advice would be the same lie in a new place.
+            // The cap note names RequestedLimit, the cap this load was sent with: the Max box can change while
+            // the load runs.
             var capNote = result.Truncated
                 ? "  ⚠ STOPPED at the " + result.RequestedLimit.ToString("N0") + "-row cap — filter to narrow"
-                  + PartialResultNotice.RaiseMaxClause(ClassListCap, Constants.MaxSearchCap)
+                  + PartialResultNotice.RaiseMaxClause(result.RequestedLimit, Constants.MaxSearchCap)
                 : "";
             StatusText = $"{result.Total:N0} classes shown of {result.TotalClasses:N0} total (scanned {result.ScannedObjects:N0} objects){capNote}";
-            _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +
+            _log.Info($"ListClasses: {result.Total} results (gameOnly={gameOnlySent}, " +
                       $"scanned={result.ScannedObjects}, truncated={result.Truncated})");
         }
         catch (Exception ex)
@@ -377,8 +382,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
             }
             StatusText = $"Find Func done: {withFuncs}/{targets.Count} taken by a function"
                        + (cached > 0 ? $" ({cached} cached)." : ".")
-                       + PartialResultNotice.BatchPartialClause(partial, targets.Count)
-                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap);
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count, "class", units: "classes")
+                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap, "class", units: "classes");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

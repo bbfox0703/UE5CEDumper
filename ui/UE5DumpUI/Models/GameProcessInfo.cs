@@ -8,9 +8,9 @@ namespace UE5DumpUI.Models;
 /// The <c>Dumper*</c> fields report whether OUR dumper DLL is ALREADY loaded in
 /// the target (via a proxy DLL, a prior inject, or a Cheat Engine .CT) and the
 /// version of the DLL actually running — populated by <c>DumperModuleDetector</c>
-/// from the process's loaded modules. When true, injecting again is redundant
-/// (it would double-load the DLL and fight over the pipe), so the UI connects
-/// instead. Left false/null when detection is unavailable (access denied, etc.).
+/// from the process's loaded modules. When true, the UI connects to the copy that is
+/// already serving instead of injecting: a second copy would take the game over from it,
+/// and it would shut down. Left false/null when detection is unavailable (access denied, etc.).
 /// </summary>
 public sealed record GameProcessInfo(
     int Pid, string Name, string Path, bool IsUe,

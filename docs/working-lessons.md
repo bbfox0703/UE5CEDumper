@@ -1501,18 +1501,27 @@ explicitly in the register, since it correspondingly proves nothing about the pa
 
 **Three traps, each of which produces a confident wrong answer:**
 
-- **A game with a deployed proxy IGNORES a fresh injection.** `injectDLL` returns `true`, and then
-  the log said `DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skip`.
-  ⚠ *(2026-09-26, read from the code, not yet seen live)* That line is gone since `ac41d059` (2026-08-21,
-  `[RELAUNCHPIPE-2026-08-19]`). The proxy and the injected copy share one PID, so `Voll::DecideStart` answers
-  `AlreadyOurs`, and the injected copy logs `UE5_StartPipeServer: this process already serves the pipe — nothing
-  to do` and then `UE5_AutoStart: pipe server started`. **It now reads as health** while the OLD proxy is still
-  the server, which makes the `build_number` check below the only tell.
-  The OLD proxy keeps serving the pipe. On 2026-08-16 that meant a build-**3122** proxy answering
-  while the freshly built 3156 DLL sat loaded and inert in the same process — i.e. the batch would
-  have "verified" a fix the running code did not contain. **Read `get_pointers.build_number` and
-  compare it against what you just built, before believing any result.** To test a new build, replace
-  the proxy in the game's `Binaries\Win64` and restart the game.
+- **A fresh injection beside a deployed proxy does not test the proxy.** On 2026-08-16 `injectDLL`
+  returned `true`, the log said `DllMain AutoStart: pipe already exists (another UE5Dumper instance
+  running) — skip`, and the OLD proxy kept serving the pipe: a build-**3122** proxy answered while the
+  freshly built 3156 DLL sat loaded and inert in the same process — i.e. the batch would have
+  "verified" a fix the running code did not contain.
+  ⚠ *(2026-11-19, read from the code; the take-over was seen live on builds 3729 and 3730,
+  verification-register.md)* Since `[DUMPER-SECOND-COPY-AUTOSTART]` (2026-11-17, `dll/src/Land.h`) the
+  injected copy takes the game over instead: it scans, the proxy shuts down, and the injected copy
+  serves the pipe, so a proxy-mode row driven that way measures the injected copy, not the proxy the
+  game loaded. The CE plugin menu refuses to inject beside a loaded copy, and the UI's "Inject into
+  running game" connects to a copy it finds loaded. A proxy too old to export the mailbox contract
+  (`g_mailboxContract`) is not taken over, but it serves only the old shared pipe name (`UE5DumpBfx`,
+  no pid), which the UI and `pipe_client.py` do not connect to: the injected copy answers on the
+  game's own pipe. **Read `get_pointers.build_number` and compare it against what you just built,
+  before believing any result**: it catches a stale proxy still answering. It does not catch an
+  injected copy answering in the proxy's place when that copy is the build you just made, so **a
+  proxy-mode row also reads `get_pointers.load_mode`, which must say `proxy:<name>.dll`** (`proxy:`
+  and the answering copy's own file name, lower-cased, such as `proxy:version.dll`); an injected
+  `UE5Dumper.dll` says `injected`. `pipe_client.assert_build()` checks the build only. To test a
+  new build in proxy mode, replace the proxy in the game's
+  `Binaries\Win64` (`tools/verify/proxy_swap.py`) and restart the game.
 - **Proxy mode does not scan on load, and `init` does not make it.** A proxy is loaded long before
   the engine exists, so it deliberately starts the pipe server only
   (`DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)`). `init` returns

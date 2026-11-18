@@ -9,8 +9,13 @@ The generic form of l62_winmm_swap.py. Every path is an ARGUMENT: an install loc
 (Steam libraries move, and a trademark sign hides a folder from a name match), so none is written
 down here. Find the folder from `proxy_refresh.py report` or the Steam libraryfolders.vdf.
 
-WHY. A proxy-mode row that needs a staged DLL cannot inject it: the deployed proxy already serves
-the pipe, and a fresh injection sees "pipe already exists" and stays inert (working-lessons 2.6).
+WHY. A proxy-mode row that needs a staged DLL cannot inject it beside the deployed proxy. The CE
+plugin menu refuses to inject a second copy, and the UI's "Inject into running game" connects to a
+copy it finds loaded. A copy injected any other way takes the game over: it scans, the proxy shuts
+down, and the injected copy serves the pipe (dll/src/Land.h). A proxy too old to export the mailbox
+contract is not taken over, but it serves only the old shared pipe name, which the UI and
+pipe_client.py do not connect to. Either way the row would measure the injected copy, not the proxy
+the game loaded (working-lessons 2.6).
 The staged code has to BE the proxy the game loads by name (`stage_dll.py` with "proxies": [...]).
 This writes into a real game install, so every write is verified by hash, and `restore` puts back
 the exact bytes that were there, not "the dist build". `save` keeps its copy under out\<tag>\ and

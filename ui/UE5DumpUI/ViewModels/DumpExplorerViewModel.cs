@@ -617,14 +617,15 @@ public partial class DumpExplorerViewModel : ViewModelBase
         }
 
 
-        StatusText = "Scanning the live game's classes…";
+        StatusText = "Scanning the live game's classes, structs and enums…";
         var index = await BuildLiveTypeIndexAsync(ct);
         ct.ThrowIfCancellationRequested();
 
         int matched = 0;
-        // A distinct-class tally so the status reflects classes, not rows.
-        var seenClasses = new HashSet<string>(StringComparer.Ordinal);
-        int liveClasses = 0;
+        // A distinct tally per kind, so the status counts types, not rows: a class and a struct sharing a short name
+        // are two types.
+        var seenTypes = new HashSet<(DumpEntryKind Kind, string Name)>();
+        int liveClasses = 0, liveStructs = 0, liveEnums = 0;
         foreach (var e in _all)
         {
             bool ok = index.TryGetValue((e.OwnerKind, e.OwningClassName), out var live)
@@ -632,14 +633,20 @@ public partial class DumpExplorerViewModel : ViewModelBase
             e.IsMatched = ok;
             e.LiveAddr = ok ? live! : "";
             if (ok) matched++;
-            if (e.Kind == DumpEntryKind.Class && seenClasses.Add(e.OwningClassName) && ok) liveClasses++;
+            if (ok && e.Kind is DumpEntryKind.Class or DumpEntryKind.Struct or DumpEntryKind.Enum
+                && seenTypes.Add((e.Kind, e.OwningClassName)))
+            {
+                if (e.Kind == DumpEntryKind.Class) liveClasses++;
+                else if (e.Kind == DumpEntryKind.Struct) liveStructs++;
+                else liveEnums++;
+            }
         }
 
         LiveChecked = true;
         ApplyFilter();
         StatusText = caveat +
-                     $"Live match: {liveClasses:N0} class(es) in the current game " +
-                     $"({matched:N0} of {_all.Count:N0} rows matched).";
+                     $"Live match: {liveClasses:N0} class(es), {liveStructs:N0} struct(s) and {liveEnums:N0} enum(s) " +
+                     $"in the current game ({matched:N0} of {_all.Count:N0} rows matched).";
     }
 
     /// <summary>Paginate GObjects once and index class, struct and enum objects by

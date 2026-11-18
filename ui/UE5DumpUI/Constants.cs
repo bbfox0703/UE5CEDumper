@@ -379,7 +379,7 @@ public static class Constants
     // AOB Usage Tracking
     public const string AobUsageFilePrefix = "UE5CEDumper";
 
-    // Experimental features (Snapshot / SPC Query / Class Pivot — gated via the
+    // The experimental features' settings (IExperimentalGate; the opt-in is the
     // System-tab credit checkbox). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string ExperimentalSettingsFile = "experimental.json";
 
@@ -489,6 +489,10 @@ public static class Constants
     // Intentionally a SEPARATE constant from DefaultMaxQueryRows even though the value
     // matches — different subsystem (in-game scan session vs. snapshot-DB query).
     public const int ScanSessionMaxResults = 50000;
+
+    // The Value Search Max box's ceiling (its NumericUpDown Maximum, which a test keeps equal to this). The group
+    // First Scan's truncation note offers raising Max only while it is below this, where the box can still go higher.
+    public const int ScanSessionMaxResultsCeiling = 1000000;
 
     // Value/group scan begin deadline in ms (Value Search "Timeout" slider default).
     // Also the sentinel the wire-shape code compares against to omit the field when

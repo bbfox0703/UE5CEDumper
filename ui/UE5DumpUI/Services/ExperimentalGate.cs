@@ -58,7 +58,8 @@ public sealed class ExperimentalGate : IExperimentalGate
     public void Lock()
     {
         // Session-only: the lock is NOT persisted. After a restart the user can
-        // untick the opt-in again until they re-open an experimental tab.
+        // untick the opt-in again until they re-open an experimental tab that
+        // locks it (MainWindowViewModel.LocksExperimental).
         if (_locked) return;
         _locked = true;
         Changed?.Invoke(this, EventArgs.Empty);

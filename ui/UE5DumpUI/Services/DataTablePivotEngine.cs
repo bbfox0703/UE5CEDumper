@@ -10,7 +10,7 @@ namespace UE5DumpUI.Services;
 /// group keyed by RowName (always unique → Count 1, never a collision) and the
 /// row struct's fields are the projected columns. No key discovery needed —
 /// RowName <i>is</i> the key. Reuses the snapshot pivot's <see cref="PivotResultRow"/>
-/// / results grid + CE handoff (Copy Address / Open in Live Walker). Kept separate
+/// / results grid + CE handoff (Copy Address / HEX; a row is struct data, not a UObject). Kept separate
 /// from the ViewModel so the rendering is unit-testable without a live pipe. See
 /// docs/experimental-snapshot-spc-pivot.md §"Phase C — C4".
 /// </summary>
@@ -35,6 +35,7 @@ public static class DataTablePivotEngine
                 KeyValue      = string.IsNullOrEmpty(row.RowName) ? "(unnamed)" : row.RowName,
                 Count         = 1,
                 ObjAddr       = row.DataAddr,
+                IsDataTableRow = true,
                 ValuesDisplay = RenderRow(row, valueFields),
             });
         }

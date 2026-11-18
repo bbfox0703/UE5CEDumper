@@ -264,6 +264,38 @@ public class PointerPanelVersionGateTests
         => PointerPanelViewModel.UeVersionOverrideOptions.Where(o => o != "Auto")
             .Select(PointerPanelViewModel.LabelToVersion).ToList();
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-10: a version the DLL refuses changes nothing in the game, so the ComboBox goes back
+    // to the choice still in force instead of showing the refused one under the error.
+    private sealed class RefusingOverride : StubDumpService
+    {
+        public readonly List<int> Sent = new();
+        public override Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true,
+                                                                    CancellationToken ct = default)
+        {
+            Sent.Add(version);
+            return Task.FromException<EngineState>(new InvalidOperationException(
+                "DLL error: UE 4.17 does not fit this game. The override was not applied."));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, "Auto")]
+    [InlineData(true, "UE 4.27")]
+    public void ARefusedOverride_ShowsTheChoiceStillInForce(bool overridden, string inForce)
+    {
+        var dump = new RefusingOverride();
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(overridden ? Overridden(427)
+                             : new EngineState { UEVersion = 427, VersionDetected = true, ObjectCount = 1 });
+        Assert.Equal(inForce, vm.SelectedUeVersionOverride);
+
+        vm.SelectedUeVersionOverride = "UE 4.17";
+
+        Assert.Equal(new[] { 417 }, dump.Sent);
+        Assert.Contains("does not fit this game", vm.ErrorMessage);   // the refusal is shown...
+        Assert.Equal(inForce, vm.SelectedUeVersionOverride);           // ...over the choice the DLL kept
+    }
+
     [Fact]
     public void OverrideList_StartsAtTheDllSupportFloor()
     {

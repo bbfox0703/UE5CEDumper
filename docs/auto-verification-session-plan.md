@@ -611,9 +611,14 @@ All ten now SHA-match `dist/proxy`, confirmed by a **second, independent** scann
 updater's own success report (working-lessons §1.4). **DumperTest carries no proxy in either
 config** — which is why Groups 1/2/4/5 inject directly and skip `trigger_scan`. Keep it that way.
 
-**Why this is the first thing to check, every time.** A deployed proxy makes a fresh injection a
-silent no-op: `injectDLL` returns `true`, the DLL loads, and `DllMain AutoStart` logs *"pipe already
-exists … skip"* while the **old** proxy keeps serving the pipe (working-lessons §2.6). Had this gone
+**Why this is the first thing to check, every time.** A proxy-mode run is answered by the deployed
+proxy's own build, whatever `dist` holds, and a fresh injection does not test the proxy. The
+injected copy takes the game over: it scans, the proxy shuts down, and the injected copy serves the
+pipe. A proxy too old to export the mailbox contract is not taken over, but it serves only the old
+shared pipe name, and the injected copy serves the game's own pipe (working-lessons §2.6). When
+this was written (2026-08-17) the injected copy stood aside instead: `injectDLL` returned `true`,
+the DLL loaded, and `DllMain AutoStart` logged *"pipe already exists … skip"* while the **old**
+proxy kept serving the pipe. Had this gone
 unchecked, eight of GROUP 7's ten titles and **Elliot — the host for the whole of GROUP 6** — would
 have answered as build 3122/3161, i.e. from before AA38 (3245), A11 (3253) and A12 (3261) existed.
 The batch would have reported those three fixes *verified* against code that does not contain them.

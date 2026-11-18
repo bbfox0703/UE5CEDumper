@@ -310,17 +310,18 @@
                         IsVisible="{Binding ShowScalarActions}"
                         ToolTip.Tip="{StaticResource str.Tip.PropertySearch.CopyOffset}"
                         Padding="6,2" FontSize="11"/>
-                <!-- Freeze button: enabled only when AOBMaker plugin is reachable.
-                     Tooltip swaps between the action description and the
-                     setup hint via FreezeUnavailableTooltip (matches the
-                     LiveWalker AobMakerNote pattern from build 608). Hidden
-                     entirely for nested matches (no class-absolute offset). -->
+                <!-- Freeze button: enabled only when the AOBMaker plugin is reachable.
+                     FreezeUnavailableTooltip gives the action, or why the plugin
+                     cannot be reached; ShowOnDisabled lets the greyed button open
+                     that tooltip. Hidden entirely for nested matches (no
+                     class-absolute offset). -->
                 <Button Content="{StaticResource str.PropertySearch.Freeze}"
                         Command="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).CopyFreezeScriptCommand}"
                         CommandParameter="{Binding}"
                         IsVisible="{Binding ShowScalarActions}"
                         IsEnabled="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).IsAobMakerAvailable}"
                         ToolTip.Tip="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).FreezeUnavailableTooltip}"
+                        ToolTip.ShowOnDisabled="True"
                         Padding="6,2" FontSize="11"/>
               </StackPanel>
             </DataTemplate>

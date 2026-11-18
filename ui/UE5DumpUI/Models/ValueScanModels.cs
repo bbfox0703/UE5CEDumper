@@ -215,7 +215,7 @@ public class ValueScanWindowResult
 /// One input value row of a "Group" scan (2..4 rows). The user supplies a value,
 /// a per-slot width scope, and (P2) a per-slot scan type. The width scope fans
 /// out over numeric widths (NumericNoByte default / NumericAll). The scan type is
-/// a first-scan targeted predicate (Exact / Bigger / Smaller) on the first scan,
+/// a first-scan targeted predicate (Exact / Bigger / Smaller / Between) on the first scan,
 /// and additionally a prev-value predicate (Changed / Unchanged / Increased /
 /// Decreased) on a refine — for those the value box is hidden. Observable so the
 /// editable grid's value-cell visibility reacts to the scan-type cell.

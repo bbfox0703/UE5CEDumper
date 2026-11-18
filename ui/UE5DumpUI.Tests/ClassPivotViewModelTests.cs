@@ -1771,6 +1771,51 @@ public class ClassPivotViewModelTests : IDisposable
     private static EngineState Live(string creation) =>
         new() { PeHash = "G", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = creation };
 
+    [Fact]
+    public async Task DataTableRows_AreNotWalkedOrLocatedAsObjects_ButKeepCopyAddress()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] A DataTable row's ObjAddr is its row struct data, not a UObject: Live Walker and
+        // both Locates would walk it as one. Copy Address and HEX keep it, behind the session gate alone.
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
+        await ConnectAsync(vm);
+        vm.SelectedSource = "DataTable";
+        await vm.PendingLoad!;
+        vm.SelectedDataTable = vm.DataTables[0];
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        var row = vm.Results[0];
+        vm.SelectedResult = row;
+        string? walked = null, inWorld = null, inEngine = null;
+        vm.NavigateToInstance += a => walked = a;
+        vm.LocateInGWorld += a => inWorld = a;
+        vm.LocateInGameEngine += a => inEngine = a;
+
+        vm.OpenInLiveWalkerCommand.Execute(row);
+        vm.LocateResultInGWorldCommand.Execute(row);
+        vm.LocateResultInGameEngineCommand.Execute(row);
+
+        Assert.Null(walked);
+        Assert.Null(inWorld);
+        Assert.Null(inEngine);
+        Assert.True(vm.CanUseResultRowActions);   // the control: Copy Address and HEX still take the row
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+
+        // The Open button reads the object gate, and the hint under the grid says which buttons take a DataTable row.
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ClassPivotPanel.axaml"));
+        int open = panel.IndexOf("Content=\"{StaticResource str.Pivot.OpenWalker}\"", StringComparison.Ordinal);
+        Assert.True(open >= 0, "the Open in Live Walker button is missing from ClassPivotPanel.axaml");
+        Assert.Contains("IsEnabled=\"{Binding CanOpenResultObject}\"",
+                        panel[open..panel.IndexOf("/>", open, StringComparison.Ordinal)], StringComparison.Ordinal);
+        var en = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        const string key = "x:Key=\"str.Pivot.ResultsHint\">";
+        int at = en.IndexOf(key, StringComparison.Ordinal);
+        Assert.True(at >= 0, "str.Pivot.ResultsHint is missing from en.axaml");
+        at += key.Length;
+        Assert.Contains("DataTable", en[at..en.IndexOf("</sys:String>", at, StringComparison.Ordinal)],
+                        StringComparison.Ordinal);
+    }
+
     private async Task SeedSessionAsync(string session)
     {
         var ct = TestContext.Current.CancellationToken;
@@ -1866,7 +1911,7 @@ public class ClassPivotViewModelTests : IDisposable
         await vm.RunPivotCommand.ExecuteAsync(null);
         vm.SelectedResult = vm.Results[0];
 
-        Assert.True(vm.CanLocateResult);
+        Assert.True(vm.CanUseResultRowActions);
     }
 
     [Fact]

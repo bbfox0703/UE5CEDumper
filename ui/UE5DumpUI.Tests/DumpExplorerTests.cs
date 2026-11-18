@@ -692,6 +692,48 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
+    [Fact]
+    public async Task Vm_LiveMatch_Status_CountsLiveStructsAndEnums_BesideClasses()
+    {
+        // The bracketed row count includes struct, enum and member rows, so the type count before it names every kind
+        // the match keys on; a class and a struct sharing a short name are two types.
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            await vm.LoadFromPathAsync(path);
+
+            Assert.EndsWith("Live match: 1 class(es), 1 struct(s) and 1 enum(s) in the current game (9 of 9 rows matched).",
+                vm.StatusText, StringComparison.Ordinal);
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-40: the live match indexes class, struct and enum objects
+    /// (<c>LiveTypeKind</c>), so the status shown while that index is built names all three kinds, as the final status
+    /// and the Re-check tooltip do.</summary>
+    [Fact]
+    public async Task Vm_LiveMatch_ProgressStatus_NamesEveryKindTheIndexScans()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            var shown = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            vm.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(DumpExplorerViewModel.StatusText)) shown.Enqueue(vm.StatusText);
+            };
+            await vm.LoadFromPathAsync(path);
+
+            var scanning = Assert.Single(shown, s => s.StartsWith("Scanning the live game", StringComparison.Ordinal));
+            Assert.Contains("classes, structs and enums", scanning, StringComparison.Ordinal);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [InlineData(4, DumpEntryKind.Struct, 1)]
     [InlineData(5, DumpEntryKind.Enum, 1)]
@@ -733,6 +775,46 @@ public class DumpExplorerTests
             Assert.Equal(new[] { "Foo" }, asked);
         }
         finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void FindInstancesTip_NamesTheTabItOpens()
+    {
+        // FindInstances hands the class to the tab str.Tab.InstanceFinder names; the tip must name that tab.
+        var en = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        static string Get(string axaml, string key)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(axaml,
+                "x:Key=\"" + System.Text.RegularExpressions.Regex.Escape(key) + "\">(.*?)</sys:String>",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            Assert.True(m.Success, key + " is missing from en.axaml");
+            return System.Net.WebUtility.HtmlDecode(m.Groups[1].Value);
+        }
+
+        var tip = Get(en, "str.Tip.Dump.FindInstances");
+        Assert.Contains("the " + Get(en, "str.Tab.InstanceFinder") + " tab", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("Instance Finder", tip, StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-37: 🔍 Instances hands the owning class to
+    /// <see cref="InstanceFinderViewModel.SearchForClassAsync"/>, a class-name match that keeps class default objects and
+    /// templates, so neither its tooltip nor the panel's note may promise a live instance of the class.</summary>
+    [Fact]
+    public void FindInstances_TipAndMetaNote_DescribeAClassNameSearch_NotLiveInstances()
+    {
+        var tip = Res.Get("str.Tip.Dump.FindInstances");
+        Assert.False(string.IsNullOrEmpty(tip), "str.Tip.Dump.FindInstances is not in en.axaml");
+        Assert.DoesNotContain("live instance", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("class name contains", tip, StringComparison.Ordinal);
+        Assert.Contains("templates", tip, StringComparison.Ordinal);
+
+        // The note's first sentence rightly says the ROWS are not live instances; the button's clause starts at its label.
+        var note = Res.Get("str.Dump.MetaNote");
+        int at = note.IndexOf(Res.Get("str.Dump.FindInstances"), StringComparison.Ordinal);
+        Assert.True(at >= 0, "str.Dump.MetaNote does not name the 🔍 Instances button");
+        var clause = note[at..];
+        Assert.DoesNotContain("live instance", clause, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("templates", clause, StringComparison.Ordinal);
     }
 
     [Fact]

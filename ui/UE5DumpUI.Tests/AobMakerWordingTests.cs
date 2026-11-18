@@ -375,4 +375,293 @@ public class AobMakerWordingTests
 
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-72: the property-xref / class-funcs dialog's Disassemble button stays off
+    /// while its own push runs. SyncDisasmButton can run during a push, so the click handler raises an in-flight flag
+    /// after its bridge-down guard and before its first await, lowers it in its finally before re-setting the button,
+    /// and the button's enabling setter reads that flag. Pinned in source because no unit test here can open a
+    /// Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_stays_off_while_its_own_push_runs()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from PropertyXrefDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var click = Body("private async void OnDisassembleClicked(");
+        var raised = System.Text.RegularExpressions.Regex.Match(click, @"\n\s*(_\w+) = true;");
+        Assert.True(raised.Success, "OnDisassembleClicked raises no in-flight flag");
+        string flag = raised.Groups[1].Value;
+        // After the bridge-down guard, whose return would otherwise leave the flag up and the button off until the
+        // dialog closes.
+        int guard = click.IndexOf("if (bridge == null || !bridge.IsAvailable)", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "OnDisassembleClicked has no guard for a bridge that is down");
+        Assert.True(raised.Index > click.IndexOf("return;", guard, StringComparison.Ordinal),
+                    $"OnDisassembleClicked raises {flag} before its bridge-down guard returns");
+        Assert.True(click.IndexOf("await ", StringComparison.Ordinal) > raised.Index,
+                    $"OnDisassembleClicked raises {flag} after its first await");
+        Assert.Matches($@"finally\s*\{{\s*{flag} = false;\s*SyncDisasmButton\(\);\s*\}}", click);
+
+        var setter = System.Text.RegularExpressions.Regex.Match(Body("private void SyncDisasmButton()"),
+                                                                @"_btnDisasm\.IsEnabled = ([^;]*);");
+        Assert.True(setter.Success, "SyncDisasmButton does not set _btnDisasm");
+        Assert.Contains($"!{flag}", setter.Groups[1].Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-65: each of the Props dialog's Cheat Engine buttons builds its tooltip
+    /// from its own two en.axaml keys, each named by one const: the action text while the bridge is up, otherwise its
+    /// Off template formatted with the bridge's sentence, which says what the button needs the plugin for and that
+    /// reopening the dialog checks again. A tooltip that dropped or swapped a template fails here. Pinned in source
+    /// because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_button_tooltips_format_their_own_en_axaml_templates()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string ConstFor(string key)
+        {
+            Assert.False(string.IsNullOrEmpty(Res.Get(key)), $"en.axaml defines no {key}");
+            var decls = System.Text.RegularExpressions.Regex.Matches(
+                src, $@"const string (\w+) = ""{System.Text.RegularExpressions.Regex.Escape(key)}"";");
+            Assert.True(decls.Count == 1, $"FunctionPropsDialog.cs names {key} by {decls.Count} consts, not one");
+            return decls[0].Groups[1].Value;
+        }
+
+        foreach (var (button, onKey, offKey) in new[]
+                 {
+                     ("_btnAsm", "str.Tip.AobMaker.FuncAsm", "str.Tip.FunctionProps.AsmOff"),
+                     ("_btnSiteInCe", "str.Tip.FunctionProps.WriteSiteInCe", "str.Tip.FunctionProps.WriteSiteInCeOff"),
+                 })
+        {
+            string onConst = ConstFor(onKey), offConst = ConstFor(offKey);
+            int tip = src.IndexOf($"ToolTip.SetTip({button},", StringComparison.Ordinal);
+            Assert.True(tip >= 0, $"{button}'s tooltip is missing from FunctionPropsDialog.cs");
+            var call = System.Text.RegularExpressions.Regex.Replace(
+                src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)], @"\s+", " ");
+            var want = $" up ? Res.Get({onConst}) : Res.Format({offConst}, AobMakerUnavailable.Text(SharedAobMaker))";
+            Assert.EndsWith(want, call, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-64: the property-xref / class-funcs dialog's greyed Disassemble tooltip
+    /// is the en.axaml template str.Tip.Xref.DisasmOff, formatted with the bridge's own sentence as {0}, as the Props
+    /// dialog's greyed tooltips are: none of its English stays in a C# literal, so a translation reaches it. Pinned in
+    /// source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_greyed_disassemble_tooltip_is_an_en_axaml_template()
+    {
+        const string key = "str.Tip.Xref.DisasmOff";
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        var decl = System.Text.RegularExpressions.Regex.Match(
+            src, $@"const string (\w+) = ""{System.Text.RegularExpressions.Regex.Escape(key)}"";");
+        Assert.True(decl.Success, $"PropertyXrefDialog.cs names no const for {key}");
+        int tip = src.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+        // The greyed branch is the template and nothing else.
+        Assert.EndsWith($": Res.Format({decl.Groups[1].Value}, AobMakerUnavailable.Text(SharedAobMaker))", call,
+                        StringComparison.Ordinal);
+        Assert.DoesNotContain("through the plugin", call, StringComparison.Ordinal);
+
+        // The bridge's sentence, then what the button needs the plugin for, then the remedy the modal dialog leaves.
+        var template = Res.Get(key);
+        Assert.StartsWith("{0} ", template, StringComparison.Ordinal);
+        Assert.Contains(" Disassemble in CE pushes the function's code address to CE's disassembler through the plugin.",
+                        template, StringComparison.Ordinal);
+        Assert.EndsWith("reopen the dialog once the plugin is reachable.", template, StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-63: the Props dialog's two Cheat Engine buttons stay off while their own
+    /// push runs. UpdateSelectionButtons can run during a push, so each click handler raises an in-flight flag before
+    /// its first await and lowers it in its finally before re-setting the buttons, and the button's enabling setter
+    /// reads that flag. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_buttons_stay_off_while_their_own_push_runs()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from FunctionPropsDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var sync = Body("private void UpdateSelectionButtons()");
+        foreach (var (button, handler) in new[]
+                 {
+                     ("_btnAsm", "private async void OnAsmClicked("),
+                     ("_btnSiteInCe", "private async void OnSiteInCeClicked("),
+                 })
+        {
+            var click = Body(handler);
+            var raised = System.Text.RegularExpressions.Regex.Match(click, @"\n\s*(_\w+) = true;");
+            Assert.True(raised.Success, $"{handler} raises no in-flight flag");
+            string flag = raised.Groups[1].Value;
+            Assert.True(click.IndexOf("await ", StringComparison.Ordinal) > raised.Index,
+                        $"{handler} raises {flag} after its first await");
+            Assert.Matches($@"finally\s*\{{\s*{flag} = false;\s*UpdateSelectionButtons\(\);\s*\}}", click);
+
+            var setter = System.Text.RegularExpressions.Regex.Match(sync, $@"{button}\.IsEnabled = ([^;]*);");
+            Assert.True(setter.Success, $"UpdateSelectionButtons does not set {button}");
+            Assert.Contains($"!{flag}", setter.Groups[1].Value, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-52: the property-xref / class-funcs dialog re-sets its Disassemble button
+    /// at construction, so the tooltip exists before the first scan ends; after a push, in its finally; and in the click
+    /// guard that finds the bridge's flag false, so neither a push nor that guard leaves an enabled button or the action
+    /// text over a bridge that is down. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_is_reset_at_construction_after_a_push_and_by_the_bridge_down_guard()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from PropertyXrefDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var ctor = Body("private PropertyXrefDialog(IDumpService dump, IPlatformService platform, bool classMode,");
+        Assert.Contains("\n        SyncDisasmButton();\n", ctor, StringComparison.Ordinal);
+
+        var click = Body("private async void OnDisassembleClicked(");
+        Assert.Matches(@"finally\s*\{\s*(?:_\w+ = false;\s*)?SyncDisasmButton\(\);\s*\}", click);
+        int guard = click.IndexOf("if (bridge == null || !bridge.IsAvailable)", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "OnDisassembleClicked has no guard for a bridge that is down");
+        int bail = click.IndexOf("return;", guard, StringComparison.Ordinal);
+        int resync = click.IndexOf("SyncDisasmButton();", guard, StringComparison.Ordinal);
+        Assert.True(resync > guard && resync < bail, "the guard returns without re-setting the Disassemble button");
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-50: the two AOBMaker dialogs probe the bridge once as they open and then
+    /// re-set their Cheat Engine buttons, and each greyed tooltip says reopening the dialog checks again: the modal
+    /// dialog keeps the main window's refresh out of reach. Pinned in source because no unit test here can open a
+    /// Window.</summary>
+    [Fact]
+    public void AobMaker_dialogs_probe_the_bridge_as_they_open_and_their_greyed_tooltips_say_reopen()
+    {
+        const string reopen =
+            "This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.";
+        foreach (var (file, resync) in new[]
+                 {
+                     ("ui/UE5DumpUI/Views/PropertyXrefDialog.cs", "SyncDisasmButton();"),
+                     ("ui/UE5DumpUI/Views/FunctionPropsDialog.cs", "UpdateSelectionButtons();"),
+                 })
+        {
+            var src = File.ReadAllText(NumericInputCoercionTests.RepoFile(file)).Replace("\r\n", "\n");
+            Assert.Contains("Opened += async (_, _) => await ProbeAobMakerAsync();", src, StringComparison.Ordinal);
+            int at = src.IndexOf("private async Task ProbeAobMakerAsync()", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{file} has no ProbeAobMakerAsync");
+            var body = src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            int probe = body.IndexOf("await bridge.CheckAvailabilityAsync()", StringComparison.Ordinal);
+            Assert.True(probe >= 0, $"{file}'s open probe does not ask the bridge");
+            Assert.True(body.IndexOf(resync, probe, StringComparison.Ordinal) > probe,
+                        $"{file} does not re-set its buttons after the open probe");
+        }
+
+        var xref = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+        int tip = xref.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        var call = xref[tip..xref.IndexOf(");", tip, StringComparison.Ordinal)];
+        Assert.Contains("Res.Format(KeyDisasmOffTip, ", call, StringComparison.Ordinal);
+        foreach (var key in new[] { "str.Tip.Xref.DisasmOff", "str.Tip.FunctionProps.AsmOff",
+                                    "str.Tip.FunctionProps.WriteSiteInCeOff" })
+            Assert.EndsWith(reopen, Res.Get(key), StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-49: the Props dialog's two Cheat Engine buttons, Disassemble in CE and
+    /// Write site in CE, open their tooltips while greyed out, and while the plugin is out of reach each tooltip gives
+    /// the bridge's own reason. One method sets each button's state and tooltip, and it runs at construction and after
+    /// each push. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_buttons_say_why_the_plugin_is_unreachable_while_greyed_out()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from FunctionPropsDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        foreach (var (button, offKey, name) in new[]
+                 {
+                     ("_btnAsm", "str.Tip.FunctionProps.AsmOff", "Disassemble in CE"),
+                     ("_btnSiteInCe", "str.Tip.FunctionProps.WriteSiteInCeOff", "Write site in CE"),
+                 })
+        {
+            // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to.
+            Assert.Contains($"ToolTip.SetShowOnDisabled({button}, true);", src, StringComparison.Ordinal);
+
+            int tip = src.IndexOf($"ToolTip.SetTip({button},", StringComparison.Ordinal);
+            Assert.True(tip >= 0, $"{button}'s tooltip is missing from FunctionPropsDialog.cs");
+            Assert.True(src.IndexOf($"ToolTip.SetTip({button},", tip + 1, StringComparison.Ordinal) < 0,
+                        $"{button}'s tooltip is set in more than one place");
+            var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+            Assert.Contains("AobMakerUnavailable.Text(SharedAobMaker)", call, StringComparison.Ordinal);
+
+            // The greyed tooltip is the bridge's sentence, then what the button needs the plugin for.
+            Assert.Contains($"\"{offKey}\"", src, StringComparison.Ordinal);
+            var off = Res.Get(offKey);
+            Assert.StartsWith("{0} ", off, StringComparison.Ordinal);
+            Assert.Contains(name, off, StringComparison.Ordinal);
+
+            // State and tooltip are set in one method, so a push that drops the bridge's flag repaints both.
+            var setters = System.Text.RegularExpressions.Regex.Matches(src, $@"{button}\.IsEnabled = (?!false;)");
+            Assert.True(setters.Count == 1, $"{setters.Count} places enable {button}");
+            int from = Math.Min(setters[0].Index, tip), to = Math.Max(setters[0].Index, tip);
+            Assert.DoesNotContain("\n    }\n", src[from..to], StringComparison.Ordinal);
+        }
+
+        // At construction, so the tooltips exist before the first scan ends; and after each push.
+        Assert.Contains("\n        UpdateSelectionButtons();\n", Body("public FunctionPropsDialog(string funcName"),
+                        StringComparison.Ordinal);
+        foreach (var handler in new[] { "private async void OnAsmClicked(", "private async void OnSiteInCeClicked(" })
+            Assert.Matches(@"finally\s*\{\s*(?:_\w+ = false;\s*)?UpdateSelectionButtons\(\);\s*\}", Body(handler));
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-36: the "Disassemble in CE" button of the property-xref / class-funcs
+    /// dialog opens its tooltip while greyed out, and the tooltip gives the bridge's own reason (a busy or refused pipe
+    /// is not a missing plugin). Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_says_why_the_plugin_is_unreachable_while_greyed_out()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to.
+        Assert.Contains("ToolTip.SetShowOnDisabled(_btnDisasm, true);", src, StringComparison.Ordinal);
+
+        int tip = src.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        Assert.True(src.IndexOf("ToolTip.SetTip(_btnDisasm,", tip + 1, StringComparison.Ordinal) < 0,
+                    "the Disassemble button's tooltip is set in more than one place");
+        var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+        Assert.Contains("AobMakerUnavailable.Text(SharedAobMaker)", call, StringComparison.Ordinal);
+        Assert.DoesNotContain("not connected", call, StringComparison.Ordinal);
+
+        // A push can drop the bridge's flag while the modal dialog is open, so the button's state and its tooltip are
+        // set in one method: a button the push greys out does not keep the action text.
+        var setters = System.Text.RegularExpressions.Regex.Matches(src, @"_btnDisasm\.IsEnabled = (?!false;)");
+        Assert.True(setters.Count == 1, $"{setters.Count} places enable the Disassemble button");
+        int from = Math.Min(setters[0].Index, tip), to = Math.Max(setters[0].Index, tip);
+        Assert.DoesNotContain("\n    }\n", src[from..to], StringComparison.Ordinal);
+    }
 }

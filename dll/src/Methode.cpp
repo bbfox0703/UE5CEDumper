@@ -151,9 +151,9 @@ static bool IsProxyDllName(const wchar_t* fileName) {
 // (Services/DumperModuleDetector.cs), so the two detectors cannot disagree
 // about whether we are loaded.
 //
-// A false negative here is safe: UE5_StartPipeServer detects an existing pipe
-// and returns INIT_SKIPPED, so at worst we map a second copy that then declines
-// to serve. A false POSITIVE is not — it tells the user "already loaded, no
+// A false negative in the pre-inject check maps a second copy, which takes the
+// game over from the one already serving and shuts it down (Land.h). A false
+// POSITIVE there is worse — it tells the user "already loaded, no
 // injection needed" when nothing is loaded, and the pipe never appears.
 static bool IsOurModule(const wchar_t* modulePath)
 {
@@ -303,8 +303,8 @@ static void __stdcall OnInjectAndConnect()
     // 1.5. Check if UE5CEDumper is already loaded in the target process.
     // Common scenario: user has version.dll proxy in the game folder and
     // then clicks the inject menu — we should bail out before mapping a
-    // duplicate copy. Heiter.cpp's pipe-existence guard is a fallback;
-    // detecting here avoids loading the DLL into VA at all.
+    // duplicate copy: a later copy takes the game over from the one already
+    // serving and shuts it down (Land.h).
     HANDLE hTarget = g_CE.OpenedProcessHandle ? *g_CE.OpenedProcessHandle : nullptr;
     {
         std::string presentName, presentPath;

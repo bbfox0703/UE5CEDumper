@@ -1652,6 +1652,12 @@ public partial class SnapshotViewModel : ViewModelBase
     private async Task CopyDiffAddressAsync(SnapshotDiffRow? row)
     {
         if (row == null || _platform == null) return;
+        // [UI-TEXT-AUDIT-2026-11-18] An array-element row carries only its owner's base: HEX and +CE refuse it too.
+        if (AobMakerActions.IsSnapshotElementRow(row.PropName))
+        {
+            DiffStatusText = AobMakerActions.NoOwnAddressText(row.PropName);
+            return;
+        }
         try
         {
             var hex = row.ObjAddr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)

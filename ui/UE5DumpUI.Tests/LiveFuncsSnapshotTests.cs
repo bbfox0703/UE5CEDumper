@@ -168,6 +168,23 @@ public class LiveFuncsSnapshotTests
 
     // ---- U5 ----
 
+    /// <summary>An unloaded row with a name key keeps its Trace, Params? and Stack? boxes, as each follows the function
+    /// by name; only a keyless one loses them. The (unloaded) marker's tooltip names the three columns rather than
+    /// saying the row cannot be ticked.</summary>
+    [Fact]
+    public void The_unloaded_marker_tooltip_says_a_keyed_row_keeps_its_choice_boxes()
+    {
+        var keyed = Row("A", "Gone", "0x4", new NameKey(4, 0, 9, 0), unloaded: true);
+        var keyless = Row("A", "Old", "0x5", null, unloaded: true);
+        Assert.True(keyed.IsTickable && keyed.CanChooseSnapshot && keyed.CanChooseStack);
+        Assert.False(keyless.IsTickable || keyless.CanChooseSnapshot || keyless.CanChooseStack);
+
+        string tip = Line("str.Tip.LF.Unloaded");
+        Assert.DoesNotContain("cannot be ticked for the trace", tip, StringComparison.Ordinal);
+        foreach (var column in new[] { "str.LF.Col.Trace", "str.LF.Col.Snapshot", "str.LF.Col.Stack" })
+            Assert.Contains(Line(column), tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_choice_needs_the_trace_a_key_and_parameters_and_an_unloaded_keyed_row_can_be_chosen()
     {
@@ -386,6 +403,105 @@ public class LiveFuncsSnapshotTests
 
     // ---- U9 ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-55: with a function ticked and another chosen for parameters or a stack, a
+    /// traced Start also records the chosen calls made outside every ticked scope (the DLL's lone calls), so the Start's
+    /// status and the Call Trace tab's scope sentence say so once the DLL reports a ring for them; with ticks alone both
+    /// keep the sentence that names only the ticked functions.</summary>
+    [Fact]
+    public async Task The_ticked_status_lines_say_the_chosen_calls_outside_the_ticked_functions_are_traced_too()
+    {
+        const string outside = "and outside them the calls of the functions chosen for parameters or a stack";
+
+        // F ticked alone: the Start's status names the ticked function only.
+        var (alone, aloneDump) = MakeVm();
+        aloneDump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(alone);
+        alone.TraceEnabled = true;
+        alone.ToggleTickCommand.Execute(Shown(alone, "A", "F"));
+        await alone.StartCommand.ExecuteAsync(null);
+        Assert.Null(aloneDump.LastTrace!.Snapshots);
+        Assert.Contains(Line("str.LF.Trace.RecordingTicked", alone.TraceBufferMb, 1), alone.StatusText);
+        Assert.DoesNotContain(outside, alone.StatusText, StringComparison.Ordinal);
+
+        // F ticked, G chosen for parameters: the DLL arms G's ring, so the status says G's calls outside F are traced too.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "F"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.NotNull(dump.LastTrace!.Snapshots);
+        string started = Line("str.LF.Trace.RecordingTickedChosen", vm.TraceBufferMb, 1);
+        Assert.Contains(outside, started, StringComparison.Ordinal);
+        Assert.Contains(started, vm.StatusText);
+        Assert.DoesNotContain(Line("str.LF.Trace.RecordingTicked", vm.TraceBufferMb, 1), vm.StatusText);
+
+        // The Call Trace tab: a scoped trace the DLL reports rings for says so, by name or by address.
+        var ct = new CallTraceViewModel(dump, new NoopLogger(), vm) { StringLookup = En };
+        var rings = new SnapInfo { Allocated = true, Rings = 1 };
+        var records = new[]
+        {
+            new TraceRecord(0, 1000, 0xA, 0, 1, TraceRecord.ScopeRootFlag),
+            new TraceRecord(1 | TraceRecord.ReturnBit, 1010, 0, 0, 1, 0),
+        };
+        foreach (var (info, key, count) in new[]
+        {
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, TickedNames = 1 }, "str.CT.Status.ScopedNames", 1),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, TickedNames = 1, Snap = rings },
+             "str.CT.Status.ScopedNamesChosen", 1),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Ticked = 2 }, "str.CT.Status.Scoped", 2),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, Ticked = 2, Snap = rings },
+             "str.CT.Status.ScopedChosen", 2),
+        })
+        {
+            Assert.Equal(key, CallTraceViewModel.ScopeKey(info));
+            string sentence = Line(key, count);
+            Assert.Contains(sentence, ct.Summary(UE5DumpUI.Services.CallTraceBuilder.Build(records, info)));
+            Assert.Equal(info.Snap != null, sentence.Contains(outside, StringComparison.Ordinal));
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-38: nothing ticked, but a function chosen for parameters: the Start traces
+    /// only the chosen calls, and the Trace check box's tooltip says what a traced Start records in the words the ticked
+    /// count's tooltip uses, rather than "every call", or "only their calls" once something is ticked.</summary>
+    [Fact]
+    public async Task The_trace_check_box_tooltip_says_ticks_and_choices_decide_what_is_recorded()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Contains(Line("str.LF.Trace.RecordingSnapOnly", vm.TraceBufferMb, 1), vm.StatusText);
+
+        string tip = Line("str.Tip.LF.Trace.Enable");
+        Assert.DoesNotContain("record every call", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("only their calls", tip, StringComparison.Ordinal);
+        Assert.Contains("chosen for parameters or a stack", tip, StringComparison.Ordinal);
+        string ticked = Line("str.Tip.LF.Trace.Ticked");
+        Assert.Contains(ticked[ticked.IndexOf("With none ticked", StringComparison.Ordinal)..], tip, StringComparison.Ordinal);
+    }
+
+    /// <summary>Nothing ticked, but a function chosen for parameters: the Start traces only the chosen calls, and the
+    /// ticked count's tooltip says so rather than "every call".</summary>
+    [Fact]
+    public async Task The_ticked_tooltip_says_a_choice_without_ticks_traces_only_the_chosen_calls()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Contains(Line("str.LF.Trace.RecordingSnapOnly", vm.TraceBufferMb, 1), vm.StatusText);
+
+        string tip = Line("str.Tip.LF.Trace.Ticked");
+        Assert.DoesNotContain("with none ticked, every call", tip, StringComparison.Ordinal);
+        Assert.Contains("chosen", tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_trace_says_what_it_followed_by_name_snapshots_only_or_every_call()
     {
@@ -432,6 +548,16 @@ public class LiveFuncsSnapshotTests
     }
 
     // ---- U8 ----
+
+    /// <summary>A parameter copy shows in Call Trace's Parameters tab and, as segments or raw, in its Bytes tab: the
+    /// Params? box's tooltip names both, by the tabs' own headers.</summary>
+    [Fact]
+    public void The_Params_tooltip_names_both_Call_Trace_tabs_that_show_the_copies()
+    {
+        string tip = Line("str.Tip.LF.Snap.Choose");
+        Assert.Contains(Line("str.CT.Tab.Params"), tip, StringComparison.Ordinal);
+        Assert.Contains(Line("str.CT.Tab.Bytes"), tip, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void The_view_hides_the_Snapshot_column_with_Trace_never_sorts_it_and_keeps_the_buffer_slider()
@@ -1933,6 +2059,22 @@ public class LiveFuncsSnapshotTests
     }
 
     // ---- Clear choices: one clear for the three choice columns ----
+
+    /// <summary>The Parameters row's Clear empties the parameter and the stack choices, which share the snapshot buffer
+    /// (D4): its tooltip names both columns, and Clear choices' tooltip does not say each clear empties only its own.</summary>
+    [Fact]
+    public void The_Parameters_Clear_has_a_tooltip_naming_both_columns_it_clears()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string clear = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ClearSnapshotsCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Snap.Clear}\"", clear, StringComparison.Ordinal);
+
+        string tip = Line("str.Tip.LF.Snap.Clear");
+        Assert.Contains(Line("str.LF.Col.Snapshot"), tip, StringComparison.Ordinal);
+        Assert.Contains(Line("str.LF.Col.Stack"), tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("each empty only their own", Line("str.Tip.LF.ClearChoices"), StringComparison.Ordinal);
+    }
 
     /// <summary>A view model with every kind of choice, Trace on: A::F ticked and chosen for parameters and for a stack,
     /// A::G for parameters, A::H for a stack. F carries all three, so a clear that misses one kind leaves a box ticked

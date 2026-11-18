@@ -94,6 +94,26 @@ public class InstanceFinderViewModelTests
     private static InstanceFinderViewModel NewVm(FakeDump dump)
         => new(dump, new NoopLog(), new NoopPlatform());
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-31: a button that hands a class to this tab runs
+    /// <see cref="InstanceFinderViewModel.SearchForClassAsync"/>, a class-NAME match that keeps class default objects and
+    /// templates, so its tooltip may not promise "live instances".</summary>
+    [Theory]
+    [InlineData("str.Tip.GameClassFilter.FindInstances")]
+    [InlineData("str.Tip.Detect.Finder")]
+    [InlineData("str.Tip.Related.Find")]
+    [InlineData("str.Tip.IF.OpenInst")]
+    [InlineData("str.Tip.IP.OpenInst")]
+    [InlineData("str.Tip.PropertySearch.FindInstances")]
+    [InlineData("str.Tip.LiveWalker.FieldInst")]
+    public void Class_handoff_tooltips_describe_a_name_match_that_keeps_templates(string key)
+    {
+        var tip = Res.Get(key);
+        Assert.False(string.IsNullOrEmpty(tip), key + " is not in en.axaml");
+        Assert.DoesNotContain("live instances", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("class name contains", tip, StringComparison.Ordinal);
+        Assert.Contains("templates", tip, StringComparison.Ordinal);
+    }
+
     private static FindInstancesResult Result(params (string name, string cls)[] rows)
     {
         var r = new FindInstancesResult { Scanned = 1000, NonNull = 900, Named = 800 };

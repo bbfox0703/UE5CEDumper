@@ -53,16 +53,17 @@ public static class PartialResultNotice
     /// The ", or raise Max above N" clause — <b>empty at the ceiling</b>, where raising is not
     /// possible and saying so would be the Z10 lie in a new place.
     ///
-    /// <para>⚠ <b>Shared on purpose.</b> Three panels own a Max control (Instance Finder,
-    /// Property Search, Classes) and this rule was written three separate times in one day; the
-    /// third rewrite is where a rule stops being a rule. The Z10 family is specifically the
+    /// <para>⚠ <b>Shared on purpose.</b> A panel with a Max control calls this rather
+    /// than writing the rule again; <c>RaiseMaxClauseTests</c> checks the panels it lists.
+    /// The Z10 family is specifically the
     /// failure of ADVICE drifting from the CONTROLS a panel actually has, so its guard belongs
     /// beside the sentence it guards, not beside each control.</para>
     ///
     /// <para>Returns "" — never null — so a caller can concatenate it unconditionally.</para>
     /// </summary>
-    /// <param name="currentCap">The cap in force, i.e. what the panel's NumericUpDown reads.</param>
-    /// <param name="ceiling">The highest that control will accept (<c>Constants.MaxSearchCap</c>).</param>
+    /// <param name="currentCap">The Max the operation was sent with, captured before it ran. Not the Max box read after
+    /// it: the box can change while the operation runs, and a later read then names a cap the result never had.</param>
+    /// <param name="ceiling">The highest that control will accept: its NumericUpDown's Maximum.</param>
     public static string RaiseMaxClause(int currentCap, int ceiling)
         => currentCap < ceiling ? $", or raise Max above {currentCap:N0}" : "";
 
@@ -85,10 +86,8 @@ public static class PartialResultNotice
     /// results out of <paramref name="totalUnits"/>. Empty when nothing was partial, so a
     /// caller can append it unconditionally.
     /// </summary>
-    /// <param name="unit">What is being counted, singular. Two of the three Z9 loops scan
-    /// once per ROW; Instance Finder dedups by class and scans once per CLASS (many rows
-    /// share one result), so counting its classes and calling them rows would be a second
-    /// small lie inside the honesty fix.</param>
+    /// <param name="unit">What is being counted, singular: the thing the loop scans once per, such as a row or a
+    /// class. A loop whose one scan of a class serves many rows counts classes, not rows.</param>
     /// <param name="cause">What truncated them, as it reads in "N rows {cause} and are
     /// marked partial". Defaults to the scan deadline, which is what every Z9 caller
     /// means. AF7 needed a second cause — the disassembler's instruction budget — and

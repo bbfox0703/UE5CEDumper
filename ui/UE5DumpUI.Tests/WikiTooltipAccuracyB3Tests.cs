@@ -158,6 +158,152 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-41: Collapse Pointer Nodes collapses every group below the root, a map's
+    /// element folders as well as pointers, structs and array elements; the tip says every group rather than listing some.</summary>
+    [Fact]
+    public void Collapse_pointer_nodes_tip_says_every_group_below_the_root_collapses()
+    {
+        var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", new[]
+        {
+            new UE5DumpUI.Models.LiveFieldValue
+            {
+                Name = "ScoreMap", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+                MapCount = 2, MapKeyType = "IntProperty", MapValueType = "FloatProperty", MapKeySize = 4, MapValueSize = 4,
+                MapElements = new List<UE5DumpUI.Models.ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "42", Value = "3.14", KeyHex = "2A000000", ValueHex = "C3F54840" },
+                    new() { Index = 3, Key = "99", Value = "2.71", KeyHex = "63000000", ValueHex = "AE472D40" },
+                },
+            },
+        }, collapsePointerNodes: true);
+        foreach (var element in new[] { "\"[0] 42\"", "\"[3] 99\"" })
+        {
+            int at = xml.IndexOf(element, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{element} was not emitted");
+            var header = xml[at..xml.IndexOf("<CheatEntries>", at, StringComparison.Ordinal)];
+            Assert.Contains("<Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>", header, StringComparison.Ordinal);
+        }
+
+        var tip = EnString("str.Tip.CollapsePointers");
+        Assert.Contains("every group below the root", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("array-element", tip, StringComparison.Ordinal);
+    }
+
+    // [UI-TEXT-AUDIT-2026-11-18] UT-18. Collapse Pointer Nodes reaches Copy CE Field as well as Copy CE XML; the tip names
+    // both by their buttons.
+    [Fact]
+    public void Collapse_pointer_nodes_tip_names_both_CE_XML_copies()
+    {
+        var lw = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")).Replace("\r\n", "\n");
+        foreach (var method in new[] { "ExportCeXmlAsync", "ExportCeFieldXmlAsync" })
+        {
+            int at = lw.IndexOf($" Task {method}(", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{method} was not found");
+            var body = lw[at..lw.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            Assert.Contains("collapsePointerNodes: CollapsePointerNodes", body, StringComparison.Ordinal);
+        }
+
+        var copyCeField = new UE5DumpUI.ViewModels.LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+            new MockPlatformService(Path.GetTempPath())).ExportCeFieldButtonLabel;
+        var tip = EnString("str.Tip.CollapsePointers");
+        Assert.Contains(EnString("str.LiveWalker.ExportCE"), tip, StringComparison.Ordinal);
+        Assert.Contains(copyCeField, tip, StringComparison.Ordinal);
+    }
+
+    // [UI-TEXT-AUDIT-2026-11-18] UT-17. The Functions filter matches the interface a function comes through as well as
+    // its name (FilterBoxViewKeepTests pins the matcher); the tip says so, in the words the Name column shows it with.
+    [Fact]
+    public void Function_filter_tip_says_it_matches_the_interface_too()
+    {
+        var via = EnString("str.LiveWalker.ViaInterface");   // "{0}  (via {1})"
+        var shown = via[via.IndexOf('(')..via.IndexOf("{1}", StringComparison.Ordinal)].TrimEnd();
+        var tip = EnString("str.Tip.LiveWalker.FuncFilter");
+        Assert.Contains(shown, tip, StringComparison.Ordinal);
+        Assert.Contains("interface", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ANDed", tip, StringComparison.Ordinal);
+    }
+
+    // [UI-TEXT-AUDIT-2026-11-18] UT-16. The Options tip names every setting its flyout holds and says they are kept;
+    // each control the flyout binds is in the window's persisted sets.
+    [Fact]
+    public void Options_tip_names_every_setting_in_the_flyout_and_says_they_are_kept()
+    {
+        var doc = System.Xml.Linq.XDocument.Load(Repo("ui/UE5DumpUI/Views/MainWindow.axaml"));
+        var flyout = doc.Descendants().Single(e => e.Name.LocalName == "DropDownButton"
+            && (string?)e.Attribute("Content") == "{StaticResource str.Toolbar.Options}");
+        var tip = EnString("str.Tip.Toolbar.Options");
+        Assert.DoesNotContain("per session", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("kept across restarts", tip, StringComparison.Ordinal);
+
+        // A label is a toolbar string on a control that is always shown; a conditional warning is not a setting.
+        var labels = flyout.Descendants()
+            .Where(e => e.Attribute("IsVisible") is null)
+            .Select(e => Regex.Match((string?)e.Attribute("Text") ?? (string?)e.Attribute("Content") ?? "",
+                                     @"^\{StaticResource (str\.Toolbar\.[\w.]+)\}$"))
+            .Where(m => m.Success)
+            .Select(m => EnString(m.Groups[1].Value).TrimEnd(':'))
+            .ToList();
+        Assert.True(labels.Count >= 8, $"only {labels.Count} labels found in the Options flyout");
+        foreach (var label in labels)
+            Assert.Contains(label, tip, StringComparison.Ordinal);
+
+        var vm = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
+        string Set(string name)
+        {
+            int at = vm.IndexOf($"HashSet<string> {name} = new()", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{name} was not found");
+            return vm[at..vm.IndexOf("};", at, StringComparison.Ordinal)];
+        }
+        var main = Set("MainPersist");
+        var liveWalker = Set("LiveWalkerPersist");
+        foreach (var control in flyout.Descendants().Where(e => e.Name.LocalName is "Slider" or "CheckBox"))
+        {
+            var b = Regex.Match((string?)control.Attribute("Value") ?? (string?)control.Attribute("IsChecked") ?? "",
+                                @"^\{Binding (LiveWalker\.)?(\w+)\}$");
+            Assert.True(b.Success, $"unexpected binding on a {control.Name.LocalName} in the Options flyout");
+            Assert.Contains(b.Groups[1].Success ? $"nameof(LiveWalkerViewModel.{b.Groups[2].Value})" : $"nameof({b.Groups[2].Value})",
+                            b.Groups[1].Success ? liveWalker : main, StringComparison.Ordinal);
+        }
+    }
+
+    // [UI-TEXT-AUDIT-2026-11-18] UT-14. String Len reaches every Live Walker output that writes a string record or a
+    // CSX string child, not only the two CE XML copies; the tip names each by its button.
+    [Fact]
+    public void String_Len_tip_names_every_output_that_uses_it()
+    {
+        var lw = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")).Replace("\r\n", "\n");
+        foreach (var method in new[] { "ExportCeXmlAsync", "ExportCeFieldXmlAsync", "ExportCsxCoreAsync",
+                                       "PushCsxToCeAsync", "PushCeFieldToCeAsync", "AddRecordToCeAsync" })
+        {
+            int at = lw.IndexOf($" Task {method}(", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{method} was not found");
+            var body = lw[at..lw.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            Assert.Contains("CeStringLength", body, StringComparison.Ordinal);
+        }
+
+        var copyCeField = new UE5DumpUI.ViewModels.LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+            new MockPlatformService(Path.GetTempPath())).ExportCeFieldButtonLabel;
+        var tip = EnString("str.Tip.StringLength");
+        foreach (var label in new[] { EnString("str.LiveWalker.ExportCE"), copyCeField, EnString("str.LiveWalker.ExportCsx"),
+                                      EnString("str.LiveWalker.PushCsxToCe"), EnString("str.LiveWalker.AddToCe"),
+                                      EnString("str.LiveWalker.PushCeField") })
+            Assert.Contains(label, tip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Main_hotkey_hint_names_Gravity_Dir_and_Get_POV()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-08: both rows are in the main hotkey list that str.TP.HkHint introduces.
+        var vm = File.ReadAllText(Repo(TeleportVm));
+        var hint = EnString("str.TP.HkHint");
+        foreach (var (row, words) in new[] { ("Gravity Dir toggle", "Gravity Dir"), ("Get POV", "Get POV") })
+        {
+            Assert.Matches(@"(?<!Experimental)HotkeyRows\.Add\(new TeleportHotkeyRow \{ ActionId = ""[^""]+"",\s*DisplayName = """
+                           + Regex.Escape(row) + @"""", vm);
+            Assert.Contains(words, hint, StringComparison.Ordinal);
+        }
+    }
+
     private static IEnumerable<(string Key, string Value)> AllStrings()
     {
         var axaml = File.ReadAllText(Repo("ui/UE5DumpUI/Resources/Strings/en.axaml"));

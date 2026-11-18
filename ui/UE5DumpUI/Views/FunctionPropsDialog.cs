@@ -29,11 +29,11 @@ namespace UE5DumpUI.Views;
 public sealed class FunctionPropsDialog : ManagedDialogWindow
 {
     /// <summary>
-    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF18).
-    /// A code-built grid is not exempt from the rule the XAML panels follow: these
-    /// are all DataGridTemplateColumns, so no binding roots the sort path and the
-    /// reflection sort is trimmed away. Shared verbatim with
-    /// <see cref="PropertyXrefDialog"/>'s twin grid where the property names agree.
+    /// AOT-safe column sort comparers, keyed by SortMemberPath.
+    /// A code-built grid is not exempt from the rule the XAML panels follow: this grid
+    /// is built from DataGridTemplateColumns, which have no column-level Binding to root
+    /// the sort path, so the reflection sort is trimmed away.
+    /// <see cref="PropertyXrefDialog"/> keeps its own comparer table, typed on its own row type.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, IComparer> XrefSortComparers =
         new Dictionary<string, IComparer>
@@ -55,8 +55,14 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private DataGrid _grid = null!;
     private Button _btnRefresh = null!;
     private Button _btnCopy = null!;
+    private Button _btnAsm = null!;
     private Button _btnSiteInCe = null!;
     private Button _btnCopySites = null!;
+    // Each flag is set while its Cheat Engine button's own push runs. UpdateSelectionButtons can run during that
+    // push, and it keeps the button off while the flag is set: a second click mid-push would push again, which
+    // for Disassemble in CE adds a second record to CE's table.
+    private bool _asmPushing;
+    private bool _sitePushing;
     private CheckBox _classFieldsOnly = null!;
     private DataGridColumn _confCol = null!;
     private List<FunctionPropRef> _allProps = new();
@@ -70,11 +76,15 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
 
     internal const string KeyAsmLabel = "str.FunctionProps.AsmInCe";
     internal const string KeyAsmTip = "str.Tip.AobMaker.FuncAsm";
+    internal const string KeyAsmOffTip = "str.Tip.FunctionProps.AsmOff";
+    internal const string KeySiteTip = "str.Tip.FunctionProps.WriteSiteInCe";
+    internal const string KeySiteOffTip = "str.Tip.FunctionProps.WriteSiteInCeOff";
 
     private async void OnAsmClicked(object? sender, RoutedEventArgs e)
     {
         var bridge = SharedAobMaker;
         if (bridge == null || sender is not Button button) return;
+        _asmPushing = true;
         button.IsEnabled = false;
         try
         {
@@ -87,7 +97,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
         finally
         {
-            button.IsEnabled = bridge.IsAvailable;
+            _asmPushing = false;
+            UpdateSelectionButtons();
         }
     }
 
@@ -185,26 +196,27 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         DockPanel.SetDock(caveat, Dock.Bottom);
         root.Children.Add(caveat);
 
-        // A WrapPanel: six buttons outgrow a narrow window, and a StackPanel cut the last ones off (review WS-UI-3).
+        // A WrapPanel wraps buttons that do not fit the window's width, where a StackPanel would cut the last ones off.
         var btnRow = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 8, 0, 0),
         };
-        // [AOBM-FUNC-DISASM] The dialog is about ONE function, so this button needs no selection. Its state is read once:
-        // the dialog is modal, so nothing can re-probe the bridge while it is open, and a click on a stale "on" reports
-        // the failure rather than vanishing.
-        var btnAsm = new Button
+        // [AOBM-FUNC-DISASM] The dialog is about ONE function, so this button needs no selection.
+        // UpdateSelectionButtons sets its state and tooltip, and a click on a stale "on" reports the failure
+        // rather than vanishing. The tooltip opens on the greyed-out button too: while the plugin is out of
+        // reach, it says why.
+        _btnAsm = new Button
         {
             Content = Res.Get(KeyAsmLabel) is { Length: > 0 } label ? label : "Disassemble in CE",
             Padding = new Thickness(12, 6),
             Margin = new Thickness(0, 0, 8, 0),
-            IsEnabled = SharedAobMaker?.IsAvailable == true && !string.IsNullOrEmpty(_funcAddr),
+            IsEnabled = false,
         };
-        btnAsm.Click += OnAsmClicked;
-        btnRow.Children.Add(btnAsm);
-        ToolTip.SetTip(btnAsm, Res.Get(KeyAsmTip));
+        _btnAsm.Click += OnAsmClicked;
+        btnRow.Children.Add(_btnAsm);
+        ToolTip.SetShowOnDisabled(_btnAsm, true);
         _btnCopy = new Button
         {
             Content = "Copy property name",
@@ -224,7 +236,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         };
         _btnSiteInCe.Click += OnSiteInCeClicked;
         btnRow.Children.Add(_btnSiteInCe);
-        ToolTip.SetTip(_btnSiteInCe, Res.Get("str.Tip.FunctionProps.WriteSiteInCe"));
+        // UpdateSelectionButtons sets its tooltip, which says why the button is greyed out, so it opens then too.
+        ToolTip.SetShowOnDisabled(_btnSiteInCe, true);
         _btnCopySites = new Button
         {
             Content = Res.Get("str.FunctionProps.CopyWriteSites"),
@@ -365,18 +378,31 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Margin = new Thickness(4, 0),
                 }, supportsRecycling: false),
         });
-        // AOT-safe sort comparers (audit #5 AF18). Every column above is a
-        // DataGridTemplateColumn — no column-level Binding at all — so nothing roots
-        // its SortMemberPath and the reflection sort is trimmed: all six headers were
-        // clickable and inert in the shipped trimmed build. Same rule and same helper
-        // as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
+        // AOT-safe sort comparers. This grid is built from DataGridTemplateColumns, which have no
+        // column-level Binding to root a SortMemberPath, so the trimmed build drops the reflection
+        // metadata Avalonia's default sort reads and a header without a comparer does not sort.
+        // Same rule and same helper as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
         _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) => UpdateSelectionButtons();
+        UpdateSelectionButtons();
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
         root.Children.Add(_grid);
 
         Content = root;
         Opened += async (_, _) => await RunScanAsync();
+        Opened += async (_, _) => await ProbeAobMakerAsync();
+    }
+
+    // The bridge's flag is a cache that a probe or a push re-learns, and this modal dialog keeps the main window's
+    // ⟳ out of reach, so the dialog probes once as it opens and then re-sets the buttons that read the flag:
+    // reopening the dialog checks the plugin again, which the greyed buttons' tooltips say. The probe is not
+    // cancelled when the dialog closes: the bridge would record the cancelled connect as its last failure.
+    private async Task ProbeAobMakerAsync()
+    {
+        if (SharedAobMaker is not { } bridge) return;
+        try { await bridge.CheckAvailabilityAsync(); }
+        catch (Exception) { /* the buttons follow whatever flag the bridge kept */ }
+        UpdateSelectionButtons();
     }
 
     private async Task RunScanAsync()
@@ -469,13 +495,25 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             _lastBudgetHit ? "#E0A050" : shown.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
     }
 
+    // The buttons that follow the selection, and the Cheat Engine buttons, which push through the AOBMaker plugin and
+    // so need the bridge up. Their tooltips say what the button does or, while the plugin is out of reach, why, in the
+    // bridge's own sentence for its last failure (a busy or refused pipe is not a missing plugin). State and tooltip
+    // are set together because a push re-learns the bridge's flag while the dialog is open.
     private void UpdateSelectionButtons()
     {
         var x = _grid.SelectedItem as FunctionPropRef;
         _btnCopy.IsEnabled = x != null;
         bool hasSites = x is { WriteSites.Count: > 0 };
         _btnCopySites.IsEnabled = hasSites;
-        _btnSiteInCe.IsEnabled = hasSites && SharedAobMaker?.IsAvailable == true;
+        bool up = SharedAobMaker?.IsAvailable == true;
+        _btnSiteInCe.IsEnabled = hasSites && up && !_sitePushing;
+        _btnAsm.IsEnabled = up && !string.IsNullOrEmpty(_funcAddr) && !_asmPushing;
+        ToolTip.SetTip(_btnAsm, up
+            ? Res.Get(KeyAsmTip)
+            : Res.Format(KeyAsmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
+        ToolTip.SetTip(_btnSiteInCe, up
+            ? Res.Get(KeySiteTip)
+            : Res.Format(KeySiteOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
     }
 
     // [DENKEN-WRITE-SITES] The first write site in CE's disassembler, through the AOBMaker CE plugin.
@@ -483,6 +521,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     {
         var bridge = SharedAobMaker;
         if (bridge == null || _grid.SelectedItem is not FunctionPropRef x || x.WriteSites.Count == 0) return;
+        _sitePushing = true;
         _btnSiteInCe.IsEnabled = false;
         try
         {
@@ -493,6 +532,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
         finally
         {
+            _sitePushing = false;
             UpdateSelectionButtons();
         }
     }

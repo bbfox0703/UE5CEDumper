@@ -105,6 +105,38 @@ public class DumpServiceTests
 
     private DumpService CreateService() => new(_pipe, _log, UE5DumpUI.Core.IdentityCodePage.Instance);
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-15. A write the DLL refuses comes back with a code and a sentence written for the
+    // reader ("Not written: <addr> <why>"); the field edit shows it after "Write failed for X:", so it is passed on as
+    // it is, not under "DLL error:", and it names no pipe command. A failure without a code keeps the "DLL error:" form.
+    [Fact]
+    public async Task WriteMemAsync_PassesARefusalOnAsTheDllWroteIt()
+    {
+        const string refusal = "Not written: 0x1000 is in executable memory (code); only data memory is written";
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = refusal, ["code"] = -21 });
+        var svc = CreateService();
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.WriteMemAsync("0x1000", new byte[] { 0x01 }, TestContext.Current.CancellationToken));
+        Assert.Equal(refusal, ex.Message);
+
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = "Write failed" });
+        ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.WriteMemAsync("0x1000", new byte[] { 0x01 }, TestContext.Current.CancellationToken));
+        Assert.Equal("DLL error: Write failed", ex.Message);
+
+        // The sentences themselves: no line of code in Fern.cpp's write_mem handler names the command.
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp")).Replace("\r\n", "\n");
+        int at = fern.IndexOf("if (cmd == Renge::CMD_WRITE_MEM)", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the write_mem handler was not found");
+        int end = fern.IndexOf("if (cmd == Renge::CMD_", at + 1, StringComparison.Ordinal);
+        var code = string.Join('\n', fern[at..(end > at ? end : fern.Length)].Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        Assert.Contains("refuse(", code, StringComparison.Ordinal);   // the slice is the handler, not an empty match
+        Assert.DoesNotContain("write_mem", code, StringComparison.Ordinal);
+    }
+
     // Audit #5 AD4 — get_protect_state parsing.
     //
     // The one trap: the live value arrives on the wire as `godmode`, NOT `live`

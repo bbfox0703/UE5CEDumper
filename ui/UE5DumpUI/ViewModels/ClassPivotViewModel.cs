@@ -184,20 +184,23 @@ public partial class ClassPivotViewModel : ViewModelBase
     public event Action<string>? LocateInGameEngine;
 
     /// <summary>[W1-PIVOT-SESSION] A result row is selected AND the results belong to the CURRENT live
-    /// session, so the row's ObjAddr is still an address in the running game. Gates all four row
-    /// handoffs (Open in Live Walker, Copy Address, both Locates), as Snapshot Diff and SPC gate theirs.
+    /// session, so the row's ObjAddr is still an address in the running game. Gates every row handoff,
+    /// as Snapshot Diff and SPC gate theirs.
     /// Without it, right after a reconnect the DEFAULT snapshot is a previous launch's, and the handoffs
     /// would give the running game a dead process's address.</summary>
     public bool CanUseResultRowActions =>
         SelectedResult != null
         && !string.IsNullOrEmpty(_currentSessionId)
         && _resultsSessionId == _currentSessionId;
-    /// <summary>The selected row can be located: <see cref="CanUseResultRowActions"/>.</summary>
-    public bool CanLocateResult => CanUseResultRowActions;
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] Open in Live Walker and the Locates walk the row's ObjAddr as a UObject:
+    /// <see cref="CanUseResultRowActions"/>, and the row is not a DataTable row, whose address is struct data.</summary>
+    public bool CanOpenResultObject => CanUseResultRowActions && SelectedResult is { IsDataTableRow: false };
+    /// <summary>The selected row can be located: <see cref="CanOpenResultObject"/>.</summary>
+    public bool CanLocateResult => CanOpenResultObject;
     /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
     /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
     /// flag would disable this button on games where GWorld IS resolved (audit #5 AE10).</summary>
-    public bool CanLocateResultInGWorld => CanUseResultRowActions;
+    public bool CanLocateResultInGWorld => CanOpenResultObject;
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX button reads. Never null:
     /// without a bridge it simply stays unavailable.</summary>
@@ -212,6 +215,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     private void RaiseResultRowActionGates()
     {
         OnPropertyChanged(nameof(CanUseResultRowActions));
+        OnPropertyChanged(nameof(CanOpenResultObject));
         OnPropertyChanged(nameof(CanLocateResult));
         OnPropertyChanged(nameof(CanLocateResultInGWorld));
         OnPropertyChanged(nameof(CanHexResult));
@@ -1430,7 +1434,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     [RelayCommand]
     private void OpenInLiveWalker(PivotResultRow? row)
     {
-        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
+        if (row == null || row.IsDataTableRow || string.IsNullOrEmpty(row.ObjAddr)) return;
         NavigateToInstance?.Invoke(row.ObjAddr);
     }
 
@@ -1438,7 +1442,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     [RelayCommand]
     private void LocateResultInGWorld(PivotResultRow? row)
     {
-        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
+        if (row == null || row.IsDataTableRow || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGWorld?.Invoke(row.ObjAddr);
     }
 
@@ -1446,7 +1450,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     [RelayCommand]
     private void LocateResultInGameEngine(PivotResultRow? row)
     {
-        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
+        if (row == null || row.IsDataTableRow || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGameEngine?.Invoke(row.ObjAddr);
     }
 
@@ -1458,7 +1462,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         StatusText = await AobMakerActions.HexAsync(AobMaker, row.ObjAddr, row.KeyValue, _log);
     }
 
-    /// <summary>Copy the representative instance's base address to the clipboard.</summary>
+    /// <summary>Copy the row's address to the clipboard: a representative instance's base, or a DataTable row's
+    /// struct data.</summary>
     [RelayCommand]
     private async Task CopyAddressAsync(PivotResultRow? row)
     {

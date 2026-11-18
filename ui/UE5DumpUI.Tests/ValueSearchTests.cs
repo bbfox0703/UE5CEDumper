@@ -483,7 +483,7 @@ public class ValueSearchTests
     public async Task GroupFirstScan_StoppedByDeadlineOrCap_AdvisesOnlyWhatGroupModeCanReach()
     {
         // [P5-GROUP-ADVICE] A cap stop is not helped by a longer timeout (it re-scans into the same cap) nor by a refine
-        // (it prunes the capped set), and Max never renders in group mode. Measured on DQ7R: a cap stop at 1,849 ms.
+        // (it prunes the capped set); raising Max, shown above both modes, is. Measured on DQ7R: a cap stop at 1,849 ms.
         var (vm, fake) = MakeVm();
         fake.NextGroupBeginResult = new GroupScanBeginResult
         {
@@ -497,6 +497,7 @@ public class ValueSearchTests
 
         Assert.DoesNotContain("or refine", vm.StatusText);
         Assert.Contains("more distinctive values", vm.StatusText);
+        Assert.Contains("raise Max", vm.StatusText);
     }
 
     [Fact]
@@ -1621,6 +1622,27 @@ public class ValueSearchTests
     // ---- P2: per-slot prev-value/ordered scan types + locked-offset table ----
 
     [Fact]
+    public async Task GroupScanType_TipAndFirstScanRefusal_NameEveryFirstScanType()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-30: Between is offered and accepted on a group First Scan, so the tooltip and the
+        // prev-value refusal list it with the other first-scan types.
+        var (vm, fake) = MakeVm();
+        var firstScanTypes = vm.GroupScanTypeOptions.Where(t => !ValueSearchViewModel.IsPrevValueScanType(t)).ToList();
+        Assert.Contains(ValueScanType.Between, firstScanTypes);
+
+        var tip = Res.Get("str.Tip.VS.Group.ScanType");
+        foreach (var t in firstScanTypes) Assert.Contains(t.ToString(), tip);
+
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].ScanType = ValueScanType.Changed;
+        vm.GroupInputs[1].Value = "2";
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+        Assert.Empty(fake.GroupBegins);
+        foreach (var t in firstScanTypes) Assert.Contains(t.ToString(), vm.ErrorMessage);
+    }
+
+    [Fact]
     public void GroupSlotInput_RequiresValueInput_ReactsToScanType()
     {
         var slot = new GroupSlotInput();
@@ -2035,6 +2057,382 @@ public class ValueSearchTests
     }
 
     // ---- P4: cross-object (owned sub-objects) ----
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-87: the Classes tab logs a load with the Game classes only value the
+    /// load was sent with, not one the box was switched to while the load ran (the box stays clickable during a
+    /// load).</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClassesLoadLog_NamesTheGameOnlyTheLoadWasSent(bool gameOnly)
+    {
+        var svc = MakeService(out var pipe);
+        var log = new MockLoggingService();
+        var vm = new GameClassFilterViewModel(svc, log, new MockPlatformService(Path.GetTempPath()))
+        {
+            GameClassesOnly = gameOnly,
+        };
+        bool wired = !gameOnly;
+        bool flippedWhileLoading = false;
+        // The pipe answers from inside the load call, so the box flips while the load is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "list_classes") return new JsonObject { ["ok"] = true };
+            wired = req["game_only"]!.GetValue<bool>();
+            flippedWhileLoading = vm.IsLoading;
+            vm.GameClassesOnly = !gameOnly;
+            return new JsonObject { ["ok"] = true, ["total"] = 0 };
+        });
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Equal(gameOnly, wired);
+        Assert.True(flippedWhileLoading, "the box did not flip while the load ran");
+        Assert.Equal(!gameOnly, vm.GameClassesOnly);
+        var line = Assert.Single(log.Messages, m => m.Contains("ListClasses: ", StringComparison.Ordinal));
+        Assert.Contains($"(gameOnly={gameOnly},", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-86: a First Scan or Next Scan request is built from the scan type, data
+    /// type and values its own checks passed, not ones picked while the diagnostics probe opens between those checks
+    /// and the send (the pickers and boxes stay editable then).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScanRequest_CarriesTheInputsItsChecksPassed(bool next)
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            SessionId = next ? 2UL : 0UL, SelectedDataType = ValueScanDataType.Int32,
+            SelectedScanType = next ? ValueScanType.Changed : ValueScanType.Exact, Value = next ? "" : "1",
+            SelectedRoundingMode = FloatRoundMode.Trunc,
+        };
+        string scanCmd = next ? "refine_value_scan" : "begin_value_scan";
+        JsonObject? wired = null;
+        bool editedBeforeSend = false;
+        // The probe's opening get_diagnostics is answered from inside the scan command, after its checks and
+        // before its request is built, so the edits land in that window. FString takes no rounding mode, and a
+        // blank Value (and Value2, for Between) would have failed the checks.
+        pipe.SetHandler(req =>
+        {
+            string cmd = req["cmd"]?.GetValue<string>() ?? "";
+            if (cmd == "get_diagnostics" && wired is null && !editedBeforeSend)
+            {
+                editedBeforeSend = true;
+                vm.SelectedDataType = ValueScanDataType.FString;
+                vm.SelectedScanType = next ? ValueScanType.Exact : ValueScanType.Between;
+                vm.Value = "";
+            }
+            if (cmd != scanCmd) return new JsonObject { ["ok"] = true };
+            wired = (JsonObject)req.DeepClone();
+            return new JsonObject { ["ok"] = true, ["session_id"] = 2UL, ["total"] = 0 };
+        });
+
+        if (next) await vm.NextScanCommand.ExecuteAsync(null);
+        else await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.True(editedBeforeSend, "the edits did not land between the checks and the send");
+        Assert.NotNull(wired);
+        var request = wired!;
+        Assert.Equal(next ? nameof(ValueScanType.Changed) : nameof(ValueScanType.Exact),
+                     request["scan_type"]?.GetValue<string>());
+        Assert.Equal(FloatRoundModeWire.ToWire(FloatRoundMode.Trunc), request["rounding_mode"]?.GetValue<string>());
+        Assert.False(request.ContainsKey("value2"), "value2 goes out only for Between");
+        if (next)
+        {
+            Assert.False(request.ContainsKey("value"), "a Changed refine sends no value");
+            Assert.StartsWith($"Next Scan ({ValueScanType.Changed}):", vm.StatusText);
+        }
+        else
+        {
+            Assert.Equal(nameof(ValueScanDataType.Int32), request["data_type"]?.GetValue<string>());
+            Assert.Equal("1", request["value"]?.GetValue<string>());
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-77: a Next Scan's status names the scan type the refine was sent with, not
+    /// one picked while the refine ran (the Scan Type picker stays enabled during a refine).</summary>
+    [Fact]
+    public async Task NextScanStatus_NamesTheScanTypeTheRefineWasSent()
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            SessionId = 2UL, SelectedDataType = ValueScanDataType.Int32, SelectedScanType = ValueScanType.Exact,
+            Value = "1",
+        };
+        string wired = "";
+        bool pickedWhileRefining = false;
+        // The pipe answers from inside the refine call, so the pick lands while the refine is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "refine_value_scan") return new JsonObject { ["ok"] = true };
+            wired = req["scan_type"]!.GetValue<string>();
+            pickedWhileRefining = vm.IsScanning;
+            vm.SelectedScanType = ValueScanType.Changed;
+            return new JsonObject { ["ok"] = true, ["session_id"] = 2UL, ["total"] = 3 };
+        });
+
+        await vm.NextScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(nameof(ValueScanType.Exact), wired);
+        Assert.True(pickedWhileRefining, "the Scan Type pick did not land while the refine ran");
+        Assert.Equal(ValueScanType.Changed, vm.SelectedScanType);
+        Assert.StartsWith($"Next Scan ({ValueScanType.Exact}):", vm.StatusText);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-75: an address Lookup's deep-descent caveat names the per-container element
+    /// cap the lookup was sent with, not a cap the Options slider moved to while the lookup ran (the slider stays movable
+    /// during a lookup).</summary>
+    [Fact]
+    public async Task LookupCaveat_NamesTheElementCapTheLookupWasSent()
+    {
+        const int sent = 256;
+        const int movedTo = 4096;
+        var svc = MakeService(out var pipe);
+        var vm = new InstanceFinderViewModel(svc, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            DeepScanElemCap = sent, LookupAddress = "0x7FF700001000",
+        };
+        int wired = -1;
+        bool movedWhileLookingUp = false;
+        // The pipe answers from inside the lookup call, so the slider moves while the lookup is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "find_by_address") return new JsonObject { ["ok"] = true };
+            wired = req["container_elem_cap"]!.GetValue<int>();
+            movedWhileLookingUp = vm.IsLookingUp;
+            vm.DeepScanElemCap = movedTo;
+            // A deep descent that found nothing: the reply on which the caveat names the cap.
+            return new JsonObject
+            {
+                ["ok"] = true, ["found"] = false,
+                ["container_scan"] = new JsonObject
+                {
+                    ["objects_scanned"] = 1_000, ["objects_total"] = 1_000, ["deep_scan"] = true,
+                },
+            };
+        });
+
+        await vm.LookupAddressCommand.ExecuteAsync(null);
+
+        Assert.Equal(sent, wired);
+        Assert.True(movedWhileLookingUp, "the slider move did not land while the lookup ran");
+        Assert.Equal(movedTo, vm.DeepScanElemCap);
+        Assert.Contains($"probes at most {sent:N0} element(s) per container", vm.LookupStatusText);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-74: a capped Property Search's status line takes its [deep] tag and its
+    /// "Game classes only" advice from the values the search was sent with, not from the two check boxes as they stand
+    /// when the search returns (both stay clickable during a search).</summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task PropertySearchStatus_NamesTheGameOnlyAndDeepTheSearchWasSent(bool gameOnly, bool deep)
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new PropertySearchViewModel(svc, new MockLoggingService())
+        {
+            SearchQuery = "Health", GameClassesOnly = gameOnly, DeepSearch = deep,
+        };
+        bool wiredGameOnly = !gameOnly, wiredDeep = !deep;
+        bool flippedWhileSearching = false;
+        // The pipe answers from inside the search call, so both boxes flip while the search is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "search_properties") return new JsonObject { ["ok"] = true };
+            wiredGameOnly = req["game_only"]!.GetValue<bool>();
+            wiredDeep = req["deep"]!.GetValue<bool>();
+            flippedWhileSearching = vm.IsSearching;
+            vm.GameClassesOnly = !gameOnly;
+            vm.DeepSearch = !deep;
+            return new JsonObject { ["ok"] = true, ["total"] = 200, ["truncated"] = true };
+        });
+
+        await vm.SearchCommand.ExecuteAsync(null);
+        string status = vm.StatusText;
+        vm.Dispose();
+
+        Assert.Equal(gameOnly, wiredGameOnly);
+        Assert.Equal(deep, wiredDeep);
+        Assert.True(flippedWhileSearching, "the check boxes did not flip while the search ran");
+        if (deep) Assert.Contains(" [deep]", status);
+        else Assert.DoesNotContain(" [deep]", status);
+        if (gameOnly) Assert.DoesNotContain("Game classes only", status);
+        else Assert.Contains("tick \"Game classes only\"", status);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-67: Instances, Properties and Classes build a capped result's note from the
+    /// Max the search was sent with, not a value typed into the Max box while the search ran (the box stays editable
+    /// during a search).</summary>
+    [Theory]
+    [InlineData("find_instances")]
+    [InlineData("search_properties")]
+    [InlineData("list_classes")]
+    public async Task CapNote_NamesTheMaxTheSearchWasSent(string cmd)
+    {
+        const int sent = 5_000;
+        // Lowered below the sent cap, or raised to the box's ceiling: read after the search, either changes the clause.
+        foreach (int typedMidSearch in new[] { 1_000, Constants.MaxSearchCap })
+        {
+            var svc = MakeService(out var pipe);
+            var platform = new MockPlatformService(Path.GetTempPath());
+            var instances = cmd == "find_instances"
+                ? new InstanceFinderViewModel(svc, new MockLoggingService(), platform)
+                  { InstanceSearchCap = sent, SearchClassName = "Pawn" }
+                : null;
+            var properties = cmd == "search_properties"
+                ? new PropertySearchViewModel(svc, new MockLoggingService()) { PropertySearchCap = sent, SearchQuery = "Health" }
+                : null;
+            var classes = cmd == "list_classes"
+                ? new GameClassFilterViewModel(svc, new MockLoggingService(), platform) { ClassListCap = sent }
+                : null;
+            int wired = -1;
+            bool typedWhileSearching = false;
+            // The pipe answers from inside the search call, so the edit lands while the search is in flight.
+            pipe.SetHandler(req =>
+            {
+                if (req["cmd"]?.GetValue<string>() != cmd) return new JsonObject { ["ok"] = true };
+                wired = req["limit"]!.GetValue<int>();
+                typedWhileSearching = instances?.IsSearching ?? properties?.IsSearching ?? classes!.IsLoading;
+                if (instances != null) instances.InstanceSearchCap = typedMidSearch;
+                if (properties != null) properties.PropertySearchCap = typedMidSearch;
+                if (classes != null) classes.ClassListCap = typedMidSearch;
+                return new JsonObject { ["ok"] = true, ["total"] = sent, ["truncated"] = true };
+            });
+
+            if (instances != null) await instances.SearchCommand.ExecuteAsync(null);
+            if (properties != null) await properties.SearchCommand.ExecuteAsync(null);
+            if (classes != null) await classes.LoadCommand.ExecuteAsync(null);
+            string status = instances?.StatusText ?? properties?.StatusText ?? classes!.StatusText;
+            properties?.Dispose();
+
+            Assert.Equal(sent, wired);
+            Assert.True(typedWhileSearching, $"{cmd}: the Max edit did not land while the search ran");
+            Assert.Contains(PartialResultNotice.RaiseMaxClause(sent, Constants.MaxSearchCap), status);
+            if (instances != null) Assert.Contains($"of max {sent:N0};", status);
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-66: a First Scan's truncation note, in either mode, names the deadline the
+    /// scan was sent with, not a Timeout the slider was moved to while the scan ran (the slider stays movable during a
+    /// scan).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TruncationNote_NamesTheTimeoutTheScanWasSent(bool groupMode)
+    {
+        const int sentSeconds = 25;
+        const int movedTo = 90;
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            ScanTimeoutSeconds = sentSeconds, IsGroupMode = groupMode,
+            SelectedDataType = ValueScanDataType.Int32, SelectedScanType = ValueScanType.Exact, Value = "1",
+        };
+        vm.GroupInputs[0].Value = "1";
+        vm.GroupInputs[1].Value = "2";
+        string scanCmd = groupMode ? "begin_group_scan" : "begin_value_scan";
+        int wiredMs = -1;
+        bool movedWhileScanning = false;
+        // The pipe answers from inside the scan call, so the slider moves while the scan is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != scanCmd) return new JsonObject { ["ok"] = true };
+            wiredMs = req["deadline_ms"]!.GetValue<int>();
+            movedWhileScanning = vm.IsScanning;
+            vm.ScanTimeoutSeconds = movedTo;
+            return new JsonObject
+            {
+                ["ok"] = true, ["session_id"] = 2UL, ["total"] = 10, ["deadline_hit"] = true,
+            };
+        });
+
+        if (groupMode) await vm.GroupFirstScanCommand.ExecuteAsync(null);
+        else await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(sentSeconds * 1000, wiredMs);
+        Assert.True(movedWhileScanning, "the Timeout move did not land while the scan ran");
+        Assert.Equal(movedTo, vm.ScanTimeoutSeconds);
+        Assert.Contains($"truncated ({sentSeconds}s deadline / result cap)", vm.StatusText);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-56: a group First Scan's truncation note offers raising the Max that scan was
+    /// sent with, not a value typed into the Max box while the scan ran (the box stays editable during a scan).</summary>
+    [Fact]
+    public async Task GroupTruncationNote_NamesTheMaxTheScanWasSent()
+    {
+        const int sent = 50_000;
+        // Lowered below the sent cap, or raised to the box's ceiling: read after the scan, either changes the clause.
+        foreach (int typedMidScan in new[] { 1_000, Constants.ScanSessionMaxResultsCeiling })
+        {
+            var svc = MakeService(out var pipe);
+            var vm = new ValueSearchViewModel(svc, new MockLoggingService()) { MaxResults = sent, IsGroupMode = true };
+            vm.GroupInputs[0].Value = "1";
+            vm.GroupInputs[1].Value = "2";
+            int wired = -1;
+            bool typedWhileScanning = false;
+            // The pipe answers from inside the scan call, so the edit lands while the scan is in flight.
+            pipe.SetHandler(req =>
+            {
+                if (req["cmd"]?.GetValue<string>() != "begin_group_scan") return new JsonObject { ["ok"] = true };
+                wired = req["max_results"]!.GetValue<int>();
+                typedWhileScanning = vm.IsScanning;
+                vm.MaxResults = typedMidScan;
+                return new JsonObject
+                {
+                    ["ok"] = true, ["session_id"] = 2UL, ["total"] = sent, ["deadline_hit"] = true,
+                };
+            });
+
+            await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+            Assert.Equal(sent, wired);
+            Assert.True(typedWhileScanning, "the Max edit did not land while the scan ran");
+            Assert.Equal(typedMidScan, vm.MaxResults);
+            Assert.Contains("truncated (", vm.StatusText);
+            Assert.Contains(PartialResultNotice.RaiseMaxClause(sent, Constants.ScanSessionMaxResultsCeiling), vm.StatusText);
+        }
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-42: a group First Scan stopped at its result cap offers raising Max, but
+    /// not once Max is at its box's Maximum, where it cannot go higher.</summary>
+    [Fact]
+    public async Task GroupTruncationNote_OffersRaiseMax_OnlyBelowTheMaxBoxCeiling()
+    {
+        var doc = System.Xml.Linq.XDocument.Parse(ReadProjectFile(Path.Combine("Views", "ValueSearchPanel.axaml")));
+        var box = Assert.Single(doc.Descendants(), e => e.Attribute("Value")?.Value == "{Binding MaxResultsValue}");
+        int ceiling = int.Parse(box.Attribute("Maximum")!.Value, System.Globalization.CultureInfo.InvariantCulture);
+
+        foreach (var (max, offered) in new[] { (ceiling - 1, true), (ceiling, false) })
+        {
+            var (groupVm, groupFake) = MakeVm();
+            groupFake.NextGroupBeginResult = new GroupScanBeginResult { SessionId = 2UL, Total = max, DeadlineHit = true };
+            groupVm.MaxResults = max;
+            groupVm.IsGroupMode = true;
+            groupVm.GroupInputs[0].Value = "1";
+            groupVm.GroupInputs[1].Value = "2";
+            await groupVm.GroupFirstScanCommand.ExecuteAsync(null);
+            Assert.Contains("truncated (", groupVm.StatusText);
+            Assert.True(offered == groupVm.StatusText.Contains("raise Max", StringComparison.Ordinal),
+                        $"group mode, Max {max}: {groupVm.StatusText}");
+        }
+    }
+
+    [Fact]
+    public void GroupFirstScan_GameOnlyAndMax_RenderInGroupMode()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-29: a group First Scan sends GameOnly and MaxResults, so neither control may sit
+        // inside a panel that only one mode shows.
+        var doc = System.Xml.Linq.XDocument.Parse(ReadProjectFile(Path.Combine("Views", "ValueSearchPanel.axaml")));
+        foreach (var (attr, binding) in new[] { ("IsChecked", "{Binding GameOnly}"), ("Value", "{Binding MaxResultsValue}") })
+        {
+            var control = Assert.Single(doc.Descendants(), e => e.Attribute(attr)?.Value == binding);
+            Assert.DoesNotContain(control.Ancestors(), a => a.Attribute("IsVisible")?.Value == "{Binding IsSingleMode}");
+            Assert.DoesNotContain(control.Ancestors(), a => a.Attribute("IsVisible")?.Value == "{Binding IsGroupMode}");
+        }
+    }
 
     [Fact]
     public async Task BeginGroupScanAsync_AttachesCrossObject_WhenEnabled_OmitsByDefault()

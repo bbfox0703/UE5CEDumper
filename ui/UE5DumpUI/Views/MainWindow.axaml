@@ -127,12 +127,9 @@
                    IsVisible="{Binding AobMakerShared.HasAttachWarning}"
                    ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
 
-        <!-- Options popover (⚙):
-             Collapses 5 export-shape controls (Collapse Pointers + 4 slider
-             limits) into a single dropdown to keep the top toolbar on one
-             row even at 4K / 225% scaling. These are tuned once per export
-             session, not flipped frequently, so hiding them behind a click
-             trades zero ergonomic cost for ~600px of horizontal space. -->
+        <!-- Options popover (⚙): the export, display and lookup settings sit behind one button so the top toolbar
+             stays on one row at high display scaling. They are changed rarely and saved across restarts, so the
+             extra click costs little. -->
         <Border Margin="8,2" VerticalAlignment="Center">
           <DropDownButton Content="{StaticResource str.Toolbar.Options}"
                           ToolTip.Tip="{StaticResource str.Tip.Toolbar.Options}"

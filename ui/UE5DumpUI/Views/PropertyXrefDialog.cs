@@ -29,7 +29,7 @@ namespace UE5DumpUI.Views;
 public sealed class PropertyXrefDialog : ManagedDialogWindow
 {
     /// <summary>
-    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF23).
+    /// AOT-safe column sort comparers, keyed by SortMemberPath.
     /// Occurrences / WriteCount sort on the NUMERIC property even though the cells
     /// render "3W / 4R" — a string sort of AccessSummary would be meaningless.
     /// </summary>
@@ -60,11 +60,17 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     private Button _btnDisasm = null!;
     private Button _btnLocate = null!;
     private Button _btnClose = null!;
+    // Set while the Disassemble button's own push runs. SyncDisasmButton can run during that push, and it keeps
+    // the button off while the flag is set: a second click mid-push would push again, adding a second record to
+    // CE's table.
+    private bool _disasmPushing;
 
     /// <summary>App-global AOBMaker bridge for the "Disassemble in CE" push. A
-    /// code-behind dialog can't take per-instance DI, so MainWindow sets this
-    /// once at startup; null/unavailable hides the button.</summary>
+    /// code-behind dialog can't take per-instance DI, so MainWindowViewModel sets this;
+    /// null/unavailable leaves the button shown but disabled, its tooltip saying why.</summary>
     public static IAobMakerBridge? SharedAobMaker;
+
+    internal const string KeyDisasmOffTip = "str.Tip.Xref.DisasmOff";
 
     /// <summary>Raised when the user clicks "Locate class" on a row — MainWindow
     /// subscribes once, resolves a live (non-CDO) instance of the class, and
@@ -224,8 +230,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             Margin = new Thickness(0, 8, 0, 0),
         };
         // Disassemble in CE: resolve UFunction->Func via the DLL, then jump CE's
-        // disassembler there + drop a labeled address-list row. Hidden when no
-        // AOBMaker bridge is available.
+        // disassembler there + drop a labeled address-list row. Shown but disabled
+        // when no AOBMaker bridge is available.
         _btnDisasm = new Button
         {
             Content = "⚙ Disassemble in CE",
@@ -234,16 +240,9 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             IsEnabled = false,   // enabled on selection + when AOBMaker is connected
         };
         _btnDisasm.Click += OnDisassembleClicked;
-        // Conditional hint: different text depending on whether the AOBMaker CE
-        // plugin is connected (the button is visible-but-disabled when absent so
-        // the user can see why).
-        ToolTip.SetTip(_btnDisasm, SharedAobMaker?.IsAvailable == true
-            ? "Resolve the selected function's native code address (UFunction->Func) and jump "
-            + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
-            + "list). Native functions only — Blueprint functions point at the shared "
-            + "interpreter and will report no per-function code."
-            : "AOBMaker CE plugin not connected — connect it in CE to push the function's "
-            + "code address to the disassembler.");
+        // Opens the tooltip on the greyed-out button too: while the plugin is out of reach, that tooltip is what
+        // says why. SyncDisasmButton sets its text.
+        ToolTip.SetShowOnDisabled(_btnDisasm, true);
         btnRow.Children.Add(_btnDisasm);
 
         // Locate the selected row's owning class in GWorld (resolve a live
@@ -375,18 +374,19 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Margin = new Thickness(4, 0),
                 }, supportsRecycling: false),
         });
-        // AOT-safe sort comparers (audit #5 AF23) — the twin of
-        // FunctionPropsDialog's grid, and it carried the same defect: six
-        // DataGridTemplateColumns, CanUserSortColumns = true, no comparer, so the
-        // reflection sort is trimmed and every header is inert in the shipped build.
+        // AOT-safe sort comparers. This grid is built from DataGridTemplateColumns, which have no
+        // column-level Binding to root a SortMemberPath, so the trimmed build drops the reflection
+        // metadata Avalonia's default sort reads and a header without a comparer does not sort.
+        // Same rule and same helper as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
         _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) =>
         {
             bool has = _grid.SelectedItem is PropertyXrefMatch;
             _btnCopy.IsEnabled = has;
-            _btnDisasm.IsEnabled = has && SharedAobMaker?.IsAvailable == true;
+            SyncDisasmButton();
             _btnLocate.IsEnabled = has;
         };
+        SyncDisasmButton();
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
 
         root.Children.Add(_grid);
@@ -394,6 +394,19 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         Content = root;
 
         Opened += async (_, _) => await RunScanAsync();
+        Opened += async (_, _) => await ProbeAobMakerAsync();
+    }
+
+    // The bridge's flag is a cache that a probe or a push re-learns, and this modal dialog keeps the main window's
+    // ⟳ out of reach, so the dialog probes once as it opens and then re-sets the button: reopening the dialog checks
+    // the plugin again, which the greyed button's tooltip says. The probe is not cancelled when the dialog closes:
+    // the bridge would record the cancelled connect as its last failure.
+    private async Task ProbeAobMakerAsync()
+    {
+        if (SharedAobMaker is not { } bridge) return;
+        try { await bridge.CheckAvailabilityAsync(); }
+        catch (Exception) { /* the button follows whatever flag the bridge kept */ }
+        SyncDisasmButton();
     }
 
     private async Task RunScanAsync()
@@ -436,7 +449,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             _btnRefresh.IsEnabled = true;
             bool has = _grid.SelectedItem is PropertyXrefMatch;
             _btnCopy.IsEnabled = has;
-            _btnDisasm.IsEnabled = has && SharedAobMaker?.IsAvailable == true;
+            SyncDisasmButton();
             _btnLocate.IsEnabled = has;
         }
     }
@@ -452,10 +465,26 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 
+    // The button is enabled for a selected row while the bridge is up and the button's own push is not running. Its
+    // tooltip says what the button does, or, while the plugin is out of reach, why, in the bridge's own sentence for
+    // its last failure (a busy or refused pipe is not a missing plugin). State and tooltip are set together because a
+    // push can change the bridge's flag while the dialog is open.
+    private void SyncDisasmButton()
+    {
+        bool up = SharedAobMaker?.IsAvailable == true;
+        _btnDisasm.IsEnabled = up && _grid.SelectedItem is PropertyXrefMatch && !_disasmPushing;
+        ToolTip.SetTip(_btnDisasm, up
+            ? "Resolve the selected function's native code address (UFunction->Func) and jump "
+            + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
+            + "list). Native functions only — Blueprint functions point at the shared "
+            + "interpreter and will report no per-function code."
+            : Res.Format(KeyDisasmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
+    }
+
     // "Disassemble in CE": resolve the UFunction's native code entry point
     // (UFunction->Func) via the DLL, then drop a labeled CE address-list row and
-    // jump CE's disassembler there. Native funcs land on the execXxx thunk; BP
-    // funcs land on the interpreter (noted to the user).
+    // jump CE's disassembler there. Native funcs land on the execXxx thunk; a BP
+    // func has no address of its own, and the status line says so.
     private async void OnDisassembleClicked(object? sender, RoutedEventArgs e)
     {
         if (_grid.SelectedItem is not PropertyXrefMatch x || string.IsNullOrEmpty(x.FunctionAddress)) return;
@@ -464,10 +493,12 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         {
             // ⛔ NOT a bare `return` — that is a click that does nothing, says nothing, and
             // leaves the previous status line standing. The button is normally disabled in this
-            // state (`ShowForClassAsync` gates it on the same cached flag), so the guard reads defensive; but
-            // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
-            // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
-            // Engine with the dialog up and the button stays enabled over a stale true.
+            // state (`SyncDisasmButton` gates it on the same cached flag), so the guard reads defensive; but
+            // `IsAvailable` is a CACHE that a probe or a push anywhere in the app can rewrite, and the button
+            // follows it when SyncDisasmButton runs. A probe or push still in flight when SyncDisasmButton last
+            // ran can turn the flag false after it, over a button left enabled. Killing Cheat Engine with the
+            // dialog up does not by itself clear the flag: the click passes this guard, the push fails, and the
+            // refusal branch below says so.
             //
             // Reporting it makes the failure visible to a user AND testable. Same colour and
             // shape as the refusal branch below, different wording because nothing was
@@ -476,8 +507,11 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                               + "connection was open when this dialog was opened; reopen it "
                               + "after restarting Cheat Engine with the AOBMaker plugin.";
             _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+            // The button the stale flag left enabled greys out, and its tooltip gives the bridge's reason.
+            SyncDisasmButton();
             return;
         }
+        _disasmPushing = true;
         _btnDisasm.IsEnabled = false;
         try
         {
@@ -534,7 +568,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         }
         finally
         {
-            _btnDisasm.IsEnabled = _grid.SelectedItem is PropertyXrefMatch && SharedAobMaker?.IsAvailable == true;
+            _disasmPushing = false;
+            SyncDisasmButton();
         }
     }
 

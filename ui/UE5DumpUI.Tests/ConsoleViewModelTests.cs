@@ -163,6 +163,30 @@ public class ConsoleViewModelTests
     private const uint FUNC_BlueprintCallable  = 0x0400_0000;
     private const uint FUNC_Native             = 0x0000_0400;
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-26: Enter in the command line runs the typed command, as Run does, and
+    /// the box's tooltip says so.</summary>
+    [Fact]
+    public void Command_line_runs_on_Enter()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
+        int at = axaml.IndexOf("Text=\"{Binding CommandInput}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the command TextBox is missing from ConsolePanel.axaml");
+        int start = axaml.LastIndexOf("<TextBox", at, StringComparison.Ordinal);
+        int end = axaml.IndexOf("/>", at, StringComparison.Ordinal);
+        Assert.Contains("KeyDown=\"CommandInput_KeyDown\"", axaml[start..end]);
+
+        var code = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml.cs"));
+        int handler = code.IndexOf("void CommandInput_KeyDown(", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "CommandInput_KeyDown is missing from ConsolePanel.axaml.cs");
+        int handled = code.IndexOf("e.Handled = true;", handler, StringComparison.Ordinal);
+        Assert.True(handled > handler, "CommandInput_KeyDown does not mark the key handled");
+        var body = code[handler..handled];
+        Assert.Contains("Key.Enter", body);
+        Assert.Contains("RunCommandTextCommand.Execute(", body);
+
+        Assert.Contains("Enter", Res.Get("str.Tip.Con.CommandInput"), StringComparison.Ordinal);
+    }
+
     // ClassAddr is populated because list_all_functions really does supply it per row —
     // and the handoff events now carry it so MainWindow never re-derives an address from
     // the CAPPED list_classes page (audit #5 X2).
@@ -1968,6 +1992,19 @@ public class ConsoleViewModelTests
     // "See memory feedback_ucheatmanager_stripped." -- a developer's private note name,
     // meaningless to every user. The text now lives only in en.axaml and the panel binds
     // it with StaticResource; these pin the key, its wording and the binding.
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-28: the Console's tooltips name the parameter dialog by the title the user
+    /// sees, not by its C# class.</summary>
+    [Theory]
+    [InlineData("str.Tip.Con.CommandInput")]
+    [InlineData("str.Tip.Con.RunRow")]
+    public void Console_tooltips_do_not_name_the_dialog_class(string key)
+    {
+        var tip = Res.Get(key);
+        Assert.False(string.IsNullOrEmpty(tip), key + " is not in en.axaml");
+        Assert.DoesNotContain("InvokeParamDialog", tip, StringComparison.Ordinal);
+        Assert.Contains("Invoke dialog", tip, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void CheatManagerHint_wording_is_a_Shipping_caveat_without_internal_references()

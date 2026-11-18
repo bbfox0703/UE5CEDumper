@@ -305,6 +305,22 @@ public class LiveFuncsViewModelTests
     {
         var e = new PeProfileEntry { IsNew = isNew, Delta = delta };
         Assert.Equal(expected, e.DeltaLabel);
+
+    }
+
+    /// <summary>The fewer-calls label reads "-N" in every culture, beside the literal "+" of "+N": ICU's sv-SE writes
+    /// its minus sign as U+2212, which the column would show and copy.</summary>
+    [Fact]
+    public void PeProfileEntry_DeltaLabel_uses_an_ASCII_minus_in_every_culture()
+    {
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            Assert.Equal("-3", new PeProfileEntry { Delta = -3 }.DeltaLabel);
+            Assert.Equal("+5", new PeProfileEntry { Delta = 5 }.DeltaLabel);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
     }
 
     [Fact]

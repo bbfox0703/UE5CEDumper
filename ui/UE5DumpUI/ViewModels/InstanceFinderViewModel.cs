@@ -523,8 +523,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             StatusText = reRun ? "Re-searching..." : "Searching...";
             ShowCeXml = false;
 
+            // The cap note names the Max this search was sent with: the Max box can change while the search runs.
+            int capSent = InstanceSearchCap;
             var result = await _dump.FindInstancesAsync(
-                className, ExactMatch, limit: InstanceSearchCap, newestFirst: NewestFirst,
+                className, ExactMatch, limit: capSent, newestFirst: NewestFirst,
                 nameFilter: nameFilter, excludeClasses: excludeClasses, ct: ct);
             if (gen != _searchGen) return;   // superseded by a newer search/re-run
 
@@ -545,15 +547,14 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // truncated now means "more NON-EXCLUDED matches exist past the cap" — so
             // point at the levers that recover them: exclude noise, raise Max, or narrow.
             //
-            // ⚠ "raise Max" is CONDITIONAL. This panel does own the control — it is where the
-            // other two copied the phrase from — but at 50,000 there is nothing left to raise
-            // and the advice becomes the Z10 lie again, one ceiling later. The clause is shared
-            // (PartialResultNotice.RaiseMaxClause) rather than re-derived here: the same rule
-            // was written three times in one day for three panels, and the third time is when a
-            // rule stops being a rule. [CLASSCAP] sibling sweep.
+            // ⚠ "raise Max" is CONDITIONAL. This panel owns the control, but at its ceiling there
+            // is nothing left to raise and the advice would send the user to a control that cannot
+            // go higher. The clause comes from PartialResultNotice.RaiseMaxClause, which holds that
+            // rule for the panels with a Max control (RaiseMaxClauseTests lists them), rather than
+            // being re-derived here. [CLASSCAP]
             var capNote = result.Truncated
-                ? $" — ⚠ capped at {found} of max {InstanceSearchCap:N0}; exclude noise classes"
-                  + PartialResultNotice.RaiseMaxClause(InstanceSearchCap, Constants.MaxSearchCap)
+                ? $" — ⚠ capped at {found} of max {capSent:N0}; exclude noise classes"
+                  + PartialResultNotice.RaiseMaxClause(capSent, Constants.MaxSearchCap)
                   + ", or narrow"
                 : "";
             if (result.Scanned > 0)
@@ -628,7 +629,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var result = await _dump.FindByAddressAsync(addrStr, DeepScanElemCap);
+            // The deep-descent caveat names the element cap this lookup was sent with: the Options slider can change
+            // the cap while the lookup runs.
+            int elemCapSent = DeepScanElemCap;
+            var result = await _dump.FindByAddressAsync(addrStr, elemCapSent);
 
             SelectedInstance = null;   // detach before clearing the bound collection
             Instances.Clear();
@@ -661,7 +665,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             string scanSuffix = result.ContainerScan is { } cs
                 ? PartialResultNotice.ScanSuffix(
                       cs.ObjectsScanned, cs.ObjectsTotal, cs.DurationMs,
-                      cs.DeadlineHit, cs.DeepScan, DeepScanElemCap,
+                      cs.DeadlineHit, cs.DeepScan, elemCapSent,
                       anyContainerMatch: result.ContainerMatches.Count > 0)
                 : "";
 

@@ -36,7 +36,7 @@ both report a real error if start-up fails or times out.
 ### After any route
 
 Launch `UE5DumpUI.exe` and click **Connect**. If the DLL is already present, every route detects it
-and skips re-injecting rather than double-mapping.
+and does not inject a second copy, which would take the game over from the one already serving.
 
 -----
 

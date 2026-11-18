@@ -568,6 +568,11 @@ public sealed class DumpService : IDumpService
             ["bytes"] = Convert.ToHexString(data)
         };
         var res = await _pipe.SendAsync(req, ct);
+        // A refusal carries a code, and its error is a sentence the DLL wrote for the reader ("Not written: <addr> <why>"):
+        // the memory was left as it was on purpose, which the "DLL error:" form would report as the DLL failing.
+        if (!(res["ok"]?.GetValue<bool>() ?? false) && res["code"] is not null
+            && res["error"]?.GetValue<string>() is { Length: > 0 } refusal)
+            throw new InvalidOperationException(refusal);
         CheckResponse(res);
     }
 

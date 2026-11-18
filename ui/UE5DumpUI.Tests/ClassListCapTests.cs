@@ -116,11 +116,9 @@ public class ClassListCapTests
 }
 
 /// <summary>
-/// The Z10 rule, now in ONE place. Three panels own a Max control and each had written the
-/// "or raise Max" guard separately; the third rewrite in a single day is where a rule stops
-/// being a rule, so it moved into <c>PartialResultNotice.RaiseMaxClause</c> — beside the
-/// sentence it guards rather than beside each control. These pin the clause, and that all
-/// three callers actually go through it.
+/// The Z10 rule, in ONE place: <c>PartialResultNotice.RaiseMaxClause</c> holds the "or raise
+/// Max" guard beside the sentence it guards rather than beside each control. These pin the
+/// clause, and that each panel listed below actually goes through it.
 /// </summary>
 public class RaiseMaxClauseTests
 {
@@ -154,28 +152,27 @@ public class RaiseMaxClauseTests
     public void EveryPanelThatOffersRaiseMaxGoesThroughIt()
     {
         // ⚠ A panel that re-derives the rule inline is the defect returning: correct on the day
-        // it is written, drifting the next time the ceiling moves. Instance Finder is in this
-        // list because it is where the phrase ORIGINATED and was the last one still saying it
-        // unconditionally — at 50,000 it advised raising a Max already at its maximum.
+        // it is written, drifting the next time the ceiling moves. Each panel listed here can
+        // advise raising its Max, so each must build that clause through RaiseMaxClause, which
+        // says nothing once the cap is at the ceiling.
         foreach (var vm in new[]
                  {
                      @"ui\UE5DumpUI\ViewModels\InstanceFinderViewModel.cs",
                      @"ui\UE5DumpUI\ViewModels\PropertySearchViewModel.cs",
                      @"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs",
+                     @"ui\UE5DumpUI\ViewModels\ValueSearchViewModel.cs",
                  })
         {
             string src = File.ReadAllText(RepoFile(vm));
 
-            // ⚠ The open paren is load-bearing: it distinguishes a CALL from a mention. The
-            // first version of this test asserted on the bare name and was shown, by a negative
-            // control, to pass against a hand-rolled copy — because the comment above that copy
-            // still named the helper. A test for "goes through X" that a comment can satisfy is
-            // not a test.
+            // ⚠ The open paren is load-bearing: it tells a CALL from a mention of the bare name,
+            // which a comment beside a hand-rolled copy can make. A test for "goes through X" that
+            // a comment can satisfy is not a test.
             Assert.Contains("PartialResultNotice.RaiseMaxClause(", src);
 
-            // And the sentence itself is built in exactly ONE place. Banning the phrase outright
-            // (not just an interpolated form) is what closes the other half of that control: the
-            // hand-rolled copy used string concatenation and slipped straight past a `{` check.
+            // And the clause's wording is left to RaiseMaxClause: the phrase is banned outright from
+            // these files, not just its interpolated form, so a copy that keeps the phrase in one
+            // literal fails, whether it interpolates the number or concatenates it on.
             Assert.DoesNotContain("or raise Max above", src);
         }
     }

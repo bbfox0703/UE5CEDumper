@@ -53,7 +53,8 @@ public sealed class DenkenWriteSitesSourceTests
         Assert.Contains("string text = string.Join(Environment.NewLine, x.WriteSites);", dialog);
         // The two buttons follow the selection, after every scan too (WS-TEST-1).
         Assert.Contains("_btnCopySites.IsEnabled = hasSites;", dialog);
-        Assert.Contains("_btnSiteInCe.IsEnabled = hasSites && SharedAobMaker?.IsAvailable == true;", dialog);
+        Assert.Contains("bool up = SharedAobMaker?.IsAvailable == true;", dialog);
+        Assert.Contains("_btnSiteInCe.IsEnabled = hasSites && up && !_sitePushing;", dialog);
         Assert.Contains("_grid.SelectionChanged += (_, _) => UpdateSelectionButtons();", dialog);
         Assert.Matches(@"finally\s*\{\s*_btnRefresh\.IsEnabled = true;\s*UpdateSelectionButtons\(\);", dialog);
         string en = Src("ui/UE5DumpUI/Resources/Strings/en.axaml");

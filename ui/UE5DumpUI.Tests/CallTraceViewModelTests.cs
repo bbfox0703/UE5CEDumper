@@ -1545,6 +1545,18 @@ public class CallTraceViewModelTests
 
     // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
 
+    /// <summary>The Object line names the object the function was called on (ProcessEvent's receiver, the record's
+    /// object), never the code that called it, which a word like "calling" suggests: the callers are the tree's parents.</summary>
+    [Fact]
+    public void The_object_lines_say_the_function_was_called_on_the_object()
+    {
+        foreach (var key in new[] { "str.CT.Detail.Object", "str.CT.Detail.ObjectStale" })
+        {
+            Assert.DoesNotContain("calling", En(key), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("called on", En(key), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     /// <summary>en.axaml's strings, read as the app shows them: Res has no Avalonia application in a unit test, so
     /// the view model is handed these and the tests read the sentences a user reads.</summary>
     private static readonly Lazy<Dictionary<string, string>> EnStrings = new(() =>
@@ -1618,10 +1630,11 @@ public class CallTraceViewModelTests
     public void The_address_lines_say_whose_address_they_are()
     {
         // Maintainer, build 3638: "UFunction: 0x..." reads as a call address, and pasted into CE's disassembler it shows
-        // garbage. It is the UFunction object's address (data), and the Object line's is the calling object's.
+        // garbage. It is the UFunction object's address (data), and the Object line's is the address of the object the
+        // function was called on.
         Assert.Contains("UFunction object's address", En("str.CT.Detail.FuncAddr"), StringComparison.Ordinal);
-        Assert.Contains("calling object", En("str.CT.Detail.Object"), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("calling object's address", En("str.CT.Detail.ObjectStale"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("called on", En("str.CT.Detail.Object"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("object it was called on", En("str.CT.Detail.ObjectStale"), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

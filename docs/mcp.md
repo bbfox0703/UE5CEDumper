@@ -313,8 +313,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |
 | "The game's DLL is build N, older than 3705" (or 3706) | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
 | "Not written: ... changed since it was read" | You, the game or another program changed the memory after the AI read it; the reply shows what is there now. |
-| "Not invoked: ... has an invoke still queued or running" | A call you made has not run yet; the AI can call again once it has (`read_holds` lists outstanding calls). |
-| "Not invoked: this server's previous invoke ... is still queued" | The game thread has not run the AI's last call; it runs when the game responds, or is dropped when the session ends. |
+| "Not invoked: ... has a game-thread call still queued or running" (a gameplay tool: "Not changed: ...") | A game-thread call from you, a Cheat Engine record or another AI session (the message names it) has not run yet; the AI can call again once it has (`read_holds` lists outstanding calls). |
+| "Not invoked: a game-thread call this server made is still queued or running" | The game thread has not run the AI's last call; it runs when the game responds, or is dropped when the session ends. |
 
 The server writes its log to `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\mcp-<date>-<time>-<pid>.log`, one file per
 server; files older than 21 days are deleted.

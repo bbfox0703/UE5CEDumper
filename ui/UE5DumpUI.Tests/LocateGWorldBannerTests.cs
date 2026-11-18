@@ -129,6 +129,64 @@ public class LocateGWorldBannerTests
         Assert.Contains("UGameEngine", vm.LocateFailureMessage);
     }
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-39: the tab these texts send the user to is labelled by
+    /// str.Tab.InstanceFinder, so they name it by that label: the Value Search inst tooltip (which also says what its
+    /// class-name search returns, as the other hand-off tooltips do), the Force templates-only note and the fallback copy
+    /// ForceText keeps for a missing key, the Snapshot auto-skip tooltip and this not_reachable explanation.</summary>
+    [Fact]
+    public async Task TextsSendingTheUserToTheInstancesTab_NameItByItsLabel()
+    {
+        var tab = UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder");
+        Assert.False(string.IsNullOrEmpty(tab), "str.Tab.InstanceFinder is not in en.axaml");
+
+        var stub = new PathStub
+        {
+            Next = new GWorldPathResult { Found = false, Status = "not_reachable", Visited = 1 },
+        };
+        var vm = MakeVm(stub);
+        await vm.LocateInGWorldAsync("0x1000", 0, null, stopAtParent: false,
+            ct: TestContext.Current.CancellationToken);
+        Assert.True(vm.HasLocateFailure);
+
+        var vsTip = UE5DumpUI.Core.Res.Get("str.Tip.VS.OpenInst");
+        var texts = new[]
+        {
+            vsTip,
+            UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote("Pawn", 2),
+            UE5DumpUI.Core.Res.Get("str.Tip.Snapshot.AutoSkipNoise"),
+            vm.LocateFailureMessage,
+        };
+        foreach (var text in texts)
+        {
+            Assert.DoesNotContain("Instance Finder", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("the " + tab + " tab", text, StringComparison.Ordinal);
+        }
+        Assert.Contains("class name contains", vsTip, StringComparison.Ordinal);
+        Assert.Contains("templates", vsTip, StringComparison.Ordinal);
+
+        // en.axaml always resolves in a test, so the fallback is read from the source.
+        var forceText = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Helpers/ForceText.cs"));
+        Assert.DoesNotContain("Instance Finder", forceText, StringComparison.Ordinal);
+    }
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-54: the DLL's Current Target note for a player with no target-like
+    /// reference, which the Related tab shows as its status, names the tab it sends the user to by its label,
+    /// str.Tab.InstanceFinder. Read from Edel.cpp, which no C++ test target compiles.</summary>
+    [Fact]
+    public void CurrentTargetNoCandidateNote_NamesTheInstancesTabByItsLabel()
+    {
+        var tab = UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder");
+        Assert.False(string.IsNullOrEmpty(tab), "str.Tab.InstanceFinder is not in en.axaml");
+
+        var edel = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Edel.cpp")).Replace("\r\n", "\n");
+        const string head = "res.note = \"Player resolved but no target-like reference found.";
+        int at = edel.IndexOf(head, StringComparison.Ordinal);
+        Assert.True(at >= 0, "Edel.cpp no longer sets the no-candidate note");
+        var note = edel[at..edel.IndexOf('\n', at)];
+        Assert.DoesNotContain("Instance Finder", note, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("the " + tab + " tab", note, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task LocateInGWorld_LowDepth_ConfirmGate_SkipsSearchOnCancel_ThenQuietForSession()
     {

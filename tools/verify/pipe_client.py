@@ -13,12 +13,20 @@ only game listed under `\\\\.\\pipe\\`. With several games it takes the lowest p
 and warns. When only the legacy `\\\\.\\pipe\\UE5DumpBfx` is there, a game runs an old DLL (a proxy
 never refreshed): it refuses and says so. A rig that already knows the game's pid passes it.
 
-The three traps from §2.6 are enforced here rather than left to the caller, because each one
-produces a *confident wrong answer* rather than an error:
+The three traps from §2.6 are enforced here rather than left to the caller (trap 1 only in part, as
+its entry says), because each one produces a *confident wrong answer* rather than an error:
 
-1. **A deployed proxy ignores a fresh injection.** `injectDLL` returns true, the DLL loads, and the
-   OLD proxy keeps serving the pipe. `assert_build()` refuses to proceed unless the DLL's reported
-   `build_number` matches `dist/build_number.txt`.
+1. **A fresh injection beside a deployed proxy does not test the proxy.** The injected copy takes the
+   game over: it scans, the proxy shuts down, and the injected copy serves the pipe. Until the
+   take-over the proxy still answers, so a connection opened during the scan talks to the proxy and
+   drops when the proxy shuts down. A proxy too old to export the mailbox contract is not taken
+   over, but it serves only the old shared pipe name, and the injected copy serves the game's own
+   pipe once its scan is done. Either way the copy that ends up answering the game's own pipe is the
+   injected one, with its own build. `assert_build()` refuses to proceed unless the DLL's reported
+   `build_number` matches `dist/build_number.txt`, which catches a stale proxy still answering; it
+   cannot tell a proxy from an injected copy of the same build. Telling them apart is the caller's
+   job: a proxy-mode row reads `get_pointers.load_mode`, which must say `proxy:<name>.dll` (an
+   injected `UE5Dumper.dll` says `injected`).
 2. **Proxy mode does not scan on load, and `init` does not make it.** `ensure_scanned()` sends
    `trigger_scan` and polls until the pointers actually resolve.
 3. **A result cap turns an absence claim into a sample.** `check_complete()` fails loudly on
