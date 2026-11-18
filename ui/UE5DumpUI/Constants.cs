@@ -379,7 +379,7 @@ public static class Constants
     // AOB Usage Tracking
     public const string AobUsageFilePrefix = "UE5CEDumper";
 
-    // Experimental features (Snapshot / SPC Query / Class Pivot — gated via the
+    // The experimental features' settings (IExperimentalGate; the opt-in is the
     // System-tab credit checkbox). Persisted under %LOCALAPPDATA%\UE5CEDumper.
     public const string ExperimentalSettingsFile = "experimental.json";
 

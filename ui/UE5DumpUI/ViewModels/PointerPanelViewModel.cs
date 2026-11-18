@@ -640,9 +640,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Opt-in toggle for the experimental analysis tabs (Snapshot / SPC Query /
-    /// Class Pivot), surfaced as the System-tab credit checkbox. Backed by the
-    /// shared <see cref="IExperimentalGate"/> (persisted across restarts).
+    /// Opt-in toggle for the experimental features, surfaced as the System-tab
+    /// credit checkbox. Backed by the shared <see cref="IExperimentalGate"/>
+    /// (persisted across restarts).
     /// </summary>
     public bool ExperimentalEnabled
     {

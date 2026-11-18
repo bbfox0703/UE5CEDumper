@@ -3,11 +3,9 @@ using System;
 namespace UE5DumpUI.Core;
 
 /// <summary>
-/// Shared opt-in gate for the experimental analysis tabs (Snapshot /
-/// SPC Query / Class Pivot). A single instance is shared between
-/// MainWindowViewModel (which gates tab visibility) and
-/// PointerPanelViewModel (which owns the System-tab toggle checkbox), so
-/// flipping it in one place updates the other via <see cref="Changed"/>.
+/// Shared opt-in gate for the experimental features: the experimental tabs and
+/// the experimental cards and options in other panels. The System tab's checkbox
+/// flips it; every holder of the instance hears the flip through <see cref="Changed"/>.
 /// The implementation persists the flag across restarts.
 /// </summary>
 public interface IExperimentalGate

@@ -850,8 +850,8 @@
     <!-- Credit footer + experimental gate. The author/repo credit is a plain
          label + clickable URL link (full opacity). The experimental opt-in is a
          SEPARATE, title-less checkbox beside the author line, kept deliberately
-         faint (Opacity 0.2) so it stays low-key; its tooltip states the effect
-         (enables the Snapshot / SPC Query / Class Pivot tabs). Always visible on
+         faint so it stays low-key; its tooltip states the effect (it turns on
+         the experimental features). Always visible on
          the System tab so the attribution doesn't depend on a live DLL connection. -->
     <StackPanel Spacing="3" HorizontalAlignment="Center" Margin="0,8,0,4">
       <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
