@@ -39,7 +39,7 @@ beside them does not.
 | UT-26 | Console | behaviour | A status message says "type the command and press Enter"; the command box does nothing on Enter (its tooltip says press Run). | ✅ fixed 2026-11-18 (red `e567bbb3`, then green) |
 | UT-27 | Find Class Funcs | comment | `PropertyXrefDialog`'s comment says the Disassemble button is hidden without AOBMaker; it is visible and disabled. | ✅ fixed 2026-11-18 |
 | UT-28 | Console | text | `str.Tip.Con.CommandInput` / `str.Tip.Con.RunRow` show the internal class name `InvokeParamDialog`. | ✅ fixed 2026-11-18 (red `fafda81d`, then green) |
-| UT-29 | Value Search | behaviour | Group scan uses single mode's hidden **Game classes only** and **Max:** values, which group mode does not show; its truncation message names a result cap the user cannot see there. | ⬜ |
+| UT-29 | Value Search | behaviour | Group scan uses single mode's hidden **Game classes only** and **Max:** values, which group mode does not show; its truncation message names a result cap the user cannot see there. | ✅ fixed 2026-11-18 (red `f1b50ace`, then green) |
 | UT-30 | Value Search | text | `str.Tip.VS.Group.ScanType` lists only Exact / Bigger / Smaller for the first scan; Between is offered. The matching error omits it too. | ⬜ |
 | UT-31 | Classes and others | text | `str.Tip.GameClassFilter.FindInstances` (and **inst** elsewhere) says "live instances"; the search matches class names by substring and keeps templates. | ⬜ |
 | UT-32 | Classes | text | The batch Find Func partial clause uses the unit "rows"; Instances says "classes". | ⬜ |

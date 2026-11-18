@@ -1500,8 +1500,8 @@ public partial class ValueSearchViewModel : ViewModelBase
                           $"(scanned {result.ScannedObjects} objects, {result.ScannedClasses} classes)";
             if (result.DeadlineHit)
                 // [P5-GROUP-ADVICE] Only remedies group mode can reach: "refine" prunes the capped set and cannot surface
-                // a match that never entered it (InheritedTruncation), and Max never renders in group mode.
-                summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider (deadline) or use more / more distinctive values (result cap)";
+                // a match that never entered it (InheritedTruncation). Max sits in the mode row, which both modes show.
+                summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider (deadline), or raise Max or use more / more distinctive values (result cap)";
             // Separate fact from DeadlineHit, and the one that explains a short
             // "All fields" list. Latched for the session: refine inherits it. (AE13)
             _groupPerSlotCapHit = result.PerSlotCapHit;
