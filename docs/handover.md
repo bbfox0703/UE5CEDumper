@@ -509,13 +509,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 
 `tools/verify/pipe_client.py` is the library the other pipe rigs import. It enforces the two traps itself:
 `assert_build()` (a stale deployed **proxy** answers the pipe happily when no fresh copy was loaded
-into the game) and `ensure_scanned()` (proxy mode starts the pipe **only**; `init` returns
-`ok:true` in ~0 ms having scanned nothing, after which every pointer reads `not_found` and looks
-like a broken AOB table). ⚠ A fresh copy injected beside a deployed proxy is not inert: it takes the
-game over, or, beside a proxy too old to export the mailbox contract, serves the game's own pipe
-while the proxy serves only the old shared pipe name. Either way the injected copy answers, so when
-it is the build just made `assert_build()` passes. A proxy-mode row also reads
-`get_pointers.load_mode`, which must say `proxy:<name>.dll` (working-lessons §2.6).
+into the game, and while a freshly injected copy is still scanning) and `ensure_scanned()` (proxy
+mode starts the pipe **only**; `init` returns `ok:true` in ~0 ms having scanned nothing, after which
+every pointer reads `not_found` and looks like a broken AOB table). ⚠ A fresh copy injected beside a
+deployed proxy is not inert. It takes the game over: it scans, the proxy shuts down, and the
+injected copy serves the pipe. Until the take-over the proxy still answers, so a connection opened
+during the scan talks to the proxy and drops when the proxy shuts down. A proxy too old to export
+the mailbox contract is not taken over, but it serves only the old shared pipe name, and the
+injected copy serves the game's own pipe once its scan is done. Either way the copy that ends up
+answering the game's own pipe is the injected one, so when that copy is the build just made,
+`assert_build()` passes. A proxy-mode row also reads `get_pointers.load_mode`, which must say
+`proxy:<name>.dll` (working-lessons §2.6).
 
 Other infrastructure worth knowing exists: `inject.py` (fails loudly at every step, and **refuses**
 when one of our DLLs is already mapped — `LoadLibraryW` would hand back the old module and nothing in

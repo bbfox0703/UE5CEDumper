@@ -96,7 +96,7 @@ beside them does not.
 | UT-80 | handover | doc | `docs/handover.md`'s pipe section says a stale proxy answers while the fresh DLL sits inert; a fresh copy takes over, or serves its own pipe beside a pre-contract proxy. | ✅ fixed 2026-11-18 |
 | UT-81 | Classes | comment | A comment UT-71 rewrote says a copy built by string concatenation fails the test; only a copy keeping the phrase in one literal does. | ✅ fixed 2026-11-18 |
 | UT-82 | tools | doc | `tools/verify/pipe_client.py`'s new trap-1 text says the injected copy is the one that answers; until that copy has scanned, the deployed proxy still serves the pipe. | ✅ fixed 2026-11-18 |
-| UT-83 | handover | doc | `docs/handover.md`'s rewritten pipe paragraph has the same gap: a stale proxy also answers while a freshly injected copy is still scanning. | ⬜ |
+| UT-83 | handover | doc | `docs/handover.md`'s rewritten pipe paragraph has the same gap: a stale proxy also answers while a freshly injected copy is still scanning. | ✅ fixed 2026-11-18 |
 | UT-84 | Find Class Funcs | comment | `PropertyXrefDialog`'s sort-comparer comment carries a review id and tells a shipped build's bug (UT-73 fixed its twin). | ⬜ |
 | UT-85 | Find Class Funcs, Interesting Functions | comment | Both dialogs' `XrefSortComparers` summaries carry a review id, and `FunctionPropsDialog`'s says the table is shared with the twin; each dialog builds its own. | ⬜ |
 | UT-86 | Value Search | behaviour | First Scan and Next Scan validate the scan type (and First Scan the value) before an await, then read them again to build the request, so one request can carry a type its own checks never saw. | ⬜ |
