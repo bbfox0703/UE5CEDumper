@@ -168,15 +168,15 @@ namespace Ubel {
 // answer, whoever owns the address now. It is also strictly cheaper than the FNamePool
 // lookup it guards: two int32 reads against a pool walk.
 //
-// Deliberately NOT the (InternalIndex, SerialNumber) pair the audit prescribed. UE
-// zeroes SerialNumber in FreeUObjectIndex and allocates it lazily, essentially only
-// on weak-pointer creation, so most objects carry 0 for life and a stale witness of
-// (i, 0) matches a recycled (i, 0) — silent in exactly the case it exists to catch.
-// It would also have rested on Aura::GetSerialNumber, whose own comment marks the
-// packed FUObjectItem layout *** UNVERIFIED ***.
+// Deliberately NOT the (InternalIndex, SerialNumber) pair. UE zeroes SerialNumber in
+// FreeUObjectIndex and allocates it lazily, essentially only on weak-pointer creation,
+// so most objects carry 0 for life and a stale witness of (i, 0) matches a recycled
+// (i, 0) — silent in exactly the case it exists to catch. It would also rest on
+// Aura::GetSerialNumber, whose own comment marks the packed FUObjectItem layout
+// *** UNVERIFIED ***.
 //
-// `number` is load-bearing: dropping it is precisely audit #5 U8, which shipped once
-// already and rendered Slot_1 / Slot_2 / Slot_3 all as "Slot".
+// `number` is load-bearing: without it Slot_1 / Slot_2 / Slot_3 all render as "Slot"
+// (audit #5 U8).
 struct NameWitness {
     int32_t comparisonIndex = 0;
     int32_t number = 0;
@@ -517,13 +517,13 @@ inline bool IsClassInChain(uintptr_t classAddr, uintptr_t owner, ReadSuper readS
 // class's) read at the first call.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
-// [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
+// [FUNCPARM-CONSUMERS] The return value's slot in the parameter buffer, from the function's own chain —
 // the entry flagged CPF_ReturnParm (its Offset_Internal and ElementSize). ResolveFunctionInfo reads only the
 // tail, which records where the return starts but not how long it is. False when the function has no return
 // or the chain cannot be read.
 bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
 
-// [UE-OVERRIDE-411] review: how many bytes a ProcessEvent buffer for a function gets -- never fewer than its
+// [UE-OVERRIDE-411] How many bytes a ProcessEvent buffer for a function gets -- never fewer than its
 // own parameter chain ends at, whatever ParmsSize the tail read gave (DynOff::ProcessEventBufferBytes says why).
 // The first form uses the chain WalkFunctions read into fi.params; a FunctionInfo without it (ResolveFunctionInfo's)
 // takes the second, which reads the chain at funcAddr.
@@ -727,9 +727,9 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 
 // [VND584-01] An invoke's object-pointer parameters. TWeakObjectPtr / TSoftObjectPtr / TSoftClassPtr begin with
 // FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } (UE 5.8 WeakObjectPtr.h, PersistentObjectPtr.h), yet the
-// invoke paths write the address of the object the user picked there. The engine read that address as the pair,
-// resolved it to null, and ProcessEvent still reported success. The DLL now swaps a picked address for the engine's
-// own value before ProcessEvent; this says which slots.
+// invoke paths write the address of the object the user picked there. The engine would read that address as the pair
+// and resolve it to null, and ProcessEvent would still report success. So the DLL swaps a picked address for the
+// engine's own value before ProcessEvent; this says which slots.
 enum class ObjectParamAction : uint8_t { Leave, ConvertWeak, ConvertSoft, Refuse };
 // The slots the rewrite looks at, and so the only ones probed for a live object: the probe reads value+0x0C, and every
 // double / int64 / FName of a call would otherwise be a faulting read (1000.0 is a non-canonical address). The return
@@ -801,7 +801,7 @@ bool IsNativeClass(uintptr_t cls);
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
 int FunctionFlagsOffset();
 
-// [UE-OVERRIDE-411] review: whether a UE version override fits the UFunction tail this game actually has. A version's
+// [UE-OVERRIDE-411] Whether a UE version override fits the UFunction tail this game actually has. A version's
 // layout puts NumParms / ParmsSize where its FunctionTailShiftFor says, and the sampled UFunctions say where they are.
 // The readers follow the measurement whenever there is one (DynOff::FunctionTailReadBase), so set_ue_version_override
 // refuses a version the measurement contradicts as a version wrong for this game, not to protect those reads. Runs the
@@ -979,8 +979,8 @@ struct LiveFieldValue {
     // derivation are in Grimoire.h (kDelegateDetectorPad / DelegatePadFromElementSize).
     // ⚠ Sent from here rather than re-derived in C#/Lua ON PURPOSE: the DLL already computed
     // it from the engine's own ElementSize, and a second implementation of the same rule in
-    // another language is a second thing to get wrong (measured: the first pad survey
-    // re-implemented it in Python and therefore verified the copy, not the shipped rule).
+    // another language is a second thing to get wrong -- and a check against such a copy
+    // verifies the copy, not the shipped rule.
     int32_t     delegatePad = 0;
     // [A4-DELEGATE-ARRAY-PAD] The SAME detector, per ELEMENT of a TArray<FScriptDelegate>: its elements are the
     // standalone unicast delegate, which carries the pad on a checked build. ⛔ Never folded into delegatePad above --
@@ -1105,9 +1105,9 @@ inline constexpr int32_t kMaxGapFillBytes = 1 * 1024 * 1024;  // 1 MB
 //
 //     WARNING: 64 MB is an ADMISSION BOUND, not a claim about UE.
 //     UStruct::PropertiesSize is an int32 accumulated by UStruct::Link and the
-//     engine imposes no cap. The number sits far above every real class observed
-//     and far below the observed garbage; the samples it is derived from are
-//     recorded under SANEPROPS-2026-08-26, so the next person can RE-DERIVE it
+//     engine imposes no cap. The number must sit far above every real class and
+//     far below the garbage a recycled pointer reads; the samples it is derived from
+//     are recorded under SANEPROPS-2026-08-26, so the next person can RE-DERIVE it
 //     rather than re-guess it. If a real class is ever seen above this, RAISE it.
 //
 //     A real class refused here is not merely unpreviewed: WalkClassEx returns
@@ -1151,7 +1151,7 @@ inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize)
 //   * The entry loop BROKE mid-table (readCount < intendedCount) -> do not publish.
 //     Caching a half-read table permanently splits one UEnum: values below the break
 //     point resolve, values above render as raw integers, everywhere, with no retry.
-// Pure — unit-tested in dll_helpers_test. (audit #5, found while fixing U4)
+// Pure — unit-tested in dll_helpers_test. (audit #5; see U4)
 inline bool ShouldPublishEnumTable(bool buildLayoutOk, int32_t intendedCount, size_t readCount) {
     if (!buildLayoutOk) return true;
     return intendedCount >= 0 && readCount == static_cast<size_t>(intendedCount);
@@ -1172,7 +1172,7 @@ struct InstanceWalkResult {
     // isStale, which means a class pointer that read back implausible -- a narrower verdict.
     bool        unreadable = false;
     // [WALK-NULLCLASS-SILENT] A walk that resolved its own class found none: the header's ClassPrivate is null or
-    // unmapped. Freed and re-committed (L47 measured a zeroed page), or never an object -- the Go box takes any
+    // unmapped. Freed and re-committed (a zeroed page, L47), or never an object -- the Go box takes any
     // address -- so neither isStale's "implausible PropertiesSize" nor a "freed" claim fits it.
     bool        noHeader = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
@@ -1388,8 +1388,8 @@ enum class BoolLayout { Unresolved, Packed, Native };
 /// {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} — a whole-byte bool, the layout of
 /// every Blueprint bool and container element, written 0x01 / 0x00. UE's own IsNativeBool() tests
 /// FieldMask alone; ByteMask 0x01 is held as well, so an all-0xFF read (a probe landing on fill)
-/// is not taken for one. ⚠ The first version required ByteMask 0xFF, which no engine writes, and
-/// so refused every native bool on a real game (B05 review). PACKED is a bitfield bool that owns
+/// is not taken for one. ⚠ Never require ByteMask 0xFF: no engine writes it, so that test refuses
+/// every native bool on a real game (B05). PACKED is a bitfield bool that owns
 /// exactly one bit. Anything else — including all-zero, which is what a missed probe reads — is
 /// UNRESOLVED and must never be treated as either.
 inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
@@ -1591,37 +1591,33 @@ inline bool IsPlausibleStringCount(int32_t count) {
 
 // === FText display-string length consistency (the Text_Empty garbage) ===
 //
-// MEASURED on DumperTest 2026-09-06: a field initialised with FText::GetEmpty() read back as the
-// single character U+08F3, and had previously been seen as "No" — different garbage on different
-// runs, because it was read from whatever lay nearby. The real display FString sits at
-// FTextData+0x28 as the canonical EMPTY {nullptr, 0, 0}; TryDecodeFStringAt steps over it
-// correctly (!data, num < 2), and ReadFTextString's layout-agnostic scan then reached
-// FTextData+0x40, whose 16 bytes parse as {data=0x2B52A030000, num=4284, max=16384}. That cleared
-// every gate at Ubel.cpp `TryDecodeFStringAt` — num in [2, 8192]; max >= num; max <= 4*num+256 (17392, with
-// 1008 to spare); data in the user-space range.
+// An FText initialised with FText::GetEmpty() keeps its real display FString at FTextData+0x28
+// as the canonical EMPTY {nullptr, 0, 0}. TryDecodeFStringAt steps over it correctly (!data,
+// num < 2), and ReadFTextString's layout-agnostic scan then reaches whatever lies nearby: 16
+// bytes at FTextData+0x40 can parse as a header that clears every gate in Ubel.cpp
+// `TryDecodeFStringAt` — num in [2, 8192]; max >= num; max <= 4*num+256; data in the user-space
+// range — over a zero-filled heap page.
 //
-// What happened next is the actual defect. 8568 bytes of a zero-filled heap page were handed to
-// DecodeFStringBuffer. Its UTF-8 hypothesis failed on the interior null, so `utf8Ok` was false —
+// DecodeFStringBuffer's UTF-8 hypothesis fails on the interior null, so `utf8Ok` is false —
 // which is exactly what SKIPS the Rule 3a interior-null tie-break. The UTF-16 hypothesis then
-// found its terminator trivially, EncodeUtf16 hit `if (ch == 0) break;` (Utf8Helpers.h) at
-// unit index 1, and returned ONE character. LooksLikeDecodedText counts only '?' markers, saw
-// none out of one, and accepted.
+// finds its terminator trivially, EncodeUtf16 hits `if (ch == 0) break;` (Utf8Helpers.h) at
+// unit index 1, and returns ONE character. LooksLikeDecodedText counts only '?' markers, sees
+// none out of one, and accepts.
 //
-// A header claiming 4283 characters delivered 1, and NOTHING in the pipeline compared those two
-// numbers. That comparison is the whole fix.
+// So a header claiming thousands of characters delivers 1, and DecodedLengthMatchesFString
+// below is what compares those two numbers.
 //
 // ⚠ NOT in Utf8Helpers. This is that file's own Rule 3a applied at 25% strength. Rule 3a is gated
 // on utf8Ok DELIBERATELY, and `Test_Decode_TieBreakIsGatedOnUtf8Success`
 // (dll/tests/utf8_helpers_test.cpp) exists to pin that gate. The WEAK form below keeps that
-// row's answer (1 char decoded, num=4 -> 1*4+8 = 12 >= 3, accepted) and still rejects the
-// measured garbage by 357x. ⛔ Do not strengthen it to "the first null unit must be at Num-1"
-// without re-deciding that test.
+// row's answer (1 char decoded, num=4 -> 1*4+8 = 12 >= 3, accepted) and still rejects such
+// garbage by orders of magnitude. ⛔ Do not strengthen it to "the first null unit must be at
+// Num-1" without re-deciding that test.
 //
-// ⛔ A Max-window tightening was considered here and REJECTED. FString::Reserve sets ArrayMax with
-// no relation to Num and nothing shrinks it afterwards, so a legitimate {num=100, max=400}
-// display string — accepted today — would be refused at its REAL slot and the scan would walk
-// past its own answer. Ubel.cpp's shipped comment is right that Max is not the discriminator; it
-// was only wrong that DecodeFStringBuffer already was one.
+// ⛔ Do NOT tighten the Max window instead. FString::Reserve sets ArrayMax with no relation to Num
+// and nothing shrinks it afterwards, so a legitimate {num=100, max=400} display string would be
+// refused at its REAL slot and the scan would walk past its own answer. Max is not the
+// discriminator, and DecodeFStringBuffer alone is not one either.
 
 // Decoded characters in a UTF-8 string: lead bytes only, so one multi-byte glyph counts once.
 // Same counting rule as LooksLikeDecodedText, kept separate because that one answers "is this
@@ -1644,9 +1640,8 @@ inline size_t CountUtf8Chars(const std::string& s) {
 // for a build whose Num excludes the terminator; it is not a tuned threshold.
 //
 // The only way to fail is a payload null before ~75% of the claimed length, which is what
-// EncodeUtf16's early break produces when the header is a lie. Measured:
-// "DumperTest FText ASCII" 22 chars vs 22 claimed, passes 4x over; the garbage 1 vs 4283, fails
-// by 357x.
+// EncodeUtf16's early break produces when the header is a lie. An ASCII string passes 4x over;
+// the garbage above (1 char against thousands claimed) fails by orders of magnitude.
 inline bool DecodedLengthMatchesFString(const std::string& decoded, int32_t num) {
     if (decoded.empty() || num < 2) return false;
     const size_t claimed = static_cast<size_t>(num) - 1;   // Num includes the null

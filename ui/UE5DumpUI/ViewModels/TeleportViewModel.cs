@@ -578,9 +578,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ZOffset = NumericInput.KeepCurrentIfEmpty(value, ZOffset);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -596,9 +594,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             TraceChannel = NumericInput.KeepCurrentIfEmpty(value, TraceChannel);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -614,9 +610,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             RelativeDistance = NumericInput.KeepCurrentIfEmpty(value, RelativeDistance);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -632,9 +626,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordX = NumericInput.KeepCurrentIfEmpty(value, CoordX);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -650,9 +642,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordY = NumericInput.KeepCurrentIfEmpty(value, CoordY);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -668,9 +658,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordZ = NumericInput.KeepCurrentIfEmpty(value, CoordZ);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -686,9 +674,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordPitch = NumericInput.KeepCurrentIfEmpty(value, CoordPitch);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -704,9 +690,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordYaw = NumericInput.KeepCurrentIfEmpty(value, CoordYaw);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -722,9 +706,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordRoll = NumericInput.KeepCurrentIfEmpty(value, CoordRoll);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -740,9 +722,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordZTolerance = NumericInput.KeepCurrentIfEmpty(value, CoordZTolerance);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -756,9 +736,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             SeeThroughPierce = NumericInput.KeepCurrentIfEmpty(value, SeeThroughPierce);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -1121,12 +1099,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _gravDirActive = false;
             ApplyMouseCursorState(-1);   // cursor badge back to Unknown
             ClearPovDisplay();
-            // The POSE must go too, and this is the half that had a user-visible cost.
-            // PoseMap survives the disconnect and feeds the "current map only" coord
-            // filter, so connecting to a DIFFERENT game loaded its library and then
-            // dropped every row against the previous game's map name —
-            // "Coordinate Library (0 of 340)", self-healing only after a manual
-            // Refresh pose. Same disconnect branch as B9's missing clear. (B17)
+            // The POSE must go too, and this is the half with a user-visible cost.
+            // PoseMap would otherwise survive the disconnect and feed the "current map
+            // only" coord filter, so connecting to a DIFFERENT game would load its
+            // library and then drop every row against the previous game's map name,
+            // self-healing only after a manual Refresh pose. (B9) (B17)
             ClearPoseDisplay();
             ApplyCoordFilter();
             _pushedQuerySymbols.Clear();   // new game, new CE table (B26)
@@ -1976,9 +1953,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             var state = await _dump.SetGodModeAsync(wantOn);
             // Land the toggle on the SAME map as ↻ (audit #5 AD4). set_god_mode
-            // returns only the observed value, so a force-ON with no pawn yet came
-            // back < 0 and the badge said "Unknown" — the request itself is what
-            // the user needs to see reflected. `want` is known here without a
+            // returns only the observed value, so a force-ON with no pawn yet comes
+            // back < 0, and on its own would badge "Unknown" — the request itself is
+            // what the user needs to see reflected. `want` is known here without a
             // second round-trip, and `resolvable` follows from a readable state.
             ApplyProtectState(new ProtectState
             {
@@ -2360,7 +2337,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 : "";
 
             // Do not push the SAME symbol twice. Both symbols this record registers are global,
-            // so a second record shares them — and while its DISABLE is now safe (it checks
+            // so a second record shares them — and while its DISABLE is safe (it checks
             // ownership before freeing), a duplicate pair of records is still confusing and there
             // is no reason to create one. A repeat click falls through to the clipboard instead of
             // being refused, because the legitimate reason to click again is "I deleted the record
@@ -2533,7 +2510,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1   => string.Format(CultureInfo.InvariantCulture,
                          "✓ Walk speed held at {0:0}% ({1:0.#} cm/s). Drag + Apply to change; Reset to restore.",
                          mult * 100.0, mp.WalkSpeed.Current),
-                // [W2-MS-PROMISE] Laufen returned before storing anything, so nothing is queued to
+                // [W2-MS-PROMISE] Laufen returns before storing anything, so nothing is queued to
                 // "apply once a pawn exists" -- worded like its Gravity and Super Jump siblings.
                 < 0 => "No pawn / no CharacterMovement — enter gameplay first.",
                 _   => "Walk speed override is off.",
@@ -2711,19 +2688,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// Quiet read-back of EVERY badge the disconnect branch resets, run once on connect.
     /// </summary>
     /// <remarks>
-    /// <para>⛔ WHY THIS EXISTS. <see cref="SetConnected"/>'s disconnect branch walks twelve
-    /// badges back to Unknown; before 2026-09-10 its connect branch primed only three, so
-    /// nine cards sat at "Unknown" while the DLL held a definite answer for each. Measured
-    /// live on a Shipping fixture: Keep Foreground, Move Speed, Debug Camera, Gravity,
-    /// Super Jump and Fly all read "State: Unknown" against a pipe answering
-    /// <c>state: 0</c> / <c>has_cmc: true</c> — while God Mode and Time Dilation showed
-    /// real values, and those were exactly the two that were primed.
-    /// [BADGEPRIME].</para>
+    /// <para>⛔ WHY THIS EXISTS. <see cref="SetConnected"/>'s disconnect branch walks its
+    /// badges back to Unknown, and a badge the connect branch does not prime sits at
+    /// "Unknown" while the DLL holds a definite answer for it. [BADGEPRIME].</para>
     ///
     /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
-    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, added for
-    /// audit #5 AD4). So after a UI restart a still-active Fly, Move Speed or Gravity hold
-    /// showed "Unknown" and the user had no sign the game was still modified.</para>
+    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, audit #5
+    /// AD4). So after a UI restart an unprimed but still-active Fly, Move Speed or Gravity
+    /// hold would show "Unknown", and the user would have no sign the game was still
+    /// modified.</para>
     ///
     /// <para>⚠ QUIET IS THE WHOLE CONTRACT. The button-driven <c>Refresh*Async</c> methods
     /// set <c>IsBusy</c> — which flickers every <c>CanOperate</c>-bound control — and write
@@ -2742,7 +2715,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// </remarks>
     private async Task PrimeHeldBadgesAsync()
     {
-        // God Mode, and the two time lanes — the three that were already primed.
+        // God Mode, and the two time lanes.
         await PrimeOneAsync(RefreshHeldProtectStateAsync, "protect");
         await PrimeOneAsync(RefreshHeldTimeStateAsync, "time");
 
@@ -3144,9 +3117,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ApplyFlyReadout(seen);
             // ⛔ REPORT THE EFFECT, NOT THE ATTEMPT. HasCmc says a CharacterMovement was
             // RESOLVED — it says nothing about whether the MovementMode write landed, and
-            // that write is the only reason the pawn flies. The DLL now leaves Active false
-            // and returns FR_ERR_WRITE when it did not; FlyStatus.State has always carried
-            // the code. Slice B of the unadjudicated sweep claims, 2026-09-09.
+            // that write is the only reason the pawn flies. The DLL leaves Active false
+            // and returns FR_ERR_WRITE when it did not, and FlyStatus.State carries the code.
             StatusText = !st.HasCmc
                 ? "Fly could not engage (no CharacterMovement on this pawn)."
                 : st.Active
@@ -3181,7 +3153,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // ⛔ The same rule on the way back down, and this is the worse half: the DLL
             // returns FR_ERR_WRITE when the worker stopped but the captured MovementMode was
             // NOT restored — the feature reads OFF over a pawn that is still flying, which is
-            // the [FREEZESTUCK-2026-08-18] shape. "Fly OFF." was said unconditionally.
+            // the [FREEZESTUCK-2026-08-18] shape, so "Fly OFF." is said only when it holds.
             StatusText = st.State < 0
                 ? $"Fly stopped, but the MovementMode was NOT restored (code {st.State}) — the pawn may still be flying (MovementMode {st.CurrentMode})."
                 : "Fly OFF.";
@@ -3384,8 +3356,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ApplySeeThroughReadout(st);
             // A disable while the game thread is paused/backgrounded CANNOT un-hide:
             // the DLL keeps the record (so a later enable restores it) and reports the
-            // leftover in HiddenCount. Observed live — clicking in the UI backgrounds
-            // the game, which is exactly when this fires — so saying only "OFF" would
+            // leftover in HiddenCount. Clicking in the UI backgrounds the game, which
+            // is exactly when this fires, so saying only "OFF" would
             // leave an actor invisible in the game with no hint why.
             StatusText = st.HiddenCount > 0
                 ? $"See-through OFF — {st.HiddenCount} actor(s) are still hidden because the game "
@@ -3751,7 +3723,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var g = mp.GravityDirection;
             if (!g.HasAddr)
             {
-                // [W2-GRAVDIR-VERDICT] review follow-up: the readout's split, here too. No CMC right now
+                // [W2-GRAVDIR-VERDICT] The readout's split, here too. No CMC right now
                 // is transient; only a CMC WITHOUT the reflected field is the pre-5.3 verdict.
                 StatusText = !mp.HasCmc
                     ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
@@ -3909,7 +3881,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <see cref="CoordinateLibraryStore"/>, in which case every persistence path
     /// below silently no-ops and the whole library dies with the process.
     ///
-    /// This exists because that is exactly what shipped (audit #4 B27): App builds
+    /// This exists because the omission is silent (audit #4 B27): App builds
     /// <c>MainWindowViewModel</c> with positional arguments, and an omitted one binds
     /// to its optional default instead of failing to compile. Asserted by
     /// <c>CompositionRootWiringTests</c>; not used by the UI.
@@ -4304,10 +4276,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// DLL), or "". While set, adding to the library is refused with <see cref="CoordLibraryUnavailableText"/>
     /// instead of adding a row that is never saved.</summary>
     private string _coordUnusableModule = "";
-    /// <summary>(skeptic QM-1) Under an older DLL: the file name of a library that name saved earlier, named in the
+    /// <summary>(QM-1) Under an older DLL: the file name of a library that name saved earlier, named in the
     /// refusal, or "".</summary>
     private string _coordLegacyFile = "";
-    /// <summary>(skeptic QM-2) CoordStatus holds a refusal: the next usable load clears it.</summary>
+    /// <summary>(QM-2) CoordStatus holds a refusal: the next usable load clears it.</summary>
     private bool _coordStatusIsRefusal;
     private bool _suppressCoordPersist;
     // Set only while ApplyCoordFilter re-selects the equivalent row after rebuilding
@@ -4440,7 +4412,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _activeCoordKey = CoordinateLibraryStore.KeyFor(moduleName);
         _coordUnusableModule = !string.IsNullOrWhiteSpace(moduleName) && string.IsNullOrEmpty(_activeCoordKey)
             ? moduleName! : "";
-        // [PATH-UI-LEGACY-QMARK] (skeptic QM-1) The key an older DLL's '?' report of this game keyed to.
+        // [PATH-UI-LEGACY-QMARK] (QM-1) The key an older DLL's '?' report of this game keyed to.
         string legacyKey = CoordinateLibraryStore.LegacyKeyFor(moduleName);
         _coordLegacyFile = _coordUnusableModule.Length > 0 && _coordStore.Exists(legacyKey)
             ? Path.GetFileName(_coordStore.FilePathFor(legacyKey)) : "";
@@ -4459,12 +4431,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(_activeCoordKey))
             {
                 var file = _coordStore.Load(_activeCoordKey);
-                // (skeptic QM-1 / T6) Nothing saved under the real name yet, but the older DLL's key holds a library:
+                // (QM-1 / T6) Nothing saved under the real name yet, but the older DLL's key holds a library:
                 // carry it over, and leave the old file as it was -- that key can be shared by another game whose
                 // name the old DLL mangled the same way, so it is copied, never moved.
                 string carriedFrom = "";
                 // Only into a key that NEVER held a library: after Clear all (main file deleted, backups kept) the
-                // rows must stay gone, not be carried over again on the next connect (second review).
+                // rows must stay gone, not be carried over again on the next connect.
                 if (!_coordStore.EverHadLibrary(_activeCoordKey) && legacyKey.Length > 0 && legacyKey != _activeCoordKey
                     && _coordStore.Exists(legacyKey))
                 {
@@ -4486,7 +4458,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 }
                 else if (wasRefusal)
                 {
-                    CoordStatus = "";   // (skeptic QM-2) the refusal's cause is gone
+                    CoordStatus = "";   // (QM-2) the refusal's cause is gone
                 }
             }
             RebuildCoordGroups();
@@ -4726,8 +4698,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>[PATH-UI-LEGACY-QMARK] Says why the library cannot be used for this game, and that nothing was
-    /// saved. Before this, a row was added in memory with an "Added" status and lost on the next launch.</summary>
-    /// (skeptic QM-5) The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
+    /// saved, rather than letting a row sit in memory as "Added" and vanish on the next launch.</summary>
+    /// (QM-5) The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
     /// re-inject into it reattaches to the old DLL, so the game must be closed first. (QM-1) A library the old name
     /// saved is named: it is carried over after the update.
     private string CoordLibraryUnavailableText() =>
@@ -4741,8 +4713,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         + " Nothing was saved.";
 
     /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written: a lossy
-    /// name, or (skeptic QM-4) no game yet -- entries are kept per game, so a row added before the first connect
-    /// was reported "Added", never saved, and cleared by that connect.</summary>
+    /// name, or (QM-4) no game yet -- entries are kept per game, so a row added before the first connect would be
+    /// reported "Added", never saved, and cleared by that connect.</summary>
     private bool CoordLibraryRefused()
     {
         if (_coordStore == null || _activeCoordKey.Length > 0) return false;
@@ -4783,8 +4755,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private async Task AddCoordFromFieldsAsync()
     {
         // [W2-TPREL-MAP] Read the map AT ADD TIME -- the rule the teleport guard already follows.
-        // PoseMap is only as fresh as the last read, and was "" after a directional teleport or
-        // before the first Refresh; that "" went to disk and then matched no map ever again.
+        // PoseMap is only as fresh as the last read, and is "" after a directional teleport or
+        // before the first Refresh; that "" on disk would match no map ever again.
         if (IsConnected) await RefreshCurrentMapAsync();
         var entry = new CoordEntry
         {
@@ -4819,13 +4791,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             return;
         }
         // [B21-CSV-QUOTE-HOLES] A TYPED double quote is refused, not stored: the export escapes one
-        // correctly, but a hand-edited CSV mis-splits on it and the import then stops (the
-        // maintainer's call, 2026-10-28). A field the edit leaves unchanged keeps the quote it
-        // already holds (imported, or typed before this), so such an entry stays editable; any
-        // field the edit changes is new input. Counting quotes instead let a typed one through
-        // whenever the same edit deleted a stored one. "Unchanged" is judged on the text as the
-        // editor showed it as well as normalized: a stored value the import cut at a space no
-        // longer equals itself once Normalize trims it.
+        // correctly, but a hand-edited CSV mis-splits on it and the import then stops. A field the
+        // edit leaves unchanged keeps the quote it already holds (imported, or stored earlier), so
+        // such an entry stays editable; any field the edit changes is new input. Counting quotes
+        // instead would let a typed one through whenever the same edit deleted a stored one.
+        // "Unchanged" is judged on the text as the editor showed it as well as normalized: a
+        // stored value the import cut at a space no longer equals itself once Normalize trims it.
         static bool TypedQuote(string? edited, string next, string stored) =>
             next.Contains('"')
             && !string.Equals(edited ?? "", stored, StringComparison.Ordinal)
@@ -5162,7 +5133,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (parsed.Issues.Count > 0)
             sb.Append("\nSkipped / adjusted:\n").Append(FormatIssues(parsed.Issues));
 
-        // (skeptic QM-6) Say so up front when Apply can only be refused.
+        // (QM-6) Say so up front when Apply can only be refused.
         if (_coordStore != null && _activeCoordKey.Length == 0)
             sb.Append("\nApply is unavailable: ").Append(_coordUnusableModule.Length > 0
                 ? "the coordinate library cannot be used for this game -- see the status line."
@@ -5185,7 +5156,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyCoordImport()
     {
         if (_pendingImport == null || _pendingChanges == null) return;
-        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. (skeptic QM-6) The preview cannot outlive
+        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. (QM-6) The preview cannot outlive
         // the fix: the reconnect it needs drops it (LoadCoordLibraryForGame), so it is previewed again after.
         if (CoordLibraryRefused()) return;
 
@@ -5332,13 +5303,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// What the picker's radio buttons could not fit, as a status-line clause.
     ///
-    /// <para>Every export shares one generator and one <c>folded</c> out-parameter, but
-    /// only the DLL "Push to CE" path built this sentence — the no-DLL push and the
-    /// "Save .lua" path threw the list away with <c>out _</c> (audit #5 AF15). A user
-    /// exporting either of those got a script whose picker silently omits a group's
-    /// radio button and no hint that anything was dropped. Extracted rather than copied
-    /// twice: three inline copies of a disclosure is how the wording drifts until two of
-    /// them are wrong.</para>
+    /// <para>Every export shares one generator and one <c>folded</c> out-parameter; an
+    /// export path that discards the list (<c>out _</c>) hands the user a script whose
+    /// picker silently omits a group's radio button, with no hint that anything was
+    /// dropped (audit #5 AF15). Shared rather than copied, so the wording cannot drift
+    /// between paths.</para>
     ///
     /// <para>Returns "" when nothing folded, so callers can append it unconditionally —
     /// the shape <see cref="Core.PartialResultNotice"/> uses for the same reason.</para>
@@ -5431,7 +5400,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out var folded);
 
             // [COORDPICK-OVERSIZE-REASON] The detailed call, for the reason a refused push carries: a library over
-            // AOBMaker's message limit is refused before a byte is sent, which the bool call reported as a dropped pipe.
+            // AOBMaker's message limit is refused before a byte is sent, which the bool call reports as a dropped pipe.
             var pushed = await _aobMaker.CreateAAScriptDetailedAsync(
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
@@ -5644,8 +5613,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>[EXPOFF-TEARDOWN] The untick's teardown (the maintainer's choice after the review, 2026-10-09: the box
-    /// unticks while connected, and what the features run goes off at once). Connected, the features are forced OFF
+    /// <summary>[EXPOFF-TEARDOWN] The untick's teardown: the box unticks while connected, and what the features run
+    /// goes off at once. Connected, the features are forced OFF
     /// before their hotkeys go, so the game cannot stay cursor-locked, flying or held behind hidden cards. Disconnected,
     /// nothing reaches the DLL, and the gate keeps the untick owed: the next connect pays it from the DLL's own state
     /// (<see cref="TearDownAfterConnectPrimeAsync"/>), as the DLL's last-client teardown does not end these.</summary>
@@ -6184,15 +6153,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PoseRoll = p.Roll.ToString("0.00", CultureInfo.InvariantCulture);
         // [W2-TPREL-MAP] A reply with NO map key (teleport_relative; a save whose marker read-back
         // failed) says nothing about the map, and a directional teleport cannot leave it. Writing its
-        // "" over PoseMap re-flagged every library row as another map's and let "Add from fields"
+        // "" over PoseMap would re-flag every library row as another map's and let "Add from fields"
         // persist map = "". The source label is the same shape: absent is not "raw".
         bool mapChanged = !p.MapAbsent && !IsSameMap(PoseMap, p.Map);
         if (!p.MapAbsent) PoseMap = p.Map;
         if (!p.SourceAbsent) PoseSource = p.Source;
         // [W2-POSEATTACH-QUIETPOLL] The degraded-read state, for EVERY pose path -- the 0.5s quiet
-        // poll included, which never said so. Kept, like the source label, when the reply carries no
-        // read metadata (teleport_relative).
-        // Review 5 of 7490c24e: ...and when the reply CARRIED the flag, as the save reply does with no source key.
+        // poll included. Kept, like the source label, when the reply carries no read metadata
+        // (teleport_relative), and set whenever the reply CARRIES the flag, as the save reply does
+        // with no source key.
         if (!p.SourceAbsent || p.ParentRelativeKnown) PoseParentRelative = p.ParentRelative;
 
         // A map change re-filters the coordinate library (the "current map only"

@@ -327,8 +327,8 @@ static void __stdcall OnInjectAndConnect()
 
     // 2. Resolve this DLL's own path (running in CE's process). WIDE, not ...A:
     //    GetModuleFileNameA narrows through the ANSI code page, mapping any character
-    //    it cannot represent to '?'. Unlike this file's two DISPLAY sites (already
-    //    wide-fixed), the path here is FUNCTIONAL — handed to CE's InjectDLL, which
+    //    it cannot represent to '?'. Unlike this file's DISPLAY sites, the path
+    //    here is FUNCTIONAL — handed to CE's InjectDLL, which
     //    LoadLibrary's it in the target — so a mangled path (CE installed under a
     //    non-ANSI folder) fails the load on a path that does not exist. (audit #5 AB13)
     wchar_t dllPathW[MAX_PATH] = {};
@@ -340,10 +340,10 @@ static void __stdcall OnInjectAndConnect()
     }
     // InjectDLL takes a narrow (char*) path, which CE hands to LoadLibraryA in the game. An ASCII path goes as it is.
     // Otherwise: the 8.3 alias of the FOLDER plus the DLL's own long name (never the file's alias -- that renames the
-    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it; second review, measured) when
+    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it) when
     // it is ASCII, else the EXACT narrowing in the system ANSI code page, else that alias's exact narrowing, else
     // nothing: best fit names another folder and '?' names none. The order is Methode::NarrowForAnsiLoad's.
-    // Aliases exist only where the volume keeps 8.3 names (C: here, not D:). [PATH-METHODE-NO8DOT3]
+    // Aliases exist only where the volume keeps 8.3 names. [PATH-METHODE-NO8DOT3]
     const std::wstring aliasW = Methode::FolderAliasOf(std::wstring(dllPathW), Methode::ShortDirOf);
     const std::string narrow = Methode::NarrowForAnsiLoad(dllPathW, aliasW.empty() ? nullptr : aliasW.c_str(), CP_ACP);
     char dllPath[MAX_PATH] = {};
@@ -408,10 +408,7 @@ static void __stdcall OnInjectAndConnect()
     //        applies only the export, import and relocation directories -- not TLS, not
     //        the .pdata exception table -- so exception dispatch inside the image is not
     //        something ReadSafe's everyday __except can count on. Not a certainty either
-    //        way: in L53's manually mapped runs on the installed CE an exception reached a
-    //        catch(...) inside the image and neither game crashed. (Whether C++ or SEH is
-    //        unknown: /EHa lets catch(...) take both.) Hence "not supported", never
-    //        "will crash".
+    //        way (L53), hence "not supported", never "will crash".
     //      * The APC path and a GetExitCodeThread failure ALSO return TRUE with nothing
     //        mapped.
     //    Nothing here tells those apart, so the message names both; a manually mapped

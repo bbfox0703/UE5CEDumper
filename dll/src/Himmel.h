@@ -708,23 +708,22 @@ constexpr const char* AOB_GNAMES_GH_1 = "89 74 24 18 57 48 83 EC 20 C1 EA 03 48 
 //   instrOffset=12, 31 bytes, 19 fixed — cross-game ES/ES2/SAT
 constexpr const char* AOB_GNAMES_GH_2 = "EC 20 80 3D ?? ?? ?? 00 00 48 8B D9 48 8D 0D ?? ?? ?? ?? 48 63 FA 75 ?? E8 ?? ?? ?? ?? 48 8B";
 
-// --- UE 5.4+ NON-SHIPPING (LLM) -- mined 2026-09-26 from PDB truth [GNAMES-NONSHIP-LLM54] ---
+// --- UE 5.4+ NON-SHIPPING (LLM), from PDB truth [GNAMES-NONSHIP-LLM54] ---
 // WHY: UE 5.4 added `LLM(FLowLevelMemTracker::Get().FinishInitialise());` right after
 // `bNamePoolInitialized = true;` in GetNamePool() (UnrealNames.cpp; 5.4 line 2017 through 5.8).
-// LLM is compiled out of Shipping, so only Development / DebugGame codegen changed. There, two
-// calls now follow the FNamePool ctor, the pool pointer lives in a callee-saved register, and
-// the bigger init body is no longer inlined into the FName callers -- so every GNames pattern
-// but the 4-byte GNAM_V1 stopped reaching NamePoolData, and V1 got there only after
-// ~2,200-2,400 rejected candidates (tools/ghidra/GROUND-TRUTH.md, "Still open").
+// LLM is compiled out of Shipping, so only Development / DebugGame codegen differs. There, two
+// calls follow the FNamePool ctor, the pool pointer lives in a callee-saved register, and the
+// bigger init body is not inlined into the FName callers -- so every GNames pattern but the
+// 4-byte GNAM_V1 misses NamePoolData, and V1 reaches it only after thousands of rejected
+// candidates (tools/ghidra/GROUND-TRUTH.md).
 // LLM54_1: lea rcx,[NamePoolData]; call FNamePool::FNamePool; mov <rbx|rsi|rdi|r12|r15>,rax;
 //   mov byte[bNamePoolInitialized],1; mov rax,[FLowLevelMemTracker::TrackerInstance];
 //   test rax,rax; jnz +5; call FLowLevelMemTracker::Construct; mov rcx,rax;
 //   call FLowLevelMemTracker::FinishInitialise. 43 bytes, 21 literal.
-//   Measured: every hit is truth on 5.4 / 5.4 DumperTest / 5.6 Development + DebugGame, 5.7.4
-//   DebugGame and 5.8.3 Development (16-26 sites each); 0 hits on every Shipping build, on 5.1 /
-//   5.3 non-Shipping and on UE4; 0 decoys over the 65-program archive corpus.
-//   ⚠ The evidence is 4 Epic engine compiles on 2 MSVC toolsets plus 4 editor DLLs, not 8
-//   independent builds; a studio's own toolset / Clang / LTCG is unmeasured. Hence IWB_1 below.
+//   Every hit is truth on the corpus's 5.4-5.8 Development / DebugGame builds; no hit on a
+//   Shipping build, on 5.1 / 5.3 non-Shipping or on UE4; decoy-free over the corpus.
+//   ⚠ Its evidence is Epic engine compiles, not independent builds; a studio's own toolset /
+//   Clang / LTCG is unproven. Hence IWB_1 below.
 constexpr const char* AOB_GNAMES_LLM54_1 =
     "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4? 8B ?? C6 05 ?? ?? ?? ?? 01 "
     "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 05 E8 ?? ?? ?? ?? 48 8B C8 E8";
@@ -994,8 +993,8 @@ constexpr const char* AOB_GWORLD_SP57_4 = "48 8B 05 ?? ?? ?? ?? 48 8B B8 98 02 0
 // per-(owner, propertyName) FScriptDelegate bindings.
 //
 // Cross-version availability: UE 4.23 introduced sparse delegates, and **4.23 IS IN THE CORPUS**
-// — the maintainer built the 4.23.1 "Flying" template himself (UE4.23-Flying, full PDB, added
-// 2026-07-28), so the earliest version the feature has ever had is MEASURED, not interpolated.
+// (UE4.23-Flying, a self-built 4.23.1 "Flying" template with a full PDB), so the earliest version
+// the feature has is MEASURED, not interpolated.
 // The outer TMap is keyed by a raw `UObjectBase const*` at every version we can check —
 // PDB-verified from the mangled symbol on 4.23 (Flying), 4.24 (DropIn_UE424), 4.25 (Everspace 2
 // depot), 4.26 (Satisfactory), 4.27 (DropIn) and across 5.x, and vendor/UnrealEngine 5.8 declares
@@ -1004,16 +1003,15 @@ constexpr const char* AOB_GWORLD_SP57_4 = "48 8B 05 ?? ?? ?? ?? 48 8B B8 98 02 0
 // i.e. the shape is unchanged from the version that introduced it, and NO version is left
 // unverified. SPARSE_DI427_1 is what resolves it live on the 4.23 build.
 //
-// The older note here ("UE 4.23-4.27 used FObjectKey, 16 bytes") was wrong on both counts:
-// FObjectKey is 8 bytes ({int32 ObjectIndex; int32 ObjectSerialNumber}) and is not used as this
-// key at any verified version. Aura's walker still probes the live key shape rather than gating
-// on a version number — keep it that way. That is what covers any licensee fork no sample can,
-// and it costs one pointer-shape check.
+// The key is NOT FObjectKey at any verified version, and FObjectKey is 8 bytes, not 16
+// ({int32 ObjectIndex; int32 ObjectSerialNumber}). Aura's walker still probes the live key
+// shape rather than gating on a version number — keep it that way. That is what covers any
+// licensee fork no sample can, and it costs one pointer-shape check.
 //
 // ── WHY THERE IS NO `SPARSE_EXP` SYMBOL-EXPORT ENTRY, although the symbol does exist ─────────
 // `FSparseDelegateStorage::SparseDelegates` is COREUOBJECT_API, so a MODULAR build really does
-// export it — right beside the `?GUObjectArray@@3VFUObjectArray@@A` we already use. Measured with
-// tools/pe/pe_imports_exports.py over the three modular oracles, the exported name is:
+// export it — right beside the `?GUObjectArray@@3VFUObjectArray@@A` we already use. On the three
+// modular oracles (tools/pe/pe_imports_exports.py lists them) the exported name is:
 //   4.26 Sat  ?SparseDelegates@FSparseDelegateStorage@@0V?$TMap@PEBVUObjectBase@@V?$TMap@VFName@@
 //             V?$TSharedPtr@V?$TMulticastScriptDelegate@UFWeakObjectPtr@@@@$0A@ ...
 //   5.2  Sat  ... identical EXCEPT the TSharedPtr mode argument is `$00`, not `$0A@`
@@ -1116,24 +1114,22 @@ constexpr const char* AOB_SPARSE_DI427_2 =
 // SPARSE_DI427_2 models the same semantics but with a SHORT jz and a different instruction
 // order, which is why it takes 0 hits here. 29 literal bytes.
 //
-// Measured over the full 35-program sweep it fires on exactly three binaries and is decoy-free
-// on all of them: Palworld (2 hits, both on the true address — the goal), **UE 4.26 Satisfactory
-// (2/2, UNIQUE-OK — an unplanned bonus, so this is not 5.1-only)**, and DQ I&II HD-2D (2 hits
-// converging on one address, unverifiable without symbols). Zero hits on the other 32 programs.
+// Decoy-free wherever it fires: Palworld (both hits on the true address), **UE 4.26
+// Satisfactory (UNIQUE-OK, so this is not 5.1-only)**, and DQ I&II HD-2D (hits converging on one
+// address, unverifiable without symbols).
 //
-// The register-agnostic nibbled variant was measured and REJECTED — it produced a decoy on
-// Palworld itself, reproducing the trap already recorded for DI427_2 above. Exact-register
-// forms remain the safe ones for this target.
+// Do not nibble its registers: the register-agnostic variant produces a decoy on Palworld
+// itself — the trap recorded for DI427_2 above. Exact-register forms remain the safe ones for
+// this target.
 constexpr const char* AOB_SPARSE_PAL51_1 =
     "48 8D 3C 40 48 C1 E7 05 48 03 3D ?? ?? ?? ?? 48 8D 7F 08 48 0F 44 ?? 48 85 FF 0F 84 "
     "?? ?? ?? ?? 8B 47 08 3B 47 34";
 
 // --- MEL55: FSparseDelegateStorage twin-reference + element math (Meltopia) ---------
-// A second anchor for the UE 5.2-5.6 band, where SPARSE_ES2_1 was the ONLY pattern that hit.
-// Sparse coverage was measured across the whole corpus and that band was uniformly n=1, which
-// matters more than it looks: on an empty map ValidateSparseDelegates can only range-check two
-// ints (its UObject-key content check needs a live element), so it cannot rescue a miss the way
-// the GObjects/GNames/GWorld/GEngine validators can.
+// A further anchor for the UE 5.2-5.6 band beside SPARSE_ES2_1. Redundancy matters more for this
+// target than it looks: on an empty map ValidateSparseDelegates can only range-check two ints
+// (its UObject-key content check needs a live element), so it cannot rescue a miss the way the
+// GObjects/GNames/GWorld/GEngine validators can.
 //
 //   lea rcx,[SparseDelegates]      <- passed as `this` to TSet::FindOrAddId
 //   call <FindOrAddId>
@@ -1143,23 +1139,20 @@ constexpr const char* AOB_SPARSE_PAL51_1 =
 // The twin reference is what carries the uniqueness — the same property that makes
 // SPARSE_ES2_1 reliable — and the 0x60 stride math confirms it is this TSet and not another.
 //
-// Mined on Meltopia (UE 5.5, PDB): 3 hits, all 3 correct, zero decoys. On TQ2 (UE 5.6, no
-// symbols) 3 hits all converging on ONE address, so that title gains a second anchor as well.
-// Zero hits on Everspace 2 5.5, Satisfactory 5.2/5.6, Solarpunk 5.7, DropIn 4.27, Avowed and
-// FF7 Rebirth — it is codegen-specific, not version-specific, which is exactly why it is
-// additive rather than a replacement.
+// Correct with zero decoys on Meltopia (UE 5.5, PDB); on TQ2 (UE 5.6, no symbols) every hit
+// converges on ONE address. Other builds checked take zero hits — it is codegen-specific, not
+// version-specific, which is exactly why it is additive rather than a replacement.
 //
-// TWO REJECTED ALTERNATIVES, both instructive:
+// TWO ALTERNATIVES THAT DO NOT WORK, both instructive:
 //   * The TSet hash-bucket probe (`dec ecx; mov eax,rNd; and rcx,rax; mov eax,[rdx+rcx*4];
 //     cmp eax,-1; jz; mov rdx,[Sparse]`) reads like a great anchor and is NOT: it is the
-//     GENERIC TSet lookup used by every TSet in the engine, so it resolved to 39-43 DIFFERENT
-//     globals per binary and was DECOY-ONLY on Solarpunk and Satisfactory 5.2.
-//   * The register-nibbled form of this pattern took 0 hits — over-wildcarding does not
+//     GENERIC TSet lookup used by every TSet in the engine, so it resolves to dozens of
+//     DIFFERENT globals per binary.
+//   * The register-nibbled form of this pattern takes 0 hits — over-wildcarding does not
 //     generalise a pattern, it just stops it matching.
 // The leading `lea rdx,[rsp+d32]` (the out-param address) is KEPT with its displacement
-// wildcarded. It was briefly dropped on a misreading of the stack-displacement rule: the rule
-// bans a LITERAL frame offset, not the instruction. Keeping the form costs nothing, adds four
-// literal bytes of context, and measured identically (3/3 on Meltopia either way).
+// wildcarded: the stack-displacement rule bans a LITERAL frame offset, not the instruction.
+// Keeping the form costs nothing and adds four literal bytes of context.
 constexpr const char* AOB_SPARSE_MEL55_1 =
     "48 8D 94 24 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 63 84 24 ?? ?? ?? ?? "
     "48 8D 3C 40 48 C1 E7 05 48 03 3D";
@@ -1167,32 +1160,31 @@ constexpr const char* AOB_SPARSE_MEL55_1 =
 // ============================================================
 // SparseDelegates — AV53 (UE 5.3, Avowed / Obsidian fork)
 // ============================================================
-// Closes the "Avowed (5.3) sparse: zero hits" gap. All 7 prior patterns MISS: same functions,
+// Avowed's sparse-delegate anchor: every other SPARSE pattern MISSES it — same functions,
 // different MSVC scheduling. ES2_1 needs `lea rcx,[crit]; call [IAT]; mov rdx,rXX;
 // lea rcx,[Sparse]` with a 3-byte gap — Avowed has ~42 bytes of inlined PointerHash there.
 // MEL55_1/PAL51_1 need `add r,[Sparse]`; Avowed emits `mov r,[Sparse]` + `lea r,[base+idx]`.
 //
-// The fork does NOT change this structure. Measured against stock UE 5.x at
+// The fork does NOT change this structure. Against stock UE 5.x at
 // FSparseDelegateStorage::GetSparseDelegate: outer stride 0x60, TSet::HashSize at +0x48,
 // element HashNextId at +0x58, inner TMap at element+8, inner stride 0x20 with the value at
 // +8, PointerHash = ptr>>4 into the 32-bit Murmur finalizer (stock 5.0-5.7; 5.8 hashes the raw pointer with
 // MurmurFinalize64). So Avowed's known deviations (packed
 // 20-byte FUObjectItem, static FUObjectArray) stop at the object array — ValidateSparseDelegates'
-// hardcoded kOuterStride = 0x60 was already correct for it.
+// hardcoded kOuterStride = 0x60 holds for it.
 //
 // `SparseDelegateReport` does NOT exist in this binary (the !UE_BUILD_SHIPPING console command
 // is compiled out), so the string-xref route GROUND-TRUTH.md suggests for FF7 Rebirth is dead
-// here. This was found structurally instead: scan .text for TSet stride math adjacent to a
-// rip-relative .data reference, bucket by global, and take the one with a pure-0x60 profile.
-// Corroborated by SparseDelegateMapCritical sitting exactly 0x28 (sizeof CRITICAL_SECTION)
+// here. The ground truth is structural: the one .data global whose adjacent TSet stride math has
+// a pure-0x60 profile, with SparseDelegateMapCritical exactly 0x28 (sizeof CRITICAL_SECTION)
 // below it — the two statics of SparseDelegate.cpp, adjacent.
 //
-// 22 literal bytes. 3 hits on Avowed, all correct, 0 decoys; 0 hits on all 41 other programs.
-// HONEST CAVEAT, measured: the head alone (through `shl rdx,5`, 14 literal bytes) scores
-// identically, so the `lea rcx,[rax+rdx]; cmp [rax+rdx],rsi` tail is inert on this corpus —
-// the selectivity comes from the exact register allocation, not the length.
+// 22 literal bytes. Correct on Avowed with 0 decoys; no hit on any other corpus program.
+// ⚠ The head alone (through `shl rdx,5`, 14 literal bytes) scores identically, so the
+// `lea rcx,[rax+rdx]; cmp [rax+rdx],rsi` tail is inert on this corpus — the selectivity comes
+// from the exact register allocation, not the length.
 //
-// Two sibling candidates were mined and REJECTED on measurement, not taste:
+// Two sibling candidates NOT to add:
 //   * a twin-ref form in GetSparseDelegate — correct, but it bakes in `[rsp+0x20]`, which is a
 //     frame LOCAL (`mov [rsp+0x20],rdi` spills the key) and not shadow space; DI427_1/2 encode
 //     the same out-param idiom and wildcard that disp8. One added spill in a future build kills
@@ -1200,56 +1192,47 @@ constexpr const char* AOB_SPARSE_MEL55_1 =
 //   * a `mov rdx` register variant — strictly dominated: a nibbled form covers its sites plus
 //     AV53_1's, so it buys nothing.
 //   Either would also add an Avowed-only entry to SPARSE_PATTERNS, which is scanned in kBatchSize
-//   batches: an entry that opens a new batch costs a further full AVX2 pass over 430 MB of .text
-//   across the titles that find nothing in the batches before it, for a pattern that can only
-//   ever hit Avowed. If more Avowed sites are wanted, WIDEN this pattern in place rather than
-//   appending an entry.
+//   batches: an entry that opens a new batch costs a further full AVX2 pass over .text across the
+//   titles that find nothing in the batches ahead of it, for a pattern that can only ever hit
+//   Avowed. If more Avowed sites are wanted, WIDEN this pattern in place rather than appending an
+//   entry.
 constexpr const char* AOB_SPARSE_AV53_1 =
     "48 8B 05 ?? ?? ?? ?? 48 63 C9 48 8D 14 49 48 C1 E2 05 48 8D 0C 10 48 39 34 10";
 
 // ============================================================
 // SparseDelegates — X1/X2 (cross-version; mined on Grimhook UE 5.1)
 // ============================================================
-// These close the "sparse n=1" cluster that GROUND-TRUTH.md has carried as an open item: six
-// binaries reached SparseDelegates through SPARSE_ES2_1 and NOTHING else, so a patch that moved
-// that one site would have taken sparse-delegate support with it. After these, only Avowed is
-// still n=1.
-//
-//   Everspace 2 5.5 / 5.5b  1 -> 2      Satisfactory 5.2 CoreUObject  1 -> 3
-//   Satisfactory 5.6        1 -> 3      CrashReportClient 5.6         1 -> 3
-//   Grimhook 5.1            1 -> 3      Avowed 5.3                    1 -> 1 (unchanged)
-//
-// NO binary that currently fails starts working — this is redundancy, on the same footing as
-// PAL51_1 / MEL55_1 / AV53_1, each of which was added to a binary that already resolved.
+// Redundancy for SPARSE_ES2_1: binaries that reach SparseDelegates through it gain a second or
+// third anchor here, so a patch that moves that one site does not take sparse-delegate support
+// with it (Avowed is covered by AV53_1 alone). They make no failing binary work — redundancy, on
+// the same footing as PAL51_1 / MEL55_1 / AV53_1.
 //
 // Both anchor on FSparseDelegateStorage::Remove / RemoveAll / Clear, at DIFFERENT sites from
 // SPARSE_ES2_1's (which lives in NotifyUObjectDeleted) — genuine redundancy across functions,
-// not a re-anchor on the same instruction stream. Verified decoy-free on 39 programs including
-// 8 monolithic game EXEs up to 414 MB of .text: 0 decoys, anywhere, for either.
+// not a re-anchor on the same instruction stream. Decoy-free across the corpus, monolithic game
+// EXEs included, for either.
 //
 // X1 is the empty-map epilogue: after removing the last entry, unregister the UObject delete
 // listener. That is not a generic TSet idiom — only FSparseDelegateStorage does it — which is
-// why 62 hits produce zero decoys. `8B ?5 [+0x08]` / `3B ?5 [+0x34]` are the outer-TSet Num/Max,
-// i.e. the very two ints ValidateSparseDelegates range-checks, so they stay literal (STRUCT
-// displacements, not frame).
+// why its many hits produce zero decoys. `8B ?5 [+0x08]` / `3B ?5 [+0x34]` are the outer-TSet
+// Num/Max, i.e. the very two ints ValidateSparseDelegates range-checks, so they stay literal
+// (STRUCT displacements, not frame).
 //
-// TRUNCATED DELIBERATELY. The mined form ended with one more `48 8D 0D` (the GUObjectArray ref).
-// Measured, those 3 bytes are inert on 36 of 38 programs — and they COST both Everspace 2 5.5
-// builds, because 5.5 emits `lea rdx,…; call` with no second lea. Since ES2 5.5 is one of the
-// exact n=1 binaries this exists to fix, the longer form failed at its own purpose. Longer is
-// not safer; it is only safer where the extra bytes are load-bearing.
+// TRUNCATED DELIBERATELY: one more `48 8D 0D` (the GUObjectArray ref) would be inert almost
+// everywhere and would COST both Everspace 2 5.5 builds, because 5.5 emits `lea rdx,…; call`
+// with no second lea — and those are exactly the single-anchor binaries this exists for. Longer
+// is not safer; it is only safer where the extra bytes are load-bearing.
 // UNIQUE-OK on 11 oracles / 9 engine versions (4.24 -> 5.6).
 constexpr const char* AOB_SPARSE_X1 =
     "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B ?5 ?? ?? ?? ?? 3B ?5 ?? ?? ?? ?? 75 ?? 48 8D 15";
 
-// X2 anchors one block EARLIER — the inner-TMap emptiness test that guards the same call. It is
-// the only new pattern that fires on Everspace 2 5.5, and it keeps `+0x08` / `+0x34` as LITERAL
+// X2 anchors one block EARLIER — the inner-TMap emptiness test that guards the same call. It
+// fires on Everspace 2 5.5, and it keeps `+0x08` / `+0x34` as LITERAL
 // struct displacements (version-stable UE layout, the evidence that makes a pattern
 // trustworthy). instrOffset = 11: `8B 4? 08`(3) + `3B 4? 34`(3) + `75 ??`(2) + `4? 8B D?`(3),
-// so the RIP-relative `48 8D 0D` starts at byte 11, NOT byte 0. A deliberate wrong-offset
-// control confirmed how quiet that mistake is: instrOffset 26 resolves to
-// SparseDelegateObjectListener — a plausible adjacent global 8 bytes below truth — and goes
-// DECOY-ONLY on all 15 binaries while the hit count stays healthy.
+// so the RIP-relative `48 8D 0D` starts at byte 11, NOT byte 0. ⚠ A wrong offset is quiet:
+// instrOffset 26 resolves to SparseDelegateObjectListener — a plausible adjacent global 8 bytes
+// below truth — and goes DECOY-ONLY everywhere while the hit count stays healthy.
 // UNIQUE-OK on 10 oracles / 6 engine versions.
 constexpr const char* AOB_SPARSE_X2 =
     "8B 4? 08 3B 4? 34 75 ?? 4? 8B D? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B ?5 ?? ?? ?? ?? 3B ?5";
@@ -1257,17 +1240,12 @@ constexpr const char* AOB_SPARSE_X2 =
 // ============================================================
 // GObjects — DI427 (UE 4.27, 32-byte FUObjectItem)
 // ============================================================
-// WHY these exist: on DropIn the pre-existing GObjects patterns had no DECOY-FREE anchor. Root
-// cause, measured over all 400 xrefs to ObjObjects.Objects: the destination register of the
-// chunk load is rdi(156) / rsi(92) / r14(63) / rbx(40) / r15(19) / r12(15) / rbp(7) / rax(6) /
-// r13(2) — and NEVER rcx, because rcx is the *index* register at every one of these sites.
-// GOBJ_V1 hardcodes `48 8B 0C C8` (dest = rcx), so the whole V-series is structurally unable to
-// fire here. Nibble-masking the REX + modrm is the fix.
-//   SCOPED CORRECTLY b2499. The original wording — "every one of the 52 pre-existing GObjects
-//   patterns MISSES or resolves only to decoys" — overstates it, and the sweep says so: on
-//   UE4.27-DropIn, GOBJ_ES53_1 reaches truth (1 correct behind 34 decoys, OK-BEHIND) and is
-//   still the SELECTED lander there, while G42_2 / GH_4 / PS3 are UNIQUE-OK and SAT426_1 is
-//   OK-FIRST. "No decoy-free anchor" is the claim the data supports; "nothing worked" is not.
+// WHY these exist: at the xrefs to ObjObjects.Objects on DropIn, the destination register of the
+// chunk load is rdi / rsi / r14 / rbx / r15 / r12 / rbp / rax / r13 — and NEVER rcx, because rcx
+// is the *index* register at every one of these sites. GOBJ_V1 hardcodes `48 8B 0C C8`
+// (dest = rcx), so the whole V-series is structurally unable to fire there. Nibble-masking the
+// REX + modrm is the fix. Other families do reach DropIn's truth (GOBJ_ES53_1 among them, behind
+// decoys); these add anchors of the shape the V-series cannot express.
 //
 // SECOND TRAP: do NOT shorten these. The 14-byte core
 // `48 8B 05 ?? ?? ?? ?? 4? 8B ?? C8 4? 85 ??` is decoy-free on DropIn but produces 1 decoy
@@ -1275,15 +1253,9 @@ constexpr const char* AOB_SPARSE_X2 =
 // tail is what takes all three to zero.
 //
 // THIRD, AND IT DECIDES THEIR BANDS — THESE ARE BUILD-CONFIG SHAPES, NOT "UE 4.27" SHAPES.
-// Proven by a controlled A/B rather than inferred: the maintainer's own UE 4.27.2 "Flying"
-// template, one project compiled three ways on one engine, with the config as the only variable
-// (`D:\UE_Analyze_Data\Varies Version builds\4.27.2\{Development,DebugGame,Shipping}\Win64`):
-//
-//            DI427_1   DI427_2   DI427_3        (raw .text hit counts, offline scan)
-//   Development   832      1415       246
-//   DebugGame     832      1415       246       identical counts, different addresses
-//   Shipping        0         0         0       <-- ALL THREE VANISH
-//   (DropIn 4.27   925      1524       282  — a Development build, hence the match)
+// One UE 4.27.2 project compiled three ways on one engine, the config the only variable, shows
+// it: all three fire on the Development and DebugGame builds and ALL THREE VANISH on Shipping.
+// (DropIn 4.27 is a Development build, hence its match.)
 //
 // The reason is in what a Shipping build strips. `_1` and `_2` both anchor on the
 // `E8 <check-fail>; nop; int3` that `check()` emits; `_3` anchors on IndexToObject's
@@ -1291,24 +1263,20 @@ constexpr const char* AOB_SPARSE_X2 =
 // additionally needs the 32-byte `FUObjectItem` — those 8 bytes are `TStatId`, gated at 4.27 by
 // `#if STATS || ENABLE_STATNAMEDEVENTS_UOBJECT` (`UObjectArray.h` @ 4.27.2-release), and `STATS`
 // is 0 in Shipping. Two independently symbolised 4.27 SHIPPING binaries (Breeders, Maelstrom)
-// carry the stock 24-byte item, so the 32-byte item was never a 4.27 trait.
+// carry the stock 24-byte item, so the 32-byte item is not a 4.27 trait.
 //
-// What that means per pattern, over the 51-program sweep:
-//   * GOBJ_DI427_1 fires on exactly ONE binary — UE4.27-DropIn (925 hits, 0 decoys) — and is
+// What that means per pattern:
+//   * GOBJ_DI427_1 fires on exactly ONE corpus binary — UE4.27-DropIn, with 0 decoys — and is
 //     never the selected pattern even there. It is the ONLY entry in this file that is both
-//     config-gated AND item-size-gated, so it is DEMOTED 105 -> 256: a Development-only
+//     config-gated AND item-size-gated, so it sits at the tail of Tier 1: a Development-only
 //     fingerprint should not hold a GObjects batch-1 slot that every shipped game pays to scan.
 //     Band by SEMANTICS, not by its 13 literal bytes — the same judgement the GOBJ_ES53_1
 //     counter-example in the band block above makes in the opposite direction.
-//     **DEMOTION VERIFIED by the full 58-program sweep (2026-07-29):** not one lander moved on
-//     any oracle, out/sweep/REPORT.md's band audit came back EMPTY ("all patterns sit in a band consistent
-//     with their specificity"), and DI427_1 now appears only in the §6 noise table. Neutral, as
-//     predicted — the point was ordering hygiene, not a measurable win.
-//   * GOBJ_DI427_2 (5 binaries) and _3 (4 binaries) DO reach genuine SHIPPING builds — 4.22 and
-//     4.26/5.2 Satisfactory, which evidently ship with checks ENABLED, and that is not an
-//     assumption: `_2`'s whole anchor IS the check-fail tail, so its 1,801 hits on the 4.22
-//     Shipping EXE are the proof. Not config-gated in practice; they keep their bands.
-// Do NOT read the demotion as "prune it": it is UNIQUE-OK wherever it fires, and rule 5 of
+//   * GOBJ_DI427_2 and _3 DO reach genuine SHIPPING builds — 4.22 and 4.26/5.2 Satisfactory,
+//     which ship with checks ENABLED, and that is not an assumption: `_2`'s whole anchor IS the
+//     check-fail tail, so its hits on the 4.22 Shipping EXE are the proof. Not config-gated in
+//     practice; they keep their bands.
+// Do NOT read DI427_1's low band as "prune it": it is UNIQUE-OK wherever it fires, and rule 5 of
 // GROUND-TRUTH.md (never prune on absence of proof) applies. It is insurance for the next
 // Development/DebugGame build that walks in.
 
@@ -1358,10 +1326,9 @@ constexpr const char* AOB_GWORLD_DI427_1 =
     "48 89 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 41 0F B6 ?? 24 49 8B ?? 24 80 02 00 00 88 ?? 0A 01 00 00";
 // GWLD_DI427_2: FSeamlessTravelHandler::Tick — `mov qword ptr [rip+d32], 0`, the
 //   `GWorld = nullptr` teardown store. NOTE totalLen = 11, not 7: the disp32 still starts
-//   at byte 3 but the instruction carries a trailing imm32. Every one of the 52 existing
-//   GWorld patterns uses 48 8B / 48 39 / 48 3B / 4C 0F 44 / 48 89 — the C7-imm store form
-//   is absent from the table entirely, so this shape is invisible to the scanner in EVERY
-//   game today, not just this one.
+//   at byte 3 but the instruction carries a trailing imm32. The other GWorld patterns use
+//   48 8B / 48 39 / 48 3B / 4C 0F 44 / 48 89 — without this entry the C7-imm store form is
+//   absent from the table, and the shape invisible to the scanner in EVERY game.
 constexpr const char* AOB_GWORLD_DI427_2 =
     "48 C7 05 ?? ?? ?? ?? 00 00 00 00 49 8B ?? 24 80 00 00 00 48 81 C? 38 01 00 00";
 
@@ -1387,19 +1354,16 @@ constexpr const char* AOB_GENGINE_X1 =
 // X3: X1's HEAD only — `sub rsp,0x2X; mov rdx,rcx; mov rcx,[GEngine]; call` — with the REX of
 // the `mov rdx,rcx` nibble-masked and X1's trailing `test rax,rax; jz` dropped.
 //
-// Why it exists: FF7 Remake (UE 4.18, SquareEnix fork) is the ONLY binary in a 26-program sweep
-// where GEngine resolved to nothing at all — every GEngine pattern missed. Its
+// Why it exists: it reaches FF7 Remake (UE 4.18, SquareEnix fork), which X1 cannot. Its
 // GetWorldFromContextObject wrapper spills the result (`mov rbx,rax`) BEFORE the null check, so
-// X1's `48 85 C0` no longer follows the call and no amount of nibble-masking can bridge it.
+// X1's `48 85 C0` does not follow the call and no amount of nibble-masking can bridge it.
 //
-// Dropping the tail is safe here, and measured rather than assumed: the head alone is
-// UNIQUE-OK with ZERO decoys on both symbolised oracles it was calibrated against
-// (DropIn 4.27: 3/3 correct; Solarpunk 5.7: 2/2) — i.e. it finds strictly MORE correct sites
-// than X1 (2 and 1) while introducing none that are wrong. On FF7R it produces exactly one hit,
-// at 0x145879EE8, and that site was confirmed by disassembly to be
-// `GEngine->GetWorldFromContextObject(Obj)` — the callee returns a UWorld which the caller
-// immediately runs through GUObjectArray.IndexToObject. `GENGC_A` (a wholly different shape)
-// independently resolves to the same address.
+// Dropping the tail is safe here: the head alone is UNIQUE-OK with ZERO decoys on the
+// symbolised oracles it is calibrated against (DropIn 4.27, Solarpunk 5.7) — it finds strictly
+// MORE correct sites than X1 while introducing none that are wrong. On FF7R its one hit is, by
+// disassembly, `GEngine->GetWorldFromContextObject(Obj)` — the callee returns a UWorld which the
+// caller immediately runs through GUObjectArray.IndexToObject. `GENGC_A` (a wholly different
+// shape) independently resolves to the same address.
 // X1 is kept AHEAD of this: it is the tighter of the two and costs nothing when it hits.
 constexpr const char* AOB_GENGINE_X3 =
     "48 83 EC 2? 4? 8B D1 48 8B 0D ?? ?? ?? ?? E8";
@@ -1417,27 +1381,25 @@ constexpr const char* AOB_GENGINE_SP57_1 =
 //   `mov rax,[GEngine]; test rax,rax; jz; mov rcx,[rax+disp32]; test rcx,rcx; jz`
 // i.e. null-check the engine, load one of its object members (GameViewport / GameInstance /
 // GameUserSettings / ...) at a 32-bit displacement, null-check that too. Mined on Palworld
-// (UE 5.1, no PDB — the corpus had no 5.1 sample) but it turned out to be the most broadly
-// portable GEngine pattern in the file. Measured over the full 35-program sweep it is correct on
-// TWELVE oracles spanning UE 4.20 -> 5.7: UNIQUE-OK (decoy-free) on 4.22, 4.24, 4.26, 4.27, 5.2,
-// 5.5 Meltopia and 5.6; correct-with-the-real-site-first on 4.20, 4.25, both 5.5 Everspace builds
-// and 5.7. On Avowed (UE 5.3, no symbols) all 53 hits converge on a SINGLE address — the
-// signature of a real global rather than a generic idiom, which is exactly what disqualified the
-// rejected `mov rcx,[G]; test; jz; call [vtable]` variant (76-93 *different* targets per binary).
+// (UE 5.1, no PDB), and the most broadly portable GEngine pattern in the file: correct on
+// oracles spanning UE 4.20 -> 5.7, UNIQUE-OK (decoy-free) on most and correct-with-the-real-
+// site-first on the rest. On Avowed (UE 5.3, no symbols) all its hits converge on a SINGLE
+// address — the signature of a real global rather than a generic idiom, which is exactly what
+// disqualifies the `mov rcx,[G]; test; jz; call [vtable]` variant (dozens of *different*
+// targets per binary).
 //
-// HONEST EXCEPTION — the SquareEnix forks. On FF7 Remake this is DECOY-ONLY: 106 hits across 3
-// different addresses, none of them the real GEngine; FF7 Rebirth is similarly divergent (90
-// hits, 6 targets). Those two evidently reuse this member-access shape for something else. It
-// costs nothing today because GENG_X3 (priority 105) wins on FF7 Remake before this is reached,
-// and ValidateGEngineSlot would reject the decoys anyway (it derefs the slot and demands a
-// reflected "GameViewport" property). But do not read "correct on 12 oracles" as "safe
-// everywhere" — on a UE4.18-era SquareEnix fork this pattern is noise, and if it ever became the
-// lander there the tail would need tightening.
+// ⚠ EXCEPTION — the SquareEnix forks. On FF7 Remake this is DECOY-ONLY (several addresses, none
+// of them the real GEngine), and FF7 Rebirth is similarly divergent: those two reuse this
+// member-access shape for something else. GENG_X3 (priority 105) wins on FF7 Remake before this
+// is reached, and ValidateGEngineSlot would reject the decoys anyway (it derefs the slot and
+// demands a reflected "GameViewport" property). But do not read its reach as "safe everywhere"
+// — on a UE4.18-era SquareEnix fork this pattern is noise, and if it ever became the lander
+// there the tail would need tightening.
 //
 // The `?? ?? 00 00` is load-bearing: it pins the member load to a 32-bit displacement, which is
 // what UEngine's layout forces and what keeps this off the far commoner 8-bit-displacement
 // `mov rcx,[rax+0x30]` idiom. Placed after X1/X3/X2 because it is OK-FIRST rather than
-// UNIQUE-OK on three of the seven — it is the broad safety net, not the precision instrument.
+// UNIQUE-OK on some oracles — it is the broad safety net, not the precision instrument.
 constexpr const char* AOB_GENGINE_X4 =
     "48 8B 05 ?? ?? ?? ?? 48 85 C0 74 ?? 48 8B 88 ?? ?? 00 00 48 85 C9 74";
 // ES55: UEngine::GetEngineSubsystem<T> prologue — `mov rdi,[GEngine]; call; cmp byte[flag],0`.
@@ -1452,7 +1414,7 @@ constexpr const char* AOB_GENGINE_ES55_1 =
     "48 89 5C 24 08 57 48 83 EC 20 48 8B 3D ?? ?? ?? ?? E8 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 48 8B D8";
 
 // ============================================================
-// GWorld — FD (UWorld::FinishDestroy, mined 2026-07-27 for the pre-4.20 flat-array era)
+// GWorld — FD (UWorld::FinishDestroy, for the pre-4.20 flat-array era)
 // ============================================================
 // FD_1: mov rax,[GWorld]; cmp rax,<this>; cmovz rax,<replacement>; mov [GWorld],rax; call
 //
@@ -1468,76 +1430,59 @@ constexpr const char* AOB_GENGINE_ES55_1 =
 // it is clean. Source confirmed from PDB symbols on THREE independent oracles (HeliumRain 4.20,
 // DropIn 4.24, DropIn 4.27).
 //
-// WHY IT WAS MINED — and READ THIS BEFORE CONCLUDING FROM THE SWEEP THAT IT IS POINTLESS.
-// The offline sweep shows 4.11 and 4.13 already resolving GWorld correctly, via GWLD_G42_1 at
-// priority 880 after 5 and 6 fall-throughs. That is the harness model, not the runtime:
+// WHY IT EXISTS — and READ THIS BEFORE CONCLUDING FROM THE SWEEP THAT IT IS POINTLESS.
+// Without it the offline sweep shows 4.11 and 4.13 resolving GWorld correctly, via GWLD_G42_1
+// at priority 880 after several fall-throughs. That is the harness model, not the runtime:
 // scan_patterns.java HAS the truth and walks past a decoy, whereas ValidateGWorldBasic is
-// deliberately loose and ACCEPTS the first one it is handed. So live, both titles land on a
-// wrong GWorld and are rescued only by instance-scan recovery.
-//   * NEKOPALIVE's decoy is a TSharedPtr {Object, ReferenceController} singleton at 0x1423C9940
-//     whose +0 reads like a UWorld pointer — reached by GWLD_SAT52_1 (365).
-//   * Fantasynth's is reached EARLIER, by GWLD_SF_2 (300); its analogues are 14288E648 /
-//     1427B0B40 / 14277D3C0.
-// At 265 this pattern is scanned BEFORE both (300 and 365), so the true GWorld is validated and
-// returned before either decoy is ever presented. That — not the fall-through count — is the
-// fix. It was explicitly checked against all four decoy addresses and hits none of them.
+// deliberately loose and ACCEPTS the first one it is handed. So live, both titles would land on
+// a wrong GWorld and be rescued only by instance-scan recovery.
+//   * NEKOPALIVE's decoy is a TSharedPtr {Object, ReferenceController} singleton whose +0 reads
+//     like a UWorld pointer — reached by GWLD_SAT52_1 (365).
+//   * Fantasynth's is reached EARLIER, by GWLD_SF_2 (300).
+// This pattern's band is ahead of both, so the true GWorld is validated and returned before
+// either decoy is ever presented. That — not the fall-through count — is what it buys. It hits
+// none of the decoy addresses.
 //
-// This exists because the maintainer's call was "add a pattern, do NOT tighten a validator 30+
-// oracles depend on, to fix one 2016 title" (see the V2/V4/V5/V6 removal note below for why a
-// wrong GWorld is worse than no GWorld).
+// Add a pattern for such a title; do NOT tighten ValidateGWorldBasic, which many oracles depend
+// on (see the V2/V4/V5/V6 removal note below for why a wrong GWorld is worse than no GWorld).
 //
 // RELATION TO GWLD_G427_5 (390, same function): this is a strict generalisation. The nibbled
 // CMP reaches the rsi/rdi codegen that G427_5's hardcoded `48 3B C3` cannot, the exact
 // `48 0F 44 C?` tightens a CMOV that G427_5 leaves wildcarded, and the trailing `E8` adds a
 // literal byte. G427_5 is DECOY-ONLY on both 4.11 and 4.13.
 //
-// MEASURED on the full landing sweep — 46 programs / 23 with GWorld truth, UE 4.11 -> 5.7:
-// 21 hits, 16 UNIQUE-OK, 5 NO-TRUTH, 25 MISS. ZERO decoys anywhere, and NEVER more than ONE hit
-// on any single binary. Absent from both the hotspot and the dead-weight table.
-//   UNIQUE-OK (16): 4.11, 4.13, 4.18 DQ XI S, 4.20 x2, 4.21, 4.24, 4.25, 4.26, 4.27 x3, 5.0,
-//                   5.1, 5.2
-//   NO-TRUTH,1 hit: FF7 Remake, Octopath, Artisan, Palworld, DQ I&II
-//   MISS:           4.22, FF7 Rebirth, Avowed, Elliot, all 5.5/5.6, Solarpunk
-// It became the LANDER on four binaries, three of them an improvement and none a regression:
-// 4.11 (G42_1 @880, 5 wasted -> 0), 4.13 (G42_1 @880, 6 -> 0), 4.26 Satisfactory Engine
-// (SF_2 @300, 2 -> 0), 5.2 Satisfactory Engine (lateral from SF_2). Those were the only three
-// GWorld entries in the report's fall-through list, so that list is now GObjects-only.
+// Reach: ZERO decoys anywhere in the corpus, and NEVER more than ONE hit on any single binary.
+// UNIQUE-OK on the 4.11 -> 5.2 oracles except 4.22, which it misses, as it misses 5.5 onward.
 //
-// CAVEATS, recorded rather than papered over:
+// CAVEATS:
 //   * NO 4.12 BINARY EXISTS in the corpus. 4.12 is bracketed structurally (identical shape on
-//     4.11 and 4.13 and every version through 5.2) but never measured. Do not write it up as
+//     4.11 and 4.13 and every version through 5.2) but unmeasured. Do not write it up as
 //     verified.
-//   * `48 3B C?` also admits `cmp rcx,r??`. It cost zero decoys over 45 programs, but it is
+//   * `48 3B C?` also admits `cmp rcx,r??`. It costs zero decoys on the corpus, but it is
 //     looser than the intent — noted rather than tightened blind.
-//   * instrOffset was PROVEN by counter-example: setting it to 4 keeps the hit count IDENTICAL
-//     while the resolved address lands outside the image. The usual silent failure.
+//   * ⚠ instrOffset fails silently: 4 keeps the hit count IDENTICAL while the resolved address
+//     lands outside the image.
 constexpr const char* AOB_GWORLD_FD_1 =
     "48 8B 05 ?? ?? ?? ?? 48 3B C? 48 0F 44 C? 48 89 05 ?? ?? ?? ?? E8";
 
 // ============================================================
-// GNames — XX (pre-4.23 FName::GetNames write-back, mined 2026-07-28)
+// GNames — XX (pre-4.23 FName::GetNames write-back)
 // ============================================================
 // XX_1: call malloc; mov rax,rbx; mov [rip+Names],rbx; mov rbx,[rsp+20]; add rsp,28; ret
 //
-// WHY IT EXISTS. GROUND-TRUTH.md called pre-4.23 GNames the corpus's thinnest coverage,
-// resting on "two patterns, GNAM_CT3 (700) and GNAM_G42_1 (710), of the SAME shape".
-// Measuring it made that worse, not better: G42_1's byte string is a STRICT SUPERSET
-// WINDOW of CT3 offset by +4 (CT3[4:] equals G42_1 except that G42_1 wildcards the two
-// bytes CT3 pins as literal 00 00), so every CT3 match at A implies a G42_1 match at
-// A+4 — verified token-by-token and empirically on all 36 programs. They are ONE SHAPE
-// MATCHED TWICE. A compiler change to that lazy-init prologue takes pre-4.23 GNames out
-// entirely, and always could have.
+// WHY IT EXISTS. The other pre-4.23 GNames anchors, GNAM_CT3 (700) and GNAM_G42_1 (710), are
+// ONE SHAPE MATCHED TWICE: G42_1's byte string is a STRICT SUPERSET WINDOW of CT3 offset by +4
+// (CT3[4:] equals G42_1 except that G42_1 wildcards the two bytes CT3 pins as literal 00 00),
+// so every CT3 match at A implies a G42_1 match at A+4. A compiler change to that lazy-init
+// prologue would take pre-4.23 GNames out entirely.
 //
-// WHY IT IS THE SAME FUNCTION, and why that is the honest ceiling. An xref census of the
-// TNameEntryArray global (capstone over every .pdata-covered function + a raw .text
-// disp32 sweep) finds 3 xrefs on Satisfactory 4.22 (all inside FName::GetNames) and 9 on
-// 4.15.3 over 4 functions — but the extra functions are INLINE EXPANSIONS of GetNames
-// carrying the identical lazy-init shape (disassembled and confirmed verbatim), so they
-// add no structural independence. FName::ToString / AppendString / the comparison and
-// hash paths contain ZERO references: they call GetNames and use the returned register.
-// A caller-side anchor was mined and REFUSED — `and edx,0x3FFF` preceded by a call to
-// GetNames sits at distance {11,12,27,30} on 4.15.3 but at {14,19,20} on 4.22, so no
-// fixed-offset AOB spans the band and there is nothing to hang a CallFollow on.
+// WHY IT IS THE SAME FUNCTION, and why that is the honest ceiling. The TNameEntryArray
+// global's xrefs all sit inside FName::GetNames or in INLINE EXPANSIONS of it carrying the
+// identical lazy-init shape, so they add no structural independence. FName::ToString /
+// AppendString / the comparison and hash paths contain ZERO references: they call GetNames
+// and use the returned register. A caller-side anchor does not work: the distance from a
+// GetNames call to the `and edx,0x3FFF` after it differs between builds (4.15.3 vs 4.22), so
+// no fixed-offset AOB spans the band and there is nothing to hang a CallFollow on.
 // So this is a different SITE in the same function, not a different function. That is
 // the most independence the engine actually offers, and saying otherwise would be false.
 //
@@ -1546,17 +1491,10 @@ constexpr const char* AOB_GWORLD_FD_1 =
 // shadow-space spill, no allocation-size immediate — the five things that differ between
 // builds are exactly the five things absent here.
 //
-// MEASURED, 8 of 8 pre-4.23 oracles, correct hit at INDEX 0 on every one — the only
-// pattern in this file that covers all of them:
-//   4.11 Nekopara 1 hit UNIQUE-OK    4.20 Everspace   41 hits OK-FIRST
-//   4.13 Fantasynth 1 hit UNIQUE-OK  4.20 HeliumRain  29 hits OK-FIRST
-//   4.15.3 Flying 1 hit UNIQUE-OK    4.21 FreudGate   29 hits OK-FIRST
-//   4.15.3 CrashRC 1 hit UNIQUE-OK   4.22 Satisfactory 1 hit UNIQUE-OK
-// Contrast the incumbents, which reach truth on only 6 of 8: UNIQUE-OK on 4.11 / 4.13 /
-// 4.15-Flying / 4.20-Everspace, OK-BEHIND on 4.20-HeliumRain AND 4.21-FreudGate, and
-// MISS on 4.22-Satisfactory and 4.15.3-CrashReportClient.
-// Whole corpus, 36 programs: 4 UNIQUE-OK, 3 OK-FIRST, 10 DECOY-ONLY, 12 MISS, 7 NO-TRUTH,
-// and ZERO spurious-correct anywhere.
+// Correct hit at INDEX 0 on every pre-4.23 oracle (UNIQUE-OK or OK-FIRST) — the only pattern
+// in this file that covers all of them; the CT3 / G42_1 shape misses some and sorts truth
+// behind decoys on others. Elsewhere in the corpus it is often DECOY-ONLY, and never
+// spurious-correct.
 //
 // BAND: 717 is justified by SEMANTICS, not by its 17 literal bytes — the GOBJ_ES53_1
 // precedent above. A bare `call; mov; mov [rip]; epilogue` is a common shape, so it earns
@@ -1805,15 +1743,13 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     SIG_RIP("GNAM_PS1",   AOB_GNAMES_PS1,    AobTarget::GNames, 2, 3, 7, 0, 600, "PS", "jz+9; lea r8"),
     SIG_RIP("GNAM_PS2",   AOB_GNAMES_PS2,    AobTarget::GNames, 7, 3, 7, 0, 620, "PS", "sub rsp; shr; lea rbp"),
 
-    // 695: UE 5.4+ NON-SHIPPING (Development / DebugGame). The maintainer's rule (2026-09-26):
-    // few games ship a non-Shipping build, so it sits BELOW every band a 4.23+ Shipping build
-    // resolves in (all of them resolve by GNAM_PS2 at 620) and needs only to come before the
-    // V-series, whose ~1,200 decoys per pattern made non-Shipping cost ~2,300 validations.
-    // Walk simulated over 23 local + 41 corpus programs: non-Shipping 5.4-5.8.3 now wins in
-    // batch 3 with 0-1 wasted validations (was 2,199-2,372), Pass-2 multi-module scans 20-23 ->
-    // 15-16; no other program changes winner, wasted count or Pass-2 count. (At 101 the Pass-2
-    // count would be 0 too, at the price of every game scanning it -- declined.) Pre-4.23 titles
-    // cross it at zero hits: there is no FNamePool before 4.23.
+    // 695: UE 5.4+ NON-SHIPPING (Development / DebugGame). Few games ship a non-Shipping build,
+    // so it sits BELOW every band a 4.23+ Shipping build resolves in (all of them resolve by
+    // GNAM_PS2 at 620) and needs only to come before the V-series, whose decoys would cost a
+    // non-Shipping build thousands of validations. Here it changes no other program's winner,
+    // wasted count or Pass-2 count. Not Tier 1: that would also spare a non-Shipping build its
+    // Pass-2 multi-module scans, at the price of every game scanning it. Pre-4.23 titles cross it
+    // at zero hits: there is no FNamePool before 4.23.
     SIG_RIP("GNAM_LLM54_1", AOB_GNAMES_LLM54_1, AobTarget::GNames, 0, 3, 7, 0, 695, "LLM54",
             "UE5.4+ non-Shipping GetNamePool init + FLowLevelMemTracker::FinishInitialise"),
 
@@ -1858,43 +1794,30 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     // ENTRIES ARE IN PRIORITY ORDER, and must stay that way, so reading the file gives the order
     // ScanForTarget actually uses (it sorts by priority) — see ASSERT_TABLE_ORDER.
     SIG_GWORLD_RIP("GWLD_SP57_1", AOB_GWORLD_SP57_1, 0, 3, 7, 0, 100, false, "SP57", "UE5.7 UGameEngine::Tick cmp [rcx+2C0] (tolerates inserted mov)"),
-    // PROMOTED 210 -> 101. This is the most successful GWorld pattern in the table: it WINS on
-    // 6 of 16 oracles (no other GWorld pattern wins more than 2) and has **zero decoys anywhere**
-    // in the corpus — 10 UNIQUE-OK, 6 NO-TRUTH on probes, 23 MISS. It was sitting behind 13 AOBs.
+    // The most successful GWorld pattern in the table: it is the lander on more oracles than any
+    // other GWorld pattern and has **zero decoys anywhere** in the corpus, so it sits in batch 1.
     //
     // The saving is a whole .text pass, not a few validations. Patterns are scanned in BATCHES OF
     // 8: order WITHIN a batch changes only validation order, but crossing a batch boundary costs
-    // an entire extra AVX2 sweep. At 210 this sat in batch 2, so the six games it wins each paid
-    // for batch 1 first. At 101 they resolve in batch 1 and never scan batch 2.
+    // an entire extra AVX2 sweep. In batch 1 the games it wins never scan batch 2.
     //
-    // What it displaces out of batch 1 is GWLD_ES2_3, which wins on nothing — so the swap is
-    // free. Deliberately 101 and not 95: the 40-90 band means "symbol-derived", and being 1st vs
-    // 2nd inside a batch is worth nothing anyway.
+    // Deliberately 101 and not 95: the 40-90 band means "symbol-derived", and being 1st vs 2nd
+    // inside a batch is worth nothing anyway.
     SIG_GWORLD_RIP("GWLD_TQ_1",  AOB_GWORLD_TQ_1,  0, 3, 7, 0, 101, false, "TQ", "TQ2 extended V3 — corpus's most successful GWorld shape"),
-    // PROMOTED 265 -> 102, after the corpus-wide measurement the previous note demanded.
-    // The deciding number is ZERO: replaying ScanForTarget's priority order over all 51
-    // measured binaries at 265 vs 102 changes ZERO landers, adds ZERO wasted validations,
-    // and moves ZERO programs to a later batch — while moving SIX from batch 3 to batch 1
-    // (4.11 Nekopara, 4.13 Fantasynth, 4.15.3 Flying, FF7R, 4.26-Sat Engine.dll,
-    // 5.2-Sat Engine.dll).
+    // In batch 1: replaying ScanForTarget's priority order over the corpus, this slot changes no
+    // lander, adds no wasted validation and moves no program to a later batch, while several
+    // early-UE4 oracles, FF7R and the Satisfactory Engine.dll programs resolve in batch 1. The
+    // batch-1 slots it competes for are not scarce: several of them win on no binary.
     //
-    // What it displaces is worth nothing: GWLD_SP57_3 falls to batch 2 but hits exactly 1
-    // of 51 binaries (Solarpunk), where GWLD_SP57_1 @100 lands first in batch 1 under BOTH
-    // layouts — so it is unreachable there either way; and GWLD_GH_2 falls to batch 3 with
-    // 0 hits on 51 binaries (it is in out/sweep/REPORT.md's "never hits anything, anywhere" list).
-    // The census also showed five of the eight batch-1 slots — DI427_1, DI427_2, SP57_2,
-    // ES2_2, SP57_3 — win on ZERO binaries. Batch 1 was not scarce.
+    // The 4.15.3 oracle shows why it matters: EVERY pattern at priority 100-260 MISSES on it,
+    // FD_1 is the FIRST HITTING pattern, and the one that would win in its absence (GWLD_SF_2
+    // @300) resolves a DECOY (FNiagaraDataSetID::DeathEvent+0xB0) — the exact failure mode FD_1
+    // exists to stop.
     //
-    // The strongest corroboration is the 4.15.3 oracle: EVERY pattern at priority 100-260
-    // MISSES on it, FD_1 is the FIRST HITTING pattern, and the one that would win in its
-    // absence (GWLD_SF_2 @300) resolves a DECOY (FNiagaraDataSetID::DeathEvent+0xB0) —
-    // the exact failure mode FD_1 was written to stop, now reproduced on a symbolised
-    // binary in a band that previously had no symbols at all.
-    //
-    // SCOPE THE CLAIM HONESTLY: "changes no answer" is true ON THIS 51-BINARY CORPUS, not
-    // unbounded. The move puts FD_1 ahead of 17 patterns, so on an unmeasured engine where
-    // FD_1 and one of those both hit, FD_1 now decides. Residual risk is small (0 decoys
-    // on 51 binaries, never more than 1 hit on any) but it is an inference, not a proof.
+    // ⚠ SCOPE THE CLAIM: "changes no answer" holds ON THE CORPUS, not unbounded. FD_1 sits ahead
+    // of most of Tier 1, so on an unmeasured engine where FD_1 and one of those both hit, FD_1
+    // decides. Residual risk is small (0 decoys on the corpus, never more than 1 hit on any
+    // binary) but it is an inference, not a proof.
     SIG_GWORLD_RIP("GWLD_FD_1",  AOB_GWORLD_FD_1,   0, 3, 7, 0, 102, false, "FD", "UWorld::FinishDestroy read + conditional write-back (4.11-5.2, generalises G427_5)"),
     // 105/115: UE 4.27 (DropIn, PDB-verified). Both are WRITE sites -> allowNull.
     // NOTE DI427_2 has totalLen = 11: `mov qword[rip+d32], imm32` — the disp32 still starts
@@ -2029,18 +1952,17 @@ constexpr AobSignature SPARSE_PATTERNS[] = {
                    16, 3, 7, 0, 140,
                    "ES2", "UE4.27 (DropIn, PDB-verified) + ES2 5.4 + TQ2 5.7 NotifyUObjectDeleted twin-ref"),
     // 150: placed LAST deliberately. SPARSE_ES2_1 already resolves Palworld, so this is the
-    // second anchor for when that site changes — not a replacement. Ordering it after ES2_1
-    // means adding it cannot perturb any existing selection, which the re-sweep confirmed.
+    // second anchor for when that site changes — not a replacement. Ordered after ES2_1, it
+    // cannot change any selection the entries above it make.
     SIG_RIP_DIRECT("SPARSE_PAL51_1", AOB_SPARSE_PAL51_1, AobTarget::SparseDelegates,
                    8, 3, 7, 0, 150,
                    "PAL51", "UE5.1 element addr (add r,[Sparse]) + TSet Num/Max compare"),
     // 160: last, for the same reason as PAL51_1 — SPARSE_ES2_1 already resolves both binaries
     // this hits, so ordering it behind everything guarantees it cannot perturb a selection.
     // instrOffset = 8: the pattern opens with `lea rdx,[rsp+d32]` (8 bytes), so the RIP-relative
-    // `lea rcx,[SparseDelegates]` starts at byte 8, NOT byte 0. Restoring that leading
-    // instruction without moving instrOffset silently resolved off the wrong instruction and
-    // dropped the pattern to 0 correct — caught by the verification sweep, which is exactly the
-    // failure mode instrOffset mistakes always take.
+    // `lea rcx,[SparseDelegates]` starts at byte 8, NOT byte 0. A leading instruction added or
+    // removed without moving instrOffset resolves off the wrong instruction and finds nothing
+    // correct, silently -- the way every instrOffset mistake fails.
     SIG_RIP_DIRECT("SPARSE_MEL55_1", AOB_SPARSE_MEL55_1, AobTarget::SparseDelegates,
                    8, 3, 7, 0, 160,
                    "MEL55", "UE5.5/5.6 twin-ref lea+add of SparseDelegates around the 0x60 stride math"),
@@ -2053,12 +1975,11 @@ constexpr AobSignature SPARSE_PATTERNS[] = {
     SIG_RIP_DIRECT("SPARSE_AV53_1", AOB_SPARSE_AV53_1, AobTarget::SparseDelegates,
                    0, 3, 7, 0, 170,
                    "AV53", "UE5.3 (Avowed fork) element addr + pointer-key compare; stock 0x60 stride"),
-    // 180/190 — the pair that closes the n=1 cluster. They take this table from 8 to 10 entries,
-    // i.e. from ONE batch to TWO (kBatchSize = 8), so the second batch is paid for by the FIRST
-    // of them and the marginal cost of the second is exactly zero. That cost lands only on
-    // titles where all 8 batch-1 patterns miss — and it is paid precisely when it is needed: if
-    // the SPARSE_ES2_1 site changes in a patch, batch 1 comes back empty and batch 2 catches it.
-    // Ordered last so they cannot perturb any existing selection.
+    // 180/190 — a pair for the titles the entries above reach through one pattern only. They
+    // open a second batch (kBatchSize = 8): the first of them pays for its .text pass and the
+    // second rides it. That pass runs only on titles where every batch-1 pattern misses -- which
+    // is when it is needed: if the SPARSE_ES2_1 site changes in a patch, batch 1 comes back
+    // empty and batch 2 catches it. Ordered last so they cannot change any earlier selection.
     SIG_RIP_DIRECT("SPARSE_X1", AOB_SPARSE_X1, AobTarget::SparseDelegates,
                    0, 3, 7, 0, 180,
                    "X+GH51", "Remove/RemoveAll/Clear empty-map epilogue (unregister delete listener)"),

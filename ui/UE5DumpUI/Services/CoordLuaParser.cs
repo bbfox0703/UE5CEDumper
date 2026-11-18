@@ -118,7 +118,7 @@ public static class CoordLuaParser
         int blockOffset = start.Index + start.Length;
 
         // One issue, on the line of block offset `at`, and nothing imported: a stray quote is
-        // an error, never a guess at where its field ends (the maintainer's rule, 2026-10-28).
+        // an error, never a guess at where its field ends.
         CoordCsvParseResult Stop(int at, string reason)
         {
             int sol = source.LastIndexOf('\n', Math.Min(at, source.Length - 1)) + 1;

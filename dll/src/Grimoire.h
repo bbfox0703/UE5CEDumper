@@ -18,9 +18,9 @@ namespace Grimoire {
 // --- Logging ---
 constexpr const wchar_t* LOG_FOLDER_NAME  = L"UE5CEDumper";
 constexpr const wchar_t* LOG_SUBFOLDER    = L"Logs";
-// Retention is AGE-based, not generation-based. The old fixed shuffle
-// (-0 -> -1 -> ... -> -4, oldest deleted) could not express an age at all: it ran on
-// every process start, so four launches of the same game in one afternoon discarded
+// Retention is AGE-based, not generation-based. A fixed generation shuffle
+// (-0 -> -1 -> ... -> -4, oldest deleted) cannot express an age at all: it runs on
+// every process start, so four launches of the same game in one afternoon would discard
 // everything earlier regardless of date. See the retention block in Sein.cpp.
 constexpr int            LOG_RETENTION_DAYS = 21;     // archived runs older than this are deleted
 constexpr size_t         LOG_MAX_SIZE_MB  = 8;
@@ -36,10 +36,9 @@ constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDump
 // process -- unless a later copy zeroed that magic because it could not serve the copy's mailbox ([DUMPER-SECOND-COPY-
 // AUTOSTART], Land::TakeMailbox); such a copy is recognised by the legacy export below.
 constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
-// The contract only exists since 2026-08-06, so a build from before it -- a stale proxy left in a game folder -- is
-// recognised by the C ABI's init entry instead, which every build has exported (the version.dll proxy since
-// 2026-03-05) and the CE scripts look for by name. It carries no magic to check; no engine module exports that name,
-// so a module that does is not one the walk needs.
+// A build older than the contract -- a stale proxy left in a game folder -- is recognised by the C ABI's init entry
+// instead, which every build exports and the CE scripts look for by name. It carries no magic to check; no engine
+// module exports that name, so a module that does is not one the walk needs.
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 // [DUMPER-SECOND-COPY-AUTOSTART] What a later copy calls or reads on an earlier copy in the same process (Land): its
 // mailbox, the hand-off it carries from this change on, and the shutdown every build carries.
@@ -51,7 +50,7 @@ constexpr const char*    DUMPER_HAND_OVER_HIDDEN_EXPORT = "UE5_HandOverHiddenAct
 // How many actors the later copy takes per call: See-through hides a handful at a time, so one call is the usual case.
 constexpr int32_t        LAND_HIDDEN_BATCH = 256;
 // How long a later copy asks an earlier copy that is still handing over (to a copy it took over) for that record, and
-// how often: a hand-off's shutdown has been measured at 9-13 s on a busy game, and it may run past the pass's own wait.
+// how often: a hand-off's shutdown can take 9-13 s on a busy game, and it may run past the pass's own wait.
 constexpr int32_t        LAND_HIDDEN_WAIT_MS = 120000;
 constexpr int32_t        LAND_HIDDEN_POLL_MS = 100;
 // One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two
@@ -60,11 +59,11 @@ constexpr const wchar_t* LAND_PASS_MUTEX_FORMAT = L"Local\\UE5CEDumper_Land_%lu"
 
 // --- Named Pipe ---
 // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid>; Voll::PipeNameForPid builds
-// the name. The old fixed name, \\.\pipe\UE5DumpBfx, is no longer served: a protocol break by decision, so a UI that
-// finds the old name knows a game runs an old DLL and can refuse it with an explanation.
+// the name. The unsuffixed name, \\.\pipe\UE5DumpBfx, is not served, so a UI that finds it knows a game runs an old
+// DLL and can refuse it with an explanation.
 constexpr const wchar_t* PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_";
 constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
-// [PIPE-PER-PROCESS-2026-11-06] Stage C. The pipe log's at-capacity line and the holders it carries, which a client that
+// [PIPE-PER-PROCESS-2026-11-06] The pipe log's at-capacity line and the holders it carries, which a client that
 // cannot connect reads: the UI's Constants.cs and tools/verify/pipe_client.py match these words, and
 // PipePerProcessSourceTests pins the three copies equal. The line reads
 //   all <n> pipe instances in use, waiting for a free slot -- <pipe> holders=[...] more=<k>
@@ -73,7 +72,7 @@ constexpr const char*    PIPE_AT_CAPACITY_TEXT   = "pipe instances in use";
 constexpr const char*    PIPE_HOLDERS_TOKEN      = " holders=";
 constexpr const char*    PIPE_HOLDERS_MORE_TOKEN = " more=";
 constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
-// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the names of the holds whose owner the DLL records (Voll::HoldLedger),
+// [PIPE-PER-PROCESS-2026-11-06] The names of the holds whose owner the DLL records (Voll::HoldLedger),
 // as get_holds reports them and an if_free refusal names them. A movement knob, a time lane and a force-field job add
 // their own name after the prefix ("movement:walk_speed", "time:global", "force_field:<class>::<field>").
 constexpr const char*    HOLD_GOD_MODE           = "god_mode";
@@ -91,10 +90,10 @@ constexpr int32_t        WRITE_MEM_EXECUTABLE    = -21;   // the range touches c
 constexpr int32_t        WRITE_MEM_NOT_WRITABLE  = -22;   // a read-only, guard, no-access or uncommitted page
 constexpr int32_t        WRITE_MEM_CHANGED       = -23;   // `expect` no longer matches what is there
 constexpr int32_t        WRITE_MEM_OWN_IMAGE     = -25;   // [WRITEMEM-OWN-IMAGE] a background client, inside the DLL's image
-// [D2-3-INVOKE] invoke_function's refusal of a background client's call the maintainer's list names (Voll); and the
+// [D2-3-INVOKE] invoke_function's refusal of a background client's call the deny list names (Voll); and the
 // name an if_free invoke's conflict carries, beside the holds, when another client's invoke is outstanding.
 constexpr int32_t        INVOKE_REFUSED_FOR_BACKGROUND = -24;
-// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: invoke_function's refusal of a background client's call under a grant
+// [MCP-WRITE-GRANTS-2026-11-14] invoke_function's refusal of a background client's call under a grant
 // (`grant`) that its checks do not allow: another function than the grant names, a parameter that reaches functions or
 // properties by name, one it cannot read, or a non-static function on a template.
 constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;
@@ -107,7 +106,7 @@ constexpr const char*    HOLD_INVOKE_QUEUE       = "invoke_queue";
 // cost when nothing survives is zero — the loop exits on the first wait.
 constexpr int            PIPE_STOP_CANCEL_REASSERT_MS = 100;
 
-// `watch` ([PIPE-PER-PROCESS-2026-11-06] Stage C). The floor keeps a watch from spinning its thread. Each watch is a
+// `watch` ([PIPE-PER-PROCESS-2026-11-06]). The floor keeps a watch from spinning its thread. Each watch is a
 // thread in the game, outside the GObjects walk's worker budget, so the count is capped: per connection, so one client
 // cannot take every watch, and in all.
 constexpr int            PIPE_WATCH_INTERVAL_MIN_MS    = 50;
@@ -142,17 +141,15 @@ inline bool IsUserspacePointer(uintptr_t p) {
 // the caller rejects the candidate rather than clamping it.
 //
 // ⛔ THEY ARE ALL 0x100000 TODAY AND THAT IS A COINCIDENCE OF MAGNITUDE, NOT A SHARED
-// MEANING -- which is the whole reason they are separate names. Classified site-by-site
-// 2026-09-07 by tracing each value's PRODUCING read and CONSUMING arithmetic, then put to
-// independent adversarial re-checks.
+// MEANING -- which is the whole reason they are separate names. Each site is classified by
+// its value's PRODUCING read and CONSUMING arithmetic.
 //
-// ⭐ THE SPLIT THAT SURVIVED, AND THE ONE THAT DID NOT. Two reviewers looked at the same
-// int32 at +0x08 and reached OPPOSITE conclusions -- one "it is a live element COUNT"
-// (UE's own `TSparseArray::GetMaxIndex() { return Data.Num(); }`, vendor SparseArray.h:460),
-// the other "it is a slot EXTENT including freed entries" (this codebase spells the live
-// count `MaxIndex - NumFreeIndices` in six places, and ReadTMapHeader reads NumFreeIndices
-// yet never subtracts it). Both arguments are sound, which is the point: count-vs-index is
-// NOT a distinction this code sustains, so it gets ONE name. What IS real is the field
+// ⭐ ONE NAME FOR +0x08, ANOTHER FOR +0x0C. The int32 at +0x08 reads soundly both as a live
+// element COUNT (UE's own `TSparseArray::GetMaxIndex() { return Data.Num(); }`, vendor
+// SparseArray.h:460) and as a slot EXTENT including freed entries (this codebase spells the
+// live count `MaxIndex - NumFreeIndices`, and ReadTMapHeader reads NumFreeIndices yet never
+// subtracts it). Count-vs-index is NOT a distinction this code sustains, so it gets ONE
+// name. What IS real is the field
 // split -- +0x08 (num/extent) and +0x0C (capacity) are different members, and Max >= Num
 // always, so capacity can want the looser ceiling. That is where the line is drawn.
 //
@@ -178,10 +175,10 @@ constexpr int32_t SANITY_MAX_CONTAINER_CAPACITY = 0x100000;
 constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 
 /// GObjects population -- the number of UObjects in the whole process. Separate magnitude
-/// AND separate meaning. Measured, not guessed: a real title reached 0x800000 (8,388,608).
+/// AND separate meaning. A real title's population can reach 0x800000 (8,388,608).
 /// ⚠ Aura.cpp `FindByAddress` bounds an InternalIndex rather than a count; an index lives in the same
 /// space as the population and must rise with it, so it belongs here -- but do NOT merge this
-/// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
+/// with kMaxElementsCeiling (0x2000000), a separate ceiling.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
 
 // The engine's debug camera controller (ADebugCameraController : APlayerController). Tested by derivation: a game's
@@ -211,9 +208,8 @@ constexpr const char* AURA_USERPICK_OWNER_PROPERTY = "Owner";
 
 // UObject::ObjectFlags (at OFF_UOBJECT_FLAGS) bits a TEMPLATE carries, rather than a world object: the same values from
 // UE 4.12 to 5.8 (RE-UE4SS Flags412 / Flags415; UE 5.8 ObjectMacros.h). RF_ArchetypeObject propagates to a class-default
-// object's default subobjects (RF_PropagateToSubObjects), and a Blueprint's component templates carry it too. Measured on
-// DumperTest 5.4 Shipping: class-default objects 0x31, their default subobjects 0x40021, a live component neither bit --
-// and every component-class lookup had landed on such a subobject. [INVOKE-NONSTATIC-ON-CDO]
+// object's default subobjects (RF_PropagateToSubObjects), and a Blueprint's component templates carry it too, while a
+// live component carries neither bit. A component-class lookup can land on such a subobject. [INVOKE-NONSTATIC-ON-CDO]
 constexpr uint32_t RF_CLASS_DEFAULT_OBJECT = 0x10;
 constexpr uint32_t RF_ARCHETYPE_OBJECT     = 0x20;
 
@@ -234,8 +230,8 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 // ValidateAndFixOffsets() dynamically detects all offsets below.
 // Defaults match the UE 4.25-5.2 layout (FFieldVariant=0x10 bytes).
 // UE 5.3+ uses FFieldVariant=0x08 bytes, shifting FField::Next/Name/etc by -8. [VND583-DOC UEP-D1]
-// (This said 5.1.1 -- wrong against its own source: RE-UE4SS's 5_00/5_01/5_02 templates all put
-// Offset_Internal at 0x4C and 5_03 at 0x44, as Field.h does; DynOff::UsesSmallFFieldVariantDefault.)
+// (RE-UE4SS's 5_00/5_01/5_02 templates all put Offset_Internal at 0x4C and 5_03 at 0x44, as
+// Field.h does; DynOff::UsesSmallFFieldVariantDefault.)
 //
 // Version differences (from RE-UE4SS MemberVarLayoutTemplates):
 //   UE5.0-5.2:   FFieldVariant=0x10 → Next=0x20, Name=0x28, Offset_Internal=0x4C
@@ -259,15 +255,16 @@ namespace DynOff {
 // [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
 // sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
 // CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
-// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
+// connections are already reading it; as plain ints that would be a data race, undefined behaviour however benign on
+// x64.
 // Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
 // family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
 // The other offsets measured the same way -- the persistent-pointer envelopes latched from an ElementSize, UEnum::Names'
 // layout, UFunction's Func and flags -- are RuntimeOffset for the same reason.
-// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
+// It converts to int implicitly, so a read site uses it as an int; a variadic log argument needs an explicit int.
 class RuntimeOffset {
 public:
-    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
+    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int would make every
     // `cond ? DynOff::X : 0` ambiguous (C2445).
     constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
     RuntimeOffset(const RuntimeOffset&) = delete;
@@ -297,16 +294,16 @@ inline int USTRUCT_SCRIPT     = 0x60;
 // [UE4-USTRUCT-GIVEUP] The head above is 4.25's. A UProperty engine (UE < 4.25) has no ChildProperties, and its
 // SuperStruct sits right behind UField::Next -- unless the build carries FStructBaseChain, a 16-byte private base that
 // 4.22-4.24 put between UField and SuperStruct in every non-editor build (ObjectMacros.h picks the struct-array IsChildOf
-// outside UE_EDITOR). Measured: UE_4.18 Class.h and EVERSPACE's 4.20 Shipping PDB give 0x30/0x38/0x40/0x48 for
-// Super/Children/PropertiesSize/Script; UE_4.23 Class.h and UE423_Flying's 4.23 Shipping PDB give 0x40/0x48/0x50/0x58
-// (its Development PDB, whose UObject carries a StatID, is the same head 8 further on, as UField::Next is). Where between
-// 4.21 and 4.22 the base arrived is RE-UE4SS's MemberVariableLayout templates' answer; no header or PDB of either is here.
+// outside UE_EDITOR). UE_4.18 Class.h gives 0x30/0x38/0x40/0x48 for Super/Children/PropertiesSize/Script; UE_4.23
+// Class.h gives 0x40/0x48/0x50/0x58 (a Development build, whose UObject carries a StatID, has the same head 8 further
+// on, as UField::Next is). Where between 4.21 and 4.22 the base arrived is RE-UE4SS's MemberVariableLayout templates'
+// answer.
 // Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
 // version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
-// than that default was.
+// than that default.
 // ⚠ The head follows the UField::Next it is GIVEN. DetectUPropertyMode only guesses Next from the FName width (0x30 for
 // case-preserving names, 0x28 otherwise), and a STATS build's TStatId (Development, DebugGame) moves it 8 further on --
-// a give-up on the guess shipped this head 8 short (4.15 Development: 30/38/40/48 against the PDB's 38/40/48/50). So
+// a give-up on the guess would ship this head 8 short on such a build. So
 // Genau measures Next on the property UObjects' own chains before applying the head ([UE4-USTRUCT-GIVEUP-STATS],
 // ProbeUFieldNextUProperty); only when no property chains does a give-up still ship the guess's head.
 struct UStructHead {
@@ -340,7 +337,7 @@ inline RuntimeOffset UFUNCTION_FUNC     {0};
 // Latched once detection has run (success or failure), to avoid re-sampling.
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
-// === FField — defaults for UE5.0-5.2 (FFieldVariant=0x10) ===   [R7-A-03] was "5.1.0"; 5.1.1 / 5.2 use them too
+// === FField — defaults for UE5.0-5.2 (FFieldVariant=0x10) ===   [R7-A-03]
 // UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
 inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
@@ -351,10 +348,10 @@ inline int FFIELD_NAME        = 0x28;  // FName
 // (both have FFieldVariant = 0x10, so FField is 0x38 and FProperty's own fields follow it)
 // UE5.3+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
 //
-// ElementSize is 0x3C, NOT 0x38 — 0x38 is ArrayDim. Verified against the DropIn 4.27.2 PDB:
-// ArrayDim@0x38, ElementSize@0x3C, PropertyFlags@0x40, Offset_Internal@0x4C. The old 0x38
-// here was internally inconsistent with FPROPERTY_FLAGS (0x38 + 4 != 0x40) and, when the
-// dynamic offset validation failed and these defaults were used, read ArrayDim as the
+// ElementSize is 0x3C, NOT 0x38 — 0x38 is ArrayDim. UE 4.27.2:
+// ArrayDim@0x38, ElementSize@0x3C, PropertyFlags@0x40, Offset_Internal@0x4C. 0x38 here
+// would be inconsistent with FPROPERTY_FLAGS (0x38 + 4 != 0x40) and, whenever the
+// dynamic offset validation fails and these defaults are used, would read ArrayDim as the
 // element size.
 inline int FPROPERTY_ELEMSIZE = 0x3C;
 inline int FPROPERTY_FLAGS    = 0x40;  // uint64 PropertyFlags
@@ -366,9 +363,7 @@ inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 // base class, so the vfptr lands at +0x00 and EVERY member shifts +8 — Name is +0x00
 // up to UE 5.7 and +0x08 from UE 5.8.
 //
-// This one constant cost a full RE session, because it was the ONLY UE offset never
-// dynamically verified while every other one self-corrects. When it is wrong the
-// damage is total but silent: the ChildProperties probe identifies a candidate by
+// When it is wrong the damage is total but silent: the ChildProperties probe identifies a candidate by
 // resolving this name, so it matches nothing at ANY offset (-> "keeping defaults"),
 // and the walker types every property as unknown -> Scalar (-> no drill-down).
 // Latched by the JOINT (ChildProperties, FFieldClass::Name) probe in
@@ -376,13 +371,13 @@ inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 // loop is what discovers ChildProperties in the first place. No later phase can set it.
 inline int FFIELDCLASS_NAME   = 0x00;  // pre-probe default = the <=5.7 layout
 
-// Candidate order is LOAD-BEARING. 0x00 is tried first with unchanged semantics, so
-// every game that works today latches exactly as it does today and cannot regress.
+// Candidate order is LOAD-BEARING. 0x00 is tried first, so a game on the <=5.7 layout
+// latches exactly what a probe of 0x00 alone would.
 inline constexpr int kFFieldClassNameProbes[] = { 0x00, 0x08 };
 
 // True iff `s` is a plausible FFieldClass type name. Every FFieldClass name in the
 // engine ends in "Property" (IntProperty, ObjectProperty, ...), so a SUFFIX test is
-// strictly stronger than a substring find and is what makes the new 0x08 candidate
+// strictly stronger than a substring find and is what makes the 0x08 candidate
 // safe — at +0x08 on a <=5.7 build sits a uint64 Id (<=5.6) or EClassFlags (5.7 only
 // [VND583-DOC UEP-D3]), and a substring test on garbage
 // is far likelier to false-positive than a suffix test.
@@ -398,8 +393,7 @@ template <class Resolve>
 inline int PickFFieldClassNameOffset(Resolve&& resolve) {
     for (int off : kFFieldClassNameProbes) {
         const std::string n = resolve(off);
-        // 0x00 keeps the historical substring semantics so behaviour on every
-        // already-working title is bit-identical; 0x08 requires the stricter suffix.
+        // 0x00 keeps the substring test; 0x08 requires the stricter suffix.
         if (off == 0x00) { if (n.find("Property") != std::string::npos) return off; }
         else             { if (LooksLikeFieldClassName(n))              return off; }
     }
@@ -464,9 +458,9 @@ inline int UBOOLPROP_FIELDSIZE = 0x70;
 //   FSoftObjectPath       8     0x10    0x08     0x30 (5.1-5.2) or 0x28 (≤5.0) / 0x28
 //   FUniqueObjectGuid     4     0x0C    0x08     0x1C              / 0x18
 //
-// ⚠ 0x10 is right for soft ONLY up to 5.2, and is right for lazy in NO era. Both were
-// hardcoded 0x10 before this existed, so every UE 5.3+ title read the soft path one
-// field late and every title read the lazy GUID 4 bytes into it.
+// ⚠ 0x10 is right for soft ONLY up to 5.2, and is right for lazy in NO era: a hardcoded
+// 0x10 reads the soft path one field late on every UE 5.3+ title, and the lazy GUID 4
+// bytes into it on every title.
 //
 // MEASURED, not version-gated: the property's own ElementSize already reaches us, and a
 // misdetected version is precisely the case where a hardcoded offset does the most harm.
@@ -526,31 +520,21 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // Only ever a FALLBACK: Frieren's pattern scan over [0x100,0x300) stays primary, and a
 // hook installed off this table is still cross-checked by the post-install fire count.
 //
-// ⛔ The table it replaces was wrong for EVERY UE5 game, and silently. It read
-//      >= 550 -> 0x228 ; >= 500 -> 0x220
-// but 550 is unreachable — versions are encoded major*100+minor and capped at 509
-// (UeVersionCode's UE_MAX_UE5_MINOR, and UeVersionOverrideAccepted's UE_VERSION_OVERRIDE_MAX for the
-// pipe's override), so every UE5
-// title took the 0x220 arm, which is off by 0x38 (5.0) to 0x58 (5.5).
+// ⛔ One slot per VERSION, never one for all of UE5: a single 0x220 is off by 0x38 (5.0) to
+// 0x58 (5.5). A threshold such as `>= 550` is unreachable — versions are encoded
+// major*100+minor and capped at 509 (UeVersionCode's UE_MAX_UE5_MINOR, and
+// UeVersionOverrideAccepted's UE_VERSION_OVERRIDE_MAX for the pipe's override).
 //
-// MEASURED, from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
+// Derived from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
 // PDB dumps, one .ini per engine version. Slot = count of entries from `[UObjectBase]`
 // to `ProcessEvent`, counting the per-section `__vecDelDtor` once (it is the shared
 // destructor slot, relisted under each class). That dedup rule is exact here: only
 // `[UObjectBase]`, `[UObjectBaseUtility]` and `[UObject]` precede ProcessEvent — one
 // single-inheritance vtable — and `__vecDelDtor` is the ONLY name repeated among them.
 //
-// Cross-checked against six values this repo already had, all six agree:
-//   4.26 0x218 (the FF7R note's "stock 4.26")   4.27 0x220 (DropIn PDB + 4 live games)
-//   5.4  0x268 (DragonSword)                    5.6  0x260 (Lushfoil, Stark.h)
-//   5.7  0x260 (Solarpunk)                      5.8  0x250 (audit PDB work)
-// and a seventh, measured LIVE 2026-09-24 on the first 5.0-5.2 sample (DumperTest51, stock UE 5.1.1,
-// Shipping): `DetectProcessEvent (pattern): match at vtable+0x260`, Add_IntInt(3,4) == 7, zero
-// fallback lines (tools/verify/a2_es2_pehook.py DumperTest51-Win64-Shipping) -- the 501 row.
-//
 // ⚠ The table is NOT monotonic — 4.20 0x208 then 4.21 0x200, and 5.5 0x278 then 5.6
-// 0x260 — so it must stay an exact lookup. A `>=` ladder invites a "simplification"
-// that silently reintroduces the bug. (5.6 drops 3 non-editor virtuals and adds 2;
+// 0x260 — so it must stay an exact lookup. A `>=` ladder would silently give some
+// versions the wrong slot. (5.6 drops 3 non-editor virtuals and adds 2;
 // 5.8 deletes PostInterpChange and IsDestructionThreadSafe, both declared before
 // ProcessEvent, hence 0x260 - 0x10.)
 //
@@ -565,10 +549,8 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
 // floor; 5.9+ does not exist yet). The caller decides what to do with that.
 //
-// ⭐ MACHINE-CHECKED SINCE 2026-09-06 — `tools/check_processevent_slots.py`, in `check_all`.
-// This was a hand-transcribed table over a vendored source, i.e. exactly the shape CLAUDE.md
-// says to derive rather than hand-edit, and nothing pinned it. The gate re-derives all 26 rows
-// from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` and they all match:
+// ⭐ MACHINE-CHECKED — `tools/check_processevent_slots.py`, in `check_all`, re-derives every
+// row from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`:
 //
 //     slot = index_of("ProcessEvent") * 8
 //     over [UObjectBase] + [UObjectBaseUtility] + [UObject] concatenated,
@@ -576,13 +558,9 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 //
 // ⚠ That dedupe is load-bearing: the templates restate the destructor at the head of every
 // class section, but a single-inheritance vtable has ONE destructor slot for the whole chain.
-// Skip it and every row is wrong by a constant 0x10 — constant across all ten versions checked
-// by hand first, which is what identified it as a missing rule rather than a fudge.
+// Skip it and every row is wrong by a constant 0x10.
 //
-// ⭐ Incidentally this retires a planned Ghidra/PDB pass. The register was scoping how to obtain
-// the **5.2** figure from the Satisfactory UE5.2.1 depot; 5.2 was already here (0x268) and is
-// now corroborated from source, as are 4.11-5.8 entire. A PDB gives one game's build; the
-// templates give the version.
+// A PDB gives one game's build; the templates give the version.
 constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
     switch (ueVersion) {
         case 411: case 412: case 413:            return 0x1A8;
@@ -643,27 +621,24 @@ constexpr bool IsVirtualDtorFFieldClass58(int ffieldClassNameOffset) {
 
 // === UFunction::FunctionFlags offset, per engine version ===
 //
-// ⛔ The two readers that use this (Ubel::ReadFuncFlagsAndParams, Aura::ReadFunctionFlags)
-// both carried a `>= 550 -> 0xC0` band. 550 is not a producible version, so the band was
-// dead — but it must be DELETED, never retargeted. At UE 5.8, offset 0xC0 is
-// `FirstPropertyToInit`, an `FProperty*` (MemberVariableLayout_5_08_Template.ini), which is
-// non-zero for most functions. Both readers accept on `!= 0`, so a retarget to `>= 505`
-// would latch a pointer's low dword AS FunctionFlags — and then read NumParms / ParmsSize /
-// ReturnValueOffset from 0xC4 / 0xC6 / 0xC8, i.e. the rest of that pointer. That is strictly
-// worse than the dead band it replaced.
+// ⛔ No version maps to 0xC0. At UE 5.8, offset 0xC0 is `FirstPropertyToInit`, an
+// `FProperty*` (MemberVariableLayout_5_08_Template.ini), which is non-zero for most
+// functions. The readers (Ubel::ReadFuncFlagsAndParams, Aura::ReadFunctionFlags) accept on
+// `!= 0`, so a `>= 505 -> 0xC0` band would latch a pointer's low dword AS FunctionFlags —
+// and then read NumParms / ParmsSize / ReturnValueOffset from 0xC4 / 0xC6 / 0xC8, i.e. the
+// rest of that pointer.
 //
-// MEASURED across all 31 UVTD templates (vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/,
+// From all 31 UVTD templates (vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/,
 // `[UFunction] FunctionFlags`). It is FLAT for nine consecutive versions:
 //   4.07        0x90
-//   4.08-4.21   0x88     <- the old comment said "4.18-4.20", and the band said >= 421
-//   4.22-4.24   0x98     <-   ...both off by one: 4.21 is 0x88, not 0x98
+//   4.08-4.21   0x88     <- 4.21 included: it is 0x88, not 0x98
+//   4.22-4.24   0x98
 //   4.25-5.08   0xB0     <- every version from 4.25 to 5.8 inclusive
 //
 // WITH_CASE_PRESERVING_NAME adds a uniform +8: UFunction derives from UStruct -> UField ->
 // UObject, and a case-preserving FName widens UObject's Name slot by 8, shifting everything
-// after it. Measured: MemberVariableLayout_4_27_CasePreserving_Template.ini has
-// FunctionFlags = 0xB8 against 4_27's 0xB0. Neither reader consulted bCasePreservingName
-// before 2026-09-05, and 0xB8 sat LAST in their fallback sweep behind 0xC0.
+// after it: MemberVariableLayout_4_27_CasePreserving_Template.ini has
+// FunctionFlags = 0xB8 against 4_27's 0xB0.
 constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName) {
     int base;
     if      (ueVersion >= 425) base = 0xB0;
@@ -676,15 +651,15 @@ constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName
 // Fallback sweep, most-likely first. Exactly the six values the templates can produce at or
 // above our 4.11 floor — each base and its +8 case-preserving twin:
 //   0xB0/0xB8 (4.25+), 0x98/0xA0 (4.22-4.24), 0x88/0x90 (4.11-4.21).
-// ⚠ 0xC0 is NOT here (it is FirstPropertyToInit, see above) and neither is 0xA8, which the
-// old sweep tried and which matches no version of anything.
+// ⚠ 0xC0 is NOT here (it is FirstPropertyToInit, see above) and neither is 0xA8, which
+// matches no version of anything.
 inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
 
 // === [VND583-01] FunctionFlags is MEASURED, the version table above is only a fallback ===
 //
-// Before 4.25 FunctionFlags was the only UStruct/UFunction offset not taken from a probe, and
-// both readers accepted the first non-zero dword. On a layout whose UObject is shifted the
-// table lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, measured PropertiesSize
+// A reader that accepts the first non-zero dword at the table's offset latches whatever sits
+// there, and on a layout whose UObject is shifted the
+// table lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, PropertiesSize
 // 0x50, a +0x10 shift) has FunctionFlags at 0x98 where the table says 0x88 -- the low dword of
 // ScriptObjectReferences.Data, non-zero for almost every Blueprint UFunction -- and FF7R's
 // 4.18 fork has it at 0x90 (RE-UE4SS FF7R MemberVariableLayout.ini, and every
@@ -693,7 +668,7 @@ inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x9
 // FunctionFlags - PropertiesSize is CONSTANT per property mode in all 31 UEPseudo tables and
 // the RE-UE4SS MemberVarLayout templates: 0x48 in UProperty mode (4.08-4.24) and 0x58 in
 // FProperty mode (4.25-5.08, case-preserving included, because the CPN +8 already sits inside
-// the measured PropertiesSize). Measured from the templates 2026-09-24:
+// the measured PropertiesSize). From the templates:
 //   4.18/4.21 0x40->0x88   4.22/4.24 0x50->0x98   4.25/4.27/5.01/5.08 0x58->0xB0   4.27 CPN 0x60->0xB8
 // so on every STOCK layout the relation reproduces the table, and it can only change the
 // answer where the layout is not stock -- which is exactly where the table is wrong.
@@ -730,7 +705,7 @@ inline RuntimeOffset UFUNCTION_TAIL_EXTRA {0};
 // judged against them (CheckTailForVersion), so the two cannot disagree about what a tail may look like.
 inline constexpr int UFUNCTION_TAIL_EXTRAS[] = { 0, 4 };
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
-// [UE-OVERRIDE-411] review: where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
+// [UE-OVERRIDE-411] Where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
 // sit +4 / +6 behind -- measured against every candidate, whatever the version says. -1 = not measured.
 inline std::atomic<int> UFUNCTION_TAIL_MEASURED{-1};
 
@@ -742,7 +717,7 @@ inline std::atomic<int> UFUNCTION_TAIL_MEASURED{-1};
 // the RE-UE4SS PDB templates agree (4.11-4.17 put UProperty::RepNotifyFunc at 0x48 after a uint16
 // RepIndex at 0x40; 4.10 at 0x44). A case-preserving build has no such union (4), and 4.22+
 // dropped it (4). Below our 4.11 floor, or with an unknown version, the answer stays 4 -- the value
-// Scharf::RequiredAlignment has always given. Ubel::ResolveElementAlignment applies this for
+// Scharf::RequiredAlignment gives. Ubel::ResolveElementAlignment applies this for
 // NameProperty -- AFTER a measurement (below), which wins when it exists; Scharf stays
 // version-agnostic.
 constexpr int FNameAlignFor(unsigned ueVersion, bool casePreservingName) {
@@ -762,11 +737,10 @@ inline std::atomic<bool> bFNameAlignProbed{false};
 // [VND583-07, A9 step 11] Where FName::Number sits. It is +4 on every non-case-preserving build and on
 // case-preserving UE 5.1+ ({ComparisonIndex, Number, DisplayIndex}). It is +8 on case-preserving UE4 and
 // 5.0 ({ComparisonIndex, DisplayIndex, Number}) -- NameTypes.h at origin/4.27 and 5.0.3-release vs
-// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated (A9's instruction): on a case-preserving
+// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated (A9): on a case-preserving
 // build DetectCasePreservingName votes on which of UObject::NamePrivate +4 / +8 repeats the
 // ComparisonIndex -- that one is the DisplayIndex, equal to it for every name whose case was never
-// re-spelled. Measured on the UE 5.4 editor running DumperTest -game: display at +8 on 745 of 745
-// objects, so Number at +4.
+// re-spelled.
 inline int FNAME_NUMBER = 4;
 constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int displayAt8) {
     if (!casePreserving) return 4;
@@ -803,7 +777,7 @@ inline std::atomic<int>  SOFTPATH_TOPLEVEL_MEASURED{-1};
 inline std::atomic<bool> bSoftPathProbed{false};
 // [VND584-08] ...and its SIZE, measured the same way: the ScriptStruct's PropertiesSize (0 = unmeasured). The rule from
 // sizeof(FName) needs the FName probe to have run, and the soft readers do not ask for it: on a 5.1 / 5.2 build with an
-// outlined FName (4 bytes) the rule's 0x20 against a real 0x18 turned a tagged 0x28 soft pointer's +0x10 into an
+// outlined FName (4 bytes) the rule's 0x20 against a real 0x18 would turn a tagged 0x28 soft pointer's +0x10 into an
 // accepted, latched +0x08. Taken only when it is a size this path shape can have, so a misread PropertiesSize falls
 // back to the rule instead of steering the envelope.
 inline std::atomic<int>  SOFTPATH_SIZE_MEASURED{0};
@@ -862,8 +836,8 @@ inline std::atomic<bool> bCompactSets{false};
 // [VND583-12] UE5_GetVersion's lazy refine, from two markers that can surface after init.
 // A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
 // The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
-// `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. It raised to 506,
-// one version early. Monotonic and UE5-only: it never lowers a version, and never touches a UE4 label.
+// `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. Monotonic and UE5-only: it
+// never lowers a version, and never touches a UE4 label.
 constexpr uint32_t RefineVersionFromLazyMarkers(uint32_t ver, bool sawUtf8OrAnsiStr, bool fnameDataEnums) {
     if (ver < 500 || ver >= 507) return ver;
     uint32_t floor = ver;
@@ -873,9 +847,9 @@ constexpr uint32_t RefineVersionFromLazyMarkers(uint32_t ver, bool sawUtf8OrAnsi
 }
 
 // [VND583-09] The FField layout a version starts from BEFORE probing. FFieldVariant shrank from 16 bytes
-// (`union Container` + `bool bIsUObject`) to 8 (a pointer tagged by UObjectMask) in **5.3.0**, not 5.1.1:
+// (`union Container` + `bool bIsUObject`) to 8 (a pointer tagged by UObjectMask) in **5.3.0**:
 // Field.h at 5.1.1-release and 5.2.1-release still declares bIsUObject, 5.3.0-release declares
-// UObjectMask, and DumperTest51 (stock 5.1.1) measures Offset_Internal at 0x4C live. So 4.25-5.2 keep the
+// UObjectMask. So 4.25-5.2 keep the
 // defaults above (Next 0x20, Name 0x28, Offset_Internal 0x4C), and only 5.3+ -- or an unknown version,
 // most of which are modern -- start from Next 0x18 / Name 0x20 / Offset_Internal 0x44.
 // And the tag bit may be INFERRED from FField::Next == 0x18 only when that 0x18 was MEASURED; an
@@ -901,9 +875,8 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
 
 // === [VER-MARKERS-PAST-504] Rungs past 5.4, from layouts every loaded enum and struct carries ===
 //
-// A title whose PE version is stripped and whose exe holds no build string climbed no further than the CMC rung's
-// 504 -- FINAL FANTASY RESONANCE DEMO and The Adventures of Elliot both read 504, while every engine file they ship
-// matches the 5.6 installs. Such a title has no version string left to read, so these rungs read reflection objects.
+// Without them, a title whose PE version is stripped and whose exe holds no build string climbs no further than the
+// CMC rung's 504. Such a title has no version string left to read, so these rungs read reflection objects.
 //
 // A rung fires on a clear majority of what it sampled: at least kLadderProbeMinAgree agreeing samples, and three
 // quarters of all. One stray object (a class default, a half-built enum) must not decide a version, and neither may a
@@ -913,11 +886,11 @@ constexpr bool LadderProbeMajority(int agree, int sampled) {
     return agree >= kLadderProbeMinAgree && agree * 4 >= sampled * 3;
 }
 
-// UE 5.5: UEnum's CppForm shrank to uint8 and EnumPackage moved ahead of EnumDisplayNameFn. Measured from the Shipping
-// fixtures' PDBs (UEnum, relative to Names):
-//   DumperTest51 (5.1)  CppForm int32 +0x10, EnumFlags int32 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
-//   DumperTest   (5.4)  CppForm int32 +0x10, EnumFlags uint8 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
-//   DumperTest56 (5.6)  CppForm uint8 +0x10, EnumFlags uint8 +0x11, EnumPackage +0x14,       EnumDisplayNameFn +0x20
+// UE 5.5: UEnum's CppForm shrank to uint8 and EnumPackage moved ahead of EnumDisplayNameFn. Shipping layouts
+// (UEnum, relative to Names):
+//   5.1  CppForm int32 +0x10, EnumFlags int32 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   5.4  CppForm int32 +0x10, EnumFlags uint8 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   5.6  CppForm uint8 +0x10, EnumFlags uint8 +0x11, EnumPackage +0x14,       EnumDisplayNameFn +0x20
 // and RE-UE4SS's 5_05 template is 5_06's. (5.7 replaced Names itself with FNameData, which DetectUEnumNames tells
 // apart and the lazy refine already reads as 507.) EnumPackage is the enum's package's own FName: Enum.cpp sets it
 // from GetPackage()->GetFName() wherever an enum's names are registered, constructed (SetEnums) or loaded
@@ -966,9 +939,9 @@ bool SampleEnumPackage(EnumPackageTally& t, uintptr_t enumAddr, int namesOff, in
 }
 
 // UE 5.6: UStruct::MinAlignment shrank to int16, and `std::atomic<uint16> StructStateFlags` took the other half of
-// the word. Measured from the Shipping fixtures' PDBs (UStruct, relative to PropertiesSize):
-//   DumperTest51 (5.1), DumperTest (5.4)       MinAlignment int32 +4                        (RE-UE4SS 5_05: the same)
-//   DumperTest56 (5.6), DumperTest58 (5.8)     MinAlignment int16 +4, StructStateFlags +6   (RE-UE4SS 5_06-5_08: the same)
+// the word. Shipping layouts (UStruct, relative to PropertiesSize):
+//   5.1, 5.4     MinAlignment int32 +4                        (RE-UE4SS 5_05: the same)
+//   5.6, 5.8     MinAlignment int16 +4, StructStateFlags +6   (RE-UE4SS 5_06-5_08: the same)
 // UStruct::Link ends with StructStateFlags.fetch_or(PropertyDataAvailable) in Class.cpp of 5.6, 5.7 and 5.8, the only
 // flag any of them defines, so a linked class, script struct or function reads exactly 1 there; through 5.5 the
 // same two bytes are MinAlignment's high half, 0 for any alignment a struct can have. The word sits at the same
@@ -1122,7 +1095,7 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
 
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
 // the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
-// which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors
+// which this decides; without it a Garbage object stays resolvable until the next GC. UE5 mirrors
 // EInternalObjectFlags::Garbage (1<<21) into UObject::ObjectFlags as RF_MirroredGarbage (0x40000000;
 // RF_Garbage in 5.0-5.3). UE4 keeps PendingKill (1<<29) ONLY in FUObjectItem::Flags (its RF_AllFlags is
 // 0x1FFFFFFF, so 0x40000000 means nothing there). Unreachable (1<<28) is refused in both. objectFlags is
@@ -1168,15 +1141,14 @@ inline int PickUFieldNextOffset(const int* offs, const int* hops, int n) {
 
 // === UFunction's tail behind FunctionFlags: NumParms (u8) / ParmsSize (u16) / ReturnValueOffset ===
 //
-// [A2-UFUNC-TAIL-4X] These three were read at a flat +4/+6/+8 under a comment calling that
-// "stable across all UE versions". It is not: RE-UE4SS's MemberVariableLayout templates put a
-// `uint16 RepOffset` FIRST on every version from 4.11 to 4.17 (4.11: FunctionFlags 0x88,
-// RepOffset 0x8C, NumParms 0x8E) and drop it at 4.18 (NumParms 0x8C) -- re-checked in the
-// 4_11 / 4_17 / 4_18 templates. On 4.11-4.17 the reads landed one field late: `parmsSize` was
-// really NumParms, so every invoke buffer sized from it was undersized INSIDE the game.
+// [A2-UFUNC-TAIL-4X] These three do NOT sit at a flat +4/+6/+8 on every version: RE-UE4SS's
+// MemberVariableLayout templates put a `uint16 RepOffset` FIRST on every version from 4.11 to 4.17
+// (4.11: FunctionFlags 0x88, RepOffset 0x8C, NumParms 0x8E) and drop it at 4.18 (NumParms 0x8C).
+// A flat read on 4.11-4.17 lands one field late: `parmsSize` is then really NumParms, and every
+// invoke buffer sized from it is undersized INSIDE the game.
 // Returns the bytes to add to +4/+6/+8.
 // ⛔ Keyed on the VERSION, never on `funcFlagsOff == 0x88`: 0x88 is also 4.18-4.21, which have no
-// RepOffset (OCTOPATH, DQ XI S). An unknown version (0) keeps the reads it always had.
+// RepOffset (OCTOPATH, DQ XI S). An unknown version (0) gets no shift.
 constexpr int FunctionTailShiftFor(unsigned ueVersion) {
     return (ueVersion >= 411 && ueVersion < 418) ? 2 : 0;
 }
@@ -1200,22 +1172,22 @@ constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd)
         ? static_cast<uint32_t>(chainEnd) : parmsSize;
 }
 
-// === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] review ===
+// === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] ===
 //
-// The override reaches 4.11-4.17 since [UE-OVERRIDE-411], so one pick puts a version's tail 2 off the game's in
+// The override reaches 4.11-4.17, so one pick puts a version's tail 2 off the game's in
 // either direction: 4.17 on a 4.18 title, or 4.18 on a 4.15 one. The FunctionFlags vote cannot catch a wrong one --
 // it adds only that version's shift. The sampled UFunctions can: at the right base NumParms and ParmsSize match each
 // function's own parameter chain (FunctionTailMatches). The readers follow that measurement (FunctionTailReadBase
-// below), so a wrong version no longer misreads the tail; set_ue_version_override still refuses a version whose base
+// below), so a wrong version does not misread the tail; set_ue_version_override still refuses a version whose base
 // the measurement contradicts, because the version keys more than the tail, and that one is not this game's.
 // The base a version's layout puts the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
 constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtra) {
     return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
 }
 
-// [UE-OVERRIDE-411] review 2: where the readers put the tail -- the measurement (UFUNCTION_TAIL_MEASURED), whenever
+// [UE-OVERRIDE-411] Where the readers put the tail -- the measurement (UFUNCTION_TAIL_MEASURED), whenever
 // there is one, else the version's base. The measurement does not depend on the version, so a version from the wrong
-// side of 4.18 -- a persisted override, a pick made before any scan, a misdetection -- no longer moves NumParms /
+// side of 4.18 -- a persisted override, a pick made before any scan, a misdetection -- does not move NumParms /
 // ParmsSize / ReturnValueOffset by 2. On a title whose version is right the two agree: the vote's winning base is one
 // of the bases the measurement weighs, under the same per-sample rule.
 constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
@@ -1227,8 +1199,8 @@ enum class TailCheck { Agrees, Contradicts, Unmeasured };
 // `flagsOff` is the FunctionFlags offset the vote latched, or `ueVersion`'s own primary when it decided nothing;
 // `measuredBase` is UFUNCTION_TAIL_MEASURED. A version fits when the measurement sits at its own shift plus an extra
 // a game's tail can carry (UFUNCTION_TAIL_EXTRAS) -- the extra the MEASUREMENT implies, never the one the vote latched
-// ([OVERRIDE-REVIEW2-LOWS] review). The extra is the game's, not the version's, and a vote run under a version from
-// the wrong side of 4.18 decides nothing and latches 0: judged with that 0, the version that fits a +4 tail was
+// ([OVERRIDE-REVIEW2-LOWS]). The extra is the game's, not the version's, and a vote run under a version from
+// the wrong side of 4.18 decides nothing and latches 0: judged with that 0, the version that fits a +4 tail would be
 // refused for the rest of the session. Whatever the extra, the two sides of 4.18 differ by a shift of 2, so 0 or 4
 // explains a measurement for one side only. Nothing measured (no scan yet, or samples that do not decide) is never a
 // refusal: the too-old refusal sends the user to the override precisely when no scan has run.
@@ -1242,9 +1214,10 @@ constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int me
 
 // [OVERRIDE-REVIEW2-LOWS] Whether the version in force is a user override this game's UFunctions contradict -- what
 // get_pointers publishes, so the Pointers panel can say so beside the override badge. set_ue_version_override refuses
-// such a version only while a measurement exists, so one persisted before [UE-OVERRIDE-411], or chosen before any scan,
-// is still handed in ahead of the scan at every launch; the vote that then measures the contradiction said so in the
-// log alone. The verdict is the refusal's own over the same inputs, so the note and the refusal cannot disagree.
+// such a version only while a measurement exists ([UE-OVERRIDE-411]), so a persisted one, or one chosen before any
+// scan, is still handed in ahead of the scan at every launch, and the vote that then measures the contradiction would
+// otherwise say so in the log alone. The verdict is the refusal's own over the same inputs, so the note and the refusal
+// cannot disagree.
 // Nothing measured is never a contradiction, and a detected version is not one the user can take back.
 constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int measuredBase) {
     return userOverride && CheckTailForVersion(ueVersion, flagsOff, measuredBase) == TailCheck::Contradicts;
@@ -1298,7 +1271,7 @@ inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int sa
 //
 // ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
 // survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
-// inside the spread. Narrowing it "now that the base is derived" would remove the net.
+// inside the spread. Narrowing it because the base is derived would remove the net.
 constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
                                     bool casePreservingName) {
     const int delta = (ueVersion >= 418) ? 0x2C
@@ -1351,7 +1324,7 @@ inline int UPROPERTY_SUBCLASS_START = 0;
 // === FEnumProperty / FByteProperty subclass fields ===
 // NOT at the same offset: FByteProperty's UEnum* is the first subclass field, FEnumProperty's one
 // pointer later -- read either through Ubel::ReadPropertyEnum, which picks the type's own slot
-// ([ENUMSLOT-ANY-NAME]: the DataTable reader read a TEnumAsByte at the EnumProperty slot).
+// ([ENUMSLOT-ANY-NAME]).
 // Derived from FSTRUCTPROP_STRUCT (same subclass extension offset).
 inline RuntimeOffset FBYTEPROP_ENUM{0x78};  // FByteProperty::Enum (UEnum*) — first subclass field (== sizeof(FProperty))
 // FEnumProperty has FNumericProperty* UnderlyingProp BEFORE its UEnum* Enum, so Enum sits
@@ -1367,27 +1340,17 @@ inline RuntimeOffset FENUMPROP_ENUM{0x80};  // FEnumProperty::Enum (UEnum*) = FB
 // before its UEnum* (UE5.7.4 EnumProperty.h). They are five names for one measurement and
 // must move together.
 //
-// ⚠ WHY THIS HELPER EXISTS. They did NOT move together. Genau's Step 2.5 default block set
-// only FSTRUCTPROP_STRUCT and FBOOLPROP_FIELDSIZE to 0x70 and left the other three at the
-// UE5.0-era 0x78/0x78/0x80 — so any run that took one of the three "keeping defaults" exit
-// paths shipped a SPLIT family for the whole session: TArray element descriptors and every
-// enum-name read 8 bytes off, while struct reads were correct. Deterministic, first run, no
-// concurrency needed. `docs/test-games.md` records Solarpunk resolving via exactly that
-// heuristic fallback with FProperty::Offset +0x44.
-//
-// ⚠ G12 recorded "both writers now go through here". There were THREE, and the third was
-// missed: `Ubel.cpp` WalkInstance's StructProperty probe wrote FSTRUCTPROP_STRUCT directly
-// until 2026-09-07, so the split-family failure above stayed reachable by the one path G12
-// had not counted. Every writer is routed now -- Genau's default and measured arms for BOTH modes,
-// Ubel::CorrectSubclassOffsets, and Ubel's WalkInstance StructProperty probe -- and
-// `tools/check_property_family.py` counts them mechanically instead of this comment.
+// ⚠ WHY THIS HELPER EXISTS. Set one at a time, they drift apart: a writer that sets only some
+// of them ships a SPLIT family for the whole session -- TArray element descriptors and every
+// enum-name read 8 bytes off, while struct reads are correct. Deterministic, first run, no
+// concurrency needed. Every writer goes through ApplyPropertyFamily, and
+// `tools/check_property_family.py` counts them mechanically.
 // ⛔ ONE deliberate exception: `Ubel.cpp`'s ArrayProperty probe sets FARRAYPROP_INNER on its own,
 // through SetArrayInner (below, under the family write lock), because UE5.3+ puts
 // EArrayPropertyFlags before Inner so that member legitimately diverges from the shared base after
 // calibration. It re-probes per field per walk, so a family write that resets it to the base is
 // corrected on the next array.
-// `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
-// the first time.
+// `tools/check_property_family.py` pins all of this; never count the writers by hand.
 //
 // Pure and constexpr, so dll_helpers_test can pin the invariant without Genau.cpp's scan
 // machinery.
@@ -1448,8 +1411,8 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
 // through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
 // correction is walked again after it instead of serving the old slot's answer for the rest of the session. A cache
 // that hands out references erases nothing: an entry of an older epoch stays put, so a `const&` already handed out
-// stays valid (a cache that returns copies may evict, oldest first), and the bumps are few (at most one move per
-// session in every log measured, and one retire per offset validation). The trade: a re-init (CE Disable, then Enable)
+// stays valid (a cache that returns copies may evict, oldest first), and the bumps are few (one per move of the
+// family's base, and one retire per offset validation). The trade: a re-init (CE Disable, then Enable)
 // leaves the previous run's entries resident in the reference-handing caches beside the fresh set it builds -- one set
 // per re-init, never freed. Reusing them across runs would not be sound: a garbage collection between them can hand a
 // class's address to another class. The base alone decides "moved":
@@ -1529,8 +1492,7 @@ inline void SetArrayInner(int off) {
 inline RuntimeOffset UENUM_NAMES          {0x40};  // UEnum::Names (Neu::EnumNamesLayout region offset)
 // [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
 // (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).
-// Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer. (This
-// replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
+// Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer.
 inline RuntimeOffset UENUM_VALUE_SIZE     {8};
 inline RuntimeOffset UENUM_PAIR_STRIDE    {0};
 // UE5.7+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
@@ -1566,17 +1528,13 @@ inline int UPropertySubclassStart(unsigned ueVersion) {
         : UPropertySubclassStartFor(UPROPERTY_OFFSET, ueVersion, bCasePreservingName);
 }
 
-// ⭐ ASK THE QUESTION BY NAME. The rule above was already written down and was still copied
-// wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
-// and a reader cannot tell from the expression which question it is answering. Measured
-// 2026-09-06: twelve sites used the ternary, four correctly (a TPair value offset) and eight
-// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `FindReferencesToUObject` (Aura.cpp) sat
-// four lines under one of the correct ones getting it right, and `Ubel.h`'s own field comment
-// documented 12 against writers that set 0x10. Prefer these over the literal, always.
+// ⭐ ASK THE QUESTION BY NAME. Both answers are spelled `bCasePreservingName ? … : 0x08`, and a
+// reader cannot tell from the expression which question it is answering, so a copied ternary
+// easily answers the wrong one. Prefer these over the literal, always.
 //
-// ⚠ Impact is ZERO on every title measured so far: `bCasePreservingName` has only two writers
-// (`DetectCasePreservingName` in Genau.cpp, inside a live 20-object vote), no config/preset/UI can force it true,
-// and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
+// ⚠ A wrong answer stays invisible on any title that is not case-preserving:
+// `bCasePreservingName` is set by `DetectCasePreservingName` (Genau.cpp, inside a live 20-object
+// vote), and no config/preset/UI can force it true.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
     // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and
     // only while it still fits this build's family -- a re-detection that flips bCasePreservingName
@@ -1604,8 +1562,8 @@ inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName
 //                                                            TArray InvocationList  @ +0x08 }
 //
 // Read at the pad-free offsets, a padded multicast shows `Data=0` and a Num that is the LOW
-// HALF OF DATA, which is the fingerprint to recognise this by. 4.27 has no base class at all
-// (checked against the DropIn 4.27.2 PDB), so the pre-5.3 constants hold there.
+// HALF OF DATA, which is the fingerprint to recognise this by. 4.27 has no base class at all,
+// so the pre-5.3 constants hold there.
 //
 // ⚠ TWO TYPES, ONE SPELLING. A multicast's invocation-list ELEMENTS are
 // `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>` -- that base specialization is empty
@@ -1631,13 +1589,12 @@ constexpr int32_t kDelegateDetectorPad = 0x08;
 /// `TProperty_MulticastDelegate<FMulticastScriptDelegate>`.
 ///
 /// Returns **-1** when the size matches neither candidate. Callers must then report that they
-/// could not read the field -- picking one would be the very claim-without-evidence this pad
-/// was found by.
+/// could not read the field -- picking one would be a claim without evidence.
 ///
 /// ⚠ The padded size is NOT `baseSize + 8` for every base: the detector is a
 /// `std::atomic<uint64>`, so a padded delegate is 8-aligned and its size rounds up. With a
 /// 12-byte (case-preserving) FName a standalone FScriptDelegate is 8 + 8 + 12 -> **32**, not 28
-/// -- the UE 5.4 editor's own PDB gives `TScriptDelegate<FNotThreadSafeDelegateMode>` 0x20 --
+/// -- a UE 5.4 editor build's `TScriptDelegate<FNotThreadSafeDelegateMode>` is 0x20 --
 /// and with a 4-byte FName 8 + 8 + 4 -> 24. The unpadded struct is alignof 4, so it stays
 /// `baseSize`. An array of these steps by the engine's ElementSize, never by base + pad.
 constexpr int32_t DelegatePaddedSize(int32_t baseSize) {
@@ -1650,9 +1607,9 @@ inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize)
     return -1;
 }
 /// [D4B-DELEGATEPAD-2026-09-09] The hex a delegate value's row shows: all `size` bytes from the address the row names,
-/// with a space where a checked build's access detector ends. A payload-only hex left the row's address and size
-/// describing bytes its hex did not hold, and never showed the detector -- the first thing to look at when a delegate
-/// reads oddly. Shipping (pad 0) is the bare dump it always was. `bytes == nullptr` is an unread value: the same
+/// with a space where a checked build's access detector ends. A payload-only hex would leave the row's address and size
+/// describing bytes its hex does not hold, and never show the detector -- the first thing to look at when a delegate
+/// reads oddly. Shipping (pad 0) is the bare dump. `bytes == nullptr` is an unread value: the same
 /// shape in '?'.
 inline std::string DelegateHex(const uint8_t* bytes, int32_t size, int32_t pad) {
     static constexpr char kDigits[] = "0123456789ABCDEF";
@@ -1741,7 +1698,7 @@ constexpr uint32_t MIN_SUPPORTED_UE_VERSION = 411;
 //
 // A pre-UE4 engine is not "a version we are behind on", it is a DIFFERENT OBJECT MODEL: no
 // FUObjectArray, no FUObjectItem, no FNamePool, and UObject::Class / UObject::Name are not at
-// the offsets every scan validator hardcodes (measured on a UE3 shipping binary: Outer @+0x40,
+// the offsets every scan validator hardcodes (a UE3 shipping binary has Outer @+0x40,
 // Class @+0x50, vs OFF_UOBJECT_CLASS = 0x10 here). So ValidateCyclicClassChain rejects even a
 // CORRECT UE3 GObjects address, and neither a UE-version override nor an Extra Scan can bridge
 // it. Skipping the scan and saying so is the only honest answer.
@@ -1758,16 +1715,15 @@ constexpr bool RefusedAsTooOld(uint32_t ueVersion, bool versionDetected, bool lo
 // ─────────────────────────────────────────────────────────────────────────────
 // UE version code arithmetic, and where to find a second opinion about it.
 //
-// ⭐ ONE COPY OF THE ARITHMETIC. `major.minor` -> `major*100 + minor` was written out four times
-// inside DetectVersionFromPEResource (ProductVersion 5.x / 4.x, FileVersion 5.x / 4.x) and is now
-// needed by a SECOND reader (CrashReportClient.exe). Two readers of one field, each carrying its
-// own copy of the mapping and its own bounds, is the exact shape working-lessons.md 1.12 is about
-// — so the mapping and the bounds live here, once.
+// ⭐ ONE COPY OF THE ARITHMETIC. `major.minor` -> `major*100 + minor` has more than one reader
+// (DetectVersionFromPEResource's fields, CrashReportClient.exe). Two readers of one field, each
+// carrying its own copy of the mapping and its own bounds, is the exact shape working-lessons.md
+// 1.12 is about — so the mapping and the bounds live here, once.
 //
 // The bounds are load-bearing, not cosmetic: they are what stops a game's OWN version being read
-// as an engine version. Measured across the installed corpus, a game exe's ProductVersion is
-// frequently the GAME's (OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, Titan Quest II 63339.64744); every
-// one falls outside 4.0-4.27 / 5.0-5.9 and is rejected here rather than at each call site.
+// as an engine version. A game exe's ProductVersion is often the GAME's (OCTOPATH 1.0, DQ7R 1.1,
+// Elliot 1.2, Titan Quest II 63339.64744); every such one outside 4.0-4.27 / 5.0-5.9 is rejected
+// here rather than at each call site.
 constexpr uint32_t UE_MAX_UE4_MINOR = 27;
 constexpr uint32_t UE_MAX_UE5_MINOR = 9;
 
@@ -1789,7 +1745,7 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 // exe's string can also be branch first, `++UE4+Release-4.15-CL-0`, with no version half at all.
 // ⚠ The string is NOT unwritable, so the parser's strictness is what makes it a second signal. The
 // version half comes from the engine's Version.h, but the branch is Build.version's BranchName, which a
-// licensee edits, and a branch-first string's M.m is the branch's own. Measured on this machine:
+// licensee edits, and a branch-first string's M.m is the branch's own. Licensee examples:
 //     Satisfactory       ++FactoryGame+rel-main-anniversary-2026-CL-502094  (exe and CrashReportClient)
 //     Titan Quest II     ++TQ2S+tq2-beta-no-binaries-CL-137244              (its CrashReportClient)
 //     Dolls Nest         ++UE4+4.27-Nitro-CL-0                              (exe and CrashReportClient)
@@ -1797,15 +1753,15 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 // full or simplified branch, or a branch-first string's major with its release. A licensee branch reads
 // 0, which costs a corroboration, never causes a refusal; loosening the parser to accept one would let
 // a single game-authored resource arm the refusal again (the B25 shape).
-// Engine build strings measured:
+// Engine build string examples:
 //     IS Defense         4.10.2-0+++depot+UE4-Releases+4.10          (fixed version 4.10.2.0)
 //     launcher 4.10.4    4.10.4-2872498+++depot+UE4-Releases+4.10    (UE4Game and CrashReportClient)
 //     NEKOPALIVE         4.11.0-0+UE4                                (its CrashReportClient says the same)
 //     Extinction         ++UE4+Release-4.15-CL-0
 //     launcher 4.18.3    ++UE4+Release-4.18-CL-3832480               (UE4Game)
 //                        4.18.3-3832480+++UE4+Release-4.18           (its CrashReportClient)
-// The memory needle table cannot stand in for this: it floors at 4.18, so before this a genuine
-// 4.0-4.10 title could never be corroborated, and IS Defense was scanned instead of refused.
+// The memory needle table cannot stand in for this: it floors at 4.18, so it cannot corroborate a
+// genuine 4.0-4.10 title.
 
 namespace BuildStringParse {
 // A greedy run of decimal digits, so a number ends at the first non-digit: that boundary is what keeps
@@ -1906,34 +1862,26 @@ inline bool UeVersionOverrideAccepted(int version) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CrashReportClient.exe as a version source (maintainer proposal, 2026-09-06)
+// CrashReportClient.exe as a version source
 //
 // ⭐ WHY IT IS WORTH READING: it ships WITH THE ENGINE and is not written by the game team, so
 // unlike the game exe its version can never be the GAME's version. A developer has no reason to
 // pair game engine A with a crash reporter from engine B.
 //
 // ⭐ AND IT IS DECISIVE WHERE OUR OWN DETECTION IS WEAKEST, which matters more than the raw hit
-// rate: the SquareEnix HD-2D fork DQ I&II carried "UE5.05 (detected)" in docs/test-games.md for
-// months — a MISDETECTION RECORDED AS FACT, across the UE4/UE5 boundary — and its
-// CrashReportClient says 4.27.2.0. P3R (4.27 fork) is the same shape. Those are exactly the titles
-// where the memory-string tiers struggle.
+// rate: licensee forks (SquareEnix's HD-2D fork, 4.27 forks), where the memory-string tiers
+// struggle -- even across the UE4/UE5 boundary -- while the crash reporter names the engine.
 //
-// ⚠ COVERAGE, HONESTLY SCOPED: 8 of 66 folders ON ONE MACHINE ship one. That is a sample from this
-// corpus, not a universal rate — do not quote it as one. Avowed, DQ XI S, OCTOPATH and DumperTest
-// ship none, so "absent -> skip" must be a first-class path, not an error.
+// ⚠ Many titles ship none, so "absent -> skip" must be a first-class path, not an error.
 //
-// ⛔ WHAT DOES NOT WORK, MEASURED, so nobody re-proposes it: gating on a FILE HASH against a corpus
-// of known-official binaries accepts NOTHING. CrashReportClient is rebuilt as part of each game's
-// engine build, so the version string is stock while the bytes are not — 0 of 8 game copies matched
-// an Editor copy, and one version had three distinct binaries:
-//     4.27.2.0   Editor 19,469,792 B   DQ I&II 19,496,448 B   P3R 19,487,232 B
-//     5.7.4.0    Editor 26,711,480 B   TQ2     26,725,376 B
-// The oracle at tools/ue-crc-oracle.json is therefore a check on the ProductVersion -> code
-// ARITHMETIC (8 real Epic binaries, 4.11-5.8, all mapping cleanly), never an allow-list.
+// ⛔ NEVER gate on a FILE HASH against known-official binaries: CrashReportClient is rebuilt as
+// part of each game's engine build, so the version string is stock while the bytes are not, and
+// such a gate accepts nothing. The oracle at tools/ue-crc-oracle.json is therefore a check on the
+// ProductVersion -> code ARITHMETIC (real Epic binaries, 4.11-5.8), never an allow-list.
 //
 // LAYOUT. A packaged title puts the game exe at <root>/<Project>/Binaries/Win64/Game.exe and the
 // engine's own binaries at <root>/Engine/Binaries/Win64/. Rather than assume a fixed depth — which
-// breaks on the launcher-shim layouts this repo has already been bitten by — walk UP from the exe
+// breaks on launcher-shim layouts — walk UP from the exe
 // and test each ancestor. Win32 is included because older titles ship a 32-bit one (EVERSPACE).
 constexpr int CRC_MAX_ANCESTORS = 6;
 
@@ -2005,7 +1953,7 @@ constexpr int     SCHLACHT_PIERCE_DEFAULT = 1;       // hide this many nearest o
 constexpr int     SCHLACHT_PIERCE_MAX     = 10;      // UI/clamp ceiling for the pierce depth
 constexpr int     SCHLACHT_MAX_EXTRA_ITERS = 16;     // extra trace iterations beyond pierceN (skipped Pawns / dupes)
 // The producer probe asks these CLASSES, found by full path -- never a class guessed from an instance: a class-name
-// substring answered "Actor" with Default__ActorChannel on UE 5.4 Shipping. [SEETHRU-PROBE-SUBSTRING]
+// substring can answer "Actor" with Default__ActorChannel. [SEETHRU-PROBE-SUBSTRING]
 constexpr const char* SCHLACHT_ACTOR_CLASS_PATH = "/Script/Engine.Actor";                // declares SetActorHiddenInGame
 constexpr const char* SCHLACHT_KSL_CLASS_PATH   = "/Script/Engine.KismetSystemLibrary";  // declares LineTraceSingle
 // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The version ladder's CharacterMovementComponent rung reads the engine class.
@@ -2021,16 +1969,15 @@ constexpr const char* VERSION_CMC_CLASS_PATH    = "/Script/Engine.CharacterMovem
 /// hand) the auto-start path must refuse rather than AOB-scan CE and open the game pipe
 /// inside it.
 ///
-/// **A PREFIX test on purpose.** The first version of this guard was an exact-name list
-/// — `cheatengine-x86_64.exe`, `cheatengine-i386.exe`, `Cheat Engine.exe` — and a live
-/// capture then named the real executable **`cheatengine-x86_64-SSE4-AVX2.exe`**, which
-/// matched none of them. CE ships several CPU-feature variants and can add more; what is
+/// **A PREFIX test on purpose.** CE ships several CPU-feature variants of its executable
+/// (e.g. **`cheatengine-x86_64-SSE4-AVX2.exe`**, which an exact-name list of
+/// `cheatengine-x86_64.exe` / `cheatengine-i386.exe` misses) and can add more; what is
 /// stable is the stem. Matching the stem also covers `cheatengine-i386.exe`,
 /// `cheatengine-x86_64.exe` and any future `-AVX512`-style suffix without another edit.
 ///
 /// Case-insensitive (Windows filenames are). Deliberately NOT a substring search: a game
 /// legitimately called e.g. `MyCheatEngineClone.exe` must not be refused, so the match is
-/// anchored at the start. (Audit #4 B34, corrected by in-game verification.)
+/// anchored at the start. (Audit #4 B34.)
 inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
     if (!exeLeafName || !*exeLeafName) return false;
     // "cheatengine-*.exe" — every shipped variant of the main executable.
@@ -2044,7 +1991,7 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
 ///
 /// Takes the full host-executable path (what `GetModuleFileNameW(nullptr, …)` returns) and
 /// answers the one question `DllMain` has to settle *before* any thread exists. It is a
-/// separate function from `IsCheatEngineExeName` for a reason that cost a HIGH finding:
+/// separate function from `IsCheatEngineExeName` because
 /// `DllMain` cannot be reached from a test, so the decision it makes has to live somewhere
 /// a test CAN reach, taking exactly the value Windows hands us (audit #5 AB1).
 ///
@@ -2057,9 +2004,8 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
 /// nothing: DETACH runs under the loader lock, so joining our threads there deadlocks,
 /// and returning without joining leaves them in an image about to be unmapped.
 ///
-/// **Fails OPEN.** An empty or unreadable host path returns `true`, preserving the
-/// behaviour that shipped for every non-CE host rather than silently disabling the DLL on
-/// a path we failed to read.
+/// **Fails OPEN.** An empty or unreadable host path returns `true`, treating it as a
+/// non-CE host rather than silently disabling the DLL on a path we failed to read.
 inline bool HostAllowsBackgroundThreads(const wchar_t* hostExePath) {
     if (!hostExePath || !*hostExePath) return true;
     // Take the last separator of EITHER kind — a path can arrive with '/' on Windows.
@@ -2073,8 +2019,8 @@ inline bool HostAllowsBackgroundThreads(const wchar_t* hostExePath) {
 namespace Grimoire {
 
 // Every re-assert worker sleeps its period in slices of this, so StopWorker()'s join
-// waits at most one slice rather than a whole period. Was 8 bare `25`s across four
-// modules (R5). Keep it well under the shortest period (PROTECT/MOVE/TIME/SOLIDE) —
+// waits at most one slice rather than a whole period (R5). Keep it well under the
+// shortest period (PROTECT/MOVE/TIME/SOLIDE) —
 // a slice longer than a period would turn the sliced sleep into a single long one.
 constexpr int     WORKER_SLEEP_SLICE_MS = 25;
 

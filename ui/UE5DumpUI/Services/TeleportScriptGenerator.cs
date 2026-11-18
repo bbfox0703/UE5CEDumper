@@ -111,14 +111,12 @@ public static class TeleportScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Teleport");
         Line(sb);
         Line(sb, "local hadError = false");
-        // Bounded wait for IDLE before sampling cmd. This is the R3 fix, and it reached
-        // GenerateClearAll (below) and CoordLibrary but never got applied HERE — where
-        // back-to-back firing is the ORDINARY use: hotkey-spamming "TP facing direction",
-        // or Save immediately followed by Recall. A single sample meant the whole
-        // round-trip below was skipped with no else branch: nothing written, no message,
-        // hadError still false — so the deferred timer closed the window as if it were a
-        // clean success. A silent no-op that looks like it worked is the worst outcome
-        // this file can produce, and it affected 16 of the 17 shipped rows.
+        // Bounded wait for IDLE before sampling cmd (R3). Back-to-back firing is the
+        // ORDINARY use here: hotkey-spamming "TP facing direction", or Save immediately
+        // followed by Recall. With a single sample the whole round-trip below would be
+        // skipped with no else branch: nothing written, no message, hadError still false —
+        // so the deferred timer would close the window as if it were a clean success. A
+        // silent no-op that looks like it worked is the worst outcome this file can produce.
         // hadError is set AT the break, not only in the else below: a bare `then break end`
         // is exactly the silent-timeout shape CeLuaHygieneTests forbids, and the rule is
         // right — the flag has to be true from the moment the wait gives up. The message
@@ -150,17 +148,16 @@ public static class TeleportScriptGenerator
         Line(sb, $"  writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {op})             -- op");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)             -- clear status");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdTeleport})  -- CMD_TELEPORT (write LAST)");
-        // A timeout is an ERROR (CLAUDE.md's CE-Lua hygiene rule). A bare `break` fell
-        // straight through to the auto-close, so the Lua Engine window shut on the one
-        // outcome the user needed to see. A bare `return` would be wrong too — it would
-        // strand the record ticked — so set hadError, say so, and leave the loop. (B15)
+        // A timeout is an ERROR (CLAUDE.md's CE-Lua hygiene rule). A bare `break` would
+        // fall straight through to the auto-close, so the Lua Engine window would shut on
+        // the one outcome the user needs to see. A bare `return` would be wrong too — it
+        // would strand the record ticked — so set hadError, say so, and leave the loop. (B15)
         //
         // That reasoning is why this passes FlagAndBreak rather than the toggles'
         // UntickAndReturn: these rows are MOMENTARY, and the deferred timer below both
-        // unticks and suppresses the close. What the shared emitter adds is the half
-        // B15 did not cover — a real getTickCount deadline instead of a count of
-        // sleep(1) calls (measured 15.47 ms each, so the old bound was ~155 s), and a
-        // message that reads `status` rather than guessing at the cause.
+        // unticks and suppresses the close. The shared emitter also gives a real
+        // getTickCount deadline rather than a count of sleep(1) calls (sleep(1) is nowhere
+        // near 1 ms), and a message that reads `status` rather than guessing at the cause.
         CeLuaHygiene.AppendMailboxWait(sb, "Teleport", MailboxTimeout.FlagAndBreak, indent: "  ");
         Line(sb, $"  local code = readInteger(mb + {CeMailboxLayout.OffResult}, true)");
         Line(sb, $"  dbg('[Teleport] {label} -> code=' .. code)");
@@ -216,9 +213,9 @@ public static class TeleportScriptGenerator
                  "Use the UI Force button.')");
         if (op == 10)
         {
-            // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. A record from
-            // before this fix reports it through the generic branch below, which is enough to see it; this one says
-            // why, and what to do instead.
+            // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. An older
+            // generated record, without this branch, reports it through the generic branch below, which is enough
+            // to see it; this one says why, and what to do instead.
             // Invariant: a negative int in the user's culture can carry U+2212 (ICU's sv-SE), which Lua cannot parse.
             Line(sb, $"  elseif not hadError and code == {TeleportCodes.ParentRelative.ToString(CultureInfo.InvariantCulture)} then");
             Line(sb, "    hadError = true");

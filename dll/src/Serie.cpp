@@ -61,8 +61,8 @@ static int s_stride = 2;
 // right on every stock FNamePool (UE 4.23+). Pre-FNamePool builds resolve through
 // s_isUE4Mode and never reach here.
 //
-// Audit #5 G4 established there is NO reliable offline discriminator, and the reasoning
-// is what stops this being "fixed" again: a LOW index cannot distinguish 14 from 16 (both
+// There is NO reliable offline discriminator (audit #5 G4), and the reasoning is what
+// keeps this a constant: a LOW index cannot distinguish 14 from 16 (both
 // widths address the same byte — Serie::BlockBitsAreIndistinguishable), and a boundary
 // index >= 2^14 need not be an entry BOUNDARY even in a valid 16-bit pool, so a
 // fixed-index probe can WRONGLY DOWNGRADE a working pool. Anything that prints a
@@ -123,7 +123,7 @@ static std::unique_ptr<std::atomic<uint16_t>[]> s_tagKey;
 // game takes around its own probe can never be left held by us.
 // Classify a lookup so a TRANSIENT failure is never confused with a genuine miss
 // (audit #5 G6). Returns true + `outKey` when the tag is found. On a miss, `readError`
-// splits the two cases the old single-bool return conflated:
+// splits the two cases a single-bool return would conflate:
 //   readError = true  -> could NOT determine (no context / a torn read of the live table
 //                        the game mutates as it runs / a corrupt-looking chain). The
 //                        caller must not cache this.
@@ -176,10 +176,10 @@ static bool GetTagKey(uint16_t tag, uint8_t& outKey) {
     if (!LookupTagKey(tag, key, readError)) {
         if (readError) {
             // audit #5 G6: a TRANSIENT miss (no context / torn read of the live table /
-            // corrupt-looking chain) is NOT cached. Poisoning it — as the old permanent
-            // TAGKEY_MISS did — blanked every FName carrying this tag for the rest of the
-            // process, though the fork's own lookup would have succeeded on a later read.
-            // Leave the slot unresolved so the next name retries.
+            // corrupt-looking chain) is NOT cached. Caching it as a permanent miss would
+            // blank every FName carrying this tag for the rest of the process, though the
+            // fork's own lookup would succeed on a later read. Leave the slot unresolved so
+            // the next name retries.
             return false;
         }
         // Genuine ABSENT -> Genau's "absent tag = plaintext": the fork stores this block
@@ -567,10 +567,10 @@ static bool ReadUE4WideName(uintptr_t at, std::vector<wchar_t>& out) {
     return false;
 }
 
-// [UE4-WIDE-FNAME] review: a pre-4.23 narrow name, up to its terminator or the 255-byte window it has always been read
-// in. The window was one read, and an SEH read fails whole, so a name allocated within 255 bytes of an unreadable page
-// came back "" -- the pools pack entries end to end. Each read now stops at a page boundary and the next is made only
-// while no terminator has come, so wherever the old window was readable the sanitizer sees the same name.
+// [UE4-WIDE-FNAME] A pre-4.23 narrow name, up to its terminator or the 255-byte window. An SEH read fails whole and the
+// pools pack entries end to end, so the window read in one piece would return "" for a name allocated within 255 bytes
+// of an unreadable page. Each read stops at a page boundary and the next is made only while no terminator has come, so
+// wherever the whole window is readable the sanitizer sees the same name as a single read would give.
 static bool ReadUE4NarrowName(uintptr_t at, char (&buf)[256]) {
     constexpr size_t kWindow = 255;
     size_t got = 0;

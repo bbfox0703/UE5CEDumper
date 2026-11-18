@@ -142,7 +142,7 @@ inline AcceptLog OnCreateSuccess(bool& atCapacity) noexcept {
 
 
 // ── The command a request names ──────────────────────────────────────────────
-// [PIPE-PER-PROCESS-2026-11-06] Stage C. The connection thread names each request for the repeat-suppressed log line,
+// [PIPE-PER-PROCESS-2026-11-06] The connection thread names each request for the repeat-suppressed log line,
 // Stop's drain diagnostic, get_diagnostics' per-command timing and pipe_clients' "last command".
 inline constexpr size_t kMaxCmdNameChars = 64;
 
@@ -171,7 +171,7 @@ inline std::string ExtractCmdName(std::string_view line) {
 }
 
 // ── What the pipe read while an init was publishing ─────────────────────────
-// [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop dispatches what it reads while
+// [PIPE-WALK-DURING-INIT] Refuse nothing; log it. The read loop dispatches what it reads while
 // an init or an apply_rescan holds g_initInProgress -- in proxy mode trigger_scan runs UE5_Init on a job thread while
 // the other connections serve -- so a command that walks may read offsets not yet measured, or pointers mid-publish.
 // Its answer is not refused; this decides which commands leave the trace a wrong answer from that window needs: each
@@ -215,7 +215,7 @@ private:
 };
 
 // ── Who holds the pipe's connections ────────────────────────────────────────
-// [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is ever disconnected for being
+// [PIPE-PER-PROCESS-2026-11-06] No client is ever disconnected for being
 // idle, but who holds the connections can be seen -- the pipe_clients command, and, when every connection is taken
 // (no client can connect to ask), the at-capacity log line, which a client that cannot connect reads from the DLL's
 // pipe log.
@@ -229,7 +229,7 @@ struct Holder {
     bool        inFlight = false;   // a command is running now
     std::string phase;              // Fern's Connection::Phase as a short key (Fern::PhaseKey), e.g. "Dispatching"
     bool        self = false;       // the connection asking (pipe_clients)
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the connection marks its requests "background" (the MCP server does).
+    // [PIPE-PER-PROCESS-2026-11-06] The connection marks its requests "background" (the MCP server does).
     // The exe name cannot tell: the MCP server runs as UE5DumpUI.exe too.
     bool        background = false;
 };
@@ -280,7 +280,7 @@ inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget
 }
 
 // ── Who owns what a pipe client turns on ────────────────────────────────────
-// [PIPE-PER-PROCESS-2026-11-06] Stage C
+// [PIPE-PER-PROCESS-2026-11-06]
 //
 // The client's PROCESS, not its connection: the UI holds two lanes, and a lane that reconnects while its sibling stays
 // must not release what that process still uses. A connection whose pid could not be read owns things alone; the top
@@ -290,13 +290,12 @@ constexpr uint64_t ClientOwnerKey(DWORD pid, uint64_t seq) noexcept {
 }
 
 // ── Who holds what the gameplay features hold ───────────────────────────────
-// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11)
+// [PIPE-PER-PROCESS-2026-11-06]
 //
 // God mode, the movement knobs, gravity direction, the time lanes, fly, the foreground lock, the debug camera and each
-// force-field job are one process-wide state each, held by a re-assert worker past the client that set it. Nothing
-// recorded who set it, so an AI working through the MCP server could not tell the UI's hold from nobody's, and would
-// silently replace or end it. The ledger records the owner of each hold: a client process (ClientOwnerKey), CE's
-// mailbox (kHoldOwnerCe), or none.
+// force-field job are one process-wide state each, held by a re-assert worker past the client that set it. The ledger
+// records the owner of each hold -- a client process (ClientOwnerKey), CE's mailbox (kHoldOwnerCe), or none -- so an AI
+// working through the MCP server can tell the UI's hold from nobody's rather than silently replace or end it.
 //
 // Every writer -- each pipe connection and the mailbox -- changes a hold under that hold's own lock, so a request
 // marked if_free checks the owner and changes the state in one step, with no window for another writer between them.
@@ -464,7 +463,7 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 }
 
 // ── What a background client may not invoke ─────────────────────────────────
-// [D2-3-INVOKE] The maintainer's list (2026-11-11) for the MCP server's invoke_function. Empty when the call may go
+// [D2-3-INVOKE] The deny list for the MCP server's invoke_function. Empty when the call may go
 // ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag (FUNC_Net marks replication RPCs
 // only). The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
 // a heuristic, and a game function that does the same under another name is not caught. The UI and CE are never asked.
@@ -472,9 +471,9 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
 // calls any function by name, a setter that writes any property by name, a Blueprint graph entered at a free entry
 // point), RemovePlayer, and the online-service writes that leave the machine without being RPCs (achievements,
 // leaderboards, in-app purchases; names from UE's OnlineSubsystemUtils). A per-function grant must never reach these.
-// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's scan of every UFUNCTION in the UE 4.18-5.8 sources added the names the list
-// missed, and an async action's Activate by its resolved `fullName` (Ubel::GetFullName's form): it does the
-// online-service write, session join or save its factory set up, while UActorComponent::Activate shares its name.
+// [MCP-WRITE-GRANTS-2026-11-14] Names also come from a scan of every UFUNCTION in the UE 4.18-5.8 sources. An async
+// action's Activate is refused by its resolved `fullName` (Ubel::GetFullName's form): it does the online-service write,
+// session join or save its factory set up, while UActorComponent::Activate shares its name.
 inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags,
                                               const std::string& fullName = {}) {
     constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
@@ -578,7 +577,7 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
     return {};
 }
 
-// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. What a parameter list says about an invoke that reaches other functions or
+// [MCP-WRITE-GRANTS-2026-11-14] What a parameter list says about an invoke that reaches other functions or
 // properties by name, which a name list cannot see. `Field` is Ubel::ParamField's shape (name, typeName, structType,
 // objClass, and `sub`, a struct's members). Empty when it may go ahead.
 // - Always refused: a latent function. Its LatentActionInfo names the function the engine calls on CallbackTarget when
@@ -586,8 +585,9 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
 //   included, behind numbers a prompt cannot show.
 // - Under a grant (`underGrant`), whose prompt shows no later call's arguments, also any parameter that hands the engine
 //   a function, an event or a property: a delegate, a property path, a UFunction object, or a string, a name or a
-//   struct (an FGameplayTag wraps a name) whose parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
-//   pass, while a few harmless ones (an animation's TransitionEvent) are refused under a grant and stay per call.
+//   struct (an FGameplayTag wraps a name) whose parameter name says so. A heuristic on the name: everyday names
+//   (SocketName, BoneName, LevelName, Tag) pass, while a few harmless ones (an animation's TransitionEvent) are
+//   refused under a grant and stay per call.
 // FUNC_UbergraphFunction: a Blueprint's event graph, entered at any offset. Defined from 4.23; the bit is unused
 // before, so testing it is safe on every engine.
 inline constexpr uint32_t FUNC_FLAG_UBERGRAPH = 0x00008000;

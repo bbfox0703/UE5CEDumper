@@ -167,10 +167,10 @@ static std::string GetTimestamp() {
     // path. The CRT path triggers __tzset() + locale-facet init on first use,
     // which dereferences not-yet-ready CRT/process global state and AVs when
     // this DLL is loaded EARLY in a host EXE's static-import graph (its DllMain
-    // runs before the process is "warm"). Concrete failure: hijacking dxgi.dll
-    // on Octopath Traveler — dxgi is imported before d3d11, so our DllMain's
-    // very first log line faulted inside __tzset (write to null+0x24). The
-    // version.dll/dinput8.dll proxies never hit it only because they load late.
+    // runs before the process is "warm"). A dxgi.dll proxy can be such a case: in
+    // a host that imports dxgi before d3d11, our DllMain's very first log line
+    // would fault inside __tzset; the version.dll/dinput8.dll proxies escape it
+    // only because they load late.
     // GetLocalTime reads the system clock + timezone via ntdll with zero CRT
     // global dependency, so it is safe at any load time.
     SYSTEMTIME st;
@@ -199,8 +199,8 @@ static std::string GetTimestamp() {
 // archived today still prunes on its real date. Stamping with the archive time
 // would silently resurrect stale data for another full retention window.
 //
-// Why not the old generation shuffle: it ran on EVERY process start, not only on
-// size, so N launches of one game in an afternoon evicted everything before them
+// Why not a generation shuffle: it runs on EVERY process start, not only on size,
+// so N launches of one game in an afternoon would evict everything ahead of them
 // no matter how recent. An age policy cannot be expressed as a file count.
 
 // Enumerate `dir` WITHOUT the throwing increment.
@@ -210,9 +210,9 @@ static std::string GetTimestamp() {
 // failures — and on construction failure it compares equal to end(), so the loop
 // body never runs and any `if (ec) break;` written INSIDE it is dead code. A
 // mid-enumeration failure (a file vanishing under the cursor, an ACL change,
-// FindNextFileW failing) therefore threw a `filesystem_error` out of a sweep that
-// believed itself noexcept. This file contains no `catch` at all and the DLL builds
-// with /EHa, so that unwound out of `InitProcessMirror` into DLL_PROCESS_ATTACH.
+// FindNextFileW failing) would therefore throw a `filesystem_error` out of a sweep
+// that must not throw. This file contains no `catch` at all and the DLL builds with
+// /EHa, so that would unwind out of `InitProcessMirror` into DLL_PROCESS_ATTACH.
 // (audit #5 SE2)
 //
 // Returns false when enumeration failed at ANY point — construction OR increment.
@@ -450,9 +450,9 @@ static void CloseFile(LogFileState& fs_state) {
 // Returns LF_COUNT when nothing is open at all.
 //
 // This is what stops a failed open from silently swallowing a category for the
-// whole session. The victim of the old behaviour was the log-verification
-// procedure itself: a grep that finds nothing reads as "this code path never ran"
-// when the truth is "the file never opened". (audit #5 SE1)
+// whole session. Without it log verification itself is misled: a grep that finds
+// nothing reads as "this code path never ran" when the truth is "the file never
+// opened". (audit #5 SE1)
 static LogFile ResolveSink(LogFile target) {
     if (s_files[target].file) return target;
     for (int i = 0; i < LF_COUNT; ++i)
@@ -500,8 +500,8 @@ static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& 
 
     // Same per-entry error_code discipline as PruneAgedLogs: an undeletable folder
     // (a game still running, a viewer holding a file) must cost that folder, not the
-    // rest of the sweep. The old `ec.clear()` sat BEFORE both remove_all calls, so it
-    // could not undo the failure that actually broke the loop. (B19)
+    // rest of the sweep. Each entry declares fresh error_codes and the non-throwing
+    // overloads are used, so no failure carries over to the next entry or ends the loop. (B19)
     ForEachDirEntry(parentDir, [&](const fs::directory_entry& entry) {
         std::error_code ec;
         if (!entry.is_directory(ec)) return;
@@ -519,11 +519,10 @@ static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& 
             });
 
         // Could not FULLY enumerate it — leave it alone rather than guess it is
-        // empty. This guard now covers a mid-iteration failure as well, which the
-        // old `if (subEc)` structurally could not: a construction failure it caught,
-        // but a failure halfway through threw instead. The distinction is not
-        // academic here — the very next branch DELETES the folder when it saw no
-        // files, and a half-read folder must never reach it. (audit #5 SE2)
+        // empty. This covers a mid-iteration failure as well as a construction
+        // failure. The distinction is not academic here — the very next branch
+        // DELETES the folder when it saw no files, and a half-read folder must never
+        // reach it. (audit #5 SE2)
         if (!enumerated) return;
 
         std::error_code rmEc;

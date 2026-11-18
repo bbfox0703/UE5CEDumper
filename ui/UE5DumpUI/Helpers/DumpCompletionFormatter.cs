@@ -5,19 +5,17 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// Pure composition of the "Dump All" completion status line (audit X4).
 ///
-/// Defects it exists to prevent:
+/// What it keeps true:
 /// <list type="bullet">
-///   <item>The old line was derived from the output file's byte length, so a
-///     zero-class or all-errored dump still read as a successful export. The
-///     honest signal is <see cref="DumpResult.ClassesEmitted"/> — what the dump
-///     actually wrote.</item>
-///   <item>The size was <c>length / 1024 / 1024</c> — <b>integer</b> division on a
-///     <see cref="long"/>, so a 3.7 MB dump printed "3.0 MB" and anything under
-///     1 MB printed "0.0 MB". <see cref="FormatSize"/> divides in
-///     <see cref="double"/> and steps down to KB / bytes so a small dump is not
-///     rounded to "0.0 MB".</item>
-///   <item>A dump whose enums are missing, partial or nameless ending on a bare
-///     success line: only the file's summary line recorded it, and no reader
+///   <item>Success is judged by <see cref="DumpResult.ClassesEmitted"/> — what the
+///     dump actually wrote — never by the output file's byte length, which would
+///     let a zero-class or all-errored dump read as a successful export.</item>
+///   <item>The size is divided in <see cref="double"/> by <see cref="FormatSize"/>:
+///     <b>integer</b> <c>length / 1024 / 1024</c> on a <see cref="long"/> would print
+///     a 3.7 MB dump as "3.0 MB" and anything under 1 MB as "0.0 MB". It steps down
+///     to KB / bytes so a small dump is not rounded to "0.0 MB".</item>
+///   <item>A dump whose enums are missing, partial or nameless does not end on a
+///     bare success line: the file's summary line records it too, but no reader
 ///     shows that line.</item>
 /// </list>
 /// </summary>

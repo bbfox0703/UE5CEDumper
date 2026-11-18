@@ -398,9 +398,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
 
             // UTF-8 encode the WIDE path already in hand rather than asking Windows for a
             // narrow one. GetModuleFileNameA converts through the ANSI code page, which
-            // DESTROYS any character the code page cannot represent: a real install at
-            // "...\EVERSPACE™ 2\..." logged as "EVERSPACE? 2", and '?' is not a legal path
-            // character — so the logged path could not be opened, existence-checked, or matched
+            // DESTROYS any character the code page cannot represent: "...\EVERSPACE™ 2\..."
+            // becomes "EVERSPACE? 2", and '?' is not a legal path character — so the logged
+            // path could not be opened, existence-checked, or matched
             // back to a folder. The log files are UTF-8, so the wide path round-trips exactly.
             // This line is a data source for the Proxy Deploy orphan scan, which recovers
             // deployment locations from it; a mangled path is an unusable row there.
@@ -409,22 +409,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                      BuildStamp::VersionString(), procPathU8.c_str(), GetCurrentProcessId());
 
             // ⭐ WHICH ARTEFACT IS THIS, AND WHERE IS IT MAPPED. The line above names the HOST
-            // process; until 2026-09-09 nothing named US. A reader could only INFER the answer,
-            // and only sometimes: "proxy DLL mode" says a proxy without saying which one, and
+            // process; the block below names US. Without it a reader can only INFER the answer, and
+            // only sometimes: "proxy DLL mode" says a proxy without saying which one, and
             // "[PROXY] Loaded real version.dll" names the SYSTEM library we forwarded to rather
             // than ourselves — and it only appears after a successful forward, never for a
             // direct injection.
             //
-            // ⛔ TWO INCIDENTS IN ONE SESSION made the case. (1) A rig took the RVA of an export
-            // from `dist/UE5Dumper.dll` and added it to the base of a deployed `dxgi.dll` proxy
-            // — a different binary with a different layout — and Titan Quest II died with
-            // EXCEPTION_ACCESS_VIOLATION inside dxgi. (2) On EVERSPACE 2 the same rig found
-            // `dxgi.dll` first and it was C:\WINDOWS\SYSTEM32\dxgi.dll, because every D3D title
-            // loads that. Both are one log line away from being obvious.
+            // ⛔ A tool that guesses the module goes wrong quietly. The RVA of an export read
+            // from `dist/UE5Dumper.dll`, added to the base of a deployed `dxgi.dll` proxy — a
+            // different binary with a different layout — can crash the game with
+            // EXCEPTION_ACCESS_VIOLATION inside dxgi; and the first `dxgi.dll` a search finds
+            // may be C:\WINDOWS\SYSTEM32\dxgi.dll, because every D3D title loads that. Both are
+            // one log line away from being obvious.
             //
             // The identity is already computed for the wire — `Fern`'s `load_mode` derives
             // "proxy:version.dll" / "injected" from this same handle — so this only says out
-            // loud, at load time, what the init response has always been able to say on request.
+            // loud, at load time, what the init response can say on request.
             // Base is included because it is the other half an external tool needs: base + the
             // RVA read from THIS path is the only sound way to locate one of our exports.
             {
@@ -491,11 +491,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         // If the image is unmapped underneath it that is an access violation on a thread
         // with no handler — i.e. WE crash Cheat Engine, the user's main tool.
         //
-        // AutoStartBody has always refused to do anything in a CE host, but the refusal
-        // lived INSIDE the thread it should have prevented, and the mailbox poller had no
-        // such check at all. DLL_PROCESS_DETACH cannot rescue this: its `reserved`
-        // parameter is unnamed, so it cannot tell a FreeLibrary unload from process exit,
-        // and joining threads from DETACH would deadlock under the loader lock anyway.
+        // A refusal inside a thread comes too late — the thread already exists — so the
+        // decision is made here, before any is created. DLL_PROCESS_DETACH cannot rescue
+        // this: its `reserved` parameter is unnamed, so it cannot tell a FreeLibrary unload
+        // from process exit, and joining threads from DETACH would deadlock under the loader
+        // lock anyway.
         if (!startBackgroundThreads) {
             LOG_WARN("DllMain: host is Cheat Engine — NOT starting the mailbox poller or "
                      "the auto-start thread. CE FreeLibrary's plugin DLLs (on Settings→Add "

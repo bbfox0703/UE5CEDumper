@@ -12,9 +12,9 @@ namespace UE5DumpUI.Services;
 /// <para><b>Why this exists.</b> A CE table script cannot read its own <c>.CT</c> path —
 /// Cheat Engine exposes no such API. The <c>.CT</c> therefore infers the folder from CE's
 /// Open/Save dialog objects, which <c>File &gt; Open</c> fills in and a double-click in
-/// Explorer does not. Reported 2026-08-04: a double-clicked table searched only CE's
-/// install folder and <c>%LOCALAPPDATA%</c>, and failed with the DLL sitting right beside
-/// it. This file is the one channel that depends on nothing CE does or does not expose.</para>
+/// Explorer does not, so a double-clicked table would search only CE's install folder and
+/// <c>%LOCALAPPDATA%</c>, and fail with the DLL sitting right beside it. This file is the
+/// one channel that depends on nothing CE does or does not expose.</para>
 ///
 /// <para><b>Format:</b> plain UTF-8 text, one absolute DIRECTORY per line, newest first,
 /// <c>#</c> comments. A directory rather than a full DLL path because the <c>.CT</c>'s
@@ -23,8 +23,8 @@ namespace UE5DumpUI.Services;
 /// safe with no <c>[JsonSerializable]</c> context.</para>
 ///
 /// <para><b>Location:</b> the <c>%LOCALAPPDATA%\UE5CEDumper</c> root — a sibling of the
-/// other state files, NOT under <c>Logs\</c>. Verified against
-/// <see cref="LoggingService"/>: every one of its sweeps is rooted at the log directory
+/// other state files, NOT under <c>Logs\</c>. Every sweep of
+/// <see cref="LoggingService"/> is rooted at the log directory
 /// and globs only <c>*.log</c> / <c>{prefix}-*.log</c>, so this file is out of reach on
 /// both counts.</para>
 /// </summary>
@@ -47,9 +47,9 @@ public sealed class DumperDllPathStore
     /// <summary>Full path of the breadcrumb file (for logging / tests).</summary>
     public string FilePath => _path;
 
-    /// <summary>(sixth review, R6-01 -- measured) A drive ROOT keeps its separator: trimmed to a bare 'E:' it is
-    /// drive-relative, and Load (and the .CT) dropped it -- UE5DumpUI started from E:\ rewrote the file on every start.
-    /// A legacy bare 'X:' line, which this class and the .CT wrote until this fix, reads as that drive's root.</summary>
+    /// <summary>A drive ROOT keeps its separator: trimmed to a bare 'E:' it is drive-relative, and Load (and the .CT)
+    /// would drop it -- UE5DumpUI started from E:\ would rewrite the file on every start. A bare 'X:' line, which an
+    /// older UE5DumpUI or .CT could write, reads as that drive's root.</summary>
     internal static string DriveRootFix(string path) =>
         path.Length == 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' ? path + @"\" : path;
 
@@ -66,8 +66,8 @@ public sealed class DumperDllPathStore
                 var line = raw.Trim('﻿').Trim();
                 if (line.Length == 0 || line[0] == '#') continue;
                 line = DriveRootFix(line);
-                // (fifth review, R5-04) A RELATIVE line (an older UE5CEDumper.CT's self-heal could write one) is not a
-                // folder anyone can find again: the .CT would probe it against Cheat Engine's current folder.
+                // A RELATIVE line (an older UE5CEDumper.CT's self-heal could write one) is not a folder anyone can
+                // find again: the .CT would probe it against Cheat Engine's current folder.
                 if (!Path.IsPathFullyQualified(line)) continue;
                 list.Add(line);
                 if (list.Count >= MaxEntries) break;
@@ -94,7 +94,7 @@ public sealed class DumperDllPathStore
         // for the Lua reader. Win32 forbids 0x00-0x1F in a path component, so reaching
         // this is a caller bug, not user input.
         if (dllDirectory.IndexOf('\r') >= 0 || dllDirectory.IndexOf('\n') >= 0) return;
-        // (fifth review, R5-04) Only a fully qualified folder ('sub', 'C:rel' and '\x' depend on a current folder).
+        // Only a fully qualified folder ('sub', 'C:rel' and '\x' depend on a current folder).
         if (!Path.IsPathFullyQualified(dllDirectory)) return;
 
         var dir = DriveRootFix(dllDirectory.TrimEnd('\\', '/'));

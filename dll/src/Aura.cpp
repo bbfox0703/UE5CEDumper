@@ -10,9 +10,9 @@
 #include "Grimoire.h"
 #include "Serie.h"
 
-// kMaxPlausibleInvocationListNum moved to Aura.h so IsBoundInvocationListHeader --
-// the predicate dll_helpers_test pins -- shares the one copy. Its rationale went
-// with it.
+// kMaxPlausibleInvocationListNum lives in Aura.h, with its rationale, so
+// IsBoundInvocationListHeader -- the predicate dll_helpers_test pins -- shares the
+// one copy.
 
 #include "Ubel.h"
 #include "Genau.h"
@@ -136,10 +136,9 @@ namespace {
 // Threads one GObjects walk may use, from the CPU's shape. `coreClasses`: one EfficiencyClass per PHYSICAL core
 // (empty when the topology could not be read); `logical`: logical processors.
 //
-// [PIPE-PER-PROCESS-2026-11-06] The maintainer's rule (2026-11-10): the physical PERFORMANCE cores less 2, at least 1,
-// at most 16. Logical processors less 2 -- the rule before -- took every physical core of a 16C32T PC, put 14 threads
-// on an 8-core 9800X3D (8 of them SMT siblings), and counted a hybrid CPU's E-cores as full cores. The game's own
-// threads and background programs run meanwhile; threads beyond the cores only switch context more often.
+// [PIPE-PER-PROCESS-2026-11-06] The physical PERFORMANCE cores less 2, at least 1, at most 16. Physical, not logical:
+// SMT siblings share a core, and a hybrid CPU's E-cores are not full cores. The game's own threads and background
+// programs run meanwhile; threads beyond the cores only switch context more often.
 //   * Performance cores: those with the highest EfficiencyClass. A CPU without hybrid cores reports one class for all;
 //     an Intel with its E-cores disabled has only P-cores left.
 //   * Less 2: the game's main and render threads keep a core each.
@@ -204,15 +203,15 @@ int ScanThreadCount(int32_t workItems) {
 // [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
 // one budget for the whole process.
 //
-// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once, and each walk spawned
-// ScanThreadCount() - 1 workers with no limit across walks -- k walks put k times that many threads in the game, and
-// ScanThreadCount's "cores - 2" headroom held for one walk only. With the budget, the workers of all walks together
-// never exceed what one walk alone spawns. (Each walk also runs one chunk on its own thread, the connection's.)
+// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once. Without a limit across walks,
+// k walks would put k times ScanThreadCount() - 1 workers in the game, and ScanThreadCount's "cores - 2" headroom holds
+// for one walk only. With the budget, the workers of all walks together never exceed what one walk alone spawns.
+// (Each walk also runs one chunk on its own thread, the connection's.)
 //
 // A walk takes what is free and never waits for more: waiting would hold a connection's command behind another
 // connection's, and a walk on fewer threads finishes anyway. A walk that finds the budget spent runs serially on its
-// own thread, as Value Search's parallel toggle does when it is off. Chosen over a gate allowing one heavy command at a
-// time (maintainer, 2026-11-06): the DLL keeps no list of which commands are heavy, and one would drift.
+// own thread, as Value Search's parallel toggle does when it is off. Not a gate allowing one heavy command at a time:
+// the DLL keeps no list of which commands are heavy, and one would drift.
 class WorkerBudget {
 public:
     explicit WorkerBudget(int capacity) : capacity_(capacity < 0 ? 0 : capacity) {}
@@ -466,8 +465,8 @@ std::vector<ElemT> ConcatTruncate(std::vector<PerThreadT>& perThread,
 // [W3-XREF-CAP] True when a capped parallel scan's merged result MAY be a prefix: a worker reached its own
 // maxResults and stopped there, so its index range may be unfinished -- or the workers together found more
 // than maxResults and ConcatTruncate dropped some. It cannot tell a worker cut short from one whose last object
-// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist"
-// (review 3). Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
+// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist".
+// Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
 // ConcatTruncate, which moves the elements out.
 template <typename PerThreadT, typename ElemT>
 bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
@@ -518,15 +517,14 @@ struct LayoutPreset {
 
 // Upper bound on MaxElements. MaxElements is MaxChunks * elements-per-chunk, so it tracks
 // the title's gc.MaxObjectsInGame ceiling, NOT its live object count — generous
-// preallocation is normal, not corruption. This was 0x800000 (8,388,608) and DragonSword
-// Awakening (UE 5.3) rejected the CORRECT preset on it: MaxChunks=161, elements-per-chunk
-// 65536 -> MaxElements = 10,551,296. Every strict preset then failed and the relaxed tier
-// latched Layout B, whose numElementsOffset 0x04 is ObjLastNonGCIndex — a FROZEN count of
-// the startup disregard-for-GC set (37,099) instead of the live NumElements (317,810 and
-// climbing). GetCount() then reported 37,099 forever, so every GObjects walk — Value
-// Search, Instances, Property Search, snapshots — saw only startup CDOs and not one
-// runtime object. Raised to 33.5M: still far below the values seen when this slot actually
-// holds half of a pointer (MindsEye: 233M), which is what the bound exists to reject.
+// preallocation is normal, not corruption: a UE 5.3 title's MaxChunks=161 x 65536 per chunk
+// makes MaxElements = 10,551,296. A bound below a real ceiling rejects the CORRECT preset;
+// every strict preset then fails and the relaxed tier latches Layout B, whose
+// numElementsOffset 0x04 is ObjLastNonGCIndex — a FROZEN count of the startup
+// disregard-for-GC set instead of the live NumElements — so every GObjects walk sees only
+// startup CDOs and not one runtime object. 33.5M stays far below the values this slot shows
+// when it actually holds half of a pointer (hundreds of millions), which is what the bound
+// exists to reject.
 static constexpr int32_t kMaxElementsCeiling = 0x2000000;  // 33,554,432
 
 // All known chunked layouts. Order: default first, then game-specific.
@@ -558,8 +556,8 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
     // index->object accessors (e.g. RVA 0x0191AA10): `shr rcx,0x10 / movzx edx,bx /
     // shl rdx,5 / add rdx,[r9+rcx*8] / cmp qword [rdx+0x10],0`.
     { "MindsEye-Extended", { 0x28, 0x10, 0x24, 0x20, 0x14 }, { 32, 0x10 } },
-    // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter" (a508058): the chunk counts BEFORE Objects.
-    // Without it no strict row fit and the relaxed A/C row read NumElements out of the Objects pointer's high dword.
+    // [VND584-03] Dumper-7's UE5.7 Mistfall Hunter variant (a508058): the chunk counts BEFORE Objects. Without this
+    // row no strict row fits it, and the relaxed A/C row reads NumElements out of the Objects pointer's high dword.
     // Appended after the rows above for the same first-match reason; on a stock UE5-Extended array +0x04 is
     // ObjLastNonGCIndex, which fails ValidateChunkedLayout's maxChunks bound, so it cannot steal one.
     { "UE5.7-Mistfall",    { 0x10, 0x20, 0x24, 0x04, 0x08 } },
@@ -576,14 +574,12 @@ static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / s
 //                 (GOBJ_V10 / AV1 / AV2 / RE2 / V12) deliver, e.g. Octopath.
 //   "Flat-Base" — the FUObjectArray BASE, i.e. +0x10 further out, past
 //                 ObjFirstGCIndex / ObjLastNonGCIndex / MaxObjectsNotConsideredByGC /
-//                 OpenForDisregardForGC. Verified by disassembly on UE 4.11.0-preview7
-//                 (Nekopara, FUObjectItem = 16 B) and UE 4.13 (Fantasynth, 24 B): both do one
-//                 Malloc(Max * stride) with no chunk table, and EVERY pattern that hits them
-//                 resolves the base.
+//                 OpenForDisregardForGC. UE 4.11 (FUObjectItem = 16 B) and UE 4.13 (24 B)
+//                 both do one Malloc(Max * stride) with no chunk table, and EVERY pattern that
+//                 hits them resolves the base.
 //
 // Without the second row, a pre-4.21 title whose five ObjObjects-anchored patterns all miss is
 // unfixable by pattern work at ANY priority — nothing else can present the ObjObjects anchor.
-// That is the real reach argument here; the two old titles are just what exposed it.
 //
 // This tier runs BEFORE the relaxed tier on purpose: it pre-empts the Layout A/C and B
 // fallbacks, which would otherwise latch objectsOffset = 0x00 (reading the two GC index int32s
@@ -712,7 +708,8 @@ static bool ValidateChunkedLayout(uintptr_t addr, const ArrayLayout& layout) {
     uintptr_t chunk0 = 0;
     if (!Macht::ReadSafe(objPtr, chunk0)) return false;
     // [RELAXED-D-PREALLOC-HALF] A count that is half of the table's first entry is PreAllocatedObjects: above 16 TB its
-    // high dword passed the Flat-Base row's range, which reached a strict-failing UE5-Extended array before relaxed D.
+    // high dword fits the Flat-Base row's range, and that row is tried on a strict-failing UE5-Extended array before
+    // relaxed D.
     if (CountIsHalfOfFirstEntry(addr, layout.numElementsOffset, chunk0)) return false;
 
     if (chunk0 == 0) {
@@ -1422,24 +1419,24 @@ static void DetectItemSize() {
         s_itemObjOffset = 0;
     }
 
-    // 32 is here because a stock UE 5.4 **Development** package uses it, and its absence
-    // was not a near-miss -- it was undetectable. A stride that DIVIDES the real one still
-    // lands on a genuine object every k-th probe, so 16 against a real 32 validated half
-    // the pool and the sweep settled there "tentatively". Downstream, exactly every other
-    // object was garbage: UE5_Init resolved obj[0], obj[2], obj[4] and the Object Tree
-    // reported 12,588 of 25,175 named -- 50.0% to the decimal (2026-08-05, DumperTest).
+    // 32 is here because a stock UE 5.4 **Development** package uses it, and without it that
+    // stride is undetectable, not a near-miss. A stride that DIVIDES the real one still
+    // lands on a genuine object every k-th probe, so without 32, 16 against a real 32 would
+    // validate half the pool and the sweep would settle there "tentatively". Downstream,
+    // exactly every other object would be garbage: UE5_Init would resolve obj[0], obj[2],
+    // obj[4] and half the pool would read as named.
     //
-    // 40 is here for the SAME bug, second occurrence, and it is the WORSE one. At 5.7.0
-    // Build.h's UE_BUILD_TEST block began defining ENABLE_STATNAMEDEVENTS =
+    // 40 is here for the SAME aliasing in its WORSE form. From 5.7.0 Build.h's UE_BUILD_TEST
+    // block defines ENABLE_STATNAMEDEVENTS =
     // (!FORCE_USE_STATS && !USE_STATS_WITHOUT_ENGINE) and ENABLE_STATNAMEDEVENTS_UOBJECT =
     // (ENABLE_STATNAMEDEVENTS) (Build.h:307-311 @5.7.0/5.8.2; absent at 5.6.1, where both
-    // fell to the global 0). With the shipping defaults that is 1, which admits BOTH
+    // fall to the global 0). With the shipping defaults that is 1, which admits BOTH
     // `TStatId StatID` and `PROFILER_CHAR* StatIDStringStorage` into FUObjectItem
     // (UObjectArray.h:103-108). STATS is 0 in that same build, so UE_USE_LIGHTWEIGHT_STATS
     // is 1 and TStatId is a single pointer -- 24 + 8 + 8 = 40, Object still at +0x08.
     //
-    // ⚠ Why worse than the 32 case: there, the off-boundary reads landed on garbage, so
-    // named ~= bad ~= half and the sweep at least settled TENTATIVELY. Here gcd(40,20)=20,
+    // ⚠ Why worse than the 32 case: there, the off-boundary reads land on garbage, so
+    // named ~= bad ~= half and the sweep at least settles TENTATIVELY. Here gcd(40,20)=20,
     // so stride 20 alternates between the real Object and StatID -- which is LAZILY NULL
     // ('0 if nobody asked for it yet'). ProbeStride counts a zero as `null`, not `bad`, so
     // the alias scores named ~= half with bad == 0, sails through `qualityOk`
@@ -1448,10 +1445,9 @@ static void DetectItemSize() {
     //
     // ORDERING: with the real stride present it wins outright (named ~= all, bad ~= 0).
     // But a stride and its MULTIPLE tie -- every probe reads maxItems items regardless of
-    // stride, so on a real 20-byte item both 20 and 40 read only valid objects. That was
-    // already true of the 16/32 pair before 40 existed, so the old claim that ordering
-    // cannot decide the winner was overstated. The tie-break is now explicit in
-    // ProbeAllStrides (smaller stride wins a tie) rather than resting on list order.
+    // stride, so on a real 20-byte item both 20 and 40 read only valid objects, as 16 and 32
+    // do on a real 16-byte item. The tie-break is explicit in ProbeAllStrides (smaller
+    // stride wins a tie) rather than resting on list order.
     int candidates[std::size(Lineal::kItemStrideCandidates)];
     std::copy(std::begin(Lineal::kItemStrideCandidates),
               std::end(Lineal::kItemStrideCandidates), candidates);
@@ -1788,10 +1784,10 @@ int32_t GetSerialNumber(int32_t index) {
     const uintptr_t itemAddr = ItemAddrOf(index);
     if (!itemAddr) return 0;
 
-    // The whole offset rule lives in Lineal so it can be unit-pinned — no target
-    // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`
-    // silently returned 0x0C for the reachable 20-byte packed item, which reads
-    // ClusterRootIndex and made every weak reference look stale (audit #5 A1).
+    // The whole offset rule lives in Lineal so it can be unit-pinned. A size-only rule
+    // (`s_itemSize >= 24 ? 0x10 : 0x0C`) returns 0x0C for the reachable 20-byte packed
+    // item, which reads ClusterRootIndex and makes every weak reference look stale
+    // (audit #5 A1).
     const int serialOff = Lineal::SerialOffsetForLayout(
         s_layoutMode, s_itemSize, s_itemObjOffset, s_packedSerialOff);
 
@@ -1805,8 +1801,8 @@ bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:scan", "Aura::ForEach: aborted (client gone / shutdown)");
-            // [P1-ENUMNAMES] Say so: the callback did NOT see every object. Void, this let a cancelled
-            // DetectUEnumNames read "no known enum here" and latch FAILED for the process.
+            // [P1-ENUMNAMES] Say so: the callback did NOT see every object, and a cancelled
+            // DetectUEnumNames must not read that as "no known enum here" and latch FAILED for the process.
             return false;
         }
         uintptr_t obj = GetByIndex(i);
@@ -2229,8 +2225,8 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     if (totalOut) *totalOut = matchTotal;
     rset.templatesSkipped = templatesSkipped;
     // ONE source for "is this a page or the whole set". When an exact total was asked
-    // for, derive the flag from it — a second flag computed by a different code path is
-    // audit #4's own named root cause, and this handler's caller publishes `truncated`.
+    // for, derive the flag from it — a second flag computed by a different code path can
+    // disagree with the total (audit #4), and this handler's caller publishes `truncated`.
     rset.truncated = totalOut ? (matchTotal > maxResults)
                              : (static_cast<int>(rset.results.size()) >= maxResults);
 
@@ -2946,7 +2942,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // offset (parent struct offset + child field offset) and a dotted name
 // like "Stats.Levels".
 
-// ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
+// ContainerKind lives in Aura.h (audit #5 A4) so the coverage predicate
 // DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
 // Defined with the ref-meta entries below; the container walks above them check the same gate.
@@ -3993,10 +3989,10 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- TOptional<T> wrapping a pointer-shaped T ---
-        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but the old belief
-        // here -- "unset is encoded as null/zero" -- holds only for the INTRUSIVE one (a
-        // non-nullable object). A TRAILING-FLAG optional keeps its pointer after Reset(), so the
-        // entry carries its bIsSet offset and every scan checks it (OptionalGateOpen). A layout
+        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but "unset is
+        // encoded as null/zero" holds only for the INTRUSIVE one (a non-nullable object). A
+        // TRAILING-FLAG optional keeps its pointer after Reset(), so the entry carries its bIsSet
+        // offset and every scan checks it (OptionalGateOpen). A layout
         // that fits neither, or an intrusive one with no null state (weak/soft/lazy, interface),
         // is not bucketed: a reference we cannot prove is live is not reported.
         else if (f.TypeName == "OptionalProperty"
@@ -4255,8 +4251,6 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //     bCasePreservingName=false (FName=8):  TPair=24, +HashId 8 = 0x20
 //     bCasePreservingName=true  (FName=0xC, PADDED to 0x10 by the TSharedPtr): TPair=32,
 //                                           +HashId 8 = 0x28
-//   The numbers were always right; the stated REASON ('FName=16') was the sizeof myth,
-//   and this sentence two functions away is where it kept being copied from.
 //
 //   TSharedPtr<TMulticastScriptDelegate, ThreadSafe> (16B):
 //     +0x00  Object* (FMulticastScriptDelegate*)
@@ -4267,12 +4261,12 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //   contributes an 8-byte FMRSWRecursiveAccessDetector base):
 //     +0x00  [checked builds only] std::atomic<uint64> access-detector State
 //     +pad   TArray<FScriptDelegate> InvocationList { Data, Num, Max }
-//   ⛔ "16B, InvocationList at +0" was stated here as unconditional until 2026-09-09, and it
-//   is the reason a delegate with one live subscriber reported "(0 bindings, sparse)" on the
-//   Development fixture. There is no ElementSize to derive `pad` from on this path
-//   (a MulticastSparseDelegateProperty's is sizeof(FSparseDelegate) == 1), so
-//   LocateInvocationList below derives it from the object's own invariants instead.
-//   DynOff::kDelegateDetectorPad carries the measurement and the two-types-one-spelling ⚠.
+//   ⛔ "16B, InvocationList at +0" is NOT unconditional: read at +0 in a checked build, a
+//   delegate with one live subscriber reports "(0 bindings, sparse)". There is no ElementSize
+//   to derive `pad` from on this path (a MulticastSparseDelegateProperty's is
+//   sizeof(FSparseDelegate) == 1), so LocateInvocationList below derives it from the
+//   object's own invariants instead. DynOff::kDelegateDetectorPad carries the
+//   two-types-one-spelling ⚠.
 //
 //   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding).
 //   ⭐ This is the INVOCATION-LIST element type, which is never padded:
@@ -5165,22 +5159,20 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         if (Macht::ReadSafe(level + owOff, ow) && ow && ow != rootWorld) return res;
     }
 
-    // NO ULevel::Actors lookup, and that is the fix (audit #5 F8).
+    // NO ULevel::Actors lookup (audit #5 F8).
     //
     // `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO
-    // UPROPERTY, so FindFieldOffset cannot see it. It returned < 0 and this whole
-    // recovery bailed — which is why `ok_via_level` never fired: 18 sessions logged
-    // actor_count 0 and not one non-zero. Worse, the fuzzy name fallback could bind
-    // "Actors" to DestroyedReplicatedStaticActors, which IS reflected, and then scan
-    // the wrong array.
+    // UPROPERTY, so FindFieldOffset cannot see it: it returns < 0, and the fuzzy
+    // name fallback can bind "Actors" to DestroyedReplicatedStaticActors, which IS
+    // reflected -- the wrong array.
     //
-    // The membership it was proving is already guaranteed by construction: the Outer
-    // climb above exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own
-    // level. Re-deriving that from a reflected array added a hard failure mode and
-    // no information.
+    // The membership is already guaranteed by construction: the Outer climb above
+    // exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own level.
+    // Re-deriving that from a reflected array would add a hard failure mode and no
+    // information.
     //
-    // The element index goes with it. There is no reflected array to index INTO, so
-    // -1 is the honest answer, and it is the shape the UI already renders for the
+    // No element index either. There is no reflected array to index INTO, so -1 is
+    // the honest answer, and it is the shape the UI already renders for the
     // synthetic hop directly above.
 
     // --- Build the chain. ---
@@ -5819,7 +5811,7 @@ PropertySearchResult SearchProperties(
         // one of its default subobjects or a Blueprint component template is never a live sample, so a component row
         // cannot preview a class default's subobject as live while its Force holds nothing. Tested only for objects
         // whose class we actually want, a handful out of the pool.
-        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8, measured on 4.27 / 5.4 / 5.8), the one
+        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8), the one
         // UObject field here no probe confirms; a misread passes a live object over, which only costs the preview.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
@@ -6876,8 +6868,8 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
     // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau
     // derived behind Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
-    // DynOff::UPropertySubclassStart WalkFunctions uses. A flat +0x2C here left this mirror
-    // unable to match any 4.11-4.17 param ([A2-UFUNC-TAIL-4X] review follow-up).
+    // DynOff::UPropertySubclassStart WalkFunctions uses; a flat +0x2C would match no
+    // 4.11-4.17 param ([A2-UFUNC-TAIL-4X]).
     const int slot = DynOff::bUseFProperty
         ? DynOff::FSTRUCTPROP_STRUCT
         : DynOff::UPropertySubclassStart(::g_cachedUEVersion);
@@ -7237,14 +7229,13 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // selector in WalkFunctionPropertyRefs routes on `Script` alone and never consults
     // FunctionFlags — and we disassemble the INTERPRETER, then map ITS [this+off]
     // accesses against the function's owner class. Any interpreter displacement that
-    // collided with a real property offset would have been reported as a genuine
-    // reference by that function. GetFunctionCodeAddr's comment names the failure exactly:
+    // collides with a real property offset would be reported as a genuine reference by
+    // that function. GetFunctionCodeAddr's comment names the failure exactly:
     // "pushing the interpreter dispatcher and reporting a misleading success".
     //
-    // And the UI made it worse than silence: `method="disasm"` prints
+    // And the UI would make it worse than silence: `method="disasm"` prints
     // "[native disasm — heuristic, N unmapped]", i.e. it CLAIMS to have disassembled the
-    // function. Observed on DQ7R: `GetRemainingExpToNextLevel` (BC,BP,Const) reported
-    // "0 properties … 2 unmapped" on the native path.
+    // function.
     //
     // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
     // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
@@ -7314,9 +7305,9 @@ FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr) {
 
     std::vector<uint8_t> buf(static_cast<size_t>(scriptNum));
     if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) {
-        // [W3-BATCH-METHOD] review follow-up: the Script header looked plausible but its buffer did not
-        // read (a stale / freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this
-        // must not leave as "bytecode" with zero refs -- the batch renders that as a real "0".
+        // [W3-BATCH-METHOD] The Script header looked plausible but its buffer did not read (a stale /
+        // freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this must not
+        // leave as "bytecode" with zero refs -- the batch renders that as a real "0".
         out.method = "bytecode_unreadable";
         return out;
     }
@@ -7783,7 +7774,7 @@ ValueScanResult ScanForValue(
     // Per-thread output of the parallel GObjects walk. Each thread owns its
     // own caches + candidate buffer (lock-free hot path); results merge in
     // ascending tid order so the global candidate list stays ascending by
-    // object index — identical ordering to the old serial walk.
+    // object index — identical ordering to a serial walk.
     struct ThreadResult {
         std::vector<Radar::Candidate>        candidates;   // indices are THREAD-LOCAL
         std::vector<Radar::FieldDescriptor>  descriptors;  // thread-local pool
@@ -8230,8 +8221,7 @@ ValueScanResult ScanForValue(
         expandFields(expandFields, classAddr, /*baseOffset=*/0,
                      /*namePrefix=*/"", sci.fields, visited, /*depth=*/0);
         // Never truncate silently. A missing leaf is indistinguishable from a
-        // value that is not there, which is precisely how A3 stayed invisible
-        // for ~2400 builds — the scan simply reported no match.
+        // value that is not there -- the scan simply reports no match (A3).
         sci.fieldCapHit = fieldCapHit;
         if (fieldCapHit) {
             LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
@@ -8807,8 +8797,8 @@ ValueScanResult ScanForValue(
             // (like TArray) — refine re-anchors them via Radar::ValueAnchor::
             // SparseElement, which re-reads the header and re-tests THIS slot's
             // allocation bit rather than trusting the stored address (audit #5
-            // A11; the old "a realloc just drops the candidate" was wrong — a
-            // freed sparse slot is REUSED in place and reads as a live value).
+            // A11): a realloc does not just drop the candidate -- a freed sparse
+            // slot is REUSED in place and reads as a live value.
             if (sf.container == ScanContainer::Set
                 || sf.container == ScanContainer::MapKey
                 || sf.container == ScanContainer::MapValue) {
@@ -8853,9 +8843,10 @@ ValueScanResult ScanForValue(
             // so test that sentinel before the bytes are read as a value. An unreadable slot is skipped too.
             if (sf.optionalSentinel != Ubel::OptionalUnsetSentinel::None) {
                 // [A2-SENTINEL-OVERREAD] Read what the sentinel needs, never a flat 16: an intrusive optional is
-                // exactly sizeof(T), so 16 bytes ran past an 8-byte TOptional<FName>, and a read that crossed into
-                // an unmapped page failed -- indistinguishable from "unset", so a SET optional was dropped on some
-                // instances of a class and not others. sf.size is the field's own width (f.Size at emit time).
+                // exactly sizeof(T), so 16 bytes would run past an 8-byte TOptional<FName>, and a read that crossed
+                // into an unmapped page would fail -- indistinguishable from "unset", so a SET optional would be
+                // dropped on some instances of a class and not others. sf.size is the field's own width (f.Size at
+                // emit time).
                 uint8_t v16[16] = {};
                 int32_t need = Ubel::SentinelBytesNeeded(sf.optionalSentinel);
                 if (sf.size > 0 && sf.size < need) need = sf.size;
@@ -9516,9 +9507,9 @@ ValueScanStats RefineCandidates(
              initialSize, static_cast<int>(candidates.size()),
              static_cast<long long>(dtms));
     // Only when it actually fired — a line that is always there stops being read.
-    // `repointed` is the half that is a GAIN: those candidates were lost outright
-    // before A11, because a grown container's realloc left every element address
-    // stale. (audit #5 A11)
+    // `repointed` is the half that is a GAIN: a grown container's realloc leaves
+    // every stored element address stale, and without the re-anchor those
+    // candidates would be lost outright. (audit #5 A11)
     if (reanchorDropped || reanchorRepointed) {
         LOG_INFO("Radar: Refine re-anchor: %d container element(s) repointed after a "
                  "realloc, %d dropped (slot freed / container shrank / header gone)",
@@ -10657,7 +10648,7 @@ ValueScanStats RefineGroupCandidates(
                 // [W2-ORDEN-FINDENTRY] Two shapes, as in the single-value refine: a prev-value
                 // refine compares against the stored bytes, a targeted one against a target
                 // ENTRY whose verdict may be "every value of this width matches" (audit #5 AB4).
-                // Find() hid that verdict, so `Bigger -5` pruned every unsigned leaf.
+                // Find() cannot express that verdict: through it, `Bigger -5` would prune every unsigned leaf.
                 const Radar::NumericTargetSet::Entry* cmpEntry =
                     usePrev ? nullptr : slots[s].targets.FindEntry(width);
                 if (!usePrev && !cmpEntry) { ++dNoTarget; continue; }   // no value of this width can satisfy it
@@ -10698,8 +10689,8 @@ ValueScanStats RefineGroupCandidates(
     stats.scannedObjects = static_cast<int32_t>(candidates.size());
     stats.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    // Only when it actually fired. `repointed` is the half that is a GAIN: before A12 a
-    // grown container left every element address stale and those leaves were lost.
+    // Only when it actually fired. `repointed` is the half that is a GAIN: a grown container
+    // leaves every element address stale, and without the re-anchor those leaves would be lost (A12).
     if (reanchorDropped || reanchorRepointed) {
         Sein::Info("SCAN:grp",
                    "RefineGroup re-anchor: %d container element(s) repointed after a realloc, "

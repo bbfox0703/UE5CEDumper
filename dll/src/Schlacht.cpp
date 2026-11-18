@@ -245,8 +245,8 @@ bool ResolveCameraPose(uintptr_t pc, double outLoc[3], double outFwd[3]) {
 // owns it — which is what SetActorHiddenInGame needs. Bounded because Outer chains
 // end at the package and a corrupt object must not spin the worker.
 //
-// Returns the input unchanged when it is already an actor, so this is free for every
-// build where the direct read was already correct.
+// Returns the input unchanged when it is already an actor, so this costs nothing when
+// the read already names the actor.
 uintptr_t ResolveToActor(uintptr_t obj) {
     for (int hop = 0; obj && hop < 4; ++hop) {
         uintptr_t cls = Ubel::GetClass(obj);
@@ -291,19 +291,18 @@ uintptr_t ExtractHitActor(const std::vector<uint8_t>& buf, const FunctionParam& 
         return Aura::GetByIndex(idx);
     };
     // Try each candidate member in order and take the first that RESOLVES TO AN
-    // ACTOR. Reading one member and hoping was the bug: on UE 5.4 the leading int32
-    // of HitObjectHandle resolves to the hit's UStaticMeshComponent, not its owner,
-    // so every hit failed InvokeSetHidden's Actor guard and See-through hid nothing
-    // at all while reporting success. [SEETHRUNOOP-2026-08-22]
+    // ACTOR. One member is not enough: on UE 5.4 the leading int32 of HitObjectHandle
+    // resolves to the hit's UStaticMeshComponent, not its owner, which fails
+    // InvokeSetHidden's Actor guard, and See-through would hide nothing while
+    // reporting success. [SEETHRUNOOP-2026-08-22]
     //
-    // Measured FHitResult layout on UE 5.4 (DumperTest), which is why `Component` is
-    // in the list — it sits right there and its Outer IS the owning actor:
-    //   ... PhysMaterial@176 HitObjectHandle@184 Component@216 BoneName@232 ...
-    //   HitObjectHandle -> 'StaticMeshComponent', whose outer is 'StaticMeshActor_43'
+    // `Component` is in the list because in UE 5.4's FHitResult it sits just after
+    // HitObjectHandle and its Outer IS the owning actor (HitObjectHandle -> a
+    // StaticMeshComponent, whose outer is its StaticMeshActor).
     //
-    // ⭐ This cannot regress a build where the old read already worked: ResolveToActor
-    // is the IDENTITY at hop 0 for anything that is already an AActor, and `Actor` /
-    // `HitObjectHandle` are still tried first, in the same order as before.
+    // ⭐ ResolveToActor is the IDENTITY at hop 0 for anything that is already an
+    // AActor, and `Actor` / `HitObjectHandle` are tried first, so a hit whose first
+    // member already names the actor resolves exactly as it would from that member.
     static const char* const kCandidates[] = { "Actor", "HitObjectHandle", "Component" };
     for (const char* want : kCandidates)
         for (const auto& sf : outHit.structFields)
@@ -384,10 +383,9 @@ std::unordered_set<uintptr_t> RestoreHidden(const std::unordered_set<uintptr_t>&
 // mailbox result and the CE script alike -- instead of running a worker that hides nothing while the card reads
 // "Active -- nothing blocking the view". Two GObjects scans, once per enable, each stopping at its class.
 //
-// ⚠ Ask the CLASS, by full path -- never Ubel::GetClass() of an instance found by name. The first version asked
-// UE5_FindInstanceOfClass("Actor"), then a class-name SUBSTRING match that fell back to the first matching CDO; on
-// DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel, so FindFuncByName found nothing and See-through
-// was refused as "cooked out" on a build that has SetActorHiddenInGame. [SEETHRU-PROBE-SUBSTRING]
+// ⚠ Ask the CLASS, by full path -- never Ubel::GetClass() of an instance found by name. A class-name SUBSTRING match
+// with a CDO fallback can land on Default__ActorChannel, a UChannel, so FindFuncByName finds nothing and See-through is
+// refused as "cooked out" on a build that has SetActorHiddenInGame. [SEETHRU-PROBE-SUBSTRING]
 bool ProbeProducers(const char** missing) {
     FunctionInfo fi;
     const uintptr_t kslCls = Aura::FindClassByPath(Grimoire::SCHLACHT_KSL_CLASS_PATH);
@@ -647,13 +645,13 @@ void StopWorkerLocked() {
     s_worker.join();   // s_mutex must NOT be held here (the worker locks it per tick)
 }
 
-// ---- deferred restore (the leftover-hidden fix) ----
+// ---- deferred restore (leftover hidden actors) ----
 //
 // A disable while the game thread is paused CANNOT un-hide, and that is the
 // COMMON case, not an edge one: IsGameThreadResponsive is driven by ProcessEvent
 // fire times and UE throttles a backgrounded window — so clicking in the UI to
 // switch See-through off (or to disconnect) is itself what pauses the thread.
-// Observed live: a disconnect left one actor invisible with the user's only
+// Left alone, a disconnect leaves an actor invisible with the user's only
 // recovery being "reconnect and toggle the feature twice".
 //
 // So instead of leaving the record for a hypothetical later enable, poll for the

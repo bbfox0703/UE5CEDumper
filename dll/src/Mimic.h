@@ -274,10 +274,10 @@ enum ProtectOp : uint64_t {
 // LI_IN_DERIVED is what makes a class-wide freeze cover the pool the user is
 // actually looking at. A Property Search row for an INHERITED field is keyed to
 // the class that DECLARES it (`bCanBeDamaged` presents as `Actor`), so an
-// exact-name pool held one incidental debug actor while every AActor subclass in
-// the level — the player's pawn included — went untouched. Same failure Solide
-// already fixed for Force (audit #5 A6); the two sit on the same panel row and
-// must not scope oppositely. (`[FREEZESCOPE-2026-08-18]`)
+// exact-name pool can hold one incidental debug actor while every AActor subclass in
+// the level — the player's pawn included — goes untouched. Solide's Force scopes the
+// same way (audit #5 A6); the two sit on the same panel row and must not scope
+// oppositely. (`[FREEZESCOPE-2026-08-18]`)
 //
 // The bit DEFAULTS OFF, and that is the whole backward-compatibility story: a
 // contract-1/2 script never writes cmdFlags, reads 0, and gets contract-2's exact
@@ -700,8 +700,8 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //   every generated block reports a negative result it has no message for and keeps
 //   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE), the invoke
 //   family (MB_ERR_INVOKE_* -12..-15) and CMD_SET_DEBUG_CAMERA's -17, which only an ON gets: every [ENABLE] reports
-//   a state it has no branch for and keeps its window open (records since 2026-08-21 also untick; older ones stay
-//   ticked, as they did for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
+//   a state it has no branch for and keeps its window open (current records also untick; older saved ones stay
+//   ticked, as for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
 //   receive it, because an OFF is never refused. Check the generators first: some [DISABLE]
 //   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
 //   reads any negative state as "armed", so a new code there IS a change.

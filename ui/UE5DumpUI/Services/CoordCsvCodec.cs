@@ -76,14 +76,13 @@ public sealed class CoordCsvParseResult
 /// <summary>
 /// CSV round-trip for the Teleport coordinate library — docs/teleport-coord-library-spec.md §5.
 ///
-/// The repo had NO CSV reader or writer before this, so every rule here is stated
-/// rather than inherited. The ones that are not obvious:
+/// Every rule here is stated rather than inherited. The ones that are not obvious:
 ///
 ///  * <b>RFC 4180 quoting is mandatory.</b> §4.5 permits a comma in a Label, and one
 ///    unquoted comma shifts every subsequent column — the entry is then either
 ///    dropped or, worse, imported with Group="…" and Map=a number.
-///  * <b>Split with NO RemoveEmptyEntries.</b> The repo's only existing delimited
-///    reader (<c>BugItGoParser</c>) uses it, and it is the obvious template — but an
+///  * <b>Split with NO RemoveEmptyEntries.</b> <c>BugItGoParser</c>'s delimited reader
+///    uses it, and it is the obvious template — but an
 ///    empty Group (a real, common case) would collapse 10 fields to 9 and silently
 ///    shift Map→Group and X→Map.
 ///  * <b>UTF-8 WITH BOM on write.</b> A deliberate exception to the house BOM-less
@@ -94,12 +93,11 @@ public sealed class CoordCsvParseResult
 ///    <c>=Boss Arena</c> displays as <c>#NAME?</c> and Excel saves the DISPLAYED text,
 ///    destroying the label with no error anywhere. Quoting does not mitigate it.
 ///  * <b>Header is authoritative and matched by NAME</b>, so reordered/extra columns
-///    and a future v2 column are all handled — the same forward-compatibility that
-///    made the named-field Lua format win over a positional one.
-///  * <b>Quotes are read strictly, and an unpaired one stops the import.</b> No repair:
-///    the maintainer's call (2026-10-28, B21). A lenient reader has to guess where the
-///    stray quote's field ends, and the two lenient splitters this replaced guessed
-///    differently — one stray quote merged every later record into one.
+///    and a future v2 column are all handled — the same forward-compatibility the
+///    named-field Lua format has over a positional one.
+///  * <b>Quotes are read strictly, and an unpaired one stops the import.</b> No repair
+///    (B21): a lenient reader has to guess where the stray quote's field ends, and a
+///    wrong guess can merge every later record into one.
 /// </summary>
 public static class CoordCsvCodec
 {

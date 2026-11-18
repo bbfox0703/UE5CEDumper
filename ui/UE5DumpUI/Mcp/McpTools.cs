@@ -8,8 +8,8 @@ namespace UE5DumpUI.Mcp;
 /// then <see cref="McpWriteTools"/>' gameplay changes (Stage D2-2), which carry their own rules.
 ///
 /// <para><b>Nothing another client shares.</b> The reads here leave out every command whose state another client
-/// sees, so an AI working beside the UI never disturbs what the UI is doing (maintainer, 2026-11-11: the two must not
-/// interfere): <c>begin_snapshot</c> clears the name cache a UI snapshot is using, the LiveFuncs recording is one per
+/// sees, so an AI working beside the UI never disturbs what the UI is doing (the two must not interfere):
+/// <c>begin_snapshot</c> clears the name cache a UI snapshot is using, the LiveFuncs recording is one per
 /// game, and <c>reset_diagnostics</c> and the version / timeout / packed overrides are process-wide. <c>scan_start</c>
 /// starts a scan only on a game nobody has scanned. Value-scan sessions belong to this server's connection (Stage C),
 /// so they are its own.</para>

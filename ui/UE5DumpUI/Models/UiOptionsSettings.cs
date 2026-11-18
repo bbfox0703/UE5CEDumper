@@ -10,8 +10,8 @@ namespace UE5DumpUI.Models;
 ///
 /// Deliberately EXCLUDED (session-only by nature): search/filter/query text boxes,
 /// live-data selections + results, addresses, one-shot modes, transient view state
-/// (tab index, panel-collapse), busy/status flags. A collapse the maintainer asked the
-/// next start to keep is a layout choice instead, and is kept. Also excluded because already
+/// (tab index, panel-collapse), busy/status flags. A collapse meant to survive the next
+/// start is a layout choice instead, and is kept. Also excluded because already
 /// persisted elsewhere: snapshot quota + the experimental opt-in (ExperimentalGate /
 /// experimental.json), UE-version override + invoke timeout (DLL per-game state),
 /// teleport hotkeys (TeleportHotkeyStore), per-game class denylists (SnapshotStore).
@@ -77,8 +77,8 @@ public sealed class SystemUiOptions
 /// <summary>Top-bar display controls (master — fan out to child VMs on change).</summary>
 public sealed class MainUiOptions
 {
-    /// <summary>[OT-COLLAPSE-PERSIST] The left Object Tree collapsed to its strip (the maintainer, 2026-10-08). Off by
-    /// default, so a file from before it opens the tree as it always did.</summary>
+    /// <summary>[OT-COLLAPSE-PERSIST] The left Object Tree collapsed to its strip. Off by default, so a settings file
+    /// without the key opens the tree expanded.</summary>
     public bool ObjectTreeCollapsed { get; set; }
     public int SelectedAddressFormatIndex { get; set; }
     public bool CollapsePointerNodes { get; set; }
@@ -226,7 +226,7 @@ public sealed class ConsoleUiOptions
 }
 
 /// <summary>[LIVEFUNCS-STEP2] U10: the Call Trace list's column widths and its detail pane's width, in pixels, as the
-/// user dragged them. The defaults are the fixed layout the tab had before they could be dragged; the view model
+/// user dragged them. The defaults are the tab's undragged layout; the view model
 /// clamps a hand-edited value.</summary>
 public sealed class CallTraceUiOptions
 {
@@ -254,8 +254,8 @@ public sealed class LiveFuncsUiOptions
     /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32 (T12). The choices
     /// themselves are never kept: they are name keys of one game process.</summary>
     public int SnapshotBufferExponent { get; set; } = 5;
-    /// <summary>[LF-COMPACT-TOP] The capture settings folded under their header line (the maintainer, 2026-10-08). Off
-    /// by default, so a file from before it shows every setting.</summary>
+    /// <summary>[LF-COMPACT-TOP] The capture settings folded under their header line. Off by default, so a settings
+    /// file without the key shows every setting.</summary>
     public bool CaptureSettingsCollapsed { get; set; }
 }
 

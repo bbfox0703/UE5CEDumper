@@ -186,19 +186,18 @@ public static class CeLuaHygiene
         Line(sb, indent, "while _idleCmd ~= 0 do");
         // An UNREADABLE mailbox is not a busy one. readInteger returns nil when the target
         // process is gone, and `nil ~= 0` is TRUE in Lua, so without this the loop spins to
-        // its deadline and then blames a mailbox that no longer exists — the same
-        // guess-instead-of-read defect the status branches below were written to kill.
-        // Observed on Elliot 2026-08-07: closing the game produced "the DLL mailbox is
-        // busy -- try again in a moment", twice, 1.5 s each.
+        // its deadline and then blames a mailbox that no longer exists (closing the game
+        // would read as "the DLL mailbox is busy") — the same guess-instead-of-read the
+        // status branches below refuse.
         Line(sb, indent, $"  if _idleCmd == nil then {onUnreadable ?? onBusy} end");
         // See AppendMailboxWait: CE's sleep does not pump messages, so without this the
         // whole idle deadline is a frozen Cheat Engine window.
         Line(sb, indent, "  sleep(1); _idlePump(); _idleIters = _idleIters + 1");
         Line(sb, indent, $"  _idleCmd = readInteger({mbExpr} + {CeMailboxLayout.OffCmd})");
         // [A1-LUA-WAIT] EXACTLY one deadline -- the Lua helpers' shape (ue5_freeze_helper.lua / ue5_invoke_helper.lua,
-        // audit #5 AA29). `_idleTick and (elapsed >= Ms) or (iters >= N)` evaluated the iteration arm whenever the
-        // elapsed test was FALSE, so the deadline was min(real ms, N x sleep cost). The count is a fallback ONLY for a
-        // build without getTickCount.
+        // audit #5 AA29). `_idleTick and (elapsed >= Ms) or (iters >= N)` would evaluate the iteration arm whenever
+        // the elapsed test is FALSE, making the deadline min(real ms, N x sleep cost). The count is a fallback ONLY for
+        // a build without getTickCount.
         Line(sb, indent, "  local _idleOver");
         Line(sb, indent, $"  if _idleTick then _idleOver = (_idleTick() - _idleT0 >= {CeMailboxLayout.MailboxIdleWaitMs})");
         Line(sb, indent, $"  else _idleOver = (_idleIters >= {CeMailboxLayout.MailboxIdleWaitIters}) end");
@@ -241,13 +240,12 @@ public static class CeLuaHygiene
     /// <see cref="AppendDebugPreamble"/> earlier in the same <c>{$lua}</c> block.
     ///
     /// <para>Emitted from here because getting <c>executeCodeEx</c> wrong is
-    /// <b>silent</b>, and this repo got it wrong everywhere for a long time. The real
-    /// signature is <c>executeCodeEx(callmethod, timeout, address, params...)</c> —
+    /// <b>silent</b>. The real signature is <c>executeCodeEx(callmethod, timeout, address, params...)</c> —
     /// <c>callmethod</c> 0=stdcall / 1=cdecl, and <b>the address is argument 3</b>.
     /// Passing the address in slot 2 makes CE execute with <c>address = nil</c> and
     /// return <c>nil</c> <i>without raising</i>, so a <c>pcall</c> around it reports
-    /// success for a call that never happened (audit #4 B1 — a CE Disable therefore
-    /// tore nothing down while telling the user it had).</para>
+    /// success for a call that never happened (audit #4 B1 — a CE Disable would then
+    /// tear nothing down while telling the user it had).</para>
     ///
     /// <para>Hence also the result check: <c>pcall</c>'s status answers "did Lua
     /// raise", never "did the function run". <c>executeCodeEx</c> returns the callee's
@@ -260,8 +258,8 @@ public static class CeLuaHygiene
     /// <c>'Failure reading the result address'</c> and two arity messages
     /// (docs/ce-plugin-sdk-notes.md §13.5). They send you to six different places, so
     /// the emitted helper reports CE's own answer. Discarding it and printing a
-    /// guessed message is the same defect the build-2743 sweep fixed for the mailbox
-    /// timeout (see <see cref="AppendTimeoutReason"/>) — one call site later.</para>
+    /// guessed message is the defect <see cref="AppendTimeoutReason"/> refuses for the
+    /// mailbox timeout.</para>
     /// </summary>
     public static void AppendCallDllHelper(StringBuilder sb, string indent = "")
     {
@@ -303,19 +301,13 @@ public static class CeLuaHygiene
     /// Fold a Lua payload to LF before it is handed to CE as a table file.
     ///
     /// WHY THIS EXISTS (<c>[FREEZEINJECT-CRLF-2026-08-20]</c>)
-    /// "Inject Freeze Helper" reported
-    /// <c>Stream size mismatch: wrote 58345, stream has 57208</c> — and the write had
-    /// actually SUCCEEDED. The helper is 58,345 bytes with 1,137 CRLF endings, CE stores
-    /// the text LF-normalised, and 58345 − 1137 = 57208 exactly. So the post-write check
-    /// was comparing a CRLF byte count against an LF stream and calling a good write a
-    /// failure. Normalising here makes the two numbers the same thing.
+    /// CE stores a table file's text LF-normalised, so a post-write size check on a CRLF
+    /// payload compares a CRLF byte count against an LF stream ("Stream size mismatch")
+    /// and calls a good write a failure. Normalising here makes the two numbers the same thing.
     ///
-    /// ⚠ It must be done in CODE, not by rewriting the .lua on disk. These files are
-    /// <c>i/lf</c> in the index with <c>core.autocrlf=true</c> and no <c>.gitattributes</c>,
-    /// so the working tree's line endings are a property of the CHECKOUT, not of the repo:
-    /// today the freeze helper happens to be CRLF and the invoke helper LF — which is the
-    /// only reason the invoke helper injects cleanly — and a fresh clone can flip either.
-    /// A fix that depends on what a checkout produced is not a fix.
+    /// ⚠ It must be done in CODE, not by rewriting the .lua on disk: the embedded payload
+    /// carries whatever line endings the build's working tree held, and a fix that depends
+    /// on what a checkout produced is not a fix.
     ///
     /// Lone CR is folded too, so a payload that ever arrives classic-Mac-ended cannot
     /// reintroduce the mismatch by a different route.
@@ -417,13 +409,12 @@ public static class CeLuaHygiene
     /// condemn every saved table on every release. It also separates the two failure
     /// directions, which need opposite advice: a script below the DLL's minimum must
     /// be regenerated, a script above the DLL's current means the DLL is the old one.
-    /// That second case is silent corruption today.</para>
+    /// Unchecked, that second case is silent corruption.</para>
     ///
     /// <para>Degrades in two steps, both of which mean "do not write to the mailbox":
     /// the symbol not resolving at all is a DLL that predates versioning, and a wrong
-    /// magic is a symbol that resolved to a stale address — the exact failure measured
-    /// on 2026-08-06, where CE held a mailbox address the DLL no longer owned and the
-    /// script wrote into it until it timed out.</para>
+    /// magic is a symbol that resolved to a stale address — CE holding a mailbox address
+    /// the DLL no longer owns, which the script would write into until it timed out.</para>
     /// </summary>
     /// <param name="tag">Script name for the messages, e.g. <c>"Movement"</c>.</param>
     /// <param name="onFail">What to do when the check fails. Same modes, and the same
@@ -443,10 +434,8 @@ public static class CeLuaHygiene
         // Self-heal the most common cause before reporting anything. CE snapshots the
         // module list when it OPENS a process, so a DLL injected after that point has no
         // exports in the symbol table and every lookup returns nil — with CE attached to
-        // the right process and the DLL demonstrably working over the pipe. Verified on
-        // DumperTest 2026-08-07: CE on the correct PID, UI showing "Connected, DLL 2761",
-        // and the symbol still unresolvable until the handler re-enumerated.
-        // reinitializeSymbolhandler is registered at LuaHandler.pas:16357 and celua.txt:218
+        // the right process and the DLL demonstrably working over the pipe, until the
+        // handler re-enumerates. reinitializeSymbolhandler is registered at LuaHandler.pas:16357 and celua.txt:218
         // documents this exact case ("E.g when new modules have been loaded").
         sb.Append(indent).Append("if not _cv or _cv == 0 then\n");
         sb.Append(indent).Append("  reinitializeSymbolhandler()\n");
@@ -460,11 +449,10 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("if not _cv or _cv == 0 then\n");
         sb.Append(indent).Append("  ").Append(say).Append("('[").Append(tag)
           // NOT "the DLL is old". getAddressSafe returns nil for every reason a symbol can
-          // fail to resolve, and an old DLL is the RAREST of them. Verified 2026-08-07: a
-          // freshly built DLL that demonstrably exports g_mailboxContract (dumpbin ordinal
-          // 64) still produced this message, because Cheat Engine was attached to a stale
-          // PID. The old wording sent the user to rebuild a DLL that was already correct.
-          // List the causes in likelihood order and assert none of them.
+          // fail to resolve, and an old DLL is the RAREST of them: a DLL that exports
+          // g_mailboxContract still reaches this message when Cheat Engine is attached to a
+          // stale PID, and "rebuild the DLL" would send the user after a DLL that is
+          // already correct. List the causes in likelihood order and assert none of them.
           .Append("] could not resolve g_mailboxContract, even after re-reading the module list.")
           .Append("\\n\\nThe usual cause -- CE having opened the process BEFORE the DLL was ")
           .Append("injected -- was already retried automatically and did not fix it, so one of ")
@@ -483,10 +471,8 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("end\n");
         // Read ONCE into a local, and separate "cannot read" from "read the wrong value".
         // readInteger returns nil when the target is unreadable and `nil ~= MAGIC` is true, so
-        // one combined test reported "stale address" for BOTH -- a guess dressed as a
+        // one combined test would report "stale address" for BOTH -- a guess dressed as a
         // diagnosis, and the one that fires FIRST, before either wait loop is reached.
-        // Seen on DumperTest 2026-08-07: the DLL was demonstrably alive (poller logging, zero
-        // `received cmd` in its log) and the script still blamed a stale symbol.
         sb.Append(indent).Append("local _cmagic = readInteger(_cv + ")
           .Append(CeMailboxLayout.OffContractMagic).Append(")\n");
         sb.Append(indent).Append("if _cmagic == nil then\n");
@@ -680,8 +666,8 @@ public static class CeLuaHygiene
         //     been written to the mailbox — so the DLL runs it and everything downstream of
         //     this loop (result read, state<0 diagnosis, untick, auto-close) is skipped.
         //   * Emitted after the re-read it would still terminate, but `_st` is sampled ONCE
-        //     before the loop, so a round-trip that completes pays one extra sleep — 15.47 ms
-        //     on every success — to leave a loop it already knows is done.
+        //     before the loop, so a round-trip that completes pays one extra sleep on every
+        //     success to leave a loop it already knows is done.
         // Pinned by CeLuaHygieneTests.Wait_loops_never_use_a_local_before_its_declaration and
         // ..._sleep_and_pump_inside_the_loop_body, which read POSITION, not substrings.
         sb.Append(indent).Append("  sleep(1); _pump(); _iters = _iters + 1\n");
@@ -910,12 +896,10 @@ public static class CeLuaHygiene
     /// count and unregister the symbol ONLY when the last holder releases it, so a
     /// second still-ticked record keeps resolving.
     ///
-    /// <para><b>The message follows the FACT, not the intent.</b> The predecessor here
-    /// printed <c>'&lt;sym&gt; unregistered'</c> unconditionally — the "report and reality
-    /// computed by different code paths" defect (audit #4a) — while on the slot path the
-    /// unregister was skipped entirely (it was nested inside a buffer-only guard). This
-    /// re-reads <c>getAddressSafe</c> AFTER the unregister and claims success only when
-    /// the symbol is actually gone. The bounded loop also removes a stacked registration
+    /// <para><b>The message follows the FACT, not the intent.</b> It re-reads
+    /// <c>getAddressSafe</c> AFTER the unregister and claims success only when the symbol
+    /// is actually gone, so the report is derived from the reality, not from a separate
+    /// code path (audit #4a). The bounded loop also removes a stacked registration
     /// were one ever to exist, and can never hang.</para>
     /// </summary>
     /// <param name="tag">Script tag for the diagnostic, e.g. <c>"GWorld"</c>.</param>

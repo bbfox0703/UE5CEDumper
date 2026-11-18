@@ -418,9 +418,9 @@ internal static class ProxyImportAnalyzer
     /// <para><paramref name="lastWrite"/> and <paramref name="now"/> must be the same kind (both local
     /// or both UTC). A present folder whose timestamp cannot be read is still
     /// <see cref="ProxyLoadSignal.Observed"/> — the folder exists only because the DLL created it —
-    /// but without a date. The staleness guard is the direct answer to the finding's warning that a
-    /// leftover folder from a previous BUILD must not read as a current load: the date is ALWAYS
-    /// shown, so nothing here ever claims "loaded now".</para>
+    /// but without a date. The staleness guard keeps a leftover folder from an earlier BUILD from
+    /// reading as a current load: the date is ALWAYS shown, so nothing here ever claims
+    /// "loaded now".</para>
     /// </summary>
     public static (ProxyLoadSignal Signal, string Display) ClassifyLoad(
         bool logFolderPresent, DateTime? lastWrite, DateTime now, int staleAfterDays)
@@ -429,8 +429,8 @@ internal static class ProxyImportAnalyzer
         if (lastWrite is not DateTime ts) return (ProxyLoadSignal.Observed, "loaded");
         string date = ts.ToString("yyyy-MM-dd");
         return (now - ts).TotalDays > staleAfterDays
-            // (eighth review, R8-01) The mark LEADS: the Load column clips the end of its text, and a trailing
-            // "(stale)" never showed -- an old load read as a recent one.
+            // (R8-01) The mark LEADS: the Load column clips the end of its text, so a trailing "(stale)" would
+            // not show and an old load would read as a recent one.
             ? (ProxyLoadSignal.ObservedStale, $"stale · loaded {date}")
             : (ProxyLoadSignal.Observed, $"loaded {date}");
     }

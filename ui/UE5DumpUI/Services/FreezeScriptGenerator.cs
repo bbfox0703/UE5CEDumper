@@ -142,11 +142,9 @@ public static class FreezeScriptGenerator
         // ⚠ THESE MESSAGES READ CFG.className, NOT THE GENERATION-TIME NAME.
         // Both this script and the Freeze dialog TELL the user to edit `className` in the
         // CFG block to narrow the scope — the cap message below says so in as many words —
-        // and until 2026-08-22 every message then went on naming the class they had just
-        // replaced. Measured in CE: with CFG.className changed to a class that does not
-        // exist, the BEHAVIOUR followed the CFG (0 instances found) while the message said
-        // "no live instances of DumperTestActor", a class with plenty of them. The report
-        // and the reality were computed from different sources. [FREEZECFGNAME-2026-08-22]
+        // and the BEHAVIOUR follows the CFG, so a message that baked the generation-time
+        // name would report on a class the user has replaced. The report and the reality
+        // must come from the same source. [FREEZECFGNAME-2026-08-22]
         //
         // `[DISABLE]` is a SEPARATE Lua chunk with no CFG in scope, so its Stopped line
         // still bakes the name — it is dbg-gated and describes an action already taken.
@@ -293,8 +291,7 @@ public static class FreezeScriptGenerator
     /// unsigned writers of one width are the same function): UE's
     /// <c>enum class E : uint8</c> / <c>: uint16</c> are unsigned, while a 4-byte enum
     /// is a plain <c>enum</c> whose implementation-defined underlying type is signed
-    /// <c>int</c>. 4 also stays <c>int32</c> because that is what this mapping already
-    /// emitted — the only width it was ever right about.</para>
+    /// <c>int</c>.</para>
     /// </summary>
     public static string HelperTypeForSize(int size) => size switch
     {
@@ -302,7 +299,7 @@ public static class FreezeScriptGenerator
         2 => "uint16",
         4 => "int32",
         8 => "int64",
-        _ => "int32",   // unknown / unreported size → legacy default
+        _ => "int32",   // unknown / unreported size → the default
     };
 
     /// <summary>
@@ -313,7 +310,7 @@ public static class FreezeScriptGenerator
     ///
     /// <para>Size-less overload: every type whose width is fixed by its NAME maps
     /// identically, and <c>EnumProperty</c> — the one type whose width is not — falls
-    /// back to the legacy <c>int32</c>. Callers holding a real property should pass its
+    /// back to <c>int32</c>. Callers holding a real property should pass its
     /// size to <see cref="MapToHelperType(string,int)"/>; this form exists for the
     /// callers that only ask "is this type supported at all".</para>
     /// </summary>

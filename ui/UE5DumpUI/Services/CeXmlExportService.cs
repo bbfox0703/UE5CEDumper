@@ -83,9 +83,8 @@ public static class CeXmlExportService
     /// drilling THROUGH an object pointer. Without this "next layer only" gate, a deep element
     /// template (e.g. an inventory item's own Attributes / Catalysts arrays) would ALSO be
     /// fabricated to the target count at every nesting level, exploding the output
-    /// combinatorially (observed in-game: Fabricate=256 on a 234-item Cargo produced 500k+
-    /// XML lines — 256 items × 256 fabricated Attributes × … — which Cheat Engine couldn't
-    /// load). <see cref="_emitPointerDepth"/> is 0 until <see cref="EmitDrilledPointer"/>
+    /// combinatorially (N fabricated items × N fabricated Attributes × … — it can grow past
+    /// what Cheat Engine can load). <see cref="_emitPointerDepth"/> is 0 until <see cref="EmitDrilledPointer"/>
     /// crosses the first object boundary, so it cleanly distinguishes the selected array from
     /// arrays inside drilled sub-objects. (Inline structs on the selected object do NOT cross a
     /// pointer, so an array inside such a struct still counts as top-level.)
@@ -150,8 +149,7 @@ public static class CeXmlExportService
     /// currently on the emit stack — we push on entry into EmitDrilledPointer and
     /// pop on exit. If a target appears in this set, the pointer is a back-edge
     /// (e.g. UWorld -&gt; PersistentLevel -&gt; OwningWorld) and must NOT be re-emitted
-    /// as a group, otherwise the StringBuilder explodes (observed: 2GB capacity
-    /// hit on DQ I&amp;II HD-2D with Drill Depth = 2).
+    /// as a group, otherwise the StringBuilder can explode, even at a shallow Drill Depth.
     ///
     /// ResolvePointerInstancesAsync's visited set protects the *resolve* phase;
     /// the *emit* phase is independent and needs its own protection.
@@ -191,15 +189,14 @@ public static class CeXmlExportService
     /// Global safety ceiling on how much XML one Generate* call may build. A densely-connected object graph (a field
     /// that reaches GWorld → PersistentLevel → Actors[…] → components → …) makes the drilldown re-expand shared
     /// sub-objects combinatorially when shared-object dedup is off — the per-path cycle guard (_emitPath) and the
-    /// per-pointer depth cap (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder once grew until
+    /// per-pointer depth cap (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder can grow until
     /// OutOfMemory (Copy CE XML on a full character view). Once the guard is reached the recursion stops and the
     /// export is flagged truncated.
-    /// <para>[CEXML-CAP-60K] It is a crash guard in characters, not an entry count. It was 60,000 entries -- about
-    /// 16 M characters -- and real tables passed that: DumperTest's NestedBag needs 98,890 entries. Cheat Engine's
-    /// paste has no size or entry limit (7.5 and the public 7.5.1 source), so this bounds only OUR memory: 256 Mi
-    /// characters is 512 MiB of UTF-16 in the StringBuilder, as much again for ToString and for the clipboard, and well
-    /// under the ~1 Gi-character .NET string limit the runaway export threw at. At the ~270-340 characters an entry
-    /// measured on real exports that is 800,000 entries or more; a real 21,000-entry table is under 9 MB.</para>
+    /// <para>[CEXML-CAP-60K] It is a crash guard in characters, not an entry count: a real table can outgrow any
+    /// modest entry count. Cheat Engine's paste has no size or entry limit (7.5 and the public 7.5.1 source), so this
+    /// bounds only OUR memory: 256 Mi characters is 512 MiB of UTF-16 in the StringBuilder, as much again for ToString
+    /// and for the clipboard, and well under the ~1 Gi-character .NET string limit. At ~270-340 characters an entry,
+    /// that is 800,000 entries or more; a real 21,000-entry table is under 9 MB.</para>
     /// </summary>
     internal const int MaxEmitChars = 256 * 1024 * 1024;   // internal: Instance Finder's warning quotes it
 
@@ -319,7 +316,7 @@ public static class CeXmlExportService
     /// Opt-in (Live Walker "Collapse single-leaf pointers" toggle, default off): when a drilled
     /// pointer (Object/Class/Weak/Soft/Lazy/Interface) resolves to a target with EXACTLY ONE
     /// terminal-leaf field (a scalar / FName / FString), collapse the group + lone child into ONE
-    /// CE record at the pointer field with a deref chain instead of a folder. The original
+    /// CE record at the pointer field with a deref chain instead of a folder. The
     /// "pointer-to-string" case: a pointer whose only payload is a single string is two CE nodes for
     /// one value. Encodings (<see cref="EmitOneDerefLeaf"/>): scalar/name child → Address=+ptrOff,
     /// Offsets=[childOff] (1 deref); FString child → Address=+ptrOff, Offsets=[0, childOff]
@@ -418,15 +415,14 @@ public static class CeXmlExportService
         if (remainingDepth <= 0) return;
 
         // Collect this LEVEL's pointer targets first, then walk them in ONE batched
-        // call, then recurse. Previously each field was a separate round-trip, which
-        // is where a Copy CE XML's 20,357 walk_instance calls came from — and the
-        // measured split (multipipe-eval.md §10.4) showed 59-73% of that export's
-        // wall-clock was pure round-trip overhead, ~2x the actual walking.
+        // call, then recurse: one round-trip per field spends most of an export's
+        // wall-clock on round-trip overhead rather than on walking
+        // (multipipe-eval.md §10.4).
         //
         // Breadth-first per level is what makes batching possible at all: every
         // target at one depth is independent, so they can be requested together.
         // The visited/resolved guards stay HERE (not inside the batch) so cycle
-        // protection and dedup behave exactly as before.
+        // protection and dedup behave as in a one-field-at-a-time walk.
         var pending = new List<(string Addr, string? ClassAddr)>();
         foreach (var field in fields)
         {
@@ -872,10 +868,9 @@ public static class CeXmlExportService
     /// output. Prefetching leaves the emit traversal exactly as it was and only
     /// changes where its data comes from.</para>
     ///
-    /// <para>MEASURED motivation (multipipe-eval.md 10.4): this tree, not the
-    /// object-pointer drilldown, is where a Copy CE XML's ~22,500 walk_instance
-    /// calls come from -- each carrying 0.16-0.21 ms of round-trip overhead
-    /// against 0.08 ms of actual work.</para>
+    /// <para>Why (multipipe-eval.md 10.4): this tree, not the object-pointer
+    /// drilldown, is where most of a Copy CE XML's walk_instance calls come from,
+    /// and each call's round-trip overhead outweighs its actual work.</para>
     /// </summary>
     private static async Task<Dictionary<string, InstanceWalkResult>> PrefetchStructTreeAsync(
         IDumpService dump,
@@ -1009,7 +1004,7 @@ public static class CeXmlExportService
         ct.ThrowIfCancellationRequested();
         // Prefetched by PrefetchStructTreeAsync when available; a miss (older DLL,
         // failed batch, or a shape the prefetch predicate did not anticipate) walks
-        // live, exactly as before batching existed.
+        // live, one call for this struct.
         InstanceWalkResult walkResult;
         if (prefetch != null && prefetch.TryGetValue(StructCacheKey(dataAddr, classAddr), out var cached))
             walkResult = cached;
@@ -1137,10 +1132,8 @@ public static class CeXmlExportService
     /// <c>TDelegateAccessHandlerBase</c> base whose <c>DO_CHECK</c> specialization holds one
     /// <c>std::atomic&lt;uint64&gt;</c>, so in a CHECKED build (Debug/Development/DebugGame) the
     /// payload starts 8 bytes late; in Shipping/Test the base is empty and EBO applies. Emitting
-    /// <c>Offsets=[0]</c> at the raw offset therefore dereferenced the zeroed DETECTOR and the
-    /// pasted CE record pointed at address 0. Found 2026-09-09 under [D4B-DELEGATEPAD], after
-    /// the DLL-side readers had already been repaired and shipped — the enumeration of "five
-    /// readers" was DLL-only and this exporter was not in it.
+    /// <c>Offsets=[0]</c> at the raw offset would dereference the zeroed DETECTOR, and the
+    /// pasted CE record would point at address 0. [D4B-DELEGATEPAD]
     ///
     /// ⚠ <see cref="LiveFieldValue.DelegatePad"/> is 0 for every non-delegate field, so this is
     /// the identity everywhere else. It is DERIVED BY THE DLL from the engine's own
@@ -1439,7 +1432,7 @@ public static class CeXmlExportService
     /// This format survives game restarts (re-scans AOB on script activation).
     /// <para>The <c>moduleName</c> argument is NOT used: the script scans CE's own name for the main module
     /// (<c>process</c>), which is the ANSI bytes <c>enumModules</c> compares -- a baked name is not, for a non-ASCII
-    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW] (skeptic T10)</para>
+    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW] (T10)</para>
     /// </summary>
     public static string GenerateAobWrappedXml(
         string rootName,
@@ -2273,8 +2266,8 @@ public static class CeXmlExportService
                 // leaves at the combined offset instead of a nested parent group. Two gates,
                 // either of which fires the SAME promotion (EmitFlattenedStruct):
                 //  • GAS: a GameplayAttributeData struct whose children are all CE-scalar (the
-                //    original BaseValue/CurrentValue case; pointers count as 8B scalars here but
-                //    GAS attrs never have any).
+                //    BaseValue/CurrentValue case; pointers count as 8B scalars here but GAS attrs
+                //    never have any).
                 //  • Leaf: ANY terminal struct whose entire flattened subtree is primitive inline
                 //    scalars (float/int/bool/enum) — NOT pointers, strings, FName, containers, or
                 //    unresolved structs. Subsumes GAS and naturally flattens FVector/FRotator.
@@ -2304,9 +2297,8 @@ public static class CeXmlExportService
             // The gate is IsRawObjectPtrSlot, NOT the broad IsObjectPropertyType: Weak /
             // Soft / Lazy slots do not contain a pointer at all, so Offsets=[0] would
             // dereference an index+serial pair (or a GUID) as an address. They keep their
-            // 8-byte hex leaf further down. See IsRawObjectPtrSlot (audit #5 W5) — the
-            // array path has had the equivalent distinction, with a regression test, since
-            // it was written.
+            // 8-byte hex leaf further down. See IsRawObjectPtrSlot (audit #5 W5); the
+            // array path makes the equivalent distinction.
             //
             // Lookup is by PtrAddress so two fields pointing to the same instance share
             // the same resolved field list (this is also what enables cycle protection
@@ -2355,9 +2347,9 @@ public static class CeXmlExportService
 
             // ArrayProperty: emit as group with element children (Phase C).
             // Multicast delegates are exposed as implicit DelegateProperty arrays.
-            // ⚠ "the field's first 8 bytes are the InvocationList::Data pointer" stood here
-            // unconditionally until 2026-09-09 and is true only on the Shipping half: a
-            // checked build (UE 5.3+, DO_CHECK on) puts an 8-byte access detector first.
+            // ⚠ The field's first 8 bytes are the InvocationList::Data pointer only on a
+            // Shipping build: a checked build (UE 5.3+, DO_CHECK on) puts an 8-byte access
+            // detector first.
             // The projection above has already folded DelegatePad into field.Offset, so
             // Offsets=[0] lands on Data in BOTH builds.
             if (field.ArrayCount >= 0
@@ -2726,7 +2718,7 @@ public static class CeXmlExportService
     /// <summary>
     /// Collapse a drilled pointer whose target is a SINGLE terminal leaf into ONE CE record at the
     /// pointer field (Feature B — the "pointer-to-string" case). The pointer is dereferenced through the
-    /// leaf's Offsets, so the watched address is the SAME value CE would reach through the old
+    /// leaf's Offsets, so the watched address is the SAME value CE would reach through the uncollapsed
     /// group + child; only the tree is flatter. Description = "{ptr} ▸ {child}" (per-segment +Offset;
     /// the pointer class type appended once via +Type). CE pointer model (CeXmlExportService.cs
     /// header math): Address is dereferenced first, then offsets apply with O[0] outermost.
@@ -2771,8 +2763,8 @@ public static class CeXmlExportService
     private static void EmitArrayProperty(StringBuilder sb, string indent,
         LiveFieldValue field)
     {
-        // Default Description = the bare field name. The old "[N x Type (SizeB)]"
-        // descriptor is dropped; the +Type opt-in re-adds just the element type
+        // Default Description = the bare field name, with no "[N x Type (SizeB)]"
+        // descriptor; the +Type opt-in adds just the element type
         // (struct type for struct arrays, else the inner property type).
         var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
             ? field.ArrayStructType : field.ArrayInnerType;
@@ -3477,8 +3469,8 @@ public static class CeXmlExportService
     {
         var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
-        // Default Description = the bare field name; the old "{Map: N, K \u2192 V}"
-        // descriptor is dropped. +Type re-adds the concise "K \u2192 V" type signature.
+        // Default Description = the bare field name, with no "{Map: N, K \u2192 V}"
+        // descriptor. +Type adds the concise "K \u2192 V" type signature.
         var desc = DecorateDesc(field.Name, field.Offset,
             field.MapCount > 0 ? $"{keyLabel} \u2192 {valLabel}" : null);
 
@@ -3673,13 +3665,13 @@ public static class CeXmlExportService
     private static void EmitSetProperty(StringBuilder sb, string indent, LiveFieldValue field)
     {
         var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
-        // Default Description = the bare field name; the old "{Set: N, T}" descriptor
-        // is dropped. +Type re-adds the element type.
+        // Default Description = the bare field name, with no "{Set: N, T}" descriptor.
+        // +Type adds the element type.
         var desc = DecorateDesc(field.Name, field.Offset,
             field.SetCount > 0 ? elemLabel : null);
 
         // Empty / no elements → placeholder. Struct/object elements (ceElem == null)
-        // now expand via EmitFields instead of collapsing the whole set.
+        // expand via EmitFields rather than collapsing the whole set.
         if (field.SetCount <= 0
             || field.SetElements == null || field.SetElements.Count == 0
             || field.SetElemSize <= 0)
@@ -3753,8 +3745,8 @@ public static class CeXmlExportService
     {
         var structName = !string.IsNullOrEmpty(field.DataTableStructName)
             ? field.DataTableStructName : "Row";
-        // Default Description = the bare field name; the old "[DataTable: N x Struct]"
-        // descriptor is dropped. +Type re-adds the row struct name.
+        // Default Description = the bare field name, with no "[DataTable: N x Struct]"
+        // descriptor. +Type adds the row struct name.
         var desc = DecorateDesc(field.Name, field.Offset,
             field.DataTableRowCount > 0 ? structName : null);
 
@@ -4068,9 +4060,8 @@ public static class CeXmlExportService
     /// <para><b>XML metacharacters</b> (<see cref="EscapeXmlContent"/>): this body is interpolated
     /// straight into <c>&lt;DropDownList&gt;</c>, so a single <c>&amp;</c> in one entry — a
     /// <c>TArray&lt;FName&gt; Tags</c> holding a designer-typed <c>Bow &amp; Arrow</c> is enough —
-    /// makes the whole CheatTable malformed and Cheat Engine rejects the <b>entire document</b>. The
-    /// escaping added for Descriptions (audit #4 B3) never covered this site; audit #5 W4 is the same
-    /// defect surviving here.</para>
+    /// makes the whole CheatTable malformed and Cheat Engine rejects the <b>entire document</b>, so
+    /// this site escapes as Descriptions do (audit #4 B3, audit #5 W4).</para>
     ///
     /// <para><b>Line breaks</b>: the format is line-delimited, so a CR/LF inside a name would forge
     /// extra dropdown entries and shift every following one. That does not break XML well-formedness,
@@ -4093,7 +4084,7 @@ public static class CeXmlExportService
         s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
 
     /// <summary>The comment lines a CE table opens with: the UE5.7+ packed-layout note (no-op otherwise) and
-    /// [CEXPORT-STRIDE-NOTE] the caller's notes. The AOB-wrapped export wrote none before this.</summary>
+    /// [CEXPORT-STRIDE-NOTE] the caller's notes.</summary>
     private static void AppendHeaderNotes(StringBuilder sb, IReadOnlyList<string>? notes)
     {
         sb.Append(PackedLayoutNotice.XmlComment);
@@ -4421,11 +4412,10 @@ public static class CeXmlExportService
     /// element size either way, so a hardcoded 4 makes CE read four bytes at every 1-byte-spaced
     /// element — each record swallowing the next three elements.</para>
     ///
-    /// <para>That rule was already known and written down at the struct sub-field site (<i>"a 1-byte
-    /// enum must NOT be read as 4 bytes — that pulls in the next field's bytes"</i>) and applied at
-    /// three of the five call sites; the TArray and TSet element paths were left out (audit #5 W6).
-    /// Taking the size as a parameter rather than as a caller-side ternary is what stops a sixth
-    /// call site forgetting it.</para>
+    /// <para>A 1-byte enum must NOT be read as 4 bytes — that pulls in the next field's bytes —
+    /// at every call site, container elements included (audit #5 W6). Taking the size as a
+    /// parameter rather than as a caller-side ternary is what stops a new call site forgetting
+    /// it.</para>
     ///
     /// <para>Deliberately NOT size-driven: <c>NameProperty</c> stays 4 bytes because the record
     /// shows the FName ComparisonIndex (paired with a DropDownList of names) rather than the whole

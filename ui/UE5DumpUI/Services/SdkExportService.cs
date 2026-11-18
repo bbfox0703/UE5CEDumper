@@ -533,15 +533,15 @@ public static class SdkExportService
     /// SuperStruct chain to the field list, so emitting all of them re-declares every base property
     /// inside a <c>struct X : public Super</c> that already inherits it — which compiles, and makes
     /// <c>offsetof</c> wrong for every derived class in the generated SDK. The boundary is the super's
-    /// <c>PropertiesSize</c>, supplied by the DLL as <c>super_props_size</c>; the old first-field
-    /// heuristic is kept only as a fallback for a DLL that does not send it, and it is a fallback
+    /// <c>PropertiesSize</c>, supplied by the DLL as <c>super_props_size</c>; the first-field
+    /// heuristic is only a fallback for a DLL that does not send it, and it is a fallback
     /// precisely because it silently mis-splits when a derived class adds no properties of its own.</para>
     ///
     /// <para><b>Packed bitfield bools get real bitfields</b> (audit #5 W3). N <c>uint8 bX:1</c> flags
     /// that UE packed into ONE byte all arrive at the same offset with Size 1. Emitting a whole
-    /// <c>bool</c> each made the struct N−1 bytes too long from that point, and no padding could
+    /// <c>bool</c> each would make the struct N−1 bytes too long from that point, and no padding could
     /// compensate because padding is only emitted when the next offset is ahead of the cursor. They
-    /// are now emitted as C++ bitfields at their true bit positions, with unnamed fillers for the
+    /// are emitted as C++ bitfields at their true bit positions, with unnamed fillers for the
     /// bits UE left unused, so the byte reconstructs exactly.</para>
     /// </summary>
     private static void EmitStructBody(
@@ -551,11 +551,9 @@ public static class SdkExportService
         // Order by offset, then by bit position so a packed byte reads low bit first.
         var sorted = fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolMask).ToList();
 
-        // Where this class's OWN properties start. [USMAP-INHERITED-DUPES] The rule itself now
-        // lives in Core/PropertyOwnership, because the USMAP writer needs the same boundary and
-        // this file's own remark -- "so the schema and live emitters share the layout logic
-        // instead of keeping two copies of it. They had two, and both carried the same two
-        // defects" -- applies just as well across services. The reasoning below is kept here
+        // Where this class's OWN properties start. [USMAP-INHERITED-DUPES] The rule itself lives
+        // in Core/PropertyOwnership, because the USMAP writer needs the same boundary, and one
+        // copy of the layout logic cannot disagree with another. The reasoning below is kept here
         // because it is what the rule encodes.
         int ownStart = PropertyOwnership.OwnStartOffset(
             superName, superPropsSize, ownPropsStart,
@@ -563,16 +561,16 @@ public static class SdkExportService
         // ⚠ superPropsSize is one too HIGH when the super is an EMPTY USTRUCT. UE sets a
         // native struct's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so
         // an empty base reports 1 — while C++ empty-base optimisation puts the derived
-        // struct's first member at offset 0. `Offset >= 1` then silently dropped it, and
-        // the trailing-padding pass replaced it with `uint8_t Pad_0001[0x0003]`.
+        // struct's first member at offset 0. `Offset >= 1` would then silently drop it, and
+        // the trailing-padding pass would replace it with `uint8_t Pad_0001[0x0003]`.
         // UE 5.8.2 ships 62 such bases with 302 property-bearing children
         // (FEmptyPayload, the FMassFragment family, FEditorDataStorageColumn, ...).
         //
         // A NEGATIVE ownPropsStart means the DLL said nothing (or the class declares no
         // own properties) — it must NOT enter the comparison. Folding -1 or 0 in here
-        // re-emits the entire inherited chain, which is audit #5 W2 all over again.
+        // re-emits the entire inherited chain: the audit #5 W2 defect.
         //
-        // With no superPropsSize at all the first field's offset is the legacy fallback, and it
+        // With no superPropsSize at all the first field's offset is the fallback, and it
         // is a fallback precisely because it mis-splits when a derived class adds nothing.
         var own = sorted.Where(f => f.Offset >= ownStart).ToList();
         int cursor = ownStart;
@@ -621,7 +619,7 @@ public static class SdkExportService
         }
 
         // ⚠ An EMPTY USTRUCT must be emitted EMPTY, or the generated header's offsets are
-        // wrong even once the field above is no longer dropped. UE reports its PropertiesSize
+        // wrong even with the field above kept. UE reports its PropertiesSize
         // as 1, so this would emit `uint8_t Pad_0000[0x0001];` -- which makes the emitted base
         // NON-empty, defeats empty-base optimisation in the generated C++, and puts every
         // derived struct's first member at 1 where the game has it at 0. `struct X {};` is
@@ -686,7 +684,7 @@ public static class SdkExportService
 
         EmitStructBody(
             sb,
-            // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from every export (commit 860245b0), and
+            // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from every export, and
             // their "?0x..." names do not compile. Their bytes stay covered, as padding.
             fields.Where(f => !f.IsGuessed).Select(f => new SdkField(
                 f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f, names, fullPath))).ToList(),

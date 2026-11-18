@@ -1,33 +1,27 @@
 #pragma once
 
 // ============================================================
-// VersionNeedleScan — the UE-version needle sweep, extracted from Genau.cpp
+// VersionNeedleScan — the UE-version needle sweep Genau.cpp runs
 //
 // Header-only and PURE: (const uint8_t*, size_t) in, offsets and table indices out.
 // No Win32, no Macht, no Sein. That is the whole point: Genau.cpp reaches only
-// `dll_core_test` (since 2026-08-25), and dll_helpers_test builds tests/dll_helpers_test.cpp
-// + src/Radar.cpp + src/Denken.cpp only. Kept pure here, this logic is unit-testable in the
-// light target against a naive reference implementation.
+// `dll_core_test`, not the light dll_helpers_test. Kept pure here, this logic is
+// unit-testable in the light target against a naive reference implementation.
 //
 // Kept in English and NOT given a Frieren roster name: CLAUDE.md's module-naming rule
 // exempts "algorithm helpers that live inside an existing namespace", the precedent being
 // GraphPath.h under Aura::. This lives under Genau::.
 //
 // ── WHY THIS EXISTS AT ALL (audit #5 G2) ─────────────────────────────────────
-// The original was 19 naive whole-image memcmp passes for Tier 2/3 plus 4 more for
-// Tier 1. MEASURED on this repo's own example binary (Elliot-Win64-Shipping.exe,
-// 460.0 MiB = 482,344,960 bytes; MSVC 2022 /O2 x64):
+// A naive sweep is one whole-image memcmp pass per needle, Tier 1 and Tier 2/3 alike:
+// billions of compares and tens of seconds over a large Shipping exe. Behind the
+// first-byte gate below the same input costs a fraction of a second and orders of
+// magnitude fewer compares, with the same answers.
 //
-//     Tier 1   (4 passes)  4.348 s     Tier 2/3 (19 passes) 24.465 s
-//     CountPreUE4Markers   0.489 s     contiguous stretch  ~29.3 s
-//
-// Tier 2/3 alone issued 9,165,424,620 memcmp calls. Gated, the same input costs
-// 0.2245 s + 0.0957 s and 39,351 compares — same answers, ~29 s removed.
-//
-// ⚠ The measurement trap, recorded because it cost a rebuild: benchmarking with a
-// STRING LITERAL needle lets the compiler constant-fold strlen and inline the memcmp,
-// understating the real cost by ~5x. The production loop takes needleLen from a table
-// at runtime. Any re-measurement must do the same.
+// ⚠ The measurement trap: benchmarking with a STRING LITERAL needle lets the compiler
+// constant-fold strlen and inline the memcmp, understating the real cost by ~5x. The
+// production loop takes needleLen from a table at runtime. Any re-measurement must do
+// the same.
 //
 // ── THE EQUIVALENCE ARGUMENT, which is what makes the gate safe ──────────────
 // Every needle below begins '4' or '5' AND has '.' at index 1. Both Tier 1 prefixes
@@ -108,12 +102,12 @@ struct NeedleScanResult {
     bool found() const { return tier != 0; }
 };
 
-// ── anchor helper (moved verbatim from Genau.cpp, plus a first-byte gate) ─────
+// ── anchor helper, with a first-byte gate ────────────────────────────────────
 //
-// The gate matters more than it looks: the fused Tier 2/3 pass below no longer returns
-// the instant it sees a Tier 2 hit, so patterns after the winner can now reach anchor
-// calls the original never made. Without the gate that would be a net slowdown on
-// exactly the images this change exists to speed up.
+// The gate matters more than it looks: the fused Tier 2/3 pass below does not return
+// the instant it sees a Tier 2 hit, so patterns after the winner reach anchor calls
+// too. Without the gate that would be a net slowdown on exactly the images this
+// header exists to speed up.
 inline bool HasUEAnchorNearby(const uint8_t* scan, size_t size,
                               size_t off, size_t windowBytes) {
     static const char* kAnchors[] = {
@@ -165,13 +159,12 @@ inline bool HasReleaseBefore(const uint8_t* scan, size_t off, size_t windowBytes
 
 // ── Tier 1: exact engine tag "++UE5+Release-5.4" / "++UE4+Release-4.27" ──────
 //
-// Order is preserved exactly from the original nest: encoding-major (narrow, then
-// UTF-16LE), then prefix, then ascending offset, then table order. The FIRST match in
-// that order wins, so the four walks below must stay in this sequence.
+// Order: encoding-major (narrow, then UTF-16LE), then prefix, then ascending offset,
+// then table order. The FIRST match in that order wins, so the four walks below must
+// stay in this sequence.
 //
-// One behaviour change that is not observable: the original rebuilt `std::string bare`
-// and the widened needle vector INSIDE the innermost loop, i.e. once per candidate
-// offset per pattern. They are loop-invariant and are now built once per walk.
+// `bare` and the widened needle vector are loop-invariant, so they are built once per
+// walk, never per candidate offset per pattern.
 inline NeedleScanResult ScanVersionTier1(const uint8_t* scan, size_t size) {
     NeedleScanResult r;
     static const char* kPrefixes[] = { "++UE5+Release-", "++UE4+Release-" };
@@ -233,16 +226,14 @@ inline NeedleScanResult ScanVersionTier1(const uint8_t* scan, size_t size) {
 //
 // The engine stamps its build with a branch name, "++<depot>+<stream>", and ScanVersionTier1 reads Epic's own: depot
 // UE4/UE5, stream "Release-M.m". A licensee building from a stream of its own keeps the depot and names the stream
-// itself, so the tag ScanVersionTier1 looks for is not in the image at all.
-// MEASURED (2026-10-27, the 64 UE exes in the maintainer's two Steam libraries and the analyze corpus): two carry a
-// UE depot with a stream of their own that names the engine version -- Ghostwire: Tokyo's UTF-16 "++ue4+ue4_main+4.27"
-// (a customized 4.27 whose PE resource holds the game's 1.0, so it fell through every tier to the 504 default) and
-// Dolls Nest's "++UE4+4.27-Nitro" (answered first by its PE resource). The licensee depots ("++Alabama+release.2.1",
-// "++Arkansas+release-1.2.0.1") name a GAME release, which is why the depot itself must be UE4 or UE5.
+// itself, so the tag ScanVersionTier1 looks for is not in the image at all. Such a stream can still name the engine
+// version -- "++ue4+ue4_main+4.27" (UTF-16), "++UE4+4.27-Nitro" -- and this reads it. A licensee's own depot
+// ("++Alabama+release.2.1", "++Arkansas+release-1.2.0.1") names a GAME release, which is why the depot itself must be
+// UE4 or UE5.
 //
 // The grammar is deliberately narrow; each rule is a refusal in dll_helpers_test:
 //   * a NUL-terminated printable string, narrow or UTF-16LE, of at most kBranchMaxChars;
-//   * starting "++UE4+" or "++UE5+", the "UE" in either case (Ghostwire's is lower);
+//   * starting "++UE4+" or "++UE5+", the "UE" in either case (a depot can be lower-case: "++ue4+");
 //   * holding a whole token "M.m": after a '+' or a '-', followed by the end, a '+' or a '-', M the depot's own
 //     major and "M.m." a row of kVersionNeedles, so the table's 4.18 floor holds here as in every tier.
 // Epic's own tag fits the same grammar (its token follows "Release-"), so the caller runs this after ScanVersionTier1

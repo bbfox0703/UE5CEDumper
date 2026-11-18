@@ -166,25 +166,22 @@ public partial class ProxyDeployViewModel : ViewModelBase
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>What the panel is doing right now; null when idle. Exists so a refused
-    /// operation can say what it is waiting FOR — the old message was always
-    /// "Wait for scan to finish" even when the thing running was a deploy.</summary>
+    /// operation can say what it is waiting FOR, whichever operation is running.</summary>
     private string? _busyWith;
 
     /// <summary>
     /// Take the panel's exclusive lock, or return null if something else holds it.
     /// <para>
-    /// <see cref="IsScanning"/>'s own declaration already called itself "the mutual-exclusion
-    /// guard" — it just was not one. Three of the eight long operations SET it while six
-    /// TESTED it, so the guard was one-directional: a scan blocked a deploy, a deploy blocked
-    /// nothing. Deploy and Undeploy could therefore run over the same <c>Binaries</c> folder at
-    /// once and both write the single result line, and <see cref="ScanAsync"/> — which has no
-    /// entry guard at all — could <c>Games.Clear()</c> the collection <see cref="UpdateAllAsync"/>
-    /// was mid-way through. (audit #5 AE5 / AE6 / AE7)
+    /// The gate both tests and sets <see cref="IsScanning"/>, so the exclusion runs both ways: a
+    /// deploy blocks a scan as a scan blocks a deploy. Without it Deploy and Undeploy could run
+    /// over the same <c>Binaries</c> folder at once and both write the single result line, and
+    /// <see cref="ScanAsync"/> could <c>Games.Clear()</c> the collection
+    /// <see cref="UpdateAllAsync"/> is mid-way through. (audit #5 AE5 / AE6 / AE7)
     /// </para>
     /// <para>
     /// This does NOT replace what the MVVM toolkit already does. <c>AsyncRelayCommand</c> reports
     /// <c>CanExecute == false</c> while it is running and Avalonia's Button gates on that, so a
-    /// command cannot re-enter ITSELF from its own button — measured, not assumed. The gap this
+    /// command cannot re-enter ITSELF from its own button. The gap this
     /// closes is strictly CROSS-command: two different buttons, two different commands, no shared
     /// state between them. It also covers the paths no button owns (a property-changed handler,
     /// a hotkey, a test calling ExecuteAsync directly), where CanExecute is never consulted.
@@ -203,8 +200,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     }
 
     /// <summary>Releases the exclusive gate on dispose, so an early return or a throw cannot
-    /// leave the panel wedged — which is how the flag came to be set by only three of the
-    /// operations that test it.</summary>
+    /// leave the panel wedged.</summary>
     private sealed class BusyScope : IDisposable
     {
         private readonly ProxyDeployViewModel _vm;
@@ -238,30 +234,28 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// Cancel whichever long operation is running.
     ///
     /// <para>
-    /// Seven commands in this panel take a <c>CancellationToken</c>, pass it to the
-    /// service, check it in their loops and carry a whole "cancelled" reporting path —
-    /// and only two of them (<c>ScanDrives</c>, <c>ScanOrphans</c>) declared
-    /// <c>IncludeCancelCommand</c>, so for the other five nothing in the app could ever
-    /// call <c>Cancel()</c> and every one of those paths was unreachable. That included
-    /// the destructive one: <see cref="DeleteSelectedOrphansAsync"/> recycles a chain of
-    /// files per row and re-checks the token between rows, and there was no way to stop
-    /// it once started. (audit #5 AE20)
+    /// The commands in this panel that take a <c>CancellationToken</c> pass it to the
+    /// service, check it in their loops and carry a whole "cancelled" reporting path; this
+    /// is what calls <c>Cancel()</c> on them (<see cref="CancellableOperations"/>), so those
+    /// paths are reachable. That includes the destructive one:
+    /// <see cref="DeleteSelectedOrphansAsync"/> recycles a chain of files per row and
+    /// re-checks the token between rows. (audit #5 AE20)
     /// </para>
     /// <para>
-    /// One button rather than seven: the panel is exclusive (only one of these can be
+    /// One button rather than one per command: the panel is exclusive (only one of these can be
     /// running), so "cancel the current operation" is unambiguous. The fan-out is safe
     /// because <c>AsyncRelayCommand.ExecuteAsync</c> builds a FRESH
     /// <c>CancellationTokenSource</c> per execution, so cancelling a finished run cannot
     /// poison the next one, and <c>Cancel()</c> is a no-op when there is no source.
     /// </para>
     /// <para>
-    /// Deliberately does NOT gate on <c>CanBeCanceled</c>, which was the first shape and
-    /// measured wrong: that property is <c>IsRunning &amp;&amp; …</c>, and <c>IsRunning</c>
-    /// reads <c>ExecutionTask</c>, which the toolkit assigns only AFTER invoking the
-    /// command body. A body that reaches no real await before the cancel point therefore
-    /// runs with <c>CanBeCanceled == false</c> and the gate skipped it — the delete loop
-    /// ran to completion. The CTS exists before the body is invoked, so cancelling
-    /// unconditionally covers that window too.
+    /// Deliberately does NOT gate on <c>CanBeCanceled</c>: that property is
+    /// <c>IsRunning &amp;&amp; …</c>, and <c>IsRunning</c> reads <c>ExecutionTask</c>,
+    /// which the toolkit assigns only AFTER invoking the command body. A body that reaches
+    /// no real await before the cancel point therefore runs with
+    /// <c>CanBeCanceled == false</c>, and a gate on it would skip that body — the delete
+    /// loop would run to completion. The CTS exists before the body is invoked, so
+    /// cancelling unconditionally covers that window too.
     /// </para>
     /// <para>
     /// This does NOT make cancellation instantaneous. Each command observes the token
@@ -333,9 +327,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>
     /// Detected games. Non-replaceable: items are added/removed in place so that
     /// per-row PropertyChanged notifications from the DataGrid keep working.
-    /// Replacing the collection (the previous approach) caused stale visuals
-    /// because new ItemsSource swaps don't re-bind row containers reliably when
-    /// the underlying items are the same instances.
+    /// Replacing the collection would cause stale visuals because new
+    /// ItemsSource swaps don't re-bind row containers reliably when the
+    /// underlying items are the same instances.
     /// </summary>
     public ObservableCollection<DetectedGame> Games { get; } = new();
 
@@ -361,13 +355,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>Whether any games are selected for batch operations.
     ///
     /// <para>audit #5 AE29 — ⚠ NO VIEW BINDS THIS TODAY, and it has no per-row hook, so it is
-    /// only correct immediately after the five bulk sites that re-raise it (Select All / Clear /
+    /// only correct immediately after the bulk sites that re-raise it (Select All / Clear /
     /// Invert / rescan). Its sibling <see cref="HasOrphanSelection"/> IS bound and DOES have one
-    /// (<see cref="OnOrphanRowChanged"/>). The dead <c>NotifySelectionChanged()</c> that existed
-    /// solely to raise this — documented "called from View", called from nowhere — has been
-    /// removed. Before binding this to anything, subscribe to each <c>DetectedGame</c>'s
-    /// <c>PropertyChanged</c> the way the orphan list does, or ticking one row will not update
-    /// it.</para></summary>
+    /// (<see cref="OnOrphanRowChanged"/>). Before binding this to anything, subscribe to each
+    /// <c>DetectedGame</c>'s <c>PropertyChanged</c> the way the orphan list does, or ticking one
+    /// row will not update it.</para></summary>
     public bool HasSelection => Games.Any(g => g.IsSelected);
 
     public ProxyDeployViewModel(IProxyDeployService deploy, ILoggingService log,
@@ -428,10 +420,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
         if (Games.Count > 0 && File.Exists(SourceDllPath))
         {
             // Supersede any in-flight refresh. The radios carry no IsEnabled binding and this
-            // is a property-changed handler rather than a command, so nothing throttled it:
-            // two quick clicks started two refreshes over the same Games, and whichever
-            // CONTINUATION resumed last wrote the grid — which may be the one for the type the
-            // radio no longer shows. Cancel + re-check, the idiom InstanceFinderViewModel:242
+            // is a property-changed handler rather than a command, so nothing throttles it:
+            // two quick clicks start two refreshes over the same Games, and whichever
+            // CONTINUATION resumes last writes the grid — which may be the one for the type the
+            // radio no longer shows. Cancel + re-check, the idiom InstanceFinderViewModel
             // already uses for its own re-run. (audit #5 AE4)
             _typeRefreshCts?.Cancel();
             _typeRefreshCts?.Dispose();
@@ -554,9 +546,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task ScanAsync(CancellationToken ct)
     {
-        // No entry guard at all before this. That made Scan the one operation able to start
-        // while UpdateAll was suspended at an await — and its Games.Clear() below is exactly
-        // what invalidated UpdateAll's enumerator. (AE7's trigger)
+        // The gate keeps Scan from starting while UpdateAll is suspended at an await: its
+        // Games.Clear() below would invalidate UpdateAll's enumerator. (AE7)
         using var busy = TryBeginExclusive("Scan Steam");
         if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
@@ -721,7 +712,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
     // ── Leftover ("orphan") proxy cleanup ────────────────────────────────────
     //
-    // Report-first, per-row opt-in. Every measured route to data loss in this feature lives in the
+    // Report-first, per-row opt-in. Every known route to data loss in this feature lives in the
     // delete half; the detection half's worst outcome is a wrong row in a list. So: rows default
     // UNCHECKED, there is deliberately NO select-all, the scan never runs as part of Scan Steam or
     // Refresh, and the confirmation lists the exact paths before anything moves.
@@ -1169,9 +1160,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <remarks>
     /// The injected DLL scans BEFORE it opens its pipe (the proxy path is the opposite —
     /// it opens the pipe first and scans on request), so the pipe simply does not exist
-    /// for the length of a full AOB scan. Measured on a stock UE 5.4 Development package:
-    /// 1 s auto-start delay + 7.8 s scan = the pipe appeared 8.8 s after injection, and
-    /// the single immediate attempt reported "The operation has timed out."
+    /// for the auto-start delay plus a full AOB scan -- often several seconds, longer than
+    /// a single immediate attempt waits.
     /// 45 s covers a slow scan with room to spare; each attempt is cheap and the status
     /// line counts them, so a genuinely dead DLL is obvious rather than silent.
     /// </remarks>
@@ -1329,8 +1319,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     return;
                 }
 
-                // No probe wired (tests, or an older composition) — keep the old
-                // single-shot behaviour rather than spinning for 45 s on no information.
+                // No probe wired (tests, or an older composition) — single-shot rather than
+                // spinning for 45 s on no information.
                 if (IsConnectedProbe is null) return;
                 if (IsConnectedProbe())
                 {
@@ -1454,9 +1444,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                 string target = Path.Combine(game.BinariesDir, SelectedProxyType.GetDllName());
 
-                // [PROXY-DOUBLE-GUARD] Never add a second of our proxy types (maintainer request): a Select-All Deploy
-                // over games that already carry ANOTHER of ours made doubles to be fixed game by game -- and Undeploy
-                // removes both, so the user had to remember which one worked. Skipped even with Force Overwrite, and
+                // [PROXY-DOUBLE-GUARD] Never add a second of our proxy types: a Select-All Deploy over games that
+                // already carry ANOTHER of ours would make doubles to be fixed game by game -- and Undeploy removes
+                // both, so the user would have to remember which one worked. Skipped even with Force Overwrite, and
                 // foreign consent is not consumed; the type that is already ours here still follows the Force rules.
                 var ours = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsOurProxyDll);
                 var others = ours
@@ -1483,8 +1473,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 var unreadableOthers = unreadable
                     .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                // (second review) Through PlanDeploy, like the guard above: the selected type already ours there follows
-                // the same-type rules (as the service backstop and Update All do), and the refresh's own note stays.
+                // Through PlanDeploy, like the guard above: the selected type already ours there follows the same-type
+                // rules (as the service backstop and Update All do), and the refresh's own note stays.
                 if (unreadableOthers.Count > 0)
                 {
                     bool exists = File.Exists(target);
@@ -1640,8 +1630,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             foreach (var (g, note, keep) in rowNotes)
                 g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? JoinDetail(g.StatusDetail!, note) : note;
-            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The refresh already names an unreadable file at any proxy
-            // name, so a refreshed row gets only the skip; a row it did not rewrite gets the whole sentence.
+            // (UNREAD-NOTE-DOUBLED-OTHERNAME) The refresh already names an unreadable file at any proxy name, so a
+            // refreshed row gets only the skip; a row it did not rewrite gets the whole sentence.
             foreach (var (g, names) in unreadableSkips)
             {
                 string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, names)
@@ -1758,7 +1748,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // dxgi.dll, a new version.dll replaces an old version.dll, etc. Adding
         // a 4th proxy type needs no change here (iterates the enum).
         var sources = ResolveSources()
-            .OrderBy(kv => kv.Key)                     // enum order, as before
+            .OrderBy(kv => kv.Key)                     // enum order
             .Select(kv => (Type: kv.Key, Path: kv.Value))
             .ToList();
 
@@ -1777,10 +1767,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // [PROXY-PRODUCTNAME-UNREADABLE] Proxy files Update All could not read; their note is decided after the refresh.
         var unreadableNotes = new List<(DetectedGame Game, string Name)>();
         // A folder can carry two of our types. Once one failed, a later one's success must not overwrite the failure on a
-        // row the refresh preserves (second review: the grid showed DeployedCurrent beside "failed: 1").
+        // row the refresh preserves (the grid would show DeployedCurrent beside "failed: 1").
         var failedState = new Dictionary<string, (ProxyDeployStatus Status, string? Detail)>(StringComparer.OrdinalIgnoreCase);
         // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
-        // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
+        // Deploy, with no hash or timestamp second check: whoever ticks it knows what they want.
         // Read ONCE: the checkbox stays live during a run, and an untick half-way must not split one Update All
         // into two policies.
         bool force = ForceOverwrite;
@@ -1887,16 +1877,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // Report what DID get updated. Cancelling is not a reason to hide that N games were
             // already written to — the user needs to know the folders are no longer uniform.
             // [A3-DEPLOY-CANCEL] And bring the grid back in line with the disk, as Deploy / Remove
-            // do: without it the rows kept the old versions for the games this run HAD written.
+            // do: without it the rows would still show the pre-run versions for the games this run HAD written.
             await RefreshAfterCancelAsync(failedDirs);
             WriteRiskNotes();
             SetOperationResult($"Update All cancelled — updated: {updated}, failed: {fail}", fail);
         }
         catch (Exception ex)
         {
-            // This method had no catch at all, and it is an AsyncRelayCommand: a faulted task on
-            // the button path is rethrown onto the UI thread, so an exception here was a crash
-            // risk, not merely a tally that never appeared. Sibling commands all catch. (AE7)
+            // This is an AsyncRelayCommand: a faulted task on the button path is rethrown onto the
+            // UI thread, so an uncaught exception here would be a crash risk, not merely a tally
+            // that never appears. (AE7)
             SetOperationResult($"Update All failed — updated: {updated}, failed: {fail}", fail + 1);
             SetError(ex);
             _log.Error("ProxyDeploy", $"Update All failed: {ex.Message}");
@@ -1907,9 +1897,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             foreach (var (g, note) in riskNotes)
                 g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
-            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) A refreshed row already names an unreadable file at any
-            // proxy name (the second review's selected-name-only rule said it twice for the others); a PRESERVED row
-            // -- a failure in the same folder -- was never refreshed, so there the note names the file itself.
+            // (UNREAD-NOTE-DOUBLED-OTHERNAME) A refreshed row already names an unreadable file at any proxy name, so
+            // there the note does not repeat it; a PRESERVED row -- a failure in the same folder -- is not refreshed,
+            // so there the note names the file itself.
             foreach (var (g, name) in unreadableNotes)
             {
                 string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, new[] { name })

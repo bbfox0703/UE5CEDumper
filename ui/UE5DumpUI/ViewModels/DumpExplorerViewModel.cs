@@ -309,8 +309,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private bool CanRecheck() => HasFile && IsGameConnected && !IsBusy;
 
     // [DUMPDIFF-UI] Compare: the loaded class dump against one the user picks, written as an HTML report and opened.
-    // The maintainer's decision (2026-10-06): HTML only, started from this panel, because release users do not have
-    // scripts/analysis/diff_dumps.py; DumpDiffService is its port. Both options persist (D8).
+    // HTML only, started from this panel, because release users do not have scripts/analysis/diff_dumps.py;
+    // DumpDiffService is its port. Both options persist (D8).
 
     /// <summary>Also compare the engine's own modules; off, the game's own types only (the script's default).</summary>
     [ObservableProperty] private bool _diffIncludeEngine;
@@ -524,9 +524,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
         bool fileLossy = fileModule.Contains('?'), liveLossy = liveModule.Contains('?');
         bool samePe = filePeHash.Length > 0 && livePeHash.Length > 0
                       && string.Equals(filePeHash, livePeHash, StringComparison.OrdinalIgnoreCase);
-        // (skeptic QM-3) Unknown is not ANY: the older DLL wrote ASCII verbatim and one '?' per non-ASCII UTF-16
+        // (QM-3) Unknown is not ANY: an older DLL writes ASCII verbatim and one '?' per non-ASCII UTF-16
         // unit, so a name it cannot have produced -- another length, an ASCII letter where it wrote '?' -- is still a
-        // different game, and is refused as before.
+        // different game, and is refused.
         if ((fileLossy || liveLossy) && fileModule.Length > 0 && liveModule.Length > 0
             && !LossyCompatible(fileModule, liveModule))
             return (true, "");

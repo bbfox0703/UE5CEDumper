@@ -5,9 +5,9 @@ namespace UE5DumpUI.Services;
 /// so the <see cref="KeywordScoringTable"/> can match keywords as
 /// whole tokens instead of substrings.
 ///
-/// Substring matching is what bit the first version of the scorer:
-/// <c>Component</c> contained "mp" so any function on a class with
-/// "Component" in its name false-matched the Stats keyword "MP".
+/// Whole tokens, because a substring match would let <c>Component</c>
+/// (which contains "mp") false-match the Stats keyword "MP" for every
+/// function on a class with "Component" in its name.
 /// Tokenizing first means "MP" only matches when it appears as a
 /// standalone token (e.g. <c>GetMP</c> or <c>PlayerMP</c>) and not as
 /// a buried substring.

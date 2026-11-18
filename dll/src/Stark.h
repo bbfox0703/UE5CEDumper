@@ -83,7 +83,7 @@ constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// it, the rest ran nothing. Defined below the owner rule's codes, which also pass through.
 
 // ============================================================
-// [D2-3-INVOKE] Who queued an invoke (maintainer, 2026-11-11)
+// [D2-3-INVOKE] Who queued an invoke
 // ============================================================
 // The queue is one FIFO for the UI, CE, the MCP server and the DLL's own workers, and a -5 request stays in it, unseen,
 // until it runs. An AI invoke must report a conflict with the user's rather than slip in beside it, and must not run
@@ -195,10 +195,10 @@ bool IsGameThreadResponsive(int32_t thresholdMs = kStallThresholdMs);
 // "no hook yet" means "try -- the attempt is what installs the hook". That is
 // correct for the eight in-DLL gates and MUST NOT change.
 //
-// It is wrong as a REPORT. Every response envelope carried
-// `game_thread_stalled: false`, which asserted a healthy game thread that nobody
-// had measured -- the normal state of a fresh connection, because the hook
-// installs lazily on the first invoke. (STALLDEFAULT-2026-08-26)
+// It is wrong as a REPORT: a bare `game_thread_stalled: false` on every response
+// envelope would assert a healthy game thread that nobody has measured -- the
+// normal state of a fresh connection, because the hook installs lazily on the
+// first invoke. Hence the third state. (STALLDEFAULT-2026-08-26)
 enum class GameThreadLiveness : uint8_t { Unknown, Responsive, Stalled };
 
 /// Pure classifier -- state comes in as parameters so a header-only test target can
@@ -350,7 +350,7 @@ inline GameThreadPick PickGameThread(const ThreadInfo* threads, size_t n) {
 }
 
 /// Is a hook entry on thread `tid` a game-thread entry, given the identified `gameThreadId`? 0 -- nothing identified,
-/// or the gate given up -- counts every entry, as before the gate existed.
+/// or the gate given up -- counts every entry, as if there were no gate.
 inline bool IsGameThreadEntry(uint32_t tid, uint32_t gameThreadId) {
     return gameThreadId == 0 || tid == gameThreadId;
 }
@@ -363,9 +363,8 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThr
 
 /// Does a hook entry count as another thread firing, the install validator's evidence against a main-thread guess?
 /// Not an entry under our own call: the window opens inside the invoke that installed the hook, a direct call
-/// re-enters the detour on our own thread, and a game thread can make no ProcessEvent call for the whole window
-/// (Avowed, 2026-10-27: the PE validator counted 0 fires in its 1500 ms). Counted, our own call alone would then
-/// give a correct guess up.
+/// re-enters the detour on our own thread, and a game thread can make no ProcessEvent call for the whole window.
+/// Counted, our own call alone would then give a correct guess up.
 inline bool CountsAgainstGameThreadGuess(bool onGameThread, bool entryIsOurs) {
     return !onGameThread && !entryIsOurs;
 }
@@ -478,11 +477,10 @@ inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
 // ============================================================
 // [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait, cut by a shutdown on a stalled game thread
 // ============================================================
-// A waiter watched only its request's future, and on a stalled game thread only Stark::Shutdown answers it -- which
-// UE5_Shutdown reaches after joining the workers parked in such waits. A CE untick then waited out the rest of the
-// invoke timeout (measured: 11.3 s of 15) before the pipe server even began to stop. The waiter now asks between slices
-// whether a shutdown makes the rest of its wait pointless. Decisions only, header-inline: no test target compiles
-// Stark.cpp.
+// On a stalled game thread only Stark::Shutdown answers a waiter's future -- which UE5_Shutdown reaches after joining
+// the workers parked in such waits, so a waiter that watched only its future would hold a CE untick for the rest of
+// the invoke timeout before the pipe server even began to stop. The waiter asks between slices whether a shutdown
+// makes the rest of its wait pointless. Decisions only, header-inline: no test target compiles Stark.cpp.
 
 // How often a waiter asks. Short against CE's 5 s executeCodeEx and Fern::Stop's 5 s drain.
 constexpr int32_t kInvokeWaitSliceMs = 50;
@@ -617,11 +615,9 @@ constexpr int kMaxPeValidationFailures = 3;
 ///    minimised with t.IdleWhenNotForeground). The count alone cannot separate
 ///    them, so acting on every zero would disable a CORRECT hook on an idle game.
 ///  * The two causes are not equally likely per detector. The pattern scan
-///    fingerprints ProcessEvent's own body and has never been observed wrong
-///    (Lushfoil UE 5.6: pattern hit at vtable+0x260, validator OK). The version
-///    table is a per-version GUESS with no evidence from the binary at all, and
-///    it is what produced the one measured mis-detection (DumperTest UE 5.4
-///    Development: fallback primary=0x220, 0 fires).
+///    fingerprints ProcessEvent's own body, so its slot is evidence from the
+///    binary. The version table is a per-version GUESS with no evidence from
+///    the binary at all, so a zero there is the likelier sign of a wrong slot.
 ///
 /// So a zero on the pattern path reads as "the game was idle" and the hook is
 /// kept; a zero on the table path reads as "the guess was wrong" and is acted on.

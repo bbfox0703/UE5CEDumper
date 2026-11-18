@@ -30,7 +30,7 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] This connection's DLL answered find_live_instance "Unknown command":
-    /// ask it the old lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
+    /// ask it the legacy lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
     private volatile bool _noLiveLookup;
 
     /// <summary>Counts connection changes, so an "Unknown command" that answers a request sent before a reconnect does
@@ -86,7 +86,7 @@ public sealed class DumpService : IDumpService
     /// <see cref="BuildEngineState"/> falls back to "validated", i.e. no warning. The
     /// alternative (letting this throw) would turn a missing diagnostic into a failed
     /// connect, which is a much worse trade for the thing it is diagnosing.
-    /// (audit #5 U3/X3 — the command shipped in the DLL with zero clients.)
+    /// (audit #5 U3/X3)
     /// </summary>
     private async Task<JsonObject?> TryGetOffsetsAsync(CancellationToken ct)
     {
@@ -722,7 +722,7 @@ public sealed class DumpService : IDumpService
                 // Per-chunk fallback (the walk_class_batch precedent): an older DLL
                 // that doesn't know the command, or any batch-level failure, degrades
                 // to the single path rather than losing the chunk. Each single call
-                // can fail independently, exactly as before batching existed.
+                // can fail independently.
                 chunk = new List<InstanceWalkResult>(len);
                 for (int i = start; i < start + len; i++)
                 {
@@ -852,7 +852,7 @@ public sealed class DumpService : IDumpService
         }, ct);
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] A proxy DLL left in a game folder outlives a UI upgrade, and one older than
         // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
-        // answers, with the old limits, and the answer is marked so the line can say them.
+        // answers, with the legacy limits, and the answer is marked so the line can say them.
         if (res["ok"]?.GetValue<bool>() == false
             && (res["error"]?.GetValue<string>() ?? "").StartsWith(Constants.DllErrorUnknownCommand, StringComparison.Ordinal))
         {
@@ -876,8 +876,8 @@ public sealed class DumpService : IDumpService
         };
     }
 
-    /// <summary>The "a live object of this class" lookup as it was made before find_live_instance existed: an exact class
-    /// name, five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
+    /// <summary>The "a live object of this class" lookup for a DLL without find_live_instance: an exact class name,
+    /// five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
     private async Task<LiveInstanceResult> LegacyLiveInstanceAsync(string className, CancellationToken ct)
     {
         var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
@@ -1503,8 +1503,7 @@ public sealed class DumpService : IDumpService
             // Default to "bytecode" for older DLLs that don't emit the field.
             Method       = res["method"]?.GetValue<string>() ?? "bytecode",
             Unmapped     = res["unmapped"]?.GetValue<int>() ?? 0,
-            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported",
-            // which is the same thing every caller assumed before the flag existed.
+            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported".
             BudgetHit    = res["budget_hit"]?.GetValue<bool>() ?? false,
             Props        = props,
         };
@@ -1911,7 +1910,7 @@ public sealed class DumpService : IDumpService
             Total = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            // Absent on a pre-2818 DLL -> false: no truncation is reported.
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
             Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
@@ -2005,7 +2004,7 @@ public sealed class DumpService : IDumpService
             Total          = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            // Absent on a pre-2818 DLL -> false: no abort is reported.
             Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
 
@@ -2498,7 +2497,7 @@ public sealed class DumpService : IDumpService
     }
 
     // Refine takes the NEW (value, scan_type) per slot (same count as the first
-    // scan). The per-slot width scope is fixed by the session. P2: a prev-value
+    // scan). The per-slot width scope is fixed by the session. A prev-value
     // scan type (Changed/Increased/...) carries no value — it compares against the
     // previous round — so the value is sent but ignored DLL-side for those.
     public async Task<GroupScanRefineResult> RefineGroupScanAsync(
@@ -2874,17 +2873,12 @@ public sealed class DumpService : IDumpService
     /// before launching to lower the <c>list_all_functions</c> cap, so the TRUNCATION path can be
     /// reached on a title that is nowhere near 100,000 UFunctions.
     ///
-    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> needs the capped-census wording to be seen on
-    /// screen -- Console must stop claiming anything about the game
-    /// ("this scan did not finish, so it is not evidence the game has none") and both panels must
-    /// show the cap suffix. The DLL half is closed (<c>[Z8-TRUNCATED-2026-08-23]</c>), but the UI
-    /// half had no fixture: six titles were surveyed and the best, DQ7R, reaches **51 %** of the
-    /// cap, with the next under half of that. The row named FF7 REBIRTH and SEED; the former is an
-    /// empty folder here and the latter measured **10 %**. Reaching the cap would need a title
-    /// roughly 2x DQ7R and nothing installed is close.
+    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> capped-census wording has to be seen on screen -- Console
+    /// must stop claiming anything about the game ("this scan did not finish, so it is not evidence
+    /// the game has none") and both panels must show the cap suffix
+    /// (<c>[Z8-TRUNCATED-2026-08-23]</c>) -- and ordinary titles stay well short of the cap.
     ///
-    /// ⭐ So lower the cap instead of hunting a bigger game. The register's own conclusion for this
-    /// row was "stop predicting -- the screen IS the measurement"; this makes the screen reachable.
+    /// ⭐ So lower the cap instead of hunting a bigger game: this makes the screen reachable.
     ///
     /// ⚠ It overrides the caller's argument deliberately, because both UI call sites pass the
     /// default and the point is to reach them without a code change. Unparseable or non-positive
@@ -2948,8 +2942,8 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             TotalFunctions = res["total_functions"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete", which is the
-            // pre-existing behaviour rather than a new false alarm. (audit #5 Z8)
+            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete" rather than a
+            // false alarm. (audit #5 Z8)
             Truncated      = res["truncated"]?.GetValue<bool>() ?? false,
             Aborted        = res["aborted"]?.GetValue<bool>()   ?? false,
             Limit          = res["limit"]?.GetValue<int>()      ?? limit,
@@ -3546,7 +3540,7 @@ public sealed class DumpService : IDumpService
             {
                 if (item is not JsonObject obj) continue;
                 // JsonNum, not GetValue<T>: diagnostics must degrade, never throw.
-                // One out-of-range field (a UINT64_MAX sentinel) previously blanked
+                // One out-of-range field (a UINT64_MAX sentinel) must not blank
                 // the entire card. See JsonNum's remarks.
                 cmds.Add(new DiagnosticsCommandEntry
                 {
@@ -4327,7 +4321,7 @@ public sealed class DumpService : IDumpService
         State       = res?["state"]?.GetValue<int>() ?? -1,
         // Older DLLs don't send it; assume healthy so their behaviour is unchanged.
         HookActive  = res?["hook_active"]?.GetValue<bool>() ?? true,
-        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the old "still waiting" card.
+        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the "still waiting" card.
         RestorePending   = res?["restore_pending"]?.GetValue<bool>() ?? false,
         RestoreAbandoned = res?["restore_abandoned"]?.GetValue<bool>() ?? false,
         // Who has it on (DLL 3698+), and since 3714 whether this window is one of them: unknown before, never false.
@@ -4525,7 +4519,7 @@ public sealed class DumpService : IDumpService
         // Absent on a healthy read; the DLL only emits it when the pose degraded to a
         // parent-relative fallback. [POSEATTACH-2026-09-10]
         ParentRelative = res["parent_relative"]?.GetValue<bool>() ?? false,
-        // Review 5 of 7490c24e: false is an answer, absence (an older DLL) is not.
+        // false is an answer, absence (an older DLL) is not.
         ParentRelativeKnown = res["parent_relative"] is not null,
         // Emitted only when a move succeeded and its landing re-read did not.
         LandingUnknown = res["landing_unknown"]?.GetValue<bool>() ?? false,

@@ -437,12 +437,11 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
         }
         if (!got) {
             // ⛔⛔ THE DEGRADATION HAS TO LEAVE THIS FUNCTION, not just this log.
-            // docs/teleport-spec.md:218-220 says it in as many words: "If the invoke
-            // fails (game-thread idle), return the raw values anyway with `source = raw`
-            // AND A WARNING FLAG". The fallback shipped; the flag never did. So a healthy
-            // unattached world-space read and a degraded PARENT-RELATIVE one both left
-            // here as source=0 -- and the UI's own model documents "raw" as MEANING
-            // not-attached, so those numbers were displayed as world coordinates, saved
+            // docs/teleport-spec.md §5.4: when the invoke fails (game-thread idle), the raw
+            // values come back with `source = raw` AND A WARNING FLAG. Without the flag a
+            // healthy unattached world-space read and a degraded PARENT-RELATIVE one both
+            // leave here as source=0 -- and the UI's own model documents "raw" as MEANING
+            // not-attached, so those numbers would be displayed as world coordinates, saved
             // into a marker that passes the map guard, and later driven back into the
             // pawn as a world-space destination. [POSEATTACH-2026-09-10].
             //
@@ -743,14 +742,14 @@ uintptr_t StructInner(const FieldInfo& fi) {
 }
 
 // Raw-read fallback for the camera POV: when the BlueprintCallable getters exist
-// but ProcessEvent yields nothing (observed on TQ2 / Octopath — getters found
-// but the invoke returns no value), read the cached POV directly. Chain (every
+// but ProcessEvent yields nothing (getters found but the invoke returns no
+// value), read the cached POV directly. Chain (every
 // offset/size resolved by reflection, no hardcoded struct layout):
 //   APlayerCameraManager.CameraCachePrivate (FCameraCacheEntry, StructProperty)
 //     -> POV (FMinimalViewInfo, StructProperty)
 //        -> Location (FVector) / Rotation (FRotator) / FOV (float).
-// CameraCachePrivate is private but still reflected on the titles seen so far;
-// older UE4 may expose it as the public "CameraCache" (contains-match covers it).
+// Older UE4 may expose CameraCachePrivate as the public "CameraCache"
+// (contains-match covers it).
 bool ReadPovRaw(uintptr_t cam, double loc[3], double rot[3], double& fov) {
     uintptr_t camClass = Ubel::GetClass(cam);
     FieldInfo fiCache{};
@@ -1082,7 +1081,7 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
 
     // Estimate the actor's CURRENT world position to verify the move.
     // When NOT attached, raw RelativeLocation IS world space — and
-    // K2_GetActorLocation has proven unreliable on some games (TQ2 returns
+    // K2_GetActorLocation is unreliable on some games (it can return
     // (0,0,0)), so trust rawRel in that case. Only when attached do we need
     // K2_GetActorLocation (rawRel would be parent-relative then).
     auto currentWorld = [&](double out[3]) {
@@ -1100,26 +1099,26 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
 
     // Gated retry: a tier-1 invoke that "succeeded" but left the actor far from
     // the target means the game's CharacterMovement is overriding
-    // SetActorLocation (TQ2-class). Freeze the CMC (MOVE_None), force the
+    // SetActorLocation. Freeze the CMC (MOVE_None), force the
     // location BOTH ways (engine invoke + raw RelativeLocation write while
     // frozen — valid since world==relative when not attached), then thaw to
     // Falling so it re-grounds. GATED on "first attempt didn't reach target", so
-    // games where the plain move already works (SEED) never enter this path.
+    // games where the plain move already works never enter this path.
     if (moved && dist3(cur, xyz) > kReachedEps) {
         uintptr_t cmc = GetCmc(c);
         LOG_WARN("Teleport: actor didn't reach target (cur=(%.1f,%.1f,%.1f)) — "
                  "forcing via CMC freeze%s", cur[0], cur[1], cur[2],
                  cmc ? "" : " (no CMC found)");
         SetCmcMode(cmc, 0);                          // MOVE_None — freeze physics
-        // Do NOT trust K2_SetActorLocation's return here. On some titles (TQ2 —
+        // Do NOT trust K2_SetActorLocation's return here. On some titles (a
         // standard Character, capsule root + child mesh) it reports success but is
         // a no-op (CMC reverts), and a raw RelativeLocation write alone leaves the
         // cached ComponentToWorld stale so the rendered mesh stays at the old spot.
         // So ALWAYS also run the component setter — K2_SetWorldLocation runs
         // UpdateComponentToWorld and propagates the refresh to the child mesh — and
-        // deep-force the cached world transform as a fallback. (Previously the
-        // component setter was gated on the actor setter returning false, so a
-        // false-success skipped the one call that refreshes the visual.)
+        // deep-force the cached world transform as a fallback. Never gate the
+        // component setter on the actor setter's result: a false success would skip
+        // the one call that refreshes the visual.
         InvokeSetActorLocation(c.pawn, xyz);
         TeleportViaComponent(c, xyz);                // refresh ComponentToWorld + children
         if (!attached) {                              // raw write (world==relative)
@@ -1316,9 +1315,9 @@ bool InvokeWblInputMode(uintptr_t wbl, uintptr_t wblClass, const char* fn,
 //
 // show=true forces a GameOnly→GameAndUI TRANSITION: on some titles a single
 // GameAndUI call from the game's running input state doesn't release the mouse
-// capture / show the cursor until the mode actually CHANGES (observed live: the
-// first force shows nothing, but OFF-then-ON works). Cycling through GameOnly
-// first reproduces that transition in one action.
+// capture / show the cursor until the mode actually CHANGES (OFF-then-ON
+// does). Cycling through GameOnly first reproduces that transition in one
+// action.
 void ApplyCursorInputMode(uintptr_t pc, bool show) {
     if (!pc) return;
     // Derivation-gated: the CDO of WidgetBlueprintLibrary ITSELF, never the first object whose class name merely
@@ -1857,11 +1856,11 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     rc = TeleportPawnTo(c, dest, nullptr, /*preferTeleportTo=*/false, tierOut);
     if (rc != TP_OK) return rc;
     StopMovement(c);
-    // ⛔ THE RE-READ CAN FAIL, AND SILENCE MADE THAT LOOK LIKE ARRIVING AT THE ORIGIN.
-    // GetPoseImpl leaves `out` untouched on every failure path, and all three transports
+    // ⛔ THE RE-READ CAN FAIL, AND SILENCE WOULD MAKE THAT LOOK LIKE ARRIVING AT THE ORIGIN.
+    // GetPoseImpl leaves `out` untouched on every failure path, and the transports
     // zero-initialise the Pose and publish it whenever code == 0 -- so a failed re-read
-    // was emitted as a landing at exactly (0,0,0,0,0,0), indistinguishable from really
-    // standing at the world origin, and the panel overwrote its live X/Y/Z with those
+    // would be emitted as a landing at exactly (0,0,0,0,0,0), indistinguishable from really
+    // standing at the world origin, and the panel would overwrite its live X/Y/Z with those
     // zeros for the user to copy or save. The move itself SUCCEEDED, so this is not an
     // error code -- the caller is told the landing is unknown and publishes nothing
     // rather than a number nobody measured. [TPREL-ZEROPOSE-2026-09-10]
@@ -1891,7 +1890,7 @@ int32_t SetMouseCursor(bool show, bool* outState) {
     if (!Macht::WriteBytes(byteAddr, &b, 1)) return TP_ERR_WRITE_FAILED;
 
     // The bShowMouseCursor flag alone often isn't enough — a GameOnly input mode
-    // recaptures/hides the OS cursor (observed on TQ2 / DQIII HD-2D). Also drive
+    // recaptures/hides the OS cursor. Also drive
     // the input mode so the cursor actually shows/hides.
     ApplyCursorInputMode(pc, show);
 

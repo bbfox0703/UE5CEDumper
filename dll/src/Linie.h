@@ -36,7 +36,7 @@ struct FuncIdentity {
     bool     isWidget      = false;
     bool     captured      = false;   // false: never read (a reader that failed, or none installed)
     uint64_t outer         = 0;       // its Outer (its UClass) when read: a reloaded class is a new object
-    // Another function took this address during the recording (review DLL-3): read again when its key changed, so
+    // Another function took this address during the recording: read again when its key changed, so
     // the fields above are the latest occupant's, and the address's count and calls are more than one function's.
     bool     reused        = false;
     // [LIVEFUNCS-STEP2] UFunction::ReturnValueOffset, read beside ParmsSize; 0xFFFF: no return value, or not read.
@@ -216,11 +216,9 @@ using StackCapturer = uint32_t (*)(uintptr_t retSlot, uint64_t* out, uint32_t ma
 // The stack choice's limits. The UI pins each.
 inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (plan section 3)
 inline constexpr uint32_t kStackMaxDepth             = 62;
-// The budget, the maintainer's (A) of 2026-10-08 (T17): D3's rule on the fixture's measured 28 us a capture gave 50 a
-// second in all, about 1.4 ms of the game thread a second; a function may take half of it. That figure is the
-// conservative one: Avowed measured 3.25 us a capture on the same PC. The fixture's cost is not this laptop's hybrid
-// GPU nor its frame rate -- 20-22 us rendering on the integrated GPU or the RTX, uncapped, and 31 us capped at 30 fps
-// (docs/live-funcs-step3-items.md, "8.0 Results") -- so re-weigh against a real game before raising it.
+// The budget (T17): 50 captures a second in all, sized for a capture cost of about 28 us, the conservative figure in
+// docs/live-funcs-step3-items.md ("8.0 Results") -- about 1.4 ms of the game thread a second; a function may take half
+// of it. Re-weigh against a real game's capture cost before raising it.
 inline constexpr uint32_t kStackDefaultPerRingPerSec = 25;
 inline constexpr uint32_t kStackDefaultTotalPerSec   = 50;
 // The UI's Low budget (T20): half the defaults, rounded down, for a slower machine or a game where a capture costs more.
@@ -271,7 +269,7 @@ struct TraceConfig {
     uint64_t              snapBytes = 0;
     BytesCopier           copier = nullptr;   // nullptr: every copy is a fault
     // The budget, the guarantee (T9 item 3): at most this many snapshots a second per ring and in all; the first calls
-    // of each second are kept. Provisional, to be measured live; the pipe clamps what the UI sends.
+    // of each second are kept. The pipe clamps what the UI sends.
     uint32_t              snapPerRingPerSec = 1000;
     uint32_t              snapTotalPerSec   = 10000;
     // [LIVEFUNCS-STEP3] The stack rings, one per function chosen for its stack: after the parameter rings in the same
