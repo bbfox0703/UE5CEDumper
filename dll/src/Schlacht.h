@@ -207,7 +207,8 @@ void StopWorker();
 // (review wf_bbd1bbfe-20d D7-2).
 template <class Set>
 inline void KeepAddedDuringTick(Set& applied, const Set& now, const Set& snapshot) {
-    (void)applied; (void)now; (void)snapshot;
+    for (const auto& a : now)
+        if (!snapshot.count(a)) applied.insert(a);
 }
 
 // [SEETHRU-HANDOFF-LEFTOVER] This copy's leftover record, moved into `out` (at most `cap`; see TakeHiddenRecord). Nothing
