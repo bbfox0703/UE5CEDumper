@@ -376,6 +376,44 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-63: the Props dialog's two Cheat Engine buttons stay off while their own
+    /// push runs. UpdateSelectionButtons can run during a push, so each click handler raises an in-flight flag before
+    /// its first await and lowers it in its finally before re-setting the buttons, and the button's enabling setter
+    /// reads that flag. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_buttons_stay_off_while_their_own_push_runs()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from FunctionPropsDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var sync = Body("private void UpdateSelectionButtons()");
+        foreach (var (button, handler) in new[]
+                 {
+                     ("_btnAsm", "private async void OnAsmClicked("),
+                     ("_btnSiteInCe", "private async void OnSiteInCeClicked("),
+                 })
+        {
+            var click = Body(handler);
+            var raised = System.Text.RegularExpressions.Regex.Match(click, @"\n\s*(_\w+) = true;");
+            Assert.True(raised.Success, $"{handler} raises no in-flight flag");
+            string flag = raised.Groups[1].Value;
+            Assert.True(click.IndexOf("await ", StringComparison.Ordinal) > raised.Index,
+                        $"{handler} raises {flag} after its first await");
+            Assert.Matches($@"finally\s*\{{\s*{flag} = false;\s*UpdateSelectionButtons\(\);\s*\}}", click);
+
+            var setter = System.Text.RegularExpressions.Regex.Match(sync, $@"{button}\.IsEnabled = ([^;]*);");
+            Assert.True(setter.Success, $"UpdateSelectionButtons does not set {button}");
+            Assert.Contains($"!{flag}", setter.Groups[1].Value, StringComparison.Ordinal);
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-52: the property-xref / class-funcs dialog re-sets its Disassemble button
     /// at construction, so the tooltip exists before the first scan ends; after a push, in its finally; and in the click
     /// guard that finds the bridge's flag false, so neither a push nor that guard leaves an enabled button or the action
