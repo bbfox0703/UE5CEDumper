@@ -158,6 +158,27 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-18. Collapse Pointer Nodes reaches Copy CE Field as well as Copy CE XML; the tip names
+    // both by their buttons.
+    [Fact]
+    public void Collapse_pointer_nodes_tip_names_both_CE_XML_copies()
+    {
+        var lw = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")).Replace("\r\n", "\n");
+        foreach (var method in new[] { "ExportCeXmlAsync", "ExportCeFieldXmlAsync" })
+        {
+            int at = lw.IndexOf($" Task {method}(", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{method} was not found");
+            var body = lw[at..lw.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            Assert.Contains("collapsePointerNodes: CollapsePointerNodes", body, StringComparison.Ordinal);
+        }
+
+        var copyCeField = new UE5DumpUI.ViewModels.LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+            new MockPlatformService(Path.GetTempPath())).ExportCeFieldButtonLabel;
+        var tip = EnString("str.Tip.CollapsePointers");
+        Assert.Contains(EnString("str.LiveWalker.ExportCE"), tip, StringComparison.Ordinal);
+        Assert.Contains(copyCeField, tip, StringComparison.Ordinal);
+    }
+
     // [UI-TEXT-AUDIT-2026-11-18] UT-17. The Functions filter matches the interface a function comes through as well as
     // its name (FilterBoxViewKeepTests pins the matcher); the tip says so, in the words the Name column shows it with.
     [Fact]
