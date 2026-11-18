@@ -403,6 +403,65 @@ public class LiveFuncsSnapshotTests
 
     // ---- U9 ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-55: with a function ticked and another chosen for parameters or a stack, a
+    /// traced Start also records the chosen calls made outside every ticked scope (the DLL's lone calls), so the Start's
+    /// status and the Call Trace tab's scope sentence say so once the DLL reports a ring for them; with ticks alone both
+    /// keep the sentence that names only the ticked functions.</summary>
+    [Fact]
+    public async Task The_ticked_status_lines_say_the_chosen_calls_outside_the_ticked_functions_are_traced_too()
+    {
+        const string outside = "and outside them the calls of the functions chosen for parameters or a stack";
+
+        // F ticked alone: the Start's status names the ticked function only.
+        var (alone, aloneDump) = MakeVm();
+        aloneDump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(alone);
+        alone.TraceEnabled = true;
+        alone.ToggleTickCommand.Execute(Shown(alone, "A", "F"));
+        await alone.StartCommand.ExecuteAsync(null);
+        Assert.Null(aloneDump.LastTrace!.Snapshots);
+        Assert.Contains(Line("str.LF.Trace.RecordingTicked", alone.TraceBufferMb, 1), alone.StatusText);
+        Assert.DoesNotContain(outside, alone.StatusText, StringComparison.Ordinal);
+
+        // F ticked, G chosen for parameters: the DLL arms G's ring, so the status says G's calls outside F are traced too.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "F"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.NotNull(dump.LastTrace!.Snapshots);
+        string started = Line("str.LF.Trace.RecordingTickedChosen", vm.TraceBufferMb, 1);
+        Assert.Contains(outside, started, StringComparison.Ordinal);
+        Assert.Contains(started, vm.StatusText);
+        Assert.DoesNotContain(Line("str.LF.Trace.RecordingTicked", vm.TraceBufferMb, 1), vm.StatusText);
+
+        // The Call Trace tab: a scoped trace the DLL reports rings for says so, by name or by address.
+        var ct = new CallTraceViewModel(dump, new NoopLogger(), vm) { StringLookup = En };
+        var rings = new SnapInfo { Allocated = true, Rings = 1 };
+        var records = new[]
+        {
+            new TraceRecord(0, 1000, 0xA, 0, 1, TraceRecord.ScopeRootFlag),
+            new TraceRecord(1 | TraceRecord.ReturnBit, 1010, 0, 0, 1, 0),
+        };
+        foreach (var (info, key, count) in new[]
+        {
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, TickedNames = 1 }, "str.CT.Status.ScopedNames", 1),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, TickedNames = 1, Snap = rings },
+             "str.CT.Status.ScopedNamesChosen", 1),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Ticked = 2 }, "str.CT.Status.Scoped", 2),
+            (new TraceInfo { QpcFreq = 1_000_000, Written = 2, Scoped = true, Ticked = 2, Snap = rings },
+             "str.CT.Status.ScopedChosen", 2),
+        })
+        {
+            Assert.Equal(key, CallTraceViewModel.ScopeKey(info));
+            string sentence = Line(key, count);
+            Assert.Contains(sentence, ct.Summary(UE5DumpUI.Services.CallTraceBuilder.Build(records, info)));
+            Assert.Equal(info.Snap != null, sentence.Contains(outside, StringComparison.Ordinal));
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-38: nothing ticked, but a function chosen for parameters: the Start traces
     /// only the chosen calls, and the Trace check box's tooltip says what a traced Start records in the words the ticked
     /// count's tooltip uses, rather than "every call", or "only their calls" once something is ticked.</summary>
