@@ -68,8 +68,9 @@ internal static partial class McpFieldTools
                                    + (McpJson.GetString(obj, "full_name") ?? "unnamed") + ")." + Instead);
         // walk_class answers for any UStruct, and no instance's class chain holds a struct or a function, so a grant on
         // one could never be used. Every class's own class is a UClass type: Class, BlueprintGeneratedClass, ... A name
-        // test, so an asset whose type merely ends in Class (a SoundClass) passes it: walk_class finds no field there,
-        // and if it did, the grant would only be one no instance's chain reaches.
+        // test, so an asset whose type merely ends in Class (a SoundClass) passes it: walk_class refuses it as no
+        // class or struct ([WALKCLASS-NOT-STRUCT]), and if it did not, the grant would only be one no instance's chain
+        // reaches.
         if (!(McpJson.GetString(obj, "class") ?? "").EndsWith("Class", StringComparison.Ordinal))
             throw new McpToolError("Not granted: " + cls + " is not a class (its type is "
                                    + (McpJson.GetString(obj, "class") ?? "unknown") + "), and a field grant names a "

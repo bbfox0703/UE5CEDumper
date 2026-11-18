@@ -1547,9 +1547,14 @@ bool IsClassObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Class", Aura::IsClassLikeMeta);
 }
 
+// The engine's own UStruct metaclasses: the class family, the struct family and the function family.
+static bool IsEngineStructKindMetaName(const std::string& n) {
+    return Aura::IsClassLikeMeta(n) || IsEngineStructMetaName(n) || n == "Function" || n == "DelegateFunction" ||
+           n == "SparseDelegateFunction" || n == "Struct";
+}
+
 bool IsStructKindObject(uintptr_t obj) {
-    (void)obj;
-    return true;
+    return MetaclassIsKind(obj, "Struct", IsEngineStructKindMetaName);
 }
 
 // A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
