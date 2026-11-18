@@ -168,6 +168,23 @@ public class LiveFuncsSnapshotTests
 
     // ---- U5 ----
 
+    /// <summary>An unloaded row with a name key keeps its Trace, Params? and Stack? boxes, as each follows the function
+    /// by name; only a keyless one loses them. The (unloaded) marker's tooltip names the three columns rather than
+    /// saying the row cannot be ticked.</summary>
+    [Fact]
+    public void The_unloaded_marker_tooltip_says_a_keyed_row_keeps_its_choice_boxes()
+    {
+        var keyed = Row("A", "Gone", "0x4", new NameKey(4, 0, 9, 0), unloaded: true);
+        var keyless = Row("A", "Old", "0x5", null, unloaded: true);
+        Assert.True(keyed.IsTickable && keyed.CanChooseSnapshot && keyed.CanChooseStack);
+        Assert.False(keyless.IsTickable || keyless.CanChooseSnapshot || keyless.CanChooseStack);
+
+        string tip = Line("str.Tip.LF.Unloaded");
+        Assert.DoesNotContain("cannot be ticked for the trace", tip, StringComparison.Ordinal);
+        foreach (var column in new[] { "str.LF.Col.Trace", "str.LF.Col.Snapshot", "str.LF.Col.Stack" })
+            Assert.Contains(Line(column), tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_choice_needs_the_trace_a_key_and_parameters_and_an_unloaded_keyed_row_can_be_chosen()
     {
