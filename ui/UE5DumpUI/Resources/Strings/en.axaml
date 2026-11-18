@@ -1534,7 +1534,7 @@
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>
     <sys:String x:Key="str.Tip.Con.Filter">Space-separated keywords are ANDed; each may match the command name or the class name (case-insensitive). Empty = show all.</sys:String>
-    <sys:String x:Key="str.Tip.Con.CommandInput">Type an exec command name and press Run. No-arg commands invoke directly; commands with parameters open the InvokeParamDialog. Leading slash is stripped (/fly == fly).</sys:String>
+    <sys:String x:Key="str.Tip.Con.CommandInput">Type an exec command name and press Enter or Run. No-arg commands invoke directly; commands with parameters open the InvokeParamDialog. Leading slash is stripped (/fly == fly).</sys:String>
     <sys:String x:Key="str.Tip.Con.RunCommand">Resolve the typed command against the loaded list and invoke. Match is case-insensitive exact funcName; first match wins if multiple classes implement the same name.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunSelected">Invoke the currently selected row. Same code path as Run on a row.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunRow">Invoke this exec command. No-arg commands run directly via pipe; commands with parameters open the InvokeParamDialog.</sys:String>

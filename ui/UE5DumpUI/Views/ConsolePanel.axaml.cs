@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
@@ -38,5 +39,16 @@ public partial class ConsolePanel : UserControl
     private void InitializeComponent()
     {
         AvaloniaXamlLoader.Load(this);
+    }
+
+    /// <summary>Enter in the command line runs the typed command, as Run does.</summary>
+    private void CommandInput_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is ConsoleViewModel vm
+            && vm.RunCommandTextCommand.CanExecute(null))
+        {
+            vm.RunCommandTextCommand.Execute(null);
+            e.Handled = true;
+        }
     }
 }

@@ -41,6 +41,7 @@
                    FontFamily="Consolas, Menlo, monospace"
                    VerticalAlignment="Center"/>
         <TextBox Text="{Binding CommandInput}"
+                 KeyDown="CommandInput_KeyDown"
                  PlaceholderText="{StaticResource str.Con.CommandHint}"
                  ToolTip.Tip="{StaticResource str.Tip.Con.CommandInput}"
                  Width="320" Padding="4,2"
