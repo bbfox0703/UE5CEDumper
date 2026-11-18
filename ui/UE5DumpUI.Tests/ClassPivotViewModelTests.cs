@@ -1911,7 +1911,7 @@ public class ClassPivotViewModelTests : IDisposable
         await vm.RunPivotCommand.ExecuteAsync(null);
         vm.SelectedResult = vm.Results[0];
 
-        Assert.True(vm.CanLocateResult);
+        Assert.True(vm.CanUseResultRowActions);
     }
 
     [Fact]

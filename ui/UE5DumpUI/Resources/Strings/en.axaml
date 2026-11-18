@@ -928,7 +928,7 @@
     <sys:String x:Key="str.Pivot.Col.Distinct">Distinct</sys:String>
     <sys:String x:Key="str.Pivot.Col.Insts">Instances</sys:String>
     <sys:String x:Key="str.Pivot.Col.KeyScore">Key score</sys:String>
-    <sys:String x:Key="str.Pivot.ResultsHint">Tick the value fields above to project them; tick Key to build a composite key (e.g. Team · Slot) — Field mode only. Identity mode groups spawn-normalised siblings (BP_Enemy_C_0/_1/…) together. Select a group → Open in Live Walker / Copy Address hands its representative instance to CE.</sys:String>
+    <sys:String x:Key="str.Pivot.ResultsHint">Tick the value fields above to project them; tick Key to build a composite key (e.g. Team · Slot) — Field mode only. Identity mode groups spawn-normalised siblings (BP_Enemy_C_0/_1/…) together. Select a group → Open in Live Walker opens its representative instance and Copy Address copies its address for CE. A DataTable row's address is its row data, not an object: Copy Address and HEX take it; Open in Live Walker and the 🌍 / ⚙ Locates stay off.</sys:String>
     <sys:String x:Key="str.Pivot.Res.Count">Count</sys:String>
     <sys:String x:Key="str.Pivot.Res.Key">Key</sys:String>
     <sys:String x:Key="str.Pivot.Res.Values">Projected values</sys:String>

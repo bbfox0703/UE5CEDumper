@@ -158,8 +158,12 @@ public sealed class PivotResultRow
     /// <summary>Instances in this group.</summary>
     public int    Count    { get; set; }
     /// <summary>A representative instance's live address (first in the group) —
-    /// the Open-in-Live-Walker handoff target.</summary>
+    /// the Open-in-Live-Walker handoff target. A DataTable row holds its row struct's data address instead
+    /// (<see cref="IsDataTableRow"/>).</summary>
     public string ObjAddr  { get; set; } = "";
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] <see cref="ObjAddr"/> is a DataTable row's struct data, not a UObject: Copy
+    /// Address and HEX take it, Live Walker and the Locates do not.</summary>
+    public bool IsDataTableRow { get; set; }
     /// <summary>Projected values rendered as "field=cell", joined. A cell for a
     /// group with differing values renders as a collision ⟨N: v1,v2,+M⟩.</summary>
     public string ValuesDisplay { get; set; } = "";
