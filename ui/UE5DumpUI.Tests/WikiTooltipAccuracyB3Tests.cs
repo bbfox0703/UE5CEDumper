@@ -158,6 +158,30 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-14. String Len reaches every Live Walker output that writes a string record or a
+    // CSX string child, not only the two CE XML copies; the tip names each by its button.
+    [Fact]
+    public void String_Len_tip_names_every_output_that_uses_it()
+    {
+        var lw = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")).Replace("\r\n", "\n");
+        foreach (var method in new[] { "ExportCeXmlAsync", "ExportCeFieldXmlAsync", "ExportCsxCoreAsync",
+                                       "PushCsxToCeAsync", "PushCeFieldToCeAsync", "AddRecordToCeAsync" })
+        {
+            int at = lw.IndexOf($" Task {method}(", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{method} was not found");
+            var body = lw[at..lw.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+            Assert.Contains("CeStringLength", body, StringComparison.Ordinal);
+        }
+
+        var copyCeField = new UE5DumpUI.ViewModels.LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+            new MockPlatformService(Path.GetTempPath())).ExportCeFieldButtonLabel;
+        var tip = EnString("str.Tip.StringLength");
+        foreach (var label in new[] { EnString("str.LiveWalker.ExportCE"), copyCeField, EnString("str.LiveWalker.ExportCsx"),
+                                      EnString("str.LiveWalker.PushCsxToCe"), EnString("str.LiveWalker.AddToCe"),
+                                      EnString("str.LiveWalker.PushCeField") })
+            Assert.Contains(label, tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Main_hotkey_hint_names_Gravity_Dir_and_Get_POV()
     {
