@@ -308,7 +308,7 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "Not changed: no grant covers this for this game. Call grant_..." | The AI asks you for that grant first; Claude Code shows you what it covers. |
 | "Not sent: the connection now reaches another game run ..." | The game restarted between the AI's check and its write; a grant for the old run does not carry over. |
 | "'...' must be from X to Y" | The value is outside the UI's own range for it. |
-| The AI has no `write_*` tools | Its client is not Claude Code, or its registration passes `--writes=off`. Use Claude Code, or add `--writes=any-host` to that client's registration (read the warning there first). An older Claude Code has them but no grants, so every write is asked about; update it for the grants. |
+| The AI has no `write_*` tools | If its registration passes `--writes=off`, remove it: only one `--writes=` is accepted, and a second stops the server. Otherwise its client is not Claude Code: add `--writes=any-host` to that client's registration (read the warning there first). An older Claude Code has them but no grants, so every write is asked about; update it for the grants. |
 | "Not changed: ... is held by ..." | You (or the named program) hold that feature. Release it where it was set if you want the AI to take it. |
 | "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |
 | "The game's DLL is build N, older than 3705" (or 3706) | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
