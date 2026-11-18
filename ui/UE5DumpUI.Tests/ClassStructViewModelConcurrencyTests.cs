@@ -573,6 +573,11 @@ public class ClassStructViewModelConcurrencyTests
         int kind = handler.IndexOf("if (!Ubel::IsStructKindObject(addr))", StringComparison.Ordinal);
         Assert.True(kind > live && walk > kind, $"the kind refusal must sit between liveness ({live}) and the walk ({walk}), at {kind}");
         Assert.Contains("\"Not a class or struct at \" + addrStr", handler);
+        // Review wf_bbd1bbfe-20d D7-4: the panel sends Enum rows and assets typed "...Class" here on purpose, and an AI can
+        // pass an instance; none of them was freed by a level travel. The refusal says what walk_class reads instead.
+        string kindRefusal = handler[kind..walk];
+        Assert.DoesNotContain("level travel", kindRefusal);
+        Assert.Contains("walk_class reads a class, a struct or a function", kindRefusal);
         // The liveness rule is the one pe_trace_names and the snapshot decoder use: its own index leads back to it.
         Assert.Matches(@"bool IsLiveObject\(uintptr_t \w+\) \{\s*const int32_t idx = Ubel::GetIndex\(\w+\);\s*return idx >= 0 && Aura::GetByIndex\(idx\) == \w+;", fern);
     }
