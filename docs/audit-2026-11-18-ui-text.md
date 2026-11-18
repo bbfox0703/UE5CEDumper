@@ -3,6 +3,8 @@
 `[UI-TEXT-AUDIT-2026-11-18]`. The Wiki update to build 3743 checked every page against the code and the UI's own
 strings, and listed each place where the UI's text says something the program does not do. Nothing was fixed in that
 session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
+UT-36 to UT-48 were found afterwards by a review of those fixes (workflow `wf_31921b9d-4a0`: four reviewers, each finding
+checked by a second agent that tried to refute it): places a fix left untouched or got partly wrong.
 
 **Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
 code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
@@ -46,3 +48,16 @@ beside them does not.
 | UT-33 | Class Struct | behaviour | A failed instance pick keeps the old class under an error about another selection (the catch in `OnObjectSelected` does not call `DropShownClass`); `[CLASSSTRUCT-FAILED-KEEPS-OLD]` covered the walk path only. | ✅ fixed 2026-11-18 (red `24de6dee`, then green) |
 | UT-34 | Snapshot / SPC | behaviour | **Addr** on an array-element row copies the owning object's base address while the status line names the element (`Class::Arr[3].Field`); HEX and +CE refuse the same row. | ✅ fixed 2026-11-18 (red `b453be76`, then green) |
 | UT-35 | Class Pivot | behaviour | DataTable source: **Open in Live Walker** and the two Locate buttons get the row's struct data address, where their handlers expect a UObject; `str.Pivot.ResultsHint` says the row hands its instance to CE. Not checked on a game. | ✅ fixed 2026-11-18 (red `4dea216d`, then green) |
+| UT-36 | Find Class Funcs | behaviour | With no AOBMaker bridge, or one that is busy or refused, **⚙ Disassemble in CE** is greyed out and its tooltip never opens (no `ShowOnDisabled`), and the tooltip is a fixed "not connected" rather than the bridge's real state. UT-27's corrected comment says the tooltip says why. | ⬜ |
+| UT-37 | Dump Explorer | text | `str.Tip.Dump.FindInstances` and `str.Dump.MetaNote` still promise "live instances" of the owning class; the hand-off runs the class-name search UT-31 described on seven other buttons (substring unless Exact match, templates included). | ⬜ |
+| UT-38 | Live Funcs | text | `str.Tip.LF.Trace.Enable` still says Start records every call, or with ticks only the ticked functions' calls. With Params? / Stack? choices and no ticks only the chosen calls are recorded, and chosen calls outside the ticks are recorded too -- what UT-02 corrected in `str.Tip.LF.Trace.Ticked`. | ⬜ |
+| UT-39 | Value Search, Force, Live Walker | text | Four texts still name an "Instance Finder" tab, which is labelled **Instances**: `str.Tip.VS.OpenInst`, `str.Force.TemplatesOnly` and its fallback in `ForceText`, and a Live Walker Locate-in-GWorld status. | ⬜ |
+| UT-40 | Dump Explorer | text | The live-match progress status says the game's classes are being scanned; the index and the final status (UT-20) cover classes, structs and enums. | ⬜ |
+| UT-41 | Live Walker | text | `str.Tip.CollapsePointers` lists the collapsed groups as pointer, struct and array-element groups; map element folders and the other offset groups collapse too. | ⬜ |
+| UT-42 | Value Search | text | The group truncation note says "raise Max" also when Max is at its 1,000,000 ceiling (what `PartialResultNotice.RaiseMaxClause` prevents elsewhere), and the single-mode note never names Max although Max caps a single-mode scan too; the comment on the shared Max box says the note says when to raise it. | ⬜ |
+| UT-43 | System | comment | `ExperimentalSettings`' summary still lists three tabs; `IExperimentalGate` says every holder hears `Changed` (one holder never subscribes), and its `IsEnabled` doc still says tabs. | ⬜ |
+| UT-44 | AOBMaker / ASM | comment | `Aura::GetFunctionCodeAddr`'s declaration comment in `Aura.h` still says a Blueprint function gives the interpreter; UT-11 corrected four other copies. | ⬜ |
+| UT-45 | AOBMaker | comment | `AobMakerUnavailable`'s header (rewritten with UT-24) says every place that reports the bridge unreachable takes its sentence from it; several still build their own. | ⬜ |
+| UT-46 | CE inject | comment | `scripts/UE5CEDumper.CT` and `dll/src/Methode.cpp` say a duplicate copy would be stopped by Heiter's pipe-existence guard; a later copy takes the game over (UT-21's reason). | ⬜ |
+| UT-47 | Classes | comment | `PartialResultNotice`'s `unit` doc ties the unit "class" to a loop that dedups by class; the Classes batch counts classes without deduping. | ⬜ |
+| UT-48 | this register | doc | UT-03 is filed as *behaviour* and "fixed (red, then green)"; the behaviour is kept by design (D4) and only the text changed. | ⬜ |
