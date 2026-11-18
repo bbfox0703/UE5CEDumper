@@ -692,6 +692,24 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
+    [Fact]
+    public async Task Vm_LiveMatch_Status_CountsLiveStructsAndEnums_BesideClasses()
+    {
+        // The bracketed row count includes struct, enum and member rows, so the type count before it names every kind
+        // the match keys on; a class and a struct sharing a short name are two types.
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            await vm.LoadFromPathAsync(path);
+
+            Assert.EndsWith("Live match: 1 class(es), 1 struct(s) and 1 enum(s) in the current game (9 of 9 rows matched).",
+                vm.StatusText, StringComparison.Ordinal);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [InlineData(4, DumpEntryKind.Struct, 1)]
     [InlineData(5, DumpEntryKind.Enum, 1)]
