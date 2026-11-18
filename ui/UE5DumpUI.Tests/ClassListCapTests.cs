@@ -152,9 +152,9 @@ public class RaiseMaxClauseTests
     public void EveryPanelThatOffersRaiseMaxGoesThroughIt()
     {
         // ⚠ A panel that re-derives the rule inline is the defect returning: correct on the day
-        // it is written, drifting the next time the ceiling moves. Instance Finder is in this
-        // list because it is where the phrase ORIGINATED and was the last one still saying it
-        // unconditionally — at 50,000 it advised raising a Max already at its maximum.
+        // it is written, drifting the next time the ceiling moves. Each panel listed here can
+        // advise raising its Max, so each must build that clause through RaiseMaxClause, which
+        // says nothing once the cap is at the ceiling.
         foreach (var vm in new[]
                  {
                      @"ui\UE5DumpUI\ViewModels\InstanceFinderViewModel.cs",
