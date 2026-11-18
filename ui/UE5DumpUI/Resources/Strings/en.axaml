@@ -582,13 +582,13 @@
     <sys:String x:Key="str.AobMaker.Disasm.Refused">Cheat Engine refused the push for {0}: nothing was added</sys:String>
     <sys:String x:Key="str.FunctionProps.AsmInCe">&#x2699; Disassemble in CE</sys:String>
     <!-- {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
-    <sys:String x:Key="str.Tip.FunctionProps.AsmOff">{0} — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin.</sys:String>
+    <sys:String x:Key="str.Tip.FunctionProps.AsmOff">{0} — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin. This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.</sys:String>
     <sys:String x:Key="str.FunctionProps.WriteSitesHeader">Write sites</sys:String>
     <sys:String x:Key="str.Tip.FunctionProps.WriteSitesHeader">The native instructions that write this field, found in the function's machine code: the first, and how many more. A field written in more places than the DLL keeps ends with '…'. Empty for a read and for Blueprint bytecode.</sys:String>
     <sys:String x:Key="str.FunctionProps.WriteSiteInCe">&#x2699; Write site in CE</sys:String>
     <sys:String x:Key="str.Tip.FunctionProps.WriteSiteInCe">Open the selected field's first write site in Cheat Engine's disassembler (via the AOBMaker CE plugin): the instruction that writes it, where an AOB or a code injection starts. Needs a selected row with a write site.</sys:String>
     <!-- {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
-    <sys:String x:Key="str.Tip.FunctionProps.WriteSiteInCeOff">{0} — Write site in CE opens the selected field's first write site in CE's disassembler through the plugin.</sys:String>
+    <sys:String x:Key="str.Tip.FunctionProps.WriteSiteInCeOff">{0} — Write site in CE opens the selected field's first write site in CE's disassembler through the plugin. This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.</sys:String>
     <sys:String x:Key="str.FunctionProps.CopyWriteSites">Copy write sites</sys:String>
     <sys:String x:Key="str.Tip.FunctionProps.CopyWriteSites">Copy the selected field's write-site addresses, one per line.</sys:String>
     <sys:String x:Key="str.FunctionProps.WriteSitesCopied">Copied {0} write site(s) of {1}</sys:String>

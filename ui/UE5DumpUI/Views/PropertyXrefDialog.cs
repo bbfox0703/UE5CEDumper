@@ -388,6 +388,19 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         Content = root;
 
         Opened += async (_, _) => await RunScanAsync();
+        Opened += async (_, _) => await ProbeAobMakerAsync();
+    }
+
+    // The bridge's flag is a cache that a probe or a push re-learns, and this modal dialog keeps the main window's
+    // ⟳ out of reach, so the dialog probes once as it opens and then re-sets the button: reopening the dialog checks
+    // the plugin again, which the greyed button's tooltip says. The probe is not cancelled when the dialog closes:
+    // the bridge would record the cancelled connect as its last failure.
+    private async Task ProbeAobMakerAsync()
+    {
+        if (SharedAobMaker is not { } bridge) return;
+        try { await bridge.CheckAvailabilityAsync(); }
+        catch (Exception) { /* the button follows whatever flag the bridge kept */ }
+        SyncDisasmButton();
     }
 
     private async Task RunScanAsync()
@@ -460,7 +473,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             + "list). Native functions only — Blueprint functions point at the shared "
             + "interpreter and will report no per-function code."
             : AobMakerUnavailable.Text(SharedAobMaker)
-            + " — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin.");
+            + " — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin."
+            + " This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.");
     }
 
     // "Disassemble in CE": resolve the UFunction's native code entry point

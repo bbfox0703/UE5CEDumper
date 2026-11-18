@@ -383,6 +383,19 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
 
         Content = root;
         Opened += async (_, _) => await RunScanAsync();
+        Opened += async (_, _) => await ProbeAobMakerAsync();
+    }
+
+    // The bridge's flag is a cache that a probe or a push re-learns, and this modal dialog keeps the main window's
+    // ⟳ out of reach, so the dialog probes once as it opens and then re-sets the buttons that read the flag:
+    // reopening the dialog checks the plugin again, which the greyed buttons' tooltips say. The probe is not
+    // cancelled when the dialog closes: the bridge would record the cancelled connect as its last failure.
+    private async Task ProbeAobMakerAsync()
+    {
+        if (SharedAobMaker is not { } bridge) return;
+        try { await bridge.CheckAvailabilityAsync(); }
+        catch (Exception) { /* the buttons follow whatever flag the bridge kept */ }
+        UpdateSelectionButtons();
     }
 
     private async Task RunScanAsync()
