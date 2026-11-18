@@ -61,7 +61,8 @@ public static class PartialResultNotice
     ///
     /// <para>Returns "" — never null — so a caller can concatenate it unconditionally.</para>
     /// </summary>
-    /// <param name="currentCap">The cap in force, i.e. what the panel's NumericUpDown reads.</param>
+    /// <param name="currentCap">The Max the operation was sent with, captured before it ran. Not the Max box read after
+    /// it: the box can change while the operation runs, and a later read then names a cap the result never had.</param>
     /// <param name="ceiling">The highest that control will accept: its NumericUpDown's Maximum.</param>
     public static string RaiseMaxClause(int currentCap, int ceiling)
         => currentCap < ceiling ? $", or raise Max above {currentCap:N0}" : "";
