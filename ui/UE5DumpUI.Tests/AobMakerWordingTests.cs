@@ -376,6 +376,42 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-65: each of the Props dialog's Cheat Engine buttons builds its tooltip
+    /// from its own two en.axaml keys, each named by one const: the action text while the bridge is up, otherwise its
+    /// Off template formatted with the bridge's sentence, which says what the button needs the plugin for and that
+    /// reopening the dialog checks again. A tooltip that dropped or swapped a template fails here. Pinned in source
+    /// because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Props_dialog_CE_button_tooltips_format_their_own_en_axaml_templates()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/FunctionPropsDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string ConstFor(string key)
+        {
+            Assert.False(string.IsNullOrEmpty(Res.Get(key)), $"en.axaml defines no {key}");
+            var decls = System.Text.RegularExpressions.Regex.Matches(
+                src, $@"const string (\w+) = ""{System.Text.RegularExpressions.Regex.Escape(key)}"";");
+            Assert.True(decls.Count == 1, $"FunctionPropsDialog.cs names {key} by {decls.Count} consts, not one");
+            return decls[0].Groups[1].Value;
+        }
+
+        foreach (var (button, onKey, offKey) in new[]
+                 {
+                     ("_btnAsm", "str.Tip.AobMaker.FuncAsm", "str.Tip.FunctionProps.AsmOff"),
+                     ("_btnSiteInCe", "str.Tip.FunctionProps.WriteSiteInCe", "str.Tip.FunctionProps.WriteSiteInCeOff"),
+                 })
+        {
+            string onConst = ConstFor(onKey), offConst = ConstFor(offKey);
+            int tip = src.IndexOf($"ToolTip.SetTip({button},", StringComparison.Ordinal);
+            Assert.True(tip >= 0, $"{button}'s tooltip is missing from FunctionPropsDialog.cs");
+            var call = System.Text.RegularExpressions.Regex.Replace(
+                src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)], @"\s+", " ");
+            var want = $" up ? Res.Get({onConst}) : Res.Format({offConst}, AobMakerUnavailable.Text(SharedAobMaker))";
+            Assert.EndsWith(want, call, StringComparison.Ordinal);
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-64: the property-xref / class-funcs dialog's greyed Disassemble tooltip
     /// is the en.axaml template str.Tip.Xref.DisasmOff, formatted with the bridge's own sentence as {0}, as the Props
     /// dialog's greyed tooltips are: none of its English stays in a C# literal, so a translation reaches it. Pinned in
