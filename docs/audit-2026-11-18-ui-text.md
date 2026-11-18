@@ -83,5 +83,5 @@ beside them does not.
 | UT-67 | Instances, Properties, Classes | behaviour | Instance Finder, Property Search and Classes build their raise-Max advice (and Instance Finder its "of max N") from the live cap after the await, not the cap the search was sent -- UT-56's defect in the three other panels. | ✅ fixed 2026-11-18 (red `2d2ba511`, then green) |
 | UT-68 | Instances, Properties, Classes, Value Search | comment | `PartialResultNotice.RaiseMaxClause`'s `currentCap` doc says "what the panel's NumericUpDown reads"; the right value is the cap the operation was sent with. | ✅ fixed 2026-11-18 |
 | UT-69 | Interesting Functions | comment | `FunctionPropsDialog`'s WrapPanel comment counts six buttons; the row holds five. | ✅ fixed 2026-11-18 |
-| UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ⬜ |
+| UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ✅ fixed 2026-11-18 |
 | UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ⬜ |
