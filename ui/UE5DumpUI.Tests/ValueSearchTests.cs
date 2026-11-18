@@ -2058,6 +2058,37 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-77: a Next Scan's status names the scan type the refine was sent with, not
+    /// one picked while the refine ran (the Scan Type picker stays enabled during a refine).</summary>
+    [Fact]
+    public async Task NextScanStatus_NamesTheScanTypeTheRefineWasSent()
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            SessionId = 2UL, SelectedDataType = ValueScanDataType.Int32, SelectedScanType = ValueScanType.Exact,
+            Value = "1",
+        };
+        string wired = "";
+        bool pickedWhileRefining = false;
+        // The pipe answers from inside the refine call, so the pick lands while the refine is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "refine_value_scan") return new JsonObject { ["ok"] = true };
+            wired = req["scan_type"]!.GetValue<string>();
+            pickedWhileRefining = vm.IsScanning;
+            vm.SelectedScanType = ValueScanType.Changed;
+            return new JsonObject { ["ok"] = true, ["session_id"] = 2UL, ["total"] = 3 };
+        });
+
+        await vm.NextScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(nameof(ValueScanType.Exact), wired);
+        Assert.True(pickedWhileRefining, "the Scan Type pick did not land while the refine ran");
+        Assert.Equal(ValueScanType.Changed, vm.SelectedScanType);
+        Assert.StartsWith($"Next Scan ({ValueScanType.Exact}):", vm.StatusText);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-75: an address Lookup's deep-descent caveat names the per-container element
     /// cap the lookup was sent with, not a cap the Options slider moved to while the lookup ran (the slider stays movable
     /// during a lookup).</summary>
