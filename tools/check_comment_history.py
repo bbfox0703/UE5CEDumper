@@ -57,6 +57,9 @@ HISTORY = [
     re.compile(r"\b(?:[Oo]bserved|[Ss]een|[Rr]eproduced|[Ff]ound|[Rr]eported) (?:on|in|by)\b[^.\n]{0,40}"
                r"\b20\d\d-\d\d-\d\d\b"),
     re.compile(r"\b(?:before|until|since) 202[6-9]-\d\d-\d\d\b"),             # this project's own dates
+    # Pass 3: an audit's or a review's finding id, the reference a [TAG] replaces.
+    re.compile(r"\baudit #\d+\b", re.IGNORECASE),                            # "(audit #5 A12)", "Audit #4 B34."
+    re.compile(r"\b[Rr]eview [A-Z]{1,6}(?:-[A-Z0-9]{1,6})*-\d+[a-z]?\b"),     # "(review DWS-DLL-1)", "review UI-6"
 ]
 
 
@@ -155,6 +158,12 @@ SELFTEST = [
     ("// found in the storage map, and UE erases that entry", 0),
     ("// set unconditionally until 2026-09-09", 1),
     ("// on by default since 2022-03-30 (WeakObjectPtr.h @5.1.0-release)", 0),  # an engine fact, its own date
+    ("// NO ULevel::Actors lookup (audit #5 F8).", 1),
+    ("// `anchor` has NO default (Audit #4 B21): the callers", 1),
+    ("// the address held another function (review DWS-DLL-1)", 1),
+    ("// [A3-B30-STALE-FLAG] cleared before the untick is deferred", 0),  # a tag is the allowed reference
+    ("// the audit trail keeps #3 of the entries", 0),
+    ("// open the Review UI dialog", 0),                                # a name, not a finding id
 ]
 
 
