@@ -6858,8 +6858,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === get_function_code_addr: UFunction->Func (native code entry point) ===
-        // For the xref dialog's "Disassemble in CE" — resolves the .text address
-        // CE should jump its disassembler to (native funcs) / interpreter (BP).
+        // The .text address CE's disassembler jumps to for a native function; "" for one
+        // not known to be native (a script / Blueprint function's Func is the shared
+        // interpreter, not its own code) or whose Func cannot be read (Aura::GetFunctionCodeAddr).
         if (cmd == Renge::CMD_GET_FUNCTION_CODE_ADDR) {
             std::string addrStr = request.value("func_addr", "");
             if (addrStr.empty()) return Renge::MakeError(id, "Missing func_addr").dump();

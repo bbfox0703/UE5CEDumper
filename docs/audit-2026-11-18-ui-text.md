@@ -21,7 +21,7 @@ beside them does not.
 | UT-08 | Teleport | text | `str.TP.HkHint` omits the Gravity Dir toggle and Get POV, which the hotkey list has. | ✅ fixed 2026-11-18 (red `ab5a1c5e`, then green) |
 | UT-09 | Call Trace | text | `str.CT.Detail.Object` / `str.CT.Detail.ObjectStale` label the object a function was called ON as "Calling object", which reads as the caller. | ✅ fixed 2026-11-18 (red `35b4bc89`, then green) |
 | UT-10 | System | behaviour | A refused UE-version override leaves the dropdown showing the refused version (`PointerPanelViewModel.ApplyOverrideAsync` catches the refusal without a revert). Not checked at runtime. | ✅ fixed 2026-11-18 (red `d85ffa31`, then green) |
-| UT-11 | AOBMaker / ASM | comment | Comments in `Helpers/AobMakerActions.cs` and `dll/src/Fern.cpp` say ASM on a Blueprint function "lands on the interpreter"; the DLL returns no native address for a non-native function. | ⬜ |
+| UT-11 | AOBMaker / ASM | comment | Comments in `Helpers/AobMakerActions.cs` and `dll/src/Fern.cpp` say ASM on a Blueprint function "lands on the interpreter"; the DLL returns no native address for a non-native function. | ✅ fixed 2026-11-18 |
 | UT-12 | System | text | The GWorld / &GEngine **SYM** tooltips omit that they register from the game's export when there is one; the GObjects tooltip says it. | ⬜ |
 | UT-13 | System | comment | `Views/PointerPanel.axaml`'s comment on the experimental switch gives opacity 0.2 and a tooltip naming three tabs; the `ExperimentalEnabled` summary lists only three tabs. | ⬜ |
 | UT-14 | Live Walker | text | `str.Tip.StringLength` says it applies to Copy CE XML / Copy CE Field; String Len also sets the CSX string size and the +CE / +CE Field (flat) string records. | ⬜ |

@@ -298,8 +298,8 @@ internal static class AobMakerActions
     /// record labelled "<paramref name="funcName"/> (code)" and move CE's disassembler there. The sequence is the one
     /// <c>PropertyXrefDialog</c>'s "Disassemble in CE" introduced; that dialog keeps its own copy because it colours
     /// each outcome.
-    /// <para>A native function lands on its exec thunk; a Blueprint one on the script interpreter, which is still the
-    /// honest answer to "what runs when this is called".</para>
+    /// <para>A native function lands on its exec thunk. A Blueprint function has no code of its own (its Func is the
+    /// shared script interpreter), so the DLL returns no address for it and the text says so.</para>
     /// <para>The two pushes are not interchangeable, so the text says which one failed: the record is what the user
     /// right-clicks, the navigation is what they look at.</para>
     /// </summary>

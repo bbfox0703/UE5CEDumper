@@ -454,8 +454,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
 
     // "Disassemble in CE": resolve the UFunction's native code entry point
     // (UFunction->Func) via the DLL, then drop a labeled CE address-list row and
-    // jump CE's disassembler there. Native funcs land on the execXxx thunk; BP
-    // funcs land on the interpreter (noted to the user).
+    // jump CE's disassembler there. Native funcs land on the execXxx thunk; a BP
+    // func has no address of its own, and the status line says so.
     private async void OnDisassembleClicked(object? sender, RoutedEventArgs e)
     {
         if (_grid.SelectedItem is not PropertyXrefMatch x || string.IsNullOrEmpty(x.FunctionAddress)) return;

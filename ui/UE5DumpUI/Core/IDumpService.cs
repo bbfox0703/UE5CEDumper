@@ -214,8 +214,9 @@ public interface IDumpService
         CancellationToken ct = default);
 
     // Resolve a UFunction's native code entry point (UFunction->Func) — the .text
-    // address for the xref dialog's "Disassemble in CE" push. Returns "" if the
-    // offset isn't detected or the slot isn't a code pointer.
+    // address for a "Disassemble in CE" push. Returns "" for a function not known to be
+    // native (a Blueprint one's Func is the shared interpreter), or if the offset isn't
+    // detected or the slot isn't a code pointer.
     Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default);
 
     // Reverse edge: the properties a single UFunction reads/writes.
