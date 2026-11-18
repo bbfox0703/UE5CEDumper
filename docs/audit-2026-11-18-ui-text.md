@@ -94,4 +94,4 @@ beside them does not.
 | UT-78 | tools | doc | `tools/verify/pipe_client.py`'s docstring still says a deployed proxy ignores a fresh injection (UT-70 corrected the other copies). | ✅ fixed 2026-11-18 |
 | UT-79 | working-lessons | doc | Trap 1's check (compare `build_number` with the build just made) passes in the take-over it now describes; `get_pointers.load_mode` is what tells a proxy from an injected copy. | ✅ fixed 2026-11-18 |
 | UT-80 | handover | doc | `docs/handover.md`'s pipe section says a stale proxy answers while the fresh DLL sits inert; a fresh copy takes over, or serves its own pipe beside a pre-contract proxy. | ✅ fixed 2026-11-18 |
-| UT-81 | Classes | comment | A comment UT-71 rewrote says a copy built by string concatenation fails the test; only a copy keeping the phrase in one literal does. | ⬜ |
+| UT-81 | Classes | comment | A comment UT-71 rewrote says a copy built by string concatenation fails the test; only a copy keeping the phrase in one literal does. | ✅ fixed 2026-11-18 |

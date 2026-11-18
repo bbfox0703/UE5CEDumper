@@ -170,8 +170,9 @@ public class RaiseMaxClauseTests
             // a comment can satisfy is not a test.
             Assert.Contains("PartialResultNotice.RaiseMaxClause(", src);
 
-            // And the sentence itself is built in exactly ONE place. The phrase is banned outright,
-            // not just its interpolated form, so a copy built by string concatenation fails too.
+            // And the clause's wording is left to RaiseMaxClause: the phrase is banned outright from
+            // these files, not just its interpolated form, so a copy that keeps the phrase in one
+            // literal fails, whether it interpolates the number or concatenates it on.
             Assert.DoesNotContain("or raise Max above", src);
         }
     }
