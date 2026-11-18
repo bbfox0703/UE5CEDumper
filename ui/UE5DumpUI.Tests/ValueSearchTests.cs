@@ -2058,6 +2058,46 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-74: a capped Property Search's status line takes its [deep] tag and its
+    /// "Game classes only" advice from the values the search was sent with, not from the two check boxes as they stand
+    /// when the search returns (both stay clickable during a search).</summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task PropertySearchStatus_NamesTheGameOnlyAndDeepTheSearchWasSent(bool gameOnly, bool deep)
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new PropertySearchViewModel(svc, new MockLoggingService())
+        {
+            SearchQuery = "Health", GameClassesOnly = gameOnly, DeepSearch = deep,
+        };
+        bool wiredGameOnly = !gameOnly, wiredDeep = !deep;
+        bool flippedWhileSearching = false;
+        // The pipe answers from inside the search call, so both boxes flip while the search is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "search_properties") return new JsonObject { ["ok"] = true };
+            wiredGameOnly = req["game_only"]!.GetValue<bool>();
+            wiredDeep = req["deep"]!.GetValue<bool>();
+            flippedWhileSearching = vm.IsSearching;
+            vm.GameClassesOnly = !gameOnly;
+            vm.DeepSearch = !deep;
+            return new JsonObject { ["ok"] = true, ["total"] = 200, ["truncated"] = true };
+        });
+
+        await vm.SearchCommand.ExecuteAsync(null);
+        string status = vm.StatusText;
+        vm.Dispose();
+
+        Assert.Equal(gameOnly, wiredGameOnly);
+        Assert.Equal(deep, wiredDeep);
+        Assert.True(flippedWhileSearching, "the check boxes did not flip while the search ran");
+        if (deep) Assert.Contains(" [deep]", status);
+        else Assert.DoesNotContain(" [deep]", status);
+        if (gameOnly) Assert.DoesNotContain("Game classes only", status);
+        else Assert.Contains("tick \"Game classes only\"", status);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-67: Instances, Properties and Classes build a capped result's note from the
     /// Max the search was sent with, not a value typed into the Max box while the search ran (the box stays editable
     /// during a search).</summary>
