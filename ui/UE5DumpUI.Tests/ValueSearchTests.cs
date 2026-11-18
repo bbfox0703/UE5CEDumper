@@ -2058,6 +2058,64 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-86: a First Scan or Next Scan request is built from the scan type, data
+    /// type and values its own checks passed, not ones picked while the diagnostics probe opens between those checks
+    /// and the send (the pickers and boxes stay editable then).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScanRequest_CarriesTheInputsItsChecksPassed(bool next)
+    {
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            SessionId = next ? 2UL : 0UL, SelectedDataType = ValueScanDataType.Int32,
+            SelectedScanType = next ? ValueScanType.Changed : ValueScanType.Exact, Value = next ? "" : "1",
+            SelectedRoundingMode = FloatRoundMode.Trunc,
+        };
+        string scanCmd = next ? "refine_value_scan" : "begin_value_scan";
+        JsonObject? wired = null;
+        bool editedBeforeSend = false;
+        // The probe's opening get_diagnostics is answered from inside the scan command, after its checks and
+        // before its request is built, so the edits land in that window. FString takes no rounding mode, and a
+        // blank Value (and Value2, for Between) would have failed the checks.
+        pipe.SetHandler(req =>
+        {
+            string cmd = req["cmd"]?.GetValue<string>() ?? "";
+            if (cmd == "get_diagnostics" && wired is null && !editedBeforeSend)
+            {
+                editedBeforeSend = true;
+                vm.SelectedDataType = ValueScanDataType.FString;
+                vm.SelectedScanType = next ? ValueScanType.Exact : ValueScanType.Between;
+                vm.Value = "";
+            }
+            if (cmd != scanCmd) return new JsonObject { ["ok"] = true };
+            wired = (JsonObject)req.DeepClone();
+            return new JsonObject { ["ok"] = true, ["session_id"] = 2UL, ["total"] = 0 };
+        });
+
+        if (next) await vm.NextScanCommand.ExecuteAsync(null);
+        else await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.True(editedBeforeSend, "the edits did not land between the checks and the send");
+        Assert.NotNull(wired);
+        var request = wired!;
+        Assert.Equal(next ? nameof(ValueScanType.Changed) : nameof(ValueScanType.Exact),
+                     request["scan_type"]?.GetValue<string>());
+        Assert.Equal(FloatRoundModeWire.ToWire(FloatRoundMode.Trunc), request["rounding_mode"]?.GetValue<string>());
+        Assert.False(request.ContainsKey("value2"), "value2 goes out only for Between");
+        if (next)
+        {
+            Assert.False(request.ContainsKey("value"), "a Changed refine sends no value");
+            Assert.StartsWith($"Next Scan ({ValueScanType.Changed}):", vm.StatusText);
+        }
+        else
+        {
+            Assert.Equal(nameof(ValueScanDataType.Int32), request["data_type"]?.GetValue<string>());
+            Assert.Equal("1", request["value"]?.GetValue<string>());
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-77: a Next Scan's status names the scan type the refine was sent with, not
     /// one picked while the refine ran (the Scan Type picker stays enabled during a refine).</summary>
     [Fact]
