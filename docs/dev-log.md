@@ -27,6 +27,53 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (build 3743) — Review fixes: an AI's raw write cannot reach another DLL copy's mailbox, walk_class refuses what is no class, See-through survives a DLL hand-off `[WRITEMEM-ANY-COPY]` `[WALKCLASS-NOT-STRUCT]` `[SEETHRU-HANDOFF-LEFTOVER]` `[WALKCLASS-STOP-EPOCH]` `[WALKCLASS-STOP-OFFSETS]` `[MCP-RELEASE-EXPERIMENTAL-OFF]` `[MCP-WRITE-SITES-DESC]` `[MCP-DOCS-OLDER-CC]` `[TRACE-DROPPED-ENTRY]` `[LAND-MEMO-RESIDENT]`
+
+- **What changes:**
+  - **An AI's raw memory write** (`write_memory`) is refused inside ANY copy of UE5Dumper loaded in the game, not only
+    the copy answering it. After a later copy takes over it serves the earlier copy's Cheat Engine mailbox, and a write
+    there would have run a game function as Cheat Engine's, past the AI's deny list. The check walks the range's memory
+    regions, so it holds while the game loads or unloads a module.
+  - **walk_class** (the Class/Struct panel, MCP `read_class`) refuses a live object that is no class, struct or
+    function: "Not a class or struct at ... -- it holds X (Y); walk_class reads a class, a struct or a function". That
+    covers an actor at a freed class's address after a level change, and an Enum row in the object tree, which used to
+    be walked as a struct.
+  - **See-through across a DLL hand-off:** when a later copy takes over while actors See-through hid could not be shown
+    again (the game thread was stalled), the later copy takes them over and its deferred restore shows them once the
+    game thread answers; they used to stay hidden for the session. New C ABI export `UE5_HandOverHiddenActors` (65
+    exports), listed in the four proxy .def files.
+  - **The class-walk memo's stop** on an address whose contents keep changing survives a re-init that re-derives the
+    same offsets, and the address is counted once; a re-init that corrects the offsets the identity check reads lifts it.
+  - **MCP:** with the UI's experimental features off, the AI can still turn off or release what it holds (Fly, Keep
+    Foreground, See-through, a force-field job); turning on stays refused. `read_function_props` tells the model which
+    write sites are proven to write the field. docs/mcp.md and MCP-Setup.html say what an older Claude Code gets (the
+    write tools, asked about on every call, no grants), and the no-write-tools row gives each cause its own remedy.
+  - **Call Trace:** the status line says a dropped return draws the later calls on its thread inside its call, and a
+    call with no return, in a trace with records left out, names a dropped return as a possible reason.
+- **Correction to the 3741 entry** (append-only, so here): its "Live Funcs records stay whole when the trace buffer
+  wraps" overstates `[LINIE-SEQ-LAST]`, which is narrowed, not closed -- two writers overlapping on one slot can still
+  leave a mixed record under the newer number. Its "every confirmed finding was fixed red then green" holds for the
+  code fixes; the rig, test and comment fixes went in commits of their own, test fixes checked by a mutation run.
+- **Reviewed:** a seam review of PR #561's product code and three rounds on each round's fixes (`wf_1b9e937b-a0d`,
+  `wf_bbd1bbfe-20d`, `wf_846108f2-663`, `wf_eec7e89a-a4a`): 13, 9, 4 and 2 findings, all fixed -- code red then green,
+  tests and docs in their own commits.
+- **Proven live** on DumperTest Shipping, build 3742: walk_class's kind gate 6/6 (`walkclass_kind_live.py`), L49 PASS,
+  A9 6/6, bool / V1c 13/13, MCP raw writes 28/0 (the DLL's own mailbox refused, -25), MCP writes 42/0 (the server's
+  Fly OFF goes through with the experimental switch off). 3743 changes only when the deferred restore gives up:
+  See-through's restore set on DumperTest Development, arms (a) during motion, (b) on a stalled game thread and (c) a
+  yanked connection, each against a negative control: PASS. Not run live: the hand-off path and the any-copy write
+  refusal need a second DLL copy injected through Cheat Engine; covered by tests and source pins.
+- **Tests:** C# 8429 passed, 1 skipped (one run of the full suite failed `Listing_sees_a_live_pipe_without_connecting_to_it`,
+  untouched here, which passed alone three times and on the next full run: `[AOBM-LISTING-FLAKE]`); C++ dll_core_test
+  1663, dll_helpers_test 4262; 39 gates.
+- AOT UI 62,715,904 bytes (sha256 391b22b707dab7e4...); UE5Dumper.dll 3,853,824 bytes (sha256 4f0e152976dc93f1...).
+
+## 2026-11-18 (build 3742) — The review fixes before round 9 `[SEETHRU-HANDOFF-LEFTOVER]`
+
+Superseded by 3743 before it left this machine: the deferred restore could still give up on actors adopted during its
+last pass that it never tried (review `wf_eec7e89a-a4a` R9-1).
+- AOT UI 62,715,904 bytes (sha256 e180529d64b0331f...); UE5Dumper.dll 3,853,824 bytes (sha256 19544761cbf72893...).
+
 ## 2026-11-18 (build 3741) — A class at a reused address is walked again; Live Funcs records stay whole when the trace buffer wraps `[WALKCLASS-MEMO-REUSE]` `[LINIE-SEQ-LAST]` `[TRACE-DROPPED-ENTRY]` `[GROUP-RAW-WIDTH-INTERN]`
 
 - **What changes:**
