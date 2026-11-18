@@ -173,6 +173,34 @@ public class ConvenienceCopyClaimTests : IDisposable
 
     private SnapshotStore Store() => new(new MockPlatformService(_dir));
 
+    [Fact]
+    public async Task Snapshot_and_Spc_Addr_refuse_an_array_element_row_as_HEX_and_PlusCE_do()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] An array-element row carries its owner's base at offset 0: copying it would put the
+        // owner's address on the clipboard under a status line that names the element.
+        const string element = "Inventory[3].Count";
+        var p = new MockPlatformService(_dir);
+        var store = Store();
+        var snap = new SnapshotViewModel(new StubDumpService(), store, _log, platform: p);
+        var spc = new SpcQueryViewModel(store, _log, p);
+
+        await snap.CopyDiffAddressCommand.ExecuteAsync(
+            new SnapshotDiffRow { ObjAddr = "0x7FF600001000", PropOffset = 0, ClassName = "C", PropName = element });
+        await snap.CopyGroupSlotAddressCommand.ExecuteAsync(
+            new GroupSlotMatch { Addr = "0x7FF600001000", ClassName = "C", FieldName = element });
+        await spc.CopyAddressCommand.ExecuteAsync(
+            new SpcResultRow { ObjAddr = "0x7FF600001000", PropOffset = 0, ClassName = "C", PropName = element });
+        await spc.CopyGroupSlotAddressCommand.ExecuteAsync(
+            new GroupSlotMatch { Addr = "0x7FF600001000", ClassName = "C", FieldName = element });
+
+        Assert.Null(p.LastClipboard);   // nothing reached the clipboard
+        string refused = AobMakerActions.NoOwnAddressText(element);
+        Assert.Equal(refused, snap.DiffStatusText);
+        Assert.Equal(refused, snap.GroupStatusText);
+        Assert.Equal(refused, spc.StatusText);
+        Assert.Equal(refused, spc.GroupStatusText);
+    }
+
     /// <summary>The line a refused copy leaves: no claim, the imperative, and the text that did not arrive.</summary>
     private static void AssertNotClaimed(string status, MockPlatformService p)
     {
