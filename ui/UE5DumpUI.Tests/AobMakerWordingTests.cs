@@ -376,6 +376,35 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-52: the property-xref / class-funcs dialog re-sets its Disassemble button
+    /// at construction, so the tooltip exists before the first scan ends; after a push, in its finally; and in the click
+    /// guard that finds the bridge's flag false, so neither a push nor that guard leaves an enabled button or the action
+    /// text over a bridge that is down. Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_is_reset_at_construction_after_a_push_and_by_the_bridge_down_guard()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from PropertyXrefDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var ctor = Body("private PropertyXrefDialog(IDumpService dump, IPlatformService platform, bool classMode,");
+        Assert.Contains("\n        SyncDisasmButton();\n", ctor, StringComparison.Ordinal);
+
+        var click = Body("private async void OnDisassembleClicked(");
+        Assert.Matches(@"finally\s*\{\s*SyncDisasmButton\(\);\s*\}", click);
+        int guard = click.IndexOf("if (bridge == null || !bridge.IsAvailable)", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "OnDisassembleClicked has no guard for a bridge that is down");
+        int bail = click.IndexOf("return;", guard, StringComparison.Ordinal);
+        int resync = click.IndexOf("SyncDisasmButton();", guard, StringComparison.Ordinal);
+        Assert.True(resync > guard && resync < bail, "the guard returns without re-setting the Disassemble button");
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-50: the two AOBMaker dialogs probe the bridge once as they open and then
     /// re-set their Cheat Engine buttons, and each greyed tooltip says reopening the dialog checks again: the modal
     /// dialog keeps the main window's refresh out of reach. Pinned in source because no unit test here can open a
