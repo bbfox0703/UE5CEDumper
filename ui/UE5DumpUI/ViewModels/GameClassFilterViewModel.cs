@@ -377,8 +377,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
             }
             StatusText = $"Find Func done: {withFuncs}/{targets.Count} taken by a function"
                        + (cached > 0 ? $" ({cached} cached)." : ".")
-                       + PartialResultNotice.BatchPartialClause(partial, targets.Count)
-                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap);
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count, "class", units: "classes")
+                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap, "class", units: "classes");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
