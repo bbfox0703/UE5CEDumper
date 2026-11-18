@@ -126,7 +126,10 @@ public partial class GameClassFilterViewModel : ViewModelBase
             IsLoading = true;
             StatusText = "Loading...";
 
-            var result = await _dump.ListClassesAsync(gameOnly: GameClassesOnly,
+            // The log line names the Game classes only value this load was sent with: the box stays clickable while
+            // the load runs.
+            bool gameOnlySent = GameClassesOnly;
+            var result = await _dump.ListClassesAsync(gameOnly: gameOnlySent,
                                                       limit: ClassListCap);
 
             _allResults = result.Classes;
@@ -153,7 +156,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
                   + PartialResultNotice.RaiseMaxClause(result.RequestedLimit, Constants.MaxSearchCap)
                 : "";
             StatusText = $"{result.Total:N0} classes shown of {result.TotalClasses:N0} total (scanned {result.ScannedObjects:N0} objects){capNote}";
-            _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +
+            _log.Info($"ListClasses: {result.Total} results (gameOnly={gameOnlySent}, " +
                       $"scanned={result.ScannedObjects}, truncated={result.Truncated})");
         }
         catch (Exception ex)
