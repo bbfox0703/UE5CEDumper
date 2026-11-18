@@ -490,9 +490,11 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             // ⛔ NOT a bare `return` — that is a click that does nothing, says nothing, and
             // leaves the previous status line standing. The button is normally disabled in this
             // state (`SyncDisasmButton` gates it on the same cached flag), so the guard reads defensive; but
-            // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
-            // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
-            // Engine with the dialog up and the button stays enabled over a stale true.
+            // `IsAvailable` is a CACHE that a probe or a push anywhere in the app can rewrite, and the button
+            // follows it when SyncDisasmButton runs. A probe or push still in flight when SyncDisasmButton last
+            // ran can turn the flag false after it, over a button left enabled. Killing Cheat Engine with the
+            // dialog up does not by itself clear the flag: the click passes this guard, the push fails, and the
+            // refusal branch below says so.
             //
             // Reporting it makes the failure visible to a user AND testable. Same colour and
             // shape as the refusal branch below, different wording because nothing was
