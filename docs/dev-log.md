@@ -27,6 +27,47 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (build 3745) — The UI's text says what the program does: 35 places the Wiki update found `[UI-TEXT-AUDIT-2026-11-18]`
+
+- **What changes**, by panel (each row and its commits: [audit-2026-11-18-ui-text.md](audit-2026-11-18-ui-text.md)):
+  - **Live Funcs:** an unloaded row's tooltip no longer says it cannot be traced (a function is followed by name);
+    the Trace tooltip says what a Start records with ticks, with Params? / Stack? choices, and with neither; the
+    Parameters row's **Clear** has a tooltip naming both columns it empties; the parameter copies are said to show in
+    the Bytes tab too; Δ prints `-N` in every locale.
+  - **Teleport:** the hotkey hint lists Get POV and Gravity Dir. **Call Trace:** the object line names the object the
+    function was called on, not a caller.
+  - **System:** a refused UE-version override puts the dropdown back to the version in force; the GWorld and &GEngine
+    **SYM** tooltips say they register from the game's export when there is one.
+  - **Live Walker:** a refused field write shows the DLL's own sentence, without "DLL error:" or an internal command
+    name; the String Len, Options, Functions filter and Collapse Pointer Nodes tooltips name everything they apply to
+    (Options: each setting is saved).
+  - **Dump Explorer:** "Live match" counts classes, structs and enums alike; Find Instances names the **Instances** tab.
+  - **Properties:** the max-results tooltip quotes the marker the status line prints; Freeze's tooltip gives the
+    AOBMaker bridge's real state (busy, refused or missing) and shows on the greyed button; the type refusal names
+    enums.
+  - **Console:** Enter in the command box runs the command; the tooltips name the Invoke dialog by its title.
+  - **Value Search:** group mode shows **Game classes only** and **Max:**, which its scan already used; the scan-type
+    tooltip and its refusal list Between.
+  - **Classes, Instances:** the buttons that hand a class to Instances say what that search returns (class names that
+    contain it, templates included); the batch Find Func counts classes.
+  - **Class Struct:** a failed instance pick drops the old class instead of leaving it under the error.
+  - **Snapshot, SPC:** **Addr** on an array-element row is refused, as HEX and +CE are.
+  - **Class Pivot:** on the DataTable source, Open in Live Walker and both Locates are off (a row is struct data, not
+    an object).
+  - **Docs and comments:** docs/mcp.md's troubleshooting quotes the server's own texts; stale comments corrected (ASM
+    on a Blueprint function, the experimental switch, the Disassemble button, why an already-loaded copy means connect,
+    including a comment line in the CE Inject record's Lua); docs/tips.md.
+- **Kept as they are, by the maintainer's decision:** the experimental switch's look (UT-06), and Inject connecting to a
+  copy that is already loaded rather than injecting a second (UT-21).
+- **Correction to the 3729 entry** (append-only, so here): "The UI and the MCP server reconnect" holds for the MCP
+  server, whose next call reconnects; the UI window does not reconnect by itself -- click **Connect**.
+- **Tests:** the 28 text and behaviour rows each went red, then green; C# 8467 passed (1 skipped); C++ dll_core_test
+  1663, dll_helpers_test 4262, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 37; 40 gates. Read
+  from source and not run on a game.
+- Build 3744 was published before the last comment fix, which changes a comment line in the Lua the CE Inject record
+  writes; it is not released.
+- AOT UI 62,734,336 bytes (sha256 8bee8c9d6adc564f...); UE5Dumper.dll 3,853,824 bytes (sha256 e94b72a2921d6e4c...).
+
 ## 2026-11-18 (no build change) — History cut out of the code comments, pass 2; stacked doc blocks `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - `check_comment_history` counts more narrative shapes -- "Nth review", "review N of <hash>", a sentence opening on
