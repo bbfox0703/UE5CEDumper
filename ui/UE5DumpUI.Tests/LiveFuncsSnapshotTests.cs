@@ -403,6 +403,24 @@ public class LiveFuncsSnapshotTests
 
     // ---- U9 ----
 
+    /// <summary>Nothing ticked, but a function chosen for parameters: the Start traces only the chosen calls, and the
+    /// ticked count's tooltip says so rather than "every call".</summary>
+    [Fact]
+    public async Task The_ticked_tooltip_says_a_choice_without_ticks_traces_only_the_chosen_calls()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Contains(Line("str.LF.Trace.RecordingSnapOnly", vm.TraceBufferMb, 1), vm.StatusText);
+
+        string tip = Line("str.Tip.LF.Trace.Ticked");
+        Assert.DoesNotContain("with none ticked, every call", tip, StringComparison.Ordinal);
+        Assert.Contains("chosen", tip, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_trace_says_what_it_followed_by_name_snapshots_only_or_every_call()
     {
