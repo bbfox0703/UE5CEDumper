@@ -53,12 +53,11 @@ extern "C" void UE5_Shutdown();
 // Mailbox — shared memory interface for CE Lua
 #include "Mimic.h"
 
-// No handle is kept for the auto-start thread (audit #5 AB8). Nothing ever joins
-// it: DLL_PROCESS_DETACH is a deliberate no-op (a join under the loader lock would
+// No handle is kept for the auto-start thread. Nothing ever joins it:
+// DLL_PROCESS_DETACH is a deliberate no-op (a join under the loader lock would
 // deadlock) and UE5_Shutdown lives in another translation unit that could not reach
-// a file-static here anyway. The two comments that used to claim a shutdown join
-// were wrong, and the stored HANDLE was leaked for the process lifetime. The thread
-// runs detached; its CreateThread handle is closed immediately below.
+// a file-static here anyway. The thread runs detached; its CreateThread handle is
+// closed immediately below.
 
 #ifdef UE5_PROXY_BUILD
 // ── Proxy mutual exclusion ─────────────────────────────────────────────────
@@ -133,7 +132,7 @@ static void AutoStartBody()
     bool ok = UE5_StartPipeServer();
     {
         // [DUMPER-SECOND-COPY-AUTOSTART] A later copy took over while the pipe started: its hand-off published this
-        // mailbox's state already (review R2-AUTOSTART-PUBLISH-AFTER-YIELD).
+        // mailbox's state already.
         const auto publishLock = Land::LockStart();
         if (Land::RefusesStart(Land::State())) {
             LOG_WARN("DllMain ProxyStart: a later copy of the dumper took over while the pipe started -- publishing "
@@ -151,9 +150,8 @@ static void AutoStartBody()
 // If g_isCEPlugin is still false after the delay, we're in a game process and
 // call UE5_AutoStart() to scan for GObjects/GNames and start the pipe server.
 //
-// This eliminates the need for CE Lua to call UE5_Init via executeCodeEx,
-// which was timing out due to the AOB scan taking longer than CE's remote-
-// thread timeout.
+// So CE Lua need not call UE5_Init via executeCodeEx: the AOB scan takes longer
+// than CE's remote-thread timeout.
 static void AutoStartBody();
 
 // Guarded entry: AutoStartBody runs the whole AOB scan + pipe start, which allocates
@@ -180,18 +178,15 @@ static void AutoStartBody()
         return;
     }
 
-    // Belt and braces for the same race (B34). CEPlugin_GetVersion now claims plugin
-    // identity, which closes the ordinary window — but "did a human tick a checkbox in
-    // under a second" is not a condition worth betting a full AOB scan of the WRONG
-    // PROCESS on, and identity is never claimed at all when the DLL is injected into CE
-    // by hand rather than loaded as a plugin. Cheat Engine is never a scan target.
+    // Belt and braces for the same race. CEPlugin_GetVersion claims plugin identity,
+    // which closes the ordinary window — but "did a human tick a checkbox in under a
+    // second" is not a condition worth betting a full AOB scan of the WRONG PROCESS on,
+    // and identity is never claimed at all when the DLL is injected into CE by hand
+    // rather than loaded as a plugin. Cheat Engine is never a scan target.
     //
-    // PREFIX match, not an exact-name list. The first version of this guard listed
-    // "cheatengine-x86_64.exe" / "cheatengine-i386.exe" / "Cheat Engine.exe" and was
-    // verified against a live capture that named the real executable:
-    // **cheatengine-x86_64-SSE4-AVX2.exe** — a build variant none of those three
-    // matched, so the DLL scanned CE for 5.8 s and opened \\.\pipe\UE5DumpBfx inside it.
-    // CE ships several suffixed variants and can add more; the stable part is the stem.
+    // PREFIX match, not an exact-name list: CE ships several suffixed variants
+    // (**cheatengine-x86_64-SSE4-AVX2.exe**, say) and can add more; the stable part is
+    // the stem.
     {
         wchar_t hostPath[MAX_PATH] = {};
         if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
@@ -201,8 +196,7 @@ static void AutoStartBody()
                 // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — and this leaf is
                 // NOT ASCII by construction: IsCheatEngineExeName anchors only the first 11
                 // characters (`_wcsnicmp(leaf, L"cheatengine", 11)`), leaving the rest free.
-                // Users rename CE builds routinely — `cheatengine-x86_64-SSE4-AVX2.exe` is
-                // itself the rename this gate was widened for — so `cheatengine-測試.exe`
+                // Users rename CE builds routinely, so under `%ls` a `cheatengine-測試.exe`
                 // would lose the entire warning explaining why auto-start was skipped.
                 const std::string leafU8 = Utf8Helpers::EncodeUtf16(leaf, wcslen(leaf));
                 LOG_WARN("DllMain AutoStart: host process is '%s' — Cheat Engine is never "
@@ -221,13 +215,10 @@ static void AutoStartBody()
 
     // Is another UE5Dumper instance already serving? [RELAUNCHPIPE-2026-08-19]
     //
-    // ⚠ This is the SECOND copy of that defect, on the CE / manual-inject path. It used to skip
-    // the whole auto-start — init AND pipe server — permanently, on one CreateFileW. On a title
-    // that RELAUNCHES ITSELF the holder is the process that is busy dying, so the survivor was
-    // left un-scanned and unreachable for the rest of its life. Measured with two DumperTest
-    // instances: the second logged `skipping auto-start` and never recovered when the first
-    // exited. (The OCTOPATH report hit the sibling copy in Frieren's UE5_StartPipeServer, which
-    // the proxy path calls directly — same bug, different entry point.)
+    // ⚠ A held pipe must not skip the whole auto-start — init AND pipe server — permanently, on
+    // one CreateFileW. On a title that RELAUNCHES ITSELF the holder is the process that is busy
+    // dying, and the survivor would be left un-scanned and unreachable for the rest of its life.
+    // The same holds for Frieren's UE5_StartPipeServer, which the proxy path calls directly.
     // [PIPE-PER-PROCESS-2026-11-06] The name is this process's own, so the holder is a second copy
     // of the DLL here (a stale proxy beside a fresh injection), or a process that created this
     // process's name. A busy pipe counts as held, with the holder unknown.
@@ -299,7 +290,7 @@ static void AutoStartBody()
     // The BLOCKING form on purpose: this already IS the dedicated auto-start
     // thread, so the exported spawn-and-return entry point would only hand the
     // work to a second thread and leave this one to exit immediately. The
-    // asynchrony that AB2 needs is for CE's remote stub, which has a 10 s
+    // asynchrony of that entry point is for CE's remote stub, which has a 10 s
     // deadline; nothing here does.
     LOG_INFO("DllMain AutoStart: game process — running auto-start on this thread");
     UE5_AutoStartBlocking();
@@ -348,14 +339,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         // auto-start thread; the only thing this DLL still does is service
         // its OS-API export forwarders (Lugner.cpp / Lugner_Dinput8.cpp).
         //
-        // The name is per-PROCESS, and that is the whole point — the comment above has
-        // always said so, but the name used to be `Global\…`, which is a different
-        // thing in two ways (B47). Creating a `Global\` object needs
-        // SeCreateGlobalPrivilege, which a non-elevated game does NOT have: CreateMutexW
-        // returned NULL, the guard was skipped entirely, and the same-process dedup it
-        // exists for silently never worked. When it DID work (elevated game) it was
-        // worse — machine-wide, so a second instrumented game anywhere on the system
-        // turned this proxy passive. Local\ + PID is the scope the design intends.
+        // The name is per-PROCESS, and that is the whole point. A `Global\…` name is wrong
+        // in two ways. Creating a `Global\` object needs SeCreateGlobalPrivilege, which a
+        // non-elevated game does NOT have: CreateMutexW returns NULL, the guard is skipped
+        // entirely, and the same-process dedup it exists for silently never works. Where it
+        // does work (elevated game) it is worse — machine-wide, so a second instrumented
+        // game anywhere on the system turns this proxy passive. Local\ + PID is the scope
+        // the design intends.
         {
             wchar_t mutexName[64];
             swprintf_s(mutexName, L"Local\\UE5CEDumper_PrimaryProxy_%lu",
@@ -369,9 +359,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                 // Cannot log — Sein is deliberately not initialized in passive mode, and
                 // initializing it is exactly what this branch must avoid. NOTHING records
                 // the pairing at run time: the first instance does not know a second one
-                // attached, so a double leaves no trace in the logs. (An earlier comment
-                // here said the first instance records it "below" -- no such code exists;
-                // [HEITER-PAIRING-COMMENT].) Doubles are handled on DISK instead: the Proxy
+                // attached, so a double leaves no trace in the logs [HEITER-PAIRING-COMMENT].
+                // Doubles are handled on DISK instead: the Proxy
                 // Deploy grid warns "Multiple proxy DLLs deployed", and Deploy refuses to
                 // add a second of ours ([PROXY-DOUBLE-GUARD]).
                 return TRUE;

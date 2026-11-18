@@ -57,9 +57,9 @@ static HMODULE LoadRealVersion()
 
     // ⛔ SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below can re-enter this function on this
     // very thread: on a shimmed game the loader raises apphelp!SE_DllLoaded for the module
-    // being loaded and AcGenral resolves the proxied name back to US. Measured on OCTOPATH
-    // TRAVELER through the dxgi twin — see Lugner::ResolveReentry. Returning null makes the
-    // nested forwarder answer its documented failure value; the outer call still resolves.
+    // being loaded and AcGenral resolves the proxied name back to US — see
+    // Lugner::ResolveReentry. Returning null makes the nested forwarder answer its
+    // documented failure value; the outer call still resolves.
     Lugner::ResolveReentry guard;
     if (guard.reentered) return nullptr;
 

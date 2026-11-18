@@ -228,17 +228,11 @@ inline bool LooksLikeDecodedText(const std::string& s) {
 // This is the structural test that a replacement-RATIO guess cannot be: the first n
 // bytes of a UTF-16 CJK buffer contain lone continuation bytes (a UTF-16 low byte like
 // 0x87 is a continuation byte with no lead), which is not a "mostly text" question but
-// a "this cannot be UTF-8" one. (B28)
+// a "this cannot be UTF-8" one.
 //
-// `hasMultiByte` is written ONLY on success (audit #5 AD25). It used to be set true the
-// moment any valid multi-byte sequence was accepted, so a buffer whose FIRST sequence
-// was fine and whose second was not returned false with the flag left true — an
-// out-param contradicting its own return. Nothing reads it on a false return today
-// (DecodeFStringBuffer gates on `utf8Ok`, which short-circuits), so this is a latent
-// trap rather than a live bug; but "only meaningful when it returned true" is a rule the
-// next caller has to be told, and not needing to tell them is better than telling them.
-// Accumulating into a local and committing at the single success exit means the
-// out-param is now simply true or false about the buffer as a whole.
+// `hasMultiByte` is written ONLY on success: the scan accumulates into a local and
+// commits it at the single success exit, so the out-param is simply true or false about
+// the buffer as a whole and never contradicts a false return (it is false then).
 inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
     hasMultiByte = false;
     bool sawMultiByte = false;
@@ -436,8 +430,8 @@ inline std::string DecodeFStringBuffer(const uint8_t* buf, size_t bufLen, int32_
 
 // [UBEL-ASCII-FIRSTCHAR] Does a name read through a pointer the DLL is not sure of start like a name? It is the guard
 // against a dereference that landed on garbage: an empty name, or one that opens with a control byte or with bytes
-// that are not one whole UTF-8 character, is refused. A first byte above ASCII used to be refused outright, which
-// dropped every property, parameter, struct and enum named in Japanese or Chinese.
+// that are not one whole UTF-8 character, is refused. One whole non-ASCII character that is no control passes, so a
+// property, parameter, struct or enum named in Japanese or Chinese is kept.
 inline bool IsPlausibleNameStart(const std::string& name) {
     if (name.empty()) return false;
     const auto* p = reinterpret_cast<const uint8_t*>(name.data());

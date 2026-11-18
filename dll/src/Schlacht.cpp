@@ -334,13 +334,12 @@ bool ExtractHitImpactPoint(const std::vector<uint8_t>& buf, const FunctionParam&
     uintptr_t cls = Ubel::GetClass(actor);
     // Cheap liveness/sanity guard: a freed/garbage actor won't walk to AActor.
     if (!cls || !Aura::ClassDerivesFromAny(cls, {"Actor"})) {
-        // ⚠ SAY WHAT WAS REJECTED. This guard used to return false in total silence,
-        // and on UE 5.4 it rejects EVERY hit — the object coming out of FHitResult is
-        // a UStaticMeshComponent, not an AActor, so See-through hides nothing at all.
-        // That went unnoticed for as long as it did because the tally counted intent
-        // ([SEETHRUTALLY-2026-08-22]) and this branch said nothing, so there was no
-        // channel at all reporting the failure. One-shot: the condition is per-build,
-        // not per-tick, and the worker runs at 10 Hz. [SEETHRUNOOP-2026-08-22]
+        // ⚠ SAY WHAT WAS REJECTED. Where the object read out of FHitResult is a component
+        // (a UStaticMeshComponent) rather than an AActor, this guard rejects EVERY hit and
+        // See-through hides nothing at all; the tally then reads zero
+        // ([SEETHRUTALLY-2026-08-22]) and this warning names the cause. One-shot: the
+        // condition is per-build, not per-tick, and the worker runs at 10 Hz.
+        // [SEETHRUNOOP-2026-08-22]
         static bool s_warnedNotActor = false;
         if (!s_warnedNotActor) {
             s_warnedNotActor = true;
@@ -427,9 +426,8 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
     // The KismetSystemLibrary CDO + LineTraceSingle signature are resolved ONCE
     // per enable, not per tick. `Aura::FindLiveOrDefaultOf` is a full GObjects scan
     // (it only stops early on a live hit, and a function library has none), so
-    // the pre-cache version paid one whole-pool scan per trace: measured on The
-    // Adventures of Elliot (326K objects) at ~5 scans/second for the whole 29 s
-    // the feature was on, plus a class walk each time. A native function-library
+    // resolving per trace would pay one whole-pool scan per trace, plus a class
+    // walk each time. A native function-library
     // CDO is rooted for the process lifetime, so caching it is safe; the
     // generation counter re-resolves on the next enable anyway.
     // Only the worker thread reaches here, so the cache itself needs no lock.
@@ -572,16 +570,12 @@ void Tick() {
     //
     // ⚠ RECORD WHAT WAS APPLIED, NOT WHAT WAS INTENDED. `InvokeSetHidden` returns
     // false when the object is not an AActor (its own ClassDerivesFromAny guard) or
-    // when SetActorHiddenInGame is cooked out — and until 2026-08-22 BOTH call sites
-    // discarded that bool and `desired` was recorded wholesale. So `hiddenActors`,
-    // `hiddenCount`, the pipe's `hidden_count`, the UI's "Active — hiding the
-    // occluder in front of your character" and the log's "disabled (N restored)"
-    // all reported INTENT. Measured on DumperTest (UE 5.4): hidden_count read 1 for
-    // a UStaticMeshComponent whose own bHiddenInGame never moved in either state —
-    // the feature was a complete no-op and every channel said it was working.
-    // That is also why the verification row could not be falsified from outside.
-    // [SEETHRUTALLY-2026-08-22]; the reason a COMPONENT arrives here at all is the
-    // separate, unfixed [SEETHRUNOOP-2026-08-22].
+    // when SetActorHiddenInGame is cooked out. Recording `desired` wholesale would make
+    // `hiddenActors`, `hiddenCount`, the pipe's `hidden_count`, the UI's "Active —
+    // hiding the occluder in front of your character" and the log's "disabled (N
+    // restored)" all report INTENT: a complete no-op that every channel says is working.
+    // [SEETHRUTALLY-2026-08-22]; why a COMPONENT can arrive here at all is
+    // [SEETHRUNOOP-2026-08-22].
     std::unordered_set<uintptr_t> old, mayStillUnhide;
     { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; mayStillUnhide = s_state.unhideQueued; }
 
@@ -685,13 +679,12 @@ void PendingRestoreLoop() {
         // This loop can run for up to 5 minutes and it walks reflection + dispatches
         // game-thread invokes the whole time, so it outlives a game the user simply
         // closes — Tot::ShutdownRequested() is NOT set on a plain game exit. A throw
-        // escaping a thread entry is std::terminate (0xC0000409), the crash shape build
-        // 2389 reproduced live in the sibling loop. (B14)
+        // escaping a thread entry is std::terminate (0xC0000409).
         Routine::RunTickGuarded("SeeThrough", warnedThrow, [&] {
             // Re-enabled, or someone else already restored: nothing left to do.
             // The exit is decided from the record under s_mutex, and the running flag cleared in the same section: an
             // adoption (AdoptLeftovers) lands before it, and a pass takes it, or after it, and starts a restore of its
-            // own (review wf_846108f2-663 T8-1).
+            // own.
             bool nothingToDo;
             { std::lock_guard<std::mutex> lk(s_mutex);
               nothingToDo = s_state.active || s_state.hiddenActors.empty();
@@ -725,7 +718,7 @@ void PendingRestoreLoop() {
             {
                 std::lock_guard<std::mutex> lk(s_mutex);
                 RecordUnhideLeftoversLocked(kept);
-                // From the record, not from this pass: actors adopted while it ran are in it now (T8-1).
+                // From the record, not from this pass: actors adopted while it ran are in it now.
                 done = s_state.active || s_state.hiddenActors.empty();
                 left = s_state.hiddenActors.size();
                 if (done) s_pendingRunning.store(false);
@@ -733,7 +726,7 @@ void PendingRestoreLoop() {
             LOG_INFO("SeeThrough: game thread resumed after %d ms — restored %zu "
                      "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), left);
             // A responsive game whose un-hide keeps failing. Only this pass's own failures count: actors adopted while it
-            // ran were never tried, and the next tick tries them (review wf_eec7e89a-a4a R9-1).
+            // ran were never tried, and the next tick tries them.
             if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {
                 LOG_WARN("SeeThrough: gave up restoring %zu hidden actor(s) after %d s — they stay hidden until "
                          "See-through is enabled and disabled again", kept.size(), Grimoire::PENDING_RESTORE_MAX_MS / 1000);
@@ -763,7 +756,7 @@ bool StartPendingLocked() {   // s_workerMutex held
     if (s_pendingRunning.load()) return true;                // already waiting
     if (s_pendingWorker.joinable()) s_pendingWorker.join();  // reap a finished one
     if (Tot::ShutdownRequested()) return false;              // M5 spawn chokepoint
-    // A restore waits now, for the whole record: an earlier "gave up" no longer holds (review wf_846108f2-663 R8-3).
+    // A restore waits now, for the whole record: an earlier "gave up" no longer holds.
     { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = false; }
     s_pendingStop.store(false);
     s_pendingRunning.store(true);
@@ -938,8 +931,8 @@ void AdoptLeftovers(const uint64_t* actors, int32_t n) {
         active = s_state.active;
     }
     // Off: this copy's deferred restore un-hides them once the game thread answers, as after an OFF that could not
-    // finish, so the card's texts are true for them too (review wf_bbd1bbfe-20d D7-3). "Gave up" only when no restore
-    // can wait -- a shutdown. On: the worker's next tick un-hides those no longer in the way.
+    // finish, so the card's texts are true for them too. "Gave up" only when no restore can wait -- a shutdown. On:
+    // the worker's next tick un-hides those no longer in the way.
     if (!active && !StartPendingLocked()) {
         std::lock_guard<std::mutex> lk(s_mutex);
         s_state.restoreAbandoned = true;

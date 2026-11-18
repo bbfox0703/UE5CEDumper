@@ -635,8 +635,8 @@ std::vector<ModuleInfo> GetLoadedModules() {
 bool IsDumperModule(HMODULE h) {
     if (!h) return false;
     // The handle comes from the walk's module snapshot and may have gone stale since. GetProcAddress resolves it
-    // through the loader, not by reading the address: measured 2026-10-13 (Windows 11), a freed and unmapped DLL's
-    // handle answers NULL with error 126 and no fault. The magic is read under SEH all the same.
+    // through the loader, not by reading the address: a freed and unmapped DLL's handle answers NULL with error 126
+    // and no fault. The magic is read under SEH all the same.
     const FARPROC sym = GetProcAddress(h, Grimoire::DUMPER_IDENTITY_EXPORT);
     uint32_t magic = 0;
     if (sym && ReadSafe(reinterpret_cast<uintptr_t>(sym), magic) && magic == Mimic::MAILBOX_CONTRACT_MAGIC) return true;

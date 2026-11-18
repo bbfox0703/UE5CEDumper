@@ -6,8 +6,8 @@
 // say) -- the later copy takes over. It shuts the earlier copy down, takes the pipe, and serves the earlier copy's CE
 // mailbox, so a Cheat Engine script that resolved the earlier copy's g_invokeMailbox keeps working. A copy that
 // handed over starts nothing again and passes its C ABI calls to the copy that took over.
-// The maintainer's rule (2026-11-17, [DUMPER-SECOND-COPY-AUTOSTART]): the later copy always takes over, whichever
-// build is newer. "Later" is the loader's order: a copy's place in the process's module list.
+// [DUMPER-SECOND-COPY-AUTOSTART] The later copy always takes over, whichever build is newer. "Later" is the loader's
+// order: a copy's place in the process's module list.
 // [LAND-MEMO-RESIDENT] What a hand-off does not free: the earlier copy's class-walk memo (Ubel's WalkClassEx memo and
 // its parked walks, up to their byte bound) stays allocated beside the later copy's own for the session. The memo
 // hands out references and a straggling pipe thread of the earlier copy may still hold one, so it is never freed --
@@ -69,8 +69,8 @@ constexpr bool CanServeMailbox(int32_t theirCurrent, int32_t theirMinimum, int32
 
 // What the earlier copy's mailbox says when this copy cannot serve it: SKIPPED, "another copy serves this process" -- a
 // CE inject script reads READY and SKIPPED as served and leaves the copy alone, and reads any other value as parked and
-// calls that copy's UE5_AutoStart. A SERVED mailbox says MirroredState below (review R3-STALE-PUBLISHEDSTATE-COMMENTS);
-// the served arm here is that rule's for a copy that forwards, kept for the tests that pin it.
+// calls that copy's UE5_AutoStart. A SERVED mailbox says MirroredState below; the served arm here is that rule's for a
+// copy that forwards, kept for the tests that pin it.
 constexpr int32_t PublishedState(bool served, int32_t ownState) {
     return served ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);
 }
@@ -78,8 +78,7 @@ constexpr int32_t PublishedState(bool served, int32_t ownState) {
 // What an earlier copy's mailbox says while this copy serves it. A copy that forwards its exports (it carries the yield)
 // says this copy's own state: a CE inject script that reads it as parked calls that copy's UE5_AutoStart, which reaches
 // this copy. An older copy cannot forward, and its UE5_AutoStart would start it again beside this copy, two pollers on
-// one mailbox: it says READY or SKIPPED only, the two values an inject script reads as served (review wf_08585a12-ddf,
-// R2-OLD-COPY-DOUBLE-SERVE).
+// one mailbox: it says READY or SKIPPED only, the two values an inject script reads as served.
 constexpr int32_t MirroredState(int32_t ownState, bool earlierForwards) {
     if (earlierForwards) return ownState;
     return ownState == Mimic::INIT_READY ? ownState : static_cast<int32_t>(Mimic::INIT_SKIPPED);

@@ -200,16 +200,15 @@ static bool IsOurModule(const wchar_t* modulePath)
 //   2. One of our proxy DLLs (see kProxyDllNames) hijacked from the game folder
 //
 // Both are confirmed by PE ProductName, never by file name alone — see
-// IsOurModule. This used to accept ANY module named version/dinput8/dxgi/winmm
-// that was not under System32, which made ReShade's dxgi.dll look exactly like
-// our proxy: the menu then reported "already loaded, no injection needed", let
-// the user go away happy, and no pipe ever appeared (audit #4 B29).
+// IsOurModule. A module named version/dinput8/dxgi/winmm outside System32 is not
+// enough: ReShade's dxgi.dll would look exactly like our proxy, the menu would
+// report "already loaded, no injection needed", and no pipe would ever appear
+// (audit #4 B29).
 //
-// Wide throughout: the previous ANSI enumeration rendered every character the
-// code page could not represent as '?', so a perfectly good path like
-// D:\Games\EVERSPACE™ 2\... was displayed and logged as EVERSPACE? 2 — an
-// unpasteable path in the one message that is supposed to help. The sibling in
-// Heiter.cpp was fixed the same way.
+// Wide throughout: an ANSI enumeration renders every character the code page
+// cannot represent as '?', so a perfectly good path like
+// D:\Games\EVERSPACE™ 2\... would be displayed and logged as EVERSPACE? 2 — an
+// unpasteable path in the one message that is supposed to help.
 //
 // CE has already attached to the target process by the time the menu callback
 // runs, so we use the OpenedProcessHandle to enumerate its modules.
@@ -218,12 +217,12 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
 {
     if (!hProcess) return false;
 
-    // Size the buffer to the process's ACTUAL module count (audit #5 AB12). A fixed
-    // 1024-slot array silently truncated a process with more modules, and the cost is
-    // no longer just a redundant map: this same walk is the POST-INJECT verification,
-    // and freshly-loaded modules append to the END of the list — so a successful
-    // inject landing past slot 1024 was reported to the user as "not mapped". A size
-    // probe (nullptr, 0) returns the needed byte count; allocate, then enumerate.
+    // Size the buffer to the process's ACTUAL module count (audit #5 AB12). A fixed-size
+    // array would silently truncate a process with more modules, and this same walk is
+    // the POST-INJECT verification: freshly-loaded modules append to the END of the
+    // list, so a successful inject landing past the cap would be reported to the user as
+    // "not mapped". A size probe (nullptr, 0) returns the needed byte count; allocate,
+    // then enumerate.
     DWORD cbNeeded = 0;
     if (!EnumProcessModulesEx(hProcess, nullptr, 0, &cbNeeded, LIST_MODULES_ALL)
         || cbNeeded == 0) {
@@ -261,7 +260,7 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
         if (!IsOurModule(modPath)) {
             // A same-named module that is NOT ours: the genuine Windows copy, or
             // a third-party wrapper (ReShade, Ultimate ASI Loader, SpecialK…).
-            // Worth logging — it is exactly the case that used to be misread.
+            // Worth logging — it is exactly the case a file-name match would misread.
             //
             // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] Sein formats with a
             // NARROW vsnprintf (Sein.cpp `WriteLog`) and every DLL target is /MT — a static CRT
@@ -269,9 +268,7 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
             // it. UCRT's %ls then returns EILSEQ for any wide value > 0xFF, printf sets
             // _characters_written = -1, and the tail writes buffer[0] = 0: the WHOLE
             // record is lost, ASCII prefix included, so grepping for a mangled path finds
-            // nothing at all. Measured on a real ReShade dxgi.dll under `D:\測試\…`: a
-            // blank line where this message should be, while the same DLL at an ASCII
-            // path logged perfectly. (U+0080–U+00FF is worse still — it passes the cast
+            // nothing at all. (U+0080–U+00FF is worse still — it passes the cast
             // and emits a raw Latin-1 byte, i.e. invalid UTF-8 inside a UTF-8 log.)
             const std::string nameU8 = Utf8Helpers::EncodeUtf16(fileName, wcslen(fileName));
             const std::string pathU8 = Utf8Helpers::EncodeUtf16(modPath, wcslen(modPath));
@@ -374,17 +371,17 @@ static void __stdcall OnInjectAndConnect()
     //    CE's InjectDLL handles: CreateRemoteThread → LoadLibrary(path)
     //    → GetProcAddress("UE5_AutoStart") → call it in the game process.
     //
-    //    UE5_AutoStart is ASYNCHRONOUS since build 2932 (audit #5 AB2): it spawns
+    //    UE5_AutoStart is ASYNCHRONOUS (audit #5 AB2): it spawns
     //    the AOB scan + pipe start and returns at once. That is not a style
     //    choice — CE's stub does not wait for us:
     //      CEFuncProc.pas:1346-1360  a hard 10 s ceiling (counter := 10000 div 10)
     //      CEFuncProc.pas:1332-1343  or none at all on the APC path — CreateRemoteAPC
     //                                then a flat sleep(1000)
     //      CEFuncProc.pas:1379-1387  `finally ... virtualfreeex(...)` UNCONDITIONALLY
-    //    so a multi-second scan used to have the page it is running on freed out from
-    //    under it, and the `ret` crashed the GAME. (CE's own timeout text even says
-    //    "Injection routine not freed", which the `finally` above contradicts —
-    //    read from the published 7.5 source, 2026-08-15.)
+    //    so a synchronous multi-second scan would have the page it is running on freed
+    //    out from under it, and the `ret` would crash the GAME. (CE's own timeout text
+    //    even says "Injection routine not freed", which the `finally` above contradicts —
+    //    read from the published 7.5 source.)
     BOOL ok = g_CE.InjectDLL(dllPath, g_AutoStartFn);
     LOG_INFO("CEPlugin: InjectDLL returned %s", ok ? "TRUE" : "FALSE");
 
@@ -485,11 +482,11 @@ BOOL __stdcall CEPlugin_GetVersion(CePluginVersion* pv, int /*sizeofpluginversio
     if (!pv) return FALSE;
     // Claim CE-plugin identity HERE, not only in InitializePlugin. CE calls
     // InitializePlugin only when the plugin is ENABLED, so a registered-but-unticked
-    // plugin used to get DllMain + GetVersion and nothing else — and DllMain's 1 s
-    // wait cannot be beaten by a human ticking a checkbox. The auto-start thread then
-    // ran a full AOB scan and opened \\.\pipe\UE5DumpBfx INSIDE cheatengine-x86_64.exe.
+    // plugin gets DllMain + GetVersion and nothing else — and DllMain's 1 s wait cannot
+    // be beaten by a human ticking a checkbox. Unclaimed, the auto-start thread would run
+    // a full AOB scan and open \\.\pipe\UE5DumpBfx INSIDE cheatengine-x86_64.exe.
     // GetVersion is called for enabled and disabled plugins alike, and it is called
-    // early, which is exactly the signal the race needed. (B34)
+    // early, which is exactly the signal the race needs. (B34)
     g_isCEPlugin.store(true);
     pv->version    = CESDK_VERSION;
     pv->pluginname = g_PluginName;

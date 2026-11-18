@@ -28,12 +28,10 @@ namespace Scharf {
 // uint8 enum is 1-byte aligned, uint32 enum is 4-byte aligned.
 //
 // casePreservingName: if true, FName/NameProperty is 12 bytes -- still ALIGNED 4;
-// otherwise 8 bytes, also aligned 4. The flag does not change FName's alignment at all.
+// otherwise 8 bytes, also aligned 4. The flag does not change FName's alignment at all:
+// alignof(FName) is 4 in both modes.
 //
-// ⚠ It is therefore [[maybe_unused]]: NO arm of RequiredAlignment reads it any more. Audit A9
-// removed its only use (the NameProperty arm used to return `casePreservingName ? 8 : 4`, which
-// was the defect -- alignof(FName) is 4 in both modes), and a comment claiming "other arms use
-// it" was left behind and is now deleted; it was false the moment that arm changed.
+// ⚠ It is therefore [[maybe_unused]]: NO arm of RequiredAlignment reads it.
 //
 // KEPT rather than removed, deliberately, for two reasons that are not "churn avoidance":
 //   * IsAlignmentSuspicious below forwards it, and its callers (Ubel's ResolveElementAlignment
@@ -55,8 +53,8 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     if (typeName == "AssetObjectProperty" || typeName == "AssetClassProperty") return 8;
     // FLazyObjectPtr = TPersistentObjectPtr<FUniqueObjectGuid>: FWeakObjectPtr {int32, int32} (+ the
     // pre-5.3 int32 TagAtLastTest) + a bare FGuid (four uint32, no alignas) -- alignof 4 in EVERY era.
-    // It said 8, which put a TMap<int32, TLazyObjectPtr> value at +8 instead of +4 and made every
-    // TOptional<TLazyObjectPtr> (Align(0x18+1, 4) = 0x1C on 5.3+) "not recognised" (review of cc430176).
+    // 8 would put a TMap<int32, TLazyObjectPtr> value at +8 instead of +4 and leave every
+    // TOptional<TLazyObjectPtr> (Align(0x18+1, 4) = 0x1C on 5.3+) unrecognised.
     if (typeName == "LazyObjectProperty") return 4;
 
     // Pointer-shaped (8-byte) properties — exact match for plain Object/ClassProperty.

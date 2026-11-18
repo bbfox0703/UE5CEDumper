@@ -28,12 +28,11 @@ namespace Flamme {
 /// May a staged temp file be published over the real one?
 ///
 /// The write-then-rename here has exactly one job: never leave the cache in a
-/// worse state than it was. `Flamme.cpp` used to run `ofs << root.dump(2)`, let the
-/// destructor close it, and rename — testing NOTHING. A short write (full volume,
-/// quota) is swallowed by the destructor, so the truncated document got published
-/// over the only good copy; `LoadHints` then parses it with allow_exceptions=false,
-/// gets `discarded`, and every game's pattern IDs, ueVersion, user override and
-/// invoke timeout are gone at once. (audit #5 FL1)
+/// worse state than it was. A short write (full volume, quota) is swallowed by a
+/// stream's destructor, so an unchecked write-then-rename publishes the truncated
+/// document over the only good copy; `LoadHints` then parses it with
+/// allow_exceptions=false, gets `discarded`, and every game's pattern IDs, ueVersion,
+/// user override and invoke timeout are gone at once.
 ///
 /// Two INDEPENDENT detectors, because either can miss alone:
 ///   * `streamOk`  — the stream reported no failure through close(). Catches the

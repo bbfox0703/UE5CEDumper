@@ -113,7 +113,7 @@ inline bool PickBoolBits(const uint8_t (*quads)[4], const bool* readOk, int n, B
     return false;
 }
 
-// Generic damage/invincibility flag matcher (T2 — the "Build 1256" note at the top of docs/godmode-spec.md).
+// Generic damage/invincibility flag matcher (T2 in docs/godmode-spec.md).
 // Given an ALREADY-LOWERCASED reflected bool property name, return true when it
 // is a known damage/invincibility flag and set outProtect to the value that
 // means "protected" (what GodMode ON writes; OFF writes the inverse). Universal

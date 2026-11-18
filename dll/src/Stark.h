@@ -234,36 +234,33 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 
 // ============================================================
 // Calling ProcessEvent OURSELVES without re-entering our own detour
-// (audit #5 ST1)
 // ============================================================
 //
 // MinHook patches the PROLOGUE of UObject::ProcessEvent. So any caller of ours
 // that resolves the address out of the vtable and calls it lands in
-// HookedProcessEvent -- on whatever thread it happened to be running. That is
-// how a pipe lane or the Mimic polling thread ends up executing the drain, whose
-// only gate was "is the queue non-empty". The requests it then runs are precisely
+// HookedProcessEvent -- on whatever thread it happened to be running, a pipe lane
+// or the Mimic polling thread included. The requests the drain runs are precisely
 // the ones a caller judged UNSAFE off the game thread; that is why they were
 // queued instead of called directly.
 //
 // The reachability is not a tight race. An invoke that times out stays queued
 // with its own owned parameter copy, deliberately, expecting a later drain -- so
-// after one timeout the window is open indefinitely, and the next self-issued
-// direct call executes that abandoned stateful UFunction on the wrong thread.
+// after one timeout the window is open indefinitely, and a self-issued direct call
+// that drained would execute that abandoned stateful UFunction on the wrong thread.
 //
-// For OUR calls the fix is the TRAMPOLINE we are holding, as Grausam does for its
+// So OUR calls go through the TRAMPOLINE we are holding, as Grausam does for its
 // own hooks: a call through it never enters the detour. A fail-open call to an
 // OVERRIDE does (its Super::ProcessEvent is the patched address), so it runs under
 // the own-PE-call mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
 //
 // The ENGINE's worker threads call ProcessEvent too, and no trampoline covers
-// them: on UE 5.8 a drain there ran a queued ToggleDebugCamera into an
+// them: a drain there would run a queued UFunction (a ToggleDebugCamera, say) into an
 // IsInGameThread check [STARK-DRAIN-OFF-GAME-THREAD]. That needs the game thread's
-// identity after all. A guessed identity is the risk this note used to warn of --
-// a gate on the wrong thread never drains, which times out every invoke and is
-// worse than the defect -- so the identity is not a guess where UE states it (the
-// thread it names "GameThread"), and where it is a guess (the main thread) the
-// install validator gives the gate up when that thread stays silent while other
-// threads fire (PickGameThread / KeepGameThreadGate below).
+// identity. A guessed identity is a risk of its own -- a gate on the wrong thread
+// never drains, which times out every invoke -- so the identity is not a guess
+// where UE states it (the thread it names "GameThread"), and where it is a guess
+// (the main thread) the install validator gives the gate up when that thread stays
+// silent while other threads fire (PickGameThread / KeepGameThreadGate below).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -529,15 +526,14 @@ InvokeWaitEnd WaitQueuedInvoke(int32_t timeoutMs, WaitSlice&& waitSlice, NowMs&&
 // Frieren.cpp, and this header is already in dll_helpers_test's include list.
 // Moving a rule into a header is how this repo pins one (working-lessons §2.2).
 //
-// THREE failure classes, deliberately NOT merged — each has a different remedy
-// and merging them is what produced the field defect:
+// THREE failure classes, deliberately NOT merged — each has a different remedy:
 //
 //   1. NOT READY  — no UObject vtable exists to read yet. In proxy mode the DLL
 //      starts the pipe server only, so GObjects is unset until a scan runs. This
 //      is an EXPECTED state, not an error, and a later scan fixes it by itself.
-//      It must therefore leave detection ARMED. Before the fix it stored the same
-//      -1 as a hard failure and every retry path was gated against -1, so one
-//      early `pe_profile_start` poisoned the hook for the whole process life.
+//      It must therefore leave detection ARMED: stored as the hard failure's -1,
+//      it would close every retry path, and one early `pe_profile_start` would
+//      poison the hook for the whole process life.
 //   2. DETECTION FAILED — candidate vtables existed and neither the pattern scan
 //      nor the version table could name a slot. Terminal: retrying reads the same
 //      bytes and reaches the same answer.

@@ -31,9 +31,8 @@ size_t SizeOf(DataType dt) {
         // signal the string + multi-numeric families use; the authoritative
         // per-field width is FieldDescriptor::vectorWidth, read from the
         // property's reflected ElementSize at index-build time.
-        // This used to answer a flat 12, which made every LWC vector scan
-        // compare the first four bytes of each double against a float — junk
-        // that could never match. (audit #5 AB5)
+        // A flat 12 would make every LWC vector scan compare the first four
+        // bytes of each double against a float — junk that can never match.
         case DataType::FVector: case DataType::FRotator: case DataType::FTransform: return 0;
         // Multi-numeric meta types have no single width — the scan engine
         // resolves SizeOf per member; 0 signals "variable" like strings.
@@ -330,8 +329,6 @@ const std::vector<std::string>& VectorStructNames(DataType dt) {
     // "Vector" is correct to accept on BOTH engines — 12 bytes on UE4, 24 on
     // an LWC UE5 build — and a struct here whose size is neither is refused
     // by the index builder instead of being read at a guessed width.
-    // Before build 3035 the scan read a flat 12 bytes from whatever this list
-    // matched, so on UE5 it compared the low four bytes of three doubles.
     static const std::vector<std::string> kVec  = { "Vector", "Vector3f", "Vector_NetQuantize", "Vector_NetQuantizeNormal" };
     static const std::vector<std::string> kRot  = { "Rotator", "Rotator3f" };
     // FTransform deferred: layout starts with FQuat Rotation (16B UE4 /
@@ -503,12 +500,12 @@ namespace {
 // reading, a coerced float, or a float beyond 2^63, where every double is one -- so
 // for the narrow members `>= max + 1` and `> max` are the same test.
 //
-// [A4-AB4-UINT64] This used to list only the 8/16/32-bit members, on the premise
-// that a string which parsed at all fits the 64-bit ones. False both ways: a
-// negative string is never parsed as unsigned (`Bigger -5` left UInt64 with no
-// entry), and one above INT64_MAX has no signed reading (`Smaller 2^63` left Int64
-// with none). Float/Double accept anything that parsed, so they never get here.
-// Returning false means "no verdict is possible here", which keeps the old skip.
+// [A4-AB4-UINT64] The 64-bit members are listed too: a string that parsed at all
+// need not fit them. A negative string is never parsed as unsigned (`Bigger -5`
+// leaves UInt64 with no entry), and one above INT64_MAX has no signed reading
+// (`Smaller 2^63` leaves Int64 with none). Float/Double accept anything that
+// parsed, so they never get here. Returning false means "no verdict is possible
+// here": the member is skipped.
 bool IntegerMemberRange(DataType dt, double& lo, double& hiEx) {
     switch (dt) {
         case DataType::Int8:   lo = INT8_MIN;  hiEx = INT8_MAX   + 1.0; return true;
@@ -587,7 +584,7 @@ BoundReadings ParseNumericBound(const std::string& raw, RoundMode roundMode) {
         } catch (...) {}
     }
 
-    // Rounding-mode integer coercion (build 1672): a fractional input (e.g.
+    // Rounding-mode integer coercion: a fractional input (e.g.
     // "10.9", "11.0") parses as a float but NOT as a clean integer, so integer-
     // width members would otherwise be skipped. Reduce it to the displayed
     // integer via the mode so those members still match (Round 10.9->11,
@@ -605,8 +602,8 @@ BoundReadings ParseNumericBound(const std::string& raw, RoundMode roundMode) {
     }
     // A '-'-prefixed value whose integer reading is NOT negative ("-0", or a negative fraction that
     // rounds to 0) is a valid unsigned target: the sign CHARACTER suppressed the unsigned readings
-    // above, not the value. Without this every unsigned width was dropped for it, even under Exact,
-    // while the snapshot matcher kept them. (review of aaf6a022)
+    // above, not the value. Without this every unsigned width would be dropped for it, even under
+    // Exact, while the snapshot matcher keeps them.
     if (!hasUnsigned && hasSigned && sv >= 0) { uv = static_cast<uint64_t>(sv); hasUnsigned = true; }
 
     b.ok = true;
@@ -746,19 +743,18 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
         //   Bigger  500 over Int8   -> no int8 is > 500         -> skip (correct)
         //   Bigger  -500 over Int8  -> every int8 is > -500     -> AlwaysTrue
         //
-        // The two directions are NOT symmetric, and the old code was right in
-        // exactly half of the four cases — which is why the gate reads like a
-        // working optimisation. It is one, half the time. (audit #5 AB4)
+        // The two directions are NOT symmetric: a gate that only skips is right in
+        // exactly half of the four cases — which is why it reads like a working
+        // optimisation.
         //
-        // This also covers the sign leak the finding did not mention: a negative
-        // string suppresses the unsigned parse entirely (see `if (!isNeg)` above),
-        // so `Bigger -5` used to drop every UInt8/UInt16/UInt32/UInt64 field (UInt64
-        // only since [A4-AB4-UINT64]; the range table did not list it). Here the
-        // member's own minimum is 0, the target is below it, and the verdict is
-        // AlwaysTrue — which is exactly right.
+        // This also covers the sign leak: a negative string suppresses the unsigned
+        // parse entirely (see `if (!isNeg)` above), so a skip would make `Bigger -5`
+        // drop every UInt8/UInt16/UInt32/UInt64 field ([A4-AB4-UINT64] lists UInt64 in
+        // the range table). Here the member's own minimum is 0, the target is below it,
+        // and the verdict is AlwaysTrue — which is exactly right.
         if (out.entries.size() == beforeCount && haveScalar) {
-            // memLo/memHiEx, named apart from the trim's lo/hi (now in ParseNumericBound),
-            // which a C4456 would flag again if the trim ever moved back.
+            // memLo/memHiEx, named apart from the trim's lo/hi (in ParseNumericBound),
+            // which a C4456 would flag if the trim ever moved here.
             double memLo = 0.0, memHiEx = 0.0;
             if (IntegerMemberRange(m, memLo, memHiEx)) {
                 const bool always = (st == ScanType::Smaller && scalar >= memHiEx)
@@ -922,8 +918,7 @@ bool ApplyOrdered(ScanType st, T cur, T a, T b) {
     return false;
 }
 
-// Displayed-integer float predicate (build 1672 — replaces the old ± tolerance
-// ApplyOrderedTol). Semantics documented on ComparePredicate in Radar.h. Let
+// Displayed-integer float predicate. Semantics documented on ComparePredicate in Radar.h. Let
 // r(x) = ReduceRounded(x, mode). For TARGETED predicates a WHOLE target lets the
 // player search by the displayed integer (reduce the field value); a FRACTIONAL
 // target keeps exact-literal compare (the user is being precise — positions /
@@ -1294,8 +1289,6 @@ inline bool ContainsCI(const std::string& hay, const std::string& needleLower) {
 }
 
 // Does any displayed column of this candidate contain `needleLower`?
-// Mirrors the columns the client-side keyword filter used to match
-// (Class.Field / DefiningClass / Type / Value / Offset / Address / Instance).
 bool CandidateMatchesFilter(const Candidate& c, DataType dt,
                             const FieldDescriptor& d, const InstanceRecord& inst,
                             const std::string& needleLower) {
@@ -1502,7 +1495,7 @@ SessionManager::Stats SessionManager::GetStats() {
     return s;
 }
 
-// --- Group scan: ordered view + GroupSessionManager (build 1276) ---
+// --- Group scan: ordered view + GroupSessionManager ---
 
 // Candidate's OBJECT-level class = first non-empty slot's first match's
 // descriptor className (mirrors BuildGroupOrderedView's classOf / sort key).
@@ -1821,20 +1814,19 @@ std::vector<uint32_t> BuildGroupOrderedView(
 
     // Which leaf each slot DISPLAYS, per surviving candidate.
     //
-    // The key extractors below used to read `slotMatches[0][0]` — the first leaf the
-    // scan happened to keep — while the row Fern renders shows `slotMatches[0][picks[0]]`.
-    // With `per_slot_cap` at 256 a slot routinely keeps dozens of leaves, so the grid was
-    // ordered by a value the user cannot see: "sort by Value" on a filtered group scan
-    // produced an order with no visible relationship to the Value column. (audit #5 AB6)
+    // The key extractors below read the leaf each row displays — Fern renders
+    // `slotMatches[0][picks[0]]` — never `slotMatches[0][0]`, the first leaf the scan
+    // happened to keep. With `per_slot_cap` at 256 a slot routinely keeps dozens of
+    // leaves, so that grid would be ordered by a value the user cannot see: "sort by
+    // Value" on a filtered group scan would have no visible relationship to the Value column.
     //
     // Precomputed once per candidate rather than inside the comparator: std::stable_sort
     // calls `less` O(n log n) times and the assignment is a per-slot scan over every kept
     // leaf. Keyed by candidate index so the comparator stays a lookup.
     //
-    // The same function Fern calls, deliberately — CLAUDE.md records that this rule
-    // drifting from the filter it must agree with is what produced four "the scan missed
-    // my field" reports, and a sort key computed from a second, private notion of "the
-    // leaf" would be that drift returning in the one place nobody looks.
+    // The same function Fern calls, deliberately: this rule must agree with the filter,
+    // and a sort key computed from a second, private notion of "the leaf" would drift
+    // from it in the one place nobody looks.
     std::unordered_map<uint32_t, std::vector<size_t>> picksByCandidate;
     picksByCandidate.reserve(idx.size());
     for (uint32_t i : idx)

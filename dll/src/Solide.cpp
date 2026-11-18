@@ -211,7 +211,8 @@ uintptr_t ResolvePawn(uintptr_t pc) {
 // ---- per-instance apply ----
 
 // Apply (or restore) one job on one live object. Returns true when the field
-// resolved on this object (counts toward "N held"); fills sample owner/offset.
+// resolved on this object and every write it needed succeeded (counts toward
+// "N held"); fills sample owner/offset.
 // `restore` writes the captured base instead of the desired value.
 bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
                      bool* drifted, uintptr_t& sampleOwner, int32_t& sampleOffset,
@@ -251,10 +252,9 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     uintptr_t addr = obj + static_cast<uintptr_t>(fi.Offset);
 
     if (job.kind == K_OBJECT_NULL) {
-        // A strong ObjectProperty, or -- [VND583-DOC D7-04] -- a WeakObjectProperty. The gate once refused
-        // weak pointers because "8 zero bytes set ObjectIndex 0 = a VALID GObjects[0] slot (crash trap)",
-        // which is wrong in every version: SerialNumber 0 is UE's explicit null. Soft / Lazy stay refused
-        // (Solide::ObjectNullShapeFor says why). L2
+        // A strong ObjectProperty, or -- [VND583-DOC D7-04] -- a WeakObjectProperty: in every version a weak
+        // pointer with SerialNumber 0 is UE's explicit null, not a reference to the GObjects[0] slot. Soft /
+        // Lazy stay refused (Solide::ObjectNullShapeFor says why). L2
         const ObjectNullShape shape = ObjectNullShapeFor(fi.TypeName, fi.Size);
         if (shape == ObjectNullShape::Refused) { refusal = FR_ERR_WEAK_PTR; return false; }
         sampleOwner = obj; sampleOffset = fi.Offset;
@@ -276,9 +276,8 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
         if (!Macht::ReadSafe(addr, cur)) return false;
         if (cur != 0) {
             uintptr_t z = 0;
-            // A FAILED write must not count as held. Discarding this result — using it only
-            // to set `drifted` — is what let an unwritable instance be reported as one of
-            // "N held". [SOLIDEHELD-2026-08-21]
+            // A FAILED write must not count as held, or an unwritable instance is reported
+            // as one of "N held". [SOLIDEHELD-2026-08-21]
             if (!Macht::WriteBytes(addr, &z, sizeof(uintptr_t))) {
                 refusal = FR_ERR_WRITE;
                 return false;
@@ -302,15 +301,9 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     if (std::fabs(cur - target) > eps) {
         // ⚠ The write RESULT decides whether this instance is held. `WriteNumeric` returns
         // false when the value does not fit the field's width — an int8 asked to hold 200 —
-        // and the old code used that false only to suppress `drifted`, then returned true
-        // anyway. The range check did its job (nothing was written, and 200 did NOT wrap to
-        // -56), but the caller counted the instance and the UI reported "held on N instances,
-        // value 200". Measured 2026-08-21: byte unchanged at 0x00 while the reply said
-        // code=0 held=145 value=200.0. The report and the reality were computed by different
-        // paths — audit #4's root cause, in a third place. [SOLIDEHELD-2026-08-21]
-        //
-        // K_BOOL already did this correctly (`if (rc < 0) return false;`); this brings the
-        // other two branches into line with it.
+        // and writes nothing (200 does NOT wrap to -56). Counting the instance anyway would
+        // report "held on N instances, value 200" over an unchanged field: the report and
+        // the reality must come from the same result. [SOLIDEHELD-2026-08-21]
         if (!WriteNumeric(addr, fi, target)) {
             refusal = FR_ERR_WRITE;
             return false;
@@ -325,16 +318,15 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
 void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
     int32_t held = 0, refusal = 0;
     uintptr_t sampleOwner = 0; int32_t sampleOffset = -1;
-    // The class AND every subclass of it (A6). A Property Search row for an
+    // The class AND every subclass of it. A Property Search row for an
     // INHERITED field is keyed to the class that DECLARES it — `Aura` sets
     // match.className = definingName so the row can say "inherited by 4822"
     // instead of listing 4822 near-identical rows — so an exact-name pool for
-    // e.g. "Actor" resolved essentially nothing and the hold silently held
-    // nothing. Subclass semantics are what the row already claims.
+    // e.g. "Actor" would resolve essentially nothing and the hold would silently
+    // hold nothing. Subclass semantics are what the row already claims.
     //
     // NOT exactMatch=false: that is a case-insensitive SUBSTRING match on the
-    // class NAME, so "Enemy" would capture "EnemyProjectile" — the very thing
-    // the old exact match existed to prevent. FindInstancesDerivedFrom walks
+    // class NAME, so "Enemy" would capture "EnemyProjectile". FindInstancesDerivedFrom walks
     // the super chain, so "EnemyProjectile" is captured only if it genuinely
     // derives from "Enemy", which is when it SHOULD be.
     auto rset = Aura::FindInstancesDerivedFrom(job.className, Grimoire::SOLIDE_MAX_INSTANCES);
@@ -361,8 +353,8 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         job.sampleOwner = sampleOwner;
         job.sampleOffset = sampleOffset;
         job.lastRefusal = refusal;
-        // Aura already computed this two lines up and we used to drop it on the floor,
-        // leaving "held: 0" and "held: 256 of who-knows-how-many" indistinguishable.
+        // Without it, "held: 0" and "held: 256 of who-knows-how-many" are
+        // indistinguishable.
         job.poolTruncated = rset.truncated;
         job.templatesSkipped = rset.templatesSkipped;
         // Prune per-instance bases for owners no longer in the live pool — bounds the map
@@ -375,8 +367,7 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         // Uses Aura's own `truncated` rather than re-deriving "capped" from the result
         // size, so the prune guard and the UI badge can never disagree about whether the
         // pool was complete. Equivalent on this path by construction: FindInstancesDerivedFrom
-        // is called without totalOut, where Aura sets truncated = (results.size() >= maxResults)
-        // — exactly the old test, negated.
+        // is called without totalOut, where Aura sets truncated = (results.size() >= maxResults).
         if (!rset.truncated) {
             for (auto it = job.baseByOwner.begin(); it != job.baseByOwner.end(); )
                 it = seen.count(it->first) ? std::next(it) : job.baseByOwner.erase(it);

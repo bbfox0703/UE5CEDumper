@@ -471,7 +471,7 @@ inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_
 inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return parmsSize > ringCap; }
 // The after-return copy: for out parameters (FUNC_HasOutParms), for a return value (its offset), and whenever the flags
 // could not be read -- a copy too many beats a return value lost. FUNC_HasOutParms alone misses a function whose only
-// output is its return value: measured on DumperTest58, SnapProbe_RetOnly's flags are 0x20401.
+// output is its return value: a lone return value need not set that flag.
 inline bool ArmTakesAfter(uint32_t functionFlags, uint16_t returnValueOffset = 0xFFFF) {
     return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0 || returnValueOffset != 0xFFFF;
 }

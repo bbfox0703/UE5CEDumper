@@ -191,7 +191,7 @@ inline bool ReadEntry(ReadFn&& read, const EnumNamesLayout& L, int32_t i,
     // Legacy: interleaved TPair<FName,int64>. The int64 makes the pair 8-aligned, so a
     // 0xC CasePreserving FName is PADDED to 0x10 inside the pair -- the value sits at
     // Align(sizeof(FName),8) and the stride is that + 8. Do NOT use fnameSize raw here:
-    // that is the whole reason this parameter used to be misnamed 'stride'.
+    // it is sizeof(FName), never the pair's stride.
     // [VND583-04] UE 4.9-4.14's TPair<FName, uint8> puts ONE byte right after the FName and
     // leaves the rest of the pair unwritten; L.valueSize / L.legacyStride carry that shape
     // (LegacyValueOffset / LegacyStrideFor), and the byte is read alone, never as an int64.

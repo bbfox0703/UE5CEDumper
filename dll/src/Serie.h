@@ -52,10 +52,9 @@ bool IsUE4Mode();
 void LogDiagnostics();
 
 // ============================================================
-// Pure index-geometry helpers (unit-pinned in dll_helpers_test). These were written
-// when no target compiled Serie.cpp; since build 3355 (`373f3083`) dll_core_test does
-// (`#include "../src/Serie.cpp"`), so a rule may now be pinned in EITHER place — put
-// pure arithmetic here, anything needing a live pool in dll_core_test.
+// Pure index-geometry helpers (unit-pinned in dll_helpers_test). dll_core_test compiles
+// Serie.cpp too (`#include "../src/Serie.cpp"`), so a rule may be pinned in EITHER place —
+// put pure arithmetic here, anything needing a live pool in dll_core_test.
 // ============================================================
 
 // FNamePool entry geometry for a candidate FNameBlockOffsetBits width: the entry for

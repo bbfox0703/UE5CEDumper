@@ -148,8 +148,8 @@ inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
 
 // [VND583-DOC D7-04] Which pointer fields Force-null can hold. A strong UObject* is written 0. A
 // FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } is written UE's OWN reset value: SerialNumber 0
-// is its null (FWeakObjectPtr::Internal_GetObjectItem), so {0, 0} is null, NOT "a valid GObjects[0]"
-// as this gate used to claim. Soft / Lazy stay refused: their asset path / GUID lies past the weak
+// is its null (FWeakObjectPtr::Internal_GetObjectItem), so {0, 0} is null, NOT "a valid GObjects[0]".
+// Soft / Lazy stay refused: their asset path / GUID lies past the weak
 // half and re-resolves the pointer, so a held null would not hold.
 // `elementSize` is the property's reflected ElementSize. A weak pointer is held ONLY at the stock 8 bytes:
 // UE_WITH_REMOTE_OBJECT_HANDLE (5.6+, off by default) adds an FRemoteObjectId (16 bytes in all), and there

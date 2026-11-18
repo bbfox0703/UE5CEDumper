@@ -46,7 +46,7 @@ static int s_wideFlag = 0;     // Bit index for wide flag
 // Hash-prefixed UE4.26 (FF7Re): 4 (entry = [4B hash][2B header][string])
 static int s_headerOffset = 0;
 
-// FNameEntry alignment stride: used to convert FName index offset to byte offset.
+// FNameEntry alignment stride: converts an FName index offset to a byte offset.
 // Standard UE5: 2 (alignof(FNameEntry) with uint16 header)
 // Hash-prefixed UE4.26: 4 (alignof(FNameEntry) with uint32 hash + uint16 header)
 // Formula: entry_byte_offset = (nameIndex & blockOffsetMask) * s_stride

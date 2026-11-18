@@ -67,14 +67,14 @@ struct Leaf {
 // (built once per slot via Radar::BuildNumericTargets for a meta type, or a
 // single-entry set for a concrete width) plus a per-slot predicate.
 //
-// P2: `st` is the slot's first-scan predicate (Exact / Bigger / Smaller /
+// `st` is the slot's first-scan predicate (Exact / Bigger / Smaller /
 // Between — a targeted compare against `targets`, with `targets2` the upper
 // bound for Between). Prev-value predicates (Changed / Increased / Decreased /
 // Unchanged) compare against a per-leaf baseline that only exists AFTER a
 // refine, so they are honoured by the refine path (Aura::RefineGroupCandidates),
 // never by the first-scan MatchGroup below — LeafSatisfiesSlot rejects them so a
 // prev-value slot can never spuriously match on the first scan. `roundMode` is
-// the float displayed-integer reduction (build 1672, replaces the old tolerance).
+// the float displayed-integer reduction.
 struct SlotTarget {
     const Radar::NumericTargetSet* targets   = nullptr;
     Radar::ScanType                st        = Radar::ScanType::Exact;

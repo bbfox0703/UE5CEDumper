@@ -17,9 +17,8 @@ namespace Methode {
 // LoadLibraryA on it. An ASCII longPath as it is. Otherwise the ASCII alias (shortPath: the 8.3 DIRECTORY plus the
 // DLL's own long name -- an alias that renames the file is ignored), else the EXACT narrowing of longPath in codePage
 // (WC_NO_BEST_FIT_CHARS + used-default: best fit names another folder, '?' names none), else the alias's exact
-// narrowing, else "" -- the caller
-// refuses, naming the cause. The old code checked only the first narrowing and re-narrowed the alias with
-// flags 0: on a volume without 8.3 names (D: here) the alias IS the long path, so a '?'-bearing path went to CE.
+// narrowing, else "" -- the caller refuses, naming the cause. Every narrowing is exact: on a volume without 8.3 names
+// the alias IS the long path, so a lossy narrowing of it would hand CE a '?'-bearing path.
 // codePage CP_ACP is read as GetACP(); a UTF-8 ANSI code page (the Windows beta option) takes UTF-8 as is, and
 // refuses both the flag and the used-default out-parameter.
 inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* shortPath, UINT codePage)
@@ -50,15 +49,15 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
         return l;
     };
     std::string out;
-    // (second review, T-ALIAS-LEAF-PLUGIN -- HIGH, measured) An ASCII path is never aliased: it already reads the
-    // same in every code page, and a real 8.3 alias of the FILE renames it (UE5DUM~1.DLL) -- the game then maps our
-    // DLL under that name, and every name check after the inject misses it.
+    // An ASCII path is never aliased: it already reads the same in every code page, and a real 8.3 alias of the FILE
+    // renames it (UE5DUM~1.DLL) -- the game then maps our DLL under that name, and every name check after the inject
+    // misses it.
     if (longPath && ascii(longPath)) return exact(longPath, out) ? out : std::string{};
     // An alias is usable only if it keeps the DLL's own name: the caller shortens the DIRECTORY, not the file.
     const bool haveShort = shortPath && longPath && std::wcscmp(shortPath, longPath) != 0
                            && _wcsicmp(leaf(shortPath), leaf(longPath)) == 0;
-    // (skeptic CEINJ-4) CE makes these bytes in ITS code page, the game decodes them in its own (Locale Emulator
-    // gives it another): an ASCII alias reads the same in every code page, so it wins when there is one.
+    // CE makes these bytes in ITS code page, the game decodes them in its own (Locale Emulator gives it another): an
+    // ASCII alias reads the same in every code page, so it wins when there is one.
     if (haveShort && ascii(shortPath) && exact(shortPath, out)) return out;
     if (exact(longPath, out)) return out;
     if (haveShort && exact(shortPath, out)) return out;
@@ -66,10 +65,9 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
 }
 
 // [PATH-METHODE-NO8DOT3] The alias the plugin hands NarrowForAnsiLoad as shortPath: shortOf(the FOLDER) plus the DLL's
-// own long name -- never the file's own alias, which renames the loaded module (UE5DUM~1.DLL; second review, measured).
+// own long name -- never the file's own alias, which renames the loaded module (UE5DUM~1.DLL).
 // "" when there is no folder or the lookup answers nothing. shortOf is ShortDirOf in production, a fake in the test:
-// built inline in Methode.cpp, which no test target compiles, a revert to the file alias passed every test (third
-// review, T3-METHODE-FOLDER-ALIAS-UNTESTED).
+// it lives here rather than in Methode.cpp, which no test target compiles, so the folder-alias rule is tested.
 template <typename ShortOf>
 inline std::wstring FolderAliasOf(const std::wstring& longPath, ShortOf shortOf)
 {

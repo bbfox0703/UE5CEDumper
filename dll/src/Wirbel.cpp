@@ -633,12 +633,10 @@ int DeepForceWorldPos(const Chain& c, const double oldPos[3], const double targe
         ReadVec3Buf(buf + o, c.relLocSize, v);
         double dx = v[0]-oldPos[0], dy = v[1]-oldPos[1], dz = v[2]-oldPos[2];
         if (dx*dx + dy*dy + dz*dz <= kEps2) {
-            // ⛔ COUNT WHAT LANDED, NOT WHAT WAS ATTEMPTED. `rewrote` used to increment
-            // whether or not the write succeeded, and it is the function's whole output: it
-            // is returned, and it selects between "deep-force rewrote N vector(s)" and the
-            // "visual may not move" WARNING below. A run where every write was refused
-            // therefore logged a confident N and SUPPRESSED the one warning an operator has.
-            // Adjudicated 2026-09-09 as slice B of the unadjudicated sweep claims.
+            // ⛔ COUNT WHAT LANDED, NOT WHAT WAS ATTEMPTED. `rewrote` is the function's whole
+            // output: it is returned, and it selects between "deep-force rewrote N vector(s)"
+            // and the "visual may not move" WARNING below. Counting refused writes would log a
+            // confident N and SUPPRESS the one warning an operator has.
             if (Macht::WriteBytes(c.root + static_cast<uintptr_t>(o), rawTarget, vsz))
                 rewrote++;
         }
@@ -926,21 +924,19 @@ int32_t GetPovImpl(Pov& out) {
 
 // ---- teleport write (§5.5) ----
 
-// DIAGNOSTIC (build 1113, gated): a permanent low-noise "separate visible actor"
-// detector. On normal games the possessed pawn IS the camera's view target, so this
-// stays SILENT. It logs ONLY when APlayerCameraManager.ViewTarget.Target is a
-// DIFFERENT actor than the possessed pawn (a genuine separate-actor game — none seen
-// yet; TQ2 / SEED / Octopath all resolve view-target == pawn) or when ViewTarget
-// can't be resolved at all. ViewTarget is read raw via the StructInner /
-// FStructProperty walk (the camera-manager invoke getters return nothing on some
-// titles). Fires at most once per teleport (a deliberate user action).
+// DIAGNOSTIC (gated): a permanent low-noise "separate visible actor" detector. On
+// normal games the possessed pawn IS the camera's view target, so this stays SILENT.
+// It logs ONLY when APlayerCameraManager.ViewTarget.Target is a DIFFERENT actor than
+// the possessed pawn (a genuine separate-actor game) or when ViewTarget can't be
+// resolved at all. ViewTarget is read raw via the StructInner / FStructProperty walk
+// (the camera-manager invoke getters return nothing on some titles). Fires at most
+// once per teleport (a deliberate user action).
 //
-// Build 1114 found the corollary: when the pawn IS the view target yet the on-screen
-// body doesn't move (TQ2), the cause is NOT a separate actor but a stale cached world
-// transform after a raw write — fixed in the CMC-freeze path below by always running
-// the component setter (K2_SetWorldLocation) + deep-force. So the once-off Root/Mesh
-// dump that proved this is removed; this detector remains only for the genuinely
-// different-view-target case it was built to catch.
+// When the pawn IS the view target yet the on-screen body doesn't move, the cause is
+// NOT a separate actor but a stale cached world transform after a raw write — handled
+// in the CMC-freeze path below by always running the component setter
+// (K2_SetWorldLocation) + deep-force. This detector is only for the genuinely
+// different-view-target case.
 void DiagVisibleActor(const Chain& c) {
     int32_t camOff = Ubel::FindFieldOffset(Ubel::GetClass(c.pc), "PlayerCameraManager",
                                            "PlayerCameraManager", nullptr, "ObjectProperty");
@@ -995,7 +991,7 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
     uintptr_t pawnClass = Ubel::GetClass(c.pawn);
     bool moved = false;
 
-    DiagVisibleActor(c);   // build 1113: log pawn vs camera ViewTarget (see above)
+    DiagVisibleActor(c);   // log pawn vs camera ViewTarget (see above)
 
     // Capture the pre-move world position (RelativeLocation == world when the
     // root isn't attached) so the deep-force fallback can locate the stale
@@ -1513,7 +1509,7 @@ int32_t SaveMarker(int32_t slot) {
     if (slot < 0 || slot >= Grimoire::TELEPORT_SLOTS) return TP_ERR_EMPTY_MARKER;
     Marker m{};
     // [W2-MARKER-PARENTREL] Capture the read's parent-relative flag with the pose: the pose card warns "do not
-    // save these as a marker", and the save path used to have no way to know.
+    // save these as a marker", and the save path has no other way to know.
     int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative);
     if (rc != TP_OK) return rc;
     m.Valid = true;

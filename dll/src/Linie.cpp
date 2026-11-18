@@ -39,8 +39,8 @@ struct Stat {
     uint8_t  identTries = 0; // reads tried so far, up to kIdentityTries
     ArmHint  arm;            // what this address is armed for ([LIVEFUNCS-STEP2]); default: nothing
     int32_t  armSpec = -1;   // the followed name it last matched; -1: no followed name ever claimed it
-    // The followed names that have counted this address, so each counts it once while names take turns at it
-    // (review R4). A fifth name at one address counts again: an address held by five followed names in one
+    // The followed names that have counted this address, so each counts it once while names take turns at it.
+    // A fifth name at one address counts again: an address held by five followed names in one
     // recording is not a case worth a vector per entry.
     int32_t  countedFor[4] = { -1, -1, -1, -1 };
 };
@@ -130,7 +130,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
             ArmLocked(s, ufunc, nowMs);
         }
     } else if (g_reader && g_keyReader && s.ident.captured) {
-        // Review DLL-3: the table is keyed by address, and a freed function's address can be taken by another that
+        // The table is keyed by address, and a freed function's address can be taken by another that
         // fires in the same recording. Its key read now against the one read: a change is read again in full; the
         // same names under a new class object are the same function, its class reloaded; other names are another
         // function, and the entry says so from then on.
@@ -141,7 +141,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         } else {
             bool changed = idx != s.ident.nameIndex || num != s.ident.nameNumber || outer != s.ident.outer;
             // [LIVEFUNCS-STEP2] An address a followed name ever claimed has its class checked by its FName too -- one
-            // disarmed when another class came to it must see the followed class come back (review R3); an address
+            // disarmed when another class came to it must see the followed class come back; an address
             // no followed name ever claimed pays nothing.
             if (!changed && s.armSpec >= 0 && g_arms && g_arms->classNameReader) {
                 int32_t ci = 0, cn = 0;
@@ -172,21 +172,15 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         // ⚠ THE COMPARISON IS >=, NOT >. A reorder is nowMs < s.lastMs. nowMs == s.lastMs is
         // NOT a reorder — it is two fires inside the same millisecond, which is ordinary
         // (nowMs is steady_clock truncated to ms, Stark.cpp `InvokeRequest`), and >= excludes the
-        // underflow just as completely while keeping the sample. L5 (below) prescribed
-        // "strictly greater" because it was reasoning about REORDERING only; dropping the
-        // equal case was collateral. Measured 2026-08-22 on DumperTest at t.MaxFPS 60 over
-        // 10.00 s: CameraModifier::BlueprintModifyCamera fires twice per frame, count=1202
-        // but gap_samples=602 instead of 1201, and mean_period_ms read 16.61 ms against a
-        // true 8.33 ms — because the dropped sample ALSO left s.lastMs pointing at the first
-        // of the pair, so the NEXT gap spanned both fires and read as a whole frame. The
-        // four once-per-frame functions in the same window were exact, which is the control:
-        // a clock or window error would have moved all six together.
+        // underflow just as completely while keeping the sample. Dropping the equal case
+        // would drop every ~0 ms gap of a twice-per-frame function and keep only the
+        // whole-frame ones: it would show half its gaps and twice its true period.
         //
-        // The wrong number was the smaller half. Dropping the ~0 ms gaps also MANUFACTURED
-        // the regularity the "Timer" badge keys on — the surviving gaps were all exactly one
-        // frame apart, so cv collapsed to ~0.01 and a twice-per-frame render callback scored
-        // as a textbook periodic timer, the precise distinction this cadence phase exists to
-        // draw. Rig: tools/verify/linie_cadence_gap.py. [CADENCEGAP-2026-08-22]
+        // Worse, dropping the ~0 ms gaps would MANUFACTURE the regularity the "Timer" badge
+        // keys on — the surviving gaps all exactly one frame apart, cv near 0, and a
+        // twice-per-frame render callback scored as a textbook periodic timer, the precise
+        // distinction this cadence phase exists to draw. Rig: tools/verify/linie_cadence_gap.py.
+        // [CADENCEGAP-2026-08-22]
         //
         // Inter-arrival gap since this function's previous fire — Welford update.
         // Guarded on nowMs >= lastMs: multi-thread PE can deliver two fires of the SAME
@@ -741,8 +735,7 @@ void WriteTraceRecord(TraceRecord& r, uint64_t seqKind, Ticks ticks, uint64_t a,
 // A bit added once the record is out -- a copy or a stack it took, known only after that work. The slot is checked
 // FIRST: if the ring lapped during the copy or the walk (the slowest part of the write), it holds a newer record, which
 // is left whole -- withdrawing its number would destroy it, and its own writer may be between its write and its own
-// mark (review wf_a193c703-fe8). Otherwise the same rule as the write (review wf_d3c2ec9a-d52): the number withdrawn,
-// the bit set, the number put back.
+// mark. Otherwise the same rule as the write: the number withdrawn, the bit set, the number put back.
 void MarkTraceRecord(TraceRecord& r, uint64_t seqKind, uint32_t bit) {
     if (r.seqKind != seqKind) return;   // lapped: not ours any more
     r.seqKind = UINT64_MAX;

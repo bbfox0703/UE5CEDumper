@@ -362,17 +362,16 @@ static void RotateIfNeeded(LogFileState& fs_state) {
 
     // ⛔ _wfsopen, NOT _wfopen_s. `fopen_s`/`_wfopen_s` open with EXCLUSIVE (deny
     // read/write) access -- documented CRT behaviour, and the one difference from `_wfopen`
-    // that matters here. Build 3370 shipped the _s form and every live `<cat>-0.log` then
-    // answered ERROR_SHARING_VIOLATION (32) to EVERY reader: no tail, no rig, no operator,
-    // for as long as the game ran. That silently broke the capture method that
+    // that matters here: with the _s form every live `<cat>-0.log` answers
+    // ERROR_SHARING_VIOLATION (32) to EVERY reader -- no tail, no rig, no operator -- for as
+    // long as the game runs. That silently breaks the capture method that
     // docs/verification-register.md and docs/log-verification-checklist.md are built on,
-    // and it is invisible from the UI. Measured on EVERSPACE 2 2026-09-05: an archived
-    // sibling in the same folder read fine at the same instant, the live one did not.
+    // and it is invisible from the UI.
     // _wfsopen takes the share mode explicitly (_SH_DENYWR: we stay the only writer,
     // anyone may read) and, being an underscore-prefixed CRT extension rather than a
-    // deprecated ISO name, still raises no C4996 in the test target -- so 70d28548's
-    // zero-warning goal is kept. errno is read only on the failure path and immediately,
-    // so the clobber window the sibling call site documents cannot open either.
+    // deprecated ISO name, raises no C4996 in the test target. errno is read only on the
+    // failure path and immediately, so the clobber window the sibling call site documents
+    // cannot open either.
     fs_state.file = _wfsopen(fs_state.currentPath.c_str(), L"w", _SH_DENYWR);
     const errno_t reopenErr = fs_state.file ? 0 : errno;
     fs_state.written = 0;
@@ -387,9 +386,9 @@ static void RotateIfNeeded(LogFileState& fs_state) {
         // The truncating reopen failed (disk full, a viewer holding the file). The
         // category is dead for the rest of the process: WriteToFile's leading null
         // check means RotateIfNeeded is never reached again, so `written = 0` above
-        // is not what strands it — the handle is. WriteLog now reroutes this
+        // is not what strands it — the handle is. WriteLog reroutes this
         // category's lines to a file that IS open; say so once, or a later grep
-        // reads the silence as "that code path never ran". (audit #5 SE1)
+        // reads the silence as "that code path never ran".
         auto ts = GetTimestamp();
         char line[384];
         snprintf(line, sizeof(line),
@@ -405,8 +404,7 @@ static void RotateIfNeeded(LogFileState& fs_state) {
 // ================================================================
 
 // Returns false when the category's -0.log could not be opened. THE CALLER MUST
-// HONOUR IT: InitProcessMirror used to discard this bool and set s_filesOpen
-// regardless. (audit #5 SE1)
+// HONOUR IT: a category that did not open must not be treated as open.
 [[nodiscard]] static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
                           const LogFileName& name, int* outErr) {
     const wchar_t* baseName = name.w;
@@ -420,8 +418,8 @@ static void RotateIfNeeded(LogFileState& fs_state) {
     // ⛔ _wfsopen, NOT _wfopen_s -- see RotateIfNeeded above: the _s form opens EXCLUSIVELY
     // and makes the live log unreadable to every other process for the life of the game.
     // _SH_DENYWR keeps us the sole writer while leaving the file readable. errno is
-    // captured on the spot, so the clobber hazard the old comment worried about (the
-    // failure notice is written four more open attempts later) still cannot arise.
+    // captured on the spot: the failure notice is written only after the later open
+    // attempts, which would clobber it.
     fs_state.file = _wfsopen(fs_state.currentPath.c_str(), L"w", _SH_DENYWR);
     const errno_t openErr = fs_state.file ? 0 : errno;
     if (!fs_state.file) {
@@ -661,13 +659,11 @@ void InitProcessMirror(const std::wstring& processName) {
     if (ec) return;
     s_processDirReady = true;
 
-    // Open all 5 category files. Each archives its own previous -0.log first.
+    // Open every category file. Each archives its own previous -0.log first.
     //
-    // The bool is HONOURED now. It used to be dropped and s_filesOpen set
-    // unconditionally, which cost twice over: the failed category was dead for the
-    // process with nothing said anywhere, and the early buffer was flushed into its
-    // NULL FILE* and then clear()ed — destroying lines that another, perfectly
-    // healthy file could have taken. (audit #5 SE1)
+    // The bool is HONOURED: a failed category would otherwise be dead for the process
+    // with nothing said anywhere, and the early buffer flushed into its NULL FILE* and
+    // then clear()ed — destroying lines that another, healthy file can take.
     bool opened[LF_COUNT] = {};
     int  openErr[LF_COUNT] = {};
     int  openCount = 0;
@@ -741,11 +737,10 @@ void InitProcessMirror(const std::wstring& processName) {
     // only record of the run for no gain. The retention sweeps below are unaffected
     // by our own files and still run.
 
-    // The retention sweep used to run HERE, inline, under the loader lock. It is now
-    // RunRetentionSweep() below, called by DllMain — see AB9 and the contract in Sein.h.
-    // The ordering constraint it had is preserved by that call site being later still:
-    // the sweep must run AFTER the files are open, so the live -0.log of every category
-    // already exists and the archives are the only *.log left to age out.
+    // The retention sweep does not run here, under the loader lock: it is
+    // RunRetentionSweep() below, called by DllMain — see the contract in Sein.h. It must
+    // run AFTER the files are open, so the live -0.log of every category already exists
+    // and the archives are the only *.log left to age out; that call site is later still.
 }
 
 // Latched one-shot. The sweep is pure maintenance and there is nothing to gain from
@@ -757,11 +752,9 @@ void RunRetentionSweep() {
     // ORDER IS THE POINT: copy under the lock, RELEASE, then sweep unlocked.
     //
     // Holding s_mutex across the sweep would MOVE the stall — off the loader lock and onto
-    // every thread that logs — which is not the fix. And it is worse than that, measured
-    // 2026-08-24 rather than reasoned: the obvious shape (one lock_guard at the top of this
-    // function) SELF-DEADLOCKS. The !ready branch below calls LOG_WARN, WriteLog takes
-    // s_mutex unconditionally, and std::mutex is not recursive — sein_retention_test dies
-    // with a fastfail (exit 127) in its readiness case under exactly that edit. Nothing the sweep touches
+    // every thread that logs. And the obvious shape (one lock_guard at the top of this
+    // function) SELF-DEADLOCKS: the !ready branch below calls LOG_WARN, WriteLog takes
+    // s_mutex unconditionally, and std::mutex is not recursive. Nothing the sweep touches
     // is shared state: PruneAgedLogs only deletes *.log ARCHIVES in our own folder (the
     // live -0.log files are open and carry a current mtime), and PruneStaleProcessFolders
     // is explicitly told to keep ours.
@@ -785,11 +778,8 @@ void RunRetentionSweep() {
     // leave a later, valid call doing nothing.
     if (s_sweepDone.exchange(true)) return;
 
-    // Timed and LOGGED. Before AB9 this work was inline in InitProcessMirror and its cost
-    // was only ever visible as a gap between two unrelated DllMain lines; now that it is
-    // deferred and silent, nothing would show it ran at all — and "it ran" is exactly what
-    // a live check of this change needs to see. The line is also the measurement: if the
-    // sweep is ever suspected of being slow again, the number is already in the log.
+    // Timed and LOGGED: deferred work leaves no other trace that it ran, and the line is
+    // also the measurement -- a sweep suspected of being slow has its number in the log.
     const ULONGLONG t0 = ::GetTickCount64();
     PruneAgedLogs(procDir);
     PruneStaleProcessFolders(logDir, procDir);

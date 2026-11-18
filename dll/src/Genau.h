@@ -176,8 +176,8 @@ enum class AnchorState : uint8_t {
 /// dll_helpers_test pins the mapping.
 constexpr AnchorState ClassifyAnchor(bool haveAnchor, bool inAnyModule, bool inMainExe) {
     if (!haveAnchor) return AnchorState::None;
-    // Validated, but in no module: the data-scan fallback's heap FUObjectArray. It used to fall into None, so every
-    // later refusal said "GObjects never validated this run" on a run where it had.
+    // Validated, but in no module: the data-scan fallback's heap FUObjectArray. Not None, so a later refusal never
+    // says "GObjects never validated this run" on a run where it had.
     if (!inAnyModule) return AnchorState::Heap;
     return inMainExe ? AnchorState::MainExe : AnchorState::ForeignDll;
 }
@@ -202,10 +202,10 @@ enum class ModuleAdmission : uint8_t {
 /// No parameter has a default, deliberately: a target added later must STATE its
 /// answer or fail to compile, and `false` must never silently mean "nobody said".
 ///
-/// The AA38 arm is `AnchorState::None` + foreign + !producesAnchor. Before it, a
-/// process where GObjects never validated at all (python.exe, Solarpunk) published a
-/// GWorld out of some arbitrary loaded module, because an unloaded world and a wrong
-/// address that happens to read 0 are indistinguishable at the validator.
+/// The AA38 arm is `AnchorState::None` + foreign + !producesAnchor: in a process where
+/// GObjects never validated at all, a GWorld out of some arbitrary loaded module is
+/// refused, because an unloaded world and a wrong address that happens to read 0 are
+/// indistinguishable at the validator.
 constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
                                                     bool candIsMainExe,
                                                     bool producesAnchor) {
@@ -230,8 +230,8 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
             return producesAnchor ? ModuleAdmission::Accept
                                   : ModuleAdmission::RefuseHeapAnchored;
     }
-    // Unreachable for every value above; keeps every compiler quiet. [A2-HEAP-ANCHOR-TEXT] It used to ACCEPT, so a
-    // new AnchorState added without its case was silently admitted. It fails closed now.
+    // Unreachable for every value above; keeps every compiler quiet. [A2-HEAP-ANCHOR-TEXT] Fails closed, so a new
+    // AnchorState added without its case is refused, never silently admitted.
     return ModuleAdmission::RefuseUnanchored;
 }
 
@@ -417,22 +417,16 @@ uintptr_t FindSparseDelegateStorage();
 // validator cannot possibly succeed and the scan costs 0.2-0.7 s. Call
 // ResolveGEngineDeferred once the offsets are up.
 //
-// PROBE-RAN, not VALIDATED — this comment named the strict flag while the code has always
-// read the loose one, and since audit #5's G1 fix the two genuinely diverge (a partially
-// probed run now reports validated=false). The "TWO flags, deliberately" block above
-// `DynOff::bOffsetsProbeRan` in Grimoire.h explains why the loose flag is the correct gate:
-// on the UE 5.8 run the give-up path was the ONLY reason &GEngine resolved at all, so using
-// the strict one would regress it on exactly the builds that split exists to expose.
-// (Cited as `Grimoire.h:246` until build 3262; it had drifted ~45 lines. Grep the
-// identifier — docs/working-lessons.md §1 — a line number in a cross-file citation rots.)
+// PROBE-RAN, not VALIDATED — the two diverge, since a partially probed run reports
+// validated=false (audit #5 G1). The "TWO flags, deliberately" block above
+// `DynOff::bOffsetsProbeRan` in Grimoire.h explains why the loose flag is the correct gate.
 uintptr_t FindGEngineSlot();
 
 // Second-pass GEngine resolution, run after ValidateAndFixOffsets + FNamePool init.
 //
 // FindAll cannot resolve &GEngine: it runs before the dynamic FField/UStruct offsets and the
 // FNamePool exist, and ValidateGEngineSlot needs both to look up the reflected "GameViewport"
-// property. Before this existed, &GEngine reported "AOB not found" on every game even though
-// the patterns were resolving to the correct address (verified against the Everspace 2 PDB).
+// property.
 //
 // No-op when out.GEngine is already set. On success it updates the cached slot used by
 // FindLiveGameEngine's fast path and republishes the pattern-id / scan-addr / AOB triple so a
@@ -444,7 +438,7 @@ uint32_t DetectVersion();
 
 // Dynamically detect and fix FField/FProperty/UStruct offsets.
 // Must be called AFTER GObjects + GNames are initialized (Aura::Init + Serie::Init).
-// ueVersion: detected UE version (e.g. 505 = UE5.5, 427 = UE4.27). Used to determine
+// ueVersion: detected UE version (e.g. 505 = UE5.5, 427 = UE4.27); it decides
 // UProperty vs FProperty mode. Pass 0 if unknown (will fall back to heuristic detection).
 // Updates DynOff:: namespace variables.
 bool ValidateAndFixOffsets(uint32_t ueVersion);

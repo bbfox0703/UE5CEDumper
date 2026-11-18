@@ -49,12 +49,11 @@ enum FlyResult : int32_t {
 
 // What actually happened to ONE SetActorEnableCollision request.
 //
-// ⛔ `Absent` and `Refused` are NOT the same failure and must never be collapsed back into
-// a bool. That collapse is the D1 defect: `InvokeSetCollision` returned "the setter was
-// FOUND" and every caller read it as "collision CHANGED".
+// ⛔ `Absent` and `Refused` are NOT the same failure and must never be collapsed into
+// a bool: "the setter was FOUND" is not "collision CHANGED".
 //   Absent  — the pawn's class has no SetActorEnableCollision (cooked out of a stripped
 //             Shipping build). PERMANENT: retrying cannot conjure a setter, so the caller
-//             COMMITS and stops re-emitting. That is audit #4 B8 and it must survive.
+//             COMMITS and stops re-emitting.
 //   Refused — the dispatcher did not run it and never will: -8 (an off-game-thread worker
 //             while the PE hook is down, Frieren.cpp), -7 (shutdown), -3 (no usable PE offset),
 //             -2/-4. TRANSIENT: the caller must NOT commit, and must retry.
@@ -62,9 +61,7 @@ enum FlyResult : int32_t {
 //             but the request STAYS QUEUED and runs when it does -- unless Stark::Shutdown answers
 //             it first, unrun, which is why a restore Queued during a shutdown keeps its record
 //             (the three-argument ShouldCommitCollision). Otherwise (Frieren.h, Stark.cpp) the caller COMMITS, so
-//             the next opposite toggle emits the undo. [W3-DUNSTE-QUEUED] -- it used to be
-//             filed under Refused, and a queued disable then landed after the record said
-//             collision was ON, with nothing tracking it.
+//             the next opposite toggle emits the undo. [W3-DUNSTE-QUEUED]
 enum class CollisionApply : int32_t {
     Applied = 0,   // the dispatcher ran it and returned 0
     Absent  = 1,   // no setter on this pawn class

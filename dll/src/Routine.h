@@ -4,27 +4,20 @@
 // Routine — ルティーネ, 影の戦士の司書 (Shadow Warrior librarian)
 // Periodic-worker scaffolding shared by every re-assert / hold module.
 //
-// Six modules (Solitar / Laufen / Hemmung / Solide / Dunste / Schlacht) run the same
-// worker: mark the thread cancel-immune, sleep a period in short slices so a stop is
-// honoured promptly, do one tick, repeat. That shape had been hand-copied six times,
-// and audit #4 measured what hand-copying costs: the exception guard that build 2389
-// added for a LIVE-reproduced 0xC0000409 reached 2 of the 7 thread procs, and the
-// 25 ms sleep slice existed as 8 bare literals (B14 + R5).
+// The re-assert / hold modules run the same worker: mark the thread cancel-immune, sleep
+// a period in short slices so a stop is honoured promptly, do one tick, repeat. The shape
+// lives here once, so the exception guard and the sleep slice cannot differ between copies.
 //
 // An exception escaping a thread entry is std::terminate, not a caught error. A worker
 // tick reads live game state and allocates from it, so during the game's own teardown a
-// read or a std::vector sizing can throw — which is precisely the crash that was
-// observed. Every tick therefore runs inside RunTickGuarded, once, here.
+// read or a std::vector sizing can throw. Every tick therefore runs inside
+// RunTickGuarded, once, here.
 //
 // LOG_CAT: the macros below expand at the INCLUDE site, so include this header after
-// the module's `#define LOG_CAT "..."`. The parenthetical that used to sit here —
-// "(every module already defines it first)" — was FALSE and is why this went unnoticed:
-// Fern.cpp defined it three lines too late, so this header's guard messages logged under
-// "" (init-0.log) for the whole of the pipe server, and the only visible symptom was a
-// C4005 macro-redefinition warning that read as cosmetic. Do not restate the claim; the
-// compiler already enforces it, because getting it wrong warns. Each
-// module's worker then logs under its own category, exactly as the hand-copied
-// versions did.
+// the module's `#define LOG_CAT "..."`. Included before it, this header's guard messages
+// log under "" (init-0.log), and the only visible symptom is a C4005
+// macro-redefinition warning that reads as cosmetic. Each module's worker then logs
+// under its own category.
 // ============================================================
 
 #include "Sein.h"
@@ -46,22 +39,19 @@ namespace Routine {
 //
 // `~std::thread()` on a still-joinable thread calls std::terminate() **directly** — no
 // exception is thrown, so no `catch` anywhere can help. Same for move-assigning over a
-// joinable thread. That is the real cause of the DQ7R fast-fails of 2026-08-04
-// (0xC0000409 param[0]=7 = FATAL_APP_EXIT), which survived TWO generations of exception
-// guards precisely because there was never an exception to catch:
+// joinable thread. Either is a fast-fail (0xC0000409 param[0]=7 = FATAL_APP_EXIT), and
+// an exception guard cannot help because there is no exception to catch:
 //
 //   * `UE5_Shutdown` is NOT called when the user closes a game — `DllMain(DETACH)` is a
 //     deliberate no-op (joining a thread from DllMain deadlocks on the loader lock), and
-//     there is no proxy graceful-exit hook. Verified: zero `UE5_Shutdown: Cleaning up`
-//     lines in a whole session's log.
-//   * So at process exit every feature worker is still joinable, its static destructor
-//     runs, and the FIRST one to destruct kills the process.
-//   * Which is exactly why it only ever reproduced with features switched ON.
+//     there is no proxy graceful-exit hook.
+//   * So at process exit every feature worker that was switched on is still joinable, its
+//     static destructor runs, and with a plain std::thread the FIRST one to destruct kills
+//     the process.
 //
-// Fixing it by detaching from DllMain would have worked and would have been another
-// hand-maintained LIST — the same shape that made B14 and B34 fail their first in-game
-// check. This makes it a property of the TYPE instead: declare the thread as a
-// SafeThread and the failure cannot occur, including in a module nobody has written yet.
+// Detaching from DllMain would need a hand-maintained LIST of threads. This makes it a
+// property of the TYPE instead: declare the thread as a SafeThread and the failure
+// cannot occur, including in a module nobody has written yet.
 //
 // Detaching is the correct action at exit, not a cop-out: on process exit Windows has
 // already terminated every other thread before DETACH runs, so there is nothing left to
@@ -114,15 +104,11 @@ inline void RunTickGuarded(const char* tag, bool& warnedOnce, TickFn&& tick) {
 // Wrap an ENTIRE thread body (or any callback invoked from foreign code) so a throw
 // cannot escape into a frame that has no handler.
 //
-// WHY THIS EXISTS SEPARATELY FROM RunTickGuarded: audit #4's B14 was filed as "the guard
-// reached 2 of 7 thread procs", and fixing exactly those seven left the process still
-// terminating. A live DQ7R capture (2026-08-04, build 2622, WER param[0]=7 =
-// FAST_FAIL_FATAL_APP_EXIT with the whole stack inside our own module) proved the
-// enumeration itself was wrong: the DLL has ~15 places where a C++ exception means
-// std::terminate, and the six feature workers are only some of them. The rest are Fern's
-// accept / connection / watch / scan threads, Mimic's poller, Heiter's auto-start thread,
-// and — the one that cannot be reached any other way — Stark's ProcessEvent hook, which
-// runs on the GAME's own thread and is entered from game code that has no handler for us.
+// WHY THIS EXISTS SEPARATELY FROM RunTickGuarded: a feature worker's tick is only one of
+// the places where a C++ exception means std::terminate. Every thread body the DLL starts
+// needs the guard, and so does every callback entered from foreign code — above all
+// Stark's ProcessEvent hook, which runs on the GAME's own thread and is entered from game
+// code that has no handler for us.
 //
 // Returns false when the body threw, so a caller that must react (rather than merely
 // survive) can. Never rethrows.

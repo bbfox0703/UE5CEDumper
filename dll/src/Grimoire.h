@@ -495,13 +495,13 @@ inline RuntimeOffset LAZYPTR_GUID  {-1};   // FGuid           offset inside TLaz
 // CasePreservingName that makes the two arms disagree about which constant is right:
 //   two 0xC FNames = 0x18, already 8-aligned  -> 0x18 + 0x10 = 0x28
 //   one 0xC FName  = 0xC,  NOT 8-aligned      -> 0x10 + 0x10 = 0x20
-// So neither a bare 0x10 (the old code: gave 0x30 for the >=5.1 arm) nor a bare 0xC (the
-// naive fix: gives 0x1C for the <=5.0 arm) is correct for both. Only the AlignUp is.
+// So neither a bare 0x10 (gives 0x30 for the >=5.1 arm) nor a bare 0xC (gives 0x1C for the
+// <=5.0 arm) is correct for both. Only the AlignUp is.
 //
-// Getting the >=5.1 arm wrong was not just a bad number. With payload 0x30 against a real
-// CPN 5.1 tagged ElementSize of 0x38, PersistentPtrEnvelopeFor sees 0x38-0x30 = 0x08 --
-// which it ACCEPTS as a legal measurement and the caller LATCHES, so a bogus value then
-// outranks the version fallback. That is precisely the failure that function exists to stop.
+// Getting the >=5.1 arm wrong is not just a bad number. With payload 0x30 against a real
+// CPN 5.1 tagged ElementSize of 0x38, PersistentPtrEnvelopeFor would see 0x38-0x30 = 0x08 --
+// which it ACCEPTS as a legal measurement and the caller LATCHES, so a bogus value would then
+// outrank the version fallback. That is precisely the failure that function exists to stop.
 constexpr int FSoftObjectPathSizeFor(int fnameSize, bool isTopLevelAssetPath) {
     const int names = isTopLevelAssetPath ? (2 * fnameSize) : fnameSize;
     return ((names + 7) & ~7) + 0x10;   // + FString/FUtf8String { Data, Num, Max }
@@ -778,8 +778,7 @@ constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int dis
 // family can have is taken: 4 or 8 on a standard build, 8 or 12 on a case-preserving one (the smaller of
 // each pair is UE_FNAME_OUTLINE_NUMBER, which moves Number out of FName), and only when at least
 // kFNameSizeMinAgree samples agree on three quarters of them. 0 = no measurement, and SizeofFName() then
-// answers from bCasePreservingName. Measured 2026-09-24 on both case-preserving hosts: 12 on 331 of 331
-// NameProperty fields (UE 5.4 editor, DumperTest -game) and on 239 of 239 (UE 4.27 editor, UE427_3rdPerson).
+// answers from bCasePreservingName.
 constexpr int kFNameSizeMinAgree = 5;
 constexpr bool IsFNameSizeFor(int size, bool casePreserving) {
     return casePreserving ? (size == 8 || size == 12) : (size == 4 || size == 8);
@@ -792,9 +791,9 @@ inline std::atomic<int>  FNAME_SIZE_MEASURED{0};
 inline std::atomic<bool> bFNameSizeProbed{false};
 
 // [VND583-14] FSoftObjectPath's shape: UE 4.x / 5.0 hold `FName AssetPathName`; 5.1+ hold
-// `FTopLevelAssetPath AssetPath` (two FNames). It was decided by `ueVersion >= 501`, which a title
-// misdetected across 5.0/5.1 gets wrong -- and a fork that reports 505 over a 5.0 core is exactly that.
-// It is now MEASURED from the reflected ScriptStruct `SoftObjectPath` itself: a field called `AssetPath`
+// `FTopLevelAssetPath AssetPath` (two FNames). A `ueVersion >= 501` rule gets a title misdetected across
+// 5.0/5.1 wrong -- and a fork that reports 505 over a 5.0 core is exactly that -- so the shape is
+// MEASURED from the reflected ScriptStruct `SoftObjectPath` itself: a field called `AssetPath`
 // means 1 (top-level), `AssetPathName` 0. SOFTPATH_TOPLEVEL_MEASURED = -1 until measured, and then the
 // version rule answers.
 constexpr bool SoftPathIsTopLevelFor(int measured, unsigned ueVersion) {
@@ -878,7 +877,7 @@ constexpr uint32_t RefineVersionFromLazyMarkers(uint32_t ver, bool sawUtf8OrAnsi
 // Field.h at 5.1.1-release and 5.2.1-release still declares bIsUObject, 5.3.0-release declares
 // UObjectMask, and DumperTest51 (stock 5.1.1) measures Offset_Internal at 0x4C live. So 4.25-5.2 keep the
 // defaults above (Next 0x20, Name 0x28, Offset_Internal 0x4C), and only 5.3+ -- or an unknown version,
-// most of which are modern -- start from Next 0x18 / Name 0x20 / Offset_Internal 0x44. It was >= 502.
+// most of which are modern -- start from Next 0x18 / Name 0x20 / Offset_Internal 0x44.
 // And the tag bit may be INFERRED from FField::Next == 0x18 only when that 0x18 was MEASURED; an
 // unmeasured 0x18 is the default this function just chose, not evidence.
 constexpr bool UsesSmallFFieldVariantDefault(unsigned ueVersion) { return ueVersion >= 503 || ueVersion == 0; }
@@ -886,12 +885,12 @@ constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alr
     return fproperty && ffieldNext == 0x18 && !alreadyTagged && nextMeasured;
 }
 
-// [R7-X4] The CharacterMovementComponent version markers, measured 2026-09-25 on stock builds by the reflected
-// names each carries: the FVector GravityDirection PROPERTY is already in stock 5.3 (Release-5.3-CL-29314046; absent
-// from 5.1), and what 5.4 added is the reflected UFUNCTIONs SetGravityDirection / GetGravityDirection (in 5.4.4, 5.6,
-// 5.7 and 5.8, not in 5.3). The property used to raise a stock 5.3 title to 504 -- ThirdPerson53, DragonSword and
-// Avowed all measured -- which also switched off the 5.0-5.3 PendingKill tag (IsWeakTargetGarbage, R7-B-01). So the
-// function means 5.4+, and the property alone only 5.3+ (a floor for a stripped build detected lower).
+// [R7-X4] The CharacterMovementComponent version markers, by the reflected names each stock build carries: the
+// FVector GravityDirection PROPERTY is already in stock 5.3 (Release-5.3-CL-29314046; absent from 5.1), and what 5.4
+// added is the reflected UFUNCTIONs SetGravityDirection / GetGravityDirection (in 5.4.4, 5.6, 5.7 and 5.8, not in
+// 5.3). Read as a 5.4 marker, the property would raise a stock 5.3 title to 504, which also switches off the 5.0-5.3
+// PendingKill tag (IsWeakTargetGarbage, R7-B-01). So the function means 5.4+, and the property alone only 5.3+ (a
+// floor for a stripped build detected lower).
 constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool hasGravityDirectionProperty,
                                     bool hasSetGravityDirectionFunction) {
     if (!fproperty || ueVersion < 500 || ueVersion >= 504) return ueVersion;
@@ -1154,11 +1153,10 @@ constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, boo
         || (itemFlagsOk && ueVersion != 0 && (itemFlags & (1u << 28)) != 0);   // Unreachable
 }
 
-// [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
-// DetectUPropertyMode returned before touching it and the FProperty arm probed only
-// FField::Next, so on a title whose UObject carries an extra 8-byte tail (The Pathless, a
-// 4.25-layout fork: UField Next 0x30, SuperStruct 0x48 -- RE-UE4SS config) every function list
-// stepped the wrong member while the run still said validated. Genau now walks a UClass's
+// [VND583-02] UField::Next in FProperty mode (4.25+). Probed, not left at its 0x28 default: on a
+// title whose UObject carries an extra 8-byte tail (a 4.25-layout fork: UField Next 0x30,
+// SuperStruct 0x48 -- RE-UE4SS config) the default steps every function list through the wrong
+// member while the run still says validated. Genau walks a UClass's
 // Children chain at each candidate (the default first) and counts consecutive Function hops.
 // This picks the FIRST candidate with >= 2 hops: one hop can be a coincidental pointer, two in
 // a row cannot. -1 = nothing chained; the caller keeps the default and says so.
@@ -1270,15 +1268,10 @@ inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int sa
 
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
 //
-// ⛔ This was the ONE UProperty-mode offset nothing calibrated. UBOOLPROP_FIELDSIZE had
-// ZERO writers repo-wide against nine readers, while every other UProperty-mode offset in
-// ValidateAndFixOffsets IS derived (UPROPERTY_OFFSET, _ELEMSIZE, _FLAGS, UFIELD_NEXT) --
-// the FProperty arm derived the whole subclass family and simply had no `else`.
-//
 // The four bytes { FieldSize, ByteOffset, ByteMask, FieldMask } sit at the property base's
 // TOTAL SIZE, so the delta from Offset_Internal is whatever the tail after it measures.
-// MEASURED across all 31 UVTD templates ([FProperty]/[UProperty] Offset_Internal vs
-// [FBoolProperty] FieldSize) -- and it is NOT the single +0x2C the audit prescribed:
+// Read from the UVTD templates ([FProperty]/[UProperty] Offset_Internal vs
+// [FBoolProperty] FieldSize), it is NOT a single +0x2C:
 //
 //   4.07-4.10   Offset_Internal 0x4C -> FieldSize 0x70   delta 0x24   (below our 4.11 floor)
 //   4.11-4.17   Offset_Internal 0x50 -> FieldSize 0x78   delta 0x28
@@ -1287,28 +1280,21 @@ inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int sa
 //   5.03-5.08   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
 //   4.27 CPN    Offset_Internal 0x4C -> FieldSize 0x80   delta 0x34  (= 0x2C + 8)
 //
-// ⚠ THE MIDDLE ROW IS WHY THIS TABLE IS SPLIT, corrected 2026-09-06. It used to read a single
-// "4.18-5.08  0x44 -> 0x70", which is right at BOTH ENDS and wrong for the six versions between
-// them: 4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all measure 0x4C -> 0x78. The shipped code was
-// never affected -- it reads only the DELTA, which is 0x2C across all three UE4.18+ rows -- but a
-// reviewer sanity-checking the derivation on a UE 5.0 or 5.1 game would find 0x4C/0x78, conclude
-// the table was broken, and "fix" a correct one.
-// The 5.08 endpoint was ASSERTED when this comment was written (no 5_08 template existed then,
-// the highest was 5_07). RE-UE4SS shipped MemberVariableLayout_5_08_Template.ini on 2026-09-05
-// and it agrees: 0x44 -> 0x70. Re-derive with:
+// ⚠ THE MIDDLE ROW IS WHY THIS TABLE IS SPLIT: 4.25-5.02 measure 0x4C -> 0x78, the same
+// delta on another base. The code reads only the DELTA, which is 0x2C across all three UE4.18+
+// rows, so a UE 5.0 or 5.1 game reading 0x4C/0x78 does not mean the table is broken. Re-derive with:
 //   grep -h "^Offset_Internal" vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/*.ini
-// Live corroboration for the delta, both 2026-09-05: OCTOPATH 4.18 stock derived 0x44 -> 0x70,
-// and DQ XI S (UProperty mode, whole-layout +0x10 shift) derived 0x54 -> 0x80 -- the same 0x2C
-// off a shifted base, which is the case no template can supply.
+// A whole-layout +0x10 shift (UProperty mode) derives 0x54 -> 0x80 -- the same 0x2C off a
+// shifted base, which is the case no template can supply.
 //
 // The 4.17/4.18 step is not a curve fit: Offset_Internal and RepNotifyFunc SWAPPED order.
 // Up to 4.17 the tail is RepNotifyFunc(FName) + Offset_Internal + 4 pointers; from 4.18
 // Offset_Internal moves ahead of RepNotifyFunc, shortening the tail by 4. 4.11-4.17 is
-// SEVEN versions inside our supported range, so a flat +0x2C would have been wrong there.
+// SEVEN versions inside our supported range, so a flat +0x2C is wrong there.
 // The CPN +8 is the usual padded-FName SLOT delta (RepNotifyFunc is an FName followed by
 // 8-aligned pointers) -- see bCasePreservingName -- and it exists from 4.18 only. Before 4.18 the
 // 12-byte FName sits BEFORE Offset_Internal and moves Offset_Internal itself (0x50 -> 0x58), so the
-// tail stays 0x28: case-preserving 4.15 starts at 0x80, not 0x88 (review wf_b99fb861-680, F3).
+// tail stays 0x28: case-preserving 4.15 starts at 0x80, not 0x88.
 //
 // ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
 // survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
@@ -1323,10 +1309,9 @@ constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
 
 // The FIRST field of a UProperty subclass -- UStructProperty::Struct, UObjectPropertyBase::
 // PropertyClass, UBoolProperty::FieldSize: every one sits right behind the UProperty base, so the
-// measured delta above applies to all of them. [A2-UFUNC-TAIL-4X]'s lead: WalkFunctions read the
-// first two at a flat +0x2C, wrong on 4.11-4.17. For a KNOWN version this IS
-// UBoolPropFieldSizeFor; an unknown version (0) keeps the +0x2C those readers always used (plus
-// the CPN slot), never the below-floor 0x24.
+// measured delta above applies to all of them; a flat +0x2C is wrong on 4.11-4.17.
+// [A2-UFUNC-TAIL-4X] For a KNOWN version this IS UBoolPropFieldSizeFor; an unknown version (0)
+// takes +0x2C (plus the CPN slot), never the below-floor 0x24.
 constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
                                         bool casePreservingName) {
     return ueVersion >= 411 ? UBoolPropFieldSizeFor(offsetInternal, ueVersion, casePreservingName)
@@ -1337,8 +1322,8 @@ constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
 // UProperty tail orders a build has is readable from the two offsets Genau measures: Offset_Internal - ElementSize is
 // 0x10 when Offset_Internal comes first (4.18+: Offset_Internal, RepNotifyFunc, four pointers) and 0x1C when
 // RepNotifyFunc does (4.11-4.17: RepNotifyFunc, Offset_Internal, four pointers). Reading the order from the version
-// broke on a misdetected one: a 4.11-4.17 title whose detection fails is relabelled 422 and got the 4.18+ tail, a
-// misaligned 0x7C where its start is 0x78 (review wf_b99fb861-680, F1). The pointers are 8-aligned either way, which
+// breaks on a misdetected one: a 4.11-4.17 title whose detection fails is relabelled 422 and would get the 4.18+ tail,
+// a misaligned 0x7C where its start is 0x78. The pointers are 8-aligned either way, which
 // also makes a case-preserving FName (12 bytes, alignof 4) come out right in both orders.
 constexpr int UPropertySubclassStartFromLayout(int offsetInternal, int elemSizeOff, unsigned ueVersion,
                                                bool casePreservingName) {
@@ -1353,7 +1338,7 @@ constexpr int UPropertySubclassStartFromLayout(int offsetInternal, int elemSizeO
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize: 0x28; 0x30 for CPN and on pre-4.25 STATS builds; 0x38
-// measured on DQ XI S. This is only the default -- it is probed. [VND583-DOC UEP-D3]
+// on a build that shifts the whole layout. This is only the default -- it is probed. [VND583-DOC UEP-D3]
 inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
@@ -1424,15 +1409,14 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 // WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
 // 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
 // 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
-// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 were right only while Offset_Internal sat on an 8-byte boundary minus 4. A UE
+// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 hold only while Offset_Internal sits on an 8-byte boundary minus 4. A UE
 // 5.7 build with WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal (UE_5.7 UnrealType.h) and
-// moves it to 0x48: the flat +0x2C gave 0x74 where the struct is at 0x78, and TQ2 logged the later correction
-// (`CorrectSubclassOffsets: delta=4`). The fix is the same sum rounded UP to 8, and the rounding is at the END on
-// purpose: from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8 UnrealType.h), so on an 8-aligned
-// Offset_Internal -- which only a 5.3+ editor-data build has; 4.25-5.2 keep it at 4 mod 8 -- the pointers start at the
-// next boundary and the FName ends the object, which sizeof rounds up. Case-preserving 0x48 is 0x80 and a 5.5+ editor's
-// 0x50 is 0x88; the first version of this fix modelled the 4.25-5.2 order (FName, then align) and gave 0x78 / 0x80
-// (review wf_b99fb861-680, F2). At the 4-mod-8 values every build uses, both orders give the same start.
+// moves it to 0x48, where a flat +0x2C gives 0x74 while the struct is at 0x78. So the sum is rounded UP to 8, and the
+// rounding is at the END on purpose: from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8
+// UnrealType.h), so on an 8-aligned Offset_Internal -- which only a 5.3+ editor-data build has; 4.25-5.2 keep it at 4
+// mod 8 -- the pointers start at the next boundary and the FName ends the object, which sizeof rounds up.
+// Case-preserving 0x48 is 0x80 and a 5.5+ editor's 0x50 is 0x88; the 4.25-5.2 order (FName, then align) would give
+// 0x78 / 0x80 there. At the 4-mod-8 values every build uses, both orders give the same start.
 inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
     return PropertyFamilyAtBase((propOffsetOff + (casePreservingName ? 0x34 : 0x2C) + 7) & ~7);
 }
@@ -1441,9 +1425,8 @@ inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePr
 // subclass start -- UStructProperty::Struct, UObjectPropertyBase::PropertyClass, UArrayProperty::Inner,
 // UByteProperty::Enum and UBoolProperty::FieldSize all sit right behind the UProperty base, and
 // UEnumProperty::Enum 8 later behind UnderlyingProp (UE_4.18 / 4.23 UnrealType.h, EnumProperty.h).
-// Genau used to derive only the bool slot there, so the rest kept the FProperty default 0x78 -- on
-// stock 4.18-4.24 (start 0x70) past the end of a UStructProperty and ON a UClassProperty's
-// MetaClass. UE423_Flying: 2,624 of 2,624 struct members read as raw bytes after a fresh connect.
+// The FProperty default 0x78 is wrong there: on stock 4.18-4.24 (start 0x70) it is past the end
+// of a UStructProperty and ON a UClassProperty's MetaClass.
 inline constexpr PropertyFamily UPropertyFamilyFor(int offsetInternal, unsigned ueVersion,
                                                    bool casePreservingName) {
     return PropertyFamilyAtBase(UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName));
@@ -1468,18 +1451,16 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
 // stays valid (a cache that returns copies may evict, oldest first), and the bumps are few (at most one move per
 // session in every log measured, and one retire per offset validation). The trade: a re-init (CE Disable, then Enable)
 // leaves the previous run's entries resident in the reference-handing caches beside the fresh set it builds -- one set
-// per re-init, never freed -- where a re-init whose family did not move used to reuse them. Reuse across runs was never
-// sound anyway: a garbage collection between them can hand a class's address to another class. Moves after init
-// were measured on UE423_Flying (0x78 -> 0x70),
-// DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
+// per re-init, never freed. Reusing them across runs would not be sound: a garbage collection between them can hand a
+// class's address to another class. The base alone decides "moved":
 // FARRAYPROP_INNER legitimately diverges after calibration (see above), and resetting it is not a move.
 inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
 
 // User-space addresses stay below 2^47, so the epoch in the top 16 bits cannot collide with an address.
 // ⚠ It reads the epoch afresh on every call, so a builder takes its key ONCE, before its first read through the family,
-// and publishes under THAT key. A key taken at publish time filed an answer that a concurrent move had overtaken under
-// the NEW epoch, where it was served for the rest of the session (review wf_b99fb861-680, F4); taken first, the same
-// race files it under a dead epoch, and the class is simply built again.
+// and publishes under THAT key. A key taken at publish time would file an answer that a concurrent move had overtaken
+// under the NEW epoch, where it would be served for the rest of the session; taken first, the same race files it under
+// a dead epoch, and the class is simply built again.
 inline uintptr_t FamilyCacheKey(uintptr_t addr) {
     return (static_cast<uintptr_t>(g_propertyFamilyEpoch.load(std::memory_order_acquire)) << 48) ^ addr;
 }
@@ -1505,19 +1486,18 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 // slot proof and calibration latch are withdrawn, so the next walk checks the slot afresh. For the end of an offset
 // validation: an init re-derives offsets outside the family too (FPROPERTY_OFFSET, the FField layout), which the
 // family-keyed caches read, and a base that ends where it started -- or where a walk during the run had already
-// corrected it to -- is no move, so ApplyPropertyFamily alone left what was cached mid-run in place for the session
-// (review wf_8f451d97-434, B-INIT-WINDOW). Under the write lock, so a latch stored under it records a current epoch.
-// g_offsetValidations counts these retires apart from the family's moves: a builder that reads offsets before it takes its
-// key -- WalkClassEx, whose key follows CorrectSubclassOffsets' deliberate move -- compares it across the two and walks
-// again, since a move it made itself is fine and a validation that ended in between is not (review wf_b0aa9098-dd5,
-// B-EX-STRADDLE). Seqlock-shaped: odd while a retire is between its two bumps, even again only after the epoch moved. A
-// reader takes an EVEN count before its reads (SettledOffsetValidations): having seen the count a retire finished with,
-// it sees that retire's epoch too, so its plain walk cannot be keyed under the old epoch and served what was cached
-// mid-validation -- which a count bumped once, before the epoch, let through (review wf_09b53b67-caf,
-// B-R4-STRADDLE-PLAIN-HIT). Any change by the time it compares -- odd included -- means its walk is not published and
-// the call starts over. One that starts over while the retire is still half done can be served what the old epoch
-// already holds: an answer from inside the validation, as any caller during it gets, never filed under the new epoch
-// (review wf_090d2608-d9f, R5-RECURSE-UNSETTLED-HIT).
+// corrected it to -- is no move, so ApplyPropertyFamily alone would leave what was cached mid-run in place for the
+// session. Under the write lock, so a latch stored under it records a current epoch.
+// g_offsetValidations counts these retires apart from the family's moves: a builder that reads offsets before it takes
+// its key -- WalkClassEx, whose key follows CorrectSubclassOffsets' deliberate move -- compares it across the two and
+// walks again, since a move it made itself is fine and a validation that ended in between is not. Seqlock-shaped: odd
+// while a retire is between its two bumps, even again only after the epoch moved. A reader takes an EVEN count before
+// its reads (SettledOffsetValidations): having seen the count a retire finished with, it sees that retire's epoch too,
+// so its plain walk cannot be keyed under the old epoch and served what was cached mid-validation, as a count bumped
+// once, before the epoch, would let through. Any change by the time it compares -- odd included -- means its walk is
+// not published and the call starts over. One that starts over while the retire is still half done can be served what
+// the old epoch already holds: an answer from inside the validation, as any caller during it gets, never filed under
+// the new epoch.
 inline std::atomic<uint32_t> g_offsetValidations{0};
 inline void RetireFamilyEpoch() {
     const FamilyWriteLock lk;
@@ -1569,8 +1549,6 @@ inline std::atomic<bool> bUEnumNamesFailed{false};
 // (ComparisonIndex, Number, DisplayIndex), alignof 4, and `class FName` carries no
 // alignas -- there is NO trailing pad inside FName. 0x10 is the UObject NamePrivate->Outer
 // SLOT, which is wide only because OuterPrivate is an 8-aligned pointer.
-// This comment previously asserted the pad, and it is the single most-copied wrong sentence
-// in the tree: every downstream sizeof defect traced back to reading it as a size.
 //   SLOT (0x10)   : UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName, 8-aligned-T> value offset.
 //   sizeof (0xC)  : packed FName[] strides, stepping to an adjacent FName, FScriptDelegate,
 //                   and anything compared against an engine-reported ElementSize.
@@ -1579,9 +1557,9 @@ inline std::atomic<bool> bUEnumNamesFailed{false};
 inline bool bCasePreservingName  = false;
 
 // [UPROP-SUBCLASS-SLOT] The start for a reader that does not go through the family: the one Genau derived, else the
-// version's. The readers used the version formula on its own, so on a layout whose version is misdetected -- a
-// 4.11-4.17 title relabelled 422 -- they read 0x7C where Genau had put the family at the layout's 0x78: a class-valued
-// member lost its MetaClass, a UFunction parameter its struct / class (review of build 3594).
+// version's. The version formula on its own is wrong on a layout whose version is misdetected: a 4.11-4.17 title
+// relabelled 422 would read 0x7C where Genau puts the family at the layout's 0x78, and a class-valued member would
+// lose its MetaClass, a UFunction parameter its struct / class.
 inline int UPropertySubclassStart(unsigned ueVersion) {
     return UPROPERTY_SUBCLASS_START > 0
         ? UPROPERTY_SUBCLASS_START
@@ -1625,14 +1603,9 @@ inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName
 //   Development / Debug (5.3+)  : FMulticastScriptDelegate { atomic State           @ +0x00,
 //                                                            TArray InvocationList  @ +0x08 }
 //
-// Measured on DumperTest Development (UE 5.4) 2026-09-09 -- the bound `OnActorHit`:
-//   +0x00 0000000000000000   atomic State
-//   +0x08 405CBFF5D5010000   Data = 0x1D5F5BF5C40
-//   +0x10 01000000           Num  = 1        <- the one subscriber, invisible at +0x08
-//   +0x14 04000000           Max  = 4
-// Read at the old offsets that is `Data=0, Num=0xF5BF5C40` -- Num is the LOW HALF OF DATA,
-// which is the fingerprint to recognise this by. 4.27 has no base class at all (checked
-// against the DropIn 4.27.2 PDB), so the pre-5.3 constants were never wrong, just narrow.
+// Read at the pad-free offsets, a padded multicast shows `Data=0` and a Num that is the LOW
+// HALF OF DATA, which is the fingerprint to recognise this by. 4.27 has no base class at all
+// (checked against the DropIn 4.27.2 PDB), so the pre-5.3 constants hold there.
 //
 // ⚠ TWO TYPES, ONE SPELLING. A multicast's invocation-list ELEMENTS are
 // `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>` -- that base specialization is empty
@@ -1641,10 +1614,8 @@ inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName
 // `TScriptDelegate<FNotThreadSafeDelegateMode>` and IS padded. Our comments call both
 // "FScriptDelegate"; ask which one before reusing a stride.
 //
-// ⚠ WHY NOTHING RED EVER APPEARED, same shape as bCasePreservingName above: every real title
-// measured in this repo is **Shipping**, and Shipping is the pad-free side. The first host that
-// could show it was our own Development fixture, and only after 2026-09-08 gave it a bound
-// sparse delegate to walk.
+// ⚠ Same shape as bCasePreservingName above: a real title is usually **Shipping**, the pad-free
+// side, so a padded-side defect shows only on a Development / Debug build, such as our own fixture.
 constexpr int32_t kDelegateDetectorPad = 0x08;
 
 /// The pad implied by the ENGINE's own ElementSize for a delegate-family property.
@@ -1697,19 +1668,17 @@ inline std::string DelegateHex(const uint8_t* bytes, int32_t size, int32_t pad) 
 }
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
-// TWO flags, deliberately. They used to be one, which reported a run as
-// "validated=yes" three lines after logging "Offset validation failed — using default
-// offsets" (seen on UE 5.8). A user reading the honest-looking summary had no way to
-// know the walker was about to be useless.
+// TWO flags, deliberately: a run that logs "Offset validation failed — using default
+// offsets" must not also report "validated=yes", or a user reading the honest-looking
+// summary has no way to know the walker is about to be useless.
 //
 //   bOffsetsProbeRan   — "detection executed and DynOff is settled" (success OR give-up)
 //   bOffsetsValidated  — "the values were actually MEASURED and are trustworthy"
 //
 // The split is mandatory, not cosmetic: FindGEngineSlot / ResolveGEngineDeferred gate on
-// the flag purely to order themselves AFTER offset detection, and on the 5.8 run the old
-// (bogus) store-true on the give-up path was the ONLY reason &GEngine resolved at all.
-// Those gates therefore take bOffsetsProbeRan — flipping them to the strict flag would
-// silently regress &GEngine on exactly the builds this split exists to expose.
+// the flag purely to order themselves AFTER offset detection, and &GEngine can resolve on a
+// run whose offset probe gave up. Those gates therefore take bOffsetsProbeRan — the strict
+// flag would silently lose &GEngine on exactly the builds this split exists to expose.
 //
 // Both are atomic with release/acquire ordering: the release-store after writing all
 // DynOff values fences the preceding non-atomic writes, so any thread that acquire-loads
@@ -1722,7 +1691,7 @@ inline std::atomic<bool> bOffsetsValidated{false};
 inline const char* g_offsetsFallbackReason = "";
 
 // [W5-OFFSETS-UNMEASURED] UE5_Shutdown forgets the verdict: a later init re-derives it, and until then nothing may read
-// a PREVIOUS run's "validated" -- the give-ups used to keep one, over default offsets.
+// a PREVIOUS run's "validated".
 inline void ResetOffsetsVerdict() {
     bOffsetsValidated.store(false, std::memory_order_release);
     bOffsetsProbeRan.store(false, std::memory_order_release);
@@ -1926,8 +1895,7 @@ inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productV
 // The too-old refusal names the override as the way out of a wrong detection, so the override has to
 // reach every version this dumper reads: its floor is the support floor. Below it, an override would
 // force a scan of an object model nothing here can read (an override is never refused as too old);
-// above 5.9 there is no version-code band. It used to start at 4.18, so a 4.11-4.17 title could not be
-// set by hand at all.
+// above 5.9 there is no version-code band.
 
 constexpr int UE_VERSION_OVERRIDE_MIN = static_cast<int>(MIN_SUPPORTED_UE_VERSION);
 constexpr int UE_VERSION_OVERRIDE_MAX = 500 + static_cast<int>(UE_MAX_UE5_MINOR);

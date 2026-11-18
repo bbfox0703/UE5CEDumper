@@ -139,28 +139,24 @@ inline bool HasUEAnchorNearby(const uint8_t* scan, size_t size,
     return false;
 }
 
-// ── Tier 2's context test (audit #5 G8) ─────────────────────────────────────
+// ── Tier 2's context test ───────────────────────────────────────────────────
 //
-// "Release" (or "release") within the preceding `windowBytes`. Three things used to
-// disagree here and the code was the narrowest of the three: the comment said 16, the
-// buffer was `char ctx[17]`, and the memcpy copied 8.
+// "Release" (or "release") within the preceding `windowBytes`.
 //
-// ⚠ The obvious repair — widen the memcpy to 16 — is WRONG IN BOTH DIRECTIONS, and both
-// were measured before this was written:
+// ⚠ A wider `strstr` over a copied window — the obvious alternative — is WRONG IN BOTH DIRECTIONS:
 //   * `strstr` over a NUL-terminated copy stops at the FIRST NUL in the copied bytes. A
 //     neighbouring string's terminator inside the wider window therefore TRUNCATES the
-//     search and LOSES a match the narrow window found (12.2% of the 14,823 [Rr]elease
-//     occurrences across the 33-binary corpus have a NUL in the preceding 8 bytes). So a
-//     wider strstr is not a superset of a narrower one.
-//   * `off >= 16` as the guard drops Tier-2 eligibility for offsets 8..15 that qualify
-//     today — including the canonical "Release-5.4.0", whose needle sits at offset 8.
+//     search and LOSES a match a narrower window finds. So a wider strstr is not a
+//     superset of a narrower one.
+//   * `off >= 16` as the guard drops Tier-2 eligibility for offsets 8..15 — including the
+//     canonical "Release-5.4.0", whose needle sits at offset 8.
 // A raw byte search over a CLAMPED window has neither problem and is a strict superset.
 inline bool HasReleaseBefore(const uint8_t* scan, size_t off, size_t windowBytes) {
     if (off == 0) return false;
     const size_t win = (off < windowBytes) ? off : windowBytes;   // clamp at image start
     const uint8_t* w = scan + off - win;
     for (size_t i = 0; i + 7 <= win; ++i) {
-        // "Release" / "release" — the original accepted exactly these two spellings.
+        // "Release" / "release" — exactly these two spellings.
         if ((w[i] == 'R' || w[i] == 'r') && memcmp(w + i + 1, "elease", 6) == 0)
             return true;
     }
@@ -324,43 +320,27 @@ inline NeedleScanResult ScanVersionBranchName(const uint8_t* scan, size_t size) 
 
 // ── Tier 2 + 3 ───────────────────────────────────────────────────────────────
 //
-// SEMANTICS, restated from the original nest because the fused form only looks
-// different if you have not written this down:
-//
-//   for each pattern in TABLE order:
-//       walk offsets ascending; at the first offset where the needle matches AND
-//       qualifies as Tier 2 -> return that pattern immediately;
-//       at the first offset where it matches AND qualifies as Tier 3 -> record it
-//       (only if no Tier 3 was recorded yet) and move to the NEXT pattern.
-//
-// So each pattern is characterised by ONE fact: the lowest offset at which it
-// qualifies, and which tier that was. Compute that per pattern in an ascending walk,
-// then select in TABLE order — first pattern with a Tier 2 fact wins, else the first
-// with a Tier 3 fact. That is identical to the original, and it is the part a naive
-// fuse gets wrong by returning on the first Tier 2 hit in ADDRESS order instead.
+// SEMANTICS: each pattern is characterised by the lowest offset at which it qualifies
+// as Tier 2 and the lowest at which it qualifies as Tier 3, both from an ascending walk.
+// Selection is in TABLE order — the first pattern with a Tier 2 fact wins, else the
+// first with a Tier 3 fact. A naive fuse gets this wrong by returning on the first
+// Tier 2 hit in ADDRESS order instead.
 //
 // ⚠ Selection is a single post-pass over the facts of BOTH walks, deliberately — not a
 // return inside each walk. With a per-walk return, the '5' walk finishing first would
 // preserve UE5-before-UE4 ordering by construction, and a test comparing a UE5 needle
 // against a UE4 one could then NOT detect an address-order regression; only an
 // intra-group case (two '5' needles) would. The post-pass makes both shapes
-// discriminating — measured, both go red when selection is switched to address order —
-// but dll_helpers_test keeps the intra-group case anyway, because it is the one that
-// stays honest if anyone ever moves the return back inside a walk.
-//
-// Tier 2's context window is deliberately reproduced EXACTLY, including the fact that
-// it copies 8 bytes while its comment and buffer both say 16. That mismatch is a real
-// (separately filed) defect; fixing it here would break the equivalence this rewrite
-// rests on.
+// discriminating, but dll_helpers_test keeps the intra-group case anyway, because it is
+// the one that stays honest if anyone ever moves the return inside a walk.
 inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
     NeedleScanResult r;
     if (!scan) return r;
 
-    // (G9) TWO facts per pattern, not one. The old code kept a single fact and retired the
-    // pattern on whichever came first — so a Tier 3 candidate at a LOW offset hid a Tier 2
-    // hit for the SAME needle later in the image. The deferral design's own comment says it
-    // exists to stop a stray SDK version "out-racing a real Release-4.27 string later in the
-    // module"; that held ACROSS patterns and failed WITHIN one.
+    // TWO facts per pattern, not one: a single fact retired on whichever tier came first
+    // would let a Tier 3 candidate at a LOW offset hide a Tier 2 hit for the SAME needle
+    // later in the image. The deferral exists to stop a stray SDK version "out-racing a real
+    // Release-4.27 string later in the module", WITHIN a pattern as well as across them.
     bool   hasT2[kVersionNeedleCount] = {};
     size_t offT2 [kVersionNeedleCount] = {};
     bool   hasT3[kVersionNeedleCount] = {};
@@ -382,18 +362,15 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 const char* n = kVersionNeedles[k].needle;
                 if (static_cast<uint8_t>(n[0]) != firstByte) continue;
                 // Retire only once a Tier 2 is known: that is the best this pattern can do,
-                // so nothing later can improve it. A known Tier 3 must NOT retire it — that
-                // was G9.
+                // so nothing later can improve it. A known Tier 3 must NOT retire it.
                 if (hasT2[k]) continue;
 
                 const size_t needleLen = strlen(n);
-                // (G11) The needle table's trailing '.' is a TIER 3 device — it forces a
-                // three-component "X.Y.Z" so a bare "5.4" cannot match "15.40". Matching it
-                // for Tier 2 as well is why TIER 2 HAD NEVER FIRED ON ANY BINARY THIS
-                // PROJECT OWNS (measured 0/85 images): UE's own engine tag is TWO-component,
-                // "++UE4+Release-4.27", so "4.27." is simply not present. This is verbatim
-                // the defect Genau.h's rev-2 note records fixing FOR TIER 1 via the dot-strip
-                // in ScanVersionTier1 — Tier 2 never received it.
+                // The needle table's trailing '.' is a TIER 3 device — it forces a
+                // three-component "X.Y.Z" so a bare "5.4" cannot match "15.40". Tier 2 must
+                // NOT match it: UE's own engine tag is TWO-component, "++UE4+Release-4.27",
+                // so "4.27." is simply not present (ScanVersionTier1 strips the dot for the
+                // same reason).
                 const size_t bareLen = needleLen - 1;   // every needle ends '.', static_assert'd
 
                 // Per-pattern bound, NOT a shared one: 4- and 5-char needles examine a
@@ -404,22 +381,19 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 ++r.needlesCompared;
                 if (memcmp(scan + off, n, bareLen) != 0) continue;
 
-                // Structural guard, HOISTED out of Tier 3 (G11): a version token must not be
-                // preceded by a digit or a dot, or "15.42" matches "5.4" and "1.5.4" matches
-                // "5.4". Tier 3 always had this; Tier 2 did not, and it needs it far more now
-                // that it matches the shorter bare form.
+                // Structural guard, for BOTH tiers: a version token must not be preceded by a
+                // digit or a dot, or "15.42" matches "5.4" and "1.5.4" matches "5.4". Tier 2
+                // needs it most, since it matches the shorter bare form.
                 if (off > 0) {
                     uint8_t prev = scan[off - 1];
                     if ((prev >= '0' && prev <= '9') || prev == '.') continue;
                 }
 
                 // Tier 2: "Release" in the preceding window AND a UE anchor nearby.
-                // (G8) The anchor requirement is deliberate. Tier 2 was the loosest predicate
-                // in the system — unlike Tier 3 it had no anchor gate at all — so widening
-                // its window without one manufactures a confident detection out of an
-                // ordinary "Release Notes 5.4.0" that the narrow form rejected outright.
+                // The anchor requirement is deliberate: without it the 16-byte "Release" window
+                // makes a confident detection out of an ordinary "Release Notes 5.4.0".
                 //
-                // (G11) The bare needle must be a WHOLE token: the next byte may not be a
+                // The bare needle must be a WHOLE token: the next byte may not be a
                 // digit. That admits both real shapes — two-component "Release-4.27\0" and
                 // three-component "Release-5.4.2", whose next byte is '.' — while still
                 // rejecting "Release 5.40", which is a game version, not an engine one.
@@ -434,15 +408,14 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 }
 
                 // Tier 3: bare "X.Y.D" with a UE anchor nearby. Requires the FULL needle —
-                // i.e. the trailing dot AND a digit after it — which is exactly what the
-                // pre-G11 full-needle memcmp plus the digit test expressed, restated now that
-                // the match above is on the bare form.
+                // the trailing dot AND a digit after it — tested here because the match
+                // above is on the bare form.
                 if (scan[off + bareLen] == '.' &&
                     scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                     if (!HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) continue;
                     if (!hasT3[k]) { hasT3[k] = true; offT3[k] = off; }
                     // NOTE: no `continue`-to-next-pattern and no retire — keep scanning this
-                    // needle for a Tier 2 hit further along. (G9)
+                    // needle for a Tier 2 hit further along.
                 }
             }
         }
