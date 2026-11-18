@@ -163,6 +163,30 @@ public class ConsoleViewModelTests
     private const uint FUNC_BlueprintCallable  = 0x0400_0000;
     private const uint FUNC_Native             = 0x0000_0400;
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-26: Enter in the command line runs the typed command, as Run does, and
+    /// the box's tooltip says so.</summary>
+    [Fact]
+    public void Command_line_runs_on_Enter()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
+        int at = axaml.IndexOf("Text=\"{Binding CommandInput}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the command TextBox is missing from ConsolePanel.axaml");
+        int start = axaml.LastIndexOf("<TextBox", at, StringComparison.Ordinal);
+        int end = axaml.IndexOf("/>", at, StringComparison.Ordinal);
+        Assert.Contains("KeyDown=\"CommandInput_KeyDown\"", axaml[start..end]);
+
+        var code = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml.cs"));
+        int handler = code.IndexOf("void CommandInput_KeyDown(", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "CommandInput_KeyDown is missing from ConsolePanel.axaml.cs");
+        int handled = code.IndexOf("e.Handled = true;", handler, StringComparison.Ordinal);
+        Assert.True(handled > handler, "CommandInput_KeyDown does not mark the key handled");
+        var body = code[handler..handled];
+        Assert.Contains("Key.Enter", body);
+        Assert.Contains("RunCommandTextCommand.Execute(", body);
+
+        Assert.Contains("Enter", Res.Get("str.Tip.Con.CommandInput"), StringComparison.Ordinal);
+    }
+
     // ClassAddr is populated because list_all_functions really does supply it per row —
     // and the handoff events now carry it so MainWindow never re-derives an address from
     // the CAPPED list_classes page (audit #5 X2).
