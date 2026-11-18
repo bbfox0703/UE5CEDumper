@@ -1820,7 +1820,8 @@ public sealed class McpToolsTests
     [InlineData("write_foreground_lock", """{"enable":true}""", "set_foreground_lock")]
     [InlineData("write_see_through", """{"enable":true}""", "seethrough_set")]
     [InlineData("write_force_field", """{"class_name":"C","field_name":"f","kind":"bool","on":true}""", "force_field")]
-    [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
+    // An OFF that also changes a setting is not a release: the switch still refuses it.
+    [InlineData("write_fly", """{"enable":false,"noclip":true}""", "fly_set")]
     public async Task AnExperimentalWrite_FollowsTheUisExperimentalSwitch(string tool, string argsJson, string cmd)
     {
         var off = new FakeGame();
@@ -1838,6 +1839,31 @@ public sealed class McpToolsTests
         var on = new FakeGame();
         await Call(on, tool, (JsonObject)JsonNode.Parse(argsJson)!);
         Assert.Contains(cmd, on.Commands);
+    }
+
+    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_1b9e937b-a0d UI-1: the switch refused the AI's own release too,
+    /// so after the user turned experimental features off, a force-field job the AI held (the untick tears down Fly,
+    /// See-through, Keep Foreground and the Stealth card's hold, not it) kept running and the AI could not end it --
+    /// against "turning off or resetting what this server holds still works". A release ends only what this server
+    /// holds (the gate checks that at the send), so the switch lets it through.</summary>
+    [Theory]
+    [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
+    [InlineData("write_fly", """{"enable":false}""", "fly_set")]
+    [InlineData("write_foreground_lock", """{"enable":false}""", "set_foreground_lock")]
+    [InlineData("write_see_through", """{"enable":false}""", "seethrough_set")]
+    public async Task AnAisReleaseOfItsOwnHold_WorksWhileTheExperimentalSwitchIsOff(string tool, string argsJson,
+        string cmd)
+    {
+        var game = new FakeGame();
+        McpToolResult result;
+        try
+        {
+            result = await Tool(tool, game, experimental: false)
+                .Run(new McpArgs((JsonObject)JsonNode.Parse(argsJson)!), CancellationToken.None);
+        }
+        catch (McpToolError e) { result = McpToolResult.Fail(e.Message); }
+        Assert.False(result.IsError, result.IsError ? result.Payload["error"]?.GetValue<string>() : null);
+        Assert.Contains(cmd, game.Commands);
     }
 
     [Theory]
