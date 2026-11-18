@@ -2038,7 +2038,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.Disconnect">Disconnect from DLL pipe server</sys:String>
     <sys:String x:Key="str.Tip.StartScan">Trigger deferred scan (proxy DLL mode)</sys:String>
     <sys:String x:Key="str.Tip.AddressFormat">Address display format (absolute / module-relative)</sys:String>
-    <sys:String x:Key="str.Tip.CollapsePointers">Collapse the pointer, struct and array-element groups below the root in Copy CE XML / Copy CE Field output: each hides its children in Cheat Engine until it is ticked</sys:String>
+    <sys:String x:Key="str.Tip.CollapsePointers">Collapse every group below the root in Copy CE XML / Copy CE Field output: the walked path's hops, pointers, structs, containers and their element folders alike. Each hides its children in Cheat Engine until it is ticked</sys:String>
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.StringLength">CE String field display length in characters (2^N; 16-4096). Applies to Copy CE XML / Copy CE Field, to the string size in Export CSX and Push to CE Structure Dissect, and to the string records +CE and +CE Field (flat) add. A generous value never truncates a shorter live string (CE stops at the null terminator) — it reserves room for strings that grow between saves.</sys:String>
