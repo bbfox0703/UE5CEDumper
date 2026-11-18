@@ -2058,6 +2058,47 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-75: an address Lookup's deep-descent caveat names the per-container element
+    /// cap the lookup was sent with, not a cap the Options slider moved to while the lookup ran (the slider stays movable
+    /// during a lookup).</summary>
+    [Fact]
+    public async Task LookupCaveat_NamesTheElementCapTheLookupWasSent()
+    {
+        const int sent = 256;
+        const int movedTo = 4096;
+        var svc = MakeService(out var pipe);
+        var vm = new InstanceFinderViewModel(svc, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            DeepScanElemCap = sent, LookupAddress = "0x7FF700001000",
+        };
+        int wired = -1;
+        bool movedWhileLookingUp = false;
+        // The pipe answers from inside the lookup call, so the slider moves while the lookup is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != "find_by_address") return new JsonObject { ["ok"] = true };
+            wired = req["container_elem_cap"]!.GetValue<int>();
+            movedWhileLookingUp = vm.IsLookingUp;
+            vm.DeepScanElemCap = movedTo;
+            // A deep descent that found nothing: the reply on which the caveat names the cap.
+            return new JsonObject
+            {
+                ["ok"] = true, ["found"] = false,
+                ["container_scan"] = new JsonObject
+                {
+                    ["objects_scanned"] = 1_000, ["objects_total"] = 1_000, ["deep_scan"] = true,
+                },
+            };
+        });
+
+        await vm.LookupAddressCommand.ExecuteAsync(null);
+
+        Assert.Equal(sent, wired);
+        Assert.True(movedWhileLookingUp, "the slider move did not land while the lookup ran");
+        Assert.Equal(movedTo, vm.DeepScanElemCap);
+        Assert.Contains($"probes at most {sent:N0} element(s) per container", vm.LookupStatusText);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-74: a capped Property Search's status line takes its [deep] tag and its
     /// "Game classes only" advice from the values the search was sent with, not from the two check boxes as they stand
     /// when the search returns (both stay clickable during a search).</summary>
