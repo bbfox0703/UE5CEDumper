@@ -7081,12 +7081,6 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
-// Resolve a UFunction's native code entry point (UFunction->Func). For native
-// (FUNC_Native) functions this is the execXxx thunk in .text — the address to
-// disassemble; for Blueprint functions it points at the interpreter
-// (ProcessInternal). Returns 0 if the Func offset isn't detected yet or the
-// slot doesn't hold a code pointer. Used by the UI "Disassemble in CE" button
-// (push to CE via AOBMaker) on the xref dialog.
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.
 static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
@@ -7124,6 +7118,12 @@ bool IsScriptFunction(uintptr_t funcAddr) {
     return funcAddr != 0 && IsScriptFunctionFlags(ReadFunctionFlags(funcAddr));
 }
 
+// Resolve a UFunction's native code entry point (UFunction->Func) — the .text
+// address to disassemble, a native function's exec thunk. 0 for a function not
+// known to be native (a script / Blueprint function's Func is the shared
+// interpreter, not its own code), if the Func offset isn't detected yet, or if
+// the slot isn't a code pointer. NativeFuncSlot applies the FUNC_Native gate,
+// and its comment says why.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
     const uintptr_t exec = NativeFuncSlot(funcAddr);
     return exec && Macht::LooksLikeCodePointer(exec) ? exec : 0;
@@ -7219,7 +7219,7 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     EnsureUFunctionFuncOffset();
     if (DynOff::UFUNCTION_FUNC == 0) return "none";
 
-    // ⛔ NATIVE-ONLY GATE — the same one GetFunctionCodeAddr applies a few lines above,
+    // ⛔ NATIVE-ONLY GATE — like the one NativeFuncSlot applies for GetFunctionCodeAddr above,
     // for the reason spelled out there: a script/Blueprint UFunction points `Func` at the
     // SHARED interpreter (UObject::ProcessInternal), not at its own code. That is a
     // perfectly valid code pointer, so the LooksLikeCodePointer check below CANNOT tell
@@ -7230,7 +7230,7 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // FunctionFlags — and we disassemble the INTERPRETER, then map ITS [this+off]
     // accesses against the function's owner class. Any interpreter displacement that
     // collides with a real property offset would be reported as a genuine reference by
-    // that function. GetFunctionCodeAddr's comment names the failure exactly:
+    // that function. NativeFuncSlot's comment names the failure exactly:
     // "pushing the interpreter dispatcher and reporting a misleading success".
     //
     // And the UI would make it worse than silence: `method="disasm"` prints
