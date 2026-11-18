@@ -1031,11 +1031,14 @@ public partial class ValueSearchViewModel : ViewModelBase
             // Case sensitivity only passes through for string types;
             // wire serializer enforces the same restriction.
             bool effCase = SupportsCaseSensitive && CaseSensitive;
+            // The truncation note names the Timeout this scan was sent with: the Timeout slider can change while the
+            // scan runs.
+            int timeoutSent = ScanTimeoutSeconds;
             var result = await _dump.BeginValueScanAsync(
                 SelectedDataType, SelectedScanType, Value,
                 SelectedScanType == ValueScanType.Between ? Value2 : null,
                 GameOnly, MaxResults, effRound, effCase, ParallelScan, BatchRead, DeepScan,
-                NativeCScan, NewestFirst, PageSize, ScanTimeoutSeconds * 1000,
+                NativeCScan, NewestFirst, PageSize, timeoutSent * 1000,
                 PreFilterNoise, cts.Token);
 
             SessionId = result.SessionId;
@@ -1055,7 +1058,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                           $"(scanned {result.ScannedObjects} objects, " +
                           $"{result.ScannedClasses} classes with matching fields)";
             if (result.DeadlineHit)
-                summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider or narrow the predicate";
+                summary += $"  ⚠ truncated ({timeoutSent}s deadline / result cap) — raise the Timeout slider or narrow the predicate";
             StatusText = summary;
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -1484,11 +1487,13 @@ public partial class ValueSearchViewModel : ViewModelBase
 
             await EndGroupSessionIfAnyAsync();
 
-            // The truncation note names the Max this scan was sent with: the Max box can change while the scan runs.
+            // The truncation note names the Max and the Timeout this scan was sent with: the Max box and the Timeout
+            // slider can change while the scan runs.
             int maxSent = MaxResults;
+            int timeoutSent = ScanTimeoutSeconds;
             var result = await _dump.BeginGroupScanAsync(
                 GroupInputs.ToList(), GameOnly, maxSent, DeepScan, CrossObjectScan,
-                NativeCScan, NewestFirst, PageSize, ScanTimeoutSeconds * 1000,
+                NativeCScan, NewestFirst, PageSize, timeoutSent * 1000,
                 PreFilterNoise, SelectedRoundingMode, GroupPerSlotCap, cts.Token);
 
             GroupSessionId = result.SessionId;
@@ -1503,7 +1508,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             if (result.DeadlineHit)
                 // [P5-GROUP-ADVICE] Only remedies group mode can reach: "refine" prunes the capped set and cannot surface
                 // a match that never entered it (InheritedTruncation). Max sits in the mode row, which both modes show.
-                summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider (deadline); use more / more distinctive values{PartialResultNotice.RaiseMaxClause(maxSent, Constants.ScanSessionMaxResultsCeiling)} (result cap)";
+                summary += $"  ⚠ truncated ({timeoutSent}s deadline / result cap) — raise the Timeout slider (deadline); use more / more distinctive values{PartialResultNotice.RaiseMaxClause(maxSent, Constants.ScanSessionMaxResultsCeiling)} (result cap)";
             // Separate fact from DeadlineHit, and the one that explains a short
             // "All fields" list. Latched for the session: refine inherits it. (AE13)
             _groupPerSlotCapHit = result.PerSlotCapHit;
