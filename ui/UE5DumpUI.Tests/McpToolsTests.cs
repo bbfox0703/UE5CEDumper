@@ -1855,11 +1855,6 @@ public sealed class McpToolsTests
         Assert.Contains(cmd, on.Commands);
     }
 
-    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_1b9e937b-a0d UI-1: the switch refused the AI's own release too,
-    /// so after the user turned experimental features off, a force-field job the AI held (the untick tears down Fly,
-    /// See-through, Keep Foreground and the Stealth card's hold, not it) kept running and the AI could not end it --
-    /// against "turning off or resetting what this server holds still works". A release ends only what this server
-    /// holds (the gate checks that at the send), so the switch lets it through.</summary>
     /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_bbd1bbfe-20d U7-1: write_fly's description still said Fly is
     /// refused while experimental features are off, so a model told the user it could not turn its own Fly off. Each
     /// experimental tool with an OFF says the OFF still works.</summary>
@@ -1875,6 +1870,11 @@ public sealed class McpToolsTests
         Assert.Matches(@"(is not|also while the UI's experimental features are off)", d);
     }
 
+    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_1b9e937b-a0d UI-1: the switch refused the AI's own release too,
+    /// so after the user turned experimental features off, a force-field job the AI held (the untick tears down Fly,
+    /// See-through, Keep Foreground and the Stealth card's hold, not it) kept running and the AI could not end it --
+    /// against "turning off or resetting what this server holds still works". A release ends only what this server
+    /// holds (the gate checks that at the send), so the switch lets it through.</summary>
     [Theory]
     [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
     [InlineData("write_fly", """{"enable":false}""", "fly_set")]
