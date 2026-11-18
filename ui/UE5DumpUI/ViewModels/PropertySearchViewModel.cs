@@ -315,7 +315,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         }
         if (!FreezeScriptGenerator.IsTypeSupported(match.PropType))
         {
-            StatusText = $"Freeze v1 does not support {match.PropType} (numeric + bool only)";
+            StatusText = $"Freeze does not support {match.PropType} (numbers, bools and enums only)";
             return;
         }
         // A bool with neither the DLL's bool_native nor a single-bit mask has an UNRESOLVED
