@@ -29,7 +29,7 @@ namespace UE5DumpUI.Views;
 public sealed class PropertyXrefDialog : ManagedDialogWindow
 {
     /// <summary>
-    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF23).
+    /// AOT-safe column sort comparers, keyed by SortMemberPath.
     /// Occurrences / WriteCount sort on the NUMERIC property even though the cells
     /// render "3W / 4R" — a string sort of AccessSummary would be meaningless.
     /// </summary>

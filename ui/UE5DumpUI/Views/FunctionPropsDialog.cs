@@ -29,11 +29,11 @@ namespace UE5DumpUI.Views;
 public sealed class FunctionPropsDialog : ManagedDialogWindow
 {
     /// <summary>
-    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF18).
-    /// A code-built grid is not exempt from the rule the XAML panels follow: these
-    /// are all DataGridTemplateColumns, so no binding roots the sort path and the
-    /// reflection sort is trimmed away. Shared verbatim with
-    /// <see cref="PropertyXrefDialog"/>'s twin grid where the property names agree.
+    /// AOT-safe column sort comparers, keyed by SortMemberPath.
+    /// A code-built grid is not exempt from the rule the XAML panels follow: this grid
+    /// is built from DataGridTemplateColumns, which have no column-level Binding to root
+    /// the sort path, so the reflection sort is trimmed away.
+    /// <see cref="PropertyXrefDialog"/> keeps its own comparer table, typed on its own row type.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, IComparer> XrefSortComparers =
         new Dictionary<string, IComparer>
