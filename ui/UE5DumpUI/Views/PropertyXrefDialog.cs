@@ -234,16 +234,9 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             IsEnabled = false,   // enabled on selection + when AOBMaker is connected
         };
         _btnDisasm.Click += OnDisassembleClicked;
-        // Conditional hint: different text depending on whether the AOBMaker CE
-        // plugin is connected (the button is visible-but-disabled when absent so
-        // the user can see why).
-        ToolTip.SetTip(_btnDisasm, SharedAobMaker?.IsAvailable == true
-            ? "Resolve the selected function's native code address (UFunction->Func) and jump "
-            + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
-            + "list). Native functions only — Blueprint functions point at the shared "
-            + "interpreter and will report no per-function code."
-            : "AOBMaker CE plugin not connected — connect it in CE to push the function's "
-            + "code address to the disassembler.");
+        // Opens the tooltip on the greyed-out button too: while the plugin is out of reach, that tooltip is what
+        // says why. SyncDisasmButton sets its text.
+        ToolTip.SetShowOnDisabled(_btnDisasm, true);
         btnRow.Children.Add(_btnDisasm);
 
         // Locate the selected row's owning class in GWorld (resolve a live
@@ -384,9 +377,10 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         {
             bool has = _grid.SelectedItem is PropertyXrefMatch;
             _btnCopy.IsEnabled = has;
-            _btnDisasm.IsEnabled = has && SharedAobMaker?.IsAvailable == true;
+            SyncDisasmButton();
             _btnLocate.IsEnabled = has;
         };
+        SyncDisasmButton();
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
 
         root.Children.Add(_grid);
@@ -436,7 +430,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             _btnRefresh.IsEnabled = true;
             bool has = _grid.SelectedItem is PropertyXrefMatch;
             _btnCopy.IsEnabled = has;
-            _btnDisasm.IsEnabled = has && SharedAobMaker?.IsAvailable == true;
+            SyncDisasmButton();
             _btnLocate.IsEnabled = has;
         }
     }
@@ -452,6 +446,23 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 
+    // The button is enabled for a selected row while the bridge is up. Its tooltip says what the button does, or,
+    // while the plugin is out of reach, why, in the bridge's own sentence for its last failure (a busy or refused
+    // pipe is not a missing plugin). State and tooltip are set together because a push can change the bridge's flag
+    // while the dialog is open.
+    private void SyncDisasmButton()
+    {
+        bool up = SharedAobMaker?.IsAvailable == true;
+        _btnDisasm.IsEnabled = up && _grid.SelectedItem is PropertyXrefMatch;
+        ToolTip.SetTip(_btnDisasm, up
+            ? "Resolve the selected function's native code address (UFunction->Func) and jump "
+            + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
+            + "list). Native functions only — Blueprint functions point at the shared "
+            + "interpreter and will report no per-function code."
+            : AobMakerUnavailable.Text(SharedAobMaker)
+            + " — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin.");
+    }
+
     // "Disassemble in CE": resolve the UFunction's native code entry point
     // (UFunction->Func) via the DLL, then drop a labeled CE address-list row and
     // jump CE's disassembler there. Native funcs land on the execXxx thunk; a BP
@@ -464,7 +475,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         {
             // ⛔ NOT a bare `return` — that is a click that does nothing, says nothing, and
             // leaves the previous status line standing. The button is normally disabled in this
-            // state (`ShowForClassAsync` gates it on the same cached flag), so the guard reads defensive; but
+            // state (`SyncDisasmButton` gates it on the same cached flag), so the guard reads defensive; but
             // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
             // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
             // Engine with the dialog up and the button stays enabled over a stale true.
@@ -534,7 +545,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         }
         finally
         {
-            _btnDisasm.IsEnabled = _grid.SelectedItem is PropertyXrefMatch && SharedAobMaker?.IsAvailable == true;
+            SyncDisasmButton();
         }
     }
 
