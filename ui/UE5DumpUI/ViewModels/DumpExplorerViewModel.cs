@@ -617,7 +617,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         }
 
 
-        StatusText = "Scanning the live game's classes…";
+        StatusText = "Scanning the live game's classes, structs and enums…";
         var index = await BuildLiveTypeIndexAsync(ct);
         ct.ThrowIfCancellationRequested();
 
