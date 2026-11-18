@@ -329,6 +329,12 @@ public sealed class SecondCopySourceTests
         InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
                 "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
         string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
+        // Review wf_bbd1bbfe-20d D7-3 / U7-4: adopted while off, they get this copy's deferred restore, as after an OFF
+        // that could not finish -- so the card's "they reappear" and "gave up" are true for them; "gave up" is set only
+        // when no restore can wait (a shutdown), not for every adoption.
+        InOrder(FunctionBody(schlacht, "void AdoptLeftovers(const uint64_t* actors, int32_t n) {"), "the adoption",
+                "std::lock_guard<std::mutex> wk(s_workerMutex);", "s_state.hiddenActors.insert(",
+                "if (!active && !StartPendingLocked())", "s_state.restoreAbandoned = true;");
         InOrder(FunctionBody(schlacht, "int32_t TakeLeftovers(uint64_t* out, int32_t cap) {"), "the record's move",
                 "std::lock_guard<std::mutex> lk(s_mutex);", "if (s_state.active) return 0;",
                 "TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap)");
