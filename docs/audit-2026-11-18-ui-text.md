@@ -72,7 +72,7 @@ beside them does not.
 | UT-56 | Value Search | behaviour | The group truncation note reads the live Max after the scan's await, not the Max that scan was sent; the box stays editable during a scan, so the note can name a cap that was never applied. | ✅ fixed 2026-11-18 (red `3ed52a1d`, then green) |
 | UT-57 | this register | doc | UT-42's row reads "fixed" for the whole finding; its single-mode half was kept by the settled `[P5-GROUP-ADVICE]` decision, which the row does not say. | ✅ fixed 2026-11-18 |
 | UT-58 | Classes | comment | A `ClassListCapTests` comment says Instance Finder was the last panel saying "raise Max" unconditionally; Value Search's group note did until UT-42 (and the sentence is history). | ✅ fixed 2026-11-18 |
-| UT-59 | Value Search | comment | `Constants.ScanSessionMaxResultsCeiling`'s comment says "the truncation notes" compare against it; only the group note does. | ⬜ |
+| UT-59 | Value Search | comment | `Constants.ScanSessionMaxResultsCeiling`'s comment says "the truncation notes" compare against it; only the group note does. | ✅ fixed 2026-11-18 |
 | UT-60 | CE inject | comment | Another `Methode.cpp` comment says a copy injected again finds the pipe in use and does not serve; it takes the game over (UT-46 corrected the other). | ⬜ |
 | UT-61 | AOBMaker / ASM | comment | The definition comment of `Aura::GetFunctionCodeAddr` in `Aura.cpp` keeps the old wording (a Blueprint function points at the interpreter, two zero cases, one caller) and sits above `ReadFunctionFlags` instead (UT-44 fixed the declaration's). | ⬜ |
 | UT-62 | System | comment | `ExperimentalGate`'s comment says re-opening any experimental tab locks the opt-in; four of the five do. | ⬜ |

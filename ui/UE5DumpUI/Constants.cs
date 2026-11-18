@@ -490,8 +490,8 @@ public static class Constants
     // matches — different subsystem (in-game scan session vs. snapshot-DB query).
     public const int ScanSessionMaxResults = 50000;
 
-    // The Value Search Max box's ceiling (its NumericUpDown Maximum, which a test keeps equal to this). The truncation
-    // notes offer raising Max only while it is below this, where the box can still go higher.
+    // The Value Search Max box's ceiling (its NumericUpDown Maximum, which a test keeps equal to this). The group
+    // First Scan's truncation note offers raising Max only while it is below this, where the box can still go higher.
     public const int ScanSessionMaxResultsCeiling = 1000000;
 
     // Value/group scan begin deadline in ms (Value Search "Timeout" slider default).
