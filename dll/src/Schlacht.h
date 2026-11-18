@@ -202,6 +202,14 @@ bool IsActive();
 // See-through off, so the occluders are un-hidden while the hook can still dispatch.
 void StopWorker();
 
+// [SEETHRU-HANDOFF-LEFTOVER] A tick judges a snapshot of the record and writes its result back; what was added while it
+// ran -- actors an earlier copy handed over (AdoptLeftovers) -- is kept for the next tick to judge, not overwritten
+// (review wf_bbd1bbfe-20d D7-2).
+template <class Set>
+inline void KeepAddedDuringTick(Set& applied, const Set& now, const Set& snapshot) {
+    (void)applied; (void)now; (void)snapshot;
+}
+
 // [SEETHRU-HANDOFF-LEFTOVER] This copy's leftover record, moved into `out` (at most `cap`; see TakeHiddenRecord). Nothing
 // while See-through is on: a running worker owns its record.
 int32_t TakeLeftovers(uint64_t* out, int32_t cap);

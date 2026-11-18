@@ -606,6 +606,7 @@ void Tick() {
             applied.insert(a);
 
     std::lock_guard<std::mutex> lk(s_mutex);
+    KeepAddedDuringTick(applied, s_state.hiddenActors, old);
     s_state.hiddenActors = std::move(applied);
     s_state.unhideQueued = kept;
     s_state.code = STR_OK;

@@ -950,6 +950,19 @@ static void Test_Voll_ClientOwnerKey() {
 // [SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: a copy that handed over could never restore the actors its
 // shutdown's OFF left hidden on a stalled game thread. The later copy takes the record: every actor moves, in batches,
 // and an un-hide that may still run leaves the queued set with it.
+// [SEETHRU-HANDOFF-LEFTOVER] Review wf_bbd1bbfe-20d D7-2: a tick overwrote the record with its result, so actors adopted
+// while it waited on the game thread fell out of the record and stayed hidden with nothing tracking them.
+static void Test_Schlacht_TickKeepsWhatWasAdded() {
+    std::printf("Test_Schlacht_TickKeepsWhatWasAdded\n");
+    const std::unordered_set<uintptr_t> snapshot = { 0x1000, 0x2000 };
+    const std::unordered_set<uintptr_t> now = { 0x1000, 0x2000, 0x9000 };   // 0x9000 adopted mid-tick
+    std::unordered_set<uintptr_t> applied = { 0x1000 };                      // the tick un-hid 0x2000
+    Schlacht::KeepAddedDuringTick(applied, now, snapshot);
+    EXPECT("* tick: an actor adopted while it ran stays in the record", applied.count(0x9000) == 1);
+    EXPECT("tick: what it un-hid stays out", applied.count(0x2000) == 0);
+    EXPECT("tick: what it kept stays in", applied.count(0x1000) == 1 && applied.size() == 2);
+}
+
 static void Test_Schlacht_HandOverRecord() {
     std::printf("Test_Schlacht_HandOverRecord\n");
     std::unordered_set<uintptr_t> hidden = { 0x1000, 0x2000, 0x3000 }, queued = { 0x2000 };
@@ -13278,6 +13291,7 @@ int main() {
     RUN(Test_Schlacht_Owners);
     RUN(Test_Schlacht_FailedDispatchKeepsTheRecord);
     RUN(Test_Schlacht_HandOverRecord);           // [SEETHRU-HANDOFF-LEFTOVER] the record a later copy takes over
+    RUN(Test_Schlacht_TickKeepsWhatWasAdded);    // [SEETHRU-HANDOFF-LEFTOVER] ...kept by a tick that ran meanwhile
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
     RUN(Test_Kanne_WatchKeyAndSlot);
