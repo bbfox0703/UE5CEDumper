@@ -61,6 +61,22 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task CopyFreezeScript_UnsupportedType_NamesEnumsAmongTheSupportedTypes()
+    {
+        // IsTypeSupported takes EnumProperty (at its engine-reported width), so the refusal names enums beside
+        // numbers and bools.
+        Assert.True(FreezeScriptGenerator.IsTypeSupported("EnumProperty"));
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("StrProperty"));
+
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Contains("StrProperty", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("enums", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CopyFreezeScript_DialogCancel_DoesNotCreateAaScript()
     {
         var bridge = new RecordingBridge { NextAvailability = true };
