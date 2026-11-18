@@ -158,6 +158,49 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    // [UI-TEXT-AUDIT-2026-11-18] UT-16. The Options tip names every setting its flyout holds and says they are kept;
+    // each control the flyout binds is in the window's persisted sets.
+    [Fact]
+    public void Options_tip_names_every_setting_in_the_flyout_and_says_they_are_kept()
+    {
+        var doc = System.Xml.Linq.XDocument.Load(Repo("ui/UE5DumpUI/Views/MainWindow.axaml"));
+        var flyout = doc.Descendants().Single(e => e.Name.LocalName == "DropDownButton"
+            && (string?)e.Attribute("Content") == "{StaticResource str.Toolbar.Options}");
+        var tip = EnString("str.Tip.Toolbar.Options");
+        Assert.DoesNotContain("per session", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("kept across restarts", tip, StringComparison.Ordinal);
+
+        // A label is a toolbar string on a control that is always shown; a conditional warning is not a setting.
+        var labels = flyout.Descendants()
+            .Where(e => e.Attribute("IsVisible") is null)
+            .Select(e => Regex.Match((string?)e.Attribute("Text") ?? (string?)e.Attribute("Content") ?? "",
+                                     @"^\{StaticResource (str\.Toolbar\.[\w.]+)\}$"))
+            .Where(m => m.Success)
+            .Select(m => EnString(m.Groups[1].Value).TrimEnd(':'))
+            .ToList();
+        Assert.True(labels.Count >= 8, $"only {labels.Count} labels found in the Options flyout");
+        foreach (var label in labels)
+            Assert.Contains(label, tip, StringComparison.Ordinal);
+
+        var vm = File.ReadAllText(Repo("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
+        string Set(string name)
+        {
+            int at = vm.IndexOf($"HashSet<string> {name} = new()", StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{name} was not found");
+            return vm[at..vm.IndexOf("};", at, StringComparison.Ordinal)];
+        }
+        var main = Set("MainPersist");
+        var liveWalker = Set("LiveWalkerPersist");
+        foreach (var control in flyout.Descendants().Where(e => e.Name.LocalName is "Slider" or "CheckBox"))
+        {
+            var b = Regex.Match((string?)control.Attribute("Value") ?? (string?)control.Attribute("IsChecked") ?? "",
+                                @"^\{Binding (LiveWalker\.)?(\w+)\}$");
+            Assert.True(b.Success, $"unexpected binding on a {control.Name.LocalName} in the Options flyout");
+            Assert.Contains(b.Groups[1].Success ? $"nameof(LiveWalkerViewModel.{b.Groups[2].Value})" : $"nameof({b.Groups[2].Value})",
+                            b.Groups[1].Success ? liveWalker : main, StringComparison.Ordinal);
+        }
+    }
+
     // [UI-TEXT-AUDIT-2026-11-18] UT-14. String Len reaches every Live Walker output that writes a string record or a
     // CSX string child, not only the two CE XML copies; the tip names each by its button.
     [Fact]
