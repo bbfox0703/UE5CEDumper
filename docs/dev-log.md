@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (no build change) — History cut out of the code comments, pass 1 `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- Every comment line in `dll/src` and `ui/UE5DumpUI` that `check_comment_history` counts as history -- 715 lines in 180
+  files -- is rewritten to what the code does now: fix narratives, review ids, build numbers, measurements and "used to"
+  cut, each `[TAG]` kept, still-true hazards and invariants restated in the present tense. The baseline is 0.
+- Done in batches, each by an editor and then a reviewer that checked for dropped hazards, added claims and lost tags;
+  `tools/verify/comment_only_diff.py` (new) proved every batch touched comments only. The DLL and its four proxies
+  build, the C++ tests (1663 / 4262 / 287 / 22 / 37) and the C# suite (8429 passed, 1 skipped) pass, 40 gates.
+- Two stale comments the review found are fixed: a static import does not guarantee a proxy loads
+  (`ProxyImportAnalyzer`), and a cref named an overload that does not exist (`PointerPanelViewModel`).
+- History the patterns do not count is left in blocks this pass did not rewrite; the todo row plans pass 2.
+
 ## 2026-11-18 (no build change) — A gate keeps history out of new comments `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - `tools/check_comment_history.py`, gate 40 (check_all and CI): a per-file ratchet over the comments in `dll/src` and
