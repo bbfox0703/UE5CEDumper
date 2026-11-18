@@ -1397,7 +1397,7 @@
     <sys:String x:Key="str.LF.Stack.PerFrame.Run">Take its stacks</sys:String>
     <sys:String x:Key="str.LF.Stack.PerFrame.Cancel">Cancel</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Marker">(per frame)</sys:String>
-    <sys:String x:Key="str.Tip.LF.Snap.Choose">Copy this function's parameters on each traced call (by name: it is followed through unloads). Shown in the Call Trace tab's Parameters view.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Snap.Choose">Copy this function's parameters on each traced call (by name: it is followed through unloads). Shown in Call Trace's Parameters and Bytes tabs.</sys:String>
     <sys:String x:Key="str.Tip.LF.Stack.Choose">Take this function's native call stack on each traced call (by name: it is followed through unloads). A stack costs more than a parameter copy, so a per-second budget caps how many are taken. Shown in Call Trace's Call stack tab. Each capture adds to the game's frame time: read the warning that appears once a stack is chosen.</sys:String>
     <sys:String x:Key="str.Tip.LF.Stack.Standard">Standard: at most {0} stacks a second for each chosen function, {1} a second in all. The DLL's defaults.</sys:String>
     <sys:String x:Key="str.Tip.LF.Stack.Low">Low: at most {0} stacks a second for each chosen function, {1} a second in all: half of Standard, for a slower PC or a game where a capture costs more.</sys:String>
