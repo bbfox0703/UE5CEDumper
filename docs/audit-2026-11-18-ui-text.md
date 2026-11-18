@@ -101,4 +101,4 @@ beside them does not.
 | UT-85 | Find Class Funcs, Interesting Functions | comment | Both dialogs' `XrefSortComparers` summaries carry a review id, and `FunctionPropsDialog`'s says the table is shared with the twin; each dialog builds its own. | ✅ fixed 2026-11-18 |
 | UT-86 | Value Search | behaviour | First Scan and Next Scan validate the scan type (and First Scan the value) before an await, then read them again to build the request, so one request can carry a type its own checks never saw. | ✅ fixed 2026-11-18 (red `6f531569`, then green) |
 | UT-87 | Classes | behaviour | Log lines in `GameClassFilterViewModel` read Game classes only (or the query) after the load's await, so the log can record a value the request was not sent with. | ✅ fixed 2026-11-18 (red `51617eab`, then green) |
-| UT-88 | docs | doc | `docs/auto-verification-session-plan.md` still says a deployed proxy makes a fresh injection a silent no-op. | ⬜ |
+| UT-88 | docs | doc | `docs/auto-verification-session-plan.md` still says a deployed proxy makes a fresh injection a silent no-op. | ✅ fixed 2026-11-18 |
