@@ -147,8 +147,8 @@ struct SeeThroughStatus {
     int32_t pierceCount = 1;      // how many nearest occluders to hide along the ray
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
     // [P1-SEETHRU-GIVEUP] The leftover-hidden record, split: a restore still WAITING for the game thread, and one that
-    // GAVE UP after PENDING_RESTORE_MAX_MS -- or was taken over from an earlier copy at a hand-off, which no restore
-    // waits for either ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false used to mean both, and the card
+    // GAVE UP after PENDING_RESTORE_MAX_MS. A record taken over from an earlier copy at a hand-off gets the same deferred
+    // restore ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false used to mean both, and the card
     // promised "they reappear" for the one that never will.
     bool    restorePending   = false;
     bool    restoreAbandoned = false;
@@ -205,8 +205,9 @@ void StopWorker();
 // [SEETHRU-HANDOFF-LEFTOVER] This copy's leftover record, moved into `out` (at most `cap`; see TakeHiddenRecord). Nothing
 // while See-through is on: a running worker owns its record.
 int32_t TakeLeftovers(uint64_t* out, int32_t cap);
-// [SEETHRU-HANDOFF-LEFTOVER] Actors an earlier copy's See-through left hidden, recorded as this copy's: its next ON (on a
-// responsive game thread) or OFF restores them, and a running worker's next tick un-hides those no longer in the way.
+// [SEETHRU-HANDOFF-LEFTOVER] Actors an earlier copy's See-through left hidden, recorded as this copy's. Off: this copy's
+// deferred restore un-hides them when the game thread answers (as after an OFF that could not finish), and its next ON
+// or OFF does too. On: a running worker's next tick un-hides those no longer in the way.
 void AdoptLeftovers(const uint64_t* actors, int32_t n);
 
 } // namespace Schlacht

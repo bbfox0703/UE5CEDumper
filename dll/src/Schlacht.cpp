@@ -510,7 +510,7 @@ struct State {
     int32_t   hiddenCount = 0;
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
-    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up, or an earlier copy's record was taken over ([SEETHRU-HANDOFF-LEFTOVER]); cleared by SetEnabled
+    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up, or none could wait (a shutdown); cleared by SetEnabled
     // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C). Changed only with s_workerMutex AND s_mutex held, so
     // either lock is enough to read it.
     std::vector<uint64_t> owners;
@@ -909,12 +909,23 @@ int32_t TakeLeftovers(uint64_t* out, int32_t cap) {
 
 void AdoptLeftovers(const uint64_t* actors, int32_t n) {
     if (!actors || n <= 0) return;
-    std::lock_guard<std::mutex> lk(s_mutex);
-    for (int32_t i = 0; i < n; ++i)
-        if (actors[i]) s_state.hiddenActors.insert(static_cast<uintptr_t>(actors[i]));
-    s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
-    // Off: say so the way a deferred restore that gave up does, so the status shows actors left hidden.
-    if (!s_state.active) s_state.restoreAbandoned = true;
+    // s_workerMutex before s_mutex, as SetEnabled takes them: the deferred restore is started under the first.
+    std::lock_guard<std::mutex> wk(s_workerMutex);
+    bool active;
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        for (int32_t i = 0; i < n; ++i)
+            if (actors[i]) s_state.hiddenActors.insert(static_cast<uintptr_t>(actors[i]));
+        s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+        active = s_state.active;
+    }
+    // Off: this copy's deferred restore un-hides them once the game thread answers, as after an OFF that could not
+    // finish, so the card's texts are true for them too (review wf_bbd1bbfe-20d D7-3). "Gave up" only when no restore
+    // can wait -- a shutdown. On: the worker's next tick un-hides those no longer in the way.
+    if (!active && !StartPendingLocked()) {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        s_state.restoreAbandoned = true;
+    }
 }
 
 int32_t SetEnabled(bool enable, uint64_t owner) {

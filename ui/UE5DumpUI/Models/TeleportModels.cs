@@ -405,9 +405,10 @@ public sealed class SeeThroughStatus
     /// (<c>restore_pending</c>): clicking back into the game restores the actors.</summary>
     public bool RestorePending { get; init; }
 
-    /// <summary>[P1-SEETHRU-GIVEUP] The restore GAVE UP after the restore window (<c>restore_abandoned</c>), or the
-    /// actors were taken over from an earlier copy of the DLL at a hand-off ([SEETHRU-HANDOFF-LEFTOVER]): they stay
-    /// hidden until See-through is turned on and off again with the game running. False from an older DLL.</summary>
+    /// <summary>[P1-SEETHRU-GIVEUP] The restore GAVE UP after the restore window (<c>restore_abandoned</c>): those
+    /// actors stay hidden until See-through is turned on and off again with the game running. Actors taken over from an
+    /// earlier copy of the DLL at a hand-off get the same restore ([SEETHRU-HANDOFF-LEFTOVER]). False from an older
+    /// DLL.</summary>
     public bool RestoreAbandoned { get; init; }
 
     /// <summary>How many clients (and Cheat Engine's record) have it on (<c>claims</c>, DLL 3698+; 0 from an older
