@@ -2058,6 +2058,58 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-67: Instances, Properties and Classes build a capped result's note from the
+    /// Max the search was sent with, not a value typed into the Max box while the search ran (the box stays editable
+    /// during a search).</summary>
+    [Theory]
+    [InlineData("find_instances")]
+    [InlineData("search_properties")]
+    [InlineData("list_classes")]
+    public async Task CapNote_NamesTheMaxTheSearchWasSent(string cmd)
+    {
+        const int sent = 5_000;
+        // Lowered below the sent cap, or raised to the box's ceiling: read after the search, either changes the clause.
+        foreach (int typedMidSearch in new[] { 1_000, Constants.MaxSearchCap })
+        {
+            var svc = MakeService(out var pipe);
+            var platform = new MockPlatformService(Path.GetTempPath());
+            var instances = cmd == "find_instances"
+                ? new InstanceFinderViewModel(svc, new MockLoggingService(), platform)
+                  { InstanceSearchCap = sent, SearchClassName = "Pawn" }
+                : null;
+            var properties = cmd == "search_properties"
+                ? new PropertySearchViewModel(svc, new MockLoggingService()) { PropertySearchCap = sent, SearchQuery = "Health" }
+                : null;
+            var classes = cmd == "list_classes"
+                ? new GameClassFilterViewModel(svc, new MockLoggingService(), platform) { ClassListCap = sent }
+                : null;
+            int wired = -1;
+            bool typedWhileSearching = false;
+            // The pipe answers from inside the search call, so the edit lands while the search is in flight.
+            pipe.SetHandler(req =>
+            {
+                if (req["cmd"]?.GetValue<string>() != cmd) return new JsonObject { ["ok"] = true };
+                wired = req["limit"]!.GetValue<int>();
+                typedWhileSearching = instances?.IsSearching ?? properties?.IsSearching ?? classes!.IsLoading;
+                if (instances != null) instances.InstanceSearchCap = typedMidSearch;
+                if (properties != null) properties.PropertySearchCap = typedMidSearch;
+                if (classes != null) classes.ClassListCap = typedMidSearch;
+                return new JsonObject { ["ok"] = true, ["total"] = sent, ["truncated"] = true };
+            });
+
+            if (instances != null) await instances.SearchCommand.ExecuteAsync(null);
+            if (properties != null) await properties.SearchCommand.ExecuteAsync(null);
+            if (classes != null) await classes.LoadCommand.ExecuteAsync(null);
+            string status = instances?.StatusText ?? properties?.StatusText ?? classes!.StatusText;
+            properties?.Dispose();
+
+            Assert.Equal(sent, wired);
+            Assert.True(typedWhileSearching, $"{cmd}: the Max edit did not land while the search ran");
+            Assert.Contains(PartialResultNotice.RaiseMaxClause(sent, Constants.MaxSearchCap), status);
+            if (instances != null) Assert.Contains($"of max {sent:N0};", status);
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-66: a First Scan's truncation note, in either mode, names the deadline the
     /// scan was sent with, not a Timeout the slider was moved to while the scan ran (the slider stays movable during a
     /// scan).</summary>
