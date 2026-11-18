@@ -181,8 +181,8 @@ internal static class McpWriteTools
 
         yield return Write(game, experimentalEnabled, grants, "write_foreground_lock", "Keep Foreground",
             "Experimental. Makes the game believe it is the foreground window, so it keeps running (and game-thread "
-            + "work keeps answering) while another window has the focus. Refused when someone else holds it, or while "
-            + "the UI's experimental features are off.",
+            + "work keeps answering) while another window has the focus. Refused when someone else holds it; turning it "
+            + "on is refused while the UI's experimental features are off.",
             [("enable", McpSchema.Bool("On or off.", false), true)],
             (a, r) => r["enable"] = ReqBool(a, "enable"), "set_foreground_lock", experimental: true,
             kind: McpGrantKind.Toggles);
@@ -211,8 +211,8 @@ internal static class McpWriteTools
             }, "force_field", experimental: true, timeoutSeconds: 90, role: McpToolRole.PerCallWrite);
 
         yield return Write(game, experimentalEnabled, grants, "write_force_field_reset", "Release a forced field",
-            "Experimental. Releases one force-field job this server holds, restoring the captured value. Refused for "
-            + "a job someone else holds.",
+            "Experimental. Releases one force-field job this server holds, restoring the captured value, also while "
+            + "the UI's experimental features are off. Refused for a job someone else holds.",
             [("class_name", McpSchema.Str("The class."), true),
              ("field_name", McpSchema.Str("The field."), true)],
             (a, r) =>
@@ -261,10 +261,12 @@ internal static class McpWriteTools
             async (a, ct) =>
             {
                 int? pid = a.OptInt("pid");
-                if (experimental) RequireExperimental(experimentalEnabled, title);
                 var request = new JsonObject { ["cmd"] = cmd };
                 fill(a, request);
                 if (ifFree) request["if_free"] = true;
+                // [MCP-RELEASE-EXPERIMENTAL-OFF] The switch keeps the AI from turning on or changing what the user
+                // cannot see; ending what this server holds goes through (the gate checks the holder at the send).
+                if (experimental && !McpGrants.IsRelease(request)) RequireExperimental(experimentalEnabled, title);
                 var ptrs = await RequireWritableDllAsync(game, pid, ct);
                 var grant = Admit(grants, role, kind, request, ptrs);
                 // A command that makes game-thread calls on its way waits as long as the DLL may on each.
@@ -283,7 +285,7 @@ internal static class McpWriteTools
         => new("write_see_through", "See-through",
             "Experimental. Hides the occluders between the camera and the player pawn (count: how many nearest), or "
             + "ends this server's own claim on it: See-through stays on while the UI or Cheat Engine also has it on. "
-            + "Refused while the UI's experimental features are off.",
+            + "Turning it on is refused while the UI's experimental features are off; ending this server's claim is not.",
             McpSchema.Object(("enable", McpSchema.Bool("On or off.", false), true),
                 ("count", McpSchema.Int("Occluders to hide (turning on only).", 1, Constants.McpSeeThroughCountMax),
                     false), PidProp),
@@ -291,8 +293,9 @@ internal static class McpWriteTools
             async (a, ct) =>
             {
                 int? pid = a.OptInt("pid");
-                RequireExperimental(experimentalEnabled, "See-through");
                 bool enable = ReqBool(a, "enable");
+                // [MCP-RELEASE-EXPERIMENTAL-OFF] An OFF ends only this server's claim: a release.
+                if (enable) RequireExperimental(experimentalEnabled, "See-through");
                 int? count = enable && a.Has("count") ? a.IntIn("count", 1, 1, Constants.McpSeeThroughCountMax) : null;
                 var ptrs = await RequireWritableDllAsync(game, pid, ct);
                 long build = McpJson.TryGetLong(ptrs["build_number"], out long b) ? b : 0;

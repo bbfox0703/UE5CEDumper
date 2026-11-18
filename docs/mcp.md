@@ -258,7 +258,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   clears a marker slot, and **Recall last** in the UI still returns you to where you were before your own last
   teleport.
 - **The experimental features follow the UI's switch.** Fly, Keep Foreground, See-through and the force field refuse
-  while the UI's experimental features are off. The switch is read on every call.
+  to turn on or change while the UI's experimental features are off. Turning off or releasing what the AI itself holds
+  still works. The switch is read on every call.
 - **Memory writes are data only.** The DLL refuses code, read-only, guard and uncommitted memory for every program
   (the UI's field edits included) and never changes a page's protection. The AI sends the bytes it read; if you, the
   game or another program changed them since, nothing is written. A field one of the holds above keeps is put back by
