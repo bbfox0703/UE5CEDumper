@@ -286,6 +286,25 @@ public sealed class SecondCopySourceTests
         }
     }
 
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 T8-1 / R8-1: an adoption trusts a deferred restore that
+    /// is already running, and that restore's last pass decided it was done from its own snapshot -- actors adopted during
+    /// the pass were left with no restore waiting, and the card promised they would reappear. The loop decides from the
+    /// record, under the lock an adoption takes, and clears its running flag in that same section: an adoption lands
+    /// before the decision (another pass takes it) or sees no restore running (and starts one). R8-3: a new deferred
+    /// restore clears an earlier "gave up".</summary>
+    [Fact]
+    public void ADeferredRestoreTakesWhatWasAdoptedDuringItsPass()
+    {
+        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
+        string loop = FunctionBody(schlacht, "void PendingRestoreLoop() {");
+        Assert.DoesNotContain("done = kept.empty();", loop);
+        InOrder(loop, "the pass", "RecordUnhideLeftoversLocked(kept);",
+                "done = s_state.active || s_state.hiddenActors.empty();", "if (done) s_pendingRunning.store(false);");
+        InOrder(FunctionBody(schlacht, "bool StartPendingLocked() {"), "a new restore",
+                "if (Tot::ShutdownRequested()) return false;", "s_state.restoreAbandoned = false;",
+                "s_pendingWorker = std::thread(PendingRestoreLoop);");
+    }
+
     /// <summary>[WRITEMEM-ANY-COPY] Review wf_bbd1bbfe-20d U7-5: the helper is tested, the call site was not -- Fern.cpp
     /// is in no C++ test target. A background client's write_mem asks about every copy's image before it classifies the
     /// range, so a write into the earlier copy's adopted mailbox never reaches the classification.</summary>
