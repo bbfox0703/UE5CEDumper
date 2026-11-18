@@ -305,6 +305,17 @@ public sealed class SecondCopySourceTests
                 "s_pendingWorker = std::thread(PendingRestoreLoop);");
     }
 
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 R8-2: KeepAddedDuringTick was tested as a helper, and its
+    /// call in Tick could go -- Schlacht.cpp is in no C++ test target. Under the write-back's lock, before the record is
+    /// replaced: after the assignment it would merge the record with itself.</summary>
+    [Fact]
+    public void ATickKeepsWhatWasAdoptedWhileItRan()
+    {
+        InOrder(FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void Tick() {"), "the tick",
+                "old = s_state.hiddenActors;", "std::lock_guard<std::mutex> lk(s_mutex);",
+                "KeepAddedDuringTick(applied, s_state.hiddenActors, old);", "s_state.hiddenActors = std::move(applied);");
+    }
+
     /// <summary>[WRITEMEM-ANY-COPY] Review wf_bbd1bbfe-20d U7-5: the helper is tested, the call site was not -- Fern.cpp
     /// is in no C++ test target. A background client's write_mem asks about every copy's image before it classifies the
     /// range, so a write into the earlier copy's adopted mailbox never reaches the classification.</summary>
