@@ -158,6 +158,20 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    [Fact]
+    public void Main_hotkey_hint_names_Gravity_Dir_and_Get_POV()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-08: both rows are in the main hotkey list that str.TP.HkHint introduces.
+        var vm = File.ReadAllText(Repo(TeleportVm));
+        var hint = EnString("str.TP.HkHint");
+        foreach (var (row, words) in new[] { ("Gravity Dir toggle", "Gravity Dir"), ("Get POV", "Get POV") })
+        {
+            Assert.Matches(@"(?<!Experimental)HotkeyRows\.Add\(new TeleportHotkeyRow \{ ActionId = ""[^""]+"",\s*DisplayName = """
+                           + Regex.Escape(row) + @"""", vm);
+            Assert.Contains(words, hint, StringComparison.Ordinal);
+        }
+    }
+
     private static IEnumerable<(string Key, string Value)> AllStrings()
     {
         var axaml = File.ReadAllText(Repo("ui/UE5DumpUI/Resources/Strings/en.axaml"));
