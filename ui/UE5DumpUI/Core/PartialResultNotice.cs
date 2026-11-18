@@ -85,8 +85,8 @@ public static class PartialResultNotice
     /// results out of <paramref name="totalUnits"/>. Empty when nothing was partial, so a
     /// caller can append it unconditionally.
     /// </summary>
-    /// <param name="unit">What is being counted, singular: the thing the loop scans once per -- a row, or a class
-    /// where the loop dedups by class and many rows share one class's result.</param>
+    /// <param name="unit">What is being counted, singular: the thing the loop scans once per, such as a row or a
+    /// class. A loop whose one scan of a class serves many rows counts classes, not rows.</param>
     /// <param name="cause">What truncated them, as it reads in "N rows {cause} and are
     /// marked partial". Defaults to the scan deadline, which is what every Z9 caller
     /// means. AF7 needed a second cause — the disassembler's instruction budget — and
