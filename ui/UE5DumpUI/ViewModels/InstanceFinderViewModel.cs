@@ -545,12 +545,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // truncated now means "more NON-EXCLUDED matches exist past the cap" — so
             // point at the levers that recover them: exclude noise, raise Max, or narrow.
             //
-            // ⚠ "raise Max" is CONDITIONAL. This panel does own the control — it is where the
-            // other two copied the phrase from — but at 50,000 there is nothing left to raise
-            // and the advice becomes the Z10 lie again, one ceiling later. The clause is shared
-            // (PartialResultNotice.RaiseMaxClause) rather than re-derived here: the same rule
-            // was written three times in one day for three panels, and the third time is when a
-            // rule stops being a rule. [CLASSCAP] sibling sweep.
+            // ⚠ "raise Max" is CONDITIONAL. This panel owns the control, but at its ceiling there
+            // is nothing left to raise and the advice would send the user to a control that cannot
+            // go higher. The clause comes from PartialResultNotice.RaiseMaxClause, which holds that
+            // rule for the panels with a Max control (RaiseMaxClauseTests lists them), rather than
+            // being re-derived here. [CLASSCAP]
             var capNote = result.Truncated
                 ? $" — ⚠ capped at {found} of max {InstanceSearchCap:N0}; exclude noise classes"
                   + PartialResultNotice.RaiseMaxClause(InstanceSearchCap, Constants.MaxSearchCap)
