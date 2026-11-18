@@ -671,13 +671,16 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             IsSearching = true;
             StatusText = "Searching...";
 
-            // The cap advice names the Max this search was sent with: the Max box can change while the search runs.
+            // The search is sent with these values and its status line reads them, not the controls, which stay
+            // editable while the search runs.
             int capSent = PropertySearchCap;
+            bool gameOnlySent = GameClassesOnly;
+            bool deepSent = DeepSearch;
             var result = await _dump.SearchPropertiesAsync(
                 trimmedQuery,
                 types: types.Length > 0 ? types : null,
-                gameOnly: GameClassesOnly,
-                deep: DeepSearch,
+                gameOnly: gameOnlySent,
+                deep: deepSent,
                 limit: capSent);
 
             // Cache the full set so the client-side ResultFilter can refine
@@ -698,7 +701,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             ApplyResultFilter();
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
-            var deepSuffix = DeepSearch ? " [deep]" : "";
+            var deepSuffix = deepSent ? " [deep]" : "";
             // The cap/abort suffix matters: without it a capped search reads as a
             // completed sweep, the user filters these rows client-side, finds nothing,
             // and concludes the field does not exist. The DLL reports what it actually
@@ -711,7 +714,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // ceiling it would point at a lever with nowhere to go, so the advice there is
             // to narrow. [PROPSEARCHCAP-2026-08-19]
             string advice = "narrow it with a longer property name or a Type filter";
-            if (!GameClassesOnly)
+            if (!gameOnlySent)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
             advice += PartialResultNotice.RaiseMaxClause(capSent, Constants.MaxSearchCap);
             var capSuffix = result.Aborted
