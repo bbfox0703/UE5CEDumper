@@ -1622,6 +1622,27 @@ public class ValueSearchTests
     // ---- P2: per-slot prev-value/ordered scan types + locked-offset table ----
 
     [Fact]
+    public async Task GroupScanType_TipAndFirstScanRefusal_NameEveryFirstScanType()
+    {
+        // [UI-TEXT-AUDIT-2026-11-18] UT-30: Between is offered and accepted on a group First Scan, so the tooltip and the
+        // prev-value refusal list it with the other first-scan types.
+        var (vm, fake) = MakeVm();
+        var firstScanTypes = vm.GroupScanTypeOptions.Where(t => !ValueSearchViewModel.IsPrevValueScanType(t)).ToList();
+        Assert.Contains(ValueScanType.Between, firstScanTypes);
+
+        var tip = Res.Get("str.Tip.VS.Group.ScanType");
+        foreach (var t in firstScanTypes) Assert.Contains(t.ToString(), tip);
+
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].ScanType = ValueScanType.Changed;
+        vm.GroupInputs[1].Value = "2";
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+        Assert.Empty(fake.GroupBegins);
+        foreach (var t in firstScanTypes) Assert.Contains(t.ToString(), vm.ErrorMessage);
+    }
+
+    [Fact]
     public void GroupSlotInput_RequiresValueInput_ReactsToScanType()
     {
         var slot = new GroupSlotInput();
