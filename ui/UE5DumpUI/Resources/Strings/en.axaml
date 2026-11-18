@@ -1478,7 +1478,7 @@
     <sys:String x:Key="str.Tip.LF.Trace.Estimate">How long the buffer would last with every call traced, at your last recording's call rate. Ticked functions and leaving out per-frame ones make it last longer.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.ExcludePerFrame">Leave out of the trace the functions the previous recording found firing every frame (Tick and the like). What they call is still traced.</sys:String>
     <sys:String x:Key="str.Tip.LF.ClearChoices">Untick every box in the Trace, Params? and Stack? columns at once: the functions ticked for the trace, and those chosen for parameters or a stack. Clear ticks and the Parameters row's Clear each empty only their own. Not while recording: a recording keeps the choices it started with.</sys:String>
-    <sys:String x:Key="str.Tip.LF.Trace.Ticked">Functions ticked in the table. A traced Start records only their calls and what they call; with none ticked, every call.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Trace.Ticked">Functions ticked in the table. A traced Start records their calls and what they call, and the calls of the functions chosen for parameters or a stack. With none ticked: only those chosen calls, or every call when nothing is chosen.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Open">Open the trace the last recording kept in the Call Trace tab.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Tick">Trace only this function's calls and what they call.</sys:String>
     <sys:String x:Key="str.Tip.CT.Load">Read the trace the last traced Live Funcs recording kept. Opening this tab does it by itself.</sys:String>
