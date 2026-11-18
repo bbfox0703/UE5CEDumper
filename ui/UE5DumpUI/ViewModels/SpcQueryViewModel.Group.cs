@@ -210,6 +210,12 @@ public partial class SpcQueryViewModel
     private async Task CopyGroupSlotAddressAsync(GroupSlotMatch? slot)
     {
         if (slot == null || _platform == null || string.IsNullOrEmpty(slot.Addr)) return;
+        // [UI-TEXT-AUDIT-2026-11-18] An array-element slot carries only its owner's base: HEX and +CE refuse it too.
+        if (Helpers.AobMakerActions.IsSnapshotElementRow(slot.FieldName))
+        {
+            GroupStatusText = Helpers.AobMakerActions.NoOwnAddressText(slot.FieldName);
+            return;
+        }
         try
         {
             var hex = slot.Addr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
