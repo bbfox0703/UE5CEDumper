@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (no build change) — History cut out of the code comments, pass 2; stacked doc blocks `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- `check_comment_history` counts more narrative shapes -- "Nth review", "review N of <hash>", a sentence opening on
+  "Previously" or "Until now", "the old X was ...", "PROMOTED 210 -> 101", "the first version required ...", "turned
+  out", "commit <hash>", a maintainer decision with its date, "observed on ... <date>", "before/until/since <date>" --
+  each measured over the comments for few false hits, with positive and negative self-test controls. The 120 lines they
+  found in 50 files are rewritten, and those files were swept for history without the keywords: 507 more blocks (stage
+  and phase markers, review suffixes, dated captures, game-tied repro stories, decision provenance). Baseline 0 again.
+- `check_comment_refs`' CSDOC check also catches a `///` line ending in `</summary>` after its text, right before a
+  `/// <summary>` line. It found 14 stacked doc blocks: 11 moved back onto the member they describe (one merged with
+  that member's own), 3 deleted because their member no longer exists.
+- Comments only: `comment_only_diff` passes for every file; the DLL and the four proxies build; C++ 1663 / 4262 / 287
+  / 22 / 37 and C# 8429 (+1 skipped) pass; 40 gates.
+
 ## 2026-11-18 (no build change) — History cut out of the code comments, pass 1 `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - Every comment line in `dll/src` and `ui/UE5DumpUI` that `check_comment_history` counts as history -- 715 lines in 180
