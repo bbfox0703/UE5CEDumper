@@ -375,4 +375,32 @@ public class AobMakerWordingTests
 
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-36: the "Disassemble in CE" button of the property-xref / class-funcs
+    /// dialog opens its tooltip while greyed out, and the tooltip gives the bridge's own reason (a busy or refused pipe
+    /// is not a missing plugin). Pinned in source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_says_why_the_plugin_is_unreachable_while_greyed_out()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to.
+        Assert.Contains("ToolTip.SetShowOnDisabled(_btnDisasm, true);", src, StringComparison.Ordinal);
+
+        int tip = src.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        Assert.True(src.IndexOf("ToolTip.SetTip(_btnDisasm,", tip + 1, StringComparison.Ordinal) < 0,
+                    "the Disassemble button's tooltip is set in more than one place");
+        var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+        Assert.Contains("AobMakerUnavailable.Text(SharedAobMaker)", call, StringComparison.Ordinal);
+        Assert.DoesNotContain("not connected", call, StringComparison.Ordinal);
+
+        // A push can drop the bridge's flag while the modal dialog is open, so the button's state and its tooltip are
+        // set in one method: a button the push greys out does not keep the action text.
+        var setters = System.Text.RegularExpressions.Regex.Matches(src, @"_btnDisasm\.IsEnabled = (?!false;)");
+        Assert.True(setters.Count == 1, $"{setters.Count} places enable the Disassemble button");
+        int from = Math.Min(setters[0].Index, tip), to = Math.Max(setters[0].Index, tip);
+        Assert.DoesNotContain("\n    }\n", src[from..to], StringComparison.Ordinal);
+    }
 }
