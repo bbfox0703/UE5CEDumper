@@ -27,6 +27,41 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3746) — Five review rounds of the UI-text fixes: 53 more places the UI, its comments and the runbooks disagreed with the code `[UI-TEXT-AUDIT-2026-11-18]`
+
+- **What changes:**
+  - **The AOBMaker dialogs** (Find Class Funcs / Functions using field, and Properties used by): ⚙ Disassemble in CE
+    and Write site in CE say why they are greyed out, in the bridge's own words (busy, refused or missing), and open
+    that tooltip while greyed. Each dialog checks for the plugin once as it opens, so reopening it after starting
+    Cheat Engine enables the button. A button stays off while its own push runs: a second click no longer adds a
+    duplicate record to CE's table.
+  - **Dump Explorer:** Find Instances and the panel note describe the class-name search (substring unless Exact
+    match, templates included) instead of promising live instances; the live-match progress line names classes,
+    structs and enums.
+  - **Live Funcs, Call Trace:** the Trace tooltip and the status lines say that with Params? / Stack? choices the
+    chosen calls outside the ticked functions are recorded too.
+  - **The Instances tab** is named by its label wherever a text sends you there (Value Search's inst, the Force
+    templates note, a Live Walker status, and the DLL's no-target note in Related).
+  - **Live Walker:** Collapse Pointer Nodes says every group below the root collapses.
+  - **Value Search, Instances, Properties, Classes:** a truncation or cap note names the Max, Timeout, scan type,
+    Game classes only and Deep the search was sent with, even when a box changed while it ran; the group note no
+    longer offers raising Max at its 1,000,000 ceiling; First and Next Scan send the scan type they validated.
+  - **Docs and comments:** working-lessons §2.6, the handover runbook, the verify rigs' docstrings and the
+    auto-verification plan describe a fresh injection beside a proxy as a take-over once the injected copy has
+    scanned (a proxy-mode row reads `get_pointers.load_mode`); stale comments are corrected in the two dialogs, the
+    experimental gate, `Aura::GetFunctionCodeAddr`, `Methode.cpp` and `scripts/UE5CEDumper.CT`.
+- **Kept by decision:** Value Search's single-mode truncation note does not name Max (`[P5-GROUP-ADVICE]`: its cap
+  remedy is narrowing the predicate, with Max beside it); UT-42 changed only the group note.
+- **Reviewed:** five rounds after the build 3745 fixes (`wf_31921b9d-4a0`, `wf_017295c2-e45`, `wf_c7f1ac00-7e7`,
+  `wf_6b61eb19-451`, `wf_b9bce568-10b`), each finding checked by a second agent that tried to refute it: 18, 14, 9,
+  10 and 7 confirmed, mostly the same defect at a sibling site one step further out. All 53 are fixed, one commit
+  each, text and behaviour red then green; the register ([audit-2026-11-18-ui-text.md](audit-2026-11-18-ui-text.md))
+  has every row's commits. The fifth round looked only for regressions in the fourth round's changes.
+- **Tests:** C# 8497 total (1 skipped, 0 failed); C++ dll_core_test 1663, dll_helpers_test 4262,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 37; 40 gates. Read from source and
+  not run on a game.
+- AOT UI 62,751,232 bytes (sha256 4c7012363f1fc92b...); UE5Dumper.dll 3,853,824 bytes (sha256 ffede2e62a8c53f6...).
+
 ## 2026-11-18 (build 3745) — The UI's text says what the program does: 35 places the Wiki update found `[UI-TEXT-AUDIT-2026-11-18]`
 
 - **What changes**, by panel (each row and its commits: [audit-2026-11-18-ui-text.md](audit-2026-11-18-ui-text.md)):
