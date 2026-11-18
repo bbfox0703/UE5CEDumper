@@ -376,6 +376,44 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-72: the property-xref / class-funcs dialog's Disassemble button stays off
+    /// while its own push runs. SyncDisasmButton can run during a push, so the click handler raises an in-flight flag
+    /// after its bridge-down guard and before its first await, lowers it in its finally before re-setting the button,
+    /// and the button's enabling setter reads that flag. Pinned in source because no unit test here can open a
+    /// Window.</summary>
+    [Fact]
+    public void Xref_disassemble_button_stays_off_while_its_own_push_runs()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        string Body(string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{signature} is missing from PropertyXrefDialog.cs");
+            return src[at..src.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
+        }
+
+        var click = Body("private async void OnDisassembleClicked(");
+        var raised = System.Text.RegularExpressions.Regex.Match(click, @"\n\s*(_\w+) = true;");
+        Assert.True(raised.Success, "OnDisassembleClicked raises no in-flight flag");
+        string flag = raised.Groups[1].Value;
+        // After the bridge-down guard, whose return would otherwise leave the flag up and the button off until the
+        // dialog closes.
+        int guard = click.IndexOf("if (bridge == null || !bridge.IsAvailable)", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "OnDisassembleClicked has no guard for a bridge that is down");
+        Assert.True(raised.Index > click.IndexOf("return;", guard, StringComparison.Ordinal),
+                    $"OnDisassembleClicked raises {flag} before its bridge-down guard returns");
+        Assert.True(click.IndexOf("await ", StringComparison.Ordinal) > raised.Index,
+                    $"OnDisassembleClicked raises {flag} after its first await");
+        Assert.Matches($@"finally\s*\{{\s*{flag} = false;\s*SyncDisasmButton\(\);\s*\}}", click);
+
+        var setter = System.Text.RegularExpressions.Regex.Match(Body("private void SyncDisasmButton()"),
+                                                                @"_btnDisasm\.IsEnabled = ([^;]*);");
+        Assert.True(setter.Success, "SyncDisasmButton does not set _btnDisasm");
+        Assert.Contains($"!{flag}", setter.Groups[1].Value, StringComparison.Ordinal);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-65: each of the Props dialog's Cheat Engine buttons builds its tooltip
     /// from its own two en.axaml keys, each named by one const: the action text while the bridge is up, otherwise its
     /// Off template formatted with the bridge's sentence, which says what the button needs the plugin for and that
