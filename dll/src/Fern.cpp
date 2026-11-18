@@ -3531,10 +3531,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                               "client never writes there", Grimoire::WRITE_MEM_OWN_IMAGE);
             switch (Macht::ClassifyWriteRange(addr, bytes.size())) {
                 case Lager::WriteTarget::Executable:
-                    return refuse("is in executable memory (code); write_mem writes data only",
+                    return refuse("is in executable memory (code); only data memory is written",
                                   Grimoire::WRITE_MEM_EXECUTABLE);
                 case Lager::WriteTarget::NotWritable:
-                    return refuse("is not writable as it stands (a read-only, guard or no-access page); write_mem "
+                    return refuse("is not writable as it stands (a read-only, guard or no-access page); a write "
                                   "never changes page protection", Grimoire::WRITE_MEM_NOT_WRITABLE);
                 case Lager::WriteTarget::Unmapped:
                     return refuse("is not committed memory", Grimoire::WRITE_MEM_NOT_WRITABLE);
