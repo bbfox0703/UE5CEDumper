@@ -37,7 +37,7 @@ beside them does not.
 | UT-24 | Properties | behaviour | The Freeze tooltip says "AOBMaker CE Plugin not found" for every unavailable state, a busy or refused pipe included; `AobMakerUnavailable.Text` gives the real reason elsewhere. | ✅ fixed 2026-11-18 (red `fd460226`, then green) |
 | UT-25 | Properties | text | The Freeze type refusal says "(numeric + bool only)"; enums are supported. | ✅ fixed 2026-11-18 (red `0105f388`, then green) |
 | UT-26 | Console | behaviour | A status message says "type the command and press Enter"; the command box does nothing on Enter (its tooltip says press Run). | ✅ fixed 2026-11-18 (red `e567bbb3`, then green) |
-| UT-27 | Find Class Funcs | comment | `PropertyXrefDialog`'s comment says the Disassemble button is hidden without AOBMaker; it is visible and disabled. | ⬜ |
+| UT-27 | Find Class Funcs | comment | `PropertyXrefDialog`'s comment says the Disassemble button is hidden without AOBMaker; it is visible and disabled. | ✅ fixed 2026-11-18 |
 | UT-28 | Console | text | `str.Tip.Con.CommandInput` / `str.Tip.Con.RunRow` show the internal class name `InvokeParamDialog`. | ⬜ |
 | UT-29 | Value Search | behaviour | Group scan uses single mode's hidden **Game classes only** and **Max:** values, which group mode does not show; its truncation message names a result cap the user cannot see there. | ⬜ |
 | UT-30 | Value Search | text | `str.Tip.VS.Group.ScanType` lists only Exact / Bigger / Smaller for the first scan; Between is offered. The matching error omits it too. | ⬜ |

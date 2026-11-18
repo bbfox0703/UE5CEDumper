@@ -62,8 +62,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     private Button _btnClose = null!;
 
     /// <summary>App-global AOBMaker bridge for the "Disassemble in CE" push. A
-    /// code-behind dialog can't take per-instance DI, so MainWindow sets this
-    /// once at startup; null/unavailable hides the button.</summary>
+    /// code-behind dialog can't take per-instance DI, so MainWindowViewModel sets this;
+    /// null/unavailable leaves the button shown but disabled, its tooltip saying why.</summary>
     public static IAobMakerBridge? SharedAobMaker;
 
     /// <summary>Raised when the user clicks "Locate class" on a row — MainWindow
@@ -224,8 +224,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             Margin = new Thickness(0, 8, 0, 0),
         };
         // Disassemble in CE: resolve UFunction->Func via the DLL, then jump CE's
-        // disassembler there + drop a labeled address-list row. Hidden when no
-        // AOBMaker bridge is available.
+        // disassembler there + drop a labeled address-list row. Shown but disabled
+        // when no AOBMaker bridge is available.
         _btnDisasm = new Button
         {
             Content = "⚙ Disassemble in CE",
