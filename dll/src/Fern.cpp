@@ -3332,7 +3332,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Not a class or struct at " + addrStr + " -- it holds " +
                                                 Ubel::GetName(addr) + " (" +
                                                 (holderCls ? Ubel::GetName(holderCls) : std::string("no class")) +
-                                                "); a level travel can free a class and reuse its address").dump();
+                                                "); walk_class reads a class, a struct or a function").dump();
             }
             const ClassInfo& ci = Ubel::WalkClassEx(addr);
 
