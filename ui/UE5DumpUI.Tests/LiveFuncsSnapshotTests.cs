@@ -1969,6 +1969,22 @@ public class LiveFuncsSnapshotTests
 
     // ---- Clear choices: one clear for the three choice columns ----
 
+    /// <summary>The Parameters row's Clear empties the parameter and the stack choices, which share the snapshot buffer
+    /// (D4): its tooltip names both columns, and Clear choices' tooltip does not say each clear empties only its own.</summary>
+    [Fact]
+    public void The_Parameters_Clear_has_a_tooltip_naming_both_columns_it_clears()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string clear = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ClearSnapshotsCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Snap.Clear}\"", clear, StringComparison.Ordinal);
+
+        string tip = Line("str.Tip.LF.Snap.Clear");
+        Assert.Contains(Line("str.LF.Col.Snapshot"), tip, StringComparison.Ordinal);
+        Assert.Contains(Line("str.LF.Col.Stack"), tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("each empty only their own", Line("str.Tip.LF.ClearChoices"), StringComparison.Ordinal);
+    }
+
     /// <summary>A view model with every kind of choice, Trace on: A::F ticked and chosen for parameters and for a stack,
     /// A::G for parameters, A::H for a stack. F carries all three, so a clear that misses one kind leaves a box ticked
     /// on a row whose other boxes it cleared.</summary>
