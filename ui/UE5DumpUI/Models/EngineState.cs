@@ -180,8 +180,8 @@ public sealed class EngineState
     /// Per-launch session token: the game process's creation time (FILETIME
     /// 100ns-since-1601, hi:lo packed as hex). Unique per launch even when the
     /// EXE loads at a CONSTANT base (no effective ASLR, e.g. SEED) — which is
-    /// why <see cref="ModuleBase"/> alone could not distinguish an old launch
-    /// from the current one. Empty on DLLs older than build 1227 (the
+    /// why <see cref="ModuleBase"/> alone cannot distinguish an old launch
+    /// from the current one. Empty on a DLL too old to send it (the
     /// stale-session gate then degrades to "no per-launch distinction").
     /// Folded into <see cref="GameSessionId"/>.
     /// </summary>
@@ -195,12 +195,12 @@ public sealed class EngineState
     /// session's to decide whether its session-local ObjAddr is still valid
     /// (a reinject/relaunch invalidates those addresses).
     ///
-    /// Was <c>PeHash-ModuleBase</c> before build 1227, but ModuleBase is
-    /// constant across launches on games without effective ASLR (SEED), so the
-    /// gate never fired there. Process creation time always differs per launch,
-    /// so it is a strictly better discriminator. Old-format snapshots
-    /// (<c>PeHash-ModuleBase</c>) no longer match the new-format current id, so
-    /// they correctly read as a different (stale) session and gray out.
+    /// Not <c>PeHash-ModuleBase</c>: ModuleBase is constant across launches on
+    /// games without effective ASLR (SEED), so the gate would never fire there.
+    /// Process creation time always differs per launch, so it is a strictly
+    /// better discriminator. Snapshots stamped in the <c>PeHash-ModuleBase</c>
+    /// form never match the current id, so they correctly read as a different
+    /// (stale) session and gray out.
     /// </summary>
     public string GameSessionId => $"{PeHash}-{ProcessCreationTime}";
 

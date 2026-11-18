@@ -181,14 +181,13 @@ internal static class ProxyOrphanScanner
     /// Classify the leaf directory's CONTENTS and collect the files that are OURS.
     ///
     /// <para><b>Removing our own DLL is unconditional; removing FOLDERS is not.</b> Those are two
-    /// separate authorisations and conflating them was a real defect: a folder shared with a third
-    /// party — ReShade's <c>dxgi.dll</c> next to our <c>winmm.dll</c>, or a dead tool's leftover
-    /// <c>.log</c>/<c>.ini</c> — used to refuse the whole row and leave OUR litter on disk forever,
-    /// which is the opposite of what the feature is for. A foreign file no longer blocks the recycle;
-    /// it just means no directory will come away, and the non-recursive
-    /// <c>Directory.Delete</c> enforces that by itself with no pre-check.</para>
+    /// separate authorisations: a folder shared with a third party — ReShade's <c>dxgi.dll</c> next
+    /// to our <c>winmm.dll</c>, or a dead tool's leftover <c>.log</c>/<c>.ini</c> — must not refuse
+    /// the whole row and leave OUR litter on disk forever, which is the opposite of what the feature
+    /// is for. A foreign file does not block the recycle; it just means no directory will come away,
+    /// and the non-recursive <c>Directory.Delete</c> enforces that by itself with no pre-check.</para>
     ///
-    /// <para>Two things still refuse everything, including the file:</para>
+    /// <para>Two things refuse everything, including the file:</para>
     /// <list type="bullet">
     /// <item>a null probe — a listing that FAILED is never "empty"; we cannot know what is in there,
     /// so we cannot know which files are ours;</item>
@@ -321,13 +320,12 @@ internal static class ProxyOrphanScanner
         var filesToRecycle = ourNames.Select(n => Combine(leaf, n)).ToArray();
 
         // Ask about the RECYCLE BIN here, at scan time, so the confirm dialog never offers a
-        // recycle this volume cannot perform. The question used to be asked first inside
-        // MoveToRecycleBin — after the user had already been told what would happen — and it was
-        // asked as a drive-LETTER test, which a fixed volume with NukeOnDelete=1 passes while
-        // FOF_ALLOWUNDO silently hard-deletes and returns success. NotOnFixedDrive kept its name
-        // (it is in the shipped enum) but now means "no usable Recycle Bin here". (B13/B41)
+        // recycle this volume cannot perform, and ask it of the volume, not as a drive-LETTER
+        // test: a fixed volume with NukeOnDelete=1 passes that test while FOF_ALLOWUNDO silently
+        // hard-deletes and returns success. NotOnFixedDrive keeps its name (it is in the shipped
+        // enum) but means "no usable Recycle Bin here".
         //
-        // AFTER ClassifyLeaf, not before, for two reasons measured end to end on 2026-08-12:
+        // AFTER ClassifyLeaf, not before, for two reasons:
         //   * a volume with no bin must not manufacture a refusal for a folder holding nothing of
         //     ours — that folder is not this feature's business whatever the volume does; and
         //   * the plan carries filesToRecycle so the surfaced row can NAME the file it found. A
@@ -434,10 +432,9 @@ internal static class ProxyOrphanScanner
         string? steamapps = ParentOf(ceiling);
         sb.Append("No Steam appmanifest in ").Append(steamapps ?? ceiling)
           .Append(" names installdir '").Append(gameFolderName).Append('\'');
-        // ONLY facts the code actually established. There used to be a "no game content anywhere
-        // under <gameRoot>" clause here; nothing ever computed it — the sole content signal is the
-        // executable walk, whose own honest wording arrives via livenessEvidence. Printing an
-        // unevaluated claim on the screen that authorises a deletion is the worst place to do it.
+        // ONLY facts the code actually established: the sole content signal is the executable
+        // walk, whose own wording arrives via livenessEvidence. An unevaluated claim on the screen
+        // that authorises a deletion is the worst place for one.
         if (!string.IsNullOrEmpty(livenessEvidence)) sb.Append("; ").Append(livenessEvidence);
         sb.Append("; the folder holds ").Append(string.Join(", ", files.Select(LastSegment)));
         sb.Append('.');

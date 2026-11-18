@@ -1007,7 +1007,7 @@ public sealed class SnapshotStore : ISnapshotStore
         // input is kept (display columns come from B, the newer snapshot).
         // The key includes array_field + elem_index so struct-array-element rows
         // (e.g. SaveSlotList[0].GP vs SaveSlotList[1].GP, same class/owner/inner
-        // prop name) don't collide. Direct fields use "" / -1. (build 1203)
+        // prop name) don't collide. Direct fields use "" / -1.
         var aMap = new Dictionary<(string cls, long idx, string prop, int off, string arr, int elem), (string hex, double? num)>();
         await using (var cmd = conn.CreateCommand())
         {
@@ -1595,7 +1595,7 @@ public sealed class SnapshotStore : ISnapshotStore
     // predicate CHAIN (evaluated by SpcEngine.Matches, the same engine single-value SPC
     // uses). A match = one object holds all N slots' chains at DISTINCT fields/offsets.
     // Deep (struct-array elements) is inherent: the SPC load already includes
-    // array_field rows (build 1203), so each element is its own candidate field grouped
+    // array_field rows, so each element is its own candidate field grouped
     // under its owner. See docs/group-value-scan-spec.md §3.1.
     // ============================================================
     public async Task<SpcGroupResult> SpcGroupQueryAsync(SpcGroupQuery query, CancellationToken ct = default)
@@ -1767,7 +1767,7 @@ public sealed class SnapshotStore : ISnapshotStore
     }
 
     // 0 class,1 norm,2 outer,3 type,4 prop,5 offset,6 addr,7 hex,8 num,9 gobjects_index,
-    // 10 array_field,11 elem_index. Struct-array-element rows are now INCLUDED (build 1203);
+    // 10 array_field,11 elem_index. Struct-array-element rows are INCLUDED;
     // array_field/elem_index join into the key so distinct elements don't collide.
     private const string SpcRowSql =
         "SELECT class_fqn, norm_path, outer_chain, declared_type, prop_name, prop_offset, " +
@@ -1786,8 +1786,7 @@ public sealed class SnapshotStore : ISnapshotStore
     };
 
     // Append array_field + elem_index so SaveSlotList[0].GP and SaveSlotList[1].GP
-    // (same class/owner/inner prop) stay distinct; direct fields contribute ""/-1,
-    // leaving their keys byte-for-byte as before. (build 1203)
+    // (same class/owner/inner prop) stay distinct; direct fields contribute ""/-1.
     private static string SpcKey(SpcJoinMode mode, SqliteDataReader r, string cls, string prop)
         => SpcKeyBase(mode, r, cls, prop)
            + (char)1 + (r.IsDBNull(10) ? "" : r.GetString(10))

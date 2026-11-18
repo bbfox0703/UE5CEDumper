@@ -82,9 +82,9 @@ public static class AddressHelper
     ///
     /// <para>
     /// <see cref="AddressFormat.ModuleOffset"/> falls back to the absolute hex form when
-    /// the address is not inside the module (audit #5 AE30). It used to subtract
-    /// unconditionally, so a UObject on the heap — which is nearly every address this app
-    /// copies, and which sits BELOW a 0x7FF7… image base — came out as
+    /// the address is not inside the module. Subtracting unconditionally would turn a
+    /// UObject on the heap — which is nearly every address this app copies, and which sits
+    /// BELOW a 0x7FF7… image base — into
     /// <c>"game.exe"+FFFF81820A83F268</c>. That string round-trips within the same run
     /// (CE adds it back mod 2^64, and <see cref="TryNormalizeAddress"/> still accepts it),
     /// which is exactly what makes it dangerous: it LOOKS like the ASLR-stable form the

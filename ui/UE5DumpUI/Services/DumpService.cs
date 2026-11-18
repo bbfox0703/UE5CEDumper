@@ -236,7 +236,7 @@ public sealed class DumpService : IDumpService
             SparseDelegatesMethod = ptrs["sparse_delegates_method"]?.GetValue<string>() ?? "not_found",
             // AOB Usage Tracking
             PeHash = ptrs["pe_hash"]?.GetValue<string>() ?? "",
-            // Per-launch session token (build 1227+; older DLLs omit it → ""
+            // Per-launch session token (an older DLL omits it → ""
             // → GameSessionId degrades to "PeHash-" with no per-launch split).
             ProcessCreationTime = ptrs["process_creation_time"]?.GetValue<string>() ?? "",
             GObjectsPatternId = ptrs["gobjects_pattern_id"]?.GetValue<string>() ?? "",
@@ -257,13 +257,13 @@ public sealed class DumpService : IDumpService
             GWorldAob = ptrs["gworld_aob"]?.GetValue<string>() ?? "",
             GWorldAobPos = ptrs["gworld_aob_pos"]?.GetValue<int>() ?? 0,
             GWorldAobLen = ptrs["gworld_aob_len"]?.GetValue<int>() ?? 0,
-            // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name (build 3609+; older DLLs omit it -> "")
+            // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name (an older DLL omits it -> "")
             GWorldExport = ptrs["gworld_export"]?.GetValue<string>() ?? "",
-            GObjectsExport = ptrs["gobjects_export"]?.GetValue<string>() ?? "",   // [AOBM-EXPORT-SYM-REST] build 3610+
-            // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment (build 3614+; older DLLs omit it -> 0)
+            GObjectsExport = ptrs["gobjects_export"]?.GetValue<string>() ?? "",   // [AOBM-EXPORT-SYM-REST]
+            // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment (an older DLL omits it -> 0)
             GObjectsAdjustment = ptrs["gobjects_adjustment"]?.GetValue<int>() ?? 0,
             GNamesAdjustment = ptrs["gnames_adjustment"]?.GetValue<int>() ?? 0,
-            // GEngine slot + AOB metadata (build 2394+; older DLLs omit these → "" / 0)
+            // GEngine slot + AOB metadata (an older DLL omits these → "" / 0)
             GEngine = ptrs["gengine"]?.GetValue<string>() ?? "",
             GEngineMethod = ptrs["gengine_method"]?.GetValue<string>() ?? "not_found",
             GEnginePatternId = ptrs["gengine_pattern_id"]?.GetValue<string>() ?? "",
@@ -274,8 +274,8 @@ public sealed class DumpService : IDumpService
             GEngineExport = ptrs["gengine_export"]?.GetValue<string>() ?? "",
             // GameThreadDispatch invoke timeout (effective value)
             InvokeTimeoutMs = ptrs["invoke_timeout_ms"]?.GetValue<int>() ?? 5000,
-            // DLL build number — present in both init AND get_pointers responses
-            // (build 653+). Prefer the explicit caller-supplied value; fall back
+            // DLL build number — present in both init AND get_pointers responses.
+            // Prefer the explicit caller-supplied value; fall back
             // to ptrs so refreshes from get_pointers pick it up automatically.
             DllBuildNumber = dllBuildNumber != 0 ? dllBuildNumber
                                                  : (ptrs["build_number"]?.GetValue<int>() ?? 0),
@@ -440,9 +440,9 @@ public sealed class DumpService : IDumpService
             SuperName = classObj["super_name"]?.GetValue<string>() ?? "",
             PropertiesSize = classObj["props_size"]?.GetValue<int>() ?? 0,
             SuperPropertiesSize = classObj["super_props_size"]?.GetValue<int>() ?? 0,
-            // ⚠ The default is load-bearing. A pre-fix DLL sends no own_props_start, and -1
+            // ⚠ The default is load-bearing. An older DLL sends no own_props_start, and -1
             // means "no information" — a `?? 0` here would drive the min() in EmitStructBody to
-            // 0 and re-emit every inherited property (audit #5 W2), which is a far worse bug
+            // 0 and re-emit every inherited property, which is a far worse bug
             // than the one own_props_start exists to fix.
             OwnPropertiesStart = classObj["own_props_start"]?.GetValue<int>() ?? -1,
         };
@@ -1003,7 +1003,6 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
-                // Emitted by the DLL since build 1194 and dropped here until Z8/Z12.
                 DeepScan       = scanNode["deep_scan"]?.GetValue<bool>() ?? false,
             };
         }
@@ -1626,8 +1625,8 @@ public sealed class DumpService : IDumpService
             ArrayElemDelegatePad = fo["array_elem_delegate_pad"]?.GetValue<int>() ?? 0,   // [A4-DELEGATE-ARRAY-PAD] additive
             SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
             SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
-            // Absent from a pre-fix DLL. 0x10 is the pre-fix behaviour, so it is the
-            // only fallback that cannot make an older pairing worse than it was.
+            // An older DLL omits it and assumes 0x10, so 0x10 is the only fallback
+            // that cannot make an older pairing worse.
             SoftArrayPathOffset = fo["soft_path_offset"]?.GetValue<int>() ?? 0x10,
             ArrayElements = ParseArrayElements(fo["elements"]),
             ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
@@ -1951,7 +1950,7 @@ public sealed class DumpService : IDumpService
                     // treated as unresolved -- never written whole. [BOOL-NATIVE-SEARCH]
                     BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
                     BoolNative        = obj["bool_native"]?.GetValue<bool>() ?? false,
-                    // Deep-mode synthetic dotted-path leaf (build 1222). Absent
+                    // Deep-mode synthetic dotted-path leaf. Absent
                     // on shallow rows + older DLLs → defaults false.
                     IsNested          = obj["is_nested"]?.GetValue<bool>() ?? false,
                 });
@@ -2343,7 +2342,7 @@ public sealed class DumpService : IDumpService
         CheckResponse(res);
     }
 
-    // --- Multiple values group scan (CE-style "group scan", build 1276) ---
+    // --- Multiple values group scan (CE-style "group scan") ---
 
     // Decode ONE leaf of a group slot. Shared by the row's representative (inside
     // `slots`) and by query_group_slot_leaves' full list — the DLL emits both
@@ -2711,7 +2710,7 @@ public sealed class DumpService : IDumpService
             RxLogMs     = res["_t_rxlog_ms"]?.GetValue<long>() ?? 0,
             ParseMs     = res["_t_parse_ms"]?.GetValue<long>() ?? 0,
             // [W1-SNAP-FAULT] A DLL scan worker faulted on this chunk. Absent on an older DLL
-            // = false, the pre-fix behaviour (the fault then stays invisible, exactly as before).
+            // = false (the fault then stays invisible).
             WorkerFaulted = res["worker_faulted"]?.GetValue<bool>() ?? false,
         };
 
@@ -3591,7 +3590,7 @@ public sealed class DumpService : IDumpService
             {
                 HookActive      = JsonNum.B(g?["hook_active"]),
                 HookFireCount   = JsonNum.L(g?["hook_fire_count"]),
-                // -1 = never fired. A pre-fix DLL sends UINT64_MAX here, which
+                // -1 = never fired. An older DLL sends UINT64_MAX here, which
                 // JsonNum saturates to long.MaxValue — also > 0, so it still reads
                 // as "unknown" rather than as a plausible age.
                 MsSinceLastFire = JsonNum.L(g?["ms_since_last_fire"], -1L),

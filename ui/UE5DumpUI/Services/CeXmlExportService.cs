@@ -514,8 +514,8 @@ public static class CeXmlExportService
     /// dereference the slot with <c>Offsets=[0]</c> and lay the target's fields out beneath it.
     ///
     /// <para><b>Not the same question as <see cref="IsObjectPropertyType"/></b>, which is the whole
-    /// pointer FAMILY. The pointer-drill branch used to gate on that broad set and emit
-    /// <c>Offsets=[0]</c> for slots that are not pointers at all (audit #5 W5):</para>
+    /// pointer FAMILY. Gating the pointer drill on that broad set would emit <c>Offsets=[0]</c>
+    /// for slots that are not pointers at all:</para>
     /// <list type="bullet">
     /// <item><c>WeakObjectProperty</c> — <c>FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }</c>.
     /// Two ints, not an address.</item>
@@ -523,16 +523,14 @@ public static class CeXmlExportService
     /// <item><c>LazyObjectProperty</c> — <c>FGuid</c>, four ints.</item>
     /// </list>
     /// <para>The DLL resolves all of those to a live <c>UObject*</c> and stamps it on
-    /// <c>PtrAddress</c>, which is exactly what made the bug reachable and invisible: a target WAS
-    /// resolved, so the branch fired — but the resolved pointer is not what lives in the slot, and
-    /// CE would dereference an index+serial pair as an address. They keep their 8-byte hex leaf,
-    /// which is watchable and honest.</para>
+    /// <c>PtrAddress</c>, so a resolved target is no evidence of a pointer slot: the resolved
+    /// pointer is not what lives in the slot, and CE would dereference an index+serial pair as an
+    /// address. They keep their 8-byte hex leaf, which is watchable and honest.</para>
     ///
     /// <para><c>InterfaceProperty</c> IS included: <c>FScriptInterface</c> is
     /// <c>{ UObject* +0x00, void* +0x08 }</c> — stated by the DLL at
-    /// <c>Ubel::IsInterfaceArrayType</c> — so its first 8 bytes are a genuine object pointer and the
-    /// drill has always been correct for it. Excluding it to match the array predicate would have
-    /// removed a working case.</para>
+    /// <c>Ubel::IsInterfaceArrayType</c> — so its first 8 bytes are a genuine object pointer.
+    /// Excluding it to match the array predicate would remove a working case.</para>
     /// </summary>
     private static bool IsRawObjectPtrSlot(string typeName) =>
         typeName is "ObjectProperty" or "ClassProperty" or "InterfaceProperty";
@@ -808,7 +806,7 @@ public static class CeXmlExportService
     /// Parse the first <paramref name="numBytes"/> of a byte-sequence hex string
     /// (e.g. ContainerElementValue.ValueHex "A4AD310000000000") as a little-endian
     /// integer — the raw int CE reads at the value address (FName ComparisonIndex /
-    /// enum value), used to key the value DropDownList.
+    /// enum value), which keys the value DropDownList.
     /// </summary>
     private static long ParseHexLeInt(string? hex, int numBytes)
     {
@@ -3065,7 +3063,7 @@ public static class CeXmlExportService
     /// Offsets=[0] derefs the 8-byte element pointer, children at their natural
     /// offsets) via EmitDrilledPointer — so nested structs/pointers/containers
     /// expand and the same cycle/depth guards apply. Unresolved or null elements
-    /// fall back to a flat 8-byte pointer leaf (the pre-fix behavior).
+    /// fall back to a flat 8-byte pointer leaf.
     /// </summary>
     private static void EmitObjectArrayProperty(StringBuilder sb, string indent,
         LiveFieldValue field, string desc)
@@ -3098,7 +3096,7 @@ public static class CeXmlExportService
             }
         }
 
-        // TArray.Data base — used to key each fabricated slot by its ABSOLUTE element-slot
+        // TArray.Data base — keys each fabricated slot by its ABSOLUTE element-slot
         // address. The dedup / cycle guards (_emittedInstances) are export-GLOBAL, so a key
         // that folds in only (field.Offset, index) collides across two different same-class
         // arrays sharing a property offset (e.g. Item[0].Mods and Item[1].Mods both at +0x50),
@@ -3247,11 +3245,11 @@ public static class CeXmlExportService
             // FName ComparisonIndex (and Number at +4) for the
             // AssetPathName / PackageName at the FSoftObjectPath sub-offset.
             //
-            // ⚠ This used to bake "+10". That is right only up to UE 5.2: 5.3
-            // deleted TPersistentObjectPtr::TagAtLastTest and the path moved to
-            // +0x08, so every table exported from a 5.3+ title labelled AssetName
-            // as PackageName and read SubPathString's FString Data pointer as the
-            // AssetName FName. The DLL now measures it and sends it on the wire.
+            // ⚠ Not a constant: +0x10 is right only up to UE 5.2. 5.3 deleted
+            // TPersistentObjectPtr::TagAtLastTest and the path moved to +0x08, so a
+            // baked offset on a 5.3+ title labels AssetName as PackageName and reads
+            // SubPathString's FString Data pointer as the AssetName FName. The DLL
+            // measures it and sends it on the wire; 0x10 is the fallback when it sends none.
             int pathOffset = field.SoftArrayPathOffset > 0 ? field.SoftArrayPathOffset : 0x10;
             string firstFNameLabel = field.SoftArrayIsTopLevelAssetPath
                 ? "PackageName"
@@ -3539,7 +3537,7 @@ public static class CeXmlExportService
         foreach (var elem in field.MapElements)
         {
             // [R7-X6] The budget is checked per element here too: EmitFields only checks BETWEEN fields, so a big
-            // map emitted last ran past the ceiling unflagged (98,890 entries, measured on DumperTest's NestedBag).
+            // map emitted last would otherwise run past the ceiling unflagged.
             if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             int elemByteOffset = elem.Index * stride;
@@ -4143,7 +4141,7 @@ public static class CeXmlExportService
 
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] The note, when <paramref name="namesFailed"/> and an exported field holds an enum
     /// (a dropdown the latch left empty); "" otherwise. A DataTable goes out through its synthetic RowMap field, so its
-    /// rows' fields are looked at too (review round 2).</summary>
+    /// rows' fields are looked at too.</summary>
     internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
         => namesFailed && fields.Any(f => HoldsEnum(f) || f.DataTableRowData?.Any(r => r.Fields.Any(HoldsEnum)) == true)
             ? EnumNamesUnavailableExportNote : "";

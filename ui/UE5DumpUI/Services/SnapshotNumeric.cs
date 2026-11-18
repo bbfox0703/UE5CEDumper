@@ -82,7 +82,7 @@ public static class SnapshotNumeric
 
     /// <summary>
     /// Displayed-integer Exact match of a decoded numeric value <paramref name="v"/>
-    /// against a <paramref name="target"/> (build 1672, replaces the tolerance band).
+    /// against a <paramref name="target"/> (no tolerance band).
     /// Float/double fields: a WHOLE target matches any value whose DISPLAYED integer
     /// (reduce via <paramref name="mode"/>) equals it (513 finds 513.36 under Round /
     /// Trunc; 514 finds it under Ceil); a FRACTIONAL target keeps exact-literal compare.

@@ -15,7 +15,7 @@ namespace UE5DumpUI.Services;
 ///     pe_hash, UE version, object count, dumper build) and its file name, so the two files pair.</item>
 ///   <item><c>{"kind":"object","index":...,"addr":...,"name":...,"class":...,"outer":...,"path":...}</c> —
 ///     <c>index</c> is the GObjects slot (Dumper-7's lesson: two files match by slot within one session).
-///     A DLL older than build 3625 sends none, and then the line has none: the handler skips null and unnamed
+///     A DLL that does not send it leaves the line without one: the handler skips null and unnamed
 ///     slots, so a row's place in the page is not its slot.</item>
 ///   <item><c>{"kind":"summary","objects_written":...,"objects_total":...,"index_missing":...}</c> — last.
 ///     <c>objects_total</c> is the pool's SLOT count, null and unnamed slots included, so it exceeds
@@ -149,5 +149,5 @@ public static class ObjectIndexService
 public sealed record ObjectIndexEstimate(int Objects, int Slots, long Bytes, TimeSpan Duration);
 
 /// <summary>What the object index wrote. <see cref="IndexMissing"/>: the DLL sent no GObjects index for some
-/// object (a DLL older than build 3625).</summary>
+/// object (a DLL that does not send the index).</summary>
 public sealed record ObjectIndexResult(int Written, int Total, bool IndexMissing);

@@ -24,7 +24,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
 
     /// <summary>Take the single-instance mutex <paramref name="open"/> creates, holding it only when this call created
     /// it. A mutex this process may not open is another instance's too: a first instance run as administrator holds it
-    /// where an unelevated second launch is refused access (review round 2 of [LEAD-SECOND-UI-CRASHLOG]).</summary>
+    /// where an unelevated second launch is refused access. [LEAD-SECOND-UI-CRASHLOG]</summary>
     internal static bool TakeSingleInstanceMutex(Func<(Mutex Mutex, bool CreatedNew)> open, out Mutex? held)
     {
         Mutex mutex;
@@ -422,13 +422,13 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     // unified — free returns long.MaxValue ("don't block"), total returns 0 (collapses the
     // percentage term). Each is the value that makes ITS caller fail open.
     //
-    // [VOLUMEROOT-2026-08-19] These used to be Path.GetPathRoot + DriveInfo, which measures
-    // the HOST volume when the path lives on a mount point — so a snapshot folder mounted at
-    // C:\Mount\Games was guarded against C:'s free space, not its own. See VolumeRoot for
-    // why both halves of that pairing are the same mistake. GetDiskFreeSpaceExW is asked
-    // about the resolved mount root directly, and its lpFreeBytesAvailableToCaller /
-    // lpTotalNumberOfBytes are exactly what DriveInfo.AvailableFreeSpace / .TotalSize wrap,
-    // so on an ordinary drive-letter path the numbers are unchanged (measured, not assumed).
+    // [VOLUMEROOT-2026-08-19] Not Path.GetPathRoot + DriveInfo, which measures the HOST volume
+    // when the path lives on a mount point — a snapshot folder mounted at C:\Mount\Games would
+    // be guarded against C:'s free space, not its own. See VolumeRoot for why both halves of
+    // that pairing are the same mistake. GetDiskFreeSpaceExW is asked about the resolved mount
+    // root directly, and its lpFreeBytesAvailableToCaller / lpTotalNumberOfBytes are exactly
+    // what DriveInfo.AvailableFreeSpace / .TotalSize wrap, so on an ordinary drive-letter path
+    // the numbers are the same.
 
     public long GetFreeDiskSpaceBytes(string path)
     {
@@ -953,7 +953,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
 
     /// <summary>
     /// Does the volume holding <paramref name="fullPath"/> actually have a working Recycle
-    /// Bin? Asked of the shell, not inferred from the drive letter (B13/B41).
+    /// Bin? Asked of the shell, not inferred from the drive letter.
     ///
     /// <para><c>SHQueryRecycleBin</c> succeeds on a volume with a bin — including an EMPTY one,
     /// which is why the returned counts are ignored — and fails when the bin is disabled for
@@ -964,22 +964,21 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     /// <para>Fixed-drive is still required as a cheap pre-filter: a removable or network volume
     /// is out of scope for this cleanup regardless of what the shell says.</para>
     ///
-    /// <para>audit #5 AC17 — that pre-filter used to be <c>new DriveInfo(root).DriveType</c>, which
-    /// silently undid the paragraph above it. <c>DriveInfo</c>'s constructor normalizes its
-    /// argument through <c>Path.GetPathRoot</c>, so for the mount-point root this method works so
-    /// hard to obtain (<c>C:\Mount\Games\</c>) it reported on <c>C:\</c> — the HOST volume, the
-    /// exact wrong-disk answer <c>GetVolumePathName</c> is called to avoid. Since the host of a
-    /// mount point is essentially always Fixed, the filter degenerated to "always pass" for
-    /// precisely the paths it was supposed to judge. <c>GetDriveTypeW</c> accepts a volume
-    /// mount-point path directly (trailing backslash required, which
-    /// <c>GetVolumePathNameW</c> supplies) and answers about the real volume.</para>
+    /// <para>⚠ That pre-filter is <c>GetDriveTypeW</c>, never <c>new DriveInfo(root).DriveType</c>.
+    /// <c>DriveInfo</c>'s constructor normalizes its argument through <c>Path.GetPathRoot</c>, so
+    /// for a mount-point root (<c>C:\Mount\Games\</c>) it reports on <c>C:\</c> — the HOST volume,
+    /// the exact wrong-disk answer <c>GetVolumePathName</c> is called to avoid — and since the host
+    /// of a mount point is essentially always Fixed, the filter would pass precisely the paths it
+    /// is supposed to judge. <c>GetDriveTypeW</c> accepts a volume mount-point path directly
+    /// (trailing backslash required, which <c>GetVolumePathNameW</c> supplies) and answers about
+    /// the real volume.</para>
     /// </summary>
     public bool VolumeHasRecycleBin(string fullPath)
     {
         try
         {
             // Shared with the disk-space pair and the log-compression NTFS test, so the
-            // three cannot drift back apart — which is how [VOLUMEROOT] happened.
+            // three cannot drift apart. [VOLUMEROOT]
             string? root = VolumeRoot.Resolve(fullPath);
             if (root is null) return false;
 
@@ -1037,9 +1036,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     /// One DWORD from the registry, or null when the key or value is absent or is not a
     /// DWORD. <see cref="RecycleBinPolicy.IsDisabled"/> reads absent and 0 alike (neither is 1),
     /// which is Windows' own default. What null must NOT stand for is a lookup that FAILED --
-    /// that travels separately, as <c>volumeLookupFailed</c> [A3-RECYCLE-GUID-FAILOPEN]. (This
-    /// used to call null "load-bearing" because IsDisabled "treats absent and 0 differently";
-    /// it never did.)
+    /// that travels separately, as <c>volumeLookupFailed</c> [A3-RECYCLE-GUID-FAILOPEN].
     /// </summary>
     private static int? ReadDword(RegistryKey hive, string subKey, string valueName)
     {

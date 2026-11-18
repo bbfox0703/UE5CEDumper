@@ -128,12 +128,9 @@ public static class PointerQueryScriptGenerator
         Line(sb, $"  writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, op)");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)             -- clear status");
         Line(sb, $"  writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdQueryPtr})  -- CMD_QUERY_PTR (write LAST)");
-        // The shared wait, in its by-value mode. This loop used to be hand-rolled and
-        // carried all three of the defects build 2743 fixed in the other seven copies:
-        // it counted sleep(1) iterations against a millisecond constant (so the "10 s"
-        // timeout was ~155 s of frozen Lua Engine), and it reported "(DLL not
-        // responding?)" -- a guess, when `status` already says whether the DLL never saw
-        // the command or took it and wedged.
+        // The shared wait, in its by-value mode, never a hand-rolled loop: it keeps a real
+        // millisecond deadline rather than counting sleep(1) iterations, and it reports from
+        // `status` whether the DLL never saw the command or took it and wedged, never a guess.
         //
         // ReturnReason rather than the toggles' UntickAndReturn because this helper is
         // called SPECULATIVELY: the GameEngine path tries the &GEngine slot and falls
@@ -144,9 +141,8 @@ public static class PointerQueryScriptGenerator
         // would print as a ten-digit number instead of, say, -1.
         Line(sb, $"  local code = readInteger(mb + {CeMailboxLayout.OffResult}, true)");
         // The two SOFT reasons carry their own "enter gameplay first?" hint, because the
-        // caller can no longer append it blindly: it is right for "the DLL answered, it
-        // just does not have this yet" and misleading on a timeout or a busy mailbox,
-        // which is what a caller-side suffix used to staple onto every failure alike.
+        // caller cannot append it blindly: it is right for "the DLL answered, it just does
+        // not have this yet" and misleading on a timeout or a busy mailbox.
         Line(sb, "  if code ~= 0 then return nil, 'not resolved (code=' .. code .. ') -- enter gameplay first?' end");
         Line(sb, $"  local a = readQword(mb + {CeMailboxLayout.OffParamsData})");
         Line(sb, "  if not a or a == 0 then return nil, 'address is 0 -- not available yet; enter gameplay first?' end");
@@ -174,8 +170,8 @@ public static class PointerQueryScriptGenerator
             Line(sb, "  addr, err = query(1)");
             Line(sb, "end");
             Line(sb, "if not addr then");
-            // The "enter gameplay first?" hint now lives on the two reasons it actually
-            // fits (op not resolved / address still 0). Appending it to EVERY reason told a
+            // The "enter gameplay first?" hint lives on the two reasons it actually fits
+            // (op not resolved / address still 0); appended to EVERY reason it would tell a
             // user whose mailbox had timed out to go and play the game.
             Line(sb, $"  showMessage('[{tag}] ' .. tostring(err))");
             Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
@@ -197,8 +193,8 @@ public static class PointerQueryScriptGenerator
             Line(sb, "  writeQword(mem, addr)");
             // Buffer path keeps its own marker-based ownership model (NOT the refcount) —
             // each snapshot record owns a DISTINCT allocation that DISABLE must free. Clear
-            // any prior registration first (the generic pre-unregister that used to do this
-            // moved into the slot emitter, so this branch does its own).
+            // any prior registration first: the slot emitter's pre-unregister does not run on
+            // this branch, so it does its own.
             Line(sb, $"  if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
             Line(sb, $"  registerSymbol('{sym}', mem)");
             Line(sb, $"  registerSymbol('{bufSym}', mem)   -- marker: DISABLE must free this");
@@ -209,8 +205,8 @@ public static class PointerQueryScriptGenerator
         {
             Line(sb, "local addr, err = query(0)");
             Line(sb, "if not addr then");
-            // The "enter gameplay first?" hint now lives on the two reasons it actually
-            // fits (op not resolved / address still 0). Appending it to EVERY reason told a
+            // The "enter gameplay first?" hint lives on the two reasons it actually fits
+            // (op not resolved / address still 0); appended to EVERY reason it would tell a
             // user whose mailbox had timed out to go and play the game.
             Line(sb, $"  showMessage('[{tag}] ' .. tostring(err))");
             Line(sb, CeLuaHygiene.DeferredUntickLua("  "));

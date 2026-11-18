@@ -1,8 +1,8 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// What a proxy deploy is permitted to overwrite. Two policies that used to
-/// share a single <c>bool force</c> (audit #5 AC1) and have nothing in common:
+/// What a proxy deploy is permitted to overwrite. Two policies with nothing in
+/// common, so they must never share a single <c>bool force</c>:
 ///
 /// <list type="bullet">
 /// <item><b>ForceSameVersion</b> — redeploy over OUR proxy even when the version

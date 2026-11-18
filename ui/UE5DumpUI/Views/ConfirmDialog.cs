@@ -9,8 +9,8 @@ namespace UE5DumpUI.Views;
 
 /// <summary>
 /// Minimal reusable Yes/No confirmation dialog (code-behind only, AOT-safe like
-/// the other dialogs in this folder). Used to warn before a large batch xref run
-/// (e.g. "scan 250 properties — each is a full GObjects sweep?"). Returns true
+/// the other dialogs in this folder), e.g. a warning before a large batch xref run
+/// ("scan 250 properties — each is a full GObjects sweep?"). Returns true
 /// when the user confirms.
 /// </summary>
 public sealed class ConfirmDialog : Window

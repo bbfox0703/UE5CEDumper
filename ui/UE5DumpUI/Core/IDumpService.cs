@@ -348,7 +348,7 @@ public interface IDumpService
 
     Task EndValueScanAsync(ulong sessionId, CancellationToken ct = default);
 
-    // --- Multiple values group scan (build 1276) ---
+    // --- Multiple values group scan ---
     // Find objects holding ALL of N values (2..4) at distinct numeric-property
     // offsets. Object-level candidates with nested per-slot matches; otherwise
     // the same windowed session lifecycle as the single-value scan.

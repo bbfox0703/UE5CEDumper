@@ -415,22 +415,16 @@ public partial class PointerPanelViewModel : ViewModelBase
     // was tried there — Genau's gate returns before the first pattern runs — so "AOB failed" and
     // "All AOB patterns failed" are not just noise, they are false, and they directly contradict
     // the banner that says every pointer is empty by design. The banner is the whole explanation.
-    // Verified against a live UE3 run: without this the panel read "🔴 All AOB patterns failed" +
-    // "⚠ AOB failed — found via not found" on all three pointers after a scan that never happened.
 
     /// <summary>
     /// Did the NORMAL signature scan resolve this pointer, as opposed to a fallback or a
     /// recovery path?
     ///
-    /// <para>These predicates used to ask <c>method != "aob"</c>, which was the same question
-    /// only for as long as a successful scan could report nothing but <c>"aob"</c>. It cannot:
-    /// the signature tables also hold symbol exports and CallFollow entries, and those are the
-    /// STRONGEST results available (priority 0, tried first, immune to a recompile shuffling
-    /// bytes) — not a fallback and not a recovery. The DLL now labels them honestly, so the
-    /// test has to be a membership check rather than an equality one. Measured on Satisfactory
-    /// (UE 5.6), where GObjects, GNames, GWorld and GEngine ALL resolve by export: with the
-    /// old test every one of them would have raised a "found via fallback" warning and GWorld
-    /// would additionally have claimed to be "recovered".</para>
+    /// <para>A membership check, not <c>method != "aob"</c>: a successful scan does not report
+    /// only <c>"aob"</c>. The signature tables also hold symbol exports and CallFollow entries,
+    /// and those are the STRONGEST results available (priority 0, tried first, immune to a
+    /// recompile shuffling bytes) — not a fallback and not a recovery — and the DLL labels them
+    /// by their own method names.</para>
     ///
     /// <para>Recovery paths (<c>engine_recovery</c>, <c>instance_scan_recovery</c>) and
     /// <c>not_found</c> are deliberately absent — they are the cases these predicates exist to
@@ -755,12 +749,12 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on
     /// disconnect so a reconnect never offers copy/register on the previous game's
-    /// addresses (audit X5). <see cref="Update"/> repopulates on reconnect. Minimal
+    /// addresses. <see cref="Update"/> repopulates on reconnect. Minimal
     /// by design: resetting the UE-override / invoke-timeout inputs would fire a pipe
     /// round-trip via their setters, so only <see cref="HasData"/> and the plain status
     /// strings in <see cref="ResetScanState"/> are reset — none of the latter has a
-    /// setter that talks to the DLL. (The scan strings moved here from <c>Update</c> in
-    /// audit #5 V10; a disconnect really is a fresh session, a pointer refresh is not.)
+    /// setter that talks to the DLL. (The scan strings are reset here and not in
+    /// <c>Update</c>: a disconnect really is a fresh session, a pointer refresh is not.)
     /// The pipe activity log is kept for post-mortem.</summary>
     public void ClearOnDisconnect()
     {
@@ -774,21 +768,18 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// (<see cref="ClearOnDisconnect"/> and MainWindowViewModel's ApplyEngineState),
     /// never by <see cref="Update"/>.
     ///
-    /// <para>It used to live at the bottom of <see cref="Update"/> under the comment
-    /// "Reset scan state on fresh update" — but <see cref="Update"/> is not a
-    /// fresh-session signal. It is also the pointer REFRESH, and three of its four
-    /// callers are consequences of the very actions whose result it was erasing
-    /// (audit #5 V10):</para>
+    /// <para><see cref="Update"/> is not a fresh-session signal. It is also the pointer
+    /// REFRESH, and its callers include the very actions whose result this would erase:</para>
     /// <list type="bullet">
     /// <item><b>The Extra Scan's own success path.</b> <c>ExtraScanAsync</c> sets
     ///     <c>ScanResultText = "Found: GObjects: 0x…"</c>, then raises
     ///     <c>RescanApplied</c>; MainWindowViewModel's handler awaits
-    ///     <c>GetPointersAsync</c> and calls <c>Update</c>, which blanked the result
+    ///     <c>GetPointersAsync</c> and calls <c>Update</c>, which would blank the result
     ///     the user had been waiting on — milliseconds after it appeared.</item>
     /// <item><b><c>ApplyOverrideAsync</c></b> (the UE-version ComboBox) is gated on
     ///     <c>IsApplyingOverride</c>, not <c>IsScanning</c>, so it is reachable
-    ///     mid-scan. Clearing <c>IsScanning</c> there re-enabled
-    ///     <c>CanExtraScan</c> while the 1.5 s polling loop was still running, i.e.
+    ///     mid-scan. Clearing <c>IsScanning</c> there would re-enable
+    ///     <c>CanExtraScan</c> while the 1.5 s polling loop is still running, i.e.
     ///     a second concurrent scan one click away.</item>
     /// <item><b><c>ApplyInvokeTimeoutAsync</c></b> — a pure settings round-trip that
     ///     has nothing to do with scanning at all.</item>
@@ -1202,8 +1193,8 @@ public partial class PointerPanelViewModel : ViewModelBase
         => AobMakerStatus.Say(KeyScanHitLabel, "{0} AOB scan hit", pointer);
 
     /// <summary>
-    /// [AOBM-SYSTAB-ASM-SILENT] Move CE's hex view or disassembler and say what happened; these buttons used to drop
-    /// the bridge's answer, so CE was the only witness. Success goes to the green line and a refusal to the red one,
+    /// [AOBM-SYSTAB-ASM-SILENT] Move CE's hex view or disassembler and say what happened, so CE is not the only
+    /// witness of the bridge's answer. Success goes to the green line and a refusal to the red one,
     /// the split <see cref="ReportSymbolRegistration"/> uses. What the push learned about the pipe reaches this panel's
     /// own flag, so a plugin that has gone away turns the buttons off.
     /// </summary>
@@ -1454,18 +1445,17 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>
     /// Surface a "Register symbol" outcome to the USER, not only to the log.
     ///
-    /// <para>Both call sites used to branch the bool purely to pick <c>_log.Info</c>
-    /// vs <c>_log.Warn</c>, so the panel looked identical whether CE had registered
+    /// <para>A log line alone leaves the panel identical whether CE registered
     /// the symbol or the bridge never reached CE at all — and the user's next action
-    /// (rooting a CE record on that symbol) then resolved to nothing with no hint why
-    /// (audit #5 V11). Shared so the cards cannot report differently.</para>
+    /// (rooting a CE record on that symbol) then resolves to nothing with no hint why.
+    /// Shared so the cards cannot report differently.</para>
+    ///
+    /// <para>[AOBM-ACTIVATE-RESULT] Report what the plugin said, and no more. <c>success</c> only ever means "the
+    /// record exists": "Registered" needs <c>activated</c> and <c>symbolRegistered</c> as well, and a plugin that
+    /// sends neither (older than AOBMaker v20260930) gets a success that says it is not known whether CE enabled
+    /// it.</para>
     /// </summary>
     /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
-    /// <summary>
-    /// [AOBM-ACTIVATE-RESULT] Report what the plugin said, and no more. <c>success</c> only ever meant "the record
-    /// exists": "Registered" needs <c>activated</c> and <c>symbolRegistered</c> as well, and a plugin that sends
-    /// neither (older than AOBMaker v20260930) gets a success that says it is not known whether CE enabled it.
-    /// </summary>
     internal void ReportSymbolRegistration(SymbolScriptResult result, string symbolName, string detail,
                                            string? successText = null)
     {
@@ -2141,9 +2131,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// an invoke that the DLL accepted or refused, or null when the function isn't
     /// present on this game.
     ///
-    /// <para><c>result</c> is carried out deliberately. It used to be discarded, so
+    /// <para><c>result</c> is carried out deliberately. Without it
     /// a REFUSED invoke (the DLL returning -3 without ever calling ProcessEvent)
-    /// was indistinguishable from a call that ran and wrote nothing — the return
+    /// is indistinguishable from a call that ran and wrote nothing — the return
     /// slot is untouched either way.</para></summary>
     private async Task<(double actual, string hex, bool passed, int result)?> TrySelfTestCandidate(SelfTestCandidate cand)
     {

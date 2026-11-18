@@ -7,19 +7,17 @@ namespace UE5DumpUI.Helpers;
 /// </summary>
 /// <remarks>
 /// <para>A rebuild detaches the selection, and its restore is posted at Background priority, which
-/// is BELOW input: keys that arrive before it runs rebuild again, and each of those captures read
-/// the detached, empty selection. Measured on build 3574 (Interesting Funcs, one row picked, keys
-/// sent at once): the clear left the row at the bottom edge instead of bringing it to the top. So
-/// while a restore is queued, a capture returns the state it carries — unless the control has a
-/// selection again, which the user made after the rebuild and which wins — and every restore but
-/// the newest is dropped: the newest carries the original selection and the mode of the last edit.</para>
-/// <para>A keyword that hides EVERY selected row (a typo, zero rows) used to drop the selection for
-/// good, so the clear that fixed the typo had nothing to bring back (measured on build 3576). The
-/// maintainer's call, 2026-09-27: keep the last non-empty selection. A restore that finds none of
-/// its rows parks them; a later capture with nothing selected and nothing queued hands them back,
-/// so they return as soon as an edit shows them again. A partly hidden selection is not parked:
-/// the rows still shown are the selection now. The View drops the parked rows when the USER
-/// changes the selection, and the keeper when the program resets the box.</para>
+/// is BELOW input: keys that arrive before it runs rebuild again, and each of those captures would
+/// read the detached, empty selection. So while a restore is queued, a capture returns the state it
+/// carries — unless the control has a selection again, which the user made after the rebuild and
+/// which wins — and every restore but the newest is dropped: the newest carries the original
+/// selection and the mode of the last edit.</para>
+/// <para>A keyword that hides EVERY selected row (a typo, zero rows) must not drop the selection for
+/// good, or the clear that fixes the typo has nothing to bring back: the last non-empty selection is
+/// kept. A restore that finds none of its rows parks them; a later capture with nothing selected and
+/// nothing queued hands them back, so they return as soon as an edit shows them again. A partly
+/// hidden selection is not parked: the rows still shown are the selection now. The View drops the
+/// parked rows when the USER changes the selection, and the keeper when the program resets the box.</para>
 /// </remarks>
 public sealed class FilterViewRestoreQueue
 {

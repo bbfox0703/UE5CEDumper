@@ -237,12 +237,11 @@ public static class SdkExportService
     /// <see cref="Type"/> goes <b>before</b> the identifier and <see cref="ArraySuffix"/>
     /// (<c>""</c>, or <c>"[0xN]"</c>) goes <b>after</b> it.
     ///
-    /// <para>They are separate because C++ has no <c>uint8_t[0x40] CellBounds;</c> form. The raw-byte
-    /// fallbacks used to bake the extent into the type string and the field writer emitted
-    /// <c>{type} {name};</c>, so every <c>OptionalProperty</c> and every unresolved
-    /// <c>StructProperty</c> became a syntax error — 5 of them in a real 75,342-line export, which
-    /// is enough to stop the whole header compiling. The padding emitter always placed the extent
-    /// after the identifier, which is why its 7,543 declarations were fine.</para>
+    /// <para>They are separate because C++ has no <c>uint8_t[0x40] CellBounds;</c> form: an extent
+    /// baked into the type string and written as <c>{type} {name};</c> is a syntax error, and one is
+    /// enough to stop the whole header compiling. The raw-byte fallbacks (every
+    /// <c>OptionalProperty</c> and every unresolved <c>StructProperty</c>) carry an extent, so they
+    /// need the split as much as the padding emitter does.</para>
     /// </summary>
     internal readonly record struct CppDecl(string Type, string ArraySuffix);
 

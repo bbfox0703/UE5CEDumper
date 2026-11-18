@@ -469,12 +469,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 // [AOBM-TRAINER-SETUP-MODAL] Unticked, Setup included. A Setup that fails calls showMessage, the house
                 // style for refusals. Activated by the push, the plugin runs it on CE's main thread while its single
-                // bridge worker waits, so that modal blocks every bridge client until the user closes it (seen live
-                // 2026-09-29: a bridge-triggered activation whose record raised a modal timed the bridge call out), and
-                // an immediate read-back still sees Active=true. Ticked by the user in CE, no bridge call waits on the
-                // activation, and the bridge keeps serving other clients while that modal is open (measured live
-                // 2026-09-29, build 3603: a GetAttachedProcess and a CreateAAScript whose Lua runs on CE's main
-                // thread both answered at once) -- only the worker that is itself waiting on the activation stalls.
+                // bridge worker waits, so that modal blocks every bridge client until the user closes it, and an
+                // immediate read-back still sees Active=true. Ticked by the user in CE, no bridge call waits on the
+                // activation, and the bridge keeps serving other clients while that modal is open -- only the worker
+                // that is itself waiting on the activation stalls.
                 var pushed = await _aobMaker.CreateAAScriptDetailedAsync(e.Description, e.Script, autoActivate: false,
                                                                          group: CeGroupTrainer);
                 if (pushed.Created) { ok++; continue; }
@@ -1074,11 +1072,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // record. All of it survives a UI reconnect as long as the game lives, so
             // the badges must show it without the user pressing ↻ on each card.
             //
-            // ⚠ This used to be two calls covering three badges, while the disconnect
-            // branch below reset TWELVE — so nine cards read "Unknown" over state the
-            // DLL could answer for. Measured live on Shipping, with the two primed
-            // cards as the control. [BADGEPRIME]; the asymmetry is now held
-            // by tools/check_badge_prime_symmetry.py.
+            // ⚠ The prime must cover every badge the disconnect branch below resets, or
+            // those cards read "Unknown" over state the DLL could answer for. [BADGEPRIME];
+            // tools/check_badge_prime_symmetry.py holds the symmetry.
             //
             // Deliberately NOT the button-driven RefreshXxxAsync methods: those set
             // IsBusy, which flickers every CanOperate-bound button, and write
@@ -1305,8 +1301,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Locate the Current Pose's pawn in the Live Walker — reads a fresh
     /// pose to get the live pawn address, then hands it to the GWorld locator
     /// (goto + select). One-click: works even without auto-refresh on. NOT gated
-    /// on a C# GWorld-available flag (a stale flag once caused a silent no-op,
-    /// build 1311) — the DLL's find_path is the source of truth and the Live
+    /// on a C# GWorld-available flag, which can be stale and turn the click into a
+    /// silent no-op — the DLL's find_path is the source of truth and the Live
     /// Walker reports reachability via its own status (incl. ok_via_level for
     /// World-Partition / streaming pawns).</summary>
     [RelayCommand]
@@ -1898,23 +1894,22 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         };
 
     /// <summary>
-    /// Badge from the FULL state (audit #5 AD4). <c>get_god_mode</c> returns one
-    /// number and therefore cannot separate three genuinely different situations,
-    /// all of which used to render as a flat "OFF" or "Unknown":
+    /// Badge from the FULL state. <c>get_god_mode</c> returns one number and
+    /// therefore cannot separate three genuinely different situations, each of
+    /// which would otherwise render as a flat "OFF" or "Unknown":
     ///
     /// <list type="bullet">
     /// <item><b>ON (pending)</b> — the user enabled it, but no canonical
     /// <c>bCanBeDamaged</c> has been resolved yet (no pawn in the world). The hold
-    /// is armed and will apply on spawn. This read "Unknown".</item>
+    /// is armed and will apply on spawn. On the one number alone the badge reads "Unknown".</item>
     /// <item><b>ON (not held)</b> — the pawn currently reads immune, but WE are not
     /// the reason: nothing was requested. Reporting a plain "ON" would credit the
     /// tool for a state it is not maintaining, and the badge would then go "off"
     /// by itself when the game changed it back.</item>
     /// <item><b>ON (contested)</b> — the hold IS engaged and resolvable, and the
     /// game just won the drift race this instant. The re-assert worker will take it
-    /// back. This read "OFF", i.e. identical to never having enabled it — which is
-    /// the same conflation this method exists to remove, so omitting this cell
-    /// would have reproduced the defect inside its own fix.</item>
+    /// back. On the one number alone the badge reads "OFF", i.e. identical to never
+    /// having enabled it — the same conflation this method exists to remove.</item>
     /// </list>
     /// </summary>
     private void ApplyProtectState(ProtectState st)
@@ -2774,16 +2769,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         // [A4-STEALTH-PRIME] The Stealth hold survives a UI reconnect like every other hold.
         await PrimeOneAsync(RefreshHeldStealthStateAsync, "stealth");
 
-        // Not a badge, but the same omission: nothing read the POSE on connect, so PoseMap stayed ""
-        // until the user pressed Refresh -- and the library's map flags and "Add from fields" both
-        // work off it. RefreshCurrentMapAsync is already quiet (no IsBusy, no StatusText). [W2-TPREL-MAP]
+        // Not a badge, but read on connect for the same reason: without it PoseMap stays "" until the
+        // user presses Refresh -- and the library's map flags and "Add from fields" both work off it.
+        // RefreshCurrentMapAsync is already quiet (no IsBusy, no StatusText). [W2-TPREL-MAP]
         await PrimeOneAsync(RefreshCurrentMapAsync, "pose");
     }
 
     /// <summary>One quiet prime: log-only on failure, and never abandons the rest.</summary>
-    /// <remarks>A prime that threw used to be indistinguishable from a badge that is
-    /// genuinely Unknown — and leaving the badge at Unknown IS the honest outcome for a
-    /// read that failed, so the catch deliberately does not force any other state.</remarks>
+    /// <remarks>Leaving the badge at Unknown IS the honest outcome for a read that failed,
+    /// so the catch deliberately does not force any other state; the log is what tells a
+    /// prime that threw from a badge that is genuinely Unknown.</remarks>
     private async Task PrimeOneAsync(Func<Task> read, string what)
     {
         if (!IsConnected) return;
@@ -3112,16 +3107,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         ApplyFlyState(st.Active ? 1 : 0);
     }
 
-    /// <summary>[FLY-REPORTS-WISH] review round 2: the step between re-reads while the observed collision catches up.</summary>
+    /// <summary>[FLY-REPORTS-WISH] The step between re-reads while the observed collision catches up.</summary>
     internal TimeSpan FlySettleStep { get; set; } = TimeSpan.FromMilliseconds(100);
 
     /// <summary>How many steps the card waits at most: about a second at the default step.</summary>
     private const int FlySettleSteps = 10;
 
     /// <summary>
-    /// [FLY-REPORTS-WISH] review round 2: a reply to the request that changes noclip is read before the Fly worker's next
-    /// tick applies it on the game thread, so its collision is the one from before (measured on DumperTest Development:
-    /// the reply said colliding, the pawn read not colliding 103 ms later). Re-read while Fly is on and the reading
+    /// [FLY-REPORTS-WISH] A reply to the request that changes noclip is read before the Fly worker's next tick applies
+    /// it on the game thread, so its collision is the one from before. Re-read while Fly is on and the reading
     /// disagrees with the request; what is left after the window is what the card reports.
     /// </summary>
     private async Task<FlyStatus> SettleFlyCollisionAsync(FlyStatus st, bool noclipAsked)

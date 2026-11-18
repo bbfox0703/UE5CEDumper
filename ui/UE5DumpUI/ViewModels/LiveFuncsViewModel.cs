@@ -83,8 +83,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// the first <see cref="FetchLimit"/> rows, while <c>distinct_funcs</c> stays pre-cap
     /// (pipe-protocol.md), so <c>shown &lt; distinct</c> — less the per-frame functions left out on request and the
     /// ones the DLL had no name for — is a conservative, correct test for "not everything is on screen" — it is also
-    /// true when an older DLL dropped the functions unloaded since they fired (build 3634 sends them, named) or a
-    /// cooperative abort cut the emit loop short, and all of these mean the same thing to the user.</summary>
+    /// true when an older DLL drops the functions unloaded since they fired or a
+    /// cooperative abort cuts the emit loop short, and all of these mean the same thing to the user.</summary>
     private int _lastShown;
     private int _lastDistinct;
     private long _lastTotalCalls;
@@ -112,9 +112,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>The limit the last fetch asked for, and whether the baseline's page was cut by ITS limit and at
     /// which value. An incomplete page is not always the cap's doing: the DLL leaves out functions it has no name
-    /// for (and, before build 3634, every one unloaded since it fired; all still counted in distinct_funcs), and an
-    /// abort can cut the emit loop. Only a page that came back as long as the limit was cut by it, and only then
-    /// does a higher limit bring rows back.</summary>
+    /// for (an older DLL also leaves out every one unloaded since it fired; all are still counted in
+    /// distinct_funcs), and an abort can cut the emit loop. Only a page that came back as long as the limit was cut
+    /// by it, and only then does a higher limit bring rows back.</summary>
     private int  _lastLimit;
     private bool _baselineCapHit;
     private int  _baselineLimit;
@@ -314,9 +314,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // recording. The game commits the whole ring at Start and holds it until this UI has read it. While this UI loads
     // it holds the window (the ring's own size), the trace's columns (73 of every 80 bytes a call takes in the ring)
     // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. 2 x N is
-    // that structure; the extra quarter is what the live check of 2026-10-07 (build 3636, Avowed) needed for "up to"
-    // to hold over the load's start: a full 128 MB load peaked 303 MB above it, a full 512 MB one 1,054 MB. What the
-    // UI already held before the load is not the trace's cost (that 512 MB run was 1,206 MB above a fresh UI).
+    // that structure; the extra quarter is the margin "up to" needs to hold over the load's start. What the UI
+    // already held before the load is not the trace's cost.
     internal const double TraceUiPeakFactor = 2.25;
     internal const int    TraceUiPageMb     = 45;
     public int TraceGameMb   => TraceBufferMb + (AnySnapshotChoice ? SnapshotBufferMb : 0);

@@ -233,8 +233,7 @@ public static class DumpJsonlReader
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] A function row's signature: the return type in front, then the
-    /// arguments, an out one marked. A dump from before build 3622 has no params, so it shows the count it
-    /// recorded instead.</summary>
+    /// arguments, an out one marked. A dump written without params shows the count it recorded instead.</summary>
     internal static string ComposeSignature(DumpFuncLine f)
     {
         var sb = new StringBuilder();

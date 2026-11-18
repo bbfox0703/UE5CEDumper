@@ -146,9 +146,9 @@ public sealed class WindowRestoreState
 
     /// <summary>True when the (pos, size) rect shows a grabbable chunk on some current
     /// monitor. No screens (headless / pre-show) => accept, so the pure tests and the
-    /// not-yet-shown window keep their existing behaviour. Size is in DIPs and is converted with the pushed
+    /// not-yet-shown window are accepted. Size is in DIPs and is converted with the pushed
     /// <see cref="SetScale"/> scale: WindowPlacement works in PHYSICAL pixels, and no min-visible tolerance absorbs a
-    /// 225% factor (it used to claim one did) [W3-DIP-PIXELS].</summary>
+    /// 225% factor [W3-DIP-PIXELS].</summary>
     private bool PositionAcceptable(PixelPoint pos, double w, double h)
         => _screens.Count == 0
            || WindowPlacement.IsVisibleEnough(

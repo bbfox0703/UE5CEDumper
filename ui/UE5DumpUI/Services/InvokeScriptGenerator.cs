@@ -268,13 +268,13 @@ public static class InvokeScriptGenerator
     /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
     /// clears only the return slot itself. So every byte the callee reads, and every out-param
     /// slot it assigns into, must be zeroed here: an out-FString assignment frees whatever Data
-    /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
-    /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
+    /// pointer it finds. ParmsSize alone is not enough: an older DLL on UE 4.11-4.17 reads NumParms
+    /// into it ([A2-UFUNC-TAIL-4X]).</para>
     ///
-    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from a DLL older than
-    /// build 3622 the parameters are the leading NumParms entries, another tail read older DLLs have
-    /// misread, and this span must not depend on one ([FUNCPARM-CONSUMERS] review). A Blueprint
-    /// local's bytes are zeroed too, which costs nothing: ProcessEvent never copies them.</para>
+    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from an older DLL the
+    /// parameters are the leading NumParms entries, another tail read older DLLs have misread, and
+    /// this span must not depend on one [FUNCPARM-CONSUMERS]. A Blueprint local's bytes are zeroed
+    /// too, which costs nothing: ProcessEvent never copies them.</para>
     ///
     /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
     /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
@@ -519,13 +519,13 @@ public static class InvokeScriptGenerator
                 continue;
             }
             // A struct param has no scalar spelling, and this form has one edit box per
-            // param. It used to fall through GetMailboxWriteStatement's size switch to
-            // writeInteger, so an FVector (12 B on UE4, 24 on UE5) got FOUR bytes written from
-            // math.floor(tonumber(text)) and the rest left zero -- i.e. the call went out with a
-            // garbage vector and nothing said so. The params buffer is already zero-filled
-            // above, so skipping the write sends a well-defined zeroed struct instead, which is
-            // at least a value the callee can survive. Use the app's Invoke dialog (which
-            // expands sub-fields) to pass a real one (audit #5 Y6).
+            // param. Through GetMailboxWriteStatement's size switch it would reach
+            // writeInteger, so an FVector (12 B on UE4, 24 on UE5) would get FOUR bytes written
+            // from math.floor(tonumber(text)) and the rest left zero -- a garbage vector, and
+            // nothing said so. The params buffer is already zero-filled above, so skipping the
+            // write sends a well-defined zeroed struct instead, which is at least a value the
+            // callee can survive. Use the app's Invoke dialog (which expands sub-fields) to pass
+            // a real one.
             if (p.TypeName == "StructProperty")
             {
                 Line(sb, $"    -- {p.Name}: struct ({p.Size} B) left ZEROED - this form cannot edit a struct");
@@ -534,8 +534,8 @@ public static class InvokeScriptGenerator
             // [P3-INVOKE-Y11-CEFORM] Every other type FIRE's WriteParam will not write either. The
             // gate at the top of this handler refused a typed value (and an FText outright), so
             // the zero-fill above IS the value sent -- the empty TArray, the unbound delegate.
-            // These used to fall through GetMailboxWriteStatement's size switch and write the
-            // textbox as a raw int32 over the structure's first pointer.
+            // Through GetMailboxWriteStatement's size switch these would write the textbox as a
+            // raw int32 over the structure's first pointer.
             if (ParamBufferBuilder.IsUnwritableParam(p.TypeName))
             {
                 Line(sb, $"    -- {p.Name}: {ShortTypeName(p.TypeName)} ({p.Size} B) left ZEROED - no textbox encoding");
@@ -835,11 +835,10 @@ public static class InvokeScriptGenerator
         //
         // The prefix MUST be stripped before tonumber(s, 16). Lua's base form rejects any
         // character that is not a digit of that base, and 'x' is not a hex digit, so
-        // tonumber('0x1F2A3B4C5D0', 16) is nil -- the old code detected the "0x" and then
-        // handed the still-prefixed string straight to it, so `or 0` wrote a NULL POINTER
-        // for every address the user actually pasted. The app formats every address as
-        // "0x" + uppercase hex (Renge::AddrToStr), so that was every real input; only the
-        // '0x0' default parsed "correctly", which is why it went unnoticed (audit #5 Y1).
+        // tonumber('0x1F2A3B4C5D0', 16) is nil -- and with the still-prefixed string `or 0`
+        // writes a NULL POINTER for every address the user actually pastes. The app formats
+        // every address as "0x" + uppercase hex (Renge::AddrToStr), so that is every real
+        // input; only the '0x0' default would parse "correctly", so the failure hides.
         //
         // Verified in Cheat Engine's own lua53-64.dll: 0x1F2A3B4C5D0 -> 2141640246736,
         // bare hex 1F2A3B4C5D0 -> the same, decimal 1234 -> 1234, junk -> 0, and every

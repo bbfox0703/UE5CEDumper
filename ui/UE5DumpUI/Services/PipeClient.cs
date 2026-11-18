@@ -78,10 +78,9 @@ public sealed class PipeClient : IPipeClient
     }
 
     /// <summary>
-    /// Classify a failed write. Pure, and split out precisely because the collapsed form
-    /// was the audit #5 AC10 defect: the filters read
-    /// <c>!IsConnected || _cts.IsCancellationRequested</c> and reported ALL of it as
-    /// cancellation.
+    /// Classify a failed write. Pure, and split out so it can be tested: the collapsed form,
+    /// <c>!IsConnected || _cts.IsCancellationRequested</c> reported as one cancellation,
+    /// would hide an unexpected disconnect.
     ///
     /// The order matters and is not arbitrary. Both deliberate teardowns cancel
     /// <c>_cts</c> BEFORE clearing <c>IsConnected</c>, so <paramref name="clientCancelled"/>
@@ -101,9 +100,8 @@ public sealed class PipeClient : IPipeClient
     }
 
     /// <summary>[TRACE-UI-READ-SPEED] The reply reader's buffer, which is the size of each read from the pipe. The
-    /// StreamReader default (1 KB) made a 14 MB pe_trace_get page ~14,000 async reads: ~60 MB/s for the read loop
-    /// against ~600 MB/s at 64 KB, measured on 14 MB lines through a named pipe (2026-11-02). The rig reads in 64 KB
-    /// blocks for the same reason.</summary>
+    /// StreamReader default (1 KB) makes a multi-MB pe_trace_get page thousands of async reads, and the read loop
+    /// runs far slower than at 64 KB. The rig reads in 64 KB blocks for the same reason.</summary>
     internal const int PipeReadBufferBytes = 64 * 1024;
 
     public PipeClient(ILoggingService log, string laneTag = "")
@@ -184,20 +182,16 @@ public sealed class PipeClient : IPipeClient
         // measurement that lets DiagnosticsProbe split a heavy operation into
         // dll / ipc / ui. See PipeTransportStats for why that split matters.
         //
-        // audit #5 AC13 — the record used to sit in a finally around `await tcs.Task`
-        // ALONE, so everything before that await (the write-lock wait, WriteLineAsync,
-        // and every throw out of the IOException/ObjectDisposedException classifier)
-        // bypassed it and a request that DIED IN THE WRITE contributed 0 ms. That is
-        // the opposite of what the finally's own comment asked for — "a cancelled or
-        // faulted request still consumed transport time, and dropping those would
-        // flatter the IPC figure exactly when the pipe is misbehaving" — because a
-        // misbehaving pipe is exactly when writes fail, so the samples most worth
-        // having were the ones being dropped. The comment had the intent right and
-        // the placement wrong, so the body moved rather than the comment.
+        // The record wraps the whole send, not only the await on the response: the
+        // write-lock wait, WriteLineAsync and every throw out of the
+        // IOException/ObjectDisposedException classifier count too. A cancelled or
+        // faulted request still consumed transport time, and a misbehaving pipe is
+        // exactly when writes fail, so dropping those samples would flatter the IPC
+        // figure exactly when the pipe is misbehaving.
         //
         // The not-connected guard deliberately stays ABOVE the timer: nothing was
         // sent, so there is no transport time to attribute, and a 0 ms sample would
-        // deflate the average just as the missing write-failures inflated it.
+        // deflate the average just as dropped write-failures would inflate it.
         long txStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
@@ -252,26 +246,23 @@ public sealed class PipeClient : IPipeClient
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            // A write can fail for three reasons that callers must be able to tell
-            // apart. The old filters lumped them together as `!IsConnected ||
-            // _cts.IsCancellationRequested` and threw a TOKEN-LESS
-            // OperationCanceledException for all of them (audit #5 AC10).
+            // A write can fail for reasons that callers must be able to tell apart,
+            // so each is thrown as its own exception, a cancel carrying the token that
+            // caused it -- never one token-less OperationCanceledException for all.
             //
-            // The `!IsConnected` half fires ONLY on unexpected pipe death: both
+            // `!IsConnected` with nothing cancelled means unexpected pipe death: both
             // deliberate teardowns (DisconnectAsync, Dispose) cancel _cts BEFORE
-            // they clear IsConnected, so the cancellation half already covers them,
+            // they clear IsConnected, so the cancellation check already covers them,
             // and the only other writer of `IsConnected = false` is ReadLoopAsync's
             // finally on an unplanned exit. That is precisely the case this file's
             // own finally at the bottom of ReadLoopAsync says must surface as an
             // IOException, "so callers surface it as an error rather than a silent
-            // cancel" — and the late-death reap 20 lines below already does exactly
-            // that when the write happens to SUCCEED on the dying pipe. Reporting it
-            // as a cancel when the write loses the race and as a failure when it wins
-            // is the inconsistency being removed here.
+            // cancel" — and the late-death reap below does exactly that when the
+            // write happens to SUCCEED on the dying pipe, so the write reports the
+            // same failure whether it loses the race or wins it.
             //
-            // Drain the bookkeeping first: the old code left _pending/_txMeta
-            // populated on any unfiltered exception, orphaning the entry until the
-            // next disconnect.
+            // Drain the bookkeeping first, or _pending/_txMeta keep an orphaned
+            // entry until the next disconnect.
             _txMeta.TryRemove(id, out _);
             _pending.TryRemove(id, out _);
 
@@ -279,7 +270,7 @@ public sealed class PipeClient : IPipeClient
             {
                 // The CALLER cancelled. Carry ct, so a caller matching on
                 // `oce.CancellationToken == ct` recognises its own cancellation (the
-                // export commands thread a real token through as of L6/X6).
+                // export commands thread a real token through).
                 case SendFailure.CallerCancelled:
                     throw new OperationCanceledException("Pipe send cancelled by caller", ex, ct);
 
@@ -299,7 +290,7 @@ public sealed class PipeClient : IPipeClient
             }
         }
 
-        // Late-death reap (audit #4): the IsConnected guard at entry is a TOCTOU —
+        // Late-death reap: the IsConnected guard at entry is a TOCTOU —
         // ReadLoopAsync's finally can drain+clear _pending and flip IsConnected to
         // false in the window between that guard and the `_pending[id] = tcs` insert
         // above. If the write then happens to succeed on the just-dying pipe (OS
@@ -314,20 +305,18 @@ public sealed class PipeClient : IPipeClient
         }
 
         // The transport-time record lives in SendAsync's finally, which wraps this whole
-        // method — so a cancel or fault HERE is counted, and so is one in the write above
-        // (audit #5 AC13).
+        // method — so a cancel or fault HERE is counted, and so is one in the write above.
         return await tcs.Task;
     }
 
     private async Task ReadLoopAsync()
     {
         // Capture the reader into a local, for exactly the reason SendAsync captures the
-        // writer (audit #5 AC14). The loop used to test `_reader != null` on the FIELD and
-        // then await `_reader.ReadLineAsync` on the FIELD, and Dispose() calls CloseStreams()
-        // — which nulls it — WITHOUT awaiting this loop, so the null can land between the
-        // test and the dereference. The resulting NullReferenceException is not covered by
-        // the IOException / ObjectDisposedException filters below; it falls through to the
-        // generic handler and logs a "ReadLoop error" for what is an ordinary shutdown.
+        // writer. Dispose() calls CloseStreams() — which nulls the FIELD — WITHOUT awaiting
+        // this loop, so a null test and a dereference on the field can straddle it. The
+        // resulting NullReferenceException is not covered by the IOException /
+        // ObjectDisposedException filters below; it would fall through to the generic
+        // handler and log a "ReadLoop error" for what is an ordinary shutdown.
         // A disposed local instead throws ObjectDisposedException, which IS filtered.
         // Capturing once is correct: _reader is assigned in ConnectAsync before this task
         // starts and is only ever nulled, never replaced, for the life of the loop.
@@ -339,9 +328,8 @@ public sealed class PipeClient : IPipeClient
             {
                 // Telemetry split (snapshot capture profiling): the response line read, the
                 // "Pipe RX" debug log of it, and the JSON DOM parse each scale with payload
-                // size and were lumped into one "parse+pipe" bucket. Time them separately and
-                // inject the ms into the response object so a snapshot_chunk caller can read
-                // them back (harmless to every other response).
+                // size. Time them separately and inject the ms into the response object so a
+                // snapshot_chunk caller can read them back (harmless to every other response).
                 var readSw = System.Diagnostics.Stopwatch.StartNew();
                 var line = await reader.ReadLineAsync(_cts.Token);
                 readSw.Stop();

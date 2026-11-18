@@ -630,24 +630,19 @@ public sealed class InvokeParamDialog : Window
                     {
                         // Struct param: validate EVERY sub-field first, then write them.
                         //
-                        // The validation used to live only in the scalar branch below, and
-                        // WriteParam's own comment asserts "TryValidateScalar refuses ahead of
-                        // this whenever the user actually typed something". That was true for a
-                        // top-level param and FALSE here: this branch called WriteStructParam
-                        // straight through, so a sub-field went to WriteParam unchecked. Two
-                        // things fell through the gap, both silent:
+                        // WriteStructParam hands each sub-field to WriteParam unchecked, so the
+                        // sub-fields are validated here, as the scalar branch below validates a
+                        // top-level param. Without it two things fall through, both silent:
                         //
                         //   * a sub-field that is ITSELF opaque (a nested struct such as
-                        //     FSlateBrush::ImageSize / ::Margin) hit WriteParam's
-                        //     IsUnwritableParam early-return, so the typed value was dropped and
-                        //     FIRE still reported "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
-                        //   * an out-of-range INTEGER sub-field masked to width exactly the way
-                        //     top-level params used to, i.e. the width family (W6/Y2/Y9/Y15/AE1)
-                        //     surviving in the one place its fix was not applied.
+                        //     FSlateBrush::ImageSize / ::Margin) hits WriteParam's
+                        //     IsUnwritableParam early-return, so the typed value is dropped and
+                        //     FIRE still reports "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
+                        //   * an out-of-range INTEGER sub-field is masked to width.
                         //
-                        // Refusing is deliberate and is what the row asks for. ⛔ Do NOT "fix"
-                        // this by writing the value instead: writing the user's text over a
-                        // structure's first pointer field is the original Y11 defect.
+                        // Refusing is deliberate. ⛔ Do NOT "fix" this by writing the value
+                        // instead: that writes the user's text over a structure's first pointer
+                        // field.
                         var subFields = subEdits.Select(se => se.sf).ToArray();
                         // A cleared string box is the empty string, not "0" -- which
                         // [P3-INVOKE-STRUCT-FSTRING]'s gate would read as the text "0".
@@ -686,11 +681,10 @@ public sealed class InvokeParamDialog : Window
                         var text = (_edits[i]?.Text ?? "0").Trim();
                         // Range-check BEFORE writing. Every integer write in
                         // ParamBufferBuilder masks to the field width, so an
-                        // out-of-range value used to reach the game truncated with
-                        // nothing said — 9999 into a 1-byte param fired 15. Refusing
+                        // out-of-range value would reach the game truncated with
+                        // nothing said — 9999 into a 1-byte param fires 15. Refusing
                         // the whole invoke is right here: a UFunction called with one
                         // silently-wrong argument is worse than one not called.
-                        // (audit #5, the width family on the FIRE path.)
                         if (!ParamBufferBuilder.TryValidateScalar(
                                 param.TypeName, param.Size, text, out var rangeErr))
                         {
@@ -933,8 +927,8 @@ public sealed class InvokeParamDialog : Window
 
         try
         {
-            // Review of d8a7f44f: the gate FIRE runs, before anything is generated. Copy AA Script
-            // used to bake whatever the boxes held -- a typed TFieldPath / TOptional value as a raw
+            // Run FIRE's gate before anything is generated. Without it Copy AA Script would
+            // bake whatever the boxes hold -- a typed TFieldPath / TOptional value as a raw
             // int32, text in a struct's FString member -- all of which FIRE refuses.
             if (!TryValidateInputsForInvoke(out var gateError))
             {
@@ -1205,16 +1199,11 @@ public sealed class InvokeParamDialog : Window
                 => BinaryPrimitives.ReadDoubleLittleEndian(span).ToString(CultureInfo.InvariantCulture),
             "IntProperty" or "UInt32Property" when available >= 4
                 => BinaryPrimitives.ReadInt32LittleEndian(span).ToString(),
-            // EnumProperty is decoded at the width the ENGINE reported, never 4.
-            // It used to be grouped with IntProperty above, so UE's dominant shape
-            // — `enum class E : uint8` — was read as 4 bytes whenever 4 bytes of
-            // buffer remained: the returned value was the enum byte plus three
-            // bytes belonging to whatever followed it. The tell is that a 1-byte
-            // enum at the very END of the buffer decoded correctly (the guard
-            // failed and it fell through to the size switch) while the same enum
-            // mid-buffer did not. This is the READ side of the mistake Y2 fixed on
-            // the write side, in ParamBufferBuilder.WriteParam — found by the
-            // width-family grep.
+            // EnumProperty is decoded at the width the ENGINE reported, never 4, so it
+            // is not grouped with IntProperty above: UE's dominant shape
+            // — `enum class E : uint8` — read as 4 bytes would return the enum byte
+            // plus three bytes belonging to whatever follows it. This is the READ
+            // side of the same width rule ParamBufferBuilder.WriteParam keeps.
             "EnumProperty" => DecodeBySize(buf, p.Offset, available, p.Size),
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),

@@ -9,16 +9,14 @@ namespace UE5DumpUI.Converters;
 /// Picks one of two brushes from a bool, for a <c>Style</c> setter that has to react to a property
 /// on the bound item. [LWREFRESH-2026-08-21]
 ///
-/// <para><b>Why this exists rather than the imperative painter it replaces.</b> Live Walker used to
-/// tint its rows from <c>FieldGrid_LoadingRow</c>, which runs only when a row is <i>realized</i>.
-/// That was fine while every refresh replaced the row objects — and it is exactly what stopped
-/// being fine when the refresh started reusing them to keep the grid from scrolling. A realization
-/// hook cannot see a property change on a row that was never re-realized.</para>
+/// <para><b>Why a binding rather than an imperative painter.</b> Live Walker's refresh reuses its
+/// row objects to keep the grid from scrolling, and a row-realization hook such as
+/// <c>LoadingRow</c> runs only when a row is <i>realized</i>: it cannot see a property change on a
+/// row that was never re-realized.</para>
 ///
-/// <para>⚠ The old handler could not simply be left in place as a fallback:
-/// <c>e.Row.Background = …</c> writes at <b>LocalValue</b> priority, which outranks a
-/// <c>Style</c> setter, so even its <c>Transparent</c> branch would have pinned every non-matching
-/// row and the binding would never have shown. It had to be deleted, and was.</para>
+/// <para>⚠ Never add such a painter beside it as a fallback: <c>e.Row.Background = …</c> writes at
+/// <b>LocalValue</b> priority, which outranks a <c>Style</c> setter, so even a <c>Transparent</c>
+/// branch would pin every non-matching row and the binding would never show.</para>
 ///
 /// <para>Colours are passed as <c>ConverterParameter="&lt;whenTrue&gt;|&lt;whenFalse&gt;"</c> so the
 /// two call sites keep their own palette in the AXAML beside everything else, instead of hiding

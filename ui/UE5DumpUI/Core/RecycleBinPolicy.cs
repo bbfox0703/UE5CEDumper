@@ -9,18 +9,13 @@ namespace UE5DumpUI.Core;
 /// configured as. The reading of those values lives in the platform service, which is
 /// where the "Platform Abstraction" rule requires it.</para>
 ///
-/// <para><b>Why this exists at all — the measurement that forced it (2026-08-12).</b>
-/// <see cref="IPlatformService.VolumeHasRecycleBin"/> used to answer the question with
-/// <c>SHQueryRecycleBin(root) == S_OK</c> alone. That call reports on the bin's
-/// <i>contents</i>, not on the <i>policy</i>: on a fixed volume whose bin had been turned
-/// off via <c>NukeOnDelete=1</c> it still returned <c>S_OK</c> (with the stale
-/// <c>$RECYCLE.BIN</c> folder's leftover items), so the probe answered <b>true</b> and the
-/// refusal never fired. Measured end to end on that volume, with a throwaway file:
-/// <c>SHFileOperation</c> with <c>FOF_ALLOWUNDO</c> returned <c>rc=0</c>,
-/// <c>fAnyOperationsAborted=false</c>, the bin's item count did not change, and the file
-/// was gone. The caller then reported <i>"moved to the Recycle Bin"</i> for a file it had
-/// permanently destroyed — the exact lie the B13/B41 fix was written to prevent, still
-/// reachable because its detector could not see the condition it was named after.</para>
+/// <para><b>Why the registry and not <c>SHQueryRecycleBin</c>.</b> That call reports on the
+/// bin's <i>contents</i>, not on the <i>policy</i>: on a fixed volume whose bin is turned off
+/// via <c>NukeOnDelete=1</c> it still returns <c>S_OK</c> (over the stale <c>$RECYCLE.BIN</c>
+/// folder's leftover items). On such a volume <c>SHFileOperation</c> with
+/// <c>FOF_ALLOWUNDO</c> returns <c>rc=0</c> and <c>fAnyOperationsAborted=false</c> and the
+/// file is gone for good, so a caller trusting either call reports <i>"moved to the Recycle
+/// Bin"</i> for a file it permanently destroyed.</para>
 ///
 /// <para><b>Do not "simplify" this by looking at the bin's item count.</b> An enabled bin
 /// that happens to be EMPTY is the common case and must read as present; keying off items
@@ -73,13 +68,12 @@ public static class RecycleBinPolicy
         //    produce a verdict the shell does not share -- in either direction.
         if (useGlobalSettings == 1) return globalNukeOnDelete == 1;
 
-        // 3. Otherwise the per-volume flag decides. This is the case the original probe
-        //    missed entirely.
+        // 3. Otherwise the per-volume flag decides.
         //
         //    [A3-RECYCLE-GUID-FAILOPEN] ...and when that flag could not be READ -- the volume-GUID lookup failed
         //    (SUBST, RAM-disk-style volumes) -- fail CLOSED. Null means "absent", and absent reads as "bin enabled",
-        //    which left the verdict to SHQueryRecycleBin: measured blind to NukeOnDelete. Refusing a delete that
-        //    would have worked is recoverable; a permanent delete reported as "moved to the Recycle Bin" is not.
+        //    which would let a disabled volume through. Refusing a delete that would have worked is recoverable; a
+        //    permanent delete reported as "moved to the Recycle Bin" is not.
         //    Only here: a policy or the global setting above decides without the volume flag.
         if (volumeLookupFailed) return true;
         return volumeNukeOnDelete == 1;
@@ -90,8 +84,8 @@ public static class RecycleBinPolicy
     /// volume name <c>GetVolumeNameForVolumeMountPoint</c> returns
     /// (<c>\\?\Volume{...}\</c>). Returns "" when the input is not that shape. The caller must
     /// then pass <c>volumeLookupFailed</c> to <see cref="IsDisabled"/>: an ABSENT value reads as
-    /// "enabled", so treating a failed lookup as absent is exactly how a disabled volume slipped
-    /// back through [A3-RECYCLE-GUID-FAILOPEN].
+    /// "enabled", so treating a failed lookup as absent would let a disabled volume read as
+    /// enabled [A3-RECYCLE-GUID-FAILOPEN].
     /// </summary>
     public static string VolumeGuidFromVolumeName(string? volumeName)
     {

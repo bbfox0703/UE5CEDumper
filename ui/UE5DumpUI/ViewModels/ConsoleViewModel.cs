@@ -143,10 +143,9 @@ public partial class ConsoleViewModel : ViewModelBase
     /// event.
     ///
     /// Payload is (className, funcName, classAddr). The address rides along
-    /// because <c>list_all_functions</c> already supplies it per row: the
-    /// handler used to re-derive it from <c>list_classes</c>, which returns a
-    /// CAPPED page, so every exec on a class past the cap died on
-    /// "Class X not found" (audit #5 X2).
+    /// because <c>list_all_functions</c> already supplies it per row; re-deriving
+    /// it from <c>list_classes</c>, which returns a CAPPED page, would fail every
+    /// exec on a class past the cap with "Class X not found".
     /// </summary>
     public event Action<string, string, string>? RequestParameterInvoke;
 
@@ -525,15 +524,13 @@ public partial class ConsoleViewModel : ViewModelBase
             catch (Exception ex) when (usedPin && ex is not OperationCanceledException)
             {
                 // [CONSOLE-PIN-THROWS] A dead pin does NOT come back as a failed result, which is
-                // what the retry below was written to catch. The DLL reads the class from the
+                // what the retry below catches. The DLL reads the class from the
                 // instance (Fern.cpp's invoke_function handler) and then the function from that class, and on
                 // freed-and-reused memory the class read SUCCEEDS with a garbage pointer while the
                 // lookup fails -- so the handler answers `ok:false, "Function not found"`, and
-                // DumpService.CheckResponse THROWS. Control jumped straight to the catch below,
-                // `_stickyInstance.Remove` never ran, and the command stayed broken until the user
-                // pressed Load. Measured 2026-09-17 on DumperTest Development: a level change moved
-                // CheatManager, and SpawnServerStatReplicator then failed identically twice in a row
-                // while the same command succeeded immediately after a Load cleared the pin.
+                // DumpService.CheckResponse THROWS. Without this catch the throw would skip the
+                // result-code branch below, its `_stickyInstance.Remove` would never run, and the
+                // command would stay broken until the user pressed Load.
                 //
                 // ⭐ RETRYING HERE CANNOT RUN THE COMMAND TWICE, and that is not an assumption:
                 // EVERY `ok:false` in Fern.cpp's invoke_function handler is returned before the
@@ -560,15 +557,12 @@ public partial class ConsoleViewModel : ViewModelBase
             // instead of permanently breaking the command.
             //
             // [W3-CONSOLE-REINVOKE] EXCEPT on a dispatch timeout: the DLL leaves that request
-            // QUEUED and it will still run, so a retry ran the command twice -- a stateful give /
-            // spawn / teleport, twice. The pin stays too, because the queued call is on it.
+            // QUEUED and it will still run, so a retry would run the command twice -- a stateful
+            // give / spawn / teleport, twice. The pin stays too, because the queued call is on it.
             //
-            // ⚠ [CONSOLE-PIN-THROWS] This comment used to assert "a stale pin produces -2 / -4,
-            // never -5, so the self-heal still covers exactly the case it was written for". The
-            // first half is wrong and was measured wrong on 2026-09-17: a stale pin produces a
-            // THROWN "Function not found", not a result code at all, so this branch never saw it.
-            // That case is handled where the call is made, above; this branch remains for a failure
-            // the DLL does report as a result.
+            // [CONSOLE-PIN-THROWS] A stale pin produces a THROWN "Function not found", not a result
+            // code at all, so this branch never sees it; that case is handled where the call is
+            // made, above. This branch remains for a failure the DLL does report as a result.
             bool dispatchTimedOut = result.Result == Constants.InvokeDispatchTimeoutResult;
             if (!reResolved && !result.Success && usedPin && !dispatchTimedOut)
             {

@@ -288,12 +288,11 @@ public sealed class FreezeValueDialog : Window
     /// <summary>
     /// The en.axaml key for one (purpose, leaf) pair — <b>every key written out in full</b>.
     ///
-    /// <para>This used to interpolate the purpose and the leaf into the key, which is
-    /// shorter and worse. <c>tools/check_axaml_strings.py</c> greps for literal key tokens
-    /// precisely because a missing <c>StaticResource</c> raises at load time and takes the
-    /// panel with it; an interpolated key is invisible to that grep, so the gate saw a
-    /// dangling reference to the constant prefix ahead of the first brace and called all
-    /// eight real keys dead. It went red the moment AF22 landed and would have stayed red,
+    /// <para>Never interpolate the purpose and the leaf into the key, though it is shorter.
+    /// <c>tools/check_axaml_strings.py</c> greps for literal key tokens precisely because a
+    /// missing <c>StaticResource</c> raises at load time and takes the panel with it; an
+    /// interpolated key is invisible to that grep, so the gate sees a dangling reference to
+    /// the constant prefix ahead of the first brace, calls every real key dead and stays red,
     /// hiding every genuine missing key behind the noise. Composing a resource key at
     /// runtime also leans on <c>Enum.ToString</c>, which is metadata the trimmer has no
     /// reason to keep — a literal cannot rot that way either.</para>

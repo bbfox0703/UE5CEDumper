@@ -14,13 +14,12 @@ public partial class LiveFuncsPanel : UserControl
     // roots — a template column (no column-level Binding at all) or a text column
     // whose SortMemberPath differs from its Binding path. Their reflection sort is
     // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class binds and sorts on the
-    // same path, so it is rooted and needs nothing. Function became a template column for the unloaded marker
+    // same path, so it is rooted and needs nothing. Function is a template column for the unloaded marker
     // ([TRACE-UNLOADED-NAMES]), so it needs one.
     //
-    // ⚠ ROOTED IS NOT THE SAME AS CORRECT. This comment used to include Params in that
-    // list, and it was right that Params was rooted — and that is exactly why it went
-    // unfixed. The question the AF16-AF23 sweep asked was "is the header inert under
-    // trimming?", so a column that sorted perfectly well by the WRONG key passed.
+    // ⚠ ROOTED IS NOT THE SAME AS CORRECT. A column whose binding roots its sort path is
+    // AOT-safe and can still sort perfectly well by the WRONG key; choose the sort path
+    // for its order, not only for being rooted (see Params below).
     private static readonly IReadOnlyDictionary<string, IComparer> ResultsSortComparers =
         new Dictionary<string, IComparer>
         {
@@ -29,20 +28,16 @@ public partial class LiveFuncsPanel : UserControl
             ["Delta"] = DataGridSortComparers.Number<PeProfileEntry>(r => r.Delta),
             ["Kind"]  = DataGridSortComparers.Ordinal<PeProfileEntry>(r => r.Kind),
             ["TypeLabel"] = DataGridSortComparers.Ordinal<PeProfileEntry>(r => r.TypeLabel),
-            // Period (audit #5 AF19). The column renders PeriodLabel but sorts on
-            // MeanPeriodMs, so no column binding roots the sort path and the header was
-            // inert under trimming — on the one column the Phase E cadence feature exists
-            // for ("which callback fires on a regular timer?").
+            // Period. The column renders PeriodLabel but sorts on MeanPeriodMs, so no
+            // column binding roots the sort path and without a comparer the header is
+            // inert under trimming — on the one column the cadence feature exists for
+            // ("which callback fires on a regular timer?").
             ["MeanPeriodMs"] = DataGridSortComparers.Double<PeProfileEntry>(r => r.MeanPeriodMs),
             // Params (PARAMSSORT-2026-08-22). The cell shows "{NumParms} ({ParmsSize}B)"
-            // but the column now sorts on NumParms, so nothing roots the sort path and a
-            // comparer is required. It previously sorted on ParamsLabel — which was AOT-safe
-            // (binding and sort path agreed, so the property was rooted) and WRONG: the
-            // ordinal order of the label puts "11 (72B)" above "2 (9B)". Measured on
-            // DumperTest 2026-08-22: 3,142 functions, two with >=10 parameters, so the
-            // inversion is reachable on a stock host. AF20 fixed the Live Walker twin only,
-            // because the audit asked "is the header inert under trimming?" and these three
-            // were not inert — just wrong.
+            // but the column sorts on NumParms, so nothing roots the sort path and a
+            // comparer is required. Sorting on ParamsLabel would be AOT-safe (binding and
+            // sort path agree, so the property is rooted) and WRONG: the ordinal order of
+            // the label puts "11 (72B)" above "2 (9B)".
             ["NumParms"] = DataGridSortComparers.Number<PeProfileEntry>(r => r.NumParms),
             ["FuncName"] = DataGridSortComparers.Ordinal<PeProfileEntry>(r => r.FuncName),
         };

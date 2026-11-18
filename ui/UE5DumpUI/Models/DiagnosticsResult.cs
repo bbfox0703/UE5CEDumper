@@ -60,8 +60,8 @@ public sealed class DiagnosticsGameThread
     public long HookFireCount     { get; init; }
     /// <summary>Age of the last ProcessEvent fire. <b>-1 = never fired</b>
     /// (liveness unknown) — the DLL's <c>UINT64_MAX</c> sentinel, mapped to a
-    /// value that fits a signed 64-bit integer at the wire boundary. A very large
-    /// positive value means the same thing and came from a pre-fix DLL.</summary>
+    /// value that fits a signed 64-bit integer at the wire boundary. An older DLL
+    /// sends the sentinel as a very large positive value, which means the same.</summary>
     public long MsSinceLastFire   { get; init; } = -1;
     /// <summary>The GATE predicate, not a measurement: "unknown" counts as
     /// responsive, because with no hook installed the right answer to "should I

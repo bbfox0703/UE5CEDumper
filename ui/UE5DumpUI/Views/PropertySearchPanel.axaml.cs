@@ -83,10 +83,10 @@ public partial class PropertySearchPanel : UserControl
     /// double the force_field path carries — and REFUSE rather than write a different number.
     ///
     /// <para>
-    /// Two failures used to look identical to a cancel (audit #5 AF6): an unconvertible
-    /// literal, and a 64-bit integer beyond a double's 53-bit mantissa. The second is the
-    /// nastier one — <c>double.TryParse</c> SUCCEEDS on 9223372036854775807 and hands back
-    /// 9223372036854775808, so Force would have silently held the field at a value the user
+    /// Two failures must not look like a cancel: an unconvertible literal, and a 64-bit
+    /// integer beyond a double's 53-bit mantissa. The second is the nastier one —
+    /// <c>double.TryParse</c> SUCCEEDS on 9223372036854775807 and hands back
+    /// 9223372036854775808, so Force would silently hold the field at a value the user
     /// never typed. Refusing is the honest answer while the wire is a double end-to-end;
     /// widening it is a DLL + protocol change, not a UI one.
     /// </para>

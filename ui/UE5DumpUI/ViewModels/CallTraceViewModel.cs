@@ -26,18 +26,18 @@ public partial class CallTraceViewModel : ViewModelBase
     public LiveFuncsViewModel LiveFuncs { get; }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] Records a page asks for. A page arrives as ONE pipe line, and StreamReader keeps
-    /// its pooled line buffers per thread: on lines of 14 million chars (262,144 records as base64) it kept 205 MB after
-    /// a full collection, on lines of 1.75 million chars nothing (measured 2026-10-07). 32,768 records is 1.3 MB of
-    /// records, 1.75 million chars; a 512 MB ring is about 410 pages.</summary>
+    /// its pooled line buffers per thread: on lines of 14 million chars (262,144 records as base64) they survive a full
+    /// collection, on lines of 1.75 million chars they do not. 32,768 records is 1.3 MB of records, 1.75 million chars;
+    /// a 512 MB ring is about 410 pages.</summary>
     internal const int PageRecords = 32768;
     internal const int NamesPage = 20000;
     /// <summary>[LIVEFUNCS-STEP2] Slots a snapshot page asks for; the DLL also ends a page at about 1 MB of JSON.</summary>
     internal const int SnapPage = 4096;
     /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
-    /// page), and nothing collects them during a load of hundreds of pages: live on build 3634 a full 128 MB load still
-    /// peaked at 1.27 GB working set. A collection at least every this many pages -- about 21 MB of records -- keeps
-    /// them to ~85 MB; it takes milliseconds, the heap being a few large arrays of plain values. The slider's estimate
-    /// was calibrated on this period (build 3636): with less memory free a load collects more often, never less.</summary>
+    /// page), and nothing collects them during a load of hundreds of pages, so the working set climbs with every page.
+    /// A collection at least every this many pages -- about 21 MB of records -- keeps them to ~85 MB; it takes
+    /// milliseconds, the heap being a few large arrays of plain values. The slider's estimate assumes this period: with
+    /// less memory free a load collects more often, never less.</summary>
     internal const int CollectEveryPages = 16;
     /// <summary>What a full page leaves behind until a collection (MB): its pipe line, 1.75 million chars as UTF-16,
     /// and its parsed document.</summary>
@@ -45,8 +45,8 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The pages' garbage between two collections may take this share of the free physical memory.</summary>
     internal const int FreeMemoryShare = 32;
 
-    /// <summary>[TRACE-UI-LOAD-MEMORY] The pages a load reads before it collects, from the physical memory free now (the
-    /// maintainer, 2026-10-07): 1/FreeMemoryShare of it for the pages' garbage, between one page and CollectEveryPages.
+    /// <summary>[TRACE-UI-LOAD-MEMORY] The pages a load reads before it collects, from the physical memory free now:
+    /// 1/FreeMemoryShare of it for the pages' garbage, between one page and CollectEveryPages.
     /// Free memory that cannot be read comes as long.MaxValue, so it keeps the calibrated period.</summary>
     internal static int PagesBetweenCollections(long availableBytes)
     {
@@ -354,9 +354,8 @@ public partial class CallTraceViewModel : ViewModelBase
 
             ulong kept = info.Written - info.FirstValid;
             reclaim = true;   // a window is about to be made: whatever happens next, collect it afterwards
-            // Let go of the trace on screen first, and collect it: held beside the new window and columns it cost
-            // ~0.4 GB of a 3.77 GB peak (a 512 MB load after a 128 MB one, build 3634). A read dropped after this
-            // leaves no trace on screen; its status says why.
+            // Let go of the trace on screen first, and collect it: held beside the new window and columns, the old
+            // trace adds to the load's peak. A read dropped after this leaves no trace on screen; its status says why.
             DropShownTrace();
             CollectPageGarbage();
             _loadStartWs = _loadPeakWs = Environment.WorkingSet;

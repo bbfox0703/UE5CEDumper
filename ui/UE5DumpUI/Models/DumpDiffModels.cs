@@ -53,8 +53,8 @@ public sealed class DumpDiffProp
     [JsonPropertyName("enum")]        public string? Enum { get; set; }
 }
 
-/// <summary>A function of a class line. <see cref="Params"/> is null in a dump from before build 3622, which is not
-/// the same as a function with none.</summary>
+/// <summary>A function of a class line. <see cref="Params"/> is null in a dump written without parameters, which is
+/// not the same as a function with none.</summary>
 public sealed class DumpDiffFunc
 {
     [JsonPropertyName("name")]        public string? Name { get; set; }

@@ -31,11 +31,12 @@ public sealed class InstanceWalkResult
     /// <summary>
     /// The reflected walk RAN and <see cref="Fields"/> is complete; only the DLL's
     /// Guess-What raw-byte pass was skipped, because the class is larger than the
-    /// gap-fill work cap. NOT staleness — conflating the two is what reported a live
-    /// 3.6 MB USaveGame to the user as freed. (SANEPROPS-2026-08-26)
+    /// gap-fill work cap. NOT staleness — conflating the two would report a large live
+    /// object to the user as freed. (SANEPROPS-2026-08-26)
     /// </summary>
     public bool GapFillSkipped { get; init; }
-    /// <summary>UStruct::PropertiesSize — total struct/class size in bytes. Used to detect 0-field classes that should auto-enable fill_gaps.</summary>
+    /// <summary>UStruct::PropertiesSize — total struct/class size in bytes. A 0-field class with a nonzero size
+    /// should auto-enable fill_gaps.</summary>
     public int PropertiesSize { get; init; }
     public List<LiveFieldValue> Fields { get; init; } = new();
 }

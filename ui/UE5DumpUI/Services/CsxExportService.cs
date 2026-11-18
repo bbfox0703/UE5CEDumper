@@ -431,19 +431,17 @@ public static class CsxExportService
     {
         var vartype = typeName == "StrProperty" ? "Unicode String" : "String";
         // [R7-C-02] Bytes, not characters: CE reads `Bytesize` bytes for a Unicode String (byteinterpreter),
-        // while CE XML's <Length> is characters and CE doubles it itself. Without this an FString showed half
-        // as many characters as the CE XML of the same field.
+        // while CE XML's <Length> is characters and CE doubles it itself. Without this an FString would show
+        // half as many characters as the CE XML of the same field.
         var byteSize = typeName == "StrProperty" ? _csxStringLength * 2 : _csxStringLength;
         var name = FormatStructName(addr);
         var sb = new StringBuilder();
         sb.Append("        <Structure Name=\"").Append(EscapeXml(name))
           .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
         sb.AppendLine("          <Elements>");
-        // ⛔ NOT A LITERAL ANY MORE. This was `Bytesize="18"` -- 9 wide characters -- for every
-        // string in every export, whatever its length, so CE's Structure Dissect silently cut
-        // anything longer. Measured 2026-09-16 on the fixture's Arr_Str, whose elements are 12, 15
-        // and 22 characters: all three rendered 9 characters wide. The window is now the export's
-        // String Len, which is what the CE XML path has always used (EmitStringLeaf).
+        // ⛔ NOT A LITERAL. A fixed Bytesize applies to every string in every export, whatever its
+        // length, so CE's Structure Dissect silently cuts anything longer. The window is the
+        // export's String Len, which is what the CE XML path uses too (EmitStringLeaf).
         sb.AppendLine($"            <Element Offset=\"0\" Vartype=\"{vartype}\" Bytesize=\"{byteSize}\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
         sb.AppendLine("          </Elements>");
         sb.AppendLine("        </Structure>");
@@ -877,7 +875,7 @@ public static class CsxExportService
         foreach (var elem in arrField.ArrayElements!)
         {
             // Build descriptive name: prefer enum name, then the value, then bare index. [CSX-LONG-ELEMENT-LABEL] A value
-            // past 20 characters keeps its start and says it was cut; it used to be dropped, leaving a bare "[2]".
+            // past 20 characters keeps its start and says it was cut, rather than leaving a bare "[2]".
             var label = !string.IsNullOrEmpty(elem.EnumName) ? elem.EnumName
                 : !string.IsNullOrEmpty(elem.Value) ? ShortLabel(elem.Value)
                 : null;

@@ -17,12 +17,11 @@ public static class XrefFormat
     ///
     /// <para>
     /// <paramref name="deadlineHit"/> is not optional decoration. The DLL runs each
-    /// sweep against a real 30 s budget and latches the flag when it runs out; the
-    /// three batch loops used to consume <c>res.Xrefs</c> and throw the rest away, so a
-    /// row whose sweep timed out was written as a bare <c>0</c> — which the user reads
-    /// as "no Blueprint function touches this field, so freezing it is safe". The
-    /// single-row dialog built on the SAME DLL call has always printed
-    /// "[DEADLINE HIT — partial]", so two UI paths over one call disagreed. (audit #5 Z9)
+    /// sweep against a real 30 s budget and latches the flag when it runs out. A row
+    /// whose sweep timed out, written as a bare <c>0</c>, reads to the user as "no
+    /// Blueprint function touches this field, so freezing it is safe". The single-row
+    /// dialog built on the SAME DLL call prints "[DEADLINE HIT — partial]", and the
+    /// batch cells must say the same thing.
     /// </para>
     /// </summary>
     public static string FunctionsSummary(IReadOnlyList<PropertyXrefMatch> xrefs,

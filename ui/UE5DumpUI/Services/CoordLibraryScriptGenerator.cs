@@ -255,9 +255,9 @@ public static class CoordLibraryScriptGenerator
             Line(sb, "local function call(op, writeParams)");
             Line(sb, "  local mb = mailbox()");
             Line(sb, "  if mb == nil then return nil, 'g_invokeMailbox not found -- is UE5Dumper.dll injected?' end");
-            // R3: was a single sample of cmd. Teleporting to two coordinates in quick
+            // A wait, not a single sample of cmd: teleporting to two coordinates in quick
             // succession is the ordinary use of this script, and that is exactly the
-            // pattern the single read gets wrong.
+            // pattern a single read gets wrong.
             CeLuaHygiene.AppendIdleWait(sb, "mb",
                 "return nil, 'the DLL mailbox is busy -- try again in a moment'", "  ",
             "return nil, 'the mailbox could not be read -- the game process has most likely exited (re-inject UE5Dumper.dll if it is still running)'");
@@ -266,11 +266,10 @@ public static class CoordLibraryScriptGenerator
             Line(sb, "  writeQword(mb + MB_INST, op)");
             Line(sb, "  writeInteger(mb + MB_STATUS, 0)");
             Line(sb, $"  writeInteger(mb + MB_CMD, {CmdTeleport})   -- write LAST");
-            // The shared wait, in its by-value mode. Hand-rolled until now, and it
-            // carried the same two defects build 2743 fixed elsewhere: it counted
-            // sleep(1) iterations against a millisecond constant (15.47 ms each, so "10
-            // s" was ~155 s), and 'the DLL did not respond' asserted a cause the mailbox
-            // can actually distinguish.
+            // The shared wait, in its by-value mode, never a hand-rolled one: a sleep(1)
+            // iteration is nowhere near 1 ms, so a loop counted against a millisecond
+            // constant overshoots its deadline many times over, and a generic 'the DLL
+            // did not respond' asserts a cause the mailbox can actually distinguish.
             //
             // ReturnReason, not the toggles' UntickAndReturn: `call` answers its caller
             // with (code, err) and go() does the reporting. A return here would leave
@@ -279,16 +278,16 @@ public static class CoordLibraryScriptGenerator
             CeLuaHygiene.AppendMailboxWait(
                 sb, "Coordinate Library", MailboxTimeout.ReturnReason, indent: "  ");
             // Signed: the Wirbel rc is an int32 and readInteger defaults to UNSIGNED, which
-            // surfaced -1 to the user as "code 4294967295" (Coordinate Library, 2026-08-07).
+            // would show -1 to the user as "code 4294967295".
             Line(sb, "  return readInteger(mb + MB_RESULT, true), nil, mb");
             Line(sb, "end");
             Line(sb);
             Line(sb, "-- Current map, read from GET_POSE's pose block (map name at params+48).");
             Line(sb, "local function currentMap()");
             Line(sb, $"  local code, err, mb = call({OpGetPose}, nil)");
-            // Propagate err. Dropping it made the caller run a SECOND round-trip that
-            // failed the same way, so a dead game cost two full idle-wait deadlines
-            // before saying anything (observed 2026-08-07: ~3 s, message shown once).
+            // Propagate err. Dropping it makes the caller run a SECOND round-trip that
+            // fails the same way, so a dead game costs two full idle-wait deadlines
+            // before saying anything.
             Line(sb, "  if err ~= nil then return nil, err end");
             Line(sb, "  if code ~= 0 or mb == nil then return nil end");
             Line(sb, "  return readString(mb + MB_PARAMS + 48, 127, false)");
@@ -320,8 +319,8 @@ public static class CoordLibraryScriptGenerator
             Line(sb, "local function teleport(e)");
             Line(sb, "  if not UE5T_ready then");
             // Lua DOUBLE quotes here: the message itself contains single quotes, and
-            // C#'s \' escape collapses to a bare ' -- which silently produced an
-            // unterminated Lua string (in-game syntax error, build 2269).
+            // C#'s \' escape collapses to a bare ' -- which silently produces an
+            // unterminated Lua string (an in-game syntax error).
             Line(sb, "    return nil, \"enable 'UE5 Trainer: Setup' first\"");
             Line(sb, "  end");
             Line(sb, "  local p = UE5T_pawn()");

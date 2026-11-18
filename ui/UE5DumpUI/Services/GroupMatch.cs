@@ -74,8 +74,8 @@ public static class GroupMatch
         public Predicate Predicate = Predicate.Exact;
         public double? Target;     // absolute predicates
         public double? Target2;    // Between upper bound
-        /// <summary>Displayed-integer reduction for Float/Double leaves (build 1672,
-        /// replaces the old tolerance band). Integer leaves are reduce-invariant.</summary>
+        /// <summary>Displayed-integer reduction for Float/Double leaves.
+        /// Integer leaves are reduce-invariant.</summary>
         public FloatRoundMode RoundMode = FloatRoundMode.Round;
     }
 
@@ -192,7 +192,7 @@ public static class GroupMatch
                 // Comparisons use the decoded double (leaf.Num), like the rest of the
                 // snapshot subsystem (SPC / Diff / Pivot all key on numeric_value). Integer
                 // values above 2^53 lose precision — a known, snapshot-WIDE limitation.
-                // RoundMode (build 1672) reduces a Float/Double value to the integer the
+                // RoundMode reduces a Float/Double value to the integer the
                 // game DISPLAYS before comparing a WHOLE target; a fractional target on an
                 // integer field is coerced via the mode. The width-fit gate runs on the
                 // COERCED target so a fractional target/bound is range-checked at its

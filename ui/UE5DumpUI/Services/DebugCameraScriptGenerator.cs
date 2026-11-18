@@ -29,7 +29,8 @@ public static class DebugCameraScriptGenerator
     // Mimic mailbox layout (must match dll/src/Mimic.h MailboxData):
     //   0x00 cmd (write LAST to trigger), 0x04 status (poll == 1), 0x08 result,
     //   0x10 instanceAddr (here: the request 0=OFF / 1=ON), 0x72C cmdOutFlags (the template warning, read on an ON
-    //   that did not take or is queued; only a DLL from builds 3676-3681 sets it, a newer one answers -17 instead).
+    //   that did not take or is queued; only a contract-7 DLL older than [DEBUGCAM-FORCEON-CDO] sets it, a newer one
+    //   answers -17 instead).
     //   CMD_SET_DEBUG_CAMERA=7.
     private static void EmitBlock(StringBuilder sb, string header, bool enable)
     {
@@ -67,7 +68,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, "  return");
         Line(sb, "end");
         // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
-        // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
+        // dbg()s and returns -- one EmitBlock writes both blocks, so it must not give the untick the tick's modal.
         var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
@@ -75,10 +76,9 @@ public static class DebugCameraScriptGenerator
         Line(sb);
 
         // Mailbox round-trip: write request, trigger CMD_SET_DEBUG_CAMERA=7, poll.
-        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
-        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
-        // a toggle fired while another command was still in flight wrote straight
-        // over it. Above the OPERAND writes, not merely above the status clear:
+        // Bounded wait for IDLE before the FIRST write, so a toggle fired while
+        // another command is still in flight cannot write straight over it.
+        // Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
         CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "DebugCamera", bail);
@@ -158,9 +158,10 @@ public static class DebugCameraScriptGenerator
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
-            // [INVOKE-NONSTATIC-ON-CDO] A DLL from builds 3676-3681 (contract 7, which this record claims) says when the
-            // toggle ran on the CheatManager's class default object -- no live CheatManager, where it does nothing. A newer
-            // DLL refuses that ON (-17, above), so without the bit this is a read that failed or a toggle that did not take.
+            // [INVOKE-NONSTATIC-ON-CDO] A contract-7 DLL (the contract this record claims) older than
+            // [DEBUGCAM-FORCEON-CDO] says when the toggle ran on the CheatManager's class default object -- no live
+            // CheatManager, where it does nothing. A newer DLL refuses that ON (-17, above), so without the bit this is
+            // a read that failed or a toggle that did not take.
             int bit = CeMailboxLayout.InvOutNonStaticOnTemplate;
             Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * bit} >= {bit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +

@@ -4,10 +4,9 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// Coarse "where in its life was the app?" marker. Only three states, because the
-/// point is to keep <c>crash.log</c> honest, not to build a state machine: the
-/// file used to hard-code the phrase "startup crash" for every crash, so a fault
-/// 31 minutes into a live session was filed as a startup failure and triaged as
-/// one (field report <c>[PASTECRASH-2026-08-18]</c>).
+/// point is to keep <c>crash.log</c> honest, not to build a state machine: a fault
+/// deep into a live session must not be filed and triaged as a startup failure
+/// (<c>[PASTECRASH-2026-08-18]</c>).
 /// </summary>
 internal enum AppPhase
 {

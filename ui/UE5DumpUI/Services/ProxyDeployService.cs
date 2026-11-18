@@ -425,13 +425,6 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// so <see cref="DetectedGame.UeVersion"/> has one documented origin if an offline
     /// heuristic is ever added. <c>ProxyDeployTests</c> asserts the null, which is what
     /// keeps this honest.</para>
-    ///
-    /// <para>audit #5 AC15 — this used to open <c>FileVersionInfo.GetVersionInfo(exePath)</c>
-    /// into a local named <c>info</c> and then unconditionally <c>return null</c> without
-    /// reading it. That is a full VERSIONINFO resource load per detected game, on every
-    /// Steam scan and every generic drive walk, for a value that was discarded — and the
-    /// property it fed is read by nothing in the app. The dead load is gone; the seam and
-    /// its (null) contract are not.</para>
     /// </summary>
     private static string? TryDetectUeVersion(string exePath) => null;
 
@@ -1120,13 +1113,13 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>
     /// Publish <paramref name="sourcePath"/> at <paramref name="targetPath"/> without ever
-    /// exposing a partial file (audit #5 AC11).
+    /// exposing a partial file.
     ///
-    /// The old code was a bare <c>File.Copy(overwrite: true)</c> straight onto the live
-    /// target, which TRUNCATES first and then streams. Any failure part-way — disk full,
-    /// source read error, the process being killed — left a truncated DLL sitting at the
-    /// real proxy path, and that state is worse than a failed deploy in three ways:
-    ///   • the game IMPORTS that name, so it now fails to start;
+    /// A bare <c>File.Copy(overwrite: true)</c> straight onto the live target TRUNCATES
+    /// first and then streams. Any failure part-way — disk full, source read error, the
+    /// process being killed — would leave a truncated DLL sitting at the real proxy path,
+    /// and that state is worse than a failed deploy in three ways:
+    ///   • the game IMPORTS that name, so it fails to start;
     ///   • a truncated PE has no version resource, so <see cref="IsOurProxyDll"/> is false
     ///     and the grid reports it as "Other proxy: unknown" — another program's DLL;
     ///   • and on that verdict BOTH removal paths refuse it (PlanUndeploy skips it as
@@ -1138,7 +1131,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// copy and the rename leaves one file that the next deploy of this type overwrites.
     /// IOExceptions are left to propagate so DeployAsync's SHARING_VIOLATION filter still
     /// classifies a locked target as "File locked (game running?)" — the rename raises the
-    /// same violation the direct copy used to.
+    /// same violation a direct copy would.
     /// </summary>
     internal static void CopyProxyStaged(string sourcePath, string targetPath)
     {
@@ -1229,7 +1222,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // Replacing a third party's DLL is irreversible and the same
                 // operation erases the row that said whose it was (a successful
                 // deploy clears StatusDetail), so record the identity FIRST —
-                // otherwise nothing anywhere says what used to be here.
+                // otherwise nothing anywhere says what was there before.
                 if (exists && !isOurs)
                 {
                     _log.Warn("ProxyDeploy",
@@ -1237,9 +1230,9 @@ public sealed class ProxyDeployService : IProxyDeployService
                         $"({DescribeForeignDll(targetDll)}) — foreign overwrite was explicitly allowed");
                 }
 
-                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal used
-                // to live here and rejected version.dll (the broadest-compatible flavour) on every
-                // game that loads it dynamically. Two independent risks, at most one of which
+                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal would
+                // reject version.dll (the broadest-compatible flavour) on every game that loads it
+                // dynamically. Two independent risks, at most one of which
                 // applies (they partition on whether the flavour is imported):
                 //   • BYPASS: the flavour IS imported, so an already-mapped System32 copy can
                 //     pre-empt ours — the [PROXYLOAD-2026-08-17] OCTOPATH failure; and
@@ -1798,15 +1791,13 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// <para><b>Why this is not <c>File.ReadLines</c>.</b> That helper opens with
     /// <c>FileShare.Read</c>, which declares "other handles may only read" — so it fails with a
     /// sharing violation against a writer that already has the file open, which is exactly what our
-    /// own logger is doing to <c>view-0.log</c> while the app runs. Measured 2026-08-12: deploying a
-    /// proxy and then pressing "Find leftovers" in the SAME session found nothing, because the only
-    /// log line naming that folder was in the live <c>view-0.log</c>, the read threw, and the
-    /// caller's per-file <c>catch</c> swallowed it — so the whole file contributed zero candidates
-    /// and the folder was never examined. It only became visible after a restart rotated the log to
-    /// an archive. <c>FileShare.ReadWrite | FileShare.Delete</c> is what tolerates the live writer;
-    /// <c>Delete</c> additionally survives the file being rotated out from under us mid-read.</para>
+    /// own logger is doing to <c>view-0.log</c> while the app runs. The caller's per-file
+    /// <c>catch</c> would swallow that throw, so the live log — which may hold the only line naming a
+    /// folder deployed in this session — would contribute zero candidates. <c>FileShare.ReadWrite |
+    /// FileShare.Delete</c> is what tolerates the live writer; <c>Delete</c> additionally survives
+    /// the file being rotated out from under us mid-read.</para>
     ///
-    /// <para>Lazy, like the helper it replaces, so an open failure surfaces at the first
+    /// <para>Lazy, like <c>File.ReadLines</c>, so an open failure surfaces at the first
     /// <c>MoveNext</c> inside the caller's <c>try</c> rather than at the call site.</para>
     /// </summary>
     internal static IEnumerable<string> ReadLinesShared(string path)
@@ -2134,7 +2125,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 string? note = ambiguous
                     ? SharedExeNoteFor(confirmedByExe.ContainsKey(exeName), injectedExes.Contains(exeName))
                     : null;
-                if (note != null)   // the tag leads (sixth review, R6-03); what was not used follows
+                if (note != null)   // the tag leads; what was not used follows
                     display = SharedTag + (string.IsNullOrEmpty(display) ? note : $"{display} · {note}");
 
                 results.Add((game, suggestion.Type, display));
@@ -2145,8 +2136,8 @@ public sealed class ProxyDeployService : IProxyDeployService
 
         // Back on the caller's thread — see the threading contract above.
         // SuggestedProxy feeds a DataGrid column, so this pass is a visual-tree mutation
-        // exactly like the status one, and reading 29 PE import tables is slow enough that
-        // it used to land mid-render.
+        // exactly like the status one, and reading the PE import tables is slow enough that
+        // it would otherwise land mid-render.
         foreach (var (game, type, display) in suggestions)
         {
             game.SuggestedProxyType = type;

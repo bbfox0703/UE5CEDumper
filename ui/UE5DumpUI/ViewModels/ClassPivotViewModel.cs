@@ -90,14 +90,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     // and leave Fields holding a mix of two classes.
     private int _classLoadId;
     private int _fieldLoadId;
-    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. It used to take _classLoadId, so a class click in Array
-    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A
+    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. Sharing _classLoadId would let a class click in Array
+    // source supersede the class-list load in flight and leave the previous snapshot's classes in the picker. A
     // source or snapshot switch bumps it too: the class it was loading for belongs to the list being replaced, and a
     // late result would auto-pick an array field whose prop load wipes the new source's Fields. Never the class load,
     // and never on a Refresh that keeps the snapshot: there the class can stay selected, and nothing would re-run it.
     private int _arrayFieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
-    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
+    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load must not cancel an in-flight CLASS load, which
     // nothing restarts, leaving the previous snapshot's classes in the picker.
     private CancellationTokenSource? _classLoadCts;   // class list loads (GROUP BY over ~1.7M rows)
     private CancellationTokenSource? _fieldLoadCts;   // field list loads
@@ -620,13 +620,13 @@ public partial class ClassPivotViewModel : ViewModelBase
             .Where(m => m.IsUsable).ToList();
 
         // Capture what the user had chosen BEFORE the rebuild throws the objects
-        // away (audit #5 AF5). SnapshotMeta is a class and UiCollection.Reset
-        // repopulates with NEW instances, so this must round-trip by Id — never by
-        // reference or index. A refresh used to hard-reset the picker to "newest"
-        // plus the two-newest ticks, silently discarding a deliberate choice.
+        // away, or a refresh resets the picker to "newest" plus the two-newest ticks and
+        // silently discards a deliberate choice. SnapshotMeta is a class and
+        // UiCollection.Reset repopulates with NEW instances, so this must round-trip by
+        // Id — never by reference or index.
         //
         // [A4-PIVOT-CROSSGAME-ID] ...but only within ONE game: after a reconnect to a different game the same Id names
-        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick (AF5), so
+        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick, so
         // the test is "did the game change", not "was there a connect".
         bool sameGame = pe == _listedPe;
         long? keepSnapshotId = sameGame ? SelectedSnapshot?.Id : null;
@@ -1105,7 +1105,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// fire on one run: the GROUP cap (PivotEngine: the top N groups of a COMPLETE input, every count exact) and the row
     /// FETCH cap (SnapshotStore: the pivot was built over a PREFIX in gobjects_index order, so the instance count, the
     /// group count and every group's count are undercounts -- and a mid-instance break can make a bogus "(missing)"
-    /// group). The fetch cap used to fold into the group cap's "(capped at 5,000)", presenting the prefix as totals.
+    /// group). Folding the fetch cap into the group cap's "(capped at 5,000)" would present the prefix as totals.
     /// "Tick only the fields you need", not "fewer": with NO value field ticked every prop is fetched.</summary>
     internal static string PivotRunStatus(PivotResult r, int maxGroups, string groupsNoun, string instancesNoun, string tail)
     {
@@ -1146,8 +1146,8 @@ public partial class ClassPivotViewModel : ViewModelBase
                 var valueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList();
                 var res = DataTablePivotEngine.Build(_dataTable!, valueFields);
                 SetResults(res.Rows, runSession);
-                // [W1-DT-TRUNC] The load said "(showing N of M)" for a capped page; the Run used to print a bare row
-                // count over it. Same wording as the load, 17 lines above an array branch that gets it right.
+                // [W1-DT-TRUNC] The load says "(showing N of M)" for a capped page, so the Run must not print a bare
+                // row count over it. Same wording as the load.
                 var dtTrunc = _dataTable!.RowCount > _dataTable.Rows.Count
                     ? $" (showing {_dataTable.Rows.Count:N0} of {_dataTable.RowCount:N0})" : "";
                 StatusText = $"{res.GroupCount:N0} rows{dtTrunc} · key = RowName · {_dataTable!.RowStructName}";

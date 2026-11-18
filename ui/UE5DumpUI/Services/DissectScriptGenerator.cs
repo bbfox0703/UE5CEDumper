@@ -57,9 +57,8 @@ public static class DissectScriptGenerator
         Line(sb, "-- ================================================================");
         Line(sb, $"local probe = getAddressSafe('{ProbeExport}')");
         // [AOBM-DISSECT-INJECT] CE snapshots the module list when it OPENS the game, so a DLL injected afterwards has no
-        // exports in the symbol table until it is re-enumerated. Measured 2026-09-29 on DumperTest: CE opened before
-        // the inject, the DLL answering the pipe, and this record said "not loaded". The same self-heal
-        // CeLuaHygiene.AppendContractCheck does, before any verdict.
+        // exports in the symbol table until it is re-enumerated: with CE opened before the inject, the probe misses a
+        // DLL that is answering the pipe. The same self-heal CeLuaHygiene.AppendContractCheck does, before any verdict.
         Line(sb, "if not probe or probe == 0 then");
         Line(sb, "  reinitializeSymbolhandler()");
         Line(sb, $"  probe = getAddressSafe('{ProbeExport}')");

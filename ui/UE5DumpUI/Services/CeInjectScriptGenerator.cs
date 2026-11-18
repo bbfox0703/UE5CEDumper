@@ -51,12 +51,11 @@ public static class CeInjectScriptGenerator
     /// An inert row whose only job is to be READ. Every mailbox command in this table is
     /// dispatched on the game thread, so while the game is paused, alt-tabbed or sitting on
     /// a breakpoint nothing runs and the script eventually times out. That is invisible from
-    /// inside Cheat Engine, and it cost a real debugging session before it was understood.
+    /// inside Cheat Engine.
     ///
     /// <para>Two things this warns about, and the second is the one that surprises people:
     /// a timed-out command is NOT cancelled. The DLL still holds it and runs it as soon as
-    /// the game ticks again -- measured on DumperTest 2026-08-07, a teleport completed 35 s
-    /// after it was sent and 25 s after the script had given up on it. Clicking again after
+    /// the game ticks again, even after the script has given up on it. Clicking again after
     /// a timeout therefore QUEUES a second one.</para>
     ///
     /// <para>It applies itself to nothing, so per the table-wide rule it unticks itself
@@ -124,12 +123,11 @@ public static class CeInjectScriptGenerator
         Line(sb, "-- ================================================================");
         Line(sb);
 
-        // [A3-B30-STALE-FLAG] review 4: an enable runs only on an UNTICKED record, which owns nothing -- whatever the
+        // [A3-B30-STALE-FLAG] An enable runs only on an UNTICKED record, which owns nothing -- whatever the
         // global says was left by a record no longer active. CE drops records WITHOUT running [DISABLE] on a File >
         // Open and on a process switch (MainUnit.pas: disableAllWithoutExecute), and every bail-out below defers an
-        // untick that runs the disable block's guard. The serving branch alone used to clear it, so the parked
-        // branch's failed UE5_AutoStart could still tear a pipe down. Cleared before the first bail-out; the success
-        // path at the bottom stays the one claim.
+        // untick that runs the disable block's guard. Cleared before the first bail-out, on every branch, so a parked
+        // branch's failed UE5_AutoStart cannot tear a pipe down; the success path at the bottom stays the one claim.
         Line(sb, "-- This record owns nothing until the success path below claims it. The flag is one global that");
         Line(sb, "-- outlives a File > Open and a process switch (both drop records without running their disable");
         Line(sb, "-- block), and every bail-out below unticks -- so a stale true must not survive to reach them.");
@@ -167,12 +165,9 @@ public static class CeInjectScriptGenerator
         Line(sb, $"  local INIT_READY, INIT_SKIPPED = {CeMailboxLayout.InitReady}, {CeMailboxLayout.InitSkipped}");
         // BOTH spellings. CE may present an export as the bare name or only as
         // "<module>.<name>", and which one resolves is not predictable from here.
-        // This site and CeAutorunScriptGenerator's twin were the last two holdouts
-        // of the B33 rule that eight other emitters already follow; the .CT's own
-        // copy of this pre-check has used ue5_findMailbox() (both spellings) all
-        // along, so the three routes had drifted apart. A miss here is silent and
-        // it is NOT harmless: `pre` stays nil, a serving DLL is misread as "parked",
-        // and UE5_AutoStart is fired at a pipe that is already up.
+        // A miss here is silent and it is NOT harmless: `pre` stays nil, a serving
+        // DLL is misread as "parked", and UE5_AutoStart is fired at a pipe that is
+        // already up.
         Line(sb, "  local mbNow = getAddressSafe('g_invokeMailbox')");
         Line(sb, "  if not mbNow or mbNow == 0 then mbNow = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "  local pre = nil");

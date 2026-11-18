@@ -5,11 +5,11 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// What a CONVENIENCE copy -- an address, a path, a name -- says when the clipboard refused the write.
 ///
-/// <para>These copies end in a status line naming what was copied, and that line used to be set whatever
-/// <see cref="IPlatformService.CopyToClipboardAsync"/> returned. Its bool is the only failure signal (it never throws
-/// for an ordinary clipboard failure, [PASTECRASH-2026-08-18]), so a refused write still read "Copied 7FF6...": the
-/// user then pastes the PREVIOUS clipboard into Cheat Engine instead of re-clicking. Each such site now claims the
-/// copy only on true and shows this line, on the same status line, on false.</para>
+/// <para>These copies end in a status line naming what was copied. The bool
+/// <see cref="IPlatformService.CopyToClipboardAsync"/> returns is the only failure signal (it never throws for an
+/// ordinary clipboard failure, [PASTECRASH-2026-08-18]); a refused write that still read "Copied 7FF6..." would have
+/// the user paste the PREVIOUS clipboard into Cheat Engine instead of re-clicking. Each such site claims the copy
+/// only on true and shows this line, on the same status line, on false.</para>
 ///
 /// <para>Kept apart from <see cref="ClipboardDelivery"/>: that type is for a generated script whose loss runs the
 /// wrong script, and its gate's predicate is that payload. A copy that makes no claim at all needs nothing here.</para>

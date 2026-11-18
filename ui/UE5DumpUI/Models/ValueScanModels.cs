@@ -209,7 +209,7 @@ public class ValueScanWindowResult
     public List<ValueCandidate> Candidates { get; set; } = new();
 }
 
-// ===================== Multiple values group scan (build 1276) =====================
+// ===================== Multiple values group scan =====================
 
 /// <summary>
 /// One input value row of a "Group" scan (2..4 rows). The user supplies a value,

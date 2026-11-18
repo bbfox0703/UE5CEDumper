@@ -687,19 +687,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
     /// entries in place (the live address) and needs new rows to repaint.</param>
     private void ApplyFilter(bool filterEdit = false)
     {
-        // R4 — the last panel not using the shared space=AND helpers. Splitting on ' '
-        // alone missed tab/newline-separated input (pasting a column out of a
-        // spreadsheet), and hand-rolling the match is how a rule drifts.
+        // The shared space=AND helpers: splitting on ' ' alone misses tab/newline-separated
+        // input (pasting a column out of a spreadsheet), and hand-rolling the match is how
+        // a rule drifts.
         //
-        // MEASURED before choosing the shape (500K entries, 3 terms, mean of 5 passes):
-        //   concat haystack + Ordinal           26.7 ms   <- what this used to do
-        //   FOUR fields + OrdinalIgnoreCase     55.1 ms   <- 2x WORSE
-        //   concat haystack + OrdinalIgnoreCase 25.8 ms   <- chosen
-        // All three produced identical hit counts. So the four-field split the audit
-        // suggested as the ideal shape is rejected ON A NUMBER, not on taste: this panel
-        // is the one that loads a whole offline dump, and doubling its filter cost to
-        // satisfy a rule whose observable behaviour is already identical would be a bad
-        // trade. The single pre-lowered haystack IS the field-OR set, concatenated at
+        // One concatenated haystack, not a per-field match: this panel loads a whole
+        // offline dump, the per-field shape is the slower one, and the hits are identical.
+        // The single pre-lowered haystack IS the field-OR set, concatenated at
         // parse time.
         var terms = ObjectTreeFilter.SplitTerms(SearchText);
 
@@ -758,7 +752,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private static string BuildHeader(DumpFileModel model)
     {
         var m = model.Meta;
-        // Structs and enums only when the file has them: a dump from before build 3620 has neither.
+        // Structs and enums only when the file has them: an older dump has neither.
         var counts = $"{model.ClassCount:N0} classes";
         if (model.StructCount > 0) counts += $" · {model.StructCount:N0} structs";
         if (model.EnumCount > 0) counts += $" · {model.EnumCount:N0} enums";

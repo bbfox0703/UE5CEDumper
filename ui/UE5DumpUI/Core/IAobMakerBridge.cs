@@ -43,8 +43,7 @@ public interface IAobMakerBridge
     /// [W1-PIPEBUSY-STATUS] Why the most recent connect attempt (by ANY method — every call reconnects) failed, or
     /// <see cref="AobMakerFailure.None"/> after a success. Leaves the <c>bool</c> contracts untouched: callers that
     /// only need "reachable?" keep reading <see cref="IsAvailable"/>; the status text reads this to pick the remedy.
-    /// The default serves doubles that model availability only — it is the pre-fix reading, where every failure
-    /// meant "not running".
+    /// The default serves doubles that model availability only: every failure reads as "not running".
     /// </summary>
     AobMakerFailure LastFailure => IsAvailable ? AobMakerFailure.None : AobMakerFailure.Absent;
 

@@ -89,11 +89,11 @@ public static class FieldValueConverter
 
     /// <summary>
     /// Decide how to write a bool. [A3-BOOL-NATIVE-NOWRITE]
-    /// <para>This used to be implicit: every bool went through <see cref="ApplyBoolMask"/>, and a
-    /// native bool arrives with mask 0 (the DLL publishes a mask only for a single bit), so the
-    /// editor wrote back the byte it had just read and printed "Written". The DLL now marks the
-    /// native layout explicitly (<c>bool_native</c>); everything else without a single-bit mask is
-    /// refused, never guessed.</para>
+    /// <para>Explicit, not left to <see cref="ApplyBoolMask"/>: a native bool arrives with mask 0
+    /// (the DLL publishes a mask only for a single bit), so masking it would write back the byte
+    /// just read and report "Written". The DLL marks the native layout explicitly
+    /// (<c>bool_native</c>); everything else without a single-bit mask is refused, never
+    /// guessed.</para>
     /// </summary>
     public static BoolWriteMode PlanBoolWrite(bool native, int fieldMask)
         => native ? BoolWriteMode.NativeByte
@@ -267,14 +267,12 @@ public static class FieldValueConverter
         // Convert to bytes based on field size
         var size = fieldSize > 0 ? fieldSize : 1;
 
-        // Range-check BEFORE masking (audit #5 AE1). These `& 0xFF` / `& 0xFFFF` /
-        // `& 0xFFFFFFFF` casts used to be the only thing standing between an
-        // out-of-range value and the game: typing 9999 for a 1-byte enum wrote 15
-        // and the caller then reported "Written: Field = 9999". Every sibling
-        // converter in this file already refuses out-of-range and names the range
-        // (see TryConvertByte's "Invalid byte (range: 0 to 255)") — the enum path
-        // was the one that did not. The masks below stay, but are now unreachable
-        // for a value that does not fit.
+        // Range-check BEFORE masking. The `& 0xFF` / `& 0xFFFF` / `& 0xFFFFFFFF`
+        // casts below would silently truncate an out-of-range value: typing 9999 for
+        // a 1-byte enum would write 15 while the caller reports
+        // "Written: Field = 9999". Refused here and the range named, like the
+        // sibling converters (see TryConvertByte's "Invalid byte (range: 0 to 255)");
+        // the masks stay, but are unreachable for a value that does not fit.
         if (!FitsInWidth(rawValue, size))
         {
             return (false, Array.Empty<byte>(),

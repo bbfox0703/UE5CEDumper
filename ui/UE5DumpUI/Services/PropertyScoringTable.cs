@@ -54,40 +54,35 @@ public static class PropertyScoringTable
 
     // ------------------------------------------------------------------
     // Keyword tables (per category). Whole-token match against the
-    // property name via KeywordTokenizer — same lesson from build 609
-    // applies: substring matching causes acronym collisions ("Component"
-    // contains "MP") so token matching is the safe default.
+    // property name via KeywordTokenizer: substring matching causes acronym
+    // collisions ("Component" contains "MP"), so token matching is the safe
+    // default.
     // ------------------------------------------------------------------
 
     public const int StatsKeywordScore = 5;
     public static readonly string[] StatsKeywords =
     {
         // Health / mana / stamina / energy.
-        // "Hp" used to sit beside "HP" — a pre-tokenisation leftover. The
-        // tokeniser lowercases, so both spellings are exactly ["hp"] and one
-        // keyword was scored twice (+5 on every HP-named row, tooltip showing
-        // "keywords(2 hits)"), contradicting CountTokenHits' documented
-        // "each keyword counts once". Removed. Case variants are never needed;
-        // SPELLING variants (Defense/Defence, Coin/Coins) still are. (Z13)
+        // Case variants are never needed: the tokeniser lowercases, so "Hp"
+        // beside "HP" would both be exactly ["hp"] and score one keyword twice,
+        // contradicting CountTokenHits' documented "each keyword counts once".
+        // SPELLING variants (Defense/Defence, Coin/Coins) still are.
         "HP", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
         // Experience / level
         "XP", "Exp", "Experience", "Level", "Lv", "Lvl",
         // Alive / dead state — IsDead / bIsAlive are very common BP-added
         // boolean cheat targets on character classes.
         //
-        // The compound forms are a SPECIFICITY weight, not a match requirement,
-        // and the comment here used to claim otherwise ("include both forms" —
-        // as if "IsDead" were needed to match `IsDead`). It is not: "IsDead"
-        // tokenises to ["is","dead"], and CountTokenHits is a subset test, so
-        // "Dead" alone already matches `IsDead`, `bIsDead` and `IsDead_2`.
+        // The compound forms are a SPECIFICITY weight, not a match requirement:
+        // "IsDead" tokenises to ["is","dead"], and CountTokenHits is a subset test,
+        // so "Dead" alone already matches `IsDead`, `bIsDead` and `IsDead_2`.
         // What the compound buys is one EXTRA hit when the explicit boolean
         // prefix is present, separating `bIsDead` (certainly a life-state flag)
         // from `DeadZone` / `DeadReckoning` (which match "Dead" and nothing
         // else). Same deliberate device as CritDamage beside Crit+Damage,
         // JumpHeight beside Jump, and InitialLifeSpan beside LifeSpan below —
-        // and distinct from the exact DUPLICATE removed above, which fires on
-        // identical input and can express no such difference. Kept; only the
-        // justification is corrected. (audit #5 Z14)
+        // and distinct from an exact case DUPLICATE (see above), which fires on
+        // identical input and can express no such difference.
         "Dead", "IsDead", "Alive", "IsAlive",
         // General resource bars / regeneration
         "Regen", "Regenerate", "Max",  // "Max" is per-token; only fires on
@@ -231,11 +226,11 @@ public static class PropertyScoringTable
     /// keyword still surfaces (mirrors <see cref="GasAttributeBonus"/>).</summary>
     public const int TimeStructBonus = 4;
 
-    // PropertyFlags gating (P2b). Persistent / designer-facing fields are more
+    // PropertyFlags gating. Persistent / designer-facing fields are more
     // likely a real cheat target; editor-only fields never are. Conservative
     // on purpose — NO Transient/Net penalty, since current HP is very often
     // transient + replicated (GAS-derived). Needs the DLL's prop_flags field
-    // (search_properties/_batch, build 2017+); 0 on older DLLs → no effect.
+    // (search_properties/_batch); 0 from a DLL that does not send it → no effect.
     public const int SaveGameBonus = 2;          // CPF_SaveGame — persisted player data (Gold/Level/…)
     public const int BlueprintVisibleBonus = 1;  // CPF_BlueprintVisible — designer/BP exposed
     public const int EditorOnlyPenalty = -4;     // CPF_EditorOnly — never a live runtime value

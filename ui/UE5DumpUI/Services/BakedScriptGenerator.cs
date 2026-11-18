@@ -68,21 +68,17 @@ public static class BakedScriptGenerator
     /// <summary>
     /// Byte width of verify mode's Before/After hex dump.
     ///
-    /// <para>It used to be a flat <c>max(8, min(parmsSize, 32))</c> — which, whenever the
-    /// return slot sat past byte 32, produced a dump that could not possibly contain the
-    /// value the very next printed line told the user to read out of it ("complex return;
-    /// see After: dump above"). A return slot at offset 32+ is the ordinary case, not an
-    /// edge one: the return is the LAST param, so any function with two 8-byte inputs and
-    /// an <c>FString</c> return already clears 32 (audit #5 Y13).</para>
+    /// <para>The dump has to reach the return slot: the very next printed line tells the user
+    /// to read the value out of it ("complex return; see After: dump above"). A return slot at
+    /// offset 32+ is the ordinary case, not an edge one: the return is the LAST param, so any
+    /// function with two 8-byte inputs and an <c>FString</c> return already clears 32.</para>
     ///
     /// <para>Grows to cover <c>returnParam.Offset + Size</c>, then clamps: never past the
     /// function's own <c>parmsSize</c> (reading beyond it would show mailbox fields as if
-    /// they were params), never past <see cref="MaxDumpBytes"/>, and never below 8 — the
-    /// last of which preserves the old behaviour for a tiny params buffer.</para>
+    /// they were params), never past <see cref="MaxDumpBytes"/>, and never below 8.</para>
     ///
-    /// <para>⚠ One deliberate difference from the old expression: a <c>parmsSize</c> of 0
-    /// (a no-arg void function) now yields the 32-byte default rather than 8. There is no
-    /// declared size to clamp to, the dump is read-only <c>readByte</c> with an <c>or 0</c>
+    /// <para>A <c>parmsSize</c> of 0 (a no-arg void function) yields the 32-byte default.
+    /// There is no declared size to clamp to, the dump is read-only <c>readByte</c> with an <c>or 0</c>
     /// fallback, and 32 bytes of the shared params region is the more useful diagnostic —
     /// the whole point of verify mode being to show what the previous invoke left behind.</para>
     /// </summary>
@@ -732,8 +728,8 @@ public static class BakedScriptGenerator
     /// <para>Defined by RUNNING the real renderer rather than re-deriving the rule, so it
     /// cannot disagree with what the script actually contains — a second parser here is
     /// how "the report and the reality are computed by different code paths" gets
-    /// re-introduced. Its caller is the dialog's export message, which used to announce
-    /// "N baked param(s)" over params that had failed to parse (audit #5 Y14).</para>
+    /// re-introduced. The dialog's export message uses it to name the params that failed to
+    /// parse instead of reporting a clean "N baked param(s)".</para>
     /// </summary>
     public static bool IsUnparsedLiteral(string ueTypeName, string text)
         => RenderLiteral(ueTypeName, text).StartsWith(UnparsedMarker, StringComparison.Ordinal);
@@ -742,7 +738,7 @@ public static class BakedScriptGenerator
         => $"{UnparsedMarker}{EscapeLuaComment(raw)}]] 0";
 
     /// <summary>Shared with <see cref="ParamBufferBuilder"/> so the FIRE path and the exported
-    /// script parse the same inputs, negatives included (audit #5 Y2/Y5).</summary>
+    /// script parse the same inputs, negatives included.</summary>
     internal static bool TryParseHexOrDecimal(string text, out ulong value)
     {
         value = 0;
@@ -771,7 +767,7 @@ public static class BakedScriptGenerator
     }
 
     /// <summary>Shared with <see cref="ParamBufferBuilder"/> so the FIRE path and the exported
-    /// script accept the SAME spellings -- they used to disagree (audit #5 Y3).</summary>
+    /// script accept the SAME spellings.</summary>
     internal static bool? ParseBoolLiteral(string text) => text.ToLowerInvariant() switch
     {
         "true" or "1" or "yes" or "on"  => true,
@@ -786,10 +782,9 @@ public static class BakedScriptGenerator
     public static string ShortTypeNameForComment(string typeName)
         => ShortTypeNameForComment(typeName, 0);
 
-    /// <summary>Size-aware form. Only <c>EnumProperty</c> consults the size — the
-    /// comment used to hardcode <c>enum(int32)</c>, so after Y16 corrected the WRITE
-    /// the generated script's own comment would have gone on asserting the old width
-    /// (audit #5 Y16, the cosmetic straggler folded in rather than filed).</summary>
+    /// <summary>Size-aware form. Only <c>EnumProperty</c> consults the size, so the
+    /// generated script's own comment states the width the WRITE uses rather than a
+    /// fixed <c>enum(int32)</c>.</summary>
     public static string ShortTypeNameForComment(string typeName, int size) => typeName switch
     {
         "EnumProperty"   => size switch
@@ -826,10 +821,8 @@ public static class BakedScriptGenerator
     /// Reached with user text via the string-param path in <see cref="FormatValue"/>.</summary>
     public static string EscapeLua(string s) => CeLuaHygiene.EscapeLuaString(s);
 
-    // R2: the body used to live here, hand-copied. Its own comment said "keep them
-    // mirrors" — which is a divergence being maintained by hand, and there is no
-    // reason for two implementations of one escape table. The name stays so callers
-    // and tests do not churn; the behaviour is now defined in exactly one place.
+    // A forwarder: the escape table is defined in exactly one place,
+    // CeLuaHygiene.EscapeLuaString, never hand-copied here.
 
     /// <summary>Escape for embedding in a Lua block comment <c>--[[...]]</c>.
     /// Breaks EVERY closing long bracket -- <c>]]</c>, <c>]=]</c>, <c>]==]</c>, any

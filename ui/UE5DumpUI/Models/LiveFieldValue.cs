@@ -94,30 +94,27 @@ public sealed class ArrayElementsResult
 /// <remarks>
 /// ⚠ <b>Row objects SURVIVE a refresh.</b> [LWREFRESH-2026-08-21]
 ///
-/// <para>Live Walker's refresh used to assign <c>Fields[i] = newFields[i]</c> under a comment
-/// claiming it "preserves scroll position". Measured on DumperTest, it does the opposite: the
-/// <c>DataGridCollectionView</c> splits each indexer assignment into Remove+Add and the grid ends
-/// up <b>exactly one row higher</b> per Refresh, cumulatively — which is the reported "the match
-/// sits one row below the viewport". Disabling the assignment entirely made the drift vanish;
-/// replacing the loop with a single Clear+Add was worse still (it jumps to the top).</para>
+/// <para>Live Walker's refresh must not assign <c>Fields[i] = newFields[i]</c>: the
+/// <c>DataGridCollectionView</c> splits each indexer assignment into Remove+Add, so the grid ends
+/// up <b>exactly one row higher</b> per Refresh, cumulatively; a single Clear+Add jumps it to the
+/// top.</para>
 ///
-/// <para>So the refresh now copies values onto the EXISTING row via
+/// <para>So the refresh copies values onto the EXISTING row via
 /// <see cref="CopyLiveValuesFrom"/>, and the members that can differ between two walks of the same
 /// object are observable so the cells still repaint. The structural ones stay <c>init</c> on
 /// purpose. That is sound only because the in-place branch reuses the rows solely for the SAME
 /// object (address AND class) with the SAME row layout (<c>Name</c>, <c>Offset</c>,
 /// <c>TypeName</c>, <c>Size</c> and guessed-ness, row by row; a guessed row's <c>TypeName</c> is
-/// compared without its value-driven <c>?</c>). It used to check just the count and the first name,
-/// which let another instance of the same class — and moved Guess? rows — keep this row's
-/// <c>init</c> members, the absolute <c>StructDataAddr</c> among them.
-/// [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT]</para>
+/// compared without its value-driven <c>?</c>). A looser check would let another instance of the
+/// same class — or moved Guess? rows — keep this row's <c>init</c> members, the absolute
+/// <c>StructDataAddr</c> among them. [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT]</para>
 ///
 /// <para>⚠ A few members CAN change on the same object with the same layout — the map/set element
 /// lists, the container data addresses with the map/set geometry published beside them, and
 /// <c>PtrClassAddr</c>. They are <c>init</c> to the outside but backed by plain fields that
 /// <see cref="CopyLiveValuesFrom"/> refreshes, so a same-object refresh takes them too.
-/// <c>ArrayElements</c> was already publicly settable (the array drill persists fetched elements
-/// onto it) and is refreshed there as well. [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS]</para>
+/// <c>ArrayElements</c> is publicly settable (the array drill persists fetched elements onto it)
+/// and is refreshed there as well. [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS]</para>
 /// </remarks>
 public sealed partial class LiveFieldValue : ObservableObject
 {
@@ -266,7 +263,8 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>For ArrayProperty (Phase G soft arrays): byte offset of FSoftObjectPath inside the TSoftObjectPtr element.
     /// 0x10 up to UE 5.2, 0x08 from UE 5.3 — which deleted TPersistentObjectPtr::TagAtLastTest.
-    /// Measured DLL-side from the property's ElementSize; 0 = not a soft array (or a pre-fix DLL, where 0x10 is the only safe assumption).
+    /// Derived DLL-side from the property's ElementSize; 0 = not a soft array, or a DLL that does not send it,
+    /// where 0x10 is the only safe assumption.
     /// ⚠ Do not bake 0x10: on any UE 5.3+ title that reads AssetName where PackageName should be.</summary>
     public int SoftArrayPathOffset { get; init; }
 
@@ -327,14 +325,13 @@ public sealed partial class LiveFieldValue : ObservableObject
     private int _mapValueOffset;
 
     /// <summary>
-    /// For MapProperty: the TSparseArray slot stride the DLL actually used to read these elements.
-    /// 0 = the DLL did not supply one (older DLL, or element data was not read).
+    /// For MapProperty: the TSparseArray slot stride the DLL read these elements with.
+    /// 0 = the DLL did not supply one (a DLL that does not send it, or element data was not read).
     /// <para>
     /// Never recompute this client-side. The real formula is
     /// <c>Align(Align(pairSize, alignof(TPair)) + 8, alignof(TPair))</c> and the alignments do not
-    /// cross the wire, so a client-side copy can only guess — which is exactly how three separate
-    /// C# copies silently went stale when the DLL's own formula was corrected (audit #5 V2).
-    /// Go through <see cref="ContainerGeometry.MapStrideOf"/>.
+    /// cross the wire, so a client-side copy can only guess, and goes stale silently whenever the
+    /// DLL's formula changes. Go through <see cref="ContainerGeometry.MapStrideOf"/>.
     /// </para>
     /// <para>Published only when the map had elements, so <see cref="CopyLiveValuesFrom"/> takes it
     /// WITH the element list: fresh elements under a first-walk zero stride would fall back to the
@@ -455,8 +452,8 @@ public sealed partial class LiveFieldValue : ObservableObject
     {
         // [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS] The container data and the
         // pointer's class go in FIRST, and silently (plain fields), so every notification below
-        // repaints from the NEW data. ArrayElements used to be assigned LAST: ArrayCount's repaint
-        // rendered the new count over the old list, and the list itself raised nothing.
+        // repaints from the NEW data. ArrayElements assigned after ArrayCount would let ArrayCount's
+        // repaint render the new count over the old list, and the list itself raises nothing.
         // The geometry and the data address travel WITH the element lists, never alone: the DLL
         // publishes the map/set stride and value offset only when the container had elements, and
         // the data address whenever the allocation exists (Data != 0, even at count 0). A fresh
@@ -615,19 +612,16 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// delegate on a checked build.
     /// </summary>
     /// <remarks>
-    /// ⛔ THE TWO ARE NOT INTERCHANGEABLE, and conflating them is a real defect this repo
-    /// shipped. UE 5.3+ puts an 8-byte <c>FMRSWRecursiveAccessDetector</c> in front of every
-    /// delegate payload when <c>DO_CHECK</c> is on, so on a Development build the field
-    /// STARTS at <c>FieldAddress</c> but its <c>InvocationList</c> starts 8 bytes later.
+    /// ⛔ THE TWO ARE NOT INTERCHANGEABLE. UE 5.3+ puts an 8-byte
+    /// <c>FMRSWRecursiveAccessDetector</c> in front of every delegate payload when <c>DO_CHECK</c>
+    /// is on, so on a Development build the field STARTS at <c>FieldAddress</c> but its
+    /// <c>InvocationList</c> starts 8 bytes later.
     /// <para>
-    /// <c>CeXmlExportService.CeOffset</c> has always got this right — the exported record for
+    /// <c>CeXmlExportService.CeOffset</c> follows the same split — the exported record for
     /// <c>Multicast_Inline (980)</c> carries <c>&lt;Address&gt;+988&lt;/Address&gt;</c>, i.e.
-    /// the description names the FIELD offset while the address names the PAYLOAD. The two
-    /// one-click buttons beside each row did not: measured 2026-09-09
-    /// (<c>[CEPATHS-UNPADDED-2026-09-09]</c>), the HEX button logged
-    /// <c>"AOBMaker: navigated hex view to 1ED06BBD460"</c> — the access detector, which reads
-    /// 0 — where the exported record resolved to <c>0x1ED33872F80</c>, the real invocation
-    /// list.
+    /// the description names the FIELD offset while the address names the PAYLOAD. The one-click
+    /// buttons beside each row go through this property for the same reason: the unpadded address
+    /// is the access detector, which reads 0. [CEPATHS-UNPADDED-2026-09-09]
     /// </para>
     /// ⚠ <see cref="FieldAddress"/> stays UNPADDED and is what the Address column shows,
     /// deliberately: it is the address of the FIELD, which is what a reader comparing against
@@ -671,13 +665,13 @@ public sealed partial class LiveFieldValue : ObservableObject
         {
             // [LW-EDIT-RETYPE-DROP] The pending text first. The editor's TwoWay binding re-reads
             // this getter after every value it writes, and skips a keystroke whose text equals
-            // what it last read. Returning the LIVE value here made retyping the value on screen
-            // lose its final keystroke -- typing 1234568 over 1234568 wrote 123456 (measured,
-            // build 3568) -- and let a refresh repaint the box under the user's typing.
+            // what it last read. Returning the LIVE value here would make retyping the value on
+            // screen lose its final keystroke, and let a refresh repaint the box under the user's
+            // typing.
             // Keyed on "the editor has written", not on the text being non-empty: falling back to
-            // the live value for "" refilled the box the moment the user deleted its last
-            // character (measured on build 3569). ResetPendingEdit at edit begin clears the flag,
-            // so the editor still opens on the live value.
+            // the live value for "" would refill the box the moment the user deletes its last
+            // character. ResetPendingEdit at edit begin clears the flag, so the editor still opens
+            // on the live value.
             if (_editTouched)
                 return _editableValue;
             if (TypeName == "BoolProperty")

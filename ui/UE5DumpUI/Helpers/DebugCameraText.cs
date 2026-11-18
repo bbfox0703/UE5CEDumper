@@ -9,14 +9,14 @@ namespace UE5DumpUI.Helpers;
 /// <para>The two directions are not symmetric. A queued ON still turns the camera on when it drains. A queued OFF
 /// does not turn it off on stock UE 4.18-5.7: it drains as a toggle on the ORIGINAL controller's CheatManager, whose
 /// outer is not the debug camera controller, so the stock toggle calls EnableDebugCamera, which does nothing once that
-/// controller has lost its Player -- only the swap back a COMPLETED OFF escalates to turns the camera off (L83,
-/// measured on DumperTest 5.4 Development). Escalating on the queued result instead is the fix the 2026-08-13 audit
-/// refuted: the toggle that drains after the swap turns the camera back on.</para>
+/// controller has lost its Player -- only the swap back a COMPLETED OFF escalates to turns the camera off (L83).
+/// Escalating on the queued result instead is wrong: the toggle that drains after the swap turns the camera back
+/// on.</para>
 ///
 /// <para>[DBGCAM-QUEUEDON-UNDO-TEXT] A queued ON still says not to press again, and the reason is only that the toggle
 /// is already queued. What a second queued toggle does when it drains depends on the engine: on stock UE 4.18-5.7 it
 /// lands on the same CheatManager and does nothing, for the reason above; UE 5.8 (source-read) can turn the camera back
-/// off. So "a second toggle would undo the first" held only on some engines.</para>
+/// off. So "a second toggle would undo the first" holds only on some engines.</para>
 /// </summary>
 internal static class DebugCameraText
 {
@@ -34,8 +34,8 @@ internal static class DebugCameraText
     internal const string KeyOnTemplate = "str.DbgCam.OnTemplate";
 
     /// <summary>[INVOKE-NONSTATIC-ON-CDO] A Force's status, plus the DLL's warning when the toggle ran on the
-    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there. Only a DLL
-    /// from builds 3676-3681 sends it; a newer one refuses that ON (<see cref="NoLiveCheatManagerText"/>).</summary>
+    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there. Only some
+    /// older DLLs send it; a current one refuses that ON (<see cref="NoLiveCheatManagerText"/>).</summary>
     internal static string WithTemplateNote(string status, bool? onTemplate)
         => onTemplate == true ? status + " " + OnTemplateText : status;
 
@@ -54,7 +54,7 @@ internal static class DebugCameraText
 
     internal const string KeyForceFailed = "str.DbgCam.ForceFailed";
 
-    /// <summary>[DEBUGCAM-FORCEON-CDO] A Force answered -1. It no longer means "no live CheatManager" (that is
+    /// <summary>[DEBUGCAM-FORCEON-CDO] A Force answered -1. It does not mean "no live CheatManager" (that is
     /// <see cref="NoLiveCheatManagerText"/>): the state did not read, or the toggle failed.</summary>
     internal static string ForceFailed(bool wantOn) => AobMakerStatus.Say(KeyForceFailed,
         "Force {0} failed: the Debug Camera state could not be read, or the toggle failed (see the DLL log).",

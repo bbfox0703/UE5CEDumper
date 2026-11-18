@@ -161,7 +161,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
 
     // "Locate in GWorld" is intentionally NOT gated on a C# GWorld-available
     // flag: the DLL's find_path is the source of truth, and gating the button on
-    // a stale C# flag previously produced a silent no-op (build 1311). The
+    // a stale C# flag makes it a silent no-op. The
     // LiveWalker handler reports availability via its own StatusText.
     [RelayCommand]
     private void LocateRowInGWorld(RelatedObject? row)

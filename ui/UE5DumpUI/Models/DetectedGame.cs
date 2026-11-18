@@ -99,7 +99,7 @@ public sealed partial class DetectedGame : ObservableObject
     /// "stale · loaded 2026-07-01", or "not observed" — computed from the per-process log
     /// folder the DLL creates on load (see <c>ProxyImportAnalyzer.ClassifyLoad</c>). A folder another
     /// listed game logs into as well gets a leading "shared · " (<c>ProxyDeployService.ComputeLoadObservation</c>):
-    /// the marks LEAD because the column clips the end (R8-01, ninth review R9-03).
+    /// the marks LEAD because the column clips the end.
     ///
     /// <para><b>Orthogonal to <see cref="Status"/>, which is DISK state only.</b>
     /// <c>DeployedCurrent</c> + "not observed" is precisely the <c>[PROXYLOAD-2026-08-17]</c>

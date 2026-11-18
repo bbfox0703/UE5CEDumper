@@ -46,7 +46,7 @@ public sealed class PivotClassInfo
     public string Display => $"{ClassName}  ({InstanceCount:N0})";
 }
 
-/// <summary>One numeric field of a pivot class, with cardinality stats used to
+/// <summary>One numeric field of a pivot class, with the cardinality stats that
 /// rank key candidates and suggest value fields.</summary>
 public sealed class PivotFieldInfo
 {

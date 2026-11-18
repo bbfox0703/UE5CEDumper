@@ -39,7 +39,7 @@ public static class SpcEngine
                 if (!AbsMatches(abs[i], num[i], declaredType, mode)) return false;
 
         // Directional chain: snapshot i vs i-1. Index 0 is the baseline (Any). The
-        // rounding mode (build 1672) compares the DISPLAYED (reduced) values for Float/
+        // rounding mode compares the DISPLAYED (reduced) values for Float/
         // Double leaves so sub-display jitter is "unchanged"; integer / non-finite leaves
         // keep byte-exact hex for Changed/Unchanged (no >2^53 double-precision regression).
         for (int i = 1; i < n; i++)

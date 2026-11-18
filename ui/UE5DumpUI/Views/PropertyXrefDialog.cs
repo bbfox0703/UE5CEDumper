@@ -462,19 +462,16 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         var bridge = SharedAobMaker;
         if (bridge == null || !bridge.IsAvailable)
         {
-            // ⛔ THIS USED TO BE A BARE `return` — a click that did nothing, said nothing, and
-            // left the previous status line standing. The button is normally disabled in this
+            // ⛔ NOT a bare `return` — that is a click that does nothing, says nothing, and
+            // leaves the previous status line standing. The button is normally disabled in this
             // state (`ShowForClassAsync` gates it on the same cached flag), so the guard reads defensive; but
             // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
             // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
-            // Engine with the dialog up and the button stays enabled over a stale true, and the
-            // click vanished silently.
+            // Engine with the dialog up and the button stays enabled over a stale true.
             //
-            // Found 2026-09-09 while scouting SW5, whose acceptance ("with Cheat Engine closed,
-            // Push to CE disassembler must produce the RED ...") was therefore unreachable as
-            // written. Reporting it makes the failure visible to a user AND makes that row
-            // testable. Same colour and shape as the refusal branch below, different wording
-            // because nothing was attempted: there is no push for CE to have refused.
+            // Reporting it makes the failure visible to a user AND testable. Same colour and
+            // shape as the refusal branch below, different wording because nothing was
+            // attempted: there is no push for CE to have refused.
             _statusLabel.Text = "Cheat Engine is not reachable — nothing was pushed. The "
                               + "connection was open when this dialog was opened; reopen it "
                               + "after restarting Cheat Engine with the AOBMaker plugin.";

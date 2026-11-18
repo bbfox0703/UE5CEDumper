@@ -160,11 +160,11 @@ public static class CeLuaHygiene
     /// <c>hadError</c> in a flat block), so the emitter does not assume one. (R3)</para>
     ///
     /// <para>The bound is a REAL <c>getTickCount()</c> deadline, for the same reason
-    /// <see cref="AppendMailboxWait"/>'s is: this loop also counted <c>sleep(1)</c>
-    /// iterations against a millisecond constant, and <c>sleep(1)</c> costs 15.47 ms in
-    /// CE. Locals are <c>_idle</c>-prefixed because a generator emits this AND the
-    /// status wait into the same Lua scope (TeleportScriptGenerator, CoordLibrary), so
-    /// the two must not share names.</para>
+    /// <see cref="AppendMailboxWait"/>'s is: <c>sleep(1)</c> costs 15.47 ms in CE, so
+    /// counting its iterations against a millisecond constant is no clock. Locals are
+    /// <c>_idle</c>-prefixed because a generator emits this AND the status wait into the
+    /// same Lua scope (TeleportScriptGenerator, CoordLibrary), so the two must not share
+    /// names.</para>
     /// </summary>
     public static void AppendIdleWait(StringBuilder sb, string mbExpr, string onBusy,
                                       string indent = "", string? onUnreadable = null)
@@ -572,19 +572,17 @@ public static class CeLuaHygiene
     /// shape rather than as a one-liner.
     ///
     /// <para><b>Why this exists rather than calling <see cref="AppendIdleWait"/>
-    /// directly (audit #5 AA10).</b> Seven of the eleven mailbox emitters had NO idle
-    /// wait at all: they sampled nothing and wrote straight over whatever command was in
-    /// flight. The four that did have one are all helper-shaped
-    /// (<c>return nil, reason</c>), so there was no toggle-shaped precedent to copy —
-    /// and hand-rolling one per generator is precisely how build 2743's three defects
-    /// reached all seven copies of the mailbox wait at once.</para>
+    /// directly.</b> An emitter without an idle wait samples nothing and writes straight
+    /// over whatever command is in flight. A toggle needs a toggle-shaped bail (message,
+    /// untick, return) rather than a helper's <c>return nil, reason</c>, and one shared
+    /// emitter keeps that bail identical across generators instead of one hand-rolled
+    /// copy per generator.</para>
     ///
     /// <para>The bail is emitted across SEPARATE LINES on purpose. Squeezing
     /// <c>showMessage(...); if memrec then ... end; return</c> onto the single line
     /// <see cref="AppendIdleWait"/> interpolates into makes it invisible to
     /// <c>CeMailboxBailoutTests</c>, which scans line-by-line for an untick FOLLOWING
-    /// each message. That test caught this the first time it was written the short way,
-    /// and it was right to: the one-liner is also unreadable in CE's editor.</para>
+    /// each message. The one-liner is also unreadable in CE's editor.</para>
     ///
     /// <para>Placement is the caller's job and it matters: this belongs ABOVE the
     /// operand writes, not merely above the status clear. Writing operands into a
@@ -623,27 +621,22 @@ public static class CeLuaHygiene
     /// <summary>
     /// Emit the mailbox round-trip's WAIT loop plus its bail-out. Every generator that
     /// talks to <c>g_invokeMailbox</c> must use this rather than hand-rolling the loop,
-    /// because three separate things were wrong in all seven hand-rolled copies and a
-    /// per-file fix would only have drifted again.
+    /// so the three rules below cannot drift apart file by file.
     ///
     /// <list type="number">
-    /// <item><b>The checkbox lied.</b> Every copy cleared <c>memrec.Active</c> on the
-    /// "mailbox not found" path and none cleared it on the timeout path, so a timed-out
-    /// enable left the CE row TICKED with nothing applied. Same class as the audit's
-    /// B30/B40, which was fixed in <c>UE5CEDumper.CT</c> and
-    /// <c>CeInjectScriptGenerator</c> and never propagated here.</item>
+    /// <item><b>The checkbox must not lie.</b> A record-owning mode's timeout path unticks the
+    /// record, directly or through the caller's deferred timer (see <paramref name="onTimeout"/>),
+    /// so a timed-out enable does not leave the CE row TICKED with nothing applied.</item>
     ///
-    /// <item><b>The message blamed the wrong thing.</b> "(DLL not responding?)" was a
-    /// guess, and the mailbox already holds the answer: <c>status</c> is still
-    /// <see cref="CeMailboxLayout.StatusIdle"/> when the DLL never saw the command
-    /// (stale mailbox address / poller down) and
+    /// <item><b>The message must not guess.</b> The mailbox already holds the answer:
+    /// <c>status</c> is still <see cref="CeMailboxLayout.StatusIdle"/> when the DLL never
+    /// saw the command (stale mailbox address / poller down) and
     /// <see cref="CeMailboxLayout.StatusProcessing"/> when it took the command and
-    /// wedged. Measured 2026-08-06 on ES2: a real timeout occurred while the DLL's
-    /// poller was demonstrably alive at 1 ms, so the message sent the user to inspect a
-    /// healthy DLL.</item>
+    /// wedged. A guess such as "(DLL not responding?)" sends the user to inspect a
+    /// healthy DLL whenever the command never reached it.</item>
     ///
-    /// <item><b>The timeout was 15.5x its stated value.</b> The loop counted
-    /// <c>sleep(1)</c> iterations; <c>sleep(1)</c> measures 15.47 ms in CE. See
+    /// <item><b>The timeout is real time.</b> <c>sleep(1)</c> costs about 15.47 ms in CE,
+    /// so an iteration count is no clock. See
     /// <see cref="CeMailboxLayout.MailboxPollTimeoutMs"/>. This emits a real
     /// <c>getTickCount()</c> deadline, with the iteration count kept only as a fallback
     /// for a CE build that lacks it.</item>
@@ -665,8 +658,8 @@ public static class CeLuaHygiene
     {
         string mb = "mb + " + CeMailboxLayout.OffStatus;
         // Keep Cheat Engine's window alive while we block. CE's Lua `sleep` is a bare Win32
-        // Sleep (LuaHandler.pas lua_sleep) and does NOT pump messages -- despite a comment
-        // in this repo that claimed it did -- so a 10 s wait froze CE for the full 10 s.
+        // Sleep (LuaHandler.pas lua_sleep) and does NOT pump messages, so without a pump a
+        // 10 s wait would freeze CE for the full 10 s.
         //
         // Prefer processMessagesPaintOnly. CE's own celua.txt calls processMessages "not
         // recommended" (timers and other scripts run during it and can modify locals), and
@@ -689,8 +682,7 @@ public static class CeLuaHygiene
         //   * Emitted after the re-read it would still terminate, but `_st` is sampled ONCE
         //     before the loop, so a round-trip that completes pays one extra sleep — 15.47 ms
         //     on every success — to leave a loop it already knows is done.
-        // Build 2769 shipped it above both. Pinned by
-        // CeLuaHygieneTests.Wait_loops_never_use_a_local_before_its_declaration and
+        // Pinned by CeLuaHygieneTests.Wait_loops_never_use_a_local_before_its_declaration and
         // ..._sleep_and_pump_inside_the_loop_body, which read POSITION, not substrings.
         sb.Append(indent).Append("  sleep(1); _pump(); _iters = _iters + 1\n");
         sb.Append(indent).Append("  _st = readInteger(").Append(mb).Append(")\n");
@@ -698,8 +690,8 @@ public static class CeLuaHygiene
         // `_st == nil` short-circuits the deadline: readInteger returns nil once the target
         // process is gone, and waiting the full timeout to say so helps nobody. It reaches
         // the caller's normal bail with the nil case named in _msg (AppendTimeoutReason).
-        // [A1-LUA-WAIT] One deadline, the helpers' if / elseif shape (see AppendIdleWait): the old
-        // `_st == nil or (_tick and (...) or (_iters >= N))` kept the iteration arm LIVE beside getTickCount.
+        // [A1-LUA-WAIT] One deadline, the helpers' if / elseif shape (see AppendIdleWait): an
+        // `_tick and (...) or (_iters >= N)` form would keep the iteration arm LIVE beside getTickCount.
         sb.Append(indent).Append("  local _over\n");
         sb.Append(indent).Append("  if _st == nil then _over = true\n");
         sb.Append(indent).Append("  elseif _tick then _over = (_tick() - _t0 >= ")
@@ -709,10 +701,8 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("  if _st ~= ").Append(CeMailboxLayout.StatusDone)
           .Append(" and _over then\n");
 
-        // ONE reason builder for every mode. It used to be three inline showMessage
-        // literals, which meant a mode that reports by value or by raise would have
-        // needed its own copy of the status table — and "two copies of a rule is how the
-        // timeout defect got into seven files" (CeMailboxLayout.cs).
+        // ONE reason builder for every mode, so a mode that reports by value or by raise
+        // needs no status table of its own.
         AppendTimeoutReason(sb, indent + "    ");
 
         switch (onTimeout)
@@ -754,20 +744,18 @@ public static class CeLuaHygiene
     /// bolts its own <c>[Tag]</c> on, and the by-value mode hands the bare reason to a
     /// caller that already has one.
     ///
-    /// <para>The whole point of the table is that it does not GUESS. "(DLL not
-    /// responding?)" blamed the DLL for the far more common case where the DLL never
-    /// received the command at all — measured on ES2 2026-08-06 with the DLL's poller
-    /// demonstrably alive at 1 ms — and the mailbox already answers the question:
-    /// <see cref="CeMailboxLayout.StatusIdle"/> means untouched (stale
+    /// <para>The whole point of the table is that it does not GUESS: the mailbox already
+    /// answers the question. <see cref="CeMailboxLayout.StatusIdle"/> means untouched (stale
     /// <c>g_invokeMailbox</c> address), <see cref="CeMailboxLayout.StatusProcessing"/>
-    /// means picked up and wedged. The two send the user to opposite places.</para>
+    /// means picked up and wedged. The two send the user to opposite places, and a guess
+    /// that blames the DLL is wrong whenever the DLL never received the command at all.</para>
     /// </summary>
     private static void AppendTimeoutReason(StringBuilder sb, string indent)
     {
         sb.Append(indent).Append("local _msg\n");
         // nil FIRST: it is not a status value, it is the absence of one. Every other branch
         // compares _st against a number, and in Lua `nil == 0` is false, so without this the
-        // dead-process case fell into the else and told the user its status was "nil".
+        // dead-process case would fall into the else and tell the user its status was "nil".
         sb.Append(indent).Append("if _st == nil then\n");
         sb.Append(indent).Append("  _msg = 'the mailbox could not be read.\\n\\n")
           .Append("The game process has most likely exited. If it is still running, ")
@@ -815,15 +803,13 @@ public static class CeLuaHygiene
     /// <para>While our script is running at (3), <c>fActive</c> is still <c>false</c>. So
     /// <c>memrec.Active = false</c> hits (1) — <c>state = fActive</c>, both false — and returns
     /// having changed nothing. Then (4) sets it true. The record ends up ticked no matter what the
-    /// bail-out asked for. Measured in CE 7.7 first, then confirmed against the 7.5 source: a
-    /// freeze record whose ENABLE bailed out with <c>helper not found</c> applied nothing (the
-    /// value kept ticking) yet read <c>Active=true</c> from CE's own Lua Engine.</para>
+    /// bail-out asked for.</para>
     ///
     /// <para>A <b>deferred</b> untick works because by the time the timer fires, (4) has already
     /// run: <c>state(false) ≠ fActive(true)</c> clears (1), and the activation is finished so
     /// (2) is clear too. This is the same mechanism that makes the momentary shape's
-    /// end-of-block timer work — it was never the "momentary" part that mattered, only the
-    /// deferral, which is why the stateful bail-outs needed it just as much.</para>
+    /// end-of-block timer work — the deferral is what matters, not the "momentary" part, so
+    /// the stateful bail-outs need it just as much.</para>
     ///
     /// <para>⚠ Emitted as ONE line on purpose. These scripts are read by users inside Cheat
     /// Engine, and this appears at 32 bail-out sites; six lines apiece would bury the actual
@@ -842,9 +828,7 @@ public static class CeLuaHygiene
     /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
     ///
     /// <para>The plain untick sets <c>Active = false</c>, and CE runs <c>[DISABLE]</c> for that. On a stateful toggle
-    /// that is a real "off" the user never asked for. Measured on build 3659: the Debug Camera record refused a tick
-    /// over a queued OFF (-6), and its untick then sent an OFF, which the DLL answered -5, and <c>[DISABLE]</c> raised
-    /// on it. The record stayed ticked under a dialog that had said "Tick again".</para>
+    /// that is a real "off" the user never asked for, sent for an enable that applied nothing.</para>
     ///
     /// <para>Not for a bail-out whose <c>[DISABLE]</c> unwinds something the <c>[ENABLE]</c> half-did (Dissect's
     /// failed registration): there the plain untick is the right one. Like it, the line must be armed AFTER any
@@ -876,7 +860,7 @@ public static class CeLuaHygiene
     }
 
     /// <summary>
-    /// A CE Lua GLOBAL table used to reference-count SLOT-backed registered symbols
+    /// A CE Lua GLOBAL table that reference-counts SLOT-backed registered symbols
     /// across the separate <c>[ENABLE]</c>/<c>[DISABLE]</c> Lua chunks (chunk locals
     /// do not cross, and CE's Lua state persists for the whole session — see
     /// docs/CE-Bugs-Minesweeper.md §5).
@@ -892,9 +876,9 @@ public static class CeLuaHygiene
 
     /// <summary>[A1-SLOTSYM-FAILED] Per-RECORD ownership beside the count: <c>UE5_slotSymHolders[sym][memrec.ID]</c>. CE
     /// runs a record's <c>[DISABLE]</c> on the deferred untick after every FAILED enable, and every enable bail returns
-    /// before the register step -- so a bare count let the failed record's release drop a live record's symbol. Not
-    /// <c>[B30-REOPEN]</c>'s one global boolean (records share Lua globals), and not a <c>getAddressSafe(sym)</c> guard
-    /// (A's registration makes it true for B too).</summary>
+    /// before the register step -- so a bare count would let the failed record's release drop a live record's symbol.
+    /// Not <c>[B30-REOPEN]</c>'s one global boolean (records share Lua globals), and not a <c>getAddressSafe(sym)</c>
+    /// guard (A's registration makes it true for B too).</summary>
     private const string SlotSymHolders = "UE5_slotSymHolders";
 
     /// <summary>

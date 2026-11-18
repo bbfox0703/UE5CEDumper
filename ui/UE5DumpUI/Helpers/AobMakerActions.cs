@@ -124,8 +124,8 @@ internal static class AobMakerActions
 
     /// <summary>
     /// [AOBM-EXPORT-GWORLD-AOB] Cheat Engine's name for an export the DLL found a pointer through, or "" when it
-    /// cannot be named. Measured on Satisfactory with CE 7.7 (2026-10-01): CE lists exports UNDECORATED, so
-    /// <c>?GWorld@@3VUWorldProxy@@A</c> resolves as <c>GWorld</c> and never under its MSVC name.
+    /// cannot be named. CE (7.7) lists exports UNDECORATED, so <c>?GWorld@@3VUWorldProxy@@A</c> resolves as
+    /// <c>GWorld</c> and never under its MSVC name.
     /// </summary>
     internal static string CeExportSymbol(string mangled)
     {

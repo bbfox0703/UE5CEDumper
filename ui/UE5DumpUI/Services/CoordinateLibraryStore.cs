@@ -150,8 +150,8 @@ public sealed class CoordinateLibraryStore
 
     /// <summary>[PATH-UI-LEGACY-QMARK] Whether <paramref name="key"/> EVER held a library: the main file or any of its
     /// backups (.bak, .preimport.bak, .preclear.bak). "Clear all" deletes the main file and keeps the backups, so
-    /// the main file alone cannot tell "never had one" from "the user emptied it" -- and the legacy carry-over used to
-    /// resurrect a cleared library on the next connect (second review, the [A1-COORD-RESURRECT] shape).</summary>
+    /// the main file alone cannot tell "never had one" from "the user emptied it" -- and judged by it, the legacy
+    /// carry-over would resurrect a cleared library on the next connect (the [A1-COORD-RESURRECT] shape).</summary>
     public bool EverHadLibrary(string key)
     {
         if (string.IsNullOrEmpty(key)) return false;

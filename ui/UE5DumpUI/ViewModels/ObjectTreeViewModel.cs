@@ -430,13 +430,12 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         // Supersede any in-flight full load before we replace _allNodes, so its
         // paging loop stops appending (otherwise search hits + full-list pages mix).
         //
-        // Then REPLACE the source. The old code cancelled `_loadCts` and never made a
-        // new one, so for the whole search the panel's only enabled control was a
-        // Cancel button wired to an already-cancelled token — it could not do anything
-        // (audit #5 V9). `search_objects` is a full GObjects sweep on the DLL side, so
-        // this is the one call in this panel a user most wants to be able to abandon.
-        // Shape copied from LoadAsync directly above, generation counter included, so
-        // the two commands supersede each other symmetrically.
+        // Then REPLACE the source: cancelled and not replaced, the panel's only enabled
+        // control for the whole search would be a Cancel button wired to an
+        // already-cancelled token. `search_objects` is a full GObjects sweep on the DLL
+        // side, so this is the one call in this panel a user most wants to be able to
+        // abandon. Same shape as LoadAsync directly above, generation counter included,
+        // so the two commands supersede each other symmetrically.
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;

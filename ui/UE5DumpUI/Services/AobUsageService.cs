@@ -211,13 +211,12 @@ public sealed class AobUsageService
     private async Task SaveFileAsync(AobUsageFile file)
     {
         // PER-PROCESS temp name. The DLL's Flamme::SaveResults writes the SAME cache file
-        // from the game process, and both sides used to stage through the byte-identical
-        // "<file>.tmp" with truncate — so one could truncate the staging file while the
-        // other was mid-write, and whichever renamed last published a half-written
-        // document over the real cache. The in-process semaphore around this method
-        // cannot see the other process. The final rename stays last-writer-wins (the
-        // existing, accepted semantics); only the staging file must not be shared. Kept
-        // byte-compatible with the DLL's MakeTempPath so the two are obviously a pair. (B39)
+        // from the game process. A staging file the two shared, truncated on open, would let
+        // one truncate it while the other is mid-write, and whichever renamed last would
+        // publish a half-written document over the real cache. The in-process semaphore around this
+        // method cannot see the other process. The final rename stays last-writer-wins (the
+        // accepted semantics); only the staging file must not be shared. Kept
+        // byte-compatible with the DLL's MakeTempPath so the two are obviously a pair.
         var tempPath = AtomicFileHygiene.TempPathFor(_filePath, Environment.ProcessId);
         var json = JsonSerializer.Serialize(file, s_jsonCtx.AobUsageFile);
         try
@@ -227,9 +226,9 @@ public sealed class AobUsageService
         }
         finally
         {
-            // AC6: on success the rename consumed it; on ANY failure the PID suffix makes
+            // On success the rename consumed it; on ANY failure the PID suffix makes
             // this a distinctly named full copy of the cache that nothing would ever
-            // delete. The DLL's twin (Flamme FL2) does the same at the same point.
+            // delete. The DLL's twin in Flamme does the same at the same point.
             try { if (File.Exists(tempPath)) File.Delete(tempPath); }
             catch { /* best-effort — the sweep below catches it on a later launch */ }
         }

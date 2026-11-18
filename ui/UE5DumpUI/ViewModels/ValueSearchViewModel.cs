@@ -1296,7 +1296,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     // ==================================================================
-    // Group mode — Multiple values group scan (build 1276)
+    // Group mode — Multiple values group scan
     //
     // A separate, parallel workflow that finds OBJECTS holding ALL of N values
     // (2..4) at distinct numeric-property offsets. Shares the IsScanning flag,
@@ -1336,14 +1336,11 @@ public partial class ValueSearchViewModel : ViewModelBase
     ///
     /// The SUBSTRING predicates (Contains / StartsWith / EndsWith) are the ones
     /// intentionally excluded: a group slot is numeric by construction. Between is
-    /// deliberately IN, and the doc used to say the opposite while listing it fourth
-    /// (audit #5 AE25). Direction re-derived rather than assumed — Between is
-    /// supported end to end and by three independent witnesses: docs/group-value-scan-spec.md
+    /// deliberately IN — it is supported end to end: docs/group-value-scan-spec.md
     /// §"First scan takes Exact / Bigger / Smaller / Between", the DLL's own slot parser
     /// (Fern.cpp reads a per-slot <c>value2</c> as "the Between upper bound"), and
     /// <see cref="GroupValuesValid"/> here, which rejects a Between row missing its
-    /// upper bound. Deleting the option would have removed a shipped, spec'd feature
-    /// to satisfy a stale comment.</summary>
+    /// upper bound.</summary>
     public IReadOnlyList<ValueScanType> GroupScanTypeOptions { get; } = new[]
     {
         ValueScanType.Exact,

@@ -18,8 +18,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private readonly IProxyDeployService _deploy;
     private readonly ILoggingService _log;
 
-    /// <summary>Only used to reveal a leftover folder in Explorer. Optional so existing call sites
-    /// and test doubles keep compiling; the command no-ops when it is absent.</summary>
+    /// <summary>Platform services for the Explorer and report commands. Optional so test doubles can leave it
+    /// out; a command that needs it does nothing, or says it is unavailable, when it is absent.</summary>
     private readonly IPlatformService? _platform;
 
     [ObservableProperty] private bool _isScanning;
@@ -41,9 +41,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// Allow replacing a DLL that is provably NOT ours (ReShade, Special K,
     /// Ultimate ASI Loader, a game-shipped wrapper).
     ///
-    /// <para><b>Deliberately NOT persisted, and that is the fix — audit #5
-    /// AC1.</b> This used to be the same flag as <see cref="ForceOverwrite"/>,
-    /// which IS persisted, so a tick meaning "redeploy over my own DLL" became a
+    /// <para><b>Deliberately NOT persisted, and kept separate from
+    /// <see cref="ForceOverwrite"/>, which IS.</b> A persisted flag would be a
     /// standing cross-session, cross-game authorisation to destroy other
     /// programs' files — applied per game inside the deploy loop, over a
     /// Select All that can be an entire Steam library, with no confirmation and
@@ -301,15 +300,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// COM / manifest parsing) rather than under the early loader lock, so it is
     /// the safest activation timing for the broadest set of games.
     ///
-    /// ⚠ The old parenthetical here said "Octopath Traveler instant-exits with the
-    /// dxgi proxy … Pick dxgi only for EXEs importing neither version nor dinput8".
-    /// That restriction is LIFTED. It was written 2026-08-24 and the defect was
-    /// fixed three days later: builds 3363 + 3365 (the AppCompat pre-CRT crash,
-    /// then the SRWLOCK self-deadlock caused by our own re-entrant LoadLibraryW),
-    /// verified in-game on Octopath itself 2026-08-27 build 3366 — "dxgi proxy:
-    /// lazily forwarded 20/20 exports", pipe server up, 406,060 objects.
-    ///
-    /// dxgi is still not the DEFAULT, but that is a timing PREFERENCE, not a
+    /// dxgi is not the DEFAULT, but that is a timing PREFERENCE, not a
     /// capability limit: version.dll activates at ordinary runtime, which is simply
     /// the least eventful moment to load into. Choose dxgi freely when the version
     /// or winmm slot is already taken.
@@ -766,13 +757,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>Re-raise the orphan selection computed properties, because a change inside a
     /// collection item is not observed by the collection itself.
     ///
-    /// <para>audit #5 AE28 — this used to say "Called by the view when a row checkbox toggles".
-    /// No view calls it, and the design is better than that: the trigger is
-    /// <see cref="OnOrphanRowChanged"/>, a per-row <c>PropertyChanged</c> subscription taken out
-    /// when the scan populates <c>Orphans</c>. The other three call sites are the scan finishing
-    /// and the cleanup loop's success and cancel paths. Naming a view call-site that does not
-    /// exist is how someone later "restores" it and double-raises, or removes the real
-    /// subscription believing the view covers it.</para></summary>
+    /// <para>No view calls it. A row checkbox reaches it through <see cref="OnOrphanRowChanged"/>, a
+    /// per-row <c>PropertyChanged</c> subscription taken out when the scan populates <c>Orphans</c>;
+    /// a view call added on top would double-raise, and dropping that subscription leaves the counts
+    /// stale.</para></summary>
     public void NotifyOrphanSelectionChanged()
     {
         OnPropertyChanged(nameof(SelectedOrphanCount));
@@ -1010,9 +998,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private async Task DeleteSelectedOrphansAsync(CancellationToken ct)
     {
         // A cheap pre-check, so a delete that is going to be refused never puts a modal on screen.
-        // It reports through BusyMessage() like the other seven: this used to say the generic
-        // "Wait for the current operation to finish", which names nothing — almost exactly the
-        // wording AE5's fix exists to replace. [ORPHANBUSYMSG-2026-08-24]
+        // It reports through BusyMessage(), which names the operation that blocks it.
+        // [ORPHANBUSYMSG-2026-08-24]
         if (IsScanning || IsRemovingOrphans)
         {
             LastOperationResult = BusyMessage();
@@ -1040,28 +1027,17 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // AFTER the confirmation, deliberately: holding it across the modal would make the panel
         // report itself busy for as long as the dialog is open, and
         // `TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate` pins that it must not. So the check
-        // above is a pre-filter and THIS is the gate — which also closes a window that pre-filter
-        // alone left open: something invoked while the dialog was up (hotkey, property-changed)
-        // used to find the delete setting `IsRemovingOrphans` unconditionally on the way out.
+        // above is a pre-filter and THIS is the gate: something invoked while the dialog was up
+        // (hotkey, property-changed) is refused here, not by the pre-filter.
         //
-        // Sharing `TryBeginExclusive` is the point. The delete used to hand-roll the predicate and
-        // so never set `_busyWith`, leaving it the one operation in this panel that was unnamed as
-        // the blocker as well as the blocked: everything else fell through `BusyMessage()`'s
-        // `?? "another operation"` fallback and said `Busy: another operation is running`.
+        // Sharing `TryBeginExclusive` is the point: it sets `_busyWith`, so an operation refused while
+        // the delete runs is told by `BusyMessage()` that the delete blocks it, and it sets
+        // `IsScanning`, so the delete shows the busy bar like every other long operation.
         // [ORPHANBUSYMSG-2026-08-24]
         //
-        // ⚠ The finding that reported this claimed `IsRemovingOrphans` was load-bearing because
-        // "the leftover card's Cancel binds to it". It does not — that Cancel binds to
-        // `IsScanningOrphans`, and the comment on that binding in ProxyDeployPanel.axaml says so in as many
-        // words ("NOT to the shared IsScanning and NOT to IsRemovingOrphans"). Nothing in any
-        // .axaml binds `IsRemovingOrphans` at all. It is kept because it is half of `IsBusy` and
-        // the orphan tests assert on it, NOT for the stated reason.
-        //
-        // Blast radius of now setting the shared flag here, checked rather than assumed: inside
-        // this panel `IsScanning` is bound only by the progress bar in ProxyDeployPanel.axaml
-        // and read in `OnScanDrivesModeChanged` to skip the drive-list auto-load. So the visible change is that a
-        // leftover delete finally SHOWS the busy bar — it showed none before, which is the
-        // unreported third half of this defect.
+        // `IsRemovingOrphans` is not what the leftover card's Cancel binds to — that is
+        // `IsScanningOrphans` (see the binding's comment in ProxyDeployPanel.axaml). It is kept
+        // because it is half of `IsBusy` and the orphan tests assert on it.
         using var busy = TryBeginExclusive("Delete leftovers");
         if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
@@ -1084,11 +1060,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 // read "Delete checked (1)" — the retry has to be something the user asks for.
                 row.IsSelected = false;
 
-                // ⚠ Counted UNCONDITIONALLY. [ORPHANCANCEL-2026-08-20] These used to be inside
-                // the success branch, so anything a non-successful row had already recycled went
-                // unreported — and the log then showed three "Recycled leftover proxy" lines under
-                // a summary that claimed two. A partly-locked row has the same problem as an
-                // interrupted one: work happened, and the tally has to say so.
+                // ⚠ Counted UNCONDITIONALLY, not only on success: a non-successful row may already
+                // have recycled files, and the summary must agree with the per-file log lines. A
+                // partly-locked row is like an interrupted one: work happened, and the tally has to
+                // say so. [ORPHANCANCEL-2026-08-20]
                 files += result.FilesRecycled;
                 dirs += result.DirsRemoved;
 
@@ -1810,11 +1785,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // into two policies.
         bool force = ForceOverwrite;
 
-        // Snapshot. This used to enumerate the live bound ObservableCollection across an await,
-        // so a Scan completing mid-loop (Games.Clear() + re-Add) invalidated the enumerator and
-        // the next MoveNext threw InvalidOperationException. The gate above now stops the two
-        // from overlapping at all; the snapshot is the belt to that braces, and costs one list.
-        // Every other loop in this file already snapshots (`.Where(...).ToList()`). (AE7)
+        // Snapshot: the loop awaits, and a Scan completing mid-loop (Games.Clear() + re-Add) would
+        // invalidate an enumerator over the live bound ObservableCollection (InvalidOperationException
+        // on the next MoveNext). The gate above stops the two from overlapping; the snapshot is the
+        // belt to that braces, and costs one list.
         var targets = Games.ToList();
 
         try

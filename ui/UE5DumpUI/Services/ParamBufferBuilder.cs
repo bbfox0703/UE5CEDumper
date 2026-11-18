@@ -432,26 +432,22 @@ public static class ParamBufferBuilder
         // Multi-word structures (FText / TArray / TMap / TSet / delegate / TFieldPath /
         // TOptional, and a StructProperty with no resolved layout) have no textbox
         // encoding. Leave the slot ZEROED instead of falling through to the size-driven
-        // default, which wrote 4 bytes of the user's text over the structure's first
-        // pointer field and handed ProcessEvent a bogus Data pointer (audit #5 Y11).
+        // default, which would write 4 bytes of the user's text over the structure's first
+        // pointer field and hand ProcessEvent a bogus Data pointer.
         //
         // ⚠ CALLERS MUST RUN TryValidateScalar FIRST — this early-return is silent by
         // design, so anything that skips the check drops the user's input and still
-        // reports success. This comment used to claim the check "refuses ahead of this"
-        // as though it were guaranteed; it was only ever true of the top-level scalar
-        // path, and InvokeParamDialog's STRUCT branch reached here unchecked, which is
-        // exactly [Y11-OPAQUEDROP-2026-08-22]. Both call sites validate now; a third one
-        // that forgets will reproduce the same silent drop.
+        // reports success [Y11-OPAQUEDROP-2026-08-22]. Nothing here enforces the check;
+        // a call site that forgets reproduces that silent drop.
         if (IsUnwritableParam(typeName)) return;
 
         switch (typeName)
         {
             case "BoolProperty":
             {
-                // Same spellings the exported script accepts (true/false/yes/no/on/off/1/0).
-                // This path used to run everything through ParseByte, so typing `true` made
-                // FIRE send 0 while Copy AA Script baked 1 -- one dialog, two opposite calls
-                // into a live game (audit #5 Y3).
+                // Same spellings the exported script accepts (true/false/yes/no/on/off/1/0),
+                // so FIRE and Copy AA Script never make two opposite calls into a live game
+                // from one dialog.
                 buf[offset] = BakedScriptGenerator.ParseBoolLiteral(text) == true ? (byte)1 : (byte)0;
                 break;
             }
@@ -518,10 +514,10 @@ public static class ParamBufferBuilder
             }
             case "EnumProperty":
             {
-                // An enum's width is whatever the engine reported, NOT 4. This case used to
-                // be grouped with IntProperty, so a 1-byte `enum class : uint8` param hit the
-                // `available >= 4` guard, wrote NOTHING, and the game received 0 while the
-                // exported script sent the user's value (audit #5 Y2).
+                // An enum's width is whatever the engine reported, NOT 4, so it is not
+                // grouped with IntProperty: there a 1-byte `enum class : uint8` param would hit
+                // the `available >= 4` guard and write NOTHING, and the game would receive 0
+                // while the exported script sends the user's value.
                 WriteBySize(buf, offset, available, size, text);
                 break;
             }

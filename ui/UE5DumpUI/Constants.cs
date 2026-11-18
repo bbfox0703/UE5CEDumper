@@ -40,7 +40,7 @@ public static class Constants
     public const string HoldKindCe = "ce";
     public const string HoldKindClient = "client";
     public const string HoldKindNone = "none";
-    /// <summary>The first DLL build that answers get_holds (build 3704 recorded who holds each hold).</summary>
+    /// <summary>The first DLL build that answers get_holds, which says who holds each hold.</summary>
     public const int HoldsMinDllBuild = 3704;
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
@@ -84,9 +84,9 @@ public static class Constants
     /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Which tools carry it depends on
     /// the host's decision (<see cref="Mcp.McpGrants.IsMarked"/>).</summary>
     public const string McpRequiresInteractionKey = "anthropic/requiresUserInteraction";
-    /// <summary>The first DLL build the write tools may change a game through: build 3704 records who holds each hold
-    /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
-    /// both keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
+    /// <summary>The first DLL build the write tools may change a game through: the first that both records who holds
+    /// each hold (if_free, get_holds) and keeps the user's undo point on an AI's teleport (keep_undo). An older DLL
+    /// ignores those keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
     public const int McpMinDllBuildForWrites = 3705;
     /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through (Stage D2-3): write_mem refuses
     /// code and read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
@@ -405,11 +405,10 @@ public static class Constants
     // hand-curated coordinate list must survive one. See
     // docs/teleport-coord-library-spec.md D1.
     //
-    // It is the THIRD per-game family and it used to write to the flat app-data ROOT,
-    // which the App-data layout rule forbids — the root is for files that are app-wide
-    // and FIXED IN NUMBER, and this one grows by up to four files per game forever
-    // (.json + .bak + .preimport.bak + .preclear.bak). Moved to its own subfolder
-    // beside Snapshots\ and Bookmarks\ (audit #5 AF11); AppDataFolderMaintenance moves
+    // A per-game family, so it has its own subfolder beside Snapshots\ and Bookmarks\:
+    // the App-data layout rule keeps the root for files that are app-wide and FIXED IN
+    // NUMBER, and this one grows by up to four files per game forever
+    // (.json + .bak + .preimport.bak + .preclear.bak). AppDataFolderMaintenance moves
     // anything left at the root on first use, per game, as a GROUP.
     public const string CoordLibraryFilePrefix = "teleport-coords";
     public const string CoordLibrarySubFolder  = "TeleportCoords";
@@ -427,15 +426,15 @@ public static class Constants
 
     // ---- Per-game data SUBFOLDERS under %LOCALAPPDATA%\UE5CEDumper ----------------
     //
-    // Both families used to sit at the folder ROOT. They are the only files there whose
-    // count grows without bound — one set per game, and a new PE hash on every game
-    // patch — so they buried the handful of app-wide files (dll-path.txt,
+    // Not at the folder ROOT: these families' count grows without bound — one set per
+    // game, and a new PE hash on every game patch — so there they would bury the handful
+    // of app-wide files (dll-path.txt,
     // experimental.json, ai-writes.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
     // UE5CEDumper.{COMPUTERNAME}.json — the per-machine hint cache, see
     // dll/src/Grimoire.h) that someone actually has to find by hand.
     //
-    // Sibling folders of Logs\ and Reports\, PascalCase to match them. Files still at
-    // the old root location are MOVED here once, at first use, by
+    // Sibling folders of Logs\ and Reports\, PascalCase to match them. Files left at
+    // the root are MOVED here once, at first use, by
     // Services.AppDataFolderMaintenance — see that file for why a game's files move as
     // a GROUP (a .db that arrives without its -wal has silently lost every transaction
     // the WAL held).
@@ -550,9 +549,8 @@ public static class Constants
     // looks exactly like a drive full of games. This machine's AOB corpus is one: `UE_Analyze_data`
     // holds `Varies Version builds\`, `Game archive\DropIn\` and `For Testing\`, and
     // tools/ue-sample/repackage.py already REFUSES to write into it by name (FORBIDDEN_ARCHIVE),
-    // because inventory_builds.py / preflight.py assert its row counts.
-    // ⭐ Measured 2026-09-16 (live check L13): a D: scan returned 28 "games", most of them corpus
-    // folders, and one All + Deploy there would have put a proxy DLL in every one.
+    // because inventory_builds.py / preflight.py assert its row counts. Unpruned, a scan lists its
+    // folders as games, and one All + Deploy there would put a proxy DLL in every one.
     // ⚠ A NAME, not a path: the same corpus is reachable through any drive letter or junction.
     // Extend it through ui-options.json (`proxyDeploy.scanExcludedFolderNames`). The assumption it
     // rests on, stated so it can be argued with: nobody installs a game into UE_Analyze_data.

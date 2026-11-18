@@ -47,8 +47,8 @@ public sealed partial class AobMakerStatus : ObservableObject
     partial void OnIsAvailableChanged(bool value)
     {
         // [AOBM-ATTACH-CHECK] With the plugin out of reach nothing can tell which process CE has open, and a check that
-        // cannot tell must not accuse (DescribeAttach). The warning used to outlive Cheat Engine itself: measured
-        // 2026-09-29, CE closed with it showing and the chip went Offline beside "CE is not on this game".
+        // cannot tell must not accuse (DescribeAttach), so the warning clears: it must not outlive Cheat Engine itself,
+        // left showing "CE is not on this game" beside an Offline chip.
         // And the way back: a busy pipe or one failed push also lands here, with CE still on the wrong process, so
         // regaining the plugin asks again rather than leaving the warning cleared until the next ⟳.
         if (!value) AttachWarning = "";
