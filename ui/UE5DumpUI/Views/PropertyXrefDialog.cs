@@ -503,6 +503,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                               + "connection was open when this dialog was opened; reopen it "
                               + "after restarting Cheat Engine with the AOBMaker plugin.";
             _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+            // The button the stale flag left enabled greys out, and its tooltip gives the bridge's reason.
+            SyncDisasmButton();
             return;
         }
         _btnDisasm.IsEnabled = false;
