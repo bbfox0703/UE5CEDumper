@@ -71,7 +71,7 @@ UE5CEDumper/
 │       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
-│       ├── Frieren.cpp / .h        ← ExportAPI — 64 C ABI exports for CE Lua bridge
+│       ├── Frieren.cpp / .h        ← ExportAPI — 65 C ABI exports for CE Lua bridge
 │       ├── Land.cpp / .h           ← SecondCopy — two copies of the dumper in one process: the later one shuts the
 │       │                             earlier down, takes the pipe and serves its CE mailbox; a copy that handed over
 │       │                             passes its export calls on

@@ -1102,7 +1102,10 @@ public partial class CallTraceViewModel : ViewModelBase
         }
         sb.AppendLine(Say("str.CT.Detail.Thread", t.Tid[i]));
         sb.AppendLine(Say("str.CT.Detail.Start", t.StartMs(i)));
-        sb.AppendLine(t.DurationUs(i) is { } us ? Say("str.CT.Detail.Duration", us) : StringLookup("str.CT.Detail.NoReturn"));
+        // [TRACE-DROPPED-ENTRY] With records left out, a call with no return may have returned: its record was dropped.
+        sb.AppendLine(t.DurationUs(i) is { } us
+            ? Say("str.CT.Detail.Duration", us)
+            : StringLookup(t.OtherDropped > 0 ? "str.CT.Detail.NoReturnDropped" : "str.CT.Detail.NoReturn"));
         sb.AppendLine(Say("str.CT.Detail.Children", t.ChildCount[i]));
         if ((t.Flags[i] & TraceRecord.ScopeRootFlag) != 0) sb.AppendLine(StringLookup("str.CT.Detail.ScopeRoot"));
         sb.AppendLine();

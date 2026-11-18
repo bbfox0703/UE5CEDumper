@@ -83,6 +83,24 @@ bool RangeInOwnImage(uintptr_t addr, size_t size) {
     return Lager::RangeOverlapsImage(addr, size, base, nt->OptionalHeader.SizeOfImage);
 }
 
+bool RangeInAnyDumperImage(uintptr_t addr, size_t size) {
+    const auto base = reinterpret_cast<uintptr_t>(&__ImageBase);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + static_cast<uintptr_t>(__ImageBase.e_lfanew));
+    auto query = [](uintptr_t p) {
+        Lager::MemRegion r;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(p), &mbi, sizeof(mbi)) != sizeof(mbi)) return r;
+        r.base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        r.size = mbi.RegionSize;
+        r.image = mbi.Type == MEM_IMAGE;
+        r.allocationBase = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+        return r;
+    };
+    // An image's allocation base is its module handle; GetProcAddress answers NULL for one the loader does not know.
+    return Lager::RangeTouchesDumperImage(addr, size, base, nt->OptionalHeader.SizeOfImage, query,
+                                          [](uintptr_t alloc) { return IsDumperModule(reinterpret_cast<HMODULE>(alloc)); });
+}
+
 Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {
     using Lager::WriteTarget;
     if (!addr || size == 0 || !Grimoire::IsUserspacePointer(addr)) return WriteTarget::Unmapped;

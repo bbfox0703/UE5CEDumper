@@ -499,6 +499,31 @@ inline bool RangeOverlapsImage(uintptr_t addr, size_t size, uintptr_t imageBase,
     return addr < imageEnd && imageBase < end;
 }
 
+/// [WRITEMEM-ANY-COPY] One region of the address space, as VirtualQuery answers it (size 0: nothing could be read).
+struct MemRegion { uintptr_t base = 0; size_t size = 0; bool image = false; uintptr_t allocationBase = 0; };
+
+/// [WRITEMEM-ANY-COPY] True when [addr, addr + size) overlaps the image holding this code (`ownBase`, `ownSize`) or
+/// touches an image region whose module is a build of the dumper (`isDumperAt(allocationBase)`), walked region by region
+/// with `query(p)`. No module list: one that could not be read (EnumProcessModules fails while a DLL loads or unloads)
+/// let the range through (review wf_bbd1bbfe-20d D7-6). A region that cannot be read ends the walk; write_mem's own
+/// classification refuses what is not committed.
+template <class QueryFn, class IsDumperFn>
+bool RangeTouchesDumperImage(uintptr_t addr, size_t size, uintptr_t ownBase, size_t ownSize, QueryFn&& query,
+                             IsDumperFn&& isDumperAt) {
+    if (RangeOverlapsImage(addr, size, ownBase, ownSize)) return true;
+    if (size == 0) return false;
+    const uintptr_t end = (addr + size < addr) ? UINTPTR_MAX : addr + size;
+    for (uintptr_t p = addr; p < end;) {
+        const MemRegion r = query(p);
+        if (r.size == 0) return false;
+        if (r.image && isDumperAt(r.allocationBase)) return true;
+        const uintptr_t next = r.base + r.size;
+        if (next <= p) return false;   // a region that does not move on: never loop
+        p = next;
+    }
+    return false;
+}
+
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
 // instruction by instruction until the bytes copied reach sizeof(JMP_REL) == 5; the LAST instruction it disassembles
 // therefore starts at an offset of at most 4 + 15 (the longest x86-64 instruction can precede it) = 19, and hde64

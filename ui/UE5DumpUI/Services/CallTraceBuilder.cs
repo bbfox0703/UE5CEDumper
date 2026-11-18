@@ -50,8 +50,9 @@ public static class CallTraceBuilder
 
     /// <summary>
     /// Builds the tree. Each thread keeps a stack of its open calls: an entry's caller is the top of its thread's
-    /// stack. A return closes its call, and any call still open above it on that thread never returned (an
-    /// exception unwound it). A return whose entry is older than the kept window ends a call that began before it,
+    /// stack. A return closes its call, and any call still open above it on that thread has no return in the records
+    /// (an exception unwound it, or its return was dropped -- <see cref="CallTrace.OtherDropped"/> -- and the calls
+    /// after it on that thread were drawn inside it until then). A return whose entry is older than the kept window ends a call that began before it,
     /// and every call still open on that thread was inside that call, so they are closed as never returned too.
     /// A return whose entry is numbered INSIDE the window but missing is different: the DLL dropped that slot (written
     /// out of turn, [LINIE-SEQ-LAST]), so it is counted in <see cref="CallTrace.EntriesDropped"/> and the calls still

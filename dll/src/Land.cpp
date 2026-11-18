@@ -12,8 +12,11 @@
 #include "Macht.h"
 #include "Mimic.h"
 #include "Routine.h"
+#include "Schlacht.h"
 #include "Sein.h"
+#include "Tot.h"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -165,11 +168,61 @@ void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxCo
 struct RetireCall {
     FARPROC                  yield    = nullptr;   // UE5_YieldToLaterCopy(HMODULE), when the copy exports it
     FARPROC                  shutdown = nullptr;   // UE5_Shutdown(), every build
+    FARPROC                  hidden   = nullptr;   // UE5_HandOverHiddenActors(uint64_t*, int32_t), when exported
     HMODULE                  self     = nullptr;
     CopySeen                 seen;
     Mimic::MailboxData*      box      = nullptr;
     Mimic::MailboxContract*  contract = nullptr;
 };
+
+// What one ask came to: the earlier copy answered (Done), has not handed over yet (NotYet), or this copy is itself
+// being taken over and left the record where it is (Left).
+enum class HiddenAsk { Done, NotYet, Left };
+
+// [SEETHRU-HANDOFF-LEFTOVER] The actors the earlier copy's See-through left hidden become this copy's: that copy can
+// never run another un-hide. Under the start lock BeginYield takes, and only while this copy is not being taken over: a
+// copy that hands over never serves its record again, so the actors stay with the earlier copy for the copy taking over
+// to ask (review wf_bbd1bbfe-20d D7-1). Bounded, so a copy that kept answering could not hold the hand-off.
+HiddenAsk AdoptHiddenActors(FARPROC handOver) {
+    if (!handOver) return HiddenAsk::Done;
+    std::vector<uint64_t> batch(static_cast<size_t>(Grimoire::LAND_HIDDEN_BATCH));
+    int32_t total = 0;
+    HiddenAsk outcome = HiddenAsk::Done;
+    {
+        const auto start = LockStart();
+        if (RefusesStart(State())) return HiddenAsk::Left;
+        for (int round = 0; round < 16; ++round) {
+            const int32_t n = reinterpret_cast<int32_t (*)(uint64_t*, int32_t)>(handOver)(batch.data(),
+                                                                                         Grimoire::LAND_HIDDEN_BATCH);
+            if (n < 0) {   // the earlier copy has not handed over yet
+                if (round == 0) outcome = HiddenAsk::NotYet;
+                break;
+            }
+            if (n == 0) break;
+            Schlacht::AdoptLeftovers(batch.data(), (std::min)(n, Grimoire::LAND_HIDDEN_BATCH));
+            total += n;
+            if (n < Grimoire::LAND_HIDDEN_BATCH) break;
+        }
+    }
+    if (total > 0)
+        LOG_WARN("Land: the earlier copy's See-through left %d actor(s) hidden -- this copy holds them now, and its next "
+                 "See-through ON or OFF restores them", total);
+    return outcome;
+}
+
+// After "yielded" the earlier copy answers at once. After "already handing over" it is still handing over -- to a copy
+// this one took over or is taking over -- so it is asked again until it has, bounded (review wf_bbd1bbfe-20d D7-1).
+void PollHiddenActors(FARPROC handOver) {
+    const ULONGLONG t0 = GetTickCount64();
+    while (AdoptHiddenActors(handOver) == HiddenAsk::NotYet) {
+        if (GetTickCount64() - t0 >= static_cast<ULONGLONG>(Grimoire::LAND_HIDDEN_WAIT_MS) || Tot::ShutdownRequested()) {
+            LOG_WARN("Land: the earlier copy had not handed over after %llu ms -- the actors its See-through left hidden, "
+                     "if any, stay with it", GetTickCount64() - t0);
+            return;
+        }
+        Sleep(Grimoire::LAND_HIDDEN_POLL_MS);
+    }
+}
 
 DWORD WINAPI RetireThread(LPVOID param) {
     auto* call = static_cast<RetireCall*>(param);
@@ -184,6 +237,7 @@ DWORD WINAPI RetireThread(LPVOID param) {
             }
             LOG_INFO("Land: the earlier copy %s in %llu ms", reply == YIELD_DONE ? "yielded" : "had already handed over",
                      GetTickCount64() - t0);
+            PollHiddenActors(call->hidden);
         } else {
             reinterpret_cast<void (*)()>(call->shutdown)();
             LOG_INFO("Land: the earlier copy shut down in %llu ms", GetTickCount64() - t0);
@@ -294,6 +348,7 @@ void RetireEarlierCopies() {
         auto* call = new RetireCall;
         call->yield = GetProcAddress(h, Grimoire::DUMPER_YIELD_EXPORT);
         call->shutdown = GetProcAddress(h, Grimoire::DUMPER_SHUTDOWN_EXPORT);
+        call->hidden = GetProcAddress(h, Grimoire::DUMPER_HAND_OVER_HIDDEN_EXPORT);
         call->self = g_hDllModule;
         call->seen = seen;
         call->box = box;

@@ -287,7 +287,11 @@ internal static class McpTools
 
             Pipe(game, "read_function_props", "Properties a function touches",
                 "The properties one UFunction reads or writes, from its bytecode, or from its machine code for a "
-                + "native function; there, write_sites are the addresses of the instructions that write each one.",
+                + "native function. There, write_sites lists instructions that store at the property's offset: only "
+                + "the first write_sites_via_this of them are proven to write it, through the object itself; the rest "
+                + "store through another pointer and may write another object's field or something else. "
+                + "write_sites_truncated means there were more. shared_offset (packed bools) says how many "
+                + "properties share that byte, so a store there may be to any of them.",
                 [("func_addr", McpSchema.Addr("The UFunction's address (addr in read_functions)."), true)],
                 "walk_function_props", (a, r) => r["func_addr"] = a.Addr("func_addr"), HeavySeconds),
 

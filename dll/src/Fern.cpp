@@ -3319,12 +3319,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [WALKCLASS-STALE-OK] Refused BEFORE the walk when the address is not a live object. A class a level travel
             // freed either walks to nothing (painted as a blank class, no error, the panel's re-select refused as a
             // duplicate) or, walked before it was freed, is answered from WalkClassEx's memo with its OLD fields.
-            // Every walk_class caller passes a class, struct or function, which GObjects always holds; refusing first
+            // A class, struct or function is what walk_class can walk, and GObjects always holds one; refusing first
             // also keeps a stale address out of the memo. An address ANOTHER object took since is live; WalkClassEx's
             // witness check walks that one again ([WALKCLASS-MEMO-REUSE]).
             if (!IsLiveObject(addr))
                 return Renge::MakeError(id, "Not a live class at " + addrStr +
                                                 " -- freed (a level travel?) or never a UObject").dump();
+            // [WALKCLASS-NOT-STRUCT] Live is not enough: the freed class's address may hold another kind of object now
+            // (an actor), and walking that as a class answered an empty or made-up class with no error.
+            if (!Ubel::IsStructKindObject(addr)) {
+                const uintptr_t holderCls = Ubel::GetClass(addr);
+                return Renge::MakeError(id, "Not a class or struct at " + addrStr + " -- it holds " +
+                                                Ubel::GetName(addr) + " (" +
+                                                (holderCls ? Ubel::GetName(holderCls) : std::string("no class")) +
+                                                "); walk_class reads a class, a struct or a function").dump();
+            }
             const ClassInfo& ci = Ubel::WalkClassEx(addr);
 
             json data;
@@ -3559,8 +3568,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             };
             // [WRITEMEM-OWN-IMAGE] A background client (the MCP server) never writes the DLL's own image: its globals
             // include the CE mailbox, and a write there hands an invoke to the CE-owned poller, past the background
-            // deny list. The UI's and CE's writes are not refused here.
-            if (conn->background.load() && Macht::RangeInOwnImage(addr, bytes.size()))
+            // deny list. The UI's and CE's writes are not refused here. [WRITEMEM-ANY-COPY] Nor another copy's image:
+            // after a take-over this copy's poller serves the earlier copy's mailbox too.
+            if (conn->background.load() && Macht::RangeInAnyDumperImage(addr, bytes.size()))
                 return refuse("is inside UE5Dumper's own image (the Cheat Engine mailbox and the DLL's state); an AI "
                               "client never writes there", Grimoire::WRITE_MEM_OWN_IMAGE);
             switch (Macht::ClassifyWriteRange(addr, bytes.size())) {

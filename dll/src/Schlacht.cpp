@@ -510,7 +510,7 @@ struct State {
     int32_t   hiddenCount = 0;
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
-    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up; cleared by SetEnabled
+    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up, or none could wait (a shutdown); cleared by SetEnabled
     // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C). Changed only with s_workerMutex AND s_mutex held, so
     // either lock is enough to read it.
     std::vector<uint64_t> owners;
@@ -606,6 +606,7 @@ void Tick() {
             applied.insert(a);
 
     std::lock_guard<std::mutex> lk(s_mutex);
+    KeepAddedDuringTick(applied, s_state.hiddenActors, old);
     s_state.hiddenActors = std::move(applied);
     s_state.unhideQueued = kept;
     s_state.code = STR_OK;
@@ -688,9 +689,13 @@ void PendingRestoreLoop() {
         // 2389 reproduced live in the sibling loop. (B14)
         Routine::RunTickGuarded("SeeThrough", warnedThrow, [&] {
             // Re-enabled, or someone else already restored: nothing left to do.
+            // The exit is decided from the record under s_mutex, and the running flag cleared in the same section: an
+            // adoption (AdoptLeftovers) lands before it, and a pass takes it, or after it, and starts a restore of its
+            // own (review wf_846108f2-663 T8-1).
             bool nothingToDo;
             { std::lock_guard<std::mutex> lk(s_mutex);
-              nothingToDo = s_state.active || s_state.hiddenActors.empty(); }
+              nothingToDo = s_state.active || s_state.hiddenActors.empty();
+              if (nothingToDo) s_pendingRunning.store(false); }
             if (nothingToDo) { done = true; return; }
 
             if (!Stark::IsGameThreadResponsive()) {
@@ -701,7 +706,8 @@ void PendingRestoreLoop() {
                              Grimoire::PENDING_RESTORE_MAX_MS / 1000);
                     // [P1-SEETHRU-GIVEUP] ...and say so on the status, not only in the log: the card still promised
                     // "click back into the game and they reappear".
-                    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
+                    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true;
+                      s_pendingRunning.store(false); }
                     done = true;
                 }
                 return;
@@ -715,14 +721,24 @@ void PendingRestoreLoop() {
             // An un-hide that did not run (the game thread stalled again) goes back in the record, and this loop
             // waits for the game thread once more. [SHUTDOWN-SEETHRU-WAIT]
             const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
-            { std::lock_guard<std::mutex> lk(s_mutex); RecordUnhideLeftoversLocked(kept); }
+            size_t left = 0;
+            {
+                std::lock_guard<std::mutex> lk(s_mutex);
+                RecordUnhideLeftoversLocked(kept);
+                // From the record, not from this pass: actors adopted while it ran are in it now (T8-1).
+                done = s_state.active || s_state.hiddenActors.empty();
+                left = s_state.hiddenActors.size();
+                if (done) s_pendingRunning.store(false);
+            }
             LOG_INFO("SeeThrough: game thread resumed after %d ms — restored %zu "
-                     "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), kept.size());
-            done = kept.empty();
-            if (!done && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {   // a responsive game whose un-hide keeps failing
+                     "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), left);
+            // A responsive game whose un-hide keeps failing. Only this pass's own failures count: actors adopted while it
+            // ran were never tried, and the next tick tries them (review wf_eec7e89a-a4a R9-1).
+            if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {
                 LOG_WARN("SeeThrough: gave up restoring %zu hidden actor(s) after %d s — they stay hidden until "
                          "See-through is enabled and disabled again", kept.size(), Grimoire::PENDING_RESTORE_MAX_MS / 1000);
-                { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
+                { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true;
+                  s_pendingRunning.store(false); }
                 done = true;
             }
         });
@@ -747,6 +763,8 @@ bool StartPendingLocked() {   // s_workerMutex held
     if (s_pendingRunning.load()) return true;                // already waiting
     if (s_pendingWorker.joinable()) s_pendingWorker.join();  // reap a finished one
     if (Tot::ShutdownRequested()) return false;              // M5 spawn chokepoint
+    // A restore waits now, for the whole record: an earlier "gave up" no longer holds (review wf_846108f2-663 R8-3).
+    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = false; }
     s_pendingStop.store(false);
     s_pendingRunning.store(true);
     s_pendingWorker = std::thread(PendingRestoreLoop);
@@ -895,6 +913,37 @@ static int32_t ApplyLocked(bool enable) {
         }
     }
     return 0;
+}
+
+int32_t TakeLeftovers(uint64_t* out, int32_t cap) {
+    if (!out || cap <= 0) return 0;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (s_state.active) return 0;
+    const int32_t n = TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap);
+    s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+    if (s_state.hiddenActors.empty()) s_state.restoreAbandoned = false;
+    return n;
+}
+
+void AdoptLeftovers(const uint64_t* actors, int32_t n) {
+    if (!actors || n <= 0) return;
+    // s_workerMutex before s_mutex, as SetEnabled takes them: the deferred restore is started under the first.
+    std::lock_guard<std::mutex> wk(s_workerMutex);
+    bool active;
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        for (int32_t i = 0; i < n; ++i)
+            if (actors[i]) s_state.hiddenActors.insert(static_cast<uintptr_t>(actors[i]));
+        s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+        active = s_state.active;
+    }
+    // Off: this copy's deferred restore un-hides them once the game thread answers, as after an OFF that could not
+    // finish, so the card's texts are true for them too (review wf_bbd1bbfe-20d D7-3). "Gave up" only when no restore
+    // can wait -- a shutdown. On: the worker's next tick un-hides those no longer in the way.
+    if (!active && !StartPendingLocked()) {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        s_state.restoreAbandoned = true;
+    }
 }
 
 int32_t SetEnabled(bool enable, uint64_t owner) {

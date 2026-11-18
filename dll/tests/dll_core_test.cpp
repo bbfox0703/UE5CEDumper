@@ -295,6 +295,11 @@ int main() {
               Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&Macht::RangeInOwnImage), 1));
         check("a heap block is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(heapBlock.data()), 64));
         check("an empty range is not", !Macht::RangeInOwnImage(reinterpret_cast<uintptr_t>(&ownGlobal), 0));
+        // [WRITEMEM-ANY-COPY] What write_mem asks: this image counts, and a heap block is not any module's.
+        check("any copy: this image is still refused",
+              Macht::RangeInAnyDumperImage(reinterpret_cast<uintptr_t>(&ownGlobal), sizeof(ownGlobal)));
+        check("any copy: a heap block is not",
+              !Macht::RangeInAnyDumperImage(reinterpret_cast<uintptr_t>(heapBlock.data()), 64));
     }
 
     // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
@@ -4026,6 +4031,46 @@ int main() {
             check("* WALKCLASS-MEMO-REUSE: ...counted as ONE stopped address, with its 8 walks parked",
                   stopped1 - stopped0 == 1 && parked1 - parked0 == 8,
                   (std::to_string(stopped1 - stopped0) + " stopped, " + std::to_string(parked1 - parked0) + " parked").c_str());
+            // [WALKCLASS-STOP-EPOCH] Review wf_1b9e937b-a0d R6-6: the memo is keyed by (family epoch, address), and the
+            // stop was too, so an epoch bump (any re-init's offset validation) gave the stopped address a fresh count --
+            // 8 more re-walks and a second stop. The first call after the bump is a memo miss (one fresh walk); the stop
+            // then holds, and the address is still one stopped address.
+            DynOff::RetireFamilyEpoch();
+            int afterBump = -1;   // the miss's fresh walk is not a re-walk
+            last = nullptr;
+            for (int i = 0; i < 20; ++i) {
+                put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
+                const ClassInfo* now = &Ubel::WalkClassEx(C);
+                if (!last || now != last) ++afterBump;
+                last = now;
+            }
+            size_t parked2 = 0, stopped2 = 0;
+            Ubel::GetParkedClassWalks(parked2, stopped2);
+            check("* WALKCLASS-STOP-EPOCH: a stopped address stays stopped across a family-epoch bump",
+                  afterBump == 0, std::to_string(afterBump).c_str());
+            check("* WALKCLASS-STOP-EPOCH: ...and is still ONE stopped address",
+                  stopped2 == stopped1, (std::to_string(stopped2 - stopped1) + " more").c_str());
+            // [WALKCLASS-STOP-OFFSETS] Review wf_bbd1bbfe-20d D7-5: a stop reached while the witness read wrong offsets
+            // (a give-up's guesses) must not outlive their correction -- a later genuine reuse would be answered with
+            // the old walk. A re-init that re-derives the SAME offsets keeps it (above); one that changes a witness
+            // offset lifts it: the address is re-walked again up to the bound, and still counted once.
+            const int savedOuter = DynOff::UOBJECT_OUTER;
+            DynOff::UOBJECT_OUTER = savedOuter + 8;
+            int afterFix = 0;
+            last = nullptr;
+            for (int i = 0; i < 20; ++i) {
+                put32(capCls, Grimoire::OFF_UOBJECT_NAME, (i % 2) ? 8 : 7);
+                const ClassInfo* now = &Ubel::WalkClassEx(C);
+                if (last && now != last) ++afterFix;
+                last = now;
+            }
+            DynOff::UOBJECT_OUTER = savedOuter;
+            size_t parked3 = 0, stopped3 = 0;
+            Ubel::GetParkedClassWalks(parked3, stopped3);
+            check("* WALKCLASS-STOP-OFFSETS: a witness offset that changed lifts the stop (8 more re-walks)",
+                  afterFix == 8, std::to_string(afterFix).c_str());
+            check("* WALKCLASS-STOP-OFFSETS: ...and the address is still counted once",
+                  stopped3 == stopped1, (std::to_string(stopped3 - stopped1) + " more").c_str());
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 7);
             const bool okFirst = Ubel::WalkClassEx(K).Name == "Items";
             put32(okCls, Grimoire::OFF_UOBJECT_NAME, 8);
@@ -5015,7 +5060,7 @@ int main() {
             {
                 std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
                 check("WALKCLASSEXUNMAPPED ⭐: ...and GetCachedStructFields, the twin, memoizes nothing for it",
-                      sf1.empty() && Ubel::s_structFieldCache.count(wcS) == 0);
+                      sf1.empty() && Ubel::s_structFieldCache.count(DynOff::FamilyCacheKey(wcS)) == 0);
             }
 
             // The page comes back, holding a plausible class at each subject.
@@ -5031,7 +5076,9 @@ int main() {
             {
                 std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
                 check("WALKCLASSEXUNMAPPED control: ...and the twin memoizes a readable struct",
-                      Ubel::s_structFieldCache.count(wcS) == 1);
+                      // The memo's key, not the bare address: they agree only while the family epoch is 0, and an earlier
+                      // block bumps it ([WALKCLASS-STOP-EPOCH]).
+                      Ubel::s_structFieldCache.count(DynOff::FamilyCacheKey(wcS)) == 1);
             }
             // Deliberately NOT released: the memos now hold this address for the process, which ends soon.
         }
@@ -9702,9 +9749,75 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- STRUCTKIND-2026-11-18 -- what walk_class walks: a UStruct of some kind, not any live object ------------------
+    //
+    // ⛔ OWN name table (after KINDNAMES). [WALKCLASS-NOT-STRUCT] Review wf_1b9e937b-a0d DLL-3: walk_class's liveness
+    // gate let any live object through, and a level travel can free a class and put an actor at its address -- walked as
+    // a class, that answered an empty or made-up class with no error. The engine's metaclasses pass by name (a give-up
+    // session never measures USTRUCT_SUPER), any other subclass by its chain reaching Struct.
+    {
+        blk("STRUCTKIND - a class, a struct and a function are walkable; an actor, an enum and an asset are not");
+        ResetCancel();
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t skEntry[12][0x40] = {};
+        const char* skNames[12] = { "", "Class", "ScriptStruct", "Function", "Enum", "Struct", "VerseClass",
+                                    "SoundClass", "Actor", "MyActor", "Vector", "E_Mood" };
+        static uintptr_t skChunk[13] = {};
+        for (int i = 1; i <= 11; ++i) {
+            memcpy(skEntry[i] + 0x10, skNames[i], strlen(skNames[i]) + 1);
+            skChunk[i] = A(skEntry[i]);
+        }
+        static uintptr_t skChunks[2] = { A(skChunk), 0 };
+        Serie::InitUE4(A(skChunks), 0x10);
+
+        static uint8_t skClassMeta[0x100] = {}, skSsMeta[0x100] = {}, skFnMeta[0x100] = {}, skEnumMeta[0x100] = {},
+                       skStructRoot[0x100] = {}, skVerseMeta[0x100] = {}, skSoundMeta[0x100] = {},
+                       skActorCls[0x100] = {}, skMyActorCls[0x100] = {},
+                       skVector[0x100] = {}, skFunc[0x100] = {}, skEnum[0x100] = {}, skActor[0x100] = {},
+                       skVerseObj[0x100] = {}, skSound[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, cls ? A(cls) : 0);
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(skClassMeta, skClassMeta, 1);
+        uobj(skSsMeta, skClassMeta, 2);
+        uobj(skFnMeta, skClassMeta, 3);
+        uobj(skEnumMeta, skClassMeta, 4);
+        uobj(skStructRoot, skClassMeta, 5);
+        uobj(skVerseMeta, skClassMeta, 6);   // a UClass subclass no name list knows: its chain reaches Class, then Struct
+        putP(skVerseMeta, DynOff::USTRUCT_SUPER, A(skClassMeta));
+        putP(skClassMeta, DynOff::USTRUCT_SUPER, A(skStructRoot));
+        uobj(skSoundMeta, skClassMeta, 7);   // an asset whose TYPE merely ends in Class
+        uobj(skActorCls, skClassMeta, 8);
+        uobj(skMyActorCls, skClassMeta, 9);
+        putP(skMyActorCls, DynOff::USTRUCT_SUPER, A(skActorCls));
+
+        uobj(skVector, skSsMeta, 10);        // a struct
+        uobj(skFunc, skFnMeta, 3);           // a function
+        uobj(skEnum, skEnumMeta, 11);        // an enum
+        uobj(skActor, skMyActorCls, 9);      // an actor: what a freed class's address can hold after a level travel
+        uobj(skVerseObj, skVerseMeta, 6);
+        uobj(skSound, skSoundMeta, 7);
+
+        check("STRUCTKIND control: a class (metaclass Class) is walkable", Ubel::IsStructKindObject(A(skActorCls)));
+        check("STRUCTKIND control: a script struct is walkable", Ubel::IsStructKindObject(A(skVector)));
+        check("STRUCTKIND control: a function is walkable", Ubel::IsStructKindObject(A(skFunc)));
+        check("STRUCTKIND control: a class of a UClass subclass no list names is walkable (chain reaches Struct)",
+              Ubel::IsStructKindObject(A(skVerseObj)));
+        check("* STRUCTKIND: an actor instance is not walkable as a class", !Ubel::IsStructKindObject(A(skActor)));
+        check("* STRUCTKIND: an enum is not walkable as a class", !Ubel::IsStructKindObject(A(skEnum)));
+        check("* STRUCTKIND: an asset whose type ends in Class (SoundClass) is not walkable",
+              !Ubel::IsStructKindObject(A(skSound)));
+        check("STRUCTKIND: a null address is not walkable", !Ubel::IsStructKindObject(0));
+        putP(skClassMeta, DynOff::USTRUCT_SUPER, 0);
+    }
+
     // -- PROBEOVERRUN-2026-09-28 -- the C-ABI subclass getters read no further than a proven slot ---------------------
     //
-    // ⛔ OWN name table (after KINDNAMES). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
+    // ⛔ OWN name table (after STRUCTKIND). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
     // FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned) and returned the first object of the wanted kind. On
     // EVERSPACE 2 the PropertyClass getter, asked about a Blueprint UberGraphFrame StructProperty (0x78 bytes), returned
     // the component class at +0x80 -- the NEXT heap block -- and a null PropertyClass would have done the same. A slot a

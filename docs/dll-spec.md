@@ -520,6 +520,7 @@ extern "C" {
     // nothing in it). 1 = handed over, 0 = already handing over, -1 = `successor` is not loaded after this copy.
     // [DUMPER-SECOND-COPY-AUTOSTART]
     __declspec(dllexport) int32_t  UE5_YieldToLaterCopy(HMODULE successor);
+    __declspec(dllexport) int32_t  UE5_HandOverHiddenActors(uint64_t* out, int32_t cap);
     __declspec(dllexport) uint32_t UE5_GetVersion();    // e.g. 507, 427, 422
     // 1 = the UE property offsets were MEASURED; 0 = not, and reasonBuf says why ("probe-not-run" before detection).
     // int32_t, not bool: executeCodeEx reads RAX. [W5-OFFSETS-UNMEASURED]

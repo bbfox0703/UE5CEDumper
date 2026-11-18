@@ -63,7 +63,7 @@ internal static class CallTraceExport
         Int(sb, "excluded_per_frame", t.Info.Excluded);
         Int(sb, "returns_before_window", t.ReturnsBeforeWindow);
         Int(sb, "entries_dropped", t.EntriesDropped);   // [TRACE-DROPPED-ENTRY]
-        Int(sb, "other_dropped", t.OtherDropped);   // returns, or starts of calls running at Stop
+        Int(sb, "other_dropped", t.OtherDropped);   // records no kept one attributes (CallTrace.OtherDropped)
         // [TRACE-UNLOADED-NAMES] What the names below rest on.
         Int(sb, "distinct_funcs", t.DistinctFuncs);
         Int(sb, "unloaded_funcs", t.UnloadedFuncs);

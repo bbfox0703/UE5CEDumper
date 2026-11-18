@@ -406,7 +406,8 @@ public sealed class SeeThroughStatus
     public bool RestorePending { get; init; }
 
     /// <summary>[P1-SEETHRU-GIVEUP] The restore GAVE UP after the restore window (<c>restore_abandoned</c>): those
-    /// actors stay hidden until See-through is turned on and off again with the game running. False from an older
+    /// actors stay hidden until See-through is turned on and off again with the game running. Actors taken over from an
+    /// earlier copy of the DLL at a hand-off get the same restore ([SEETHRU-HANDOFF-LEFTOVER]). False from an older
     /// DLL.</summary>
     public bool RestoreAbandoned { get; init; }
 

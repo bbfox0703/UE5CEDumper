@@ -833,6 +833,9 @@ uintptr_t GetClass(uintptr_t uobjectAddr);
 // object -- on DQ XI S a Blueprint-owned property's PostConstructLinkNext, a named UProperty.
 bool IsScriptStructObject(uintptr_t obj);
 bool IsClassObject(uintptr_t obj);
+// [WALKCLASS-NOT-STRUCT] A UStruct of any kind -- a class, a script struct or a function, or a subclass of one: what
+// walk_class can walk. A live object of any other kind (an actor at a freed class's address, an enum, an asset) is not.
+bool IsStructKindObject(uintptr_t obj);
 // [ENUMSLOT-ANY-NAME] The same for an enum slot: a UEnum or a subclass (UserDefinedEnum, ...). ReadPropertyEnum reads the
 // slot the property TYPE has -- FByteProperty::Enum or FEnumProperty::Enum, one pointer apart -- and returns the UEnum*
 // only if it is one, else 0 (also for any other type). Every enum-slot reader goes through it.

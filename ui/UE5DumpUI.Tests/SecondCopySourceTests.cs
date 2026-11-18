@@ -64,8 +64,10 @@ public sealed class SecondCopySourceTests
 
     /// <summary>The exports a copy that handed over does NOT forward: the yield itself begins the hand-off, and its
     /// shutdown and pipe stop do nothing there -- a CE untick reaching it must not stop the copy that took over, which
-    /// that record never started (B30's rule; review wf_67396083-685 FWD-SHUTDOWN-B30).</summary>
-    private static readonly string[] NotForwarded = { "UE5_YieldToLaterCopy", "UE5_Shutdown", "UE5_StopPipeServer" };
+    /// that record never started (B30's rule; review wf_67396083-685 FWD-SHUTDOWN-B30). The hidden-actor hand-over is
+    /// answered from this copy's own record, for the copy it would be forwarded to (review wf_1b9e937b-a0d DLL-2).</summary>
+    private static readonly string[] NotForwarded =
+        { "UE5_YieldToLaterCopy", "UE5_Shutdown", "UE5_StopPipeServer", "UE5_HandOverHiddenActors" };
 
     /// <summary>The class walk's state is the copy's own, so a walk begun here finishes here (FWD-WALK-SPLIT).</summary>
     private static readonly string[] ForwardedUnlessWalkOpen = { "UE5_WalkClassGetField", "UE5_WalkClassEnd" };
@@ -75,7 +77,7 @@ public sealed class SecondCopySourceTests
     /// match let LAND_FORWARD(UE5_AutoStartBlocking) inside UE5_AutoStart pass, which never forwards
     /// (PIN-FWD-PREFIX).</summary>
     [Fact]
-    public void EveryExportForwardsOnceYielded_ButTheThreeThatMustNot()
+    public void EveryExportForwardsOnceYielded_ButTheFourThatMustNot()
     {
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         var exports = DeclaredExports();
@@ -278,6 +280,100 @@ public sealed class SecondCopySourceTests
     public void EveryProxyListsTheYield()
     {
         foreach (string def in new[] { "ProxyVersion.def", "ProxyDinput8.def", "ProxyDxgi.def", "ProxyWinmm.def" })
+        {
             Assert.Matches(@"(?m)^\s*UE5_YieldToLaterCopy\s*$", DllSrc(def));
+            Assert.Matches(@"(?m)^\s*UE5_HandOverHiddenActors\s*$", DllSrc(def));
+        }
+    }
+
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 T8-1 / R8-1: an adoption trusts a deferred restore that
+    /// is already running, and that restore's last pass decided it was done from its own snapshot -- actors adopted during
+    /// the pass were left with no restore waiting, and the card promised they would reappear. The loop decides from the
+    /// record, under the lock an adoption takes, and clears its running flag in that same section: an adoption lands
+    /// before the decision (another pass takes it) or sees no restore running (and starts one). R8-3: a new deferred
+    /// restore clears an earlier "gave up".</summary>
+    [Fact]
+    public void ADeferredRestoreTakesWhatWasAdoptedDuringItsPass()
+    {
+        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
+        string loop = FunctionBody(schlacht, "void PendingRestoreLoop() {");
+        Assert.DoesNotContain("done = kept.empty();", loop);
+        // Review wf_eec7e89a-a4a R9-2: each flag store INSIDE the section that decides the exit -- moved after its closing
+        // brace, or left to the store at the loop's end, the race is back. One regex per section, braces included.
+        Assert.Matches(@"std::lock_guard<std::mutex> lk\(s_mutex\);\s*nothingToDo = s_state\.active \|\| " +
+                       @"s_state\.hiddenActors\.empty\(\);\s*if \(nothingToDo\) s_pendingRunning\.store\(false\); \}", loop);
+        Assert.Matches(@"\{\s*std::lock_guard<std::mutex> lk\(s_mutex\);\s*RecordUnhideLeftoversLocked\(kept\);\s*" +
+                       @"done = s_state\.active \|\| s_state\.hiddenActors\.empty\(\);\s*left = s_state\.hiddenActors\.size\(\);\s*" +
+                       @"if \(done\) s_pendingRunning\.store\(false\);\s*\}", loop);
+        // R9-1: it gives up only on this pass's own failures; actors adopted while it ran were never tried.
+        Assert.Contains("if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS)", loop);
+        InOrder(FunctionBody(schlacht, "bool StartPendingLocked() {"), "a new restore",
+                "if (Tot::ShutdownRequested()) return false;", "s_state.restoreAbandoned = false;",
+                "s_pendingWorker = std::thread(PendingRestoreLoop);");
+    }
+
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 R8-2: KeepAddedDuringTick was tested as a helper, and its
+    /// call in Tick could go -- Schlacht.cpp is in no C++ test target. Under the write-back's lock, before the record is
+    /// replaced: after the assignment it would merge the record with itself.</summary>
+    [Fact]
+    public void ATickKeepsWhatWasAdoptedWhileItRan()
+    {
+        InOrder(FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void Tick() {"), "the tick",
+                "old = s_state.hiddenActors;", "std::lock_guard<std::mutex> lk(s_mutex);",
+                "KeepAddedDuringTick(applied, s_state.hiddenActors, old);", "s_state.hiddenActors = std::move(applied);");
+    }
+
+    /// <summary>[WRITEMEM-ANY-COPY] Review wf_bbd1bbfe-20d U7-5: the helper is tested, the call site was not -- Fern.cpp
+    /// is in no C++ test target. A background client's write_mem asks about every copy's image before it classifies the
+    /// range, so a write into the earlier copy's adopted mailbox never reaches the classification.</summary>
+    [Fact]
+    public void AnAiWriteMemIsRefusedInsideAnyCopysImage()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int at = fern.IndexOf("if (conn->background.load() && Macht::RangeInAnyDumperImage(addr, bytes.size()))",
+                              StringComparison.Ordinal);
+        Assert.True(at > 0, "write_mem's any-copy refusal not found -- re-point this pin");
+        int classify = fern.IndexOf("Macht::ClassifyWriteRange(addr, bytes.size())", at, StringComparison.Ordinal);
+        Assert.True(classify > at, "the any-copy refusal must precede the classification");
+        Assert.Contains("Grimoire::WRITE_MEM_OWN_IMAGE", fern[at..classify]);
+        Assert.DoesNotContain("RangeInOwnImage(addr", fern);
+    }
+
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: the hand-off's See-through OFF keeps on a stalled
+    /// game thread what it could not un-hide, "for the next ON" -- which a copy that handed over never gets. The later
+    /// copy takes that record after a hand-off it began, before anything else can take this copy over; the earlier copy
+    /// answers only once it has handed over, from its own record.</summary>
+    [Fact]
+    public void TheLaterCopyTakesOverTheActorsSeeThroughLeftHidden()
+    {
+        string land = CodeOnly(DllSrc("Land.cpp"));
+        // Review wf_bbd1bbfe-20d D7-1: asked after "already handing over" too -- that copy is still handing over, to a copy
+        // this one took over -- and asked again until it has, bounded.
+        string retire = FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {");
+        InOrder(retire, "the hand-off thread", "reply == YIELD_NOT_LATER", "PollHiddenActors(call->hidden);",
+                "RefusesStart(State())", "TakeMailbox(");
+        Assert.DoesNotContain("reply == YIELD_DONE) AdoptHiddenActors", retire);
+        Assert.Contains("call->hidden = GetProcAddress(h, Grimoire::DUMPER_HAND_OVER_HIDDEN_EXPORT);", land);
+        // Under the start lock BeginYield takes, and only while this copy is not being taken over: a copy that hands
+        // over never serves its record again, so it leaves the actors with the earlier copy for the copy taking over.
+        InOrder(FunctionBody(land, "HiddenAsk AdoptHiddenActors(FARPROC handOver) {"), "the adoption",
+                "LockStart()", "if (RefusesStart(State())) return HiddenAsk::Left;", "handOver)(",
+                "Schlacht::AdoptLeftovers(");
+        InOrder(FunctionBody(land, "void PollHiddenActors(FARPROC handOver) {"), "the poll",
+                "AdoptHiddenActors(handOver) == HiddenAsk::NotYet", "Grimoire::LAND_HIDDEN_WAIT_MS",
+                "Tot::ShutdownRequested()", "Sleep(Grimoire::LAND_HIDDEN_POLL_MS)");
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
+                "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
+        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
+        // Review wf_bbd1bbfe-20d D7-3 / U7-4: adopted while off, they get this copy's deferred restore, as after an OFF
+        // that could not finish -- so the card's "they reappear" and "gave up" are true for them; "gave up" is set only
+        // when no restore can wait (a shutdown), not for every adoption.
+        InOrder(FunctionBody(schlacht, "void AdoptLeftovers(const uint64_t* actors, int32_t n) {"), "the adoption",
+                "std::lock_guard<std::mutex> wk(s_workerMutex);", "s_state.hiddenActors.insert(",
+                "if (!active && !StartPendingLocked())", "s_state.restoreAbandoned = true;");
+        InOrder(FunctionBody(schlacht, "int32_t TakeLeftovers(uint64_t* out, int32_t cap) {"), "the record's move",
+                "std::lock_guard<std::mutex> lk(s_mutex);", "if (s_state.active) return 0;",
+                "TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap)");
     }
 }

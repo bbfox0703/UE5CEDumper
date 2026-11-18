@@ -834,6 +834,20 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
                     switch.restore()
                     switch = _ExperimentalSwitch()
                     switch.set(True)
+        # 5b. [MCP-RELEASE-EXPERIMENTAL-OFF] (UI 3742+) The switch refuses turning on, not the server ending its own hold:
+        # with Fly on, the switch turned off, the server's Fly OFF still goes through.
+        if toggle_experimental:
+            r, d, _ = call("write_fly", {"enable": True})
+            ck.check(not r.get("isError"), "write_fly on, to end it with the switch off", d)
+            switch.set(False)
+            try:
+                r, d, _ = call("write_fly", {"enable": False})
+                ck.check(not r.get("isError"), "write_fly OFF goes through while the experimental features are off", d)
+                ck.check(not holds().get("fly", {}).get("active"), "and fly is off")
+            finally:
+                switch.restore()
+                switch = _ExperimentalSwitch()
+                switch.set(True)
         if experimental or toggle_experimental:
             r, d, _ = call("write_fly", {"enable": True})
             ck.check(not r.get("isError"), "write_fly on", d)

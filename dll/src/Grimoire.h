@@ -46,6 +46,14 @@ constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 constexpr const char*    DUMPER_MAILBOX_EXPORT  = "g_invokeMailbox";
 constexpr const char*    DUMPER_YIELD_EXPORT    = "UE5_YieldToLaterCopy";
 constexpr const char*    DUMPER_SHUTDOWN_EXPORT = "UE5_Shutdown";
+// [SEETHRU-HANDOFF-LEFTOVER] Asked of a copy that handed over: the actors its See-through left hidden.
+constexpr const char*    DUMPER_HAND_OVER_HIDDEN_EXPORT = "UE5_HandOverHiddenActors";
+// How many actors the later copy takes per call: See-through hides a handful at a time, so one call is the usual case.
+constexpr int32_t        LAND_HIDDEN_BATCH = 256;
+// How long a later copy asks an earlier copy that is still handing over (to a copy it took over) for that record, and
+// how often: a hand-off's shutdown has been measured at 9-13 s on a busy game, and it may run past the pass's own wait.
+constexpr int32_t        LAND_HIDDEN_WAIT_MS = 120000;
+constexpr int32_t        LAND_HIDDEN_POLL_MS = 100;
 // One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two
 // passes at once could each hand the other's mailbox over while it is still served.
 constexpr const wchar_t* LAND_PASS_MUTEX_FORMAT = L"Local\\UE5CEDumper_Land_%lu";

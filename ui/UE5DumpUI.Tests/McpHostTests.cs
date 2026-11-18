@@ -189,6 +189,35 @@ public sealed class McpHostTests
         foreach (var name in named) Assert.True(catalog.Contains(name), $"MCP-Setup.html names {name}");
     }
 
+    /// <summary>[MCP-DOCS-OLDER-CC] Review wf_1b9e937b-a0d CON-2: both guides said the server lists its write tools
+    /// "only to Claude Code 2.1.246 or later", and the troubleshooting row blamed an older Claude Code for having none.
+    /// McpGrants.DecideFor gives an older Claude Code -- or one whose version is missing or unreadable -- every write tool,
+    /// asked before each call, and no grant.</summary>
+    [Fact]
+    public void TheGuides_SayWhatAnOlderClaudeCodeGets()
+    {
+        foreach (string v in new[] { "2.1.200", "", "not-a-version" })
+            Assert.Equal(McpHostDecision.MarkedPerCall,
+                McpGrants.DecideFor(McpWriteMode.Default, Constants.McpClaudeCodeClientName, v));
+        Assert.True(McpGrants.IsListed(McpToolRole.PerCallWrite, McpHostDecision.MarkedPerCall));
+        Assert.False(McpGrants.IsListed(McpToolRole.Grant, McpHostDecision.MarkedPerCall));
+        foreach (string file in new[] { "docs/mcp.md", "scripts/MCP-Setup.html" })
+        {
+            string guide = Regex.Replace(Source(file), @"\s+", " ");
+            Assert.DoesNotContain("lists its write tools only to Claude Code", guide);
+            Assert.Contains("An older Claude Code", guide);
+            Assert.Contains("asked about on every call", guide);
+        }
+        Assert.DoesNotContain("| The AI has no `write_*` tools | Its client is not Claude Code 2.1.246 or later.",
+            Source("docs/mcp.md"));
+        // Review wf_bbd1bbfe-20d U7-3: each cause gets its own remedy. Under --writes=off Claude Code reads only too
+        // (DecideFor), and a second --writes= stops the server (TryParseArgs), so "add --writes=any-host" fixes neither.
+        Assert.Equal(McpHostDecision.ReadOnly, McpGrants.DecideFor(McpWriteMode.Off, Constants.McpClaudeCodeClientName, "9.9.9"));
+        string row = Source("docs/mcp.md").Split('\n').Single(l => l.StartsWith("| The AI has no `write_*` tools |"));
+        Assert.Contains("remove it", row);
+        Assert.Contains("only one `--writes=`", row);
+    }
+
     [Theory]
     [InlineData(McpHostDecision.Grants)]
     [InlineData(McpHostDecision.MarkedPerCall)]

@@ -95,6 +95,25 @@ inline bool UnhideLeftItHidden(int32_t code) {
     return code != 0 && code != kHideNotAttempted && code != kHideFaultedInCall;
 }
 
+// ── The record across a hand-off ([SEETHRU-HANDOFF-LEFTOVER]) ────────────────
+// A copy that hands over to a later copy (Land) turns See-through off in its shutdown. On a game thread that is not
+// firing then, the un-hides cannot run and the record is kept "for the next See-through ON" -- but a copy that handed
+// over never gets another ON: its exports run in the later copy, whose own record does not know these actors. The later
+// copy therefore takes the record over (UE5_HandOverHiddenActors), and its next ON or OFF restores them.
+
+// Moves up to `cap` actors out of `hidden` -- and out of `queued`, the un-hides that may still run -- into `out`;
+// returns how many. What does not fit stays for the next call.
+template <class Set>
+inline int32_t TakeHiddenRecord(Set& hidden, Set& queued, uint64_t* out, int32_t cap) {
+    int32_t n = 0;
+    for (auto it = hidden.begin(); it != hidden.end() && n < cap;) {
+        out[n++] = static_cast<uint64_t>(*it);
+        queued.erase(*it);
+        it = hidden.erase(it);
+    }
+    return n;
+}
+
 // A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
 // un-hide may still be queued, and when it runs the actor shows while the record says hidden. Such an actor is hidden
 // again (the queue runs the hide after the un-hide). Hiding twice is harmless.
@@ -128,7 +147,8 @@ struct SeeThroughStatus {
     int32_t pierceCount = 1;      // how many nearest occluders to hide along the ray
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
     // [P1-SEETHRU-GIVEUP] The leftover-hidden record, split: a restore still WAITING for the game thread, and one that
-    // GAVE UP after PENDING_RESTORE_MAX_MS. hiddenCount > 0 with active == false used to mean both, and the card
+    // GAVE UP after PENDING_RESTORE_MAX_MS. A record taken over from an earlier copy at a hand-off gets the same deferred
+    // restore ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false used to mean both, and the card
     // promised "they reappear" for the one that never will.
     bool    restorePending   = false;
     bool    restoreAbandoned = false;
@@ -181,5 +201,22 @@ bool IsActive();
 // Stop + join the worker, leaving the hidden record as it is. Idempotent. UE5_Shutdown does not use it: it turns
 // See-through off, so the occluders are un-hidden while the hook can still dispatch.
 void StopWorker();
+
+// [SEETHRU-HANDOFF-LEFTOVER] A tick judges a snapshot of the record and writes its result back; what was added while it
+// ran -- actors an earlier copy handed over (AdoptLeftovers) -- is kept for the next tick to judge, not overwritten
+// (review wf_bbd1bbfe-20d D7-2).
+template <class Set>
+inline void KeepAddedDuringTick(Set& applied, const Set& now, const Set& snapshot) {
+    for (const auto& a : now)
+        if (!snapshot.count(a)) applied.insert(a);
+}
+
+// [SEETHRU-HANDOFF-LEFTOVER] This copy's leftover record, moved into `out` (at most `cap`; see TakeHiddenRecord). Nothing
+// while See-through is on: a running worker owns its record.
+int32_t TakeLeftovers(uint64_t* out, int32_t cap);
+// [SEETHRU-HANDOFF-LEFTOVER] Actors an earlier copy's See-through left hidden, recorded as this copy's. Off: this copy's
+// deferred restore un-hides them when the game thread answers (as after an OFF that could not finish), and its next ON
+// or OFF does too. On: a running worker's next tick un-hides those no longer in the way.
+void AdoptLeftovers(const uint64_t* actors, int32_t n);
 
 } // namespace Schlacht

@@ -666,6 +666,53 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public void A_dropped_return_is_said_to_put_the_later_calls_of_its_thread_inside_its_call()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_1b9e937b-a0d R6-2: B's return (12) was dropped, so B stays open on thread 1 and C,
+        // which began after B returned, is drawn as B's child -- the tree's most visible effect, which the status line
+        // left out ("not returned, or be missing").
+        var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
+        {
+            new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(11, 110, 0xB, 0, 1, 0),
+            new TraceRecord(13, 130, 0xC, 0, 1, 0), new TraceRecord(14 | TraceRecord.ReturnBit, 140, 13, 0, 1, 0),
+            new TraceRecord(15 | TraceRecord.ReturnBit, 150, 10, 0, 1, 0),
+        }, new TraceInfo { QpcFreq = 1_000_000, FirstValid = 10, Written = 16 });
+        Assert.Equal(1, t.Parent[2]);   // what the line must explain: C under B
+        var (vm, _) = MakeVm(Dump());
+        vm.StringLookup = En;
+        string sum = vm.Summary(t);
+        Assert.Contains(Line("str.CT.Status.Dropped", 1, 0, 1), sum);
+        Assert.Contains("later calls on its thread", sum, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_call_whose_return_may_be_among_the_dropped_records_says_so()
+    {
+        // [TRACE-DROPPED-ENTRY] Review wf_1b9e937b-a0d R6-3: the detail pane said a call with no return "did not return
+        // (still running at Stop, or unwound by an exception)". B returned; its record was left out as the buffer wrapped.
+        // A trace with records left out names that reason too; one with none keeps the two.
+        var d = new FakeDumpService();
+        d.Ring.AddRange(new[]
+        {
+            new TraceRecord(0, 1000, 0xA, 0, 1, 0), new TraceRecord(1, 1010, 0xB, 0, 1, 0),
+            new TraceRecord(3, 1030, 0xC, 0, 1, 0), new TraceRecord(4 | R, 1040, 3, 0, 1, 0),
+            new TraceRecord(5 | R, 1050, 0, 0, 1, 0),
+        });
+        d.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = 6, FirstValid = 0, QpcFreq = 1_000_000 };
+        var (vm, _) = MakeVm(d);
+        vm.StringLookup = En;
+        await vm.LoadCommand.ExecuteAsync(null);
+        string b = vm.Detail(1);
+        Assert.Contains("left out", b, StringComparison.Ordinal);
+        Assert.DoesNotContain(En("str.CT.Detail.NoReturn"), b, StringComparison.Ordinal);
+
+        var (plain, _) = MakeVm(Dump());
+        plain.StringLookup = En;
+        await plain.LoadCommand.ExecuteAsync(null);
+        Assert.Contains(En("str.CT.Detail.NoReturn"), plain.Detail(4), StringComparison.Ordinal);   // GameMode::Tick
+    }
+
+    [Fact]
     public void A_dropped_start_of_a_call_still_running_is_not_called_a_return()
     {
         // [TRACE-DROPPED-ENTRY] Review wf_53eabd00-f5e: a missing record that no return names can be a dropped RETURN or

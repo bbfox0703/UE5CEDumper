@@ -57,6 +57,7 @@
 #include <Windows.h>
 
 #include <thread>
+#include <unordered_set>   // [SEETHRU-HANDOFF-LEFTOVER] the hidden record's shape
 
 #include <algorithm>
 #include <cstdio>
@@ -946,6 +947,39 @@ static void Test_Voll_ClientOwnerKey() {
 }
 
 // [PIPE-PER-PROCESS-2026-11-06] Stage C: a departing client releases only its own claim on See-through.
+// [SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: a copy that handed over could never restore the actors its
+// shutdown's OFF left hidden on a stalled game thread. The later copy takes the record: every actor moves, in batches,
+// and an un-hide that may still run leaves the queued set with it.
+// [SEETHRU-HANDOFF-LEFTOVER] Review wf_bbd1bbfe-20d D7-2: a tick overwrote the record with its result, so actors adopted
+// while it waited on the game thread fell out of the record and stayed hidden with nothing tracking them.
+static void Test_Schlacht_TickKeepsWhatWasAdded() {
+    std::printf("Test_Schlacht_TickKeepsWhatWasAdded\n");
+    const std::unordered_set<uintptr_t> snapshot = { 0x1000, 0x2000 };
+    const std::unordered_set<uintptr_t> now = { 0x1000, 0x2000, 0x9000 };   // 0x9000 adopted mid-tick
+    std::unordered_set<uintptr_t> applied = { 0x1000 };                      // the tick un-hid 0x2000
+    Schlacht::KeepAddedDuringTick(applied, now, snapshot);
+    EXPECT("* tick: an actor adopted while it ran stays in the record", applied.count(0x9000) == 1);
+    EXPECT("tick: what it un-hid stays out", applied.count(0x2000) == 0);
+    EXPECT("tick: what it kept stays in", applied.count(0x1000) == 1 && applied.size() == 2);
+}
+
+static void Test_Schlacht_HandOverRecord() {
+    std::printf("Test_Schlacht_HandOverRecord\n");
+    std::unordered_set<uintptr_t> hidden = { 0x1000, 0x2000, 0x3000 }, queued = { 0x2000 };
+    uint64_t out[4] = {};
+    EXPECT("* hand-over: a batch of 2 moves 2 actors", Schlacht::TakeHiddenRecord(hidden, queued, out, 2) == 2);
+    EXPECT("* hand-over: ...and leaves 1 in the record", hidden.size() == 1);
+    const int32_t last = Schlacht::TakeHiddenRecord(hidden, queued, out + 2, 2);
+    EXPECT("* hand-over: the next call moves the rest", last == 1 && hidden.empty());
+    std::unordered_set<uint64_t> got(out, out + 3);
+    EXPECT("* hand-over: every actor moved, none twice", got.size() == 3 && got.count(0x1000) && got.count(0x2000)
+                                                         && got.count(0x3000));
+    EXPECT("* hand-over: a moved actor's queued un-hide leaves with it", queued.empty());
+    EXPECT("hand-over: an empty record moves nothing", Schlacht::TakeHiddenRecord(hidden, queued, out, 4) == 0);
+    std::unordered_set<uintptr_t> one = { 0x4000 }, none;
+    EXPECT("hand-over: a batch of 0 moves nothing", Schlacht::TakeHiddenRecord(one, none, out, 0) == 0 && one.size() == 1);
+}
+
 static void Test_Schlacht_Owners() {
     using R = Schlacht::OwnerRelease;
     const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
@@ -12266,6 +12300,47 @@ static void Test_Lager_ClassifyWriteRegion() {
     EXPECT("own image: an empty image is overlapped by nothing", !RangeOverlapsImage(kImg, 8, kImg, 0));
     EXPECT("own image: a range wrapping past the top still reaches an image above its start",
            RangeOverlapsImage(kImg - 0x10, ~static_cast<size_t>(0), kImg, kImgSize));
+
+    // [WRITEMEM-ANY-COPY] Review wf_1b9e937b-a0d DLL-1: a later copy that took over serves the earlier copy's CE
+    // mailbox, which lives in the EARLIER copy's image -- refused like this copy's own.
+    constexpr uintptr_t kEarlier = 0x7FF700000000ull, kGameDll = 0x7FF800000000ull;
+    // Review wf_bbd1bbfe-20d D7-6: the module list comes back EMPTY when EnumProcessModules fails (a DLL loading or
+    // unloading), and the earlier copy's image then went unchecked. The region walk asks VirtualQuery instead.
+    struct Reg { uintptr_t base; size_t size; bool image; uintptr_t alloc; };
+    const std::vector<Reg> regs = {
+        {0x20000000ull, 0x10000, false, 0x20000000ull},                // heap
+        {kEarlier, 0x1000, true, kEarlier},                            // the earlier copy's headers
+        {kEarlier + 0x1000, 0x2FF000, true, kEarlier},                 // ...and its .data (the adopted mailbox)
+        {kGameDll, 0x200000, true, kGameDll},                          // a game module
+    };
+    auto query = [&](uintptr_t p) {
+        for (const auto& r : regs)
+            if (p >= r.base && p < r.base + r.size) return MemRegion{r.base, r.size, r.image, r.alloc};
+        return MemRegion{};
+    };
+    int askedAt = 0;
+    auto dumperAt = [&](uintptr_t alloc) { ++askedAt; return alloc == kEarlier || alloc == 0x30001000ull; };
+    EXPECT("* regions: the earlier copy's .data (its adopted mailbox) is refused with no module list",
+           RangeTouchesDumperImage(kEarlier + 0x2000, 8, kImg, kImgSize, query, dumperAt));
+    // A heap page directly below a copy's image: a write across the boundary reaches the image's second region.
+    const std::vector<Reg> joined = { {0x30000000ull, 0x1000, false, 0x30000000ull},
+                                      {0x30001000ull, 0x1000, true, 0x30001000ull} };
+    auto joinedQuery = [&](uintptr_t p) {
+        for (const auto& r : joined)
+            if (p >= r.base && p < r.base + r.size) return MemRegion{r.base, r.size, r.image, r.alloc};
+        return MemRegion{};
+    };
+    EXPECT("* regions: a write running from the heap into a copy's image is refused",
+           RangeTouchesDumperImage(0x30000FFCull, 8, kImg, kImgSize, joinedQuery, dumperAt));
+    EXPECT("regions: this copy's own image is refused before any query",
+           RangeTouchesDumperImage(kImg + 8, 8, kImg, kImgSize, [](uintptr_t) { return MemRegion{}; }, dumperAt));
+    EXPECT("regions: a game module's image is not", !RangeTouchesDumperImage(kGameDll + 0x10, 8, kImg, kImgSize, query,
+                                                                            dumperAt));
+    askedAt = 0;
+    EXPECT("regions: the heap is not, and no module is asked about it",
+           !RangeTouchesDumperImage(0x20000000ull + 0x10, 8, kImg, kImgSize, query, dumperAt) && askedAt == 0);
+    EXPECT("regions: an unreadable region ends the walk (write_mem's own check refuses it)",
+           !RangeTouchesDumperImage(0x10000ull, 8, kImg, kImgSize, query, dumperAt));
 }
 
 static void Test_Lager_HolderCandidateReadable() {
@@ -13215,6 +13290,8 @@ int main() {
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
     RUN(Test_Schlacht_FailedDispatchKeepsTheRecord);
+    RUN(Test_Schlacht_HandOverRecord);           // [SEETHRU-HANDOFF-LEFTOVER] the record a later copy takes over
+    RUN(Test_Schlacht_TickKeepsWhatWasAdded);    // [SEETHRU-HANDOFF-LEFTOVER] ...kept by a tick that ran meanwhile
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
     RUN(Test_Kanne_WatchKeyAndSlot);
