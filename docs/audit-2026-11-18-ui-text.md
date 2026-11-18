@@ -1,0 +1,48 @@
+# UI text vs behaviour — found while updating the Wiki to build 3743 (2026-11-18)
+
+`[UI-TEXT-AUDIT-2026-11-18]`. The Wiki update to build 3743 checked every page against the code and the UI's own
+strings, and listed each place where the UI's text says something the program does not do. Nothing was fixed in that
+session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
+
+**Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
+code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
+a question for the maintainer, not a defect. Line numbers are as of build 3743 and drift; the function or string key
+beside them does not.
+
+| ID | Area | Kind | Finding | Status |
+|----|------|------|---------|--------|
+| UT-01 | Live Funcs | text | `str.Tip.LF.Unloaded` says an unloaded row "cannot be ticked for the trace"; a row with a name key can be ticked and chosen for Params? / Stack? (`LiveFuncsViewModel` `Tickable`). | ⬜ |
+| UT-02 | Live Funcs | text | `str.Tip.LF.Trace.Ticked` says "with none ticked, every call"; with Params? / Stack? choices and no ticks, only the chosen calls are recorded (`str.LF.Trace.RecordingSnapOnly`). | ⬜ |
+| UT-03 | Live Funcs | behaviour | The Parameters row's **Clear** has no tooltip and also clears the stack choices, while `str.Tip.LF.ClearChoices` says each Clear empties only its own. | ⬜ |
+| UT-04 | Live Funcs | text | `str.Tip.LF.Snap.Choose` names only the Parameters view; the copies also show in the Bytes tab. | ⬜ |
+| UT-05 | Live Funcs | behaviour | The Δ label formats `Delta` with the current culture, so some locales show `−N` instead of `-N` (`PeProfileResult`). | ⬜ |
+| UT-06 | System | design | The experimental switch is an unlabelled check box at Opacity 0.1; "Enable advanced experimental features" is only its tooltip. | ⬜ |
+| UT-07 | docs/mcp.md | doc | Two troubleshooting rows quote texts the server does not send ("Not invoked: ... still queued or running", `McpRawTools`). | ⬜ |
+| UT-08 | Teleport | text | `str.TP.HkHint` omits the Gravity Dir toggle and Get POV, which the hotkey list has. | ⬜ |
+| UT-09 | Call Trace | text | `str.CT.Detail.Object` / `str.CT.Detail.ObjectStale` label the object a function was called ON as "Calling object", which reads as the caller. | ⬜ |
+| UT-10 | System | behaviour | A refused UE-version override leaves the dropdown showing the refused version (`PointerPanelViewModel.ApplyOverrideAsync` catches the refusal without a revert). Not checked at runtime. | ⬜ |
+| UT-11 | AOBMaker / ASM | comment | Comments in `Helpers/AobMakerActions.cs` and `dll/src/Fern.cpp` say ASM on a Blueprint function "lands on the interpreter"; the DLL returns no native address for a non-native function. | ⬜ |
+| UT-12 | System | text | The GWorld / &GEngine **SYM** tooltips omit that they register from the game's export when there is one; the GObjects tooltip says it. | ⬜ |
+| UT-13 | System | comment | `Views/PointerPanel.axaml`'s comment on the experimental switch gives opacity 0.2 and a tooltip naming three tabs; the `ExperimentalEnabled` summary lists only three tabs. | ⬜ |
+| UT-14 | Live Walker | text | `str.Tip.StringLength` says it applies to Copy CE XML / Copy CE Field; String Len also sets the CSX string size and the +CE / +CE Field (flat) string records. | ⬜ |
+| UT-15 | Live Walker | text | A failed field edit shows "Write failed for X: DLL error: Not written: ... write_mem writes data only" -- the "DLL error:" prefix and the internal command name `write_mem`. | ⬜ |
+| UT-16 | Live Walker | text | `str.Tip.Toolbar.Options` says "Set once per session" though the settings persist, and lists only some of them (not String Len, Fabricate, Locate depth, the deep-scan cap). | ⬜ |
+| UT-17 | Live Walker | text | `str.Tip.LiveWalker.FuncFilter` says each keyword must match the function name; the filter also matches the interface name. | ⬜ |
+| UT-18 | Live Walker | text | `str.Tip.CollapsePointers` says "in CE XML export"; it applies to Copy CE Field too. (`MainWindowViewModel`'s comment gives Fabricate as 2..512; the slider goes to 4096.) | ⬜ |
+| UT-19 | Dump Explorer | text | `str.Tip.Dump.FindInstances` says "in the Instance Finder"; the tab is **Instances**. | ⬜ |
+| UT-20 | Dump Explorer | behaviour | "Live match: N class(es) ... (M of T rows matched)" counts class rows only in N, while structs and enums also match and count in M. | ⬜ |
+| UT-21 | Proxy Deploy | design | Inject from the UI only connects when the game already holds any copy of the DLL, a stale proxy included; the second copy's take-over is reachable only through `inject-ue.ps1` or another injector. | ⬜ |
+| UT-22 | dev-log | doc | The build 3729 entry says "The UI and the MCP server reconnect" after a hand-off; the UI does not reconnect by itself (the user clicks Connect). | ⬜ |
+| UT-23 | Properties | text | `str.Tip.PropertySearch.MaxResults` says 'Raise it if you see "⚠ capped"'; the status line says "⚠ STOPPED at the N-row cap"; "⚠ capped" is the Forced-fields strip's label. | ⬜ |
+| UT-24 | Properties | behaviour | The Freeze tooltip says "AOBMaker CE Plugin not found" for every unavailable state, a busy or refused pipe included; `AobMakerUnavailable.Text` gives the real reason elsewhere. | ⬜ |
+| UT-25 | Properties | text | The Freeze type refusal says "(numeric + bool only)"; enums are supported. | ⬜ |
+| UT-26 | Console | behaviour | A status message says "type the command and press Enter"; the command box does nothing on Enter (its tooltip says press Run). | ⬜ |
+| UT-27 | Find Class Funcs | comment | `PropertyXrefDialog`'s comment says the Disassemble button is hidden without AOBMaker; it is visible and disabled. | ⬜ |
+| UT-28 | Console | text | `str.Tip.Con.CommandInput` / `str.Tip.Con.RunRow` show the internal class name `InvokeParamDialog`. | ⬜ |
+| UT-29 | Value Search | behaviour | Group scan uses single mode's hidden **Game classes only** and **Max:** values, which group mode does not show; its truncation message names a result cap the user cannot see there. | ⬜ |
+| UT-30 | Value Search | text | `str.Tip.VS.Group.ScanType` lists only Exact / Bigger / Smaller for the first scan; Between is offered. The matching error omits it too. | ⬜ |
+| UT-31 | Classes and others | text | `str.Tip.GameClassFilter.FindInstances` (and **inst** elsewhere) says "live instances"; the search matches class names by substring and keeps templates. | ⬜ |
+| UT-32 | Classes | text | The batch Find Func partial clause uses the unit "rows"; Instances says "classes". | ⬜ |
+| UT-33 | Class Struct | behaviour | A failed instance pick keeps the old class under an error about another selection (the catch in `OnObjectSelected` does not call `DropShownClass`); `[CLASSSTRUCT-FAILED-KEEPS-OLD]` covered the walk path only. | ⬜ |
+| UT-34 | Snapshot / SPC | behaviour | **Addr** on an array-element row copies the owning object's base address while the status line names the element (`Class::Arr[3].Field`); HEX and +CE refuse the same row. | ⬜ |
+| UT-35 | Class Pivot | behaviour | DataTable source: **Open in Live Walker** and the two Locate buttons get the row's struct data address, where their handlers expect a UObject; `str.Pivot.ResultsHint` says the row hands its instance to CE. Not checked on a game. | ⬜ |
