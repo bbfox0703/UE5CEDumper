@@ -146,8 +146,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
             // user cannot reach), found while live-checking CLASSTOTAL on Avowed, where it read
             // "5,000 classes shown of 7,409 total … or raise the cap" with nothing to raise. The
             // control exists now; at the ceiling the advice would be the same lie in a new place.
-            // Both of the note's numbers are RequestedLimit, the cap this load was sent with: the Max box can change
-            // while the load runs.
+            // The cap note names RequestedLimit, the cap this load was sent with: the Max box can change while
+            // the load runs.
             var capNote = result.Truncated
                 ? "  ⚠ STOPPED at the " + result.RequestedLimit.ToString("N0") + "-row cap — filter to narrow"
                   + PartialResultNotice.RaiseMaxClause(result.RequestedLimit, Constants.MaxSearchCap)
