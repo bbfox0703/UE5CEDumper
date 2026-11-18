@@ -374,10 +374,10 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Margin = new Thickness(4, 0),
                 }, supportsRecycling: false),
         });
-        // AOT-safe sort comparers (audit #5 AF23) — the twin of
-        // FunctionPropsDialog's grid, and it carried the same defect: six
-        // DataGridTemplateColumns, CanUserSortColumns = true, no comparer, so the
-        // reflection sort is trimmed and every header is inert in the shipped build.
+        // AOT-safe sort comparers. This grid is built from DataGridTemplateColumns, which have no
+        // column-level Binding to root a SortMemberPath, so the trimmed build drops the reflection
+        // metadata Avalonia's default sort reads and a header without a comparer does not sort.
+        // Same rule and same helper as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
         _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) =>
         {
