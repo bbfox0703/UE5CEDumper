@@ -1117,10 +1117,13 @@ public partial class ValueSearchViewModel : ViewModelBase
 
             var effRound = SupportsRoundingMode ? SelectedRoundingMode : FloatRoundMode.Round;
             bool effCase = SupportsCaseSensitive && CaseSensitive;
+            // The status line names the scan type this refine was sent with: the Scan Type picker can change while
+            // the refine runs.
+            var scanTypeSent = SelectedScanType;
             var result = await _dump.RefineValueScanAsync(
-                SessionId, SelectedScanType,
+                SessionId, scanTypeSent,
                 needsValue ? Value : null,
-                SelectedScanType == ValueScanType.Between ? Value2 : null,
+                scanTypeSent == ValueScanType.Between ? Value2 : null,
                 effRound, effCase, PageSize, cts.Token);
 
             // Refine prunes the existing set (no re-scan), so the histogram is exact
@@ -1132,7 +1135,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                 result.ClassDistinct, countsPartial: _scanTruncated);
             await ApplyScanResultAsync(result.Total, result.Candidates);
 
-            StatusText = $"Next Scan ({SelectedScanType}): {result.Total} surviving candidates " +
+            StatusText = $"Next Scan ({scanTypeSent}): {result.Total} surviving candidates " +
                          $"in {result.DurationMs} ms"
                        + (_scanTruncated ? PartialResultNotice.InheritedTruncation() : "");
         }

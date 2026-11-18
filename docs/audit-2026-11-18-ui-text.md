@@ -90,7 +90,7 @@ beside them does not.
 | UT-74 | Properties | behaviour | Property Search's status line reads Game classes only and Deep after the search's await, not the values the search was sent (UT-67 moved only the Max). | ✅ fixed 2026-11-18 (red `676a39e6`, then green) |
 | UT-75 | Instances | behaviour | Instance Finder's address Lookup names the deep descent's element cap read after the await, not the cap the lookup was sent. | ✅ fixed 2026-11-18 (red `cff46c85`, then green) |
 | UT-76 | Classes | comment | The comment UT-67 added says both of the Classes cap note's numbers are the cap sent; only the raise-Max clause is pinned by a test. | ✅ fixed 2026-11-18 |
-| UT-77 | Value Search | behaviour | Next Scan's status names the scan type read after the refine's await, not the type the refine was sent. | ⬜ |
+| UT-77 | Value Search | behaviour | Next Scan's status names the scan type read after the refine's await, not the type the refine was sent. | ✅ fixed 2026-11-18 (red `7c21593d`, then green) |
 | UT-78 | tools | doc | `tools/verify/pipe_client.py`'s docstring still says a deployed proxy ignores a fresh injection (UT-70 corrected the other copies). | ⬜ |
 | UT-79 | working-lessons | doc | Trap 1's check (compare `build_number` with the build just made) passes in the take-over it now describes; `get_pointers.load_mode` is what tells a proxy from an injected copy. | ⬜ |
 | UT-80 | handover | doc | `docs/handover.md`'s pipe section says a stale proxy answers while the fresh DLL sits inert; a fresh copy takes over, or serves its own pipe beside a pre-contract proxy. | ⬜ |
