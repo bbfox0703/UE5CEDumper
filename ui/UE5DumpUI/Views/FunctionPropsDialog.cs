@@ -77,6 +77,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     internal const string KeyAsmLabel = "str.FunctionProps.AsmInCe";
     internal const string KeyAsmTip = "str.Tip.AobMaker.FuncAsm";
     internal const string KeyAsmOffTip = "str.Tip.FunctionProps.AsmOff";
+    internal const string KeySiteTip = "str.Tip.FunctionProps.WriteSiteInCe";
     internal const string KeySiteOffTip = "str.Tip.FunctionProps.WriteSiteInCeOff";
 
     private async void OnAsmClicked(object? sender, RoutedEventArgs e)
@@ -512,7 +513,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             ? Res.Get(KeyAsmTip)
             : Res.Format(KeyAsmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
         ToolTip.SetTip(_btnSiteInCe, up
-            ? Res.Get("str.Tip.FunctionProps.WriteSiteInCe")
+            ? Res.Get(KeySiteTip)
             : Res.Format(KeySiteOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
     }
 
