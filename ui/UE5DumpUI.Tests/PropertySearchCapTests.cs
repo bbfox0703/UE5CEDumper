@@ -114,7 +114,9 @@ public class PropertySearchCapTests
         int at = vm.IndexOf("_dump.SearchPropertiesAsync(", StringComparison.Ordinal);
         Assert.True(at > 0, "the SearchPropertiesAsync call site was not found");
         string call = vm.Substring(at, Math.Min(400, vm.Length - at));
-        Assert.Contains("limit: PropertySearchCap", call);
+        Assert.Contains("limit: capSent", call);
+        // capSent is the Max box's value, read just before the call; the status line's advice names the same cap.
+        Assert.Contains("int capSent = PropertySearchCap;", vm.Substring(Math.Max(0, at - 300), Math.Min(300, at)));
     }
 
     [Fact]

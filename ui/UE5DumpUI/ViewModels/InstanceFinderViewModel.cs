@@ -523,8 +523,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             StatusText = reRun ? "Re-searching..." : "Searching...";
             ShowCeXml = false;
 
+            // The cap note names the Max this search was sent with: the Max box can change while the search runs.
+            int capSent = InstanceSearchCap;
             var result = await _dump.FindInstancesAsync(
-                className, ExactMatch, limit: InstanceSearchCap, newestFirst: NewestFirst,
+                className, ExactMatch, limit: capSent, newestFirst: NewestFirst,
                 nameFilter: nameFilter, excludeClasses: excludeClasses, ct: ct);
             if (gen != _searchGen) return;   // superseded by a newer search/re-run
 
@@ -551,8 +553,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // rule for the panels with a Max control (RaiseMaxClauseTests lists them), rather than
             // being re-derived here. [CLASSCAP]
             var capNote = result.Truncated
-                ? $" — ⚠ capped at {found} of max {InstanceSearchCap:N0}; exclude noise classes"
-                  + PartialResultNotice.RaiseMaxClause(InstanceSearchCap, Constants.MaxSearchCap)
+                ? $" — ⚠ capped at {found} of max {capSent:N0}; exclude noise classes"
+                  + PartialResultNotice.RaiseMaxClause(capSent, Constants.MaxSearchCap)
                   + ", or narrow"
                 : "";
             if (result.Scanned > 0)

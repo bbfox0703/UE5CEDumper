@@ -177,8 +177,8 @@ public class PropertySearchFilterTests
             int limit = 200, CancellationToken ct = default) => Task.FromResult(Next);
     }
 
-    /// <param name="configure">Applied BEFORE the search runs — the cap is read while the
-    /// status line is composed, so setting it afterwards would test nothing.</param>
+    /// <param name="configure">Applied BEFORE the search runs — the cap is read when the
+    /// search is sent, so setting it afterwards would test nothing.</param>
     private static async Task<PropertySearchViewModel> VmFor(
         PropertySearchResult result, Action<PropertySearchViewModel>? configure = null)
     {

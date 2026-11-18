@@ -671,12 +671,14 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             IsSearching = true;
             StatusText = "Searching...";
 
+            // The cap advice names the Max this search was sent with: the Max box can change while the search runs.
+            int capSent = PropertySearchCap;
             var result = await _dump.SearchPropertiesAsync(
                 trimmedQuery,
                 types: types.Length > 0 ? types : null,
                 gameOnly: GameClassesOnly,
                 deep: DeepSearch,
-                limit: PropertySearchCap);
+                limit: capSent);
 
             // Cache the full set so the client-side ResultFilter can refine
             // without another DLL roundtrip.
@@ -711,7 +713,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             string advice = "narrow it with a longer property name or a Type filter";
             if (!GameClassesOnly)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
-            advice += PartialResultNotice.RaiseMaxClause(PropertySearchCap, Constants.MaxSearchCap);
+            advice += PartialResultNotice.RaiseMaxClause(capSent, Constants.MaxSearchCap);
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled()
                 : result.Truncated
