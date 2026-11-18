@@ -673,13 +673,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OffsetsFallbackReason = state.OffsetsFallbackReason;
         PublisherThumbprint = state.PublisherThumbprint;
         // Re-sync the ComboBox selection to whatever the DLL actually has (override or auto).
-        // _suppressOverrideSelectionEvent gates the partial method so this assignment doesn't
-        // re-trigger the apply path. A pending Auto is the user's choice even though the
-        // override's version is still in force, so it shows as Auto ([UE-OVERRIDE-HINT-AUTO]).
-        _suppressOverrideSelectionEvent = true;
-        SelectedUeVersionOverride = state.IsUserOverride && !state.IsAutoPending
-            ? VersionToLabel(state.UEVersion) : "Auto";
-        _suppressOverrideSelectionEvent = false;
+        ShowOverrideInForce();
         TotalObjects = state.ObjectCount;
         ItemPacked = state.ItemPacked;
         ItemLayoutMode = state.ItemLayoutMode;
@@ -970,11 +964,23 @@ public partial class PointerPanelViewModel : ViewModelBase
         {
             SetError(ex);
             _log?.Error(Constants.LogCatInit, "Failed to apply UE version override", ex);
+            // A refused version changed nothing in the DLL: the box goes back to the choice in force.
+            ShowOverrideInForce();
         }
         finally
         {
             IsApplyingOverride = false;
         }
+    }
+
+    /// <summary>Shows in the UE-version ComboBox the choice in force, as the last state read from the DLL has it, without
+    /// sending it back: _suppressOverrideSelectionEvent gates the apply path. A pending Auto is the user's choice even
+    /// though the override's version is still in force, so it shows as Auto ([UE-OVERRIDE-HINT-AUTO]).</summary>
+    private void ShowOverrideInForce()
+    {
+        _suppressOverrideSelectionEvent = true;
+        SelectedUeVersionOverride = IsUserOverride && !IsAutoPending ? VersionToLabel(UeVersion) : "Auto";
+        _suppressOverrideSelectionEvent = false;
     }
 
     /// <summary>"UE 4.27" → 427, "UE 5.4" → 504, "Auto" → 0.</summary>
