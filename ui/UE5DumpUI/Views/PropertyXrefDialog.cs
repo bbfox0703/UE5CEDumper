@@ -60,6 +60,10 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     private Button _btnDisasm = null!;
     private Button _btnLocate = null!;
     private Button _btnClose = null!;
+    // Set while the Disassemble button's own push runs. SyncDisasmButton can run during that push, and it keeps
+    // the button off while the flag is set: a second click mid-push would push again, adding a second record to
+    // CE's table.
+    private bool _disasmPushing;
 
     /// <summary>App-global AOBMaker bridge for the "Disassemble in CE" push. A
     /// code-behind dialog can't take per-instance DI, so MainWindowViewModel sets this;
@@ -461,14 +465,14 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 
-    // The button is enabled for a selected row while the bridge is up. Its tooltip says what the button does, or,
-    // while the plugin is out of reach, why, in the bridge's own sentence for its last failure (a busy or refused
-    // pipe is not a missing plugin). State and tooltip are set together because a push can change the bridge's flag
-    // while the dialog is open.
+    // The button is enabled for a selected row while the bridge is up and the button's own push is not running. Its
+    // tooltip says what the button does, or, while the plugin is out of reach, why, in the bridge's own sentence for
+    // its last failure (a busy or refused pipe is not a missing plugin). State and tooltip are set together because a
+    // push can change the bridge's flag while the dialog is open.
     private void SyncDisasmButton()
     {
         bool up = SharedAobMaker?.IsAvailable == true;
-        _btnDisasm.IsEnabled = up && _grid.SelectedItem is PropertyXrefMatch;
+        _btnDisasm.IsEnabled = up && _grid.SelectedItem is PropertyXrefMatch && !_disasmPushing;
         ToolTip.SetTip(_btnDisasm, up
             ? "Resolve the selected function's native code address (UFunction->Func) and jump "
             + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
@@ -507,6 +511,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             SyncDisasmButton();
             return;
         }
+        _disasmPushing = true;
         _btnDisasm.IsEnabled = false;
         try
         {
@@ -563,6 +568,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         }
         finally
         {
+            _disasmPushing = false;
             SyncDisasmButton();
         }
     }

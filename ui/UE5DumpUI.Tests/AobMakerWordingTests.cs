@@ -539,7 +539,7 @@ public class AobMakerWordingTests
         Assert.Contains("\n        SyncDisasmButton();\n", ctor, StringComparison.Ordinal);
 
         var click = Body("private async void OnDisassembleClicked(");
-        Assert.Matches(@"finally\s*\{\s*SyncDisasmButton\(\);\s*\}", click);
+        Assert.Matches(@"finally\s*\{\s*(?:_\w+ = false;\s*)?SyncDisasmButton\(\);\s*\}", click);
         int guard = click.IndexOf("if (bridge == null || !bridge.IsAvailable)", StringComparison.Ordinal);
         Assert.True(guard >= 0, "OnDisassembleClicked has no guard for a bridge that is down");
         int bail = click.IndexOf("return;", guard, StringComparison.Ordinal);
