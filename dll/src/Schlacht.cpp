@@ -721,16 +721,20 @@ void PendingRestoreLoop() {
             // An un-hide that did not run (the game thread stalled again) goes back in the record, and this loop
             // waits for the game thread once more. [SHUTDOWN-SEETHRU-WAIT]
             const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
+            size_t left = 0;
             {
                 std::lock_guard<std::mutex> lk(s_mutex);
                 RecordUnhideLeftoversLocked(kept);
                 // From the record, not from this pass: actors adopted while it ran are in it now (T8-1).
                 done = s_state.active || s_state.hiddenActors.empty();
+                left = s_state.hiddenActors.size();
                 if (done) s_pendingRunning.store(false);
             }
             LOG_INFO("SeeThrough: game thread resumed after %d ms — restored %zu "
-                     "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), kept.size());
-            if (!done && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {   // a responsive game whose un-hide keeps failing
+                     "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), left);
+            // A responsive game whose un-hide keeps failing. Only this pass's own failures count: actors adopted while it
+            // ran were never tried, and the next tick tries them (review wf_eec7e89a-a4a R9-1).
+            if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {
                 LOG_WARN("SeeThrough: gave up restoring %zu hidden actor(s) after %d s — they stay hidden until "
                          "See-through is enabled and disabled again", kept.size(), Grimoire::PENDING_RESTORE_MAX_MS / 1000);
                 { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true;
