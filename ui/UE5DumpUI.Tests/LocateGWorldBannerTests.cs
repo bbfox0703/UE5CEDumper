@@ -129,6 +129,46 @@ public class LocateGWorldBannerTests
         Assert.Contains("UGameEngine", vm.LocateFailureMessage);
     }
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-39: the tab these texts send the user to is labelled by
+    /// str.Tab.InstanceFinder, so they name it by that label: the Value Search inst tooltip (which also says what its
+    /// class-name search returns, as the other hand-off tooltips do), the Force templates-only note and the fallback copy
+    /// ForceText keeps for a missing key, the Snapshot auto-skip tooltip and this not_reachable explanation.</summary>
+    [Fact]
+    public async Task TextsSendingTheUserToTheInstancesTab_NameItByItsLabel()
+    {
+        var tab = UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder");
+        Assert.False(string.IsNullOrEmpty(tab), "str.Tab.InstanceFinder is not in en.axaml");
+
+        var stub = new PathStub
+        {
+            Next = new GWorldPathResult { Found = false, Status = "not_reachable", Visited = 1 },
+        };
+        var vm = MakeVm(stub);
+        await vm.LocateInGWorldAsync("0x1000", 0, null, stopAtParent: false,
+            ct: TestContext.Current.CancellationToken);
+        Assert.True(vm.HasLocateFailure);
+
+        var vsTip = UE5DumpUI.Core.Res.Get("str.Tip.VS.OpenInst");
+        var texts = new[]
+        {
+            vsTip,
+            UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote("Pawn", 2),
+            UE5DumpUI.Core.Res.Get("str.Tip.Snapshot.AutoSkipNoise"),
+            vm.LocateFailureMessage,
+        };
+        foreach (var text in texts)
+        {
+            Assert.DoesNotContain("Instance Finder", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("the " + tab + " tab", text, StringComparison.Ordinal);
+        }
+        Assert.Contains("class name contains", vsTip, StringComparison.Ordinal);
+        Assert.Contains("templates", vsTip, StringComparison.Ordinal);
+
+        // en.axaml always resolves in a test, so the fallback is read from the source.
+        var forceText = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Helpers/ForceText.cs"));
+        Assert.DoesNotContain("Instance Finder", forceText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task LocateInGWorld_LowDepth_ConfirmGate_SkipsSearchOnCancel_ThenQuietForSession()
     {
