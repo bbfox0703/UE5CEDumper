@@ -376,6 +376,36 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-64: the property-xref / class-funcs dialog's greyed Disassemble tooltip
+    /// is the en.axaml template str.Tip.Xref.DisasmOff, formatted with the bridge's own sentence as {0}, as the Props
+    /// dialog's greyed tooltips are: none of its English stays in a C# literal, so a translation reaches it. Pinned in
+    /// source because no unit test here can open a Window.</summary>
+    [Fact]
+    public void Xref_greyed_disassemble_tooltip_is_an_en_axaml_template()
+    {
+        const string key = "str.Tip.Xref.DisasmOff";
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PropertyXrefDialog.cs"))
+            .Replace("\r\n", "\n");
+
+        var decl = System.Text.RegularExpressions.Regex.Match(
+            src, $@"const string (\w+) = ""{System.Text.RegularExpressions.Regex.Escape(key)}"";");
+        Assert.True(decl.Success, $"PropertyXrefDialog.cs names no const for {key}");
+        int tip = src.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
+        Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
+        var call = src[tip..src.IndexOf(");", tip, StringComparison.Ordinal)];
+        // The greyed branch is the template and nothing else.
+        Assert.EndsWith($": Res.Format({decl.Groups[1].Value}, AobMakerUnavailable.Text(SharedAobMaker))", call,
+                        StringComparison.Ordinal);
+        Assert.DoesNotContain("through the plugin", call, StringComparison.Ordinal);
+
+        // The bridge's sentence, then what the button needs the plugin for, then the remedy the modal dialog leaves.
+        var template = Res.Get(key);
+        Assert.StartsWith("{0} ", template, StringComparison.Ordinal);
+        Assert.Contains(" Disassemble in CE pushes the function's code address to CE's disassembler through the plugin.",
+                        template, StringComparison.Ordinal);
+        Assert.EndsWith("reopen the dialog once the plugin is reachable.", template, StringComparison.Ordinal);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-63: the Props dialog's two Cheat Engine buttons stay off while their own
     /// push runs. UpdateSelectionButtons can run during a push, so each click handler raises an in-flight flag before
     /// its first await and lowers it in its finally before re-setting the buttons, and the button's enabling setter
