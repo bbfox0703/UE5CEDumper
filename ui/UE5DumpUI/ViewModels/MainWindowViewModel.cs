@@ -197,8 +197,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Computed CE String leaf display length: 2^CeStringLengthExponent (16..4096).</summary>
     public int CeStringLength => 1 << CeStringLengthExponent;
 
-    /// <summary>Computed Copy CE Field array fabricate count: 0 (off) or 2^FabricateArrayCountExponent
-    /// (2..512). When &gt; 0, Copy CE Field on a TArray pads it to this many element rows.</summary>
+    /// <summary>Computed Copy CE Field array fabricate count: 0 (off) or 2^FabricateArrayCountExponent, the exponent
+    /// bounded by the Options slider. When &gt; 0, Copy CE Field on a TArray pads it to this many element rows.</summary>
     public int FabricateArrayCount => FabricateArrayCountExponent <= 0 ? 0 : (1 << FabricateArrayCountExponent);
 
     /// <summary>Toolbar readout for the fabricate slider — "Off" at 0, the count otherwise,
