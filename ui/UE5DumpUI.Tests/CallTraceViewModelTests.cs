@@ -1630,10 +1630,11 @@ public class CallTraceViewModelTests
     public void The_address_lines_say_whose_address_they_are()
     {
         // Maintainer, build 3638: "UFunction: 0x..." reads as a call address, and pasted into CE's disassembler it shows
-        // garbage. It is the UFunction object's address (data), and the Object line's is the calling object's.
+        // garbage. It is the UFunction object's address (data), and the Object line's is the address of the object the
+        // function was called on.
         Assert.Contains("UFunction object's address", En("str.CT.Detail.FuncAddr"), StringComparison.Ordinal);
-        Assert.Contains("calling object", En("str.CT.Detail.Object"), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("calling object's address", En("str.CT.Detail.ObjectStale"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("called on", En("str.CT.Detail.Object"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("object it was called on", En("str.CT.Detail.ObjectStale"), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

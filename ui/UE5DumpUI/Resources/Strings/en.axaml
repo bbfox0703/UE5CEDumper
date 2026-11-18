@@ -1341,8 +1341,8 @@
     <sys:String x:Key="str.CT.Detail.Script">Script function (runs in the interpreter): its code is the bytecode interpreter every Blueprint function shares, not a native entry of its own.</sys:String>
     <sys:String x:Key="str.CT.Detail.KindUnknown">Function kind unknown: its flags could not be read, so no native entry is shown.</sys:String>
     <sys:String x:Key="str.CT.Detail.NativeNotRead">Native entry not read (unloaded): the function was gone when the trace was read.</sys:String>
-    <sys:String x:Key="str.CT.Detail.Object">Calling object: {0} ({1}), the object's address: {2}</sys:String>
-    <sys:String x:Key="str.CT.Detail.ObjectStale">Calling object's address: {0} (no longer the object it was, so not named)</sys:String>
+    <sys:String x:Key="str.CT.Detail.Object">Called on object: {0} ({1}), the object's address: {2}</sys:String>
+    <sys:String x:Key="str.CT.Detail.ObjectStale">Address of the object it was called on: {0} (no longer the object it was, so not named)</sys:String>
     <sys:String x:Key="str.CT.Detail.Thread">Thread: {0}</sys:String>
     <sys:String x:Key="str.CT.Detail.Start">Start: {0:F3} ms</sys:String>
     <sys:String x:Key="str.CT.Detail.Duration">Duration: {0:F1} µs</sys:String>
