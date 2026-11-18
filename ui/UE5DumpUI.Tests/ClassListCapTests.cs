@@ -165,16 +165,13 @@ public class RaiseMaxClauseTests
         {
             string src = File.ReadAllText(RepoFile(vm));
 
-            // ⚠ The open paren is load-bearing: it distinguishes a CALL from a mention. The
-            // first version of this test asserted on the bare name and was shown, by a negative
-            // control, to pass against a hand-rolled copy — because the comment above that copy
-            // still named the helper. A test for "goes through X" that a comment can satisfy is
-            // not a test.
+            // ⚠ The open paren is load-bearing: it tells a CALL from a mention of the bare name,
+            // which a comment beside a hand-rolled copy can make. A test for "goes through X" that
+            // a comment can satisfy is not a test.
             Assert.Contains("PartialResultNotice.RaiseMaxClause(", src);
 
-            // And the sentence itself is built in exactly ONE place. Banning the phrase outright
-            // (not just an interpolated form) is what closes the other half of that control: the
-            // hand-rolled copy used string concatenation and slipped straight past a `{` check.
+            // And the sentence itself is built in exactly ONE place. The phrase is banned outright,
+            // not just its interpolated form, so a copy built by string concatenation fails too.
             Assert.DoesNotContain("or raise Max above", src);
         }
     }

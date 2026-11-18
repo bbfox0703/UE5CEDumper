@@ -84,4 +84,4 @@ beside them does not.
 | UT-68 | Instances, Properties, Classes, Value Search | comment | `PartialResultNotice.RaiseMaxClause`'s `currentCap` doc says "what the panel's NumericUpDown reads"; the right value is the cap the operation was sent with. | ✅ fixed 2026-11-18 |
 | UT-69 | Interesting Functions | comment | `FunctionPropsDialog`'s WrapPanel comment counts six buttons; the row holds five. | ✅ fixed 2026-11-18 |
 | UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ✅ fixed 2026-11-18 |
-| UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ⬜ |
+| UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ✅ fixed 2026-11-18 |
