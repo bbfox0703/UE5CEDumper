@@ -2058,6 +2058,30 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-42: a group First Scan stopped at its result cap offers raising Max, but
+    /// not once Max is at its box's Maximum, where it cannot go higher.</summary>
+    [Fact]
+    public async Task GroupTruncationNote_OffersRaiseMax_OnlyBelowTheMaxBoxCeiling()
+    {
+        var doc = System.Xml.Linq.XDocument.Parse(ReadProjectFile(Path.Combine("Views", "ValueSearchPanel.axaml")));
+        var box = Assert.Single(doc.Descendants(), e => e.Attribute("Value")?.Value == "{Binding MaxResultsValue}");
+        int ceiling = int.Parse(box.Attribute("Maximum")!.Value, System.Globalization.CultureInfo.InvariantCulture);
+
+        foreach (var (max, offered) in new[] { (ceiling - 1, true), (ceiling, false) })
+        {
+            var (groupVm, groupFake) = MakeVm();
+            groupFake.NextGroupBeginResult = new GroupScanBeginResult { SessionId = 2UL, Total = max, DeadlineHit = true };
+            groupVm.MaxResults = max;
+            groupVm.IsGroupMode = true;
+            groupVm.GroupInputs[0].Value = "1";
+            groupVm.GroupInputs[1].Value = "2";
+            await groupVm.GroupFirstScanCommand.ExecuteAsync(null);
+            Assert.Contains("truncated (", groupVm.StatusText);
+            Assert.True(offered == groupVm.StatusText.Contains("raise Max", StringComparison.Ordinal),
+                        $"group mode, Max {max}: {groupVm.StatusText}");
+        }
+    }
+
     [Fact]
     public void GroupFirstScan_GameOnlyAndMax_RenderInGroupMode()
     {
