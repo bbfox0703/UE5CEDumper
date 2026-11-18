@@ -2058,6 +2058,44 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-56: a group First Scan's truncation note offers raising the Max that scan was
+    /// sent with, not a value typed into the Max box while the scan ran (the box stays editable during a scan).</summary>
+    [Fact]
+    public async Task GroupTruncationNote_NamesTheMaxTheScanWasSent()
+    {
+        const int sent = 50_000;
+        // Lowered below the sent cap, or raised to the box's ceiling: read after the scan, either changes the clause.
+        foreach (int typedMidScan in new[] { 1_000, Constants.ScanSessionMaxResultsCeiling })
+        {
+            var svc = MakeService(out var pipe);
+            var vm = new ValueSearchViewModel(svc, new MockLoggingService()) { MaxResults = sent, IsGroupMode = true };
+            vm.GroupInputs[0].Value = "1";
+            vm.GroupInputs[1].Value = "2";
+            int wired = -1;
+            bool typedWhileScanning = false;
+            // The pipe answers from inside the scan call, so the edit lands while the scan is in flight.
+            pipe.SetHandler(req =>
+            {
+                if (req["cmd"]?.GetValue<string>() != "begin_group_scan") return new JsonObject { ["ok"] = true };
+                wired = req["max_results"]!.GetValue<int>();
+                typedWhileScanning = vm.IsScanning;
+                vm.MaxResults = typedMidScan;
+                return new JsonObject
+                {
+                    ["ok"] = true, ["session_id"] = 2UL, ["total"] = sent, ["deadline_hit"] = true,
+                };
+            });
+
+            await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+            Assert.Equal(sent, wired);
+            Assert.True(typedWhileScanning, "the Max edit did not land while the scan ran");
+            Assert.Equal(typedMidScan, vm.MaxResults);
+            Assert.Contains("truncated (", vm.StatusText);
+            Assert.Contains(PartialResultNotice.RaiseMaxClause(sent, Constants.ScanSessionMaxResultsCeiling), vm.StatusText);
+        }
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-42: a group First Scan stopped at its result cap offers raising Max, but
     /// not once Max is at its box's Maximum, where it cannot go higher.</summary>
     [Fact]
