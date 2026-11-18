@@ -219,7 +219,7 @@
     <sys:String x:Key="str.VS.NewScan">New Scan</sys:String>
     <sys:String x:Key="str.VS.OpenLive">Live</sys:String>
     <sys:String x:Key="str.VS.OpenInst">inst</sys:String>
-    <sys:String x:Key="str.Tip.VS.OpenInst">Open this hit's owning class in the Instance Finder tab — pre-fills the class name and runs the search.</sys:String>
+    <sys:String x:Key="str.Tip.VS.OpenInst">Open this hit's owning class in the Instances tab — pre-fills the class name and runs the search: objects whose class name contains it (unless Exact match is ticked there), class default objects and templates included.</sys:String>
     <sys:String x:Key="str.VS.CopyAddr">Addr</sys:String>
     <sys:String x:Key="str.VS.PivotThis">📊 Pivot</sys:String>
     <sys:String x:Key="str.VS.LocateGWorld">🌍</sys:String>
@@ -715,7 +715,7 @@
     <sys:String x:Key="str.Tip.Snapshot.Estimate">Pre-flight check: walks a small SAMPLE of objects (spread across the index space) with the current options, models the on-disk row cost, and extrapolates to the full object count — WITHOUT writing the database. Gives a "~X GB" go/no-go before committing to a multi-GB capture on a huge game.</sys:String>
     <sys:String x:Key="str.Snapshot.GameOnly">Game objects only</sys:String>
     <sys:String x:Key="str.Snapshot.AutoSkipNoise">Auto detect Engine/System noise</sys:String>
-    <sys:String x:Key="str.Tip.Snapshot.AutoSkipNoise">On by default. Skips pure engine/system classes (UI widgets, textures, sounds, particle/Niagara systems, anim instances, and /Script engine packages) at the SOURCE — they never enter the snapshot, so capture is faster and the DB is smaller. This differs from the Noise picker below, which filters the finished snapshot AFTER capture. Source-level skipping is irreversible: re-capture (with this off) to bring a skipped class back. A gameplay guardrail force-keeps any Actor / Pawn / Character / ActorComponent / Controller / PlayerState-derived class, so a player Pawn's X/Y/Z (and HP/MP living in components or GAS AttributeSets) is never dropped. Mirrors the auto-detect already used in Value Search and the Instance finder.</sys:String>
+    <sys:String x:Key="str.Tip.Snapshot.AutoSkipNoise">On by default. Skips pure engine/system classes (UI widgets, textures, sounds, particle/Niagara systems, anim instances, and /Script engine packages) at the SOURCE — they never enter the snapshot, so capture is faster and the DB is smaller. This differs from the Noise picker below, which filters the finished snapshot AFTER capture. Source-level skipping is irreversible: re-capture (with this off) to bring a skipped class back. A gameplay guardrail force-keeps any Actor / Pawn / Character / ActorComponent / Controller / PlayerState-derived class, so a player Pawn's X/Y/Z (and HP/MP living in components or GAS AttributeSets) is never dropped. Mirrors the auto-detect already used in Value Search and the Instances tab.</sys:String>
     <sys:String x:Key="str.Snapshot.Label">Label:</sys:String>
     <sys:String x:Key="str.Snapshot.LabelWatermark">(optional — defaults to a timestamp)</sys:String>
     <sys:String x:Key="str.Snapshot.Capture">Capture Snapshot</sys:String>
@@ -1740,7 +1740,7 @@
     <sys:String x:Key="str.TP.StNothingToRelease">No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.</sys:String>
     <sys:String x:Key="str.TP.StNothingHeld">Nothing is held, so Reset sent nothing.</sys:String>
     <!-- [LISTINSTANCES-KEEPS-TEMPLATES] appended to a Force / Hold armed on nothing when the DLL passed over templates -->
-    <sys:String x:Key="str.Force.TemplatesOnly">Only templates of {0} exist right now ({1}: class default objects and their subobjects), and a Force never writes a template, since every later spawn copies it. To change one anyway, edit its address from the Instance Finder.</sys:String>
+    <sys:String x:Key="str.Force.TemplatesOnly">Only templates of {0} exist right now ({1}: class default objects and their subobjects), and a Force never writes a template, since every later spawn copies it. To change one anyway, edit its address from the Instances tab.</sys:String>
     <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
