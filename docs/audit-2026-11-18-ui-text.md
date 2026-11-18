@@ -5,7 +5,7 @@ strings, and listed each place where the UI's text says something the program do
 session (it changed the Wiki only). This register holds the list; each row is fixed in its own commit and marked here.
 UT-36 to UT-48 were found afterwards by a review of those fixes (workflow `wf_31921b9d-4a0`: four reviewers, each finding
 checked by a second agent that tried to refute it): places a fix left untouched or got partly wrong.
-UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`). UT-63 to UT-71 came from the third, of the UT-49 to UT-62 fixes (`wf_c7f1ac00-7e7`).
+UT-49 to UT-62 came from a second review round, of the UT-36 to UT-48 fixes (`wf_017295c2-e45`). UT-63 to UT-71 came from the third, of the UT-49 to UT-62 fixes (`wf_c7f1ac00-7e7`). UT-72 to UT-81 came from the fourth, of the UT-63 to UT-71 fixes (`wf_6b61eb19-451`).
 
 **Kinds.** *text*: a tooltip or message says something the code does not do -- the text is fixed. *behaviour*: the
 code does the wrong thing -- the code is fixed (red, then green). *comment* / *doc*: not user-facing in the UI. *design*:
@@ -85,3 +85,13 @@ beside them does not.
 | UT-69 | Interesting Functions | comment | `FunctionPropsDialog`'s WrapPanel comment counts six buttons; the row holds five. | ✅ fixed 2026-11-18 |
 | UT-70 | tools | doc | `tools/verify/proxy_swap.py`'s WHY paragraph says a fresh injection with a proxy deployed sees "pipe already exists" and stays inert; a later copy takes the game over (UT-46, UT-60). | ✅ fixed 2026-11-18 |
 | UT-71 | Classes | comment | Two comments in `ClassListCapTests.EveryPanelThatOffersRaiseMaxGoesThroughIt` tell the test's own history (UT-58 removed a third). | ✅ fixed 2026-11-18 |
+| UT-72 | Find Class Funcs | behaviour | `PropertyXrefDialog`'s Disassemble button has no in-flight flag: a row selection, a scan ending or the open probe re-enables it while its own push runs, and a second click pushes a duplicate record to Cheat Engine (UT-63's defect in the twin dialog). | ⬜ |
+| UT-73 | Interesting Functions | comment | `FunctionPropsDialog`'s sort-comparer comment counts six headers (the grid has seven) and tells a shipped build's bug. | ⬜ |
+| UT-74 | Properties | behaviour | Property Search's status line reads Game classes only and Deep after the search's await, not the values the search was sent (UT-67 moved only the Max). | ⬜ |
+| UT-75 | Instances | behaviour | Instance Finder's address Lookup names the deep descent's element cap read after the await, not the cap the lookup was sent. | ⬜ |
+| UT-76 | Classes | comment | The comment UT-67 added says both of the Classes cap note's numbers are the cap sent; only the raise-Max clause is pinned by a test. | ⬜ |
+| UT-77 | Value Search | behaviour | Next Scan's status names the scan type read after the refine's await, not the type the refine was sent. | ⬜ |
+| UT-78 | tools | doc | `tools/verify/pipe_client.py`'s docstring still says a deployed proxy ignores a fresh injection (UT-70 corrected the other copies). | ⬜ |
+| UT-79 | working-lessons | doc | Trap 1's check (compare `build_number` with the build just made) passes in the take-over it now describes; `get_pointers.load_mode` is what tells a proxy from an injected copy. | ⬜ |
+| UT-80 | handover | doc | `docs/handover.md`'s pipe section says a stale proxy answers while the fresh DLL sits inert; a fresh copy takes over, or serves its own pipe beside a pre-contract proxy. | ⬜ |
+| UT-81 | Classes | comment | A comment UT-71 rewrote says a copy built by string concatenation fails the test; only a copy keeping the phrase in one literal does. | ⬜ |
