@@ -406,8 +406,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// </summary>
     public string AobMakerNote => IsAobMakerAvailable
         ? ""
-        // [R7-S7] WHY it is not reachable, in the sentence every other surface shows: "plugin not found" sent a user
-        // whose pipe was merely busy to reinstall the plugin.
+        // [R7-S7] Why the bridge is out of reach, in AobMakerUnavailable's sentence for the bridge's last failure
+        // (a busy or refused pipe is not a missing plugin).
         : AobMakerUnavailable.Text(_aobMaker) + " — AA Script export will fall back to clipboard";
 
     /// <summary>[R7-S7] Publish a probe run elsewhere on the shared bridge, repainting the note even when the flag is
