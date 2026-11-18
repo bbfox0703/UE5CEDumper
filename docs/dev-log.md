@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (no build change) — Code comments carry no history `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- The maintainer's rule, now working-lessons §8 rule 7 and CLAUDE.md's comment line: a comment says what the code does
+  and why, as it stands. No fix narrative, review id, measurement or bug cause -- at most a `[TAG]` and the date it was
+  fixed, which todo.md and this log resolve; a function's header comment says what the function does, not how it got
+  there. The history-laden comments already in the code are tracked by the todo row of that tag (a clean-up pass and a
+  ratchet gate).
+
 ## 2026-11-18 (build 3743) — Review fixes: an AI's raw write cannot reach another DLL copy's mailbox, walk_class refuses what is no class, See-through survives a DLL hand-off `[WRITEMEM-ANY-COPY]` `[WALKCLASS-NOT-STRUCT]` `[SEETHRU-HANDOFF-LEFTOVER]` `[WALKCLASS-STOP-EPOCH]` `[WALKCLASS-STOP-OFFSETS]` `[MCP-RELEASE-EXPERIMENTAL-OFF]` `[MCP-WRITE-SITES-DESC]` `[MCP-DOCS-OLDER-CC]` `[TRACE-DROPPED-ENTRY]` `[LAND-MEMO-RESIDENT]`
 
 - **What changes:**
