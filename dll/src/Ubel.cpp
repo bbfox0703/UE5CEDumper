@@ -1722,7 +1722,16 @@ static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkCl
 static constexpr uint32_t kMaxRewalksPerAddress = 8;
 static constexpr uint32_t kHoldHitsToForgive    = 3;
 static constexpr size_t   kMaxParkedBytes       = size_t(256) << 20;
-struct RewalkState { uint32_t rewalks = 0; uint32_t held = 0; bool stopped = false; };
+// `offsets`: the witness offsets the count was taken under; when a re-init changes them the stop and the count are lifted
+// ([WALKCLASS-STOP-OFFSETS]: a stop reached on wrong offsets must not outlive their correction). `counted`: the address
+// is in s_walkClassExStopped already, so a later stop does not count it twice.
+struct RewalkState { uint32_t rewalks = 0; uint32_t held = 0; bool stopped = false; bool counted = false; uint64_t offsets = 0; };
+static uint64_t WitnessOffsetsKey() {
+    auto u16 = [](int v) { return static_cast<uint64_t>(static_cast<uint16_t>(v)); };
+    // Each offset is far below 0x8000, so 15 bits hold it; the top bit says whether the FField chain is read at all.
+    return u16(DynOff::UOBJECT_OUTER) | (u16(DynOff::USTRUCT_CHILDPROPS) << 16) | (u16(DynOff::USTRUCT_CHILDREN) << 32) |
+           ((u16(DynOff::USTRUCT_SUPER) & 0x7FFF) << 48) | (static_cast<uint64_t>(DynOff::bUseFProperty) << 63);
+}
 static std::unordered_map<uintptr_t, RewalkState> s_walkClassExRewalks;
 static size_t s_walkClassExStopped     = 0;   // distinct addresses, whatever the epoch
 static size_t s_walkClassExParkedBytes = 0;
@@ -1748,14 +1757,20 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             auto rs = s_walkClassExRewalks.empty() ? s_walkClassExRewalks.end() : s_walkClassExRewalks.find(uclassAddr);
             if (WitnessMatches(it->second, witness)) {
                 // Holding still: enough matching hits in a row forgive an address that has not stopped.
-                if (rs != s_walkClassExRewalks.end() && !rs->second.stopped && ++rs->second.held >= kHoldHitsToForgive)
-                    s_walkClassExRewalks.erase(rs);
+                if (rs != s_walkClassExRewalks.end() && !rs->second.stopped && ++rs->second.held >= kHoldHitsToForgive) {
+                    if (rs->second.counted) { rs->second.rewalks = 0; rs->second.held = 0; }   // keep: counted once
+                    else s_walkClassExRewalks.erase(rs);
+                }
                 return it->second;
             }
             RewalkState& st = (rs != s_walkClassExRewalks.end()) ? rs->second : s_walkClassExRewalks[uclassAddr];
+            const uint64_t offsets = WitnessOffsetsKey();
+            if (st.offsets != offsets) { st.offsets = offsets; st.stopped = false; st.rewalks = 0; st.held = 0; }
             if (st.stopped) return it->second;
             if (st.rewalks >= kMaxRewalksPerAddress) {
                 st.stopped = true;
+                if (st.counted) return it->second;   // stopped before, under other offsets: counted once
+                st.counted = true;
                 if (++s_walkClassExStopped <= 16)
                     Sein::Warn("WALK:safe", "WalkClassEx: 0x%llx changed class %u times running -- no longer re-walked; "
                                "its last walk is answered", (unsigned long long)uclassAddr, kMaxRewalksPerAddress);
