@@ -1522,8 +1522,10 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
                                              int32_t maxResults = 200);
 
 // Resolve a UFunction's native code entry point (UFunction->Func) — the .text
-// address to disassemble (native funcs) or the interpreter (BP funcs). 0 if the
-// Func offset isn't detected yet or the slot isn't a code pointer. See Aura.cpp.
+// address to disassemble, a native function's exec thunk. 0 for a function not
+// known to be native (a script / Blueprint function's Func is the shared
+// interpreter, not its own code), if the Func offset isn't detected yet, or if
+// the slot isn't a code pointer. See Aura.cpp.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
 
 // [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
