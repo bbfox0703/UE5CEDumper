@@ -2058,6 +2058,49 @@ public class ValueSearchTests
 
     // ---- P4: cross-object (owned sub-objects) ----
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-66: a First Scan's truncation note, in either mode, names the deadline the
+    /// scan was sent with, not a Timeout the slider was moved to while the scan ran (the slider stays movable during a
+    /// scan).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TruncationNote_NamesTheTimeoutTheScanWasSent(bool groupMode)
+    {
+        const int sentSeconds = 25;
+        const int movedTo = 90;
+        var svc = MakeService(out var pipe);
+        var vm = new ValueSearchViewModel(svc, new MockLoggingService())
+        {
+            ScanTimeoutSeconds = sentSeconds, IsGroupMode = groupMode,
+            SelectedDataType = ValueScanDataType.Int32, SelectedScanType = ValueScanType.Exact, Value = "1",
+        };
+        vm.GroupInputs[0].Value = "1";
+        vm.GroupInputs[1].Value = "2";
+        string scanCmd = groupMode ? "begin_group_scan" : "begin_value_scan";
+        int wiredMs = -1;
+        bool movedWhileScanning = false;
+        // The pipe answers from inside the scan call, so the slider moves while the scan is in flight.
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() != scanCmd) return new JsonObject { ["ok"] = true };
+            wiredMs = req["deadline_ms"]!.GetValue<int>();
+            movedWhileScanning = vm.IsScanning;
+            vm.ScanTimeoutSeconds = movedTo;
+            return new JsonObject
+            {
+                ["ok"] = true, ["session_id"] = 2UL, ["total"] = 10, ["deadline_hit"] = true,
+            };
+        });
+
+        if (groupMode) await vm.GroupFirstScanCommand.ExecuteAsync(null);
+        else await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(sentSeconds * 1000, wiredMs);
+        Assert.True(movedWhileScanning, "the Timeout move did not land while the scan ran");
+        Assert.Equal(movedTo, vm.ScanTimeoutSeconds);
+        Assert.Contains($"truncated ({sentSeconds}s deadline / result cap)", vm.StatusText);
+    }
+
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-56: a group First Scan's truncation note offers raising the Max that scan was
     /// sent with, not a value typed into the Max box while the scan ran (the box stays editable during a scan).</summary>
     [Fact]
