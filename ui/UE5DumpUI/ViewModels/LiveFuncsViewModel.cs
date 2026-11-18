@@ -1094,9 +1094,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>[LIVEFUNCS-STEP2] What a traced Start's status says it records: inside ticked functions (by name or by
-    /// address), only the chosen calls (T11), or every call. Each takes the MB and <see cref="TraceStartCount"/>.</summary>
-    internal static string TraceStartKey(TraceStartOptions trace)
-        => trace.Ticked.Count > 0 || trace.TickedNames.Count > 0 ? "str.LF.Trace.RecordingTicked"
+    /// address), and outside them the chosen calls when <paramref name="armed"/>, the Start reply's trace, holds a
+    /// ring for parameters or a stack; only the chosen calls (T11); or every call. Each takes the MB and
+    /// <see cref="TraceStartCount"/>.</summary>
+    internal static string TraceStartKey(TraceStartOptions trace, TraceInfo? armed = null)
+        => trace.Ticked.Count > 0 || trace.TickedNames.Count > 0
+             ? (armed?.Snap != null || armed?.Stack != null
+                    ? "str.LF.Trace.RecordingTickedChosen" : "str.LF.Trace.RecordingTicked")
          : trace.Snapshots != null ? "str.LF.Trace.RecordingSnapOnly"
          : "str.LF.Trace.RecordingAll";
 
@@ -1289,7 +1293,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (trace != null && start.HookActive)
             {
                 StatusText += " " + (start.Trace == null ? StringLookup("str.LF.Trace.NotArmed")
-                    : Say(TraceStartKey(trace), TraceBufferMb, TraceStartCount(trace)));
+                    : Say(TraceStartKey(trace, start.Trace), TraceBufferMb, TraceStartCount(trace)));
                 // A stacks-only Start sends the snapshots object too; the parameter sentence is for parameters asked.
                 if (trace.Snapshots is { Funcs.Count: > 0 })
                 {

@@ -612,8 +612,12 @@ public partial class CallTraceViewModel : ViewModelBase
         switch (ScopeKey(t.Info))
         {
             case "str.CT.Status.Scoped": sb.Append(' ').Append(Say("str.CT.Status.Scoped", t.Info.Ticked)); break;
+            case "str.CT.Status.ScopedChosen":
+                sb.Append(' ').Append(Say("str.CT.Status.ScopedChosen", t.Info.Ticked)); break;
             case "str.CT.Status.ScopedNames":
                 sb.Append(' ').Append(Say("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
+            case "str.CT.Status.ScopedNamesChosen":
+                sb.Append(' ').Append(Say("str.CT.Status.ScopedNamesChosen", t.Info.TickedNames)); break;
             case { } key: sb.Append(' ').Append(StringLookup(key)); break;
         }
         if (t.Info.Excluded > 0) sb.Append(' ').Append(Say("str.CT.Status.Excluded", t.Info.Excluded));
@@ -640,13 +644,20 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>[LIVEFUNCS-STEP2] Which sentence says what the trace followed: ticked functions (by address, or by
-    /// name), only the chosen calls (T11), or every call -- that one only when nothing was left out. A DLL that
-    /// predates names sends no `scoped`: its ticks by address say it.</summary>
+    /// name), and outside them the chosen calls when it had rings for parameters or a stack; only the chosen calls
+    /// (T11); or every call -- that one only when nothing was left out. A DLL that predates names sends no `scoped`:
+    /// its ticks by address say it.</summary>
     internal static string? ScopeKey(TraceInfo i)
     {
         if (i.SnapOnly) return "str.CT.Status.SnapOnly";
         if (i.Scoped ?? i.Ticked > 0)
-            return i.TickedNames > 0 ? "str.CT.Status.ScopedNames" : "str.CT.Status.Scoped";
+        {
+            // Rings for parameters or a stack: the chosen calls outside every ticked scope are recorded too.
+            bool chosen = i.Snap != null || i.Stack != null;
+            return i.TickedNames > 0
+                ? (chosen ? "str.CT.Status.ScopedNamesChosen" : "str.CT.Status.ScopedNames")
+                : (chosen ? "str.CT.Status.ScopedChosen" : "str.CT.Status.Scoped");
+        }
         return i.Excluded == 0 ? "str.CT.Status.Unscoped" : null;
     }
 
