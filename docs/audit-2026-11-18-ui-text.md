@@ -18,7 +18,7 @@ beside them does not.
 | UT-05 | Live Funcs | behaviour | The Δ label formats `Delta` with the current culture, so some locales show `−N` instead of `-N` (`PeProfileResult`). | ✅ fixed 2026-11-18 (red `c27825cc`, then green) |
 | UT-06 | System | design | The experimental switch is an unlabelled check box at Opacity 0.1; "Enable advanced experimental features" is only its tooltip. | ⬜ |
 | UT-07 | docs/mcp.md | doc | Two troubleshooting rows quote texts the server does not send ("Not invoked: ... still queued or running", `McpRawTools`). | ✅ fixed 2026-11-18 |
-| UT-08 | Teleport | text | `str.TP.HkHint` omits the Gravity Dir toggle and Get POV, which the hotkey list has. | ⬜ |
+| UT-08 | Teleport | text | `str.TP.HkHint` omits the Gravity Dir toggle and Get POV, which the hotkey list has. | ✅ fixed 2026-11-18 (red `ab5a1c5e`, then green) |
 | UT-09 | Call Trace | text | `str.CT.Detail.Object` / `str.CT.Detail.ObjectStale` label the object a function was called ON as "Calling object", which reads as the caller. | ⬜ |
 | UT-10 | System | behaviour | A refused UE-version override leaves the dropdown showing the refused version (`PointerPanelViewModel.ApplyOverrideAsync` catches the refusal without a revert). Not checked at runtime. | ⬜ |
 | UT-11 | AOBMaker / ASM | comment | Comments in `Helpers/AobMakerActions.cs` and `dll/src/Fern.cpp` say ASM on a Blueprint function "lands on the interpreter"; the DLL returns no native address for a non-native function. | ⬜ |
