@@ -504,8 +504,9 @@ public class AobMakerWordingTests
         int tip = xref.IndexOf("ToolTip.SetTip(_btnDisasm,", StringComparison.Ordinal);
         Assert.True(tip >= 0, "the Disassemble button's tooltip is missing from PropertyXrefDialog.cs");
         var call = xref[tip..xref.IndexOf(");", tip, StringComparison.Ordinal)];
-        Assert.Contains(reopen, call, StringComparison.Ordinal);
-        foreach (var key in new[] { "str.Tip.FunctionProps.AsmOff", "str.Tip.FunctionProps.WriteSiteInCeOff" })
+        Assert.Contains("Res.Format(KeyDisasmOffTip, ", call, StringComparison.Ordinal);
+        foreach (var key in new[] { "str.Tip.Xref.DisasmOff", "str.Tip.FunctionProps.AsmOff",
+                                    "str.Tip.FunctionProps.WriteSiteInCeOff" })
             Assert.EndsWith(reopen, Res.Get(key), StringComparison.Ordinal);
     }
 

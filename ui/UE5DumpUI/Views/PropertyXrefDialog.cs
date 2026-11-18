@@ -66,6 +66,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     /// null/unavailable leaves the button shown but disabled, its tooltip saying why.</summary>
     public static IAobMakerBridge? SharedAobMaker;
 
+    internal const string KeyDisasmOffTip = "str.Tip.Xref.DisasmOff";
+
     /// <summary>Raised when the user clicks "Locate class" on a row — MainWindow
     /// subscribes once, resolves a live (non-CDO) instance of the class, and
     /// navigates to Live Walker (GWorld path). Modal: the dialog closes first.</summary>
@@ -472,9 +474,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             + "CE's disassembler to it (also drops a labeled byte-array row in CE's address "
             + "list). Native functions only — Blueprint functions point at the shared "
             + "interpreter and will report no per-function code."
-            : AobMakerUnavailable.Text(SharedAobMaker)
-            + " — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin."
-            + " This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.");
+            : Res.Format(KeyDisasmOffTip, AobMakerUnavailable.Text(SharedAobMaker)));
     }
 
     // "Disassemble in CE": resolve the UFunction's native code entry point

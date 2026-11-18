@@ -334,6 +334,8 @@
     <sys:String x:Key="str.ClassStruct.NoClass">Select an object to view its class structure</sys:String>
     <sys:String x:Key="str.Xref.FindFunctions">Find functions using this field</sys:String>
     <sys:String x:Key="str.Xref.FindFuncsButton">Find Funcs</sys:String>
+    <!-- {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
+    <sys:String x:Key="str.Tip.Xref.DisasmOff">{0} — Disassemble in CE pushes the function's code address to CE's disassembler through the plugin. This dialog checks for the plugin when it opens: reopen the dialog once the plugin is reachable.</sys:String>
     <sys:String x:Key="str.ClassStruct.FilterLabel">Filter:</sys:String>
     <sys:String x:Key="str.ClassStruct.FilterHint">Filter fields by name or type</sys:String>
     <sys:String x:Key="str.ClassStruct.EmptyClassTitle">This class has no instance fields</sys:String>
