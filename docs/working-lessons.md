@@ -4208,9 +4208,18 @@ exists stayed accurate. What rots is the comment that restates the code, and abo
 6. **A number the code depends on becomes an assert** (`static_assert(std::size(TABLE) == N)`, a `Count`
    sentinel), or a claim in `check_derived_counts`' registry. Otherwise reword so the comment does not count.
    `Frieren.cpp` said "~30 C ABI exports" over 63 because the registry pinned the `.h` banner and not the `.cpp`.
-7. **History and measurements live in `todo.md` / `dev-log.md` under a `[TAG]`**, and the comment cites the tag.
-   ⛔ Gate: every `[TAG]`, `.md` and `§` a comment names must resolve (REFS). "No test target compiles X" is
-   checked against `dll/tests` (TESTTARGET).
+7. **No history in a comment.** ⭐ The maintainer, 2026-11-18 (`[COMMENT-NO-HISTORY-2026-11-18]`): `dev-log.md`
+   and its archives are where the history is, so a comment carries none of it -- no fix narrative, no "used to",
+   no review id, no measurement, no "the cause was ...", no firm conclusion about a bug. Such a sentence is true
+   when written; a later fix overturns the design and the comment is not opened, and then someone must spend time
+   re-verifying it when the dev-log would have told them. **At most a `[TAG]` and the date it was fixed**
+   (`// [TRACE-DROPPED-ENTRY] 2026-11-18`), which `todo.md` and `dev-log.md` resolve. **A function's header
+   comment says what the function does** -- its contract: what it takes, returns and refuses, and the invariant it
+   keeps -- never how it got there. A WHY that stays true while the code stands is fine (rule 1); a WHY that only
+   explains an old bug is history. ⛔ Gate: every `[TAG]`, `.md` and `§` a comment names must resolve (REFS). "No
+   test target compiles X" is checked against `dll/tests` (TESTTARGET). The existing comments break this rule in
+   hundreds of places; `todo.md` `[COMMENT-NO-HISTORY-2026-11-18]` tracks the clean-up -- until it is done, the
+   boy-scout rule below applies to history as well.
 8. **C#: one `<summary>` per member.** Inserting a type between a doc block and its member silently re-attaches
    the doc to the new type. ⛔ Gate: CSDOC.
 
