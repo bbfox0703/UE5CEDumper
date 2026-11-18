@@ -3,14 +3,14 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Helpers;
 
 /// <summary>
-/// [W1-PIPEBUSY-STATUS] The one user-facing sentence for "the AOBMaker bridge is not reachable", chosen by
+/// [W1-PIPEBUSY-STATUS] The shared user-facing sentence for "the AOBMaker bridge is not reachable", chosen by
 /// <see cref="IAobMakerBridge.LastFailure"/>.
 ///
 /// <para><b>Why this type exists.</b> A busy or refused pipe is not a missing plugin, and the remedy differs: the
 /// AOBMaker server is single-instance, so a second Cheat Engine's plugin fails <c>CreateNamedPipe</c> (231) and never
-/// serves -- "open Cheat Engine with the AOBMaker plugin loaded" cannot help a pipe another client holds. Every place
-/// that says the bridge is unreachable takes its sentence from here, so none can disagree about the same failure.
-/// [W1-PIPEBUSY-STATUS]</para>
+/// serves -- "open Cheat Engine with the AOBMaker plugin loaded" cannot help a pipe another client holds. A caller
+/// that takes its sentence from here reports the bridge's last failure; text written elsewhere for the same state can
+/// call a busy or refused pipe a missing plugin. [W1-PIPEBUSY-STATUS]</para>
 ///
 /// <para>⚠ The toolbar status is a fixed 360-wide slot with an ellipsis (about 50 characters visible, see
 /// <see cref="ClipboardDelivery.FailureText"/>), so each sentence puts its discriminating word ("not connected" /
