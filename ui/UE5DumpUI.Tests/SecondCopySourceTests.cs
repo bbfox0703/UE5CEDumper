@@ -241,9 +241,6 @@ public sealed class SecondCopySourceTests
                         FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
-    /// <summary>A copy whose magic a later copy cleared (it could not serve that mailbox) is named as a take-over, with
-    /// advice that works: re-injecting or re-ticking resolves the same copy again (review R2-CLEARED-MAGIC-ADVICE). The
-    /// branch comes before the stale-address one, in the generated check and in both Lua helpers.</summary>
     /// <summary>The layout pin holds whatever MAILBOX_LAYOUT_SINCE says: moving it fails the build until the pin is
     /// restated for the new layout (review R3-LAYOUT-PIN-SELF-DISABLING: a conditional pin switched itself off).</summary>
     [Fact]
@@ -254,6 +251,9 @@ public sealed class SecondCopySourceTests
         Assert.DoesNotContain("MAILBOX_LAYOUT_SINCE != 3", h);
     }
 
+    /// <summary>A copy whose magic a later copy cleared (it could not serve that mailbox) is named as a take-over, with
+    /// advice that works: re-injecting or re-ticking resolves the same copy again. The branch comes before the
+    /// stale-address one, in the generated check and in both Lua helpers.</summary>
     [Fact]
     public void TheContractChecksNameATakeOver()
     {

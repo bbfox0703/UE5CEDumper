@@ -872,8 +872,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// Related tab. Payload = owning instance address.</summary>
     public event Action<string>? NavigateToRelatedObjects;
 
-    /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
-
     /// <summary>Server-side class-noise filter for SINGLE mode. Unlike the
     /// client-side panels, the candidate set is windowed in the DLL — so the
     /// histogram comes from the begin/refine response and ticking re-queries the

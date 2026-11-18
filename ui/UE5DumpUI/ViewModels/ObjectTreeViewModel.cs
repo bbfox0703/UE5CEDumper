@@ -502,11 +502,6 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>
-    /// Apply client-side class + text filter on the full in-memory cache.
-    /// Caps the displayed items at <see cref="Constants.ObjectTreeMaxDisplay"/>
-    /// to keep the UI responsive (Avalonia ListBox virtualization handles rendering).
-    /// </summary>
     /// <summary>Drop all process-scoped rows so a reconnect never shows objects
     /// (and addresses) from the previous game (audit X5). Client-side only — the
     /// pipe is already gone; does not touch persisted state (there is none here).</summary>
@@ -522,8 +517,13 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         StatusText = "";
     }
 
-    /// <summary><c>internal</c> so a test can drive it without the 200 ms debounce — the
-    /// seam <c>PropertySearchViewModel.ApplyResultFilter</c> uses.</summary>
+    /// <summary>
+    /// Apply client-side class + text filter on the full in-memory cache.
+    /// Caps the displayed items at <see cref="Constants.ObjectTreeMaxDisplay"/>
+    /// to keep the UI responsive (Avalonia ListBox virtualization handles rendering).
+    /// <c>internal</c> so a test can drive it without the 200 ms debounce — the
+    /// seam <c>PropertySearchViewModel.ApplyResultFilter</c> uses.
+    /// </summary>
     internal void ApplyFilter()
     {
         // Multi-term text filter: whitespace-separated terms are ANDed (each term

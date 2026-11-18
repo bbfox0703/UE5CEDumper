@@ -143,13 +143,6 @@ public class ValueCandidate
     }
 }
 
-/// <summary>
-/// Response from <c>begin_value_scan</c>. The DLL retains the full
-/// candidate set in a session keyed by <see cref="SessionId"/>; the
-/// client echoes the same vector here on first scan and on every
-/// refine. <see cref="DeadlineHit"/> tells the UI to show a "scan
-/// truncated" warning so the user knows to narrow the predicate.
-/// </summary>
 /// <summary>One class-noise histogram entry: a class name and how many of the
 /// session's candidates belong to it. The DLL computes this over the WHOLE
 /// session (pre-filter, pre-exclude) and returns the Top-N; the Value Search
@@ -161,6 +154,13 @@ public sealed class ClassCount
     public int    Count     { get; set; }
 }
 
+/// <summary>
+/// Response from <c>begin_value_scan</c>. The DLL retains the full
+/// candidate set in a session keyed by <see cref="SessionId"/>; the
+/// client echoes the same vector here on first scan and on every
+/// refine. <see cref="DeadlineHit"/> tells the UI to show a "scan
+/// truncated" warning so the user knows to narrow the predicate.
+/// </summary>
 public class ValueScanBeginResult
 {
     public ulong  SessionId      { get; set; }

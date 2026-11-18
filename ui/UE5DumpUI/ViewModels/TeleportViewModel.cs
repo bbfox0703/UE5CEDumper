@@ -5320,15 +5320,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
               (folded.Count > 3 ? ", …" : "") +
               ") — those entries are still listed under All and match the filter box.";
 
-    /// <summary>
-    /// Stage 1 of the Lua re-import (R7): paste a previously generated AA script and
-    /// see what it WOULD change. Shares the CSV preview/commit path, so both formats
-    /// get the same per-line diagnostics, cell-level diff and .preimport.bak.
-    /// </summary>
     /// <summary>Where the user pastes a whole generated AA script. Only our own
     /// fenced region is parsed — the surrounding Lua is ignored, never evaluated.</summary>
     [ObservableProperty] private string _coordLuaPasteText = "";
 
+    /// <summary>
+    /// Stage 1 of the Lua re-import: paste a previously generated AA script and
+    /// see what it WOULD change. Shares the CSV preview/commit path, so both formats
+    /// get the same per-line diagnostics, cell-level diff and .preimport.bak.
+    /// </summary>
     [RelayCommand]
     private void PreviewCoordLuaImport()
     {
@@ -6296,7 +6296,6 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 }
 
-/// <summary>One marker slot row in the Teleport panel.</summary>
 /// <summary>
 /// One grid row over a <see cref="CoordEntry"/>. The entry itself stays a plain
 /// POCO (it is what the JSON/CSV/Lua codecs serialize); this wrapper adds only the
@@ -6356,6 +6355,7 @@ public partial class CoordRow : ObservableObject
     }
 }
 
+/// <summary>One marker slot row in the Teleport panel.</summary>
 public partial class TeleportMarkerRow : ObservableObject
 {
     [ObservableProperty] private int _slot;

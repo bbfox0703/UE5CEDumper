@@ -836,12 +836,6 @@ public static class CeXmlExportService
         return result;
     }
 
-    /// <summary>
-    /// Walk <paramref name="fields"/>'s StructProperty entries and add their
-    /// resolved sub-fields into <paramref name="resolved"/> (keyed by
-    /// StructDataAddr). Used both for top-level resolution and for cascading
-    /// into drilled pointer targets — letting one dict cover the whole tree.
-    /// </summary>
     /// <summary>Cache key for a prefetched struct walk. Includes the class address:
     /// the same data address walked as a different class is a different walk.</summary>
     private static string StructCacheKey(string addr, string? classAddr)
@@ -930,6 +924,12 @@ public static class CeXmlExportService
         return cache;
     }
 
+    /// <summary>
+    /// Walk <paramref name="fields"/>'s StructProperty entries and add their
+    /// resolved sub-fields into <paramref name="resolved"/> (keyed by
+    /// StructDataAddr). The dict is the caller's, so top-level resolution and
+    /// the cascade into drilled pointer targets can share one dict over the whole tree.
+    /// </summary>
     private static async Task ResolveStructFieldsIntoAsync(
         IDumpService dump,
         IReadOnlyList<LiveFieldValue> fields,
@@ -1110,21 +1110,6 @@ public static class CeXmlExportService
     // XML generation
     // ========================================
 
-    /// <summary>
-    /// Generate hierarchical CE XML from the navigation breadcrumb trail and current fields.
-    ///
-    /// Algorithm:
-    /// - Root (breadcrumbs[0]): absolute address, GroupHeader
-    /// - Each breadcrumb[i] (i>=1): Address=+{fieldOffset}
-    ///   - If the breadcrumb is a pointer (IsPointerDeref): add Offsets=[0] to dereference
-    ///   - If inline (struct): no Offsets
-    ///   Parent's Offsets=[0] resolves the pointer, so children just add their offset
-    /// - Leaf fields: always Address=+{field.Offset}, no Offsets
-    ///   (Parent breadcrumb already resolved any pointer dereference via its Offsets=[0])
-    /// - StructProperty (inline): Address=+{structOffset}, no Offsets, children at relative offsets
-    /// - ArrayProperty (scalar): Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
-    ///   Element children: Address=+{N*elemSize} (Data pointer already dereferenced by parent)
-    /// </summary>
     /// <summary>The offset CE must read the field at.
     ///
     /// ⛔ A delegate field's payload does NOT start at the field's own offset on every build.
@@ -1148,6 +1133,21 @@ public static class CeXmlExportService
     private static int ElemDelegatePad(LiveFieldValue field) =>
         field.TypeName == "ArrayProperty" ? field.ArrayElemDelegatePad : 0;
 
+    /// <summary>
+    /// Generate hierarchical CE XML from the navigation breadcrumb trail and current fields.
+    ///
+    /// Algorithm:
+    /// - Root (breadcrumbs[0]): absolute address, GroupHeader
+    /// - Each breadcrumb[i] (i>=1): Address=+{fieldOffset}
+    ///   - If the breadcrumb is a pointer (IsPointerDeref): add Offsets=[0] to dereference
+    ///   - If inline (struct): no Offsets
+    ///   Parent's Offsets=[0] resolves the pointer, so children just add their offset
+    /// - Leaf fields: always Address=+{field.Offset}, no Offsets
+    ///   (Parent breadcrumb already resolved any pointer dereference via its Offsets=[0])
+    /// - StructProperty (inline): Address=+{structOffset}, no Offsets, children at relative offsets
+    /// - ArrayProperty (scalar): Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
+    ///   Element children: Address=+{N*elemSize} (Data pointer already dereferenced by parent)
+    /// </summary>
     public static string GenerateHierarchicalXml(
         string rootAddress,
         string rootName,

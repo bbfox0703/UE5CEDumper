@@ -222,8 +222,6 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// tab. Payload = instance address.</summary>
     public event Action<string>? NavigateToRelatedObjects;
 
-    /// <summary>True when GWorld is available — gates the "Locate in GWorld" button.</summary>
-
     /// <summary>Per-container element probe cap for the recursive deep container
     /// scan (the find_by_address fallback that locates values in deeply-nested,
     /// separately-allocated containers). Set from the top Options flyout.</summary>

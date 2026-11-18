@@ -182,8 +182,6 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// rooted at the live UGameEngine). Payload = class name.</summary>
     public event Action<string>? LocateInGameEngine;
 
-    /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
-
     /// <summary>Raised when the user clicks "Generate Cheat Table" on
     /// the multi-select toolbar. Subscribers (MainWindow) open the
     /// save dialog and write the payload — IO out of the VM keeps the

@@ -423,8 +423,6 @@ public class InterestingFunctionsViewModelTests
     // AOBMaker availability + Notes column
     // ==================================================================
 
-    /// <summary>Stub bridge with a controllable IsAvailable for testing
-    /// the VM's wiring without actually opening a pipe.</summary>
     /// <summary>
     /// A function list that parks the load INSIDE scoring, so a test can toggle
     /// GameplayActions at a known point instead of racing it. [TESTFLAKE-2026-08-21]
@@ -534,6 +532,8 @@ public class InterestingFunctionsViewModelTests
         }
     }
 
+    /// <summary>Stub bridge with a controllable IsAvailable for testing
+    /// the VM's wiring without actually opening a pipe.</summary>
     private sealed class FakeAobMakerBridge : IAobMakerBridge
     {
         public bool IsAvailable { get; set; }

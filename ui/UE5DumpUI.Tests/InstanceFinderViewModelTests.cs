@@ -187,14 +187,6 @@ public class InstanceFinderViewModelTests
     // Z7 — the filter must actually preserve the loaded field grid.
     // ==================================================================
 
-    /// <summary>
-    /// UiCollection.Reset calls its detach callback unconditionally, so
-    /// <c>SelectedInstance = null</c> fired the changed-handler and cleared Fields; the
-    /// restore then re-entered the handler and issued a FRESH walk_instance for the
-    /// address already loaded. Every 200 ms keystroke pause blanked the grid and
-    /// refetched it — and one class-noise tick cost TWO walks, because ApplyInstanceFilter
-    /// runs immediately AND again when the server re-run lands.
-    /// </summary>
     /// <summary>[KEYWORD-BOX-VIEW-KEEP] A keyword edit that shows the same instances must not
     /// re-set the grid at all: even with Z7's suppressed re-select, the Reset throws the grid
     /// to its first row.</summary>
@@ -237,6 +229,14 @@ public class InstanceFinderViewModelTests
         Assert.Equal(walks, dump.WalkInstanceCalls);
     }
 
+    /// <summary>
+    /// A keyword the selection still matches keeps the loaded field grid and issues no
+    /// second walk_instance. UiCollection.Reset calls its detach callback unconditionally,
+    /// so <c>SelectedInstance = null</c> reaches the changed-handler and the restore
+    /// re-enters it; unless both stay suppressed, every keystroke pause blanks and refetches
+    /// the grid, and one class-noise tick costs TWO walks, because ApplyInstanceFilter runs
+    /// immediately AND again when the server re-run lands.
+    /// </summary>
     [Fact]
     public async Task Filtering_keeps_a_surviving_selections_field_grid_without_a_second_walk()
     {
