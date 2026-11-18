@@ -105,8 +105,13 @@ inline bool UnhideLeftItHidden(int32_t code) {
 // returns how many. What does not fit stays for the next call.
 template <class Set>
 inline int32_t TakeHiddenRecord(Set& hidden, Set& queued, uint64_t* out, int32_t cap) {
-    (void)hidden; (void)queued; (void)out; (void)cap;
-    return 0;
+    int32_t n = 0;
+    for (auto it = hidden.begin(); it != hidden.end() && n < cap;) {
+        out[n++] = static_cast<uint64_t>(*it);
+        queued.erase(*it);
+        it = hidden.erase(it);
+    }
+    return n;
 }
 
 // A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
@@ -142,7 +147,8 @@ struct SeeThroughStatus {
     int32_t pierceCount = 1;      // how many nearest occluders to hide along the ray
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
     // [P1-SEETHRU-GIVEUP] The leftover-hidden record, split: a restore still WAITING for the game thread, and one that
-    // GAVE UP after PENDING_RESTORE_MAX_MS. hiddenCount > 0 with active == false used to mean both, and the card
+    // GAVE UP after PENDING_RESTORE_MAX_MS -- or was taken over from an earlier copy at a hand-off, which no restore
+    // waits for either ([SEETHRU-HANDOFF-LEFTOVER]). hiddenCount > 0 with active == false used to mean both, and the card
     // promised "they reappear" for the one that never will.
     bool    restorePending   = false;
     bool    restoreAbandoned = false;

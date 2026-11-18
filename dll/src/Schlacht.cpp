@@ -510,7 +510,7 @@ struct State {
     int32_t   hiddenCount = 0;
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
-    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up; cleared by SetEnabled
+    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up, or an earlier copy's record was taken over ([SEETHRU-HANDOFF-LEFTOVER]); cleared by SetEnabled
     // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C). Changed only with s_workerMutex AND s_mutex held, so
     // either lock is enough to read it.
     std::vector<uint64_t> owners;
