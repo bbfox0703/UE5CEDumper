@@ -4219,7 +4219,9 @@ exists stayed accurate. What rots is the comment that restates the code, and abo
    explains an old bug is history. ⛔ Gate: every `[TAG]`, `.md` and `§` a comment names must resolve (REFS). "No
    test target compiles X" is checked against `dll/tests` (TESTTARGET). The existing comments break this rule in
    hundreds of places; `todo.md` `[COMMENT-NO-HISTORY-2026-11-18]` tracks the clean-up -- until it is done, the
-   boy-scout rule below applies to history as well.
+   boy-scout rule below applies to history as well. ⛔ Gate: `check_comment_history`, a per-file ratchet over
+   `dll/src` and `ui/UE5DumpUI` -- a file's count of history lines may not grow, and a cut lowers the baseline
+   (`--update`); `--list` shows them.
 8. **C#: one `<summary>` per member.** Inserting a type between a doc block and its member silently re-attaches
    the doc to the new type. ⛔ Gate: CSDOC.
 

@@ -120,6 +120,10 @@ jobs:
           # language, so the existing text moves only when its file is touched; new text goes to en.axaml).
           & $py tools/check_ui_literals.py
           if ($LASTEXITCODE -ne 0) { throw "check_ui_literals FAILED ($LASTEXITCODE) - a file's hard-coded UI text count moved off tools/ui_literals_baseline.json. NEW UI text belongs in en.axaml; after REMOVING some run 'py tools/check_ui_literals.py --update'." }
+          # History in code comments: a per-file RATCHET ([COMMENT-NO-HISTORY-2026-11-18], working-lessons §8 rule 7).
+          # A comment keeps at most a [TAG] and its date; the history goes to dev-log.md.
+          & $py tools/check_comment_history.py
+          if ($LASTEXITCODE -ne 0) { throw "check_comment_history FAILED ($LASTEXITCODE) - a file's count of history lines in comments moved off tools/comment_history_baseline.json. A NEW one goes to dev-log.md under a [TAG]; after CUTTING some run 'py tools/check_comment_history.py --update'." }
           # CE Lua <-> DLL mailbox contract. Every generated script bakes a contract version
           # and checks itself against what the DLL publishes - but that is only worth anything
           # if the version actually moves when the contract does. A FORGOTTEN bump is worse

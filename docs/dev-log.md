@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-11-18 (no build change) — A gate keeps history out of new comments `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- `tools/check_comment_history.py`, gate 40 (check_all and CI): a per-file ratchet over the comments in `dll/src` and
+  `ui/UE5DumpUI`. It counts comment lines holding a history pattern -- a review id, "review of build", "X used to", a
+  measurement on a machine or date, a build number, "pre-fix" / "was fixed" -- and fails when a file's count grows
+  (cut the line to its `[TAG]` and date) or shrinks (lower the baseline with `--update`). Baseline: 715 lines in 180
+  files. Self-test controls run first; a new history comment added to a clean file fails it.
+
 ## 2026-11-18 (no build change) — Code comments carry no history `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - The maintainer's rule, now working-lessons §8 rule 7 and CLAUDE.md's comment line: a comment says what the code does
