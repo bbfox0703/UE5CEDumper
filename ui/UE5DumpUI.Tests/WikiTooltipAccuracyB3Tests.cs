@@ -158,6 +158,37 @@ public class WikiTooltipAccuracyB3Tests
 
     private static string Repo(string rel) => NumericInputCoercionTests.RepoFile(rel);
 
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-41: Collapse Pointer Nodes collapses every group below the root, a map's
+    /// element folders as well as pointers, structs and array elements; the tip says every group rather than listing some.</summary>
+    [Fact]
+    public void Collapse_pointer_nodes_tip_says_every_group_below_the_root_collapses()
+    {
+        var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", new[]
+        {
+            new UE5DumpUI.Models.LiveFieldValue
+            {
+                Name = "ScoreMap", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+                MapCount = 2, MapKeyType = "IntProperty", MapValueType = "FloatProperty", MapKeySize = 4, MapValueSize = 4,
+                MapElements = new List<UE5DumpUI.Models.ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "42", Value = "3.14", KeyHex = "2A000000", ValueHex = "C3F54840" },
+                    new() { Index = 3, Key = "99", Value = "2.71", KeyHex = "63000000", ValueHex = "AE472D40" },
+                },
+            },
+        }, collapsePointerNodes: true);
+        foreach (var element in new[] { "\"[0] 42\"", "\"[3] 99\"" })
+        {
+            int at = xml.IndexOf(element, StringComparison.Ordinal);
+            Assert.True(at >= 0, $"{element} was not emitted");
+            var header = xml[at..xml.IndexOf("<CheatEntries>", at, StringComparison.Ordinal)];
+            Assert.Contains("<Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>", header, StringComparison.Ordinal);
+        }
+
+        var tip = EnString("str.Tip.CollapsePointers");
+        Assert.Contains("every group below the root", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("array-element", tip, StringComparison.Ordinal);
+    }
+
     // [UI-TEXT-AUDIT-2026-11-18] UT-18. Collapse Pointer Nodes reaches Copy CE Field as well as Copy CE XML; the tip names
     // both by their buttons.
     [Fact]
