@@ -8,6 +8,10 @@
 // handed over starts nothing again and passes its C ABI calls to the copy that took over.
 // The maintainer's rule (2026-11-17, [DUMPER-SECOND-COPY-AUTOSTART]): the later copy always takes over, whichever
 // build is newer. "Later" is the loader's order: a copy's place in the process's module list.
+// [LAND-MEMO-RESIDENT] What a hand-off does not free: the earlier copy's class-walk memo (Ubel's WalkClassEx memo and
+// its parked walks, up to their byte bound) stays allocated beside the later copy's own for the session. The memo
+// hands out references and a straggling pipe thread of the earlier copy may still hold one, so it is never freed --
+// as after a re-init ([FAMILY-EPOCH]); the later copy walks the same classes into its own.
 // ============================================================
 
 #include <cstdint>
