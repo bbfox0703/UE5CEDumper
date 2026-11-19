@@ -50,6 +50,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -106,7 +107,7 @@ def export_tree(out, tag, rev):
         shutil.rmtree(dst)
     dst.mkdir(parents=True)
     tar = out / f"src_{tag}.tar"
-    subprocess.run(["git", "-C", str(VZ), "archive", "--format=tar", "-o", str(tar), rev, "include", "src"], check=True)
+    git(VZ, "archive", "--format=tar", "-o", str(tar), rev, "include", "src")
     with tarfile.open(tar) as t:
         t.extractall(dst, filter="data")
     tar.unlink()
@@ -212,7 +213,8 @@ def main():
                 raise RigError(f"zydis {rev} pins zycore {want[:12]} but the checkout holds {checkout_zycore[:12]}: "
                                "this rig compiles against the checkout's zycore, so the comparison would not be the "
                                "bump. Read the zycore delta first.")
-        out = pathlib.Path(a.out)
+        # Absolute: git and cl run with other working directories, where a relative OUT would name another folder.
+        out = pathlib.Path(a.out).resolve()
         out.mkdir(parents=True, exist_ok=True)
         env = msvc_env()
         env["VSLANG"] = "1033"   # English tool messages: localized ones do not survive a cp950 console
@@ -271,6 +273,10 @@ def main():
                                          f"group them with summarize.py {tsv} --dk-only")
     except RigError as e:
         print(f"RIG FAILED: {e}")
+        return 2
+    except Exception:  # an unexpected failure is still the rig's, never a finding: exit 1 would read as one
+        traceback.print_exc()
+        print("RIG FAILED: an unexpected error (traceback above)")
         return 2
 
     if needs_reading:
