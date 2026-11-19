@@ -8,13 +8,12 @@ namespace UE5DumpUI.Helpers;
 /// string/date computation with no <c>System.IO</c> call, so the rules can be unit-tested
 /// without a disk, and the services keep the I/O.
 ///
-/// WHY IT EXISTS (audit #5 AC4/AC5/AC6). Seven services in <c>Services/</c> hand-roll the
-/// same write-temp-then-move dance and there was no shared helper to reuse; two of them
-/// (<c>BookmarkStore</c>, <c>CoordinateLibraryStore</c>) clean up a stale temp and the rest
-/// do not. <c>AobUsageService</c> was the worst case because its temp name carries the PID
-/// — a distinctly named full copy of the cache per affected launch, i.e. UNBOUNDED residue
-/// in <c>%LOCALAPPDATA%\UE5CEDumper\</c>, against the app-data rule that the root holds only
-/// files "app-wide and fixed in number". This deliberately does NOT wrap the write itself:
+/// WHY IT EXISTS. Seven services in <c>Services/</c> hand-roll the same write-temp-then-move
+/// dance; two of them (<c>BookmarkStore</c>, <c>CoordinateLibraryStore</c>) clean up a stale
+/// temp and the rest do not. A temp name that carries the PID, as <c>AobUsageService</c>'s
+/// does, is the worst case — a distinctly named full copy of the cache per affected launch,
+/// i.e. UNBOUNDED residue in <c>%LOCALAPPDATA%\UE5CEDumper\</c>, against the app-data rule
+/// that the root holds only files "app-wide and fixed in number". This deliberately does NOT wrap the write itself:
 /// migrating the other six sites is a separate change, and a policy object they can all
 /// adopt later is worth more than a seventh copy of the mechanics.
 ///

@@ -54,9 +54,9 @@ public partial class PropertySearchMatch : ObservableObject
     /// mask travels alone and no byte offset accompanies it.</para>
     ///
     /// <para>Consumed by <see cref="FreezeScriptParams.BoolFieldMask"/>. Without
-    /// it, a freeze on a packed bool wrote the whole byte 16×/sec: up to 7 sibling
-    /// bools clobbered, and when the mask was not <c>0x01</c> the intended bool was
-    /// never set at all. (audit #5 AA1)</para>
+    /// it, a freeze on a packed bool would write the whole byte 16×/sec: up to 7 sibling
+    /// bools clobbered, and when the mask is not <c>0x01</c> the intended bool
+    /// would never be set at all.</para>
     /// </summary>
     public int BoolFieldMask { get; set; }
 
@@ -200,9 +200,9 @@ public class PropertySearchResult
 {
     public int Total { get; set; }
     public int ScannedClasses { get; set; }
-    /// <summary>Objects the DLL actually walked — NOT the pool size. Before build
-    /// 2818 this carried the full GObjects count regardless of where the walk
-    /// stopped, so a capped search claimed a complete sweep. (audit #5 D5/F4)</summary>
+    /// <summary>Objects the DLL actually walked — NOT the pool size: carrying the full
+    /// GObjects count regardless of where the walk stopped would make a capped search
+    /// claim a complete sweep.</summary>
     public int ScannedObjects { get; set; }
     /// <summary>The DLL stopped at the result cap: more matches exist beyond this set.
     /// A client-side filter over these rows is therefore filtering a PAGE.</summary>
@@ -226,9 +226,8 @@ public class PropertySearchQueryEnvelope
     /// per-batch, because the shared walk only stops once EVERY query is full — one seed keyword
     /// can be capped while another swept the whole pool.
     /// <para>
-    /// The DLL has emitted this since the D5/F4 fix; the client parsed it on the single-query path
-    /// and not here, so the two discovery panels presented a capped page as the whole pool — the
-    /// exact report class F4 was written to end (audit #5 X1).
+    /// Parsed here as on the single-query path: without it the two discovery panels would
+    /// present a capped page as the whole pool.
     /// </para>
     /// </summary>
     public bool Truncated { get; set; }

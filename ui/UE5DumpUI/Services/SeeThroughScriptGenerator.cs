@@ -76,23 +76,20 @@ public static class SeeThroughScriptGenerator
         // Pierce depth: how many nearest objects to see through. EDIT `pierceCount`
         // below (1 = just the nearest object; 2 = it + the wall behind; …). Only the
         // [ENABLE] block sends it; [DISABLE] sends 0 (ignored).
-        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
-        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
-        // a toggle fired while another command was still in flight wrote straight
-        // over it. Above the OPERAND writes, not merely above the status clear:
+        // Bounded wait for IDLE before the FIRST write: without it, a toggle fired
+        // while another command is still in flight writes straight over it.
+        // Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
         //
-        // ⛔⛔ AND IT MUST BE OUTSIDE THE `enable` BRANCH. Until 2026-09-10 this call
-        // sat between the `{` and the `else` below, so ONLY [ENABLE] got the wait --
-        // while the cmd store further down is emitted for BOTH blocks. Unticking
-        // See-through therefore wrote operands, cleared status and stored cmd with no
-        // idle wait at all, which is the exact AA10 hazard the paragraph above
-        // describes. The comment was outdented to the outer level, which is what made
-        // it read as unconditional; the file's own contract check two lines up always
-        // was. Movement and TimeDilation carry this same comment with an unconditional
-        // call and an `enable ? ... : ...` mode -- that is the shape, and this is now
-        // it. Measured across all 14 generators: it was the only enable-guarded one.
+        // ⛔⛔ AND IT MUST BE OUTSIDE THE `enable` BRANCH. The cmd store further down is
+        // emitted for BOTH blocks, so a call between the `{` and the `else` below would
+        // give ONLY [ENABLE] the wait: unticking See-through would write operands, clear
+        // status and store cmd with no idle wait at all, which is the exact hazard the
+        // paragraph above describes. An outdented comment inside the branch reads as
+        // unconditional; the brace depth is what counts. Movement and TimeDilation carry
+        // this same comment with an unconditional call and an `enable ? ... : ...` mode
+        // -- that is the shape.
         // [R3-SEETHRU-2026-09-10], held by tools/check_ce_idlewait_scope.py.
         CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "SeeThrough", bail);
         if (enable)

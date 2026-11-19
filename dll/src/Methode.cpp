@@ -202,8 +202,7 @@ static bool IsOurModule(const wchar_t* modulePath)
 // Both are confirmed by PE ProductName, never by file name alone — see
 // IsOurModule. A module named version/dinput8/dxgi/winmm outside System32 is not
 // enough: ReShade's dxgi.dll would look exactly like our proxy, the menu would
-// report "already loaded, no injection needed", and no pipe would ever appear
-// (audit #4 B29).
+// report "already loaded, no injection needed", and no pipe would ever appear.
 //
 // Wide throughout: an ANSI enumeration renders every character the code page
 // cannot represent as '?', so a perfectly good path like
@@ -217,7 +216,7 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
 {
     if (!hProcess) return false;
 
-    // Size the buffer to the process's ACTUAL module count (audit #5 AB12). A fixed-size
+    // Size the buffer to the process's ACTUAL module count. A fixed-size
     // array would silently truncate a process with more modules, and this same walk is
     // the POST-INJECT verification: freshly-loaded modules append to the END of the
     // list, so a successful inject landing past the cap would be reported to the user as
@@ -330,7 +329,7 @@ static void __stdcall OnInjectAndConnect()
     //    it cannot represent to '?'. Unlike this file's DISPLAY sites, the path
     //    here is FUNCTIONAL — handed to CE's InjectDLL, which
     //    LoadLibrary's it in the target — so a mangled path (CE installed under a
-    //    non-ANSI folder) fails the load on a path that does not exist. (audit #5 AB13)
+    //    non-ANSI folder) fails the load on a path that does not exist.
     wchar_t dllPathW[MAX_PATH] = {};
     if (!GetModuleFileNameW(g_hDllModule, dllPathW, MAX_PATH)) {
         LOG_ERROR("CEPlugin: GetModuleFileNameW failed (error=%lu)", GetLastError());
@@ -371,7 +370,7 @@ static void __stdcall OnInjectAndConnect()
     //    CE's InjectDLL handles: CreateRemoteThread → LoadLibrary(path)
     //    → GetProcAddress("UE5_AutoStart") → call it in the game process.
     //
-    //    UE5_AutoStart is ASYNCHRONOUS (audit #5 AB2): it spawns
+    //    UE5_AutoStart is ASYNCHRONOUS: it spawns
     //    the AOB scan + pipe start and returns at once. That is not a style
     //    choice — CE's stub does not wait for us:
     //      CEFuncProc.pas:1346-1360  a hard 10 s ceiling (counter := 10000 div 10)

@@ -10,7 +10,7 @@ namespace UE5DumpUI.Views;
 
 public partial class SnapshotPanel : UserControl
 {
-    // AOT-safe sort comparers, as for audit #5 AF16-AF23. Each column below renders one property
+    // AOT-safe sort comparers. Each column below renders one property
     // and sorts on another, so no column binding roots the sort path and the
     // reflection sort is trimmed (Helpers/DataGridSortComparers.cs class doc).
     private static readonly IReadOnlyDictionary<string, IComparer> SnapshotsSortComparers =

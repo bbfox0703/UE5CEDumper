@@ -113,14 +113,14 @@ bool ReadFloatAt(uintptr_t addr, int32_t size, double& out) {
 bool IsFloatType(const std::string& t) {
     return t == "FloatProperty" || t == "DoubleProperty";
 }
-// IsIntType now lives in Solide.h, derived from IntWidthOf so the gate and the
-// width/sign table cannot drift apart (audit #5 AF8).
+// IsIntType lives in Solide.h, derived from IntWidthOf so the gate and the
+// width/sign table cannot drift apart.
 bool IsNumericType(const std::string& t) { return IsFloatType(t) || IsIntType(t); }
 
 // Width + signedness come from Solide.h's IntWidthOf so the read and the write
-// cannot disagree about a type (audit #5 AF8: Int8Property was written signed and
-// read UNSIGNED, so a negative hold never converged and the worker rewrote the
-// same byte forever while reporting drift).
+// cannot disagree about a type: an Int8Property written signed and read UNSIGNED
+// never converges on a negative hold, and the worker rewrites the same byte
+// forever while reporting drift.
 bool ReadNumeric(uintptr_t addr, const FieldInfo& fi, double& out) {
     if (IsFloatType(fi.TypeName)) return ReadFloatAt(addr, fi.Size, out);
     const IntWidth w = IntWidthOf(fi.TypeName);
@@ -425,7 +425,7 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
     if (kind < K_BOOL || kind > K_NUMERIC) return FR_ERR_BAD_KIND;
     if (!g_cachedGWorld) return FR_ERR_NOT_INIT;
 
-    std::lock_guard<std::mutex> wlk(s_workerMutex);   // outer (audit #8 discipline)
+    std::lock_guard<std::mutex> wlk(s_workerMutex);   // outer: s_mutex nests inside, released before the worker starts
     int32_t held = 0;
     int32_t refusal = 0;      // non-zero: resolved instances, refused on every one
     bool    keepArmed = true; // false only when a NEW job is dropped again below

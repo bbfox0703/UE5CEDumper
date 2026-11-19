@@ -61,7 +61,7 @@ static int s_stride = 2;
 // right on every stock FNamePool (UE 4.23+). Pre-FNamePool builds resolve through
 // s_isUE4Mode and never reach here.
 //
-// There is NO reliable offline discriminator (audit #5 G4), and the reasoning is what
+// There is NO reliable offline discriminator, and the reasoning is what
 // keeps this a constant: a LOW index cannot distinguish 14 from 16 (both
 // widths address the same byte — Serie::BlockBitsAreIndistinguishable), and a boundary
 // index >= 2^14 need not be an entry BOUNDARY even in a valid 16-bit pool, so a
@@ -101,15 +101,15 @@ static uintptr_t s_keyTableCtx = 0;
 // tag -> key cache, 64K tags, allocated only in obfuscated mode so a stock title
 // carries none of this. ONE atomic word per tag, not a (value, flag) pair: with two
 // plain writes the compiler is free to publish the flag before the value, and a reader
-// on another thread then sees "resolved" with a still-zero key. That produced wrong
-// keys in practice — tag 0x0001 resolved to 0x09 on one thread and 0x00 on another in
-// the same millisecond, decoding "Object" as "Fkclj}". A single word cannot tear.
+// on another thread then sees "resolved" with a still-zero key, so two threads can
+// decode the same tag with different keys and turn a real name into garbage. A single
+// word cannot tear.
 //   bit 8 = resolved, bits 0-7 = key
-// There is deliberately NO "miss" state (audit #5 G6): a genuine absent tag resolves to
+// There is deliberately NO "miss" state: a genuine absent tag resolves to
 // key 0 (Genau's "absent tag = plaintext" rule) and is cached RESOLVED like any other,
 // while a TRANSIENT lookup failure (torn read of the live table) is left UNCACHED so the
-// next name retries. Caching a transient miss permanently blanked every FName with that
-// tag for the process life.
+// next name retries. Caching a transient miss would permanently blank every FName with
+// that tag for the process life.
 static constexpr uint16_t TAGKEY_RESOLVED = 0x100;
 static std::unique_ptr<std::atomic<uint16_t>[]> s_tagKey;
 
@@ -121,8 +121,8 @@ static std::unique_ptr<std::atomic<uint16_t>[]> s_tagKey;
 //   entry +0x00 u16 tag   +0x08 u64 value (LOW BYTE is the key)   +0x10 i32 next (-1 = end)
 // Pure memory reads: no control ever transfers into game code, so the SRW lock the
 // game takes around its own probe can never be left held by us.
-// Classify a lookup so a TRANSIENT failure is never confused with a genuine miss
-// (audit #5 G6). Returns true + `outKey` when the tag is found. On a miss, `readError`
+// Classify a lookup so a TRANSIENT failure is never confused with a genuine miss.
+// Returns true + `outKey` when the tag is found. On a miss, `readError`
 // splits the two cases a single-bool return would conflate:
 //   readError = true  -> could NOT determine (no context / a torn read of the live table
 //                        the game mutates as it runs / a corrupt-looking chain). The
@@ -175,7 +175,7 @@ static bool GetTagKey(uint16_t tag, uint8_t& outKey) {
     bool readError = false;
     if (!LookupTagKey(tag, key, readError)) {
         if (readError) {
-            // audit #5 G6: a TRANSIENT miss (no context / torn read of the live table /
+            // A TRANSIENT miss (no context / torn read of the live table /
             // corrupt-looking chain) is NOT cached. Caching it as a permanent miss would
             // blank every FName carrying this tag for the rest of the process, though the
             // fork's own lookup would succeed on a later read. Leave the slot unresolved so
@@ -232,7 +232,7 @@ static uintptr_t GetEntryInternal(int32_t nameIndex) {
     if (!s_poolAddr) return 0;
 
     if (s_isUE4Mode) {
-        // audit #5 G5: reject a negative nameIndex before `%` yields a negative elemIndex.
+        // Reject a negative nameIndex before `%` yields a negative elemIndex.
         if (!UE4NameIndexInBounds(nameIndex, UE4_CHUNK_SIZE, UE4_NAME_MAX_CHUNKS)) return 0;
         int32_t chunkIndex = nameIndex / UE4_CHUNK_SIZE;
         int32_t elemIndex  = nameIndex % UE4_CHUNK_SIZE;
@@ -506,7 +506,7 @@ uintptr_t GetEntry(int32_t nameIndex) {
     if (s_isUE4Mode) {
         // UE4 TNameEntryArray: Chunks[chunkIdx] -> FNameEntry*[UE4_CHUNK_SIZE]
         // Double dereference: array -> chunk -> entry pointer
-        // Bounds guard (audit #5 G5): reject a negative nameIndex FIRST. A poison
+        // Bounds guard: reject a negative nameIndex FIRST. A poison
         // ComparisonIndex 0xFFFFFFFF read as int32 = -1 gives chunkIndex 0 / elemIndex -1,
         // which passes a chunkIndex-only guard and derefs chunkPtr + (-1)*8 as an
         // FNameEntry*, returning a fabricated name as real. The UE5 path below is safe via

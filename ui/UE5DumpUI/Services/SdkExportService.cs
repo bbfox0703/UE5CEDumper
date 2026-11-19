@@ -18,7 +18,7 @@ public static class SdkExportService
     /// The super's PropertiesSize — where this class's own properties begin. Callers that have
     /// walked the class should pass <c>ClassInfoModel.SuperPropertiesSize</c>; 0 falls back to the
     /// first-field heuristic. Without it every inherited property is re-declared inside a struct
-    /// that already inherits it (audit #5 W2).
+    /// that already inherits it.
     /// </param>
     public static string GenerateClassHeader(
         string className, string superName, int propsSize,
@@ -529,7 +529,7 @@ public static class SdkExportService
     /// <summary>
     /// Emit the member list, padding and closing brace for one struct.
     ///
-    /// <para><b>Inherited properties are dropped</b> (audit #5 W2). The DLL prepends the <b>entire</b>
+    /// <para><b>Inherited properties are dropped.</b> The DLL prepends the <b>entire</b>
     /// SuperStruct chain to the field list, so emitting all of them re-declares every base property
     /// inside a <c>struct X : public Super</c> that already inherits it — which compiles, and makes
     /// <c>offsetof</c> wrong for every derived class in the generated SDK. The boundary is the super's
@@ -537,7 +537,7 @@ public static class SdkExportService
     /// heuristic is only a fallback for a DLL that does not send it, and it is a fallback
     /// precisely because it silently mis-splits when a derived class adds no properties of its own.</para>
     ///
-    /// <para><b>Packed bitfield bools get real bitfields</b> (audit #5 W3). N <c>uint8 bX:1</c> flags
+    /// <para><b>Packed bitfield bools get real bitfields.</b> N <c>uint8 bX:1</c> flags
     /// that UE packed into ONE byte all arrive at the same offset with Size 1. Emitting a whole
     /// <c>bool</c> each would make the struct N−1 bytes too long from that point, and no padding could
     /// compensate because padding is only emitted when the next offset is ahead of the cursor. They
@@ -568,7 +568,7 @@ public static class SdkExportService
         //
         // A NEGATIVE ownPropsStart means the DLL said nothing (or the class declares no
         // own properties) — it must NOT enter the comparison. Folding -1 or 0 in here
-        // re-emits the entire inherited chain: the audit #5 W2 defect.
+        // re-emits the entire inherited chain inside a struct that already inherits it.
         //
         // With no superPropsSize at all the first field's offset is the fallback, and it
         // is a fallback precisely because it mis-splits when a derived class adds nothing.

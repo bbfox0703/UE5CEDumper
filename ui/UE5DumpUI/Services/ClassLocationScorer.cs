@@ -211,11 +211,10 @@ public static class ClassLocationScorer
         // straight off the FName, which carry no U/A prefix — "PlayerController",
         // "LocalPlayer", "WorldSettings" above are all written that way, and
         // ConsoleViewModel.IsLikelyUCheatManagerExec matches the same substring
-        // for the same reason. A "UCheatManager" row therefore matched nothing a
-        // game can produce, and on the one input it COULD match it double-scored
-        // (+4 for itself and +4 here) — so it is deleted, not renamed. Catches
-        // the engine class and game subclasses alike: MyGameCheatManager,
-        // BP_CheatManager_C. (audit #5 AC9)
+        // for the same reason. A "UCheatManager" row would match nothing a
+        // game can produce, and on the one input it COULD match it would double-score
+        // (+4 for itself and +4 here). Catches the engine class and game
+        // subclasses alike: MyGameCheatManager, BP_CheatManager_C.
         new("CheatManager",         4, true),
 
         // No anim/audio/FX penalties on the Property side. Rationale:

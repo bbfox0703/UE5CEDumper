@@ -97,9 +97,9 @@ inline void Encode(uintptr_t obj, const PackedConsts& c,
 //
 // The offset is decided by the STRIDE, and the reachable stride set is exactly
 // {16, 20, 24, 32} — `Aura`'s auto-probe tries {16, 24, 32, 20} and
-// `UE5_InitWithExtendedLayout` forces any of {0x14, 0x18, 0x10, 0x20}. It used
-// to be computed inline as `s_itemSize >= 24 ? 0x10 : 0x0C`, a two-way split
-// that only covers 16 and 24 (audit #5 A1):
+// `UE5_InitWithExtendedLayout` forces any of {0x14, 0x18, 0x10, 0x20}. An inline
+// `s_itemSize >= 24 ? 0x10 : 0x0C` is a two-way split that covers 16 and 24 but
+// not 20:
 //
 //   16  Object(8) + Flags(4) + Serial(4)                        -> 0x0C
 //   20  Object(8) + Flags(4) + ClusterRootIndex(4) + Serial(4)  -> 0x10
@@ -107,12 +107,12 @@ inline void Encode(uintptr_t obj, const PackedConsts& c,
 //   32  classic + stats growth appended after the serial        -> 0x10
 //
 // **Stride 20 is the packed FUObjectItem Avowed ships**, and it is reachable by
-// both routes above. The old expression returned 0x0C for it, which reads
+// both routes above. That two-way split returns 0x0C for it, which reads
 // `ClusterRootIndex` — so `Ubel::ResolveWeakObjectPtr`'s bare
-// `if (actualSerial != serialNumber) return 0;` declared EVERY weak reference
-// stale, silently: no fallback, no retry, no log. That nulls WeakObjectProperty
-// and the whole delegate family outright, and costs Soft/Lazy handlers their
-// resolved live object (they still show the asset path).
+// `if (actualSerial != serialNumber) return 0;` would declare EVERY weak reference
+// stale, silently: no fallback, no retry, no log. That would null WeakObjectProperty
+// and the whole delegate family outright, and cost Soft/Lazy handlers their
+// resolved live object (they would still show the asset path).
 //
 // Offsets are from the Ghidra decompilation of Avowed's AllocateUObjectIndex,
 // recorded in docs/avowed-gobjects-fix.md: {Object@+0x00, Flags@+0x08,

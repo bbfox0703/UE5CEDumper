@@ -245,12 +245,12 @@ inline bool TryStrToAddr(const std::string& str, uintptr_t& outAddr) noexcept {
 // ⚠ This is NOT a looser PARSER — it calls TryStrToAddr and throws the failure channel
 // away. The only difference is whether the caller can tell "the address was 0" from "the
 // address was garbage", so the choice is about the CONSEQUENCE of that confusion, not
-// about permissiveness. The rule, applied per call site in audit #5 AD19:
+// about permissiveness. The rule, applied per call site:
 //
 //   * Use TryStrToAddr when a silent 0 would WRITE, EXECUTE, or change persistent state.
-//     Those handlers must refuse and say why: `write_mem` reported the generic "Write
-//     failed" for a malformed address, and `set_packed_consts` treats 0 as "leave
-//     unchanged", so a typo'd mask was discarded while the command answered ok.
+//     Those handlers must refuse and say why: through StrToAddr `write_mem` would report
+//     the generic "Write failed" for a malformed address, and `set_packed_consts` treats 0
+//     as "leave unchanged", so a typo'd mask would be discarded while the command answered ok.
 //   * StrToAddr is fine on the READ/QUERY handlers (~19 of them). There a 0 fails closed
 //     — the lookup misses and the handler already returns its own specific error — so the
 //     extra branch buys nothing.

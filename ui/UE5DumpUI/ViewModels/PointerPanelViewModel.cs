@@ -182,12 +182,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>The last AOBMaker push from this tab that worked: a "Register symbol" click, or a CE view move
     /// ([AOBM-SYSTAB-ASM-SILENT]). Bound at the top of PointerPanel.axaml next to <c>ErrorMessage</c>.
     ///
-    /// <para>Before this existed, <c>CreateSymbolScriptAsync</c>'s bool was branched on
-    /// only to pick <c>_log.Info</c> vs <c>_log.Warn</c> — neither touched a bound
-    /// property — so a button that registered nothing at all looked byte-identical on
+    /// <para>Without it, <c>CreateSymbolScriptAsync</c>'s bool would only pick
+    /// <c>_log.Info</c> vs <c>_log.Warn</c> — neither touches a bound
+    /// property — so a button that registered nothing at all would look byte-identical on
     /// screen to one that worked, and the user's next step (a CE record rooted on the
-    /// symbol) silently resolved to nothing. Success lands here; FAILURE goes to
-    /// <c>ErrorMessage</c>, which the panel already renders in red (audit #5 V11).</para>
+    /// symbol) would silently resolve to nothing. Success lands here; FAILURE goes to
+    /// <c>ErrorMessage</c>, which the panel already renders in red.</para>
     ///
     /// <para>One line for the whole tab, deliberately: each message names the symbol or
     /// the address it pushed, so there is nothing to disambiguate.</para></summary>
@@ -335,8 +335,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>
     /// True when the DLL says at least one FField/FProperty/UStruct offset is an unmeasured
     /// UE-version guess. Everything downstream — Live Walker values, every export, every
-    /// Force/Freeze write — is derived from those offsets, and until this banner existed the
-    /// DLL computed the verdict and nobody asked for it. (audit #5 U3/X3)
+    /// Force/Freeze write — is derived from those offsets, and without this banner the
+    /// DLL's verdict would reach no one.
     /// <para>
     /// Suppressed under <see cref="IsVersionTooOld"/>: there the DLL deliberately skipped the
     /// whole scan, which the refusal banner already explains — a second warning saying the

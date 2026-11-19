@@ -5,18 +5,15 @@ namespace UE5DumpUI.Core;
 /// answer".
 ///
 /// <para>
-/// Audit #5's L8 batch found the same defect in four unrelated places at once — Z4 (the
-/// class-noise picker presenting a capped page as a complete class census), Z8
-/// (<c>list_all_functions</c> capping silently, so the Console panel turned a page into
-/// a positive claim about the GAME), Z9 (a batch xref cell writing <c>0</c> for a sweep
-/// that timed out, which reads as "nothing references this field, so freezing it is
-/// safe") and Z12 (a scan suffix whose stated purpose was to separate a clean miss from
-/// a truncated scan, built from the wrong pass's counters). In every one of them a
-/// truncation signal existed and was discarded before it reached the user.
+/// A truncation signal that is discarded before it reaches the user turns a page into a
+/// claim about the whole: a capped picker reads as a complete class census, a capped
+/// function list as a positive claim about the GAME, and a batch xref cell showing
+/// <c>0</c> for a sweep that timed out as "nothing references this field, so freezing it
+/// is safe".
 /// </para>
 /// <para>
 /// The wording therefore lives HERE rather than being re-invented per panel, and it
-/// continues the phrasing the two earlier fixes already shipped:
+/// matches the phrasing of
 /// <c>[CLASSTOTAL-2026-08-18]</c>'s <c>"⚠ STOPPED at the N-row cap — …"</c> and
 /// <c>[CONTAINERCAP-2026-08-18]</c>'s <c>"⚠ showing N of M"</c>
 /// (<see cref="ContainerTruncation"/>). Three rules hold across all of them: the marker
@@ -189,9 +186,8 @@ public static class PartialResultNotice
     /// is not <see cref="RowCap"/>.
     /// </para>
     /// <para>
-    /// The DLL computed this and only wrote it to its own log, so the panel that had
-    /// already been fixed twice for "a matched field reads as a missed one" still could
-    /// not say it. (audit #5 AE13)
+    /// The flag reaches the panel in the DLL's reply, not just in the DLL's own log:
+    /// without it the panel cannot say this, and a matched field reads as a missed one.
     /// </para>
     /// </summary>
     /// <param name="cap">The cap the DLL actually applied (after its own clamp), or 0
@@ -214,8 +210,8 @@ public static class PartialResultNotice
     /// question this dialog is used to answer. "Which functions write this field?" is
     /// asked in order to conclude *nothing does, so freezing it is safe* — and a
     /// budget-truncated scan produces exactly the same empty/short list as a genuine
-    /// absence. Denken computed the flag, Aura logged it, and it was discarded before
-    /// the wire; the third instance of that shape after Z9 and AE13. (audit #5 AF7)
+    /// absence. Denken computes the flag and it crosses the wire for this sentence; a
+    /// flag that stops at the DLL's log leaves a truncated list looking exhaustive.
     /// </para>
     /// </summary>
     public static string DisassemblyBudget()
@@ -230,10 +226,10 @@ public static class PartialResultNotice
     /// Worth its own sentence because the consequence differs from a plain cap: pruning
     /// a truncated set yields survivors that are correct individually and incomplete
     /// collectively, so the usual "narrow it further" advice makes things worse — the
-    /// only repair is to redo the pass that truncated. Value Search announced the
-    /// truncation on First Scan and then a Next Scan silently dropped both that note and
-    /// the picker's "Counts are partial" badge, which reads as the problem having gone
-    /// away. (audit #5 AE24)
+    /// only repair is to redo the pass that truncated. Without it, a Value Search Next Scan
+    /// after a First Scan that announced the truncation would silently drop both that note
+    /// and the picker's "Counts are partial" badge, which reads as the problem having gone
+    /// away.
     /// </para>
     /// </summary>
     /// <param name="priorPass">The pass that truncated, named as the user's button.</param>
@@ -252,7 +248,7 @@ public static class PartialResultNotice
     /// describes something built OUT of it, where the consequence is different and worse:
     /// the panel's own status line may already admit the cap, while a dropdown beside it
     /// silently presents its contents as the complete set of choices, and a value that
-    /// exists only past the cap looks like a value that does not exist. (audit #5 AE15)
+    /// exists only past the cap looks like a value that does not exist.
     /// </para>
     /// </summary>
     /// <param name="listName">Plural, as it reads in "{listName} are derived from" —

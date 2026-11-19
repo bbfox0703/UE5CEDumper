@@ -486,7 +486,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             // Superseded by a newer load/search -> that op owns the cache and the flag.
             if (gen != _loadGen) return;
             // User pressed Cancel. The previous result set is still on screen and is
-            // still valid, so say so rather than blanking it (audit #5 V9).
+            // still valid, so say so rather than blanking it.
             StatusText = "Search cancelled";
             _log.Info($"Search cancelled for '{SearchText}'");
         }

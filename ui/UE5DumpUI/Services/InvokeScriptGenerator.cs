@@ -189,8 +189,7 @@ public static class InvokeScriptGenerator
         // to handle -- with the DLL not loaded, the first call would abort the chunk and take
         // with it the module-prefixed fallback below, the diagnostic showMessage (leaving CE's
         // raw Lua error instead), and the cleanup timer -- so the memory record would stay
-        // TICKED after a bail-out that applied nothing, against CLAUDE.md's untick rule
-        // (audit #5 Y8).
+        // TICKED after a bail-out that applied nothing, against CLAUDE.md's untick rule.
         //
         // Both spellings are mandatory and the order is not a preference: depending on how CE
         // picked the module up, an export is reachable bare or only as "<module>.<name>", and
@@ -423,7 +422,7 @@ public static class InvokeScriptGenerator
                 : "";
             // Struct params keep their edit box so the `edits[i]` indices stay aligned with the
             // param list, but the label says the box is inert -- the alternative is a form that
-            // silently ignores what the user typed (audit #5 Y6).
+            // silently ignores what the user typed.
             // [P3-INVOKE-Y11-CEFORM] The other unwritable params say so up front too, from the
             // SAME predicates FIRE uses, so this label and the FIRE gate cannot disagree.
             var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes"
@@ -632,7 +631,7 @@ public static class InvokeScriptGenerator
         "return t == '' or t == '0' or t:lower() == '0x0' end";
 
     /// <summary>
-    /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate (audit #5 Y11), emitted into the CE
+    /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate, emitted into the CE
     /// form's own FIRE handler. Every invoke path builds its ProcessEvent params from the same
     /// <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refuse
     /// these, so this form must too.
@@ -750,7 +749,7 @@ public static class InvokeScriptGenerator
                 or "WeakObjectProperty" or "LazyObjectProperty"
                 or "InterfaceProperty"
                 => "writeQword",
-            // EnumProperty is DELIBERATELY absent here (audit #5 Y16). UE sizes an enum
+            // EnumProperty is DELIBERATELY absent here. UE sizes an enum
             // by its underlying type -- 1 byte for the common TEnumAsByte / uint8 enum
             // class -- so writing 4 clobbers the next parameter in params_data. The
             // `_ => size switch` fallback below maps 1/2/8 correctly, so enums must

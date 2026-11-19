@@ -1081,7 +1081,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     internal const string StageSuffix = ".ue5dump-stage";
 
     /// <summary>
-    /// May the staged copy be published over the live target? (pure — audit #5 AC11)
+    /// May the staged copy be published over the live target? (pure)
     ///
     /// Two INDEPENDENT detectors, because they fail on different things: the byte count
     /// catches a short write / truncation, and the ownership flag catches a copy whose

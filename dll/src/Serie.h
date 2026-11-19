@@ -113,7 +113,7 @@ inline bool BlockBitsAreIndistinguishable(int32_t nameIndex, int bitsA, int bits
     return a.chunkIndex == b.chunkIndex && a.chunkOffset == b.chunkOffset;
 }
 
-// UE4 TNameEntryArray index bounds (audit #5 G5). A negative ComparisonIndex — e.g. a
+// UE4 TNameEntryArray index bounds. A negative ComparisonIndex — e.g. a
 // poison 0xFFFFFFFF read into an int32 as -1 — yields chunkIndex 0 and elemIndex -1
 // under C++ truncating division, which passes a chunkIndex-only guard and then
 // dereferences chunk + (-1)*8 as an FNameEntry* (a fabricated name returned as real).

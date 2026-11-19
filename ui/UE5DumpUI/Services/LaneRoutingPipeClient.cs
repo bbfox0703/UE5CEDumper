@@ -18,8 +18,8 @@ namespace UE5DumpUI.Services;
 ///
 /// Reconnect policy: if EITHER lane drops unexpectedly, BOTH are torn down so a
 /// reconnect re-establishes both together, and the app only ever sees one
-/// connection state. (The DLL's per-command cancel no longer needs it: it clears
-/// once no connection that raised it is registered, audit #5 F2.)
+/// connection state. (The DLL's per-command cancel does not depend on it: it clears
+/// once no connection that raised it is registered.)
 /// </summary>
 public sealed class LaneRoutingPipeClient : IPipeClient
 {
@@ -65,10 +65,10 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     private bool _tearingDown;           // guards the reconnect-both teardown
 
     // Single combined game-thread-stalled level. Both lanes report EVERY
-    // per-response observation (PipeClient no longer edge-suppresses per lane —
-    // that was the audit-X7 root cause), and this one latch dedupes so the
-    // consumer still only hears transitions. Fixes the banner sticking ON when
-    // the lane that saw the pause went idle after the game resumed.
+    // per-response observation (PipeClient does not edge-suppress per lane), and
+    // this one latch dedupes so the consumer still only hears transitions. A
+    // per-lane edge filter would leave the banner stuck ON when the lane that saw
+    // the pause goes idle after the game resumes.
     private readonly Helpers.GameThreadStalledLevel _stalled = new();
 
     public LaneRoutingPipeClient(ILoggingService log)

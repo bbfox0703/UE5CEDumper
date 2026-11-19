@@ -129,10 +129,9 @@ public sealed class EngineState
 
     // --- Dynamic offset validation (get_offsets) -------------------------------
     //
-    // The DLL has always computed and published this verdict and the UI never asked
-    // for it, so nothing could tell the user the walker was running on unmeasured
-    // UE-version defaults — every value in Live Walker, every export, silently
-    // derived from a guess. (audit #5 U3/X3)
+    // The DLL computes and publishes this verdict; without it in the UI, nothing could
+    // tell the user the walker is running on unmeasured UE-version defaults — every
+    // value in Live Walker, every export, silently derived from a guess.
     //
     // Two flags, not one, and the split is the DLL's (Grimoire.h `PickFFieldClassNameOffset`):
     //   ProbeRan  — detection executed and the offsets are settled (success OR give-up)

@@ -278,7 +278,7 @@ const std::vector<std::string>& PropertyTypeNames(DataType dt) {
         "FloatProperty", "DoubleProperty",
     };
     // NumericAll union — NumericNoByte plus the 1-byte families
-    // (Int8Property + ByteProperty) and EnumProperty (audit #5 AB14: enums are
+    // (Int8Property + ByteProperty) and EnumProperty (enums are
     // 1-byte in the overwhelming majority, resolved to UInt8 by
     // TryDataTypeFromPropertyTypeName). MUST stay in sync with the names
     // TryDataTypeFromPropertyTypeName resolves — a field is admitted into the
@@ -391,9 +391,9 @@ bool TryDataTypeFromPropertyTypeName(const std::string& propTypeName, DataType& 
     if (propTypeName == "UInt64Property") { out = DataType::UInt64; return true; }
     if (propTypeName == "FloatProperty")  { out = DataType::Float;  return true; }
     if (propTypeName == "DoubleProperty") { out = DataType::Double; return true; }
-    // EnumProperty (audit #5 AB14). Enum-backed state fields were invisible to
-    // every value scan because this name mapped to nothing, so the meta scan
-    // skipped them. An enum's storage width is NOT encoded in the type name — it
+    // EnumProperty. Without this mapping, enum-backed state fields are invisible to
+    // every value scan: the meta scan skips a name that maps to nothing. An enum's
+    // storage width is NOT encoded in the type name — it
     // is the underlying integer's ElementSize (Scharf reads FPROPERTY_ELEMSIZE for
     // exactly this reason) — but the overwhelming majority of UE enums are 1 byte
     // (`enum class : uint8`, and TEnumAsByte reflects as ByteProperty which is
@@ -551,12 +551,12 @@ BoundReadings ParseNumericBound(const std::string& raw, RoundMode roundMode) {
 
     // Parse each interpretation independently; require the WHOLE string to be
     // consumed so "100.5" doesn't pass as integer 100. Base 10 for a plain
-    // integer, 16 for a 0x-prefixed one (audit #5 AB15): base 0 read a leading
+    // integer, 16 for a 0x-prefixed one: base 0 would read a leading
     // zero as OCTAL for the integer widths ("010" -> 8) while std::stod below
-    // always reads DECIMAL ("010" -> 10), so ONE meta scan gave the same string
-    // two different numbers. Decimal is what a value-scan user means, and it now
+    // always reads DECIMAL ("010" -> 10), so ONE meta scan would give the same string
+    // two different numbers. Decimal is what a value-scan user means, and it
     // agrees across every width. (std::stod does not parse octal, so the float
-    // branch was already decimal — this makes the integer branches match it.)
+    // branch is decimal — this makes the integer branches match it.)
     const int intBase = isHex ? 16 : 10;
     bool     hasSigned = false; int64_t  sv = 0;
     bool     hasUnsigned = false; uint64_t uv = 0;
@@ -952,7 +952,7 @@ bool CompareFloatScalar(ScanType st, double cur, double a, double b, RoundMode m
 
 // Entry-taking overload. The AlwaysTrue verdict is honoured HERE, once, so the
 // scan and refine engines in Aura.cpp need only swap Find() for FindEntry() and pass
-// the entry through. (audit #5 AB4)
+// the entry through.
 bool ComparePredicate(DataType dt, ScanType st,
                       const uint8_t* rawBytes,
                       const NumericTargetSet::Entry* target,
@@ -1307,7 +1307,7 @@ bool CandidateMatchesFilter(const Candidate& c, DataType dt,
     if (ContainsCI(inst.instanceName, needleLower)) return true;
     if (ContainsCI(FormatCandidateValue(c, dt, d), needleLower)) return true;
     // The displayed "Origin" column ("Native-C (Int32)" / "Reflected"), so a
-    // user filtering for "native" hits the rows that visibly read it (audit #5 AB16).
+    // user filtering for "native" hits the rows that visibly read it.
     if (ContainsCI(FormatCandidateOrigin(d), needleLower)) return true;
     // Lowercase hex of offset + address (needle is already lowercased, so a
     // user typing either case of an offset/address pasted from the grid hits).
@@ -1451,7 +1451,7 @@ bool SessionManager::End(uint64_t owner, uint64_t sessionId) {
     auto it = FindOwnedLocked(owner, sessionId);
     const bool erased = it != sessions_.end();
     if (erased) sessions_.erase(it);
-    // Reap this owner's other idle sessions on the way out (audit #5 AB17): ending a
+    // Reap this owner's other idle sessions on the way out: ending a
     // scan is a natural point to drop ones it abandoned without an End.
     ExpireOldSessionsLocked(owner);
     return erased;
@@ -1474,7 +1474,7 @@ size_t SessionManager::DropOwner(uint64_t owner) {
 
 // Caller MUST hold mu_. Split out so RefineWith / End can sweep AFTER protecting
 // their own session, without the double-lock a public ExpireOldSessions would take
-// (std::mutex is non-recursive). (audit #5 AB17)
+// (std::mutex is non-recursive).
 void SessionManager::ExpireOldSessionsLocked(uint64_t owner) {
     ReapIdleOwned(sessions_, owner, std::chrono::steady_clock::now(), kExpirySeconds);
 }
@@ -1583,7 +1583,7 @@ namespace {
 // Kuhn's augmenting path over a candidate's slots — leaf identity = leafAddr,
 // candidates tried in PREFERENCE order (the greedy pick first, then list order).
 // Seats slot `s` on a distinct leaf, bumping earlier slots along an alternating
-// path when that is what frees one. (audit #5 AB18)
+// path when that is what frees one.
 bool AugmentWitnessSeat(size_t s,
                         const std::vector<std::vector<GroupSlotMatch>>& slotMatches,
                         const std::vector<size_t>& preferred,
@@ -1719,7 +1719,7 @@ std::vector<size_t> PickGroupWitnessAssignment(
             shownDefiningClasses.push_back(d->definingClassName);
     }
 
-    // --- Distinctness repair (audit #5 AB18) ---
+    // --- Distinctness repair ---
     // The greedy passes above choose each slot's PREFERRED leaf but never revisit an
     // earlier slot, so two slots can end up seated on the SAME physical leaf (same
     // leafAddr) even though the caller proved a distinct assignment exists
@@ -1935,7 +1935,7 @@ uint64_t GroupSessionManager::Begin(uint64_t                     owner,
                                     bool                         perSlotCapHit,
                                     int                          perSlotCap) {
 
-    // Total-leaf memory backstop (audit #5 AB19). max_results is not clamped at the
+    // Total-leaf memory backstop. max_results is not clamped at the
     // Fern boundary, so a broad scan on a large game can arrive with a candidate
     // pool whose leaf memory (candidates x slots x perSlotCap GroupSlotMatch) is
     // multiple GB inside the target process. Trim the tail (scan order keeps the
@@ -1961,7 +1961,7 @@ uint64_t GroupSessionManager::Begin(uint64_t                     owner,
     sess->instances   = std::move(instances);
     sess->lastUse     = std::chrono::steady_clock::now();
     sess->candidatesDroppedForMemory = dropped;
-    // Carried, not recomputed — refine and query cannot derive it (audit #5 AE13).
+    // Carried, not recomputed — refine and query cannot derive it.
     sess->perSlotCapHit = perSlotCapHit;
     sess->perSlotCap    = perSlotCap;
     sessions_.emplace(id, std::move(sess));
@@ -1973,7 +1973,7 @@ bool GroupSessionManager::End(uint64_t owner, uint64_t sessionId) {
     auto it = FindOwnedLocked(owner, sessionId);
     const bool erased = it != sessions_.end();
     if (erased) sessions_.erase(it);
-    ExpireOldSessionsLocked(owner);   // audit #5 AB17 — sibling of SessionManager::End
+    ExpireOldSessionsLocked(owner);   // sibling of SessionManager::End
     return erased;
 }
 
@@ -1992,7 +1992,7 @@ size_t GroupSessionManager::DropOwner(uint64_t owner) {
     return n;
 }
 
-// Caller MUST hold mu_ — see SessionManager::ExpireOldSessionsLocked. (audit #5 AB17)
+// Caller MUST hold mu_ — see SessionManager::ExpireOldSessionsLocked.
 void GroupSessionManager::ExpireOldSessionsLocked(uint64_t owner) {
     ReapIdleOwned(sessions_, owner, std::chrono::steady_clock::now(), kExpirySeconds);
 }

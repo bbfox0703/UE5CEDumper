@@ -86,7 +86,6 @@ public sealed class DumpService : IDumpService
     /// <see cref="BuildEngineState"/> falls back to "validated", i.e. no warning. The
     /// alternative (letting this throw) would turn a missing diagnostic into a failed
     /// connect, which is a much worse trade for the thing it is diagnosing.
-    /// (audit #5 U3/X3)
     /// </summary>
     private async Task<JsonObject?> TryGetOffsetsAsync(CancellationToken ct)
     {
@@ -206,7 +205,7 @@ public sealed class DumpService : IDumpService
             IsVersionTooOld = ptrs["is_version_too_old"]?.GetValue<bool>() ?? false,
             // Absent (old DLL, or get_offsets unavailable) reads as validated — no banner,
             // matching the version_detected convention above. Only a DLL that positively
-            // says "false" produces the warning. (audit #5 U3/X3)
+            // says "false" produces the warning.
             OffsetsValidated      = offsets?["validated"]?.GetValue<bool>() ?? true,
             OffsetsProbeRan       = offsets?["probe_ran"]?.GetValue<bool>() ?? false,
             OffsetsFallbackReason = offsets?["fallback_reason"]?.GetValue<string>() ?? "",
@@ -1997,9 +1996,9 @@ public sealed class DumpService : IDumpService
 
     /// <summary>
     /// Parse a search_properties_batch reply. Split out of the async caller so the wire
-    /// contract can be tested without a pipe -- the per-query `truncated` flag went
-    /// unparsed here for two builds precisely because nothing could reach this code
-    /// (audit #5 X1).
+    /// contract can be tested without a pipe -- inside the pipe-bound caller no test can
+    /// reach it, and a field left unparsed here (the per-query `truncated` flag, say)
+    /// would go unnoticed.
     /// </summary>
     internal static PropertySearchBatchResult ParseSearchPropertiesBatch(JsonObject res)
     {
@@ -2053,8 +2052,8 @@ public sealed class DumpService : IDumpService
                             // FBoolProperty FieldMask — see the single-query
                             // parser above. Freeze is reachable from the
                             // Interesting Properties rows this path feeds, so it
-                            // needs the mask and the native flag too. (audit #5 AA1,
-                            // [BOOL-NATIVE-SEARCH])
+                            // needs the mask and the native flag too.
+                            // [BOOL-NATIVE-SEARCH]
                             BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
                             BoolNative        = obj["bool_native"]?.GetValue<bool>() ?? false,
                         });
@@ -2947,8 +2946,8 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             TotalFunctions = res["total_functions"]?.GetValue<int>() ?? 0,
-            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete" rather than a
-            // false alarm. (audit #5 Z8)
+            // Absent on an older DLL → false / 0, i.e. "assume complete" rather than a
+            // false alarm.
             Truncated      = res["truncated"]?.GetValue<bool>() ?? false,
             Aborted        = res["aborted"]?.GetValue<bool>()   ?? false,
             Limit          = res["limit"]?.GetValue<int>()      ?? limit,

@@ -124,9 +124,8 @@ public static class FlyScriptGenerator
                                  bool enable)
     {
         var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;   // [R7-C-04]
-        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
-        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
-        // a toggle fired while another command was still in flight wrote straight
+        // Bounded wait for IDLE before the FIRST write. Without it, a toggle fired
+        // while another command is still in flight would write straight
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.

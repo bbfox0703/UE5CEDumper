@@ -75,7 +75,7 @@ static HANDLE g_primaryProxyMutex = nullptr;
 // False when CreateMutexW itself failed — the guard is then not armed at all and a
 // second proxy in this process would run alongside us. Logged once Sein exists. (B47)
 static bool   g_primaryProxyMutexArmed = false;
-// GetLastError() captured AT the CreateMutexW call (audit #5 AB10/AB11). The B47
+// GetLastError() captured AT the CreateMutexW call. The B47
 // warning below is logged only after Sein::Init + several Win32/CRT calls, each of
 // which clobbers the thread's last-error, so a live GetLastError() there names the
 // wrong API. Stored here at the point of failure so the warning blames the right one.
@@ -393,7 +393,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // Same guard AutoStartBody already applies, hoisted here because the decision
             // it drives is "create threads or not" and that has to be made BEFORE the
             // threads exist. Fed the FULL path, which is what the tested helper takes —
-            // DllMain itself is unreachable from a test (audit #5 AB1).
+            // DllMain itself is unreachable from a test.
             startBackgroundThreads = HostAllowsBackgroundThreads(procPathW);
 
             // UTF-8 encode the WIDE path already in hand rather than asking Windows for a
@@ -476,7 +476,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             }
 #endif
         }
-        // ── Threads: never in a Cheat Engine host (audit #5 AB1) ──────────────────
+        // ── Threads: never in a Cheat Engine host ──────────────────────────────────
         //
         // CE loads a plugin DLL and then UNLOADS it, repeatedly:
         //   * Settings → Plugins → Add does LoadLibrary → CEPlugin_GetVersion →

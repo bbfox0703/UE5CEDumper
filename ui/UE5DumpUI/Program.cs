@@ -61,7 +61,7 @@ internal static class Program
             }
             App.StartupPlatform = platform;
 
-            // RETURN the lifetime's exit code, don't discard it (audit #5 AF10): a `desktop.Shutdown(n)` in the app
+            // RETURN the lifetime's exit code, don't discard it: a `desktop.Shutdown(n)` in the app
             // must reach the shell as n, not 0.
             return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }

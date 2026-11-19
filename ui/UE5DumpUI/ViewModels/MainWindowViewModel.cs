@@ -1719,7 +1719,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 // Need a class address to walk_functions. The row already has one — it
                 // came from list_all_functions — so use it. See ResolveClassAddrAsync
-                // for why re-deriving it from list_classes was a bug (audit #5 X2).
+                // for why re-deriving it from list_classes is wrong.
                 var classAddr = await ResolveClassAddrAsync(className, rowClassAddr);
                 if (string.IsNullOrEmpty(classAddr)) return;
 
@@ -2988,9 +2988,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private void ApplyEngineState(EngineState state)
     {
         // Fresh session (connect / proxy trigger_scan): blank the Extra-Scan strip so
-        // no result from the previous game survives. Update() no longer does this —
-        // it is also the plain pointer refresh, and doing it there wiped the scan's
-        // own result seconds after the user saw it (audit #5 V10).
+        // no result from the previous game survives. Update() does not do this —
+        // it is also the plain pointer refresh, and doing it there would wipe the scan's
+        // own result seconds after the user saw it.
         Pointers.ResetScanState();
         Pointers.Update(state);
 

@@ -124,7 +124,7 @@ static uintptr_t s_hookedAddr = 0;
 // already holds MinHook's spin lock, and a second MH_CreateHook on one target simply returns MH_ERROR_ALREADY_CREATED.
 // What it guards is STARK's state and its check-then-act: s_originalPE / s_hookedAddr / s_heldTarget / s_heldBlock and
 // the "step the holder aside if ProcessEvent asks for its address" sequence, which InstallHook and the block holder
-// must not interleave (audit #3).
+// must not interleave.
 static std::mutex s_mhMutex;
 
 // [MH-PRERESERVE-PROXY] The held trampoline block (HoldTrampolineBlock). Written under s_mhMutex.
@@ -213,8 +213,8 @@ static int32_t CallAddressSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t uf
     return 0;
 }
 
-// True while THIS thread is executing inside Stark::CallOriginalSEH (audit #5
-// ST1) or Stark::CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]). Deliberately NOT set inside CallProcessEventSEH: that is what the
+// True while THIS thread is executing inside Stark::CallOriginalSEH
+// or Stark::CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]). Deliberately NOT set inside CallProcessEventSEH: that is what the
 // legitimate game-thread drain calls, and a UFunction executing there routinely
 // dispatches further ProcessEvent calls through the vtable -- i.e. back through
 // our detour. Marking the thread there would make the game's own nested
@@ -732,7 +732,7 @@ bool InstallHook(uintptr_t processEventAddr) {
     // MH_ERROR_ALREADY_CREATED -- but because this reads and writes Stark's own state
     // (s_originalPE / s_hookedAddr / s_heldTarget / s_heldBlock) and the holder step-aside,
     // and the Frieren-side call_once only covers the game-thread dispatch path, so a concurrent
-    // (or future) public caller must still see a consistent view (audit #3). A second caller
+    // (or future) public caller must still see a consistent view. A second caller
     // blocks here, then hits the s_hookActive / s_hookedAddr fast-paths below and no-ops. The
     // block holder takes the same mutex.
     std::lock_guard<std::mutex> lock(s_mhMutex);

@@ -79,13 +79,13 @@ public partial class ClassStructViewModel : ViewModelBase
                 rows.Add(f);
             }
         }
-        // Detach before clearing the selection-bound grid (audit #5 AE14): Avalonia's
+        // Detach before clearing the selection-bound grid: Avalonia's
         // DataGrid keeps SelectedItem pointing at a row that is no longer in ItemsSource,
-        // so the xref context menu and the "Find Funcs" column kept acting on a
-        // FieldInfoModel the grid had stopped showing. The keeper skips a rebuild that
+        // so the xref context menu and the "Find Funcs" column would keep acting on a
+        // FieldInfoModel the grid has stopped showing. The keeper skips a rebuild that
         // would show the same rows, and the View re-selects a row that survived one --
-        // safe here because selecting a field starts nothing (no walk, unlike Instance
-        // Finder's Z7).
+        // safe here because selecting a field starts nothing (no walk, unlike an Instance
+        // Finder selection).
         FieldsView.Update(Fields, rows, () => SelectedField = null, FieldFilter);
     }
 
@@ -95,12 +95,11 @@ public partial class ClassStructViewModel : ViewModelBase
     /// selection (a cross-tab handoff) or when the newest tree-driven load failed
     /// or loaded nothing.
     ///
-    /// Renamed from <c>_lastLoadedNodeAddress</c> (audit #5 AE3), because that name
-    /// was the false premise: it is written when a load is CLAIMED, so it names an
-    /// attempt, not an accomplished display. Read as "last LOADED", the natural
-    /// repair is to move the write after the walk — which would break the dedupe
-    /// this exists for, since a duplicate arriving while the first walk is still in
-    /// flight would no longer be caught.
+    /// It is deliberately not named "last loaded": it is written when a load is
+    /// CLAIMED, so it names an attempt, not an accomplished display. Read as
+    /// "last LOADED", the natural repair would be to move the write after the
+    /// walk — which would break the dedupe this exists for, since a duplicate
+    /// arriving while the first walk is still in flight would no longer be caught.
     ///
     /// Written only via <see cref="BeginLoad"/>, and released again by whichever
     /// path ends up showing nothing new, so a failed load can always be retried by
@@ -223,13 +222,12 @@ public partial class ClassStructViewModel : ViewModelBase
     /// parameter or return value (find_functions_by_class — reflection, native
     /// functions included). Distinct from the per-FIELD "Find Funcs" column.
     ///
-    /// The try/catch is copied verbatim from <see cref="FindFieldXrefsAsync"/>
-    /// directly above — same feature, same call shape, and this method had none
-    /// at all (audit #5 AE11). <c>find_functions_by_class</c> is a bulk-lane
+    /// The try/catch is the one <see cref="FindFieldXrefsAsync"/> directly above
+    /// has — same feature, same call shape. <c>find_functions_by_class</c> is a bulk-lane
     /// command that fails on pipe teardown, a <c>Tot::Requested()</c> abort or a
-    /// stale <see cref="LoadedClassAddr"/>; without the catch the dialog threw,
-    /// the panel's ErrorMessage line stayed blank and nothing reached
-    /// <c>view-*.log</c> either — a button that silently did nothing and left no
+    /// stale <see cref="LoadedClassAddr"/>; without the catch the dialog would throw,
+    /// the panel's ErrorMessage line would stay blank and nothing would reach
+    /// <c>view-*.log</c> either — a button that would silently do nothing and leave no
     /// trace to grep for.</summary>
     [RelayCommand]
     private async Task FindClassFuncAsync()
@@ -271,7 +269,7 @@ public partial class ClassStructViewModel : ViewModelBase
     /// The actual walk + panel write, executed on behalf of ticket
     /// <paramref name="gen"/>. Every write to the panel is gated on that ticket
     /// still being the newest, so a superseded request returns silently instead
-    /// of repainting over the selection the user actually made (audit #5 AE2).
+    /// of repainting over the selection the user actually made.
     /// Ported from <c>InstanceFinderViewModel</c>'s <c>LoadInstanceFieldsAsync</c>,
     /// which gates the same way: every exit path that writes state after the await
     /// checks the ticket first, the loading flag in the <c>finally</c> included.
@@ -316,7 +314,7 @@ public partial class ClassStructViewModel : ViewModelBase
             if (gen != _loadId) return;
             // Nothing new is on screen, so release the dedupe key — otherwise
             // re-selecting the same node is refused forever and the panel stays
-            // pinned on whatever it happened to be showing (audit #5 AE3).
+            // pinned on whatever it happened to be showing.
             _shownNodeAddress = null;
             // [CLASSSTRUCT-FAILED-KEEPS-OLD] And nothing OLD stays either: a stale class re-selected after a level
             // reload showed its error above the same class's pre-reload fields.

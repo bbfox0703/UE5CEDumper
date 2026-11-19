@@ -12,7 +12,7 @@
 // exempts "algorithm helpers that live inside an existing namespace", the precedent being
 // GraphPath.h under Aura::. This lives under Genau::.
 //
-// ── WHY THIS EXISTS AT ALL (audit #5 G2) ─────────────────────────────────────
+// ── WHY THIS EXISTS AT ALL ───────────────────────────────────────────────────
 // A naive sweep is one whole-image memcmp pass per needle, Tier 1 and Tier 2/3 alike:
 // billions of compares and tens of seconds over a large Shipping exe. Behind the
 // first-byte gate below the same input costs a fraction of a second and orders of

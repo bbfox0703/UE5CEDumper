@@ -12,7 +12,7 @@ public partial class GameClassEntry : ObservableObject
 
     /// <summary>
     /// Full object path, e.g. "/Script/Engine.Actor". Setting it invalidates the cached
-    /// <see cref="Package"/> prefix derived from it — see the note there (audit #5 AE27).
+    /// <see cref="Package"/> prefix derived from it — see the note there.
     /// </summary>
     public string ClassPath
     {
@@ -40,13 +40,12 @@ public partial class GameClassEntry : ObservableObject
     /// DataGrid binding doesn't recompute per repaint and so the filter
     /// label aligns with a visible column.
     ///
-    /// <para>audit #5 AE27 — the "pre-computed once" claim was here before anything
-    /// implemented it: this was an expression-bodied property that re-ran
+    /// <para>Memoized, because an expression-bodied property would re-run
     /// <see cref="ExtractPackagePrefix"/> on every single read, i.e. per visible row per
-    /// repaint AND once per entry per keystroke in the Package filter. Memoized now, and
-    /// the memo is invalidated by the <see cref="ClassPath"/> setter rather than assumed
-    /// write-once — <c>ClassPath</c> is a settable property, so a plain <c>??=</c> would
-    /// have traded a false comment for a stale value.</para>
+    /// repaint AND once per entry per keystroke in the Package filter. The memo is
+    /// invalidated by the <see cref="ClassPath"/> setter rather than assumed
+    /// write-once — <c>ClassPath</c> is a settable property, so a plain <c>??=</c> alone
+    /// would serve a stale value.</para>
     /// </summary>
     public string Package => _package ??= ExtractPackagePrefix(ClassPath);
     private string? _package;

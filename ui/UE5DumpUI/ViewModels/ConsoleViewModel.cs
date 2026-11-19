@@ -292,10 +292,9 @@ public partial class ConsoleViewModel : ViewModelBase
             DetectDebugCameraToggle();
 
             // A capped walk cannot support a claim about the GAME, only about the page.
-            // `list_all_functions` stops at its row cap and, until audit #5 Z8, said
-            // nothing about it — so "No UFUNCTION(exec) commands found in this game
-            // (scanned 100,000 functions…)" was written from a scan that may never have
-            // reached the classes in question, and the user stopped looking. The
+            // `list_all_functions` stops at its row cap, so an unqualified "No UFUNCTION(exec)
+            // commands found in this game (scanned 100,000 functions…)" could come from a scan
+            // that never reached the classes in question, and the user would stop looking. The
             // wording below is a claim about the SCAN whenever the scan was partial.
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled("scan")

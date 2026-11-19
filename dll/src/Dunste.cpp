@@ -568,7 +568,7 @@ void WorkerLoop() {
                     } else {
                         // Applied, or Absent — and no amount of retrying fixes absent
                         // (InvokeSetCollision says so once). Commit in both so the tick
-                        // stops re-emitting. That is audit #4 B8, deliberately preserved.
+                        // stops re-emitting. That is deliberate.
                         // Or Queued: it WILL land, so the record must say so, or the next
                         // opposite toggle emits no undo. [W3-DUNSTE-QUEUED]
                         warnedCollDefer = false;
@@ -710,8 +710,8 @@ int32_t RefusedEnable(int32_t rc) {   // s_workerMutex and s_mutex held
 namespace Dunste {
 
 int32_t SetEnabled(bool enable) {
-    // Hold s_workerMutex across the whole mutate + start/stop decision (Laufen
-    // audit #8): lock order s_workerMutex (outer) → s_mutex (inner).
+    // Hold s_workerMutex across the whole mutate + start/stop decision. Lock
+    // order: s_workerMutex (outer) → s_mutex (inner).
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     // Either direction supersedes a deferred collision restore: enable takes the pawn
     // over itself, and a fresh disable re-decides. Joined here so exactly one path ever

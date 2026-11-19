@@ -267,7 +267,7 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
 // two times in three, and the result is no longer well-formed UTF-8. nlohmann's
 // default `dump()` is STRICT: it throws type_error.316 on invalid UTF-8, and the
 // throw is caught far enough up that the whole response becomes {"error":...} —
-// so a search that genuinely matched returns zero results. (audit #5 U7)
+// so a search that genuinely matched returns zero results.
 //
 // Cutting is done by walking BACK from the limit over continuation bytes
 // (0b10xxxxxx), which is the standard boundary test and needs no decoder: a lead
@@ -309,8 +309,8 @@ inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
 //   * UTF-16 : the unit at index numUnits-1 is 0x0000 (bytes at 2*(N-1))
 //
 // Both hypotheses are EVALUATED BEFORE EITHER IS RETURNED. Returning on the first one
-// that merely passed was wrong, because the two pieces of evidence are not equally
-// strong (audit #4 B28):
+// that merely passes would be wrong, because the two pieces of evidence are not equally
+// strong:
 //
 //   * The UTF-8 evidence (byte n-1 == 0) sits INSIDE a UTF-16 string's own payload
 //     (n-1 < 2n-2 for every n > 1), so UTF-16 text produces it routinely — any U+xx00
@@ -320,7 +320,7 @@ inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
 //
 // So the decision is, in order:
 //   1. Reject the UTF-8 hypothesis unless the bytes are STRICTLY well-formed UTF-8.
-//      This alone kills the reported CJK failures: a UTF-16 prefix carries lone
+//      This alone settles the CJK case: a UTF-16 prefix carries lone
 //      continuation bytes. A replacement-RATIO test could not — "中文一二" decodes to
 //      "-N?e", one bad char in four, which any sane ratio accepts.
 //   2. Well-formed AND containing a multi-byte sequence ⇒ UTF-8, decided. A UTF-16
@@ -330,7 +330,7 @@ inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
 //      as well ("第1章" → ",{1", "中A文" → "-NA"), so prefer UTF-16 when it decodes
 //      cleanly — the stronger evidence wins.
 //
-// THE ASCII TIE, and why rules 1-3 alone got it wrong (audit #5 AD5).
+// THE ASCII TIE, and why rules 1-3 alone get it wrong.
 //
 // The case rule 3 cannot settle is a UTF-8 buffer that is PURE ASCII: rule 2 needs a
 // multi-byte sequence and there is none, so UTF-16 wins whenever its 2n-byte window
@@ -341,14 +341,13 @@ inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
 // TryDecodeFStringAt; a cooked build storing an FText display string as UTF-8 with
 // English (i.e. ASCII) text is the ordinary case, not an exotic one.
 //
-// This block previously argued the residual was near-unreachable because "both
-// conditions must hold — LooksLikeDecodedText rejects a binary tail". That is
-// MEASURED FALSE, and it is the sentence that kept the bug open:
+// ⚠ The residual is NOT near-unreachable on the grounds that "both conditions must
+// hold — LooksLikeDecodedText rejects a binary tail":
 //   * The two conditions are the SAME heap state, not independent coincidences.
 //     Zero-filled slack — the common allocator state — supplies both at once, and the
 //     mis-decode then fires 100% of the time rather than by luck.
 //   * The mojibake contains ZERO replacement characters, so LooksLikeDecodedText
-//     accepts it. It was never going to reject this; it rejects binary, and a run of
+//     accepts it. It cannot reject this; it rejects binary, and a run of
 //     valid CJK code points is not binary.
 //
 // Rule 3a below settles it with a structural fact instead of a heuristic: an FString

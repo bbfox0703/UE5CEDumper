@@ -213,7 +213,6 @@ static std::string GetTimestamp() {
 // FindNextFileW failing) would therefore throw a `filesystem_error` out of a sweep
 // that must not throw. This file contains no `catch` at all and the DLL builds with
 // /EHa, so that would unwind out of `InitProcessMirror` into DLL_PROCESS_ATTACH.
-// (audit #5 SE2)
 //
 // Returns false when enumeration failed at ANY point — construction OR increment.
 // Callers must not read that as "the directory is empty": the two are different
@@ -452,7 +451,7 @@ static void CloseFile(LogFileState& fs_state) {
 // This is what stops a failed open from silently swallowing a category for the
 // whole session. Without it log verification itself is misled: a grep that finds
 // nothing reads as "this code path never ran" when the truth is "the file never
-// opened". (audit #5 SE1)
+// opened".
 static LogFile ResolveSink(LogFile target) {
     if (s_files[target].file) return target;
     for (int i = 0; i < LF_COUNT; ++i)
@@ -522,7 +521,7 @@ static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& 
         // empty. This covers a mid-iteration failure as well as a construction
         // failure. The distinction is not academic here — the very next branch
         // DELETES the folder when it saw no files, and a half-read folder must never
-        // reach it. (audit #5 SE2)
+        // reach it.
         if (!enumerated) return;
 
         std::error_code rmEc;

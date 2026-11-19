@@ -228,13 +228,13 @@ public static class CsxExportService
                 childStructure = BuildStrChildStructure(field.TypeName, field.HexValue);
                 break;
 
-            // Audit #5 W9: Soft / SoftClass / Lazy were here too. A child <Structure>
+            // Soft / SoftClass / Lazy are deliberately NOT here. A child <Structure>
             // is only reachable in a dissect file by dereferencing the parent element,
             // and those slots hold an FSoftObjectPath / FWeakObjectPtr rather than an
-            // address — so the child was laid out under a slot CE cannot follow. The
+            // address — so a child would be laid out under a slot CE cannot follow. The
             // DLL does resolve their embedded target and stamps it on PtrAddress, which
-            // is exactly what made the TryGetValue guard below succeed and the defect
-            // invisible. Same reasoning, same three types, as W5 in the CE-XML emitter.
+            // would make the TryGetValue guard below succeed and hide the defect. Same
+            // reasoning as CeXmlExportService.IsRawObjectPtrSlot, which leaves them out too.
             case "ObjectProperty":
             case "ClassProperty":
             case "InterfaceProperty":
@@ -387,13 +387,12 @@ public static class CsxExportService
             "DataTableRows"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
 
             // Opaque types — 8-byte hex leaves, NOT Vartype=Pointer.
-            // Audit #5 W9: Soft / SoftClass / Lazy sat in the pointer block above, so
-            // CSX told CE to dereference a slot that holds no address —
+            // Soft / SoftClass / Lazy belong here, not in the pointer block above:
+            // Vartype=Pointer would tell CE to dereference a slot that holds no address —
             // FSoftObjectPath for the soft pair, FWeakObjectPtr { int32 ObjectIndex;
-            // int32 SerialNumber } for Lazy. This is exactly what W5 fixed in the
-            // CE-XML emitter (see CeXmlExportService.IsRawObjectPtrSlot and its doc
-            // block); that commit did not touch this file. WeakObjectProperty was
-            // already correct here, which is why the defect never looked systematic.
+            // int32 SerialNumber } for Lazy. The CE-XML emitter makes the same call
+            // (see CeXmlExportService.IsRawObjectPtrSlot and its doc block), and
+            // WeakObjectProperty sits here for the same reason.
             // A watchable 8-byte hex leaf is the honest representation for all four.
             "TextProperty"         => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "WeakObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),

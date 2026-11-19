@@ -5,7 +5,7 @@
 // PipeServer: Named Pipe JSON IPC server (107 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
-// asserted by `tools/check_derived_counts.py` in CI (audit #5 AD7/AD22).
+// asserted by `tools/check_derived_counts.py` in CI.
 //
 // Multi-connection model (Path A — docs/multipipe-eval.md §9): the server
 // accepts up to kMaxPipeInstances clients and serves EACH on its own thread
@@ -35,7 +35,7 @@ public:
     // NOT Stop() — see Stop's `graceful` parameter. This destructor runs from the
     // CRT's static-destructor pass (s_pipeServer is a namespace-scope static in
     // Frieren.cpp), i.e. during DLL_PROCESS_DETACH, where the full teardown is both
-    // useless and unsafe. (audit #5 D5/F1)
+    // useless and unsafe.
     ~Fern() { Stop(/*graceful=*/false); }
     bool Start();
     // graceful=true  — an explicit, in-process teardown (UE5_Shutdown / CE Disable /
@@ -78,7 +78,7 @@ private:
     // Writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
-        // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
+        // Monotonic id, assigned under m_connMutex at accept. Needed
         // because the per-command cancel is owned by the connections that RAISED it,
         // and a raw pointer cannot answer "is that same connection still live" once
         // the object is gone and the allocator has reused the address.
@@ -162,8 +162,8 @@ private:
     std::mutex              m_connMutex;     // guards m_conns + m_listenPipe + m_clientConnected
                                              // + m_cancelOwners + m_connSeq + m_tearingDown
     // Which connections raised the per-command cancel. Cleared when none of them is
-    // still registered — NOT when the registry merely goes empty, which the two-lane
-    // split made unreachable (audit #5 F2).
+    // still registered — NOT when the registry merely goes empty, which a lane dropping
+    // beside a still-connected sibling never reaches.
     std::vector<uint64_t>   m_cancelOwners;
     uint64_t                m_connSeq{0};    // assigned under m_connMutex at accept
     // Connections already erased from m_conns whose teardown still runs -- releasing what they owned can wait on the

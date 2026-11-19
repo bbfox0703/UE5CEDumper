@@ -124,7 +124,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         _platform = platform;
 
         Title = $"Properties used by: {_funcName}";
-        Width = 980;      // [DENKEN-WRITE-SITES] the Write sites column; review WS-UI-3
+        Width = 980;      // [DENKEN-WRITE-SITES] the Write sites column
         MinWidth = 720;
         Height = 520;
         MinHeight = 320;

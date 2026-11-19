@@ -104,20 +104,19 @@ public static class FieldValueConverter
     /// Whether <paramref name="value"/> can be stored in a field of
     /// <paramref name="sizeBytes"/> bytes without losing information.
     ///
-    /// <para><b>The width family's missing predicate</b> (audit #5: W6, Y2, Y9, Y15, AE1).
-    /// Every one of those was the same mistake — an out-of-range value masked down to the
-    /// field width and then reported as if the original had been written, so the user sees
-    /// "9999" in the UI and the game holds 15. At every site the correct width was already
-    /// in scope and simply not enforced. This is the enforcement, in one place, so the sites
-    /// cannot drift apart again.</para>
+    /// <para><b>The width family's shared predicate.</b> Without it, an out-of-range value would
+    /// be masked down to the field width and then reported as if the original had been written,
+    /// so the user would see "9999" in the UI while the game holds 15. Each write site has the
+    /// correct width in scope; this is the enforcement, in one place, so the sites cannot
+    /// drift apart.</para>
     ///
     /// <para><b>Deliberately signedness-TOLERANT.</b> A field of N bytes accepts anything in
     /// <c>[-2^(8N-1), 2^(8N)-1]</c> — the union of the signed and unsigned ranges — because
     /// the engine reports a width but not always a signedness, and both readings are things
-    /// a user legitimately types: <c>-1</c> into a 1-byte field means 0xFF (that is Y5's
-    /// established behaviour for byte params and must not regress), while <c>255</c> into a
+    /// a user legitimately types: <c>-1</c> into a 1-byte field means 0xFF (the established
+    /// behaviour for byte params, which must not regress), while <c>255</c> into a
     /// signed byte means the same bit pattern from the other direction. What the union still
-    /// catches is the case every one of those findings was about: a value that fits in
+    /// catches is the case this predicate exists for: a value that fits in
     /// NEITHER reading, like 9999 in one byte.</para>
     /// </summary>
     public static bool FitsInWidth(long value, int sizeBytes)

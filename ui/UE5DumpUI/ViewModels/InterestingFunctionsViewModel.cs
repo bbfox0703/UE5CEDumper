@@ -378,14 +378,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // NOT a cancel. PipeClient distinguishes three causes:
             // a caller cancel carries OUR ct (caught above), a deliberate teardown
             // carries the client's own token, and an unexpected pipe death — the game
             // crashing, the DLL unloading — arrives as an IOException. A bare
-            // `catch (OperationCanceledException)` reported all of them as
-            // "Props batch cancelled at N/M", so a dead game read as "you pressed
-            // Cancel" and nothing was logged at all. (audit #5 Z5; audit #3's L14
-            // applied at the two sites it missed.)
+            // `catch (OperationCanceledException)` would report all of them as
+            // "Props batch cancelled at N/M", so a dead game would read as "you pressed
+            // Cancel" and nothing would be logged at all.
             _log.Error("Batch props failed", ex);
             StatusText = $"Props batch failed at {done}/{targets.Count}.";
         }
@@ -509,8 +508,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
             // Build the class histogram over the FULL scored set, then filter.
             // countsPartial: a capped/aborted walk makes the picker's per-class counts
-            // a lower bound. Until Z8 there was no flag to pass here at all — the DLL
-            // emitted no truncation marker for list_all_functions. (audit #5 Z4 + Z8)
+            // a lower bound; the DLL's truncation marker for list_all_functions is what
+            // says so.
             ClassFilter.Rebuild(_allRows.Select(r => r.ClassName),
                                 countsPartial: _lastScan.IsPartial);
             ApplyFilter();

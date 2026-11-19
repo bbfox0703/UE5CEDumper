@@ -314,8 +314,8 @@ public sealed class TimeState
 /// Full God Mode state from <c>get_protect_state</c> (Solitar), as opposed to the
 /// single tri-state <c>get_god_mode</c> returns.
 ///
-/// <para>The three fields answer different questions, and collapsing them is what
-/// made the badge lie (audit #5 AD4):</para>
+/// <para>The three fields answer different questions, and collapsing them would
+/// make the badge lie:</para>
 /// <list type="bullet">
 /// <item><see cref="Want"/> — what the USER asked for. Survives a reconnect, and
 /// is what the re-assert worker keeps driving.</item>

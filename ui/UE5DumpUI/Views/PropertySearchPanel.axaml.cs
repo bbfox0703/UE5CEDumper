@@ -58,11 +58,11 @@ public partial class PropertySearchPanel : UserControl
         // literal to the double the force_field command carries — DLL-side too:
         // Solide::AddForce takes a double, so this is the wire's width, not a UI choice.
         //
-        // Purpose.Force, NOT the default (audit #5 AF22). The validation is shared; the
-        // WORDING is not. Shown verbatim, this dialog titled itself "Freeze property
-        // value" and labelled its confirm button "Create freeze script" for a flow that
+        // Purpose.Force, NOT the default. The validation is shared; the WORDING is not.
+        // With the default purpose this dialog titles itself "Freeze property value"
+        // and labels its confirm button "Create freeze script" for a flow that
         // creates no script and instead writes the field on every live instance
-        // immediately — and its scope caveat told the user to narrow the freeze by
+        // immediately — and its scope caveat tells the user to narrow the freeze by
         // editing a CFG block that does not exist on this path.
         var dialog = new FreezeValueDialog(match, FreezeValueDialog.Purpose.Force);
         Window? owner = null;

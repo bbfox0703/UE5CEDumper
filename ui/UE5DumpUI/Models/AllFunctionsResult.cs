@@ -97,7 +97,7 @@ public sealed class AllFunctionsResult
     /// <summary>
     /// The DLL walk stopped at <see cref="Limit"/>, so <see cref="Functions"/> is a
     /// PAGE, not the pool. Any "this game has no X" claim built from a truncated
-    /// scan is a claim about the page. (audit #5 Z8)
+    /// scan is a claim about the page.
     /// </summary>
     public bool Truncated { get; init; }
 

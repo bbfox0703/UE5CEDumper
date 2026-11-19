@@ -61,9 +61,9 @@ extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* 
 extern uintptr_t    g_cachedGEngine;  // &GEngine (the static slot holding UEngine*), 0 if unresolved
 extern std::atomic<bool> g_initInProgress;   // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp: an init is scanning
 
-// The UE FunctionFlags bits and the routing predicate that reads them now live in
+// The UE FunctionFlags bits and the routing predicate that reads them live in
 // Mimic.h (FUNC_FLAG_NATIVE / FUNC_FLAG_STATIC / ShouldRouteDirectInvoke) so a test
-// target can pin the rule — nothing compiles this .cpp. (audit #5 MB1)
+// target can pin the rule — nothing compiles this .cpp.
 
 // The exported mailbox — zero-initialized by default
 extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
@@ -161,16 +161,16 @@ static constexpr int32_t MB_ERR_HANDLER_THREW = -11;
 // it publishes status=DONE / cmd=IDLE based on whatever `result` was last
 // written. Catches all return paths (success, early error, exception).
 //
-// ⚠ "any return path" includes UNWINDING, and that path needed its own answer
-// (audit #5 MB3, sibling of the per-command guard in ServeOne).
+// ⚠ "any return path" includes UNWINDING, and that path needs its own answer
+// (the sibling of the per-command guard in ServeOne).
 // `result` holds whatever the last COMPLETED sub-step wrote, and the sub-steps
 // only write it on failure — HandleInvokeByName returns early when it is
 // non-zero, so at the moment a later sub-step throws `result` is normally 0.
-// Publishing DONE with that reports SUCCESS for a command that never ran to
+// Publishing DONE with that would report SUCCESS for a command that never ran to
 // completion, and CE Lua reads `result == 0` as "the invoke worked": strictly
-// worse than the hang it replaced, because the caller then trusts the params
-// buffer. Comparing against the count captured at ENTRY (not `!= 0`) is what
-// makes this correct inside a nested unwind.
+// worse than a hang, because the caller then trusts the params buffer.
+// Comparing against the count captured at ENTRY (not `!= 0`) is what makes
+// this correct inside a nested unwind.
 struct CompoundOpGuard {
     CompoundOpGuard() : uncaughtAtEntry(std::uncaught_exceptions()) { ++s_compoundDepth; }
     ~CompoundOpGuard() {
@@ -330,12 +330,12 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
         // CMD_FOREGROUND and CMD_OFFSETS_VERDICT, for two different reasons.
         //
         // CMD_FOREGROUND: its handler is pure Win32 and the PIPE path services it
-        // with no init gate at all. Gating it made the CE-Lua Keep-Foreground
+        // with no init gate at all. Gating it would make the CE-Lua Keep-Foreground
         // toggle fail with -10 on any game whose AOB scan fails, and the generated
         // script renders that as "hook error -10", naming MinHook — a subsystem the
-        // command never even reached. The exemption also skips the auto-init
-        // ATTEMPT, so the toggle no longer pays for a whole-image sweep it does not
-        // need. (audit #5 MB2)
+        // command never even reaches. The exemption also skips the auto-init
+        // ATTEMPT, so the toggle does not pay for a whole-image sweep it does not
+        // need.
         //
         // CMD_OFFSETS_VERDICT: its answer IS the init state — it reports whether the
         // offsets were measured, and "no probe has run" is one of the answers. Gating
@@ -354,16 +354,16 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
             return;
         }
 
-        // ---- audit #5 MB3: guard the DISPATCH, not the whole thread ----
+        // ---- guard the DISPATCH, not the whole thread ----
         //
         // PollingThreadProc's Routine::RunThreadGuarded is the outer net that
-        // stops a throw reaching a frame with no handler, and it stays. But it
-        // was ALSO the only guard, so one throwing handler unwound straight out
-        // of this loop and the CE mailbox was dead for the rest of the session —
+        // stops a throw reaching a frame with no handler, and it stays. As the
+        // ONLY guard it is not enough: one throwing handler would unwind straight out
+        // of this loop and leave the CE mailbox dead for the rest of the session —
         // recoverable only by a CE Disable→Enable the user has no reason to try,
         // since every subsequent script just times out.
         //
-        // This is now the per-iteration form the two siblings already use:
+        // This is the per-iteration form the two siblings use:
         // Routine::ReassertLoop guards per TICK, Stark guards per PE CALL. One
         // bad command loses that command, not the mailbox.
         //
@@ -757,7 +757,7 @@ static void HandleInvoke() {
     //   * CMD_LIST_FUNCTIONS and CMD_LIST_INSTANCES overwrite it with a PAGE COUNT.
     // ResolveFunctionInfo also validates the meta-class is "Function", so a stale or
     // recycled ufuncAddr fails safe instead of routing on garbage: it is refused just
-    // below, because a function that does not resolve cannot be sized either. (audit #5 MB1)
+    // below, because a function that does not resolve cannot be sized either.
     FunctionInfo fi{};   // global scope, like Fern's Linie query path
     const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
 
@@ -881,10 +881,10 @@ static void HandleInvoke() {
         // Call ProcessEvent via the SIZE-AWARE entry so the queued
         // GameThreadDispatch request OWNS a copy of the param bytes.
         //
-        // Audit #2: paramsData is a PERSISTENT global that CE overwrites with its
+        // paramsData is a PERSISTENT global that CE overwrites with its
         // next command the instant we SetDone below. On an idle game (menu /
-        // loading) the invoke times out (-5) while STILL queued; the old 3-arg
-        // path passed size 0, leaving the request aliasing this shared buffer, so
+        // loading) the invoke times out (-5) while STILL queued; a size-0 call
+        // would leave the request aliasing this shared buffer, so
         // the game thread would later run the ORIGINAL ufunc against the NEXT
         // command's params — silent state corruption (CallProcessEventSEH only
         // masks a wild deref, not a plausible-but-wrong call). Passing the buffer
@@ -1065,18 +1065,18 @@ static void HandleListFunctions() {
 //
 // Match policy: chosen by the caller, and the DEFAULT is the exact class.
 //
-// exactMatch=true was the only policy until contract 3, on the reasoning that a
-// freeze wants precise class identity. That reasoning holds for the class the user
-// NAMED and fails for the class the UI actually hands over: a Property Search row
+// exactMatch=true rests on the reasoning that a freeze wants precise class
+// identity. That reasoning holds for the class the user NAMED and fails for
+// the class the UI actually hands over: a Property Search row
 // for an inherited field is keyed to the class that DECLARES it, so freezing a
 // pawn's `bCanBeDamaged` submits "Actor" and an exact pool returns whichever stray
-// AActor the level happens to hold — never the pawn. Solide hit the identical wall
-// and fixed it with Aura::FindInstancesDerivedFrom (audit #5 A6); the Freeze button
+// AActor the level happens to hold — never the pawn. Solide scopes its pool with
+// Aura::FindInstancesDerivedFrom for the same reason; the Freeze button
 // and the Force submenu sit on the same row, so they must scope the same way.
 // (`[FREEZESCOPE-2026-08-18]`)
 //
-// The scope is an opt-in bit rather than a policy change, so a script generated
-// before contract 3 keeps the pool it was written against.
+// The derived scope (contract 3) is an opt-in bit rather than a policy change, so a
+// script generated before contract 3 keeps the pool it was written against.
 static void HandleListInstances() {
     char className[256];
     memcpy(className, Box().className, sizeof(className));
@@ -1150,15 +1150,15 @@ static void HandleListInstances() {
     Box().functionFlags = totalPages;
 
     // "The pool was capped" comes from the walk that did the capping, not from a
-    // second test over the page — that is audit #4's own named root cause (report
-    // and reality computed by different code paths). A derived sweep off a broad
+    // second test over the page: a report computed on a different code path from
+    // the reality it describes can disagree with it. A derived sweep off a broad
     // base reaches this routinely, so the caller must be TOLD rather than left to
     // read a truthful-but-partial count as a total.
     if (rset.truncated || rset.aborted)
         Box().cmdOutFlags |= LI_OUT_TRUNCATED;
 
     // Contract 2: publish the identity witness a caching caller needs to tell a
-    // live instance from a recycled slot (audit #5 AA2/AA3).
+    // live instance from a recycled slot.
     //
     // Read from an actual enumerated instance rather than resolved by name a
     // second time: the caller compares against what it will read out of THESE

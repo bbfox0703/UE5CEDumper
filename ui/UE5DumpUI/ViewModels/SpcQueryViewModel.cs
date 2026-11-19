@@ -385,7 +385,8 @@ public partial class SpcQueryViewModel : ViewModelBase
     public bool CanUseResultRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && NewestSelectedSessionId == _currentSessionId;
     /// <summary>As above, additionally requiring GWorld for the 🌍 button.</summary>
-    // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
+    // NOT gated on the client IsGWorldAvailable flag, which can be stale: the DLL's path
+    // lookup is the source of truth for GWorld (see ValueSearchViewModel.GWorldLocateBlockReason).
     public bool CanLocateResultRowInGWorld => CanUseResultRowActions;
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX / +CE buttons read. Never null:

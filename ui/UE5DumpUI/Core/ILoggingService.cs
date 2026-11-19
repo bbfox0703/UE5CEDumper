@@ -45,10 +45,9 @@ public interface ILoggingService
     /// Creates &lt;logDir&gt;/&lt;processName&gt;/ui-{init,pipe,view}-0.log
     /// with the same AGE-based retention as the root logs: the previous session's -0.log is
     /// archived to -YYYYMMDD-HHMMSS.log and archives older than Constants.LogMaxAgeDays are
-    /// deleted. (audit #5 Z17 — this said "2-version rotation", the generation-count policy
-    /// that CLAUDE.md's app-data rule explicitly replaced and explains cannot express the
-    /// requirement: rotation runs on every process start, so N launches evict everything
-    /// earlier regardless of date. The code has always followed the age rule.)
+    /// deleted. (Not a generation count, which CLAUDE.md's log rule explains cannot express
+    /// the requirement: rotation runs on every process start, so N launches would evict
+    /// everything earlier regardless of date.)
     /// </summary>
     void StartProcessMirror(string processName);
 

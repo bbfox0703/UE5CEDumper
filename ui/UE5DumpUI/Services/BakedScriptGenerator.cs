@@ -225,9 +225,8 @@ public static class BakedScriptGenerator
         {
             // Input path uses MapInputType so string params keep their wide/
             // narrow distinction ('fstring' vs 'fstringn') the helper needs.
-            // v.Size was in hand here the whole time and used only by the 'fstruct'
-            // arm below; an EnumProperty needs it too or it is written as 4 bytes
-            // over the next param (audit #5 Y16 site 2).
+            // v.Size serves the 'fstruct' arm below, and an EnumProperty needs it
+            // too or it is written as 4 bytes over the next param.
             var helperType = MapInputType(v.UeTypeName, v.Size);
             var literal = RenderLiteral(v.UeTypeName, v.LiteralText);
             // By-value struct ('fstruct'): emit the exact byte size so the
@@ -268,9 +267,8 @@ public static class BakedScriptGenerator
             // mb + UE5_INVOKE_PARAMS_OFFSET, and that offset is precisely the thing a
             // contract move invalidates — so writing before checking scribbles over
             // whatever now lives there. CLAUDE.md states the ordering rule outright
-            // ("before the first write, because the layout is what is in question");
-            // this was the only mailbox-touching generator with no check at all
-            // (audit #5 Y10). UntickAndReturn: a script that bailed here applied
+            // ("before the first write, because the layout is what is in question").
+            // UntickAndReturn: a script that bailed here applied
             // nothing, so leaving the record ticked would claim a cheat is active.
             Line(sb, "-- Contract check BEFORE the first mailbox write (the layout is");
             Line(sb, "-- what is in question, so a write cannot come first).");
@@ -316,11 +314,11 @@ public static class BakedScriptGenerator
             //
             // CLAMPED to the params region. `parmsSize` is UFunction::ParmsSize and is
             // NOT bounded by the mailbox: paramsData is uint8[1024] at 0x328, followed
-            // immediately by cmdFlags/cmdOutFlags, and MailboxData ends at 0x730. A
-            // UFunction with a large by-value struct parameter therefore zeroed straight
+            // immediately by cmdFlags/cmdOutFlags, and MailboxData ends at 0x730. Unclamped,
+            // a UFunction with a large by-value struct parameter would zero straight
             // through both flag words and past the end of the struct. The Lua helper's
             // own invokeUFunction refuses parmsSize > 1024 — but it runs AFTER this loop,
-            // so the refusal came too late to prevent the write (audit #5 Y10).
+            // so its refusal comes too late to prevent the write.
             int zeroLen = Math.Min(Math.Max(parmsSize, 0), ParamsRegionBytes);
             Line(sb, "if _mb_dbg ~= 0 then");
             Line(sb, $"  for i = 0, {zeroLen} - 1 do writeByte(_PD_dbg + i, 0) end");
@@ -385,7 +383,7 @@ public static class BakedScriptGenerator
                     // function ran"). ComputeDumpLength has already widened the window
                     // to cover the return slot; the hint only claims that when it is
                     // actually true, because the whole value of this line is that the
-                    // bytes are in the text above it (audit #5 Y13).
+                    // bytes are in the text above it.
                     var hint = ReturnFitsInDump(dumpLen, returnParam)
                         ? "complex return; see After: dump above"
                         : $"complex return at +{returnParam.Offset}, past the "
@@ -529,11 +527,11 @@ public static class BakedScriptGenerator
     /// generator stamps a TODO in the literal so the user notices.
     /// </remarks>
     /// <param name="size">
-    /// Engine-reported byte width, used ONLY by <c>EnumProperty</c> (audit #5 Y16).
+    /// Engine-reported byte width, used ONLY by <c>EnumProperty</c>.
     /// UE sizes an enum by its underlying type -- 1 byte for the common
-    /// TEnumAsByte / <c>enum class : uint8</c> -- so the old flat <c>'int32'</c>
-    /// wrote 4 bytes and clobbered the next parameter. 0 (the sizeless overload)
-    /// keeps the historical 4-byte answer.
+    /// TEnumAsByte / <c>enum class : uint8</c> -- so a flat <c>'int32'</c>
+    /// would write 4 bytes and clobber the next parameter. 0 (the sizeless overload)
+    /// keeps the 4-byte answer.
     ///
     /// <para>Only enums consult it, deliberately: every other type's width is
     /// implied by its name, and letting <c>size</c> override those would turn a
@@ -618,7 +616,7 @@ public static class BakedScriptGenerator
         => MapInputType(ueTypeName, 0);
 
     /// <summary>Size-aware form — this is the WRITE path, so an enum reaching it with
-    /// the wrong width corrupts the next parameter (audit #5 Y16 site 2).</summary>
+    /// the wrong width corrupts the next parameter.</summary>
     public static string MapInputType(string ueTypeName, int size) => ueTypeName switch
     {
         "StrProperty"                          => "fstring",

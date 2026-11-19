@@ -762,7 +762,7 @@ static void ScanRegionBatch(
         // Placed HERE, at classification, so it covers BOTH scalar loops at once:
         // a skipped pattern reaches neither `simdEntries` nor `scalarOnlyIndices`,
         // and its results list correctly stays empty for this region. Guarding the
-        // two loops separately would be two chances to fix only one. (audit #5 MA2)
+        // two loops separately would be two chances to guard only one.
         //
         // Latent today — the sole caller (Genau.cpp) omits `moduleBase`, so regions
         // are main-exe exec sections (>= 3,660 B) and patterns are <= ~60 B — and

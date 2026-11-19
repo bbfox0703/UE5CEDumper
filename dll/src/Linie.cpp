@@ -1037,7 +1037,7 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     if (!g_trace.distinctReady) {
         // Sets, not a vector per record: this runs in the game's process, and a 512 MB ring holds about 6.7 million
-        // entries but only thousands of distinct functions and objects (review DLL-6).
+        // entries but only thousands of distinct functions and objects.
         std::unordered_set<uintptr_t> f, o;
         f.reserve(4096);
         o.reserve(16384);

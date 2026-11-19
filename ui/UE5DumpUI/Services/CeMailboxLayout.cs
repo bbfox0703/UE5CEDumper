@@ -25,13 +25,13 @@ internal static class CeMailboxLayout
     public const string OffInstanceAddr = "0x10";   // instanceAddr / op / knobId / request
     public const string OffUfuncAddr    = "0x18";   // ufuncAddr / value / slot / show flag
     public const string OffParamsData   = "0x328";  // params_data[0..]
-    // params_data[1] / [2] — the 2nd and 3rd 8-byte operand slots. Named because five
-    // emitters wrote them as bare literals while writing the FIRST one through
-    // OffParamsData in the same statement group, so moving params_data would have
-    // silently split an FVector across the old and new layouts (audit #5 AF14).
-    // ⚠ These are the SAME BYTES the old literals named: 0x328 + 8 and + 0x10. Nothing
-    // about the mailbox moved, so this is NOT a contract change — the emitted Lua is
-    // byte-identical, which CeMailboxLayoutOffsetTests pins.
+    // params_data[1] / [2] — the 2nd and 3rd 8-byte operand slots. Named because an
+    // emitter that writes the FIRST slot through OffParamsData and the others as bare
+    // literals in the same statement group would, if params_data moved, silently split
+    // an FVector across the old and new layouts.
+    // ⚠ These are the SAME BYTES as 0x328 + 8 and + 0x10. They add no mailbox field,
+    // so they are NOT a contract change — the emitted Lua is byte-identical to the
+    // literal form, which CeMailboxLayoutOffsetTests pins.
     public const string OffParamsData1  = "0x330";  // params_data[1]
     public const string OffParamsData2  = "0x338";  // params_data[2]
     // The params slab's size: Mimic.h `uint8_t paramsData[1024]`. A zero-fill (or any write)
@@ -60,11 +60,9 @@ internal static class CeMailboxLayout
 
     // Cmd opcodes (must match Mimic.h Cmd enum).
     public const int CmdSetDebugCamera = 7;   // CMD_SET_DEBUG_CAMERA
-    // audit #5 AF25 — 8 was the one gap in this table, even though the class summary above
-    // names Teleport as a consumer. TeleportScriptGenerator and CoordLibraryScriptGenerator
-    // each carried their own `private const int CmdTeleport = 8` while every other generator
-    // referenced this class, so the single most-used opcode was the only one with no canonical
-    // home and two places to update.
+    // Teleport's opcode lives here like the rest (the class summary above names Teleport as
+    // a consumer): a generator that keeps a private copy of it gives the most-used opcode
+    // two places to update.
     public const int CmdTeleport       = 8;   // CMD_TELEPORT  (Wirbel — markers / POV / coord TP)
     public const int CmdProtect        = 9;   // CMD_PROTECT   (GodMode / Solitar)
     public const int CmdMovement       = 10;  // CMD_MOVEMENT  (Laufen knobs)

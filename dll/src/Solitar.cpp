@@ -319,7 +319,7 @@ void WorkerLoop() {
 // Start/stop the worker. The *Locked cores assume the caller already holds
 // s_workerMutex, so SetGodMode can decide start-vs-stop under the SAME hold as the
 // state mutate — concurrent ON/OFF (pipe SetGodMode + CE-mailbox CMD_PROTECT) then
-// can't join a wanted worker or leave an orphan (audit #8 discipline, retrofitted). (L1)
+// can't join a wanted worker or leave an orphan (the same discipline as Laufen).
 void StartWorkerLocked() {
     if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
     if (s_worker.joinable()) return;   // already running

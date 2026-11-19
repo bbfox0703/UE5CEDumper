@@ -44,7 +44,7 @@ public sealed class CoordinateLibraryStore
     public CoordinateLibraryStore(IPlatformService platform, ILoggingService? log = null)
     {
         _log = log;
-        // Own subfolder, not the flat app-data root (audit #5 AF11). This is a
+        // Own subfolder, not the flat app-data root. This is a
         // per-GAME family — up to four files per module (.json + .bak +
         // .preimport.bak + .preclear.bak, plus at most AtomicFileHygiene.MaxCorruptCopies
         // quarantined .corrupt-* copies), one more set on every new game, forever —
@@ -310,11 +310,11 @@ public sealed class CoordinateLibraryStore
                 // Roll a main that PARSES to .bak first, as Save does. Whenever Load had to recover
                 // from .bak (a sharing violation reads as unreadable) the in-memory library the
                 // pre-clear backup was written from is OLDER than this file, and the newest revision
-                // then ended up in no file at all. (review of 2f8d36f8)
+                // would then end up in no file at all.
                 if (TryRead(path) != null && !TryRollToBackup(path, path + ".bak"))
                 {
                     // The roll exists to keep this revision; deleting it anyway loses exactly that.
-                    // Refused: the next Load shows the library again. (review of 70f9d372)
+                    // Refused: the next Load shows the library again.
                     _log?.Warn(Constants.LogCatView,
                         $"CoordinateLibraryStore: {key} could not be backed up to .bak, NOT deleted");
                     return;
@@ -322,9 +322,9 @@ public sealed class CoordinateLibraryStore
                 if (File.Exists(path))
                 {
                     // An unparseable main is not rolled (that would put garbage over the good .bak), and
-                    // deleting it outright lost whatever it still held -- the destruction Save stopped
-                    // doing. Copied aside first, as Save does; a copy that fails throws into the catch and
-                    // refuses the Delete. (review of c002f6bf)
+                    // deleting it outright would lose whatever it still holds -- the destruction Save
+                    // avoids. Copied aside first, as Save does; a copy that fails throws into the catch and
+                    // refuses the Delete.
                     if (TryRead(path) == null) QuarantineUnparseableMain(key, path);
                     File.Delete(path);
                 }
@@ -367,8 +367,8 @@ public sealed class CoordinateLibraryStore
     /// <summary>COPY an unparseable main file aside as <c>&lt;file&gt;.corrupt-&lt;stamp&gt;</c> and keep at
     /// most <see cref="AtomicFileHygiene.MaxCorruptCopies"/> of them. The copy shares the game's key,
     /// so it moves and expires with the game's group. The copy is deliberately unguarded: see Save.
-    /// A copy, not a move: moved first, a rename that then failed left NO main at all, which Load
-    /// reads as a Clear all. (review of 70f9d372)</summary>
+    /// A copy, not a move: moved first, a rename that then fails leaves NO main at all, which Load
+    /// reads as a Clear all.</summary>
     private void QuarantineUnparseableMain(string key, string path)
     {
         var dir   = Path.GetDirectoryName(path)!;

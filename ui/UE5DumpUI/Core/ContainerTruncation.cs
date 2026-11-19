@@ -48,7 +48,7 @@ public static class ContainerTruncation
     /// <summary>
     /// Status line for a view whose cap is FIXED in code rather than driven by the
     /// Array Limit slider — today the DataTable RowMap drill-down, which requests a
-    /// hard-coded page of rows and offers no paging control (audit #5 V8).
+    /// hard-coded page of rows and offers no paging control.
     /// <para>
     /// A separate wording on purpose: pointing a user at a slider that does not govern
     /// this view would be a second false statement layered on the first. Empty when

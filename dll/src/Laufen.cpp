@@ -375,7 +375,7 @@ void WorkerLoop() {
 
 // Worker start/stop split into "Locked" cores (caller ALREADY holds s_workerMutex)
 // plus a public StopWorker() wrapper. The knob mutators hold s_workerMutex ACROSS
-// the whole "mutate desired state + decide start/stop" sequence (audit #8), so a
+// the whole "mutate desired state + decide start/stop" sequence, so a
 // concurrent mutator on a different knob can't slip a StartWorker between one op's
 // state-clear and its stop decision (which would join a freshly-started worker and
 // leave a knob active with no re-assert). Lock order is always s_workerMutex
@@ -440,7 +440,7 @@ int32_t SetMultiplier(int32_t knobId, double multiplier) {
     if (knobId < 0 || knobId >= KNOB_COUNT) return MR_ERR_REFLECT;
     multiplier = (std::max)(Grimoire::MOVE_MULT_MIN,
                             (std::min)(Grimoire::MOVE_MULT_MAX, multiplier));
-    // Hold s_workerMutex across the whole mutate+StartWorker decision (audit #8):
+    // Hold s_workerMutex across the whole mutate+StartWorker decision:
     // lock order s_workerMutex (outer) → s_mutex (inner).
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     int32_t rc = MR_OK;
@@ -488,7 +488,7 @@ int32_t ResetKnob(int32_t knobId) {
     if (knobId < 0 || knobId >= KNOB_COUNT) return MR_ERR_REFLECT;
     // Hold s_workerMutex across the clear + stop decision so a concurrent
     // SetMultiplier on another knob can't StartWorker between them and then get
-    // joined away, leaving a knob active with no re-assert worker (audit #8).
+    // joined away, leaving a knob active with no re-assert worker.
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     bool anyActive;
     {
@@ -540,7 +540,7 @@ int32_t SetGravityDirection(double x, double y, double z) {
     // BEFORE taking s_workerMutex — ResetGravityDirection() acquires it itself.
     if (std::fabs(x) < 1e-9 && std::fabs(y) < 1e-9 && std::fabs(z) < 1e-9)
         return ResetGravityDirection();
-    // Hold s_workerMutex across the mutate+StartWorker decision (audit #8):
+    // Hold s_workerMutex across the mutate+StartWorker decision:
     // lock order s_workerMutex (outer) → s_mutex (inner).
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     int32_t rc = MR_OK;
@@ -570,7 +570,7 @@ int32_t SetGravityDirection(double x, double y, double z) {
 }
 
 int32_t ResetGravityDirection() {
-    // Hold s_workerMutex across the clear + stop decision (audit #8): lock order
+    // Hold s_workerMutex across the clear + stop decision: lock order
     // s_workerMutex (outer) → s_mutex (inner); join with s_mutex released.
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     bool anyActive;

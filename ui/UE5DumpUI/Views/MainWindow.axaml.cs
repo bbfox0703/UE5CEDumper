@@ -76,7 +76,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        // Audit fixes #16 / #17: dispose timer-owning child VMs when the
+        // Dispose timer-owning child VMs when the
         // window closes, so background DispatcherTimers and Threading.Timer
         // callbacks don't fire post-close on torn-down state.
         Closed += OnClosed;
@@ -280,17 +280,17 @@ public partial class MainWindow : Window
     {
         var screens = CurrentScreenWorkingAreas();
         if (screens.Count == 0) return true;
-        // UNIT FIX (audit #5 AF21). WindowPlacement is documented "all coordinates are
+        // UNITS. WindowPlacement is documented "all coordinates are
         // PHYSICAL pixels", and `pos` (a PixelPoint) and the working areas already are —
-        // but `_pendingWidth`/`_pendingHeight` are Avalonia Width/Height, i.e. DIPs. On a
-        // 150% display a 1400-DIP window was measured as 1400px instead of 2100px, so the
-        // overlap test judged a legitimately-placed window by a rect two thirds its size
-        // and could reject it; its position then stopped being tracked.
+        // but `_pendingWidth`/`_pendingHeight` are Avalonia Width/Height, i.e. DIPs. Left
+        // unconverted, a 1400-DIP window on a 150% display is measured as 1400px instead of
+        // 2100px, so the overlap test judges a legitimately-placed window by a rect two
+        // thirds its size and can reject it; its position then stops being tracked.
         //
-        // Converted on the SIZE side because that is the side that was in the wrong unit —
+        // Converted on the SIZE side because that is the side in the wrong unit —
         // the position and the screens are natively physical, and converting them would
         // mean converting the whole helper's contract. This is verbatim what the sibling
-        // guard one method up (OnOpenedRestoreCheck) already does with _normalWidth.
+        // guard one method up (OnOpenedRestoreCheck) does with _normalWidth.
         double scale = RenderScaling > 0 ? RenderScaling : 1.0;
         return Services.WindowPlacement.IsVisibleEnough(
             pos.X, pos.Y,
@@ -689,9 +689,9 @@ public partial class MainWindow : Window
 
         // SelectionChanged BUBBLES. A ComboBox or ListBox inside the current tab
         // raises it and it arrives here with sender == the TabControl and the Tag
-        // still naming the tab the user is already on — so this whole routine used
-        // to re-run on an ordinary in-tab pick, cancelling in-flight work and
-        // rebuilding lists underneath the user (audit #5 AF5).
+        // still naming the tab the user is already on — so without this guard the whole
+        // routine would re-run on an ordinary in-tab pick, cancelling in-flight work and
+        // rebuilding lists underneath the user.
         if (!TabActivation.ShouldRunActivation(e.Source, tabs)) return;
 
         var tag = (tabs.SelectedItem as TabItem)?.Tag as string;

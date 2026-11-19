@@ -56,8 +56,8 @@ public static class StructReturnDecoder
         // licensee fork), and decoding on it labels every value with the wrong
         // field name at the wrong offset. Falling through to the DLL-discovered
         // fields below is strictly better — those came from the real UScriptStruct.
-        // The invoke dialog has refused such a layout for its INPUT boxes since Y7;
-        // this RESULT path accepted it for four more builds (audit #5 AC2).
+        // The invoke dialog refuses such a layout for its INPUT boxes too, so the
+        // INPUT and RESULT paths agree.
         if (!string.IsNullOrEmpty(returnParam.StructName))
         {
             var layout = KnownStructLayouts.GetTrustedLayout(

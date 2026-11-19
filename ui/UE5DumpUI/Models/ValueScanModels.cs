@@ -18,8 +18,7 @@ namespace UE5DumpUI.Models;
 /// reachable with the opt-in Native-C scan (<c>nativeC: true</c>), which reads
 /// each object's unmanaged holes raw at the requested width — numeric types
 /// only. The UI Value Search tab MUST surface both: the limitation and the
-/// toggle that lifts it. "Unreachable regardless of data type" was written
-/// before Native-C shipped and is no longer true. (audit #5 AE31)
+/// toggle that lifts it.
 /// </summary>
 public enum ValueScanDataType
 {
@@ -479,10 +478,9 @@ public class GroupScanBeginResult
     ///
     /// <para>Not the same claim as <see cref="DeadlineHit"/>: that one bounds how many
     /// OBJECTS were examined, this one bounds how many WITNESSES an examined object
-    /// kept. Until the DLL added <c>per_slot_cap_hit</c> (audit #5 AE13) the fact
-    /// existed only as a <c>LOG_WARN</c> line in the DLL's own log, so no DTO could
-    /// carry it and the UI presented a capped list as complete. False on an older DLL,
-    /// which is the correct default — it means "no evidence of truncation".</para></summary>
+    /// kept. The DLL reports it as <c>per_slot_cap_hit</c>; without it the UI would
+    /// present a capped list as complete. False on an older DLL, which is the correct
+    /// default — it means "no evidence of truncation".</para></summary>
     public bool  PerSlotCapHit  { get; set; }
     /// <summary>The cap the DLL actually applied, after its own 8..4096 clamp. Not
     /// derivable client-side: the request omits the key when it equals the UI default.

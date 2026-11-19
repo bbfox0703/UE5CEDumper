@@ -358,8 +358,8 @@ int32_t SetDilation(int32_t target, double value) {
     if (target < 0 || target >= DIL_COUNT) return TR_ERR_REFLECT;
     value = (std::max)(Grimoire::TIME_DILATION_MIN,
                        (std::min)(Grimoire::TIME_DILATION_MAX, value));
-    // Hold s_workerMutex across the whole mutate+StartWorker decision (audit #8
-    // discipline from Laufen): lock order s_workerMutex (outer) → s_mutex (inner).
+    // Hold s_workerMutex across the whole mutate+StartWorker decision (the same
+    // discipline as Laufen): lock order s_workerMutex (outer) → s_mutex (inner).
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     int32_t rc = TR_OK;
     {
@@ -402,7 +402,7 @@ int32_t ResetDilation(int32_t target) {
     if (target < 0 || target >= DIL_COUNT) return TR_ERR_REFLECT;
     // Hold s_workerMutex across the clear + stop decision so a concurrent
     // SetDilation on the other target can't StartWorker between them and then get
-    // joined away, leaving a lever active with no re-assert worker (Laufen audit #8).
+    // joined away, leaving a lever active with no re-assert worker.
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     bool anyActive;
     {

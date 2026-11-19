@@ -1077,7 +1077,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     /// <summary>
     /// Drive type of a volume ROOT or mount-point path. Unlike <c>DriveInfo</c> this takes the
     /// path as given — no <c>Path.GetPathRoot</c> normalization — so it answers about a volume
-    /// mounted into a folder rather than about that folder's host drive (audit #5 AC17).
+    /// mounted into a folder rather than about that folder's host drive.
     /// Requires the trailing backslash that <c>GetVolumePathNameW</c> already returns.
     /// </summary>
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDriveTypeW", ExactSpelling = true)]
