@@ -17,8 +17,9 @@ So this asks the profiler what it actually produces, and reports whether a DISCR
 exists. It does not click anything — it establishes whether clicking would be worth doing, and
 names the two rows to look at.
 
-⚠ THE ORDER MATTERS: init -> trigger_scan -> invoke -> profile. Starting the profiler first used
-to poison the ProcessEvent hook for the life of the process, so this rig never leads with it.
+⚠ THE ORDER MATTERS: init -> trigger_scan -> invoke -> profile. A profiler started before the scan
+has no ProcessEvent hook until the scan re-runs detection ([PEHOOKONCE-2026-08-18]), so this rig
+never leads with it.
 
 ⚠ The Period column is fed by Linie's CADENCE phase (Welford inter-arrival mean/cv), so a function
 needs at least a couple of fires in the window to get a period at all. A short window yields mostly

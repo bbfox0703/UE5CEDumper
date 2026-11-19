@@ -7,12 +7,12 @@ r"""P3 -- "a fix that reached some of its twins and not the rest".
     py tools/verify/pattern_p3.py tags        # fix tags that reach part of a twin group
     py tools/verify/pattern_p3.py control     # every axis must re-find its known positives, or FAIL
 
-⭐ WHY "TWINS" AND NOT "TRANSPORTS". The plan first defined P3 as "a fix landed on one of N
-transports" -- the DLL's three exits (the pipe `Fern`, the CE mailbox `Mimic`, the C ABI
-`Frieren`). The sweep then found the same defect in three other places: a delegate-array fix on the
-FProperty arm and not its UProperty twin; the UE5.5 string types on CE XML's scalar path and not its
-container path; `DelegatePad` in the CE XML exporter and not the CSX one. The common shape is a fix
-that knew about some of its twins. Transports are one kind of twin.
+⭐ WHY "TWINS" AND NOT "TRANSPORTS". "A fix landed on one of N transports" -- the DLL's three exits
+(the pipe `Fern`, the CE mailbox `Mimic`, the C ABI `Frieren`) -- is one case of the shape. The
+same defect also takes other forms: a delegate-array fix on the FProperty arm and not its UProperty
+twin; the UE5.5 string types on CE XML's scalar path and not its container path; `DelegatePad` in
+the CE XML exporter and not the CSX one. The common shape is a fix that knew about some of its
+twins. Transports are one kind of twin.
 
 ⛔⛔ EVERY AXIS IS A POPULATION PRODUCER, NOT A FINDING LIST. Twins can legitimately differ -- a
 pipe-only feature, an exporter that does not need a CE-specific field, a type map that deliberately
@@ -20,29 +20,28 @@ refuses a type. P3 is therefore a SWEEP, never a CI gate: this repo's gate rule 
 legitimate population is EMPTY, and P3's is not.
 
 ⛔ WHY `validity` IS A TABLE AND NOT A VERDICT. The obvious matcher -- "is this validity flag read by
-all three transports?" -- FAILS ITS OWN KNOWN POSITIVE: `Frieren.cpp:610` reads `bOffsetsValidated`,
-so a read-count check calls `[W5-OFFSETS-UNMEASURED]` covered, when that read only feeds a log line
-and nothing reaches a C ABI caller. Reading is not exposing, and exposure is not mechanically
-decidable here. So this axis prints every reference with its line and a reader decides.
+all three transports?" -- FAILS ITS OWN KNOWN POSITIVE: `UE5_Init` in Frieren.cpp reads
+`bOffsetsValidated` only to feed a LOG_SUMMARY line, so a read-count check calls
+`[W5-OFFSETS-UNMEASURED]` covered on that read, when nothing it does reaches a C ABI caller.
+Reading is not exposing, and exposure is not mechanically decidable here. So this axis prints every
+reference with its line and a reader decides.
 
-⛔ THE CONTROL RUNS OVER THE SAME COLLECTORS THE AXES PRINT. P1's first draft had a control that
-passed over the unfiltered population while the view hid both known positives. Here every axis is a
-`collect_*` function, and `control` calls exactly those.
+⛔ THE CONTROL RUNS OVER THE SAME COLLECTORS THE AXES PRINT. A control that runs over another
+population than the view prints can pass while the view hides every known positive. Here every
+axis is a `collect_*` function, and `control` calls exactly those.
 
-⚠⚠ LIMITS THE FIRST ADJUDICATION MEASURED (2026-09-10, 112 rows, `[PATTERN-P3-2026-09-10]`).
-Recorded so the next reader corrects for them instead of rediscovering them:
-  * typemaps -- the C# method extractor used a bare brace counter, and `SdkExportService` EMITS C++
-    SOURCE full of "{" / "};" literals, so one body swallowed a later method. Fixed (`cs_skip`).
-    Measured afterwards: 29 rows -> 28; the one removed row was fabricated; NONE added and none
-    changed, so no map had been hidden and the adjudicated bound stands.
+⚠⚠ KNOWN LIMITS (`[PATTERN-P3-2026-09-10]`). Correct for them instead of rediscovering them:
+  * typemaps -- the C# method extractor depends on `cs_skip` skipping comments and literals:
+    `SdkExportService` EMITS C++ SOURCE full of "{" / "};" literals, and a bare brace counter lets
+    one body swallow a later method (`cs_skip`'s docstring).
   * validity -- matches RAW identifiers, so a flag the pipe publishes through a renamed cache global
     (`bLowConfidence` -> `g_cachedIsLowConfidence` -> `is_low_confidence`) is shown as "Fern never
     references it", and the cache STORE in Frieren is shown as the exposure: the inverse of reality.
   * consumers -- over-reports four ways: reads through a helper (`ContainerGeometry`, the shared
     `ResolveDrilldownAsync`) are invisible; `lfv_members()` parses EVERY class in LiveFieldValue.cs,
     so sub-type members appear; one member (`InnerType`) is not on LiveFieldValue at all; and
-    pass-through COPIES in CE XML's reconstruction count as reads. 43 of 57 rows were gaps against
-    `SdkExportService`, which exports class LAYOUTS and is not a live-value twin.
+    pass-through COPIES in CE XML's reconstruction count as reads. Gaps against `SdkExportService`
+    are listed too, though it exports class LAYOUTS and is not a live-value twin.
   * tags -- over-counts twice: a fix placed in a shared CALLEE shows as "tag absent" in every caller
     that inherits it, and pipe-only commands have no mailbox or C ABI counterpart at all.
 """
@@ -274,11 +273,11 @@ BROAD = 8
 def cs_skip(text, i):
     """If a C# comment or literal starts at i, return the index just past it; else i.
 
-    ⛔ WHY THIS EXISTS. The first draft matched braces with a bare counter, and a P3 adjudicator
-    caught the symptom: `EmitClassHeaderFromLive` -- which contains no type switch -- inherited
-    `MapFunctionParamType`'s exact lacks-list. `SdkExportService` EMITS C++ SOURCE, so its method
-    bodies are full of "{" and "};" string literals; the counter walked straight past the method's
-    real end and swallowed a later one. That case only produced a duplicate row. The mirror case is
+    ⛔ WHY THIS EXISTS. A bare brace counter is wrong here. `SdkExportService` EMITS C++ SOURCE, so
+    its method bodies are full of "{" and "};" string literals; a counter walks straight past a
+    method's real end and swallows a later one, and `EmitClassHeaderFromLive` -- which contains no
+    type switch -- then inherits `MapFunctionParamType`'s exact lacks-list. That case only produces
+    a duplicate row. The mirror case is
     the dangerous one: an unbalanced "}" literal ENDS a body early, drops a type map below the
     BROAD threshold and HIDES it -- a recall hole in the bound P3 exists to establish.
     """

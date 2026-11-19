@@ -10,8 +10,8 @@ WHY EACH PIECE EXISTS -- every one of these closes a specific way the run would 
 
 `park-logs`
   The row's stated PASS is "the Loaded? column stays 'not observed'". `ClassifyLoad` emits that
-  string ONLY when the log folder is absent, and OCTOPATH's folder exists with 40+ files one day
-  old -- far inside `LogMaxAgeDays`=21. Run the row verbatim and the cell reads `loaded 2026-08-19`
+  string ONLY when the log folder is absent, and OCTOPATH's folder exists with files far inside
+  `LogMaxAgeDays`=21. Run the row verbatim and the cell reads `loaded <the newest log's date>`
   no matter what loads, so the step FAILS while telling you nothing. Renaming the folder aside is
   what makes the row's own expectation reachable at all. It also removes contaminated evidence:
   every archived run in that folder is a **winmm** run -- there is not one version-proxy line in
@@ -22,8 +22,8 @@ WHY EACH PIECE EXISTS -- every one of these closes a specific way the run would 
   flavour loaded. Both flavours also stamp the same FileVersion, so the panel's version text and
   the log's `build:` line cannot separate them either. What CAN: the loaded-module list. This
   reports, per PID, whether `version.dll` is mapped from the GAME directory (ours won) or only
-  from `C:\WINDOWS\System32` (bypassed) -- which is exactly the observation the original finding
-  rested on.
+  from `C:\WINDOWS\System32` (bypassed) -- which is exactly the observation the finding rests
+  on.
 
   It enumerates EVERY matching PID, because this title SELF-RELAUNCHES (the `[RELAUNCHPIPE]`
   defect): a launcher spawns the shipping exe, two processes write one log folder, and sampling

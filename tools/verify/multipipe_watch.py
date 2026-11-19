@@ -83,11 +83,10 @@ def tally(events, label_by_addr):
     """-> {label: [(t, int_value), ...]} for watch events only.
 
     ⚠ THE PAYLOAD IS AT TOP LEVEL, NOT UNDER "data". `Renge::MakeEvent` sets `event` and then
-    `ApplyPayload` (Renge.h:308) copies each payload key straight onto the object, so a watch
-    event is {"event":"watch","addr":...,"bytes":...,"timestamp":...}. A first draft of this
-    read `o["data"]["addr"]`, matched nothing, and would have reported zero pushes in BOTH
-    windows -- which looks exactly like the defect it is meant to detect. Read the envelope
-    before parsing it.
+    `ApplyPayload` (Renge.h) copies each payload key straight onto the object, so a watch
+    event is {"event":"watch","addr":...,"bytes":...,"timestamp":...}. Reading
+    `o["data"]["addr"]` matches nothing and reports zero pushes in BOTH windows -- which
+    looks exactly like the defect it is meant to detect. Read the envelope before parsing it.
     """
     per = {v: [] for v in label_by_addr.values()}
     want = {k.lower(): v for k, v in label_by_addr.items()}

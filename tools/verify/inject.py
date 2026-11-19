@@ -9,7 +9,7 @@
 
 WHO INJECTS. [AV-INJECT-2026-11-11] The remote thread is started by `UE5DumpUI.exe --inject-elevated <pid> <dll>
 <result file>`, the mode the UI launches through UAC for an elevated game. Started plainly, as here, it runs at this
-process's integrity, shows nothing and asks nothing. The AV's behavioural layer flagged python.exe doing
+process's integrity, shows nothing and asks nothing. The AV's behavioural layer flags python.exe doing
 CreateRemoteThread(LoadLibraryW) from a terminal, and an AV exception follows the image of the process that acts,
 not the script it runs (working-lessons.md 3.8, item 6). So python.exe only finds the target, runs the stale-module
 guard below and reads the result. The injector is the one the UI uses, so a difference in outcome between the two is
@@ -17,10 +17,10 @@ a real difference. This rig never elevates it: an elevated game needs this whole
 
 THE CONTRACT (Program.cs RunElevatedInject, pinned from both ends by InjectElevatedContractTests): exit 0 with the
 result file reading `OK <hex>` (the HMODULE's low 32 bits, upper-case, no 0x); exit 1 with the error text; exit 2 for
-a bad pid. The file is UTF-8, and some texts carry an em dash. The exe waits 10 s for the remote LoadLibraryW (the
-in-process injector before it waited 30 s) and passes the DLL path to the target verbatim, so the path given to it is
-absolute. The exe is this checkout's dist/UE5DumpUI.exe, or -- in a worktree, which has no dist -- the main
-checkout's; --exe names another. The DLL is never taken from elsewhere: it is the build under test.
+a bad pid. The file is UTF-8, and some texts carry an em dash. The exe waits 10 s for the remote LoadLibraryW and
+passes the DLL path to the target verbatim, so the path given to it is absolute. The exe is this checkout's
+dist/UE5DumpUI.exe, or -- in a worktree, which has no dist -- the main checkout's; --exe names another. The DLL is
+never taken from elsewhere: it is the build under test.
 
 FAILS LOUDLY at every step. A silent injector is worthless here: several register rows assert that a scan produced
 NOTHING, and "nothing" is exactly what a failed injection also produces (working-lessons.md 1.10a). A LoadLibraryW
@@ -255,9 +255,9 @@ def main(argv=None):
     # auto-loaded out of the game folder. LoadLibraryW then merely bumps that
     # module's refcount and returns it: the injection reports success, the logs
     # fill up, and every measurement is of the OLD binary. The failure is totally
-    # silent and it is fatal to any before/after comparison. Not hypothetical --
-    # a ~6-month-old UE5Dumper.dll sits in Cheat Engine's install folder on this
-    # machine (todo.md's STALEDLL item).
+    # silent and it is fatal to any before/after comparison. Cheat Engine's
+    # install folder is one place an old UE5Dumper.dll can sit
+    # ([STALEDLL-2026-08-18]).
     prior = already_ours(pid)
     if prior:
         print("STALE MODULE(S) ALREADY MAPPED:")

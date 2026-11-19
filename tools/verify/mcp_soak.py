@@ -208,7 +208,7 @@ def main() -> int:
         fails.append(f"the connection changed: seqs {sorted(seqs)}")
     if last != first and pct(lat[last], .95) > 2 * pct(lat[first], .95):
         fails.append("the last hour's p95 is more than twice the first's")
-    # The end sample belongs to the series: without it a run shorter than --report-every had one point to judge.
+    # The end sample belongs to the series: without it a run shorter than --report-every would have one point to judge.
     if sizes[-1][0] == n:
         sizes[-1] = (n, s1[0])
     else:

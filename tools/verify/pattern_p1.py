@@ -28,17 +28,17 @@ reads during play, and records the distinction in no state a caller can see. Sea
 MESSAGE TEXT for degradation vocabulary finds that shape directly -- and by construction it
 re-finds both known positives, which is what `control` asserts.
 
-⛔⛔ THE FIRST DRAFT HAD A TRIAGE FILTER, AND IT HID BOTH KNOWN POSITIVES. It ranked each row by
-whether the enclosing function "publishes something a caller can see" and showed only the rows
-where it did not -- 77 of 225. Both June positives were in the hidden 148: `DetectItemSize` DOES
-publish (its packed verdict), just not the tentative one; `CaptureSnapshotChunk` DOES publish (its
-result fields), just not the fault. **"The function publishes something" says nothing about whether
-it publishes THIS fact**, which is the entire question -- so the filter had 0/2 recall on exactly
-the shape it existed to find. And `control` passed anyway, because it checked the unfiltered set
-while the view printed the filtered one. Two fixes, both structural:
-  * the filter is GONE -- every row is shown, and a reader decides;
-  * `logs` and `control` now share ONE `collect()`, so the control validates the exact population
-    the view prints and can never again pass on a different set than the one a reader sees.
+⛔⛔ NO TRIAGE FILTER: ONE HIDES BOTH KNOWN POSITIVES. Ranking each row by whether the enclosing
+function "publishes something a caller can see" and showing only the rows where it does not puts
+both June positives among the hidden ones: `DetectItemSize` DOES publish (its packed verdict), just
+not the tentative one; `CaptureSnapshotChunk` DOES publish (its result fields), just not the fault.
+**"The function publishes something" says nothing about whether it publishes THIS fact**, which is
+the entire question -- so such a filter has 0/2 recall on exactly the shape it exists to find. And
+a `control` that checks the unfiltered set while the view prints the filtered one passes anyway.
+Hence two structural rules:
+  * there is no filter -- every row is shown, and a reader decides;
+  * `logs` and `control` share ONE `collect()`, so the control validates the exact population
+    the view prints and can never pass on a different set than the one a reader sees.
 """
 from __future__ import annotations
 
@@ -54,9 +54,9 @@ LOG_CALL = re.compile(r'\b(?:Sein::(?:Info|Warn|Error|Debug)|LOG_(?:INFO|WARN|ER
 
 # Prose that means "this answer is not the whole answer". Deliberately generous: the point is to
 # enumerate a reviewable population, not to be precise.
-# ⚠ NO TRAILING \b, AND THAT IS THE WHOLE POINT. The first draft had one, and `control` caught it
-# immediately: these are STEMS, so `tentativ\b` does not match "tentatively", `degrad\b` misses
-# "degraded" and `truncat\b` misses "truncated" -- it silently lost one of the two known positives.
+# ⚠ NO TRAILING \b, AND THAT IS THE WHOLE POINT: these are STEMS, so `tentativ\b` does not match
+# "tentatively", `degrad\b` misses "degraded" and `truncat\b` misses "truncated" -- a trailing \b
+# silently loses one of the two known positives, and `control` fails on it.
 # The leading \b is kept so a stem cannot match mid-word.
 DEGRADED = re.compile(
     r'(?i)\b(partial|tentativ|unverified|degrad|fallback|fell back|could ?n[o\']t|cannot|can\'t|'
@@ -115,8 +115,8 @@ def log_message(lines, idx):
 
 def collect():
     """THE population -- the one `logs` prints AND the one `control` validates. Never filter it
-    in one caller and not the other: that is precisely how the first draft's control went green
-    over a view that hid both known positives."""
+    in one caller and not the other: the control then goes green over a view that hides both
+    known positives."""
     rows = []
     for path in cpp_files():
         lines = read(path)

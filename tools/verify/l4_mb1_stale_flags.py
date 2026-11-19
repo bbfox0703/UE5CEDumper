@@ -2,14 +2,14 @@ r"""L4 / MB1 — the mailbox `functionFlags` field must NOT decide the invoke ro
 
     py tools/verify/l4_mb1_stale_flags.py
 
-THE DEFECT (fixed 2026-08-19, no contract move). `CMD_INVOKE`'s documented inputs are
+THE DEFECT (its DLL-side guard moves no contract). `CMD_INVOKE`'s documented inputs are
 `instanceAddr` / `ufuncAddr` / `paramsData`. `functionFlags` at `+0x024` is a DLL-filled **output**,
 so at invoke time it holds whatever the PREVIOUS command left there — `CMD_FIND_FUNCTION` leaves the
 flags of the function *it* resolved, and `CMD_LIST_FUNCTIONS` / `CMD_LIST_INSTANCES` overwrite it
 with a PAGE COUNT. The generated form's FIRE button re-issues `CMD_INVOKE` **without** re-running
-`CMD_FIND_FUNCTION`, so a stale `Native|Static` from an earlier Kismet helper sent a *stateful actor*
-UFunction down the direct off-game-thread path. The fix re-reads the real flags from the UFunction
-that `ufuncAddr` names (`Ubel::ResolveFunctionInfo`) and routes on those.
+`CMD_FIND_FUNCTION`, so routing on that field sends a *stateful actor* UFunction down the direct
+off-game-thread path on a stale `Native|Static` from an earlier Kismet helper. The DLL re-reads the
+real flags from the UFunction that `ufuncAddr` names (`Ubel::ResolveFunctionInfo`) and routes on them.
 
 WHY THE ROW'S UI RECIPE IS NOT WHAT THIS RUNS. The row prescribes two generated Invoke forms in
 Cheat Engine and a FIRE-B-then-FIRE-A dance to make the staleness happen *by accident*. Writing the
@@ -67,11 +67,11 @@ def all_matching(needle):
 
     ⚠ NOT a timestamp window. A `strftime("%Y-%m-%d %H:%M:%S")` watermark has ONE SECOND of
     resolution, and these three cells run milliseconds apart -- so cell A's
-    `static-native fast path` line landed inside cell B's window and the rig reported a
+    `static-native fast path` line lands inside cell B's window and the rig reports a
     FALSE FAIL ("the poisoned flags took the FAST PATH") on a run whose own `result=-5`
-    proved the call had been queued. Logs only grow within a run, so a before/after COUNT
-    is exact at any timing. Same defect class as slicing several growing files by line
-    offset, which bit `st1_queue_drain.py` earlier.
+    proves the call was queued. Logs only grow within a run, so a before/after COUNT
+    is exact at any timing. Slicing several growing files by line offset has the same
+    defect.
     """
     out = []
     for f in sorted(LOG.glob("*-0.log")):
@@ -156,12 +156,12 @@ def main():
         # class that actually has a live instance -- an invoke against a class with no
         # instance would fail for the wrong reason.
         # ⚠ `find_instances` without `exact_match` is a NAME SUBSTRING match, so asking for
-        # "Actor" returns ActorSequence, ActorElement*, ActorPartitionSubsystem... The first
-        # run of this rig took the first hit and invoked `Actor.UserConstructionScript`
-        # against a `UActorSequence`. The ROUTE measurement survived that (the decision is
-        # made from ufuncAddr's flags alone, before any call, and both cells timed out
-        # without executing) -- but a wrong-type call left QUEUED can drain later and run an
-        # AActor method against a non-actor. Filter on the reported `class`, not the name.
+        # "Actor" returns ActorSequence, ActorElement*, ActorPartitionSubsystem... Taking the
+        # first hit can invoke `Actor.UserConstructionScript` against a `UActorSequence`. The
+        # ROUTE measurement would survive that (the decision is made from ufuncAddr's flags
+        # alone, before any call, and both cells time out without executing) -- but a
+        # wrong-type call left QUEUED can drain later and run an AActor method against a
+        # non-actor. Filter on the reported `class`, not the name.
         live = {}
         for cls in ("Actor", "DumperTestActor", "Pawn"):
             ins = [i for i in (c.request("find_instances", class_name=cls, max_results=200)

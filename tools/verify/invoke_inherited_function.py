@@ -1,26 +1,27 @@
-r"""[INVOKEINHERIT-2026-08-20] — an INHERITED UFunction cannot be invoked on a derived instance.
+r"""[INVOKEINHERIT-2026-08-20] — an INHERITED UFunction must be invokable on a derived instance.
 
     py tools/verify/invoke_inherited_function.py
 
-Exits 1 while the defect stands, so it doubles as the regression test.
+Exits 1 when the inherited function does not resolve, so it is the regression test.
 
 THE MECHANISM. `Ubel::WalkFunctions(uclassAddr)` walks that UClass's **own** `UStruct::Children`
-chain and never climbs `SuperStruct`. `UE5_FindFunctionByName` is a filter over that list, so it can
-only ever resolve a function the class DECLARES. Three callers depend on it:
+chain and never climbs `SuperStruct`, which is right for LISTING. A by-name resolver that only
+filters that list can resolve nothing but a function the class DECLARES, so the resolver climbs the
+supers itself. Every by-name lookup depends on that climb, among them:
 
   * `Fern.cpp` `invoke_function` — and there is **no `func_addr` input** to bypass it, so every
     by-name pipe invoke is affected;
   * `Mimic.cpp` `HandleFindFunction` (`CMD_FIND_FUNCTION`) — the CE Lua by-name lookup;
   * `Frieren.cpp` `UE5_SetDebugCamera`, which resolves `ToggleDebugCamera` off the **live**
-    CheatManager's class. A game with a derived CheatManager (`BP_CheatManager_C`) therefore gets
-    `ToggleDebugCamera UFunction not found` — a shipped feature failing with a message that reads
-    like the engine lacks the function.
+    CheatManager's class. Without the climb, a game with a derived CheatManager (`BP_CheatManager_C`)
+    gets `ToggleDebugCamera UFunction not found` — a shipped feature failing with a message that
+    reads like the engine lacks the function.
 
 NOT affected: `CMD_INVOKE` when the caller already has the `ufuncAddr` (CE scripts with a baked
 address), because the mailbox takes the address directly and never re-resolves by name.
 
 THE THREE-WAY DISCRIMINATOR — one variable, and both controls are needed:
-  1  inherited function, derived instance    -> expected FAIL   (the defect)
+  1  inherited function, derived instance    -> must PASS       (FAILS without the climb)
   2  same function, an instance of the class that DECLARES it -> must PASS
      (rules out "the function is broken")
   3  a function the derived class declares ITSELF, on that same derived instance -> must PASS

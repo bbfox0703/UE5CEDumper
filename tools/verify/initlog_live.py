@@ -5,8 +5,8 @@ r"""[PIPE-WALK-DURING-INIT] live check: what the pipe reads while an init runs i
 
 Needs a game whose DLL came in as a PROXY and has NOT scanned yet. In inject mode the pipe opens only after UE5_Init
 returns, so nothing can arrive during it; a proxy serves the pipe first and runs UE5_Init on a job thread when a client
-sends trigger_scan, while the other connections keep being served -- the window the maintainer's decision
-(2026-11-17: refuse nothing, log it) is about.
+sends trigger_scan, while the other connections keep being served -- the window whose rule (refuse nothing, log it)
+this rig checks.
 
 Lane A sends trigger_scan and polls scan_status; lane B, a second connection, sends the same few commands in a loop
 until the scan ends, one of them a name no handler knows. Then the game's pipe-0.log, from where it stood before

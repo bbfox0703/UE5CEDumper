@@ -1596,9 +1596,9 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
         camera_off("I")
 
         # J. The AI leaves MID-COMMAND while the game thread is stalled: its write_invoke waits on the game thread when
-        # its session ends, so the DLL raises that connection's cancel flag, and the release runs with it raised. Before
-        # the review fix the release's camera read could give up under that flag ("unknown"): nothing released or owed.
-        # Its reads are cancel-immune now. (read_pose cannot stand in: on this fixture it answers from memory at once.)
+        # its session ends, so the DLL raises that connection's cancel flag, and the release runs with it raised. The
+        # release's camera reads must be cancel-immune: one that gave up under that flag would read "unknown", and then
+        # nothing is released or owed. (read_pose cannot stand in: on this fixture it answers from memory at once.)
         c = session()
         since, server_pid = time.strftime("%Y-%m-%d %H:%M:%S"), c.proc.pid
         r, kml, _ = call(c, "read_find_object", {"path": "Default__KismetMathLibrary"})

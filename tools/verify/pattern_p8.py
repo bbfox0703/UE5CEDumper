@@ -12,8 +12,8 @@ plain property that `DisplayValue` reads through `FormatArrayDisplay()`, and `Co
 assigns it AFTER `ArrayCount` -- whose `[NotifyPropertyChangedFor(nameof(DisplayValue))]` has already
 fired. Count unchanged: nothing repaints. Count changed: it repaints while the OLD list is in place.
 
-⛔ WHY TRANSITIVE. The first survey looked only at identifiers read directly inside `=> expr;` and
-MISSED the known positive: `DisplayValue` reaches `ArrayElements` only through a same-class method.
+⛔ WHY TRANSITIVE. A survey that looks only at identifiers read directly inside `=> expr;` MISSES
+the known positive: `DisplayValue` reaches `ArrayElements` only through a same-class method.
 Reads here follow calls into same-class methods and other computed properties, to a fixed point.
 
 ⭐ THE DISCRIMINATOR. A plain member set once, at construction, never needs a notification -- a data row
@@ -25,11 +25,11 @@ write). Only re-assigned members are candidates; the rest are listed for complet
 ⛔ A POPULATION PRODUCER, NOT A FINDING LIST. P8 is a SWEEP: a plain member can be legitimately
 immutable in ways this heuristic cannot prove.
 
-⚠ MEASURED LIMITS (the P4/P7/P8 adjudication, 2026-09-10, `[PATTERN-P4-P7-P8-2026-09-10]`).
-3 of the 9 `reads` rows were artifacts, and the control stayed green:
-  * the `.P =` match is by member NAME, not type -- `GroupSlotMatch.ClassName` writes
-    (DumpService.cs:2191/2429) were attributed to `PropertySearchMatch`, which shares the name;
-  * a READ, `PropertyName = match.PropName` (PropertySearchViewModel.cs:375), was counted as a write.
+⚠ KNOWN LIMITS (`[PATTERN-P4-P7-P8-2026-09-10]`). Each makes `reads` rows that are artifacts, and
+the control stays green:
+  * the `.P =` match is by member NAME, not type -- `GroupSlotMatch.ClassName` writes in
+    DumpService.cs are attributed to `PropertySearchMatch`, which shares the name;
+  * a READ, `PropertyName = match.PropName` (PropertySearchViewModel.cs), is counted as a write.
 Both are false positives, which adjudication removes; neither can hide a real row.
 """
 from __future__ import annotations
@@ -184,8 +184,8 @@ def collect_reads(files: dict) -> list:
         if not plain:
             continue
         # A `.P =` counts only in a file that NAMES this class. `ClassName` / `PropName` are common
-        # member names: the first run matched them tree-wide and marked every PropertySearchMatch
-        # member "re-assigned" on the strength of other types' assignments.
+        # member names: matched tree-wide, they mark every PropertySearchMatch member
+        # "re-assigned" on the strength of other types' assignments.
         mentioning = [f for f, t in stripped.items() if re.search(r'\b%s\b' % re.escape(cls), t)]
         for d in computed:
             for p in sorted(reads_of(d, bodies, computed) & plain):

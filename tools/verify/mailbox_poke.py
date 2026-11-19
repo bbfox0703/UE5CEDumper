@@ -71,7 +71,7 @@ class Mem:
         got = ctypes.c_size_t(0)
         ok = k32.ReadProcessMemory(self.h, ctypes.c_void_p(addr), buf, n, ctypes.byref(got))
         # FAIL LOUDLY: a zero returned for "read failed" is indistinguishable from a
-        # zero that IS the answer, and that has already produced a wrong verdict here.
+        # zero that IS the answer, so it would produce a wrong verdict.
         if not ok or got.value != n:
             raise SystemExit(f"mailbox_poke: READ FAILED at {addr:#x} "
                              f"err={ctypes.get_last_error()} got={got.value}/{n}")
@@ -117,7 +117,7 @@ def mailbox_addr(stem):
 
 
 def poke(m, base, op, timeout=10.0, cmd=CMD_QUERY_PTR, value=0):
-    """One mailbox round trip. Returns (result, paramsData[:32], elapsed, errorMsg).
+    """One mailbox round trip. Returns (result, paramsData's first 32 bytes, elapsed, errorMsg).
 
     `op` goes in instanceAddr and `value` in ufuncAddr -- the convention every
     op-coded command in Mimic.h uses (CMD_FOREGROUND, CMD_TELEPORT, CMD_QUERY_PTR...).

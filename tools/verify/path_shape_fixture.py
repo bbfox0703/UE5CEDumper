@@ -4,9 +4,9 @@
     py tools/verify/path_shape_fixture.py list  <work dir>
     py tools/verify/path_shape_fixture.py clean <work dir>
 
-WHY. The rows fixed a non-ASCII exe name (module_name, the confirmed-proxy key, CE's view of the name incl. the DBCS
+WHY. The rows cover a non-ASCII exe name (module_name, the confirmed-proxy key, CE's view of the name incl. the DBCS
 0x5C trail-byte cut), an apostrophe / '&' in it (trainer Lua, CE XML), and a stem ending in a space (the log folder).
-No real game here has such a name (the audit walked both Steam libraries), so the fixture supplies them: ONE copy of
+A real game with such a name is rare, so the fixture supplies them: ONE copy of
 the packaged build, and the Shipping exe HARD-LINKED under each name in its own Binaries\\Win64 -- a packaged UE game
 finds its content from its own folder, not its file name, and GetModuleFileName returns the link's name. Paths are
 arguments (gates and rigs never reach for a machine path).

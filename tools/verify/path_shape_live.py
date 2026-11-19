@@ -130,9 +130,9 @@ def check_one(work, exe):
     try:
         c.connect(retries=90, delay=1.0)   # not `with`: its connect gives a booting game only 10 retries
         c.assert_build()
-        # Let the engine BOOT first (handover 3: a process that exists is not a game that booted). Measured
-        # 2026-09-25: a trigger_scan ~1 s after launch hit 'RunScan: UNCAUGHT non-standard exception -- contained'
-        # in 4 of 5 launches and never rescanned. Wait, then retrigger a scan that came back empty.
+        # Let the engine BOOT first (handover 3: a process that exists is not a game that booted). A trigger_scan
+        # ~1 s after launch can hit 'RunScan: UNCAUGHT non-standard exception -- contained' and never rescan.
+        # Wait, then retrigger a scan that came back empty.
         time.sleep(BOOT_WAIT_S)
         ptr = None
         for attempt in range(1, SCAN_TRIES + 1):

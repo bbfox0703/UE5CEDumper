@@ -2,9 +2,8 @@ r"""Which UE exes were linked by lld-link (a clang build) rather than MSVC's lin
 
 Why this exists ([VND584-05]): the ProcessEvent fingerprint's byte-narrowed second pass exists for clang-built
 binaries, and the question "does the corpus hold enough of them" needs a test that does not lie. A missing Rich header
-is NOT that test. MEASURED 2026-10-27 over the corpus and both Steam libraries: eight distinct UE exes carry no Rich
-header; one of them, Avowed, is an lld build, and the other seven carry an MSVC mark (a toolset linker minor, or
-VC_FEATURE / POGO debug entries).
+is NOT that test: a UE exe with no Rich header may be an lld build (Avowed), or an MSVC one that still carries
+another MSVC mark (a toolset linker minor, or VC_FEATURE / POGO debug entries).
 
 The three signals, strongest first:
   * debug-directory entry types: MSVC's link.exe writes VC_FEATURE (12) and POGO (13); lld-link writes neither.

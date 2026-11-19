@@ -20,9 +20,9 @@ WHAT THIS GUARANTEES, and why each guarantee exists:
     re-checked after the poke. A rig that intends to flip one allocation bit and in fact rewrites a
     count has produced a result about a different experiment.
   * **An absence is only evidence once the CHANNEL is shown to carry the thing.**
-    `assert_channel_carries` exists because A11 step 6 passed for a year against `scan-0.log`, a
-    file `Refine re-anchor:` can never reach — the marker is `LOG_CAT "OARR"`, which `Sein.cpp`
-    routes to `offsets-0.log`. Grepping the wrong file returns zero for both "the code did not do
+    `assert_channel_carries` exists because a check can pass against a file its marker never
+    reaches: `Refine re-anchor:` is `LOG_CAT "OARR"`, which `Sein.cpp` routes to `offsets-0.log`,
+    never `scan-0.log`. Grepping the wrong file returns zero for both "the code did not do
     it" and "I am reading the wrong channel". [A11-LOGPATH-2026-08-21]
 
 ⚠ A SYNTHETIC MUTATION IS NOT THE SAME EVENT AS THE GAME DOING IT. Writing a new `{dataPtr,count}`
