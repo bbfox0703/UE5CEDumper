@@ -60,6 +60,36 @@ static bool ComputePEHash(char* out, size_t bufSize) {
     return true;
 }
 
+// [SCAN-LINKER-LOG-2026-11-19] The main module's linker verdict, read once by FindAll. The AOB sets are mined from MSVC
+// builds, so a target whose every pattern missed says so in its warning when the game is an lld (clang) build.
+static Macht::LinkerVerdict s_mainLinker;
+
+// The tail of a "patterns failed" warning: what the linker verdict adds, "" for any build but lld.
+static const char* LinkerNote() {
+    const bool lld = s_mainLinker.kind == Macht::LinkerKind::Lld || s_mainLinker.kind == Macht::LinkerKind::LldNoDebug;
+    return lld ? " (this game is an lld / clang build; the patterns come from MSVC builds)" : "";
+}
+
+// The Wine version when the game runs under Wine (Proton included): Wine's ntdll exports wine_get_version, and
+// Windows' does not. `host` receives "<sysname> <release>" when wine_get_host_version is exported too. "" on Windows.
+static std::string WineVersion(std::string& host) {
+    host.clear();
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return {};
+    using GetVersionFn = const char*(__cdecl*)();
+    using GetHostFn = void(__cdecl*)(const char**, const char**);
+    const auto getVersion = reinterpret_cast<GetVersionFn>(GetProcAddress(ntdll, "wine_get_version"));
+    if (!getVersion) return {};
+    if (const auto getHost = reinterpret_cast<GetHostFn>(GetProcAddress(ntdll, "wine_get_host_version"))) {
+        const char* sysname = nullptr;
+        const char* release = nullptr;
+        getHost(&sysname, &release);
+        if (sysname) host = std::string(sysname) + (release ? std::string(" ") + release : std::string());
+    }
+    const char* version = getVersion();
+    return version ? version : "?";
+}
+
 // UE4 TNameEntryArray detection state (set by ValidateGNamesUE4, read by FindAll)
 static bool g_isUE4NameArray = false;
 static int  g_ue4NameStringOffset = 0x10;
@@ -1737,7 +1767,8 @@ uintptr_t FindGObjects(const char* hintPatternId) {
         s_gobjectsMethod = ScanMethodFor(report);
     } else {
         // Fallback: exhaustive data-section pointer scan
-        Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
+        Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed%s, trying data-section scan fallback...",
+                   LinkerNote());
         result = FindGObjectsByDataScan(&s_gobjectsReport.cancelled);   // [P1-GENAU-ABORT]
         if (result) s_gobjectsMethod = "data_scan";
     }
@@ -2500,7 +2531,7 @@ uintptr_t FindGNames(const char* hintPatternId) {
         s_gnamesMethod = ScanMethodFor(report);
     } else {
         // Tier 2: string-reference fallback — find FNamePool via code that uses FName
-        Sein::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying string-ref fallback...");
+        Sein::Warn("SCAN:GNam", "FindGNames: All patterns failed%s, trying string-ref fallback...", LinkerNote());
         result = FindGNamesByStringRef();
         if (result) {
             s_gnamesMethod = "string_ref";
@@ -2566,7 +2597,7 @@ uintptr_t FindGWorld(const char* hintPatternId) {
     if (result) {
         s_gworldMethod = ScanMethodFor(report);
     } else {
-        Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
+        Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)%s", LinkerNote());
     }
     return result;
 }
@@ -5474,6 +5505,18 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // Compute PE hash early — needed for hint cache lookup
     ComputePEHash(out.peHash, sizeof(out.peHash));
     LOG_INFO("FindAll: PE hash = %s", out.peHash);
+
+    // [SCAN-LINKER-LOG-2026-11-19] What built the game and what hosts it: the first questions when the AOBs miss.
+    s_mainLinker = Macht::ClassifyMainModuleLinker();
+    LOG_INFO("FindAll: main module linker = %s (Rich header %s, linker %u.%02u, %u debug entries%s)",
+             Macht::LinkerKindName(s_mainLinker.kind), s_mainLinker.rich ? "yes" : "no",
+             static_cast<unsigned>(s_mainLinker.linkerMajor), static_cast<unsigned>(s_mainLinker.linkerMinor),
+             s_mainLinker.debugEntries, s_mainLinker.msvcDebugEntry ? ", VC_FEATURE / POGO among them" : "");
+    std::string wineHost;
+    const std::string wine = WineVersion(wineHost);
+    if (!wine.empty()) {
+        LOG_INFO("FindAll: running under Wine %s%s%s", wine.c_str(), wineHost.empty() ? "" : " on ", wineHost.c_str());
+    }
 
     // Load hint cache: previously-winning pattern IDs for this game version
     auto hints = Flamme::LoadHints(out.peHash);

@@ -14657,6 +14657,14 @@ int main() {
                  self.rich ? 1 : 0, self.linkerMajor, self.linkerMinor, self.debugEntries);
         check("* this test's own image, linked by MSVC's link.exe, reads as MSVC with its Rich header",
               self.kind == Macht::LinkerKind::Msvc && self.rich && self.linkerMajor == 14 && self.linkerMinor != 0, got);
+        // The "all patterns failed" warnings name an lld build, and only an lld build.
+        const Macht::LinkerVerdict saved = Genau::s_mainLinker;
+        Genau::s_mainLinker = avowed.Verdict();
+        check("* an lld build's failed-pattern warning names the linker", std::string(Genau::LinkerNote()).find("lld") !=
+                                                                             std::string::npos);
+        Genau::s_mainLinker = self;
+        check("control: an MSVC build's warning gets no note", std::string(Genau::LinkerNote()).empty());
+        Genau::s_mainLinker = saved;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
