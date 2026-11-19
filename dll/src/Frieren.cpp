@@ -2073,7 +2073,7 @@ static int DetectProcessEventVTableOffsetByVersion(uintptr_t vtable) {
     int primary = DynOff::ProcessEventVTableSlotFor(g_cachedUEVersion);
     bool extrapolated = false;
     if (primary == 0) {
-        // No measurement for this version: below the 4.11 floor, or a future 5.9+.
+        // No measurement for this version: below the 4.11 floor, or 5.9+, not yet measured.
         // Take the nearest measured neighbour rather than a blanket constant, and say
         // out loud that it is a guess.
         primary = (g_cachedUEVersion >= 500) ? DynOff::ProcessEventVTableSlotFor(508)

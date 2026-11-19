@@ -547,7 +547,8 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // for our target — but do not "extend" it to an editor process.
 //
 // Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
-// floor; 5.9+ does not exist yet). The caller decides what to do with that.
+// floor; 5.9 has a preview but no VTableLayout template or fixture PDB to measure it). The
+// caller decides what to do with that.
 //
 // ⭐ MACHINE-CHECKED — `tools/check_processevent_slots.py`, in `check_all`, re-derives every
 // row from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`:

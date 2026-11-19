@@ -8933,10 +8933,11 @@ static void Test_ProcessEventVTableSlot() {
     }
 
     // --- unmeasured versions return 0 so the caller can say "extrapolated" instead of
-    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 is unreleased. ---
+    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 has a preview, but no
+    //     VTableLayout template or fixture PDB has measured it. ---
     EXPECT("A2: 4.10 (below the 4.11 floor) has no measurement",
            DynOff::ProcessEventVTableSlotFor(410) == 0);
-    EXPECT("A2: 5.9 (unreleased) has no measurement",
+    EXPECT("A2: 5.9 (a preview, unmeasured) has no measurement",
            DynOff::ProcessEventVTableSlotFor(509) == 0);
     EXPECT("A2: 550 -- the value the dead arm tested for -- has no measurement",
            DynOff::ProcessEventVTableSlotFor(550) == 0);
