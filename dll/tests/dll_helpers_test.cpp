@@ -4011,6 +4011,9 @@ static void Test_IsEnginePackage() {
     EXPECT("engine: //Script/Paper2D/PaperFlipbook",      IsEnginePackage("//Script/Paper2D/PaperFlipbook"));
     EXPECT("engine: //Script/CinematicCamera/CineCameraComponent",
            IsEnginePackage("//Script/CinematicCamera/CineCameraComponent"));
+    // [VND9-05] UE 5.9 moves Cascade into a plugin that is on by default.
+    EXPECT("engine: //Script/CascadeRuntime/ParticleSystemComponent (5.9)",
+           IsEnginePackage("//Script/CascadeRuntime/ParticleSystemComponent"));
 
     // Canonical single-slash + '.'-separator format also matches.
     EXPECT("engine: /Script/Engine.Actor (canonical)", IsEnginePackage("/Script/Engine.Actor"));

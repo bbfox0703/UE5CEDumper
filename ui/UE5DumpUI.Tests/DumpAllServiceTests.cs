@@ -569,6 +569,7 @@ public class DumpAllServiceTests
     [InlineData("//Script/CoreUObject/Object", true)]
     [InlineData("//Script/Niagara/NiagaraComponent", true)]
     [InlineData("//Script/EnhancedInput/InputAction", true)]   // newly-synced prefix
+    [InlineData("//Script/CascadeRuntime/ParticleSystemComponent", true)]   // [VND9-05] Cascade's 5.9 plugin
     [InlineData("//Script/Engine", true)]                      // exact package, no trailing segment
     // Tolerant of the alternate single-slash / dot-terminated form too.
     [InlineData("/Script/Engine.Actor", true)]
