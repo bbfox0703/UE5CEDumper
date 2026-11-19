@@ -14795,6 +14795,166 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // -- VND10-A1-01 -- a Phantom Blade Zero FUObjectArray is read whole at both anchors; stock shapes as before ------
+    //
+    // ⛔ POOL-FAKING (own name table, for the static scorer).
+    // [VND10-A1] PBZ reorders ObjObjects (at +0x10 in FUObjectArray, as stock): MaxChunks +0x00, NumChunks +0x04, Objects
+    // +0x08, NumElements +0x10, MaxElements +0x14, PreAllocatedObjects +0x18. The shape is RE-UE4SS's
+    // MemberVariableLayout.ini for the game; nobody here owns it, so this block is its only test. Every stock shape runs
+    // in the same block and must read as before (working-lessons §7.3 #5).
+    {
+        blk("VND10-A1-01 - a PBZ FUObjectArray is read whole at its base and at ObjObjects; stock shapes as before");
+        static uint8_t a1Entry[2][0x40] = {};
+        memcpy(a1Entry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t a1Chunk[3] = { 0, reinterpret_cast<uintptr_t>(a1Entry[1]), 0 };
+        static uintptr_t a1Chunks[2] = { reinterpret_cast<uintptr_t>(a1Chunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(a1Chunks), 0x10);
+
+        // Genau validates through the objects: each one's ClassPrivate leads to a UClass whose own ClassPrivate is
+        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data).
+        constexpr int kA1Items = 64;
+        std::vector<uint8_t> a1Objs(static_cast<size_t>(kA1Items) * 0x40, 0), a1Cls(0x40, 0);
+        const uintptr_t a1ClsAddr = reinterpret_cast<uintptr_t>(a1Cls.data());
+        memcpy(a1Cls.data() + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
+        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(kA1Items) * 24, 0);
+        for (int i = 0; i < kA1Items; ++i) {
+            uint8_t* o = a1Objs.data() + static_cast<size_t>(i) * 0x40;
+            memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
+            const int32_t nameIdx = 1;
+            memcpy(o + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+            const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+            memcpy(a1Chunk0.data() + static_cast<size_t>(i) * 24, &oa, 8);
+        }
+        // Every table slot names a readable chunk, so a strict reading of up to 65 chunks finds each one.
+        std::vector<uintptr_t> a1Table(65, reinterpret_cast<uintptr_t>(a1Chunk0.data()));
+        const uintptr_t table = reinterpret_cast<uintptr_t>(a1Table.data());
+
+        alignas(16) static uint8_t a1[0x80] = {};
+        const uintptr_t B = reinterpret_cast<uintptr_t>(a1);
+        auto p32 = [](int at, int32_t v)   { memcpy(a1 + at, &v, 4); };
+        auto pP  = [](int at, uintptr_t v) { memcpy(a1 + at, &v, 8); };
+        // PBZ's FUObjectArray at its base: the GC prefix, ObjObjects, then the critical section (DebugInfo -1,
+        // LockCount -1, RecursionCount 0, SpinCount 4000).
+        auto buildPbz = [&](uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num, int32_t maxE) {
+            memset(a1, 0, sizeof(a1));
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001); p32(0x0C, 0);
+            p32(0x10, maxChunks); p32(0x14, numChunks); pP(0x18, tbl); p32(0x20, num); p32(0x24, maxE); pP(0x28, 0);
+            pP(0x30, ~0ull); p32(0x38, -1); p32(0x3C, 0); p32(0x50, 4000);
+        };
+        auto layoutText = [] {
+            char b[96];
+            snprintf(b, sizeof b, "count %d, obj %02X max %02X num %02X maxC %02X numC %02X", Aura::GetCount(),
+                     Aura::s_layout.objectsOffset, Aura::s_layout.maxElementsOffset, Aura::s_layout.numElementsOffset,
+                     Aura::s_layout.maxChunksOffset, Aura::s_layout.numChunksOffset);
+            return std::string(b);
+        };
+        auto latched = [](int32_t count, int obj, int maxE, int num, int maxC, int numC) {
+            return Aura::GetCount() == count && Aura::s_layout.objectsOffset == obj && Aura::s_layout.maxElementsOffset == maxE
+                && Aura::s_layout.numElementsOffset == num && Aura::s_layout.maxChunksOffset == maxC
+                && Aura::s_layout.numChunksOffset == numC;
+        };
+
+        struct Numbers { const char* what; int32_t maxChunks, numChunks, num, maxE; };
+        const Numbers sets[] = {
+            { "6 chunks of 64K, one in use",                 6,  1, 0x4000, 0x60000 },
+            { "PBZ's own: 65 chunks, 3 in use, 153,466",    65,  3, 153466, 4259840 },
+        };
+        for (const Numbers& n : sets) {
+            buildPbz(table, n.maxChunks, n.numChunks, n.num, n.maxE);
+            const std::string tag = std::string(" (") + n.what + ")";
+            check(("VND10-A1-01 ⭐: Genau validates a PBZ array at its base" + tag).c_str(), Genau::ValidateGObjects(B));
+            check(("VND10-A1-01 ⭐: ...and at ObjObjects" + tag).c_str(), Genau::ValidateGObjects(B + 0x10));
+            Aura::Init(B);
+            check(("VND10-A1-01 ⭐: Aura reads it whole at its base" + tag).c_str(),
+                  latched(n.num, 0x18, 0x24, 0x20, 0x10, 0x14), layoutText().c_str());
+            Aura::Init(B + 0x10);
+            check(("VND10-A1-01 ⭐: ...and at ObjObjects" + tag).c_str(),
+                  latched(n.num, 0x08, 0x14, 0x10, 0x00, 0x04), layoutText().c_str());
+            // What the mov rows deliver, the Objects field: relaxed F takes it (pass 2), and Aura reads 0 objects, so
+            // Frieren's Count == 0 recovery runs. Pinned, not a goal: a change that moves either must do it on purpose.
+            check(("VND10-A1-01 pin: Genau takes PBZ's Objects field through relaxed F" + tag).c_str(),
+                  Genau::ValidateGObjects(B + 0x18));
+            Aura::Init(B + 0x18);
+            check(("VND10-A1-01 pin: ...and Aura reads 0 objects there, so the recovery runs" + tag).c_str(),
+                  Aura::GetCount() == 0, layoutText().c_str());
+        }
+        {
+            buildPbz(table, 65, 3, 153466, 4259840);
+            int stride = 0, objOff = -1;
+            bool ue58 = true;
+            const int score = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58);
+            check("VND10-A1-01 ⭐: the static scorer reads a PBZ array at its base (the recovery's way back from Objects)",
+                  score >= 32 && stride == 0x18 && objOff == 0 && !ue58,
+                  ("score " + std::to_string(score) + " stride " + std::to_string(stride)).c_str());
+        }
+
+        // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
+        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; };
+        const Stock stock[] = {
+            { "Default (ObjObjects, 4.20-5.7)", 0x10, 0x00, 0x10, 0x14, 0x18, 0x1C },
+            { "UE5-Extended (base, 4.20-5.7)",  0x00, 0x10, 0x20, 0x24, 0x28, 0x2C },
+            { "UE4-Extended (base)",            0x00, 0x10, 0x18, 0x1C, 0x20, 0x24 },
+            { "UE5.8 (ObjObjects first)",       0x00, 0x00, 0x0C, 0x08, 0x14, 0x10 },
+            { "UE5.7-Mistfall (base)",          0x00, 0x10, 0x20, 0x24, 0x04, 0x08 },
+            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14 },
+            { "Back4Blood",                     0x10, 0x10, 0x00, 0x04, 0x08, 0x0C },
+            { "Multiversus",                    0x10, 0x18, 0x10, 0x00, 0x14, 0x20 },
+            { "MindsEye",                       0x10, 0x18, 0x00, 0x14, 0x10, 0x04 },
+        };
+        auto buildStock = [&](const Stock& s, uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num,
+                              int32_t maxE) {
+            memset(a1, 0, sizeof(a1));
+            uint8_t* at = a1 + s.base;
+            memcpy(at + s.obj, &tbl, 8);
+            memcpy(at + s.maxE, &maxE, 4); memcpy(at + s.num, &num, 4);
+            memcpy(at + s.maxC, &maxChunks, 4); memcpy(at + s.numC, &numChunks, 4);
+            return B + s.base;
+        };
+        for (const Stock& s : stock) {
+            for (const Numbers& n : { Numbers{ "6 chunks, one in use", 6, 1, 0x4000, 0x60000 },
+                                      Numbers{ "6 chunks, Num = Max - 1", 6, 6, 0x5FFFF, 0x60000 } }) {
+                const uintptr_t addr = buildStock(s, table, n.maxChunks, n.numChunks, n.num, n.maxE);
+                const std::string tag = std::string(s.name) + ", " + n.what;
+                Aura::Init(addr);
+                check(("VND10-A1-01 control: " + tag + " -- Aura latches its own row").c_str(),
+                      latched(n.num, s.obj, s.maxE, s.num, s.maxC, s.numC), layoutText().c_str());
+                check(("VND10-A1-01 control: " + tag + " -- Genau validates it").c_str(), Genau::ValidateGObjects(addr));
+            }
+        }
+
+        // A chunk table above 16 TB, where a pointer's halves pass the 0x1000 floor: a base-anchored UE5-Extended
+        // array whose Objects is 0x00001F00_00001000 reads, through PBZ's ObjObjects row, num 0x1000 and max 0x1F00.
+        // Its MaxChunks slot (ObjFirstGCIndex) is far past any chunk count, so the row refuses it.
+        {
+            void* hi = VirtualAlloc(reinterpret_cast<void*>(0x00001F0000000000ull), 0x10000, MEM_RESERVE | MEM_COMMIT,
+                                    PAGE_READWRITE);
+            check("VND10-A1-01 setup: a chunk table at 0x00001F00_00001000", hi != nullptr);
+            if (hi) {
+                auto* hiTable = reinterpret_cast<uintptr_t*>(static_cast<uint8_t*>(hi) + 0x1000);
+                for (int i = 0; i < 65; ++i) hiTable[i] = reinterpret_cast<uintptr_t>(a1Chunk0.data());
+                const uintptr_t addr = buildStock(stock[1], reinterpret_cast<uintptr_t>(hiTable), 6, 1, 0x4000, 0x60000);
+                p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+                Aura::Init(addr);
+                check("VND10-A1-01 control: a UE5-Extended array whose table sits above 16 TB is still UE5-Extended's",
+                      latched(0x4000, 0x10, 0x20, 0x24, 0x28, 0x2C), layoutText().c_str());
+                check("VND10-A1-01 control: ...and Genau validates it", Genau::ValidateGObjects(addr));
+                VirtualFree(hi, 0, MEM_RELEASE);
+            }
+        }
+        {
+            // The static scorer's stock geometries still answer for their own arrays, and say so.
+            const uintptr_t addr = buildStock(stock[1], table, 6, 1, 0x4000, 0x60000);
+            int stride = 0, objOff = -1;
+            bool ue58 = true;
+            const int score = Genau::ScoreGObjectsStaticBase(addr, &stride, &objOff, &ue58);
+            check("VND10-A1-01 control: a stock 5.0-5.7 static array still scores as one",
+                  score >= 32 && stride == 0x18 && !ue58, ("score " + std::to_string(score)).c_str());
+        }
+
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Bitfield bools packed into one byte share
     // Offset_Internal, so each of them gets the byte's row -- a map that kept the first one only would file a write to
     // bCanBeDamaged under whichever flag came first, and give bCanBeDamaged no row at all.
