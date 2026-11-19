@@ -17,6 +17,9 @@ each submodule's behind-count, how many upstream commits are **newer than the la
 3. More than 0: read only `git -C vendor/<name> log <reviewed>..origin/master`.
    - For zydis, run the rig on the new tip:
      `py tools/verify/zydis_bump_diff/zydis_bump_diff.py <x64 game or fixture exe>... --candidate origin/master`.
+     Run it again with `--base <reviewed_upstream>` to see the new commits alone. That run exits 1 when no case in
+     `denken_run.cpp`'s `RunControl` decodes differently across the new delta: add the bytes of one of its decode
+     changes as a case.
    - For minhook, re-check the commits against the trampoline model (§ minhook).
 4. Add a dated entry under the submodule below, newest first, and move the SHA in `tools/vendor_pin_reviews.json`.
    Do not edit an older entry: it is the record of what was true then.
@@ -30,6 +33,35 @@ never tagged a v5 (`sync_tools.ps1` prints the header version for this reason). 
 and, since 2026-11-06, Falsch (the MinHook trampoline pre-flight, `[MH-TRAMPOLINE-PREFLIGHT]`) are the DLL's Zydis
 users. Falsch reads fields Denken does not: length, encoding, opcode map and opcode, relative operands, the raw
 displacement, and absolute branch targets. A review must therefore check both; the rig's E2E and FALSCH lines do.
+
+### 2026-11-19 (second entry) — the rig prints the write sites; still `4b31c345c9ad`: **HOLD**
+
+`VND10-A4`. `denken_run` now prints each access's `[DENKEN-WRITE-SITES]` fields (`v<writeSitesViaThis>`,
+`t<writeSitesTruncated>`, then the write sites as RVAs), so the E2E line is all of Denken's result again. **The E2E
+hashes changed format with it:** compare the next review with the ones below, not with an older run. From the pin to
+`4b31c34`, on the same four binaries (1,269,946 `.pdata` starts): E2E and FALSCH byte-identical, 0 Denken-visible CODE
+rows, 3 of 6 control cases differing, exit 0.
+
+| Binary | `.pdata` starts | E2E sha256 (new format) | FALSCH sha256 |
+|---|---|---|---|
+| DumperTest Shipping (5.4) | 402,232 | `bbd7baa5ff3a` | `9c80da82e611` |
+| DumperTest58 Shipping | 508,094 | `d76c86de28ce` | `a3f6c46006f2` |
+| UE427_3rdPerson Shipping | 235,374 | `fcd52151d020` | `1948924b2b6b` |
+| Nekopara | 124,246 | `3608de2eccb8` | `eb4212e88a06` |
+
+A control case for `7254d2c` (`66 F3 0F AE 20`, a 66-prefixed PTWRITE) decodes at `fcc63c6` and is refused at
+`4b31c34`, so the delta-only run (`--base fcc63c6`) now exits 0 as well, with the same hashes and 1 of 6 controls
+differing.
+
+The rig's own faults are fixed too, and its exit code now means what its docstring says:
+
+- A relative `--out` was resolved inside `vendor/zydis`, so the run died.
+- A toolchain it could not load, or a crash of its own, exited 1 ("needs reading"); both exit 2.
+- A candidate harness that fails where the base's completed on the same input is a finding (1), not a rig failure (2).
+- `denken_run` takes Denken's result apart with structured bindings, so a field added to `Denken.h` stops it compiling
+  instead of going unprinted, which is how the write sites went missing.
+
+Reopen triggers: unchanged from the entry below.
 
 ### 2026-11-19 — reviewed up to `4b31c345c9ad` (origin/master, 2026-11-14): **HOLD**
 

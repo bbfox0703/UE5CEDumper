@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — The zydis bump rig prints all of Denken's output again `[VND10-A4]`
+
+- **What changes:** `tools/verify/zydis_bump_diff/` prints each field access's write sites, so a Zydis bump that moved
+  only where Denken finds a field's writes would now show. A control case covers upstream's newest delta, so a run over
+  just the commits since the last review can pass. A field added to Denken's result later stops the rig compiling
+  instead of going unprinted.
+- **The rig's exit code means what it says:** a relative `--out` broke the run; a toolchain it could not load, or a
+  crash of its own, read as "something needs reading" instead of "the rig failed"; and a candidate build that crashed
+  where the base's completed read as "the rig failed" instead of a finding. All nine exit paths checked with the
+  toolchain and harnesses mocked; the rig before the fix passes two of them.
+- An independent review of the rig changes confirmed eight distinct findings (one MED: the toolchain's exit code); all
+  are fixed.
+- **zydis stays held:** from the pin to `4b31c34` on four binaries, byte-identical; recorded in `vendor-pin-reviews.md`
+  with the new-format hashes, which do not compare with older runs.
+
 ## 2026-11-19 (build 3772) — UE 5.9 is recognised `[VND9-05]` `[VENDOR-AUDIT10-2026-11-19]`
 
 - **What changes:**
