@@ -307,6 +307,8 @@ function Use-MsvcCompiler() {
         if ($old -and $old -ne $cl.Source) { Write-Info "$name named $old; configuring with $($cl.Source) instead" }
         [Environment]::SetEnvironmentVariable($name, $cl.Source)
     }
+    # The AOT publish names its linker by full path from here (see the publish step).
+    $script:msvcLink = Join-Path (Split-Path $cl.Source -Parent) 'link.exe'
     return $true
 }
 
@@ -906,13 +908,11 @@ if ($cppTargets.Count -gt 0) {
 if ($Target -in "All", "UI", "Test") {
     Write-Banner "C# Avalonia UI  |  $CSharpConfig ($Mode)"
 
-    # Native AOT links with MSVC's link.exe. `-Mode Publish` on its own (or with
-    # -Target UI) never touched the C++ path, so the DevShell was never entered and
-    # ILCompiler died with `link ... exited with code 9009` -- command not found, which
-    # reads like a broken toolchain rather than a missing environment. Entering it here
-    # is idempotent (Enter-VsDevEnvironment early-outs on $script:vsDevShellLoaded and on
-    # an already-active VCINSTALLDIR) and costs nothing for a non-AOT build, so it is
-    # unconditional rather than gated on yet another combination of flags.
+    # Native AOT links with MSVC's link.exe, so a publish loads the developer
+    # environment even when no C++ target ran; without it ILCompiler fails with
+    # "exited with code 9009", which reads like a broken toolchain. Entering is
+    # idempotent (Enter-VsDevEnvironment returns at once when loaded, and reuses an
+    # inherited x64 environment), so it does not depend on which other targets ran.
     if ($Mode -eq "Publish") {
         if (-not (Enter-VsDevEnvironment)) {
             Write-Fail "Native AOT needs the MSVC linker; VS DevShell could not be loaded"
@@ -1038,20 +1038,21 @@ if ($Target -in "All", "UI", "Test") {
             # No .NET runtime bundled — much smaller than self-contained single-file.
             Write-Step "Publishing UE5DumpUI (Native AOT, Release)..."
 
-            # IlcUseEnvironmentalTools: use the MSVC linker already on PATH (loaded by
-            # Enter-VsDevEnvironment above) instead of letting ILCompiler run its own
-            # findvcvarsall.bat discovery. That discovery captures cmd.exe stdout to
-            # locate link.exe, so when the inherited environment is bloated (e.g. this
-            # shell already ran another repo's vcvars/DevShell publish, stacking
-            # PATH/LIB/INCLUDE), cmd.exe emits "The input line is too long." and that
-            # text leaks into the linker path -> link.exe exits 123. Using the
-            # environmental tools skips that fragile step entirely.
+            # IlcUseEnvironmentalTools: ILCompiler takes LIB / INCLUDE from the environment
+            # Enter-VsDevEnvironment loaded instead of running its own findvcvarsall.bat
+            # discovery, which captures cmd.exe output to locate link.exe: in a stacked
+            # environment cmd.exe prints "The input line is too long." and that text
+            # leaks into the linker path (link.exe exits 123). In this mode ILCompiler
+            # runs a bare `link`, which a coreutils link.exe ahead on PATH (Git's or
+            # MSYS2's usr\bin) would answer, so CppLinker names MSVC's by full path.
+            # [MSVC-GUARD-2026-11-19]
             Use-DotnetTemp {
                 & dotnet publish $UI_PROJ `
                     -c Release `
                     -r win-x64 `
                     -p:PublishAot=true `
                     -p:IlcUseEnvironmentalTools=true `
+                    "-p:CppLinker=$script:msvcLink" `
                     -o $publishDir `
                     --nologo
             }
