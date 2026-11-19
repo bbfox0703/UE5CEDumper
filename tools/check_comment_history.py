@@ -4,7 +4,7 @@
     py tools/check_comment_history.py              # compare with the baseline; exit 1 on any change
     py tools/check_comment_history.py --update     # lower the baseline after history was cut (refuses on growth)
     py tools/check_comment_history.py --rebaseline # rewrite it regardless: ONLY when the counting rules change
-    py tools/check_comment_history.py --list [PATH-SUBSTRING]   # print every counted comment line, exit 0
+    py tools/check_comment_history.py --list [path-substring]   # print every counted comment line, exit 0
 
 The rule ([COMMENT-NO-HISTORY-2026-11-18], working-lessons §8 rule 7): a comment says what the code does and why, as
 it stands. History -- a fix narrative, a review id, a measurement, a bug's cause -- belongs in dev-log.md under a

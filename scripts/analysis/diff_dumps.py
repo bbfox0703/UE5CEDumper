@@ -6,7 +6,7 @@ that silently break cheat tables when a game ships an update.
 
 USAGE
     python diff_dumps.py <old.jsonl> <new.jsonl>
-    python diff_dumps.py <old.jsonl> <new.jsonl> -o diff-report.md
+    python diff_dumps.py <old.jsonl> <new.jsonl> -o out/diff-report.md
     python diff_dumps.py <old.jsonl> <new.jsonl> --minimal
     python diff_dumps.py <old.jsonl> <new.jsonl> --include-engine
     python diff_dumps.py --self-test

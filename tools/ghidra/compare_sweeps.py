@@ -11,7 +11,7 @@ green") would pass a scanner that had silently lost half its hits on one program
 the only comparison that cannot be satisfied by a wrong answer that looks right.
 
 The file SET is compared too, in both directions. A missing scan TSV becomes a missing row in
-REPORT.md, and a missing row reads as "that pattern was never tested" rather than "that program
+the report `aggregate_sweep.py` writes (`out/sweep/REPORT.md`), and a missing row reads as "that pattern was never tested" rather than "that program
 did not run" — the same trap `sweep.sh`'s `_failures.tsv` exists to catch.
 """
 import argparse

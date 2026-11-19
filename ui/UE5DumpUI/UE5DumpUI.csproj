@@ -37,13 +37,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Treat warnings as errors so trim/AOT analysis warnings (IL2026 /
-         IL3050) fail `dotnet publish` instead of silently shipping — the
-         build-775 string-path Binding warnings reached a release before
-         anyone noticed precisely because this wasn't on. NoWarn below
-         keeps the third-party rollups (IL3053 / IL2104) demoted; only the
-         live, fixable IL2026 / IL3050 + ordinary CS warnings break the
-         build. Verified warning-clean across Debug + Release + Publish at
-         build 784 before enabling (aot-pitfalls.md §0.5 / §1). -->
+         IL3050) fail `dotnet publish` instead of silently shipping: a
+         string-path Binding warning is a feature that works untrimmed and
+         breaks only in the shipped binary. NoWarn below keeps the
+         third-party rollups (IL3053 / IL2104) demoted; only the live,
+         fixable IL2026 / IL3050 + ordinary CS warnings break the build. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Must be false for Native AOT before Avalonia 12.0 -->
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>

@@ -9,7 +9,7 @@
 
 ⭐ WHY A GATE AND NOT A ONE-OFF SWEEP. A broken relative link is invisible to the person who wrote
 it: the author sees the target in the folder they are thinking about, and Markdown has no compiler.
-They arrive in bulk whenever a file MOVES -- `docs/x.md` -> `docs/archive/x.md` leaves every `../foo`
+They arrive in bulk whenever a file MOVES -- `docs/<name>.md` -> `docs/archive/<name>.md` leaves every `../foo`
 in it one level too shallow -- and the move is exactly the moment nobody re-reads the body.
 
 -----

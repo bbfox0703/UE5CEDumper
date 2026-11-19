@@ -323,8 +323,8 @@
       <StackPanel Spacing="2">
         <StackPanel Orientation="Horizontal" Spacing="8">
           <!-- AOT: bind TextBlock.Text directly, NOT via a child <Run Text=...>.
-               A single-binding <Run> inside <TextBlock> StackOverflows under
-               Native AOT (aot-pitfalls.md §0.25 / §4.10). -->
+               A single-binding <Run> inside <TextBlock> overflows the stack
+               under Native AOT. -->
           <TextBlock Foreground="#569CD6" FontWeight="Bold" Text="{Binding CurrentClassName}"/>
           <TextBlock Foreground="#D4D4D4" Text="{Binding CurrentObjectName}"/>
           <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12" Text="{Binding CurrentAddress}"/>

@@ -17,7 +17,7 @@ back correctly" from "reads back correctly AND knows what an int8 is".
 
 ⚠ RE-VERIFICATION, and why: a tick held only in a copy of the checklist outside the repo has no
 evidence behind it in git. Rather than transcribe such a tick, this re-runs both steps and records
-what it actually saw. [ZHTW-MARKS-2026-08-21]
+what it actually saw.
 """
 import pathlib
 import sys
