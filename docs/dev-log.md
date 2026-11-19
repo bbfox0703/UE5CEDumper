@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3770) — The build uses MSVC whatever else is installed; the scan log names the game's linker and Wine `[MSVC-GUARD-2026-11-19]` `[SCAN-LINKER-LOG-2026-11-19]` `[IDGUARD-CANNOT-RUN-2026-11-19]`
+
+- **What changes:**
+  - **Scan log:** the scan log says which linker built the game (MSVC's link.exe, or lld for a clang build, from the
+    exe's Rich header, linker version and debug entries) and, under Wine or Proton, the Wine version. When every AOB of
+    GObjects, GNames or GWorld misses on an lld build, the warning says so: the patterns come from MSVC builds.
+  - **Building from source:** `build.ps1` builds with MSVC even when Git Bash, MSYS2 or a Visual Studio prompt shaped
+    the environment: a coreutils `link.exe` or MSYS2's `c++.exe` ahead on PATH, a `CXX` naming another compiler, a
+    build folder configured with one, a prompt whose toolset a Visual Studio update removed, or the `Platform` a vcvars
+    prompt sets (which moved the C# outputs and failed the tests). CMake refuses a non-MSVC compiler with a message
+    that says what it found. The identity guard no longer reports a leak when it simply could not run.
+- **Wiki:** Quick Start gained "Running on Linux with Proton" (English, zh-TW, ja-JP), from issue #522's report.
+- **Tests:** `tools/verify/msvc_guard_probe.py` runs eight scenarios (stale-cache in three cache types), each red then green (builds 3749-3769 are its
+  runs); dll_core_test pins the linker verdict on built headers and on its own image (1677 checks, 0 failed); the
+  identity checker's selftest covers git missing, no checkout, an empty listing and a crash. Live: DumperTest Shipping
+  logs `main module linker = msvc (Rich header yes, linker 14.38, 4 debug entries, VC_FEATURE / POGO among them)`.
+  The publish ran with Git's and MSYS2's folders in front of PATH; C# 8510 (1 skipped), headless 71, the five C++
+  self-tests, 40 gates.
+- AOT UI 62,764,544 bytes (sha256 9a15ad661658f8dd...); UE5Dumper.dll 3,858,432 bytes (sha256 76864ffde7406fc2...).
+
 ## 2026-11-19 (no build change) — The rest of the test, tools, scripts and XAML comments read and cleaned; line references gated there too `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - **Gates:** `check_comment_refs` now also reads Python docstrings, Lua block comments, the .axaml and the .ps1 (through

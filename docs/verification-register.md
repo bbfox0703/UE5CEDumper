@@ -1151,6 +1151,22 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
     row 1's proxy-mode `trigger_scan`.
 
+### 🟡 The scan log's linker and Wine lines (build 3770) — `[SCAN-LINKER-LOG-2026-11-19]`
+
+`FindAll` logs `main module linker = <msvc|lld|lld*|unknown> (...)` beside the PE hash, `running under Wine <version>
+[on <host>]` when ntdll exports `wine_get_version`, and the "all patterns failed" warnings of GObjects / GNames / GWorld
+add an lld note. Unit tests: dll_core_test's SCAN-LINKER-LOG block.
+
+1. ✅ **CLOSED 2026-11-19** (DLL 3770 injected into DumperTest Shipping, pid 56336): scan-0.log reads `FindAll: main
+    module linker = msvc (Rich header yes, linker 14.38, 4 debug entries, VC_FEATURE / POGO among them)`; no Wine line;
+    the scan completed by AOB. `linker_survey.py` on the same exe file: msvc, Rich, 14.38, debug [2, VC_FEATURE, POGO,
+    16]. The game was closed afterwards.
+2. ⬜ **An lld build.** Avowed is the one on this machine (`linker_survey.py`: lld, 14.00, debug [2, 16]). Acceptance:
+    its scan log reads `main module linker = lld (Rich header no, linker 14.00, 2 debug entries)`. Its AOBs hit today,
+    so the lld note on a failed-pattern warning is not expected there.
+3. ⬜ **Wine / Proton.** No Linux here. Acceptance: under Proton, the scan log has `running under Wine <version> on
+    Linux <release>` right after the linker line, and on Windows it never appears (step 1).
+
 ### ⬜ The relaxed-row floor above 16 TB (build 3724) — `[VND584-03-FLOOR-HIGH-HEAP]`
 
 Relaxed A/C and B refuse a count that is half of a chunk table pointer unless the row's own Objects slot holds a table
