@@ -881,7 +881,7 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
         return "Unknown";
     }
 
-    // FFieldClass has Name (FName) at offset 0x00
+    // FFieldClass::Name, at the offset Genau's joint probe latched
     std::string name = ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
     // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY:
     // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object

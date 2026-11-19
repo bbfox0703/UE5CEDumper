@@ -340,7 +340,7 @@ inline std::atomic<bool> bUFunctionFuncDetected{false};
 // === FField — defaults for UE5.0-5.2 (FFieldVariant=0x10) ===   [R7-A-03]
 // UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
-inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
+inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner, variable size; a licensee layout swaps it with Next
 inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
 inline int FFIELD_NAME        = 0x28;  // FName
 
@@ -361,7 +361,8 @@ inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 // `FName Name` IS the first declared member, but UE 5.8 made ~FFieldClass() virtual
 // (Field.h:101 @5.8.0-release; non-virtual at 5.7.4-release:100). FFieldClass has no
 // base class, so the vfptr lands at +0x00 and EVERY member shifts +8 — Name is +0x00
-// up to UE 5.7 and +0x08 from UE 5.8.
+// up to UE 5.7 and +0x08 from UE 5.8. A licensee layout can put it elsewhere
+// (kFFieldClassNameLicenseeProbes).
 //
 // When it is wrong the damage is total but silent: the ChildProperties probe identifies a candidate by
 // resolving this name, so it matches nothing at ANY offset (-> "keeping defaults"),
@@ -397,6 +398,19 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
         if (off == 0x00) { if (n.find("Property") != std::string::npos) return off; }
         else             { if (LooksLikeFieldClassName(n))              return off; }
     }
+    return -1;
+}
+
+// [VND10-A1] Licensee FFieldClass layouts: Phantom Blade Zero keeps ConstructFn at +0x00, ClassFlags at +0x08 and Name at
+// +0x30. A separate list with its own picker, not a third stock candidate: Genau consults it only after every stock
+// reading and the UProperty retry found no ChildProperties, so no stock engine ever reads these offsets. Suffix test
+// only, the stronger one.
+inline constexpr int kFFieldClassNameLicenseeProbes[] = { 0x30 };
+
+template <class Resolve>
+inline int PickFFieldClassNameOffsetLicensee(Resolve&& resolve) {
+    for (int off : kFFieldClassNameLicenseeProbes)
+        if (LooksLikeFieldClassName(resolve(off))) return off;
     return -1;
 }
 

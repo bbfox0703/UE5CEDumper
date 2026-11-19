@@ -1818,7 +1818,7 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
   "fname_size":         8,             // DynOff::SizeofFName(): a measured 4 / 8 / 12, else 8 or 12
                                        // from case_preserving. Added 2026-10-27 ([DELEGATE-PAD-ALIGN]).
   "uobject_outer":      32,            // 0x20 standard, 0x28 case-preserving
-  "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8
+  "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8, 0x30 on Phantom Blade Zero's layout
                                        // (5.8 made ~FFieldClass() virtual). ⚠ 0x00 is FOUR-WAY
                                        // ambiguous: <=5.7, probe gave up, probe gave up earlier,
                                        // or UProperty mode. Read `fallback_reason` before it.

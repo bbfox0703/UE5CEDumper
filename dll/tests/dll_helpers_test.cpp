@@ -11485,6 +11485,8 @@ static void Test_VersionMarkers() {
     // never latched, but assert it cannot raise in case that ever changes.
     EXPECT("A4: a failed probe (-1) does not raise", !IsVirtualDtorFFieldClass58(-1));
     EXPECT("A4: no other offset raises", !IsVirtualDtorFFieldClass58(0x10));
+    // [VND10-A1] A licensee Name at +0x30 (Phantom Blade Zero, a 5.7) carries no 5.8 vfptr.
+    EXPECT("A4: the licensee +0x30 does not raise", !IsVirtualDtorFFieldClass58(0x30));
 
     // --- the two markers are INDEPENDENT: a 5.8 binary satisfies BOTH, which is exactly
     //     why 507 alone is not enough to stop at the right version. ---
@@ -11542,6 +11544,33 @@ static void Test_FFieldClassName_Probe() {
             return off == 0x08 ? "PropertyBag" : std::string();
         });
         EXPECT("0x08 arm requires the SUFFIX", r == -1);
+    }
+
+    // [VND10-A1] The stock picker never reads a licensee offset: a class whose name only +0x30 holds is no answer.
+    {
+        bool readLicensee = false;
+        auto r = DynOff::PickFFieldClassNameOffset([&](int off) -> std::string {
+            if (off == 0x30) readLicensee = true;
+            return off == 0x30 ? "IntProperty" : std::string();
+        });
+        EXPECT("stock picker: a name at +0x30 alone -> -1", r == -1);
+        EXPECT("stock picker: +0x30 is never consulted", !readLicensee);
+    }
+    // The licensee picker reads +0x30 only, by suffix.
+    {
+        bool readStock = false;
+        auto r = DynOff::PickFFieldClassNameOffsetLicensee([&](int off) -> std::string {
+            if (off == 0x00 || off == 0x08) readStock = true;
+            return off == 0x30 ? "BoolProperty" : "IntProperty";
+        });
+        EXPECT("licensee picker: Phantom Blade Zero's +0x30", r == 0x30);
+        EXPECT("licensee picker: +0x00 / +0x08 are never consulted", !readStock);
+        auto bag = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string("PropertyBag"); });
+        EXPECT("licensee picker: requires the SUFFIX", bag == -1);
+        auto bare = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string("Property"); });
+        EXPECT("licensee picker: bare 'Property' -> -1", bare == -1);
+        auto none = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string(); });
+        EXPECT("licensee picker: nothing -> -1", none == -1);
     }
 
     EXPECT("suffix: IntProperty",   DynOff::LooksLikeFieldClassName("IntProperty"));

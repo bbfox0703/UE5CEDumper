@@ -4356,6 +4356,42 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         }
     }
 
+    if (!childProps && DynOff::bUseFProperty) {
+        // [VND10-A1] A licensee FFieldClass layout, read only where every stock reading above found nothing, so a stock
+        // engine never gets here with an answer to lose. A licensee offset is weaker evidence than a stock one, so a
+        // second field of the chain must read as a *Property at the same offset: Next is untagged at whichever slot
+        // holds it, and a tagged Owner (LSB set) is skipped.
+        auto licenseeNameOff = [](uintptr_t field) -> int {
+            uintptr_t fc = 0;
+            if (!Macht::ReadSafe(field + DynOff::FFIELD_CLASS, fc) || !fc || !Grimoire::IsUserspacePointer(fc)) return -1;
+            return DynOff::PickFFieldClassNameOffsetLicensee([&](int o) -> std::string {
+                uint32_t idx = 0;
+                if (!Macht::ReadSafe(fc + o, idx)) return std::string();
+                return Serie::GetString(idx);
+            });
+        };
+        for (int off = 0x38; off <= 0x80 && !childProps; off += 8) {
+            uintptr_t ptr = 0;
+            if (!Macht::ReadSafe(testStruct + off, ptr) || !ptr || !Grimoire::IsUserspacePointer(ptr)) continue;
+            const int fcNameOff = licenseeNameOff(ptr);
+            if (fcNameOff < 0) continue;
+            int agreeingNext = -1;
+            for (int nextOff : { 0x10, 0x18, 0x20 }) {
+                uintptr_t second = 0;
+                if (!Macht::ReadSafe(ptr + nextOff, second) || !second || (second & 1)) continue;
+                if (!Grimoire::IsUserspacePointer(second) || second == ptr) continue;
+                if (licenseeNameOff(second) == fcNameOff) { agreeingNext = nextOff; break; }
+            }
+            if (agreeingNext < 0) continue;
+            DynOff::FFIELDCLASS_NAME = fcNameOff;
+            childProps = ptr;
+            childPropsOff = off;
+            Sein::Info("DYNO", "ValidateAndFixOffsets: ChildProperties found at struct+0x%02X -> 0x%llX with a licensee "
+                     "FFieldClass::Name at +0x%02X (a second field at FField+0x%02X agrees)",
+                     off, (unsigned long long)ptr, fcNameOff, agreeingNext);
+        }
+    }
+
     if (!childProps) {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
         return PublishOffsetsGiveUp("childprops-probe-failed");
