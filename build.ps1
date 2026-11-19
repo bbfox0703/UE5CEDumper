@@ -199,7 +199,8 @@ function Repair-NinjaHeaderDeps([string]$Dir = $BUILD_DIR) {
 function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
     <#
     .SYNOPSIS
-        Drop the build dir if CMakeCache.txt names a compiler, linker or SDK tool that no longer exists.
+        Drop the build dir if CMakeCache.txt names a compiler, linker or SDK tool that no longer exists,
+        or a compiler that is not MSVC's cl.exe.
 
     .DESCRIPTION
         CMake records the full path of every tool it found at configure time
@@ -208,13 +209,16 @@ function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
         update installs the toolset under a new <version> folder and removes the old one,
         so a kept build dir then fails every configure and every build step with "is not
         a full path to an existing compiler tool" -- the C++ DLLs and the C++ tests do not
-        build at all, while the C# side carries on. A fresh configure finds the new
-        toolset, so remove the dir and let the caller's configure run. No-op when every
-        recorded tool exists, or when nothing is configured yet.
+        build at all, while the C# side carries on. A tree configured from another shell
+        can name another compiler (MSYS2's g++), which CMake keeps using as well. A fresh
+        configure picks MSVC (Enter-VsDevEnvironment sets CC / CXX), so remove the dir and
+        let the caller's configure run. No-op when every recorded tool exists and both
+        compilers are cl.exe, or when nothing is configured yet. [MSVC-GUARD-2026-11-19]
     #>
     $cache = Join-Path $Dir "CMakeCache.txt"
     if (-not (Test-Path $cache)) { return }
     $missing = @()
+    $foreign = @()
     foreach ($line in [System.IO.File]::ReadAllLines($cache)) {
         $m = [regex]::Match($line, '^(CMAKE_(?:CXX_COMPILER|C_COMPILER|LINKER|MT|RC_COMPILER)):FILEPATH=(.+)$')
         if (-not $m.Success) { continue }
@@ -222,12 +226,22 @@ function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
         if ([System.IO.Path]::IsPathRooted($toolPath) -and -not (Test-Path -LiteralPath $toolPath)) {
             $missing += "$($m.Groups[1].Value) = $toolPath"
         }
+        elseif ($m.Groups[1].Value -in 'CMAKE_CXX_COMPILER', 'CMAKE_C_COMPILER' -and
+                (Split-Path $toolPath -Leaf) -ne 'cl.exe') {
+            $foreign += "$($m.Groups[1].Value) = $toolPath"
+        }
     }
-    if ($missing.Count -eq 0) { return }
+    if ($missing.Count -eq 0 -and $foreign.Count -eq 0) { return }
 
-    Write-Step "Stale toolchain paths in $cache (the toolset they name is gone, e.g. after a Visual Studio update):"
-    foreach ($entry in $missing) { Write-Info $entry }
-    Write-Info "Removing the build dir to force a clean re-configure against the installed toolset."
+    if ($missing.Count -gt 0) {
+        Write-Step "Stale toolchain paths in $cache (the toolset they name is gone, e.g. after a Visual Studio update):"
+        foreach ($entry in $missing) { Write-Info $entry }
+    }
+    if ($foreign.Count -gt 0) {
+        Write-Step "Non-MSVC compiler in $cache (configured from another shell?):"
+        foreach ($entry in $foreign) { Write-Info $entry }
+    }
+    Write-Info "Removing the build dir to force a clean re-configure with the installed MSVC toolset."
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
@@ -272,6 +286,30 @@ function Repair-MsvcToolOrder() {
     return $true
 }
 
+function Use-MsvcCompiler() {
+    <#
+    .SYNOPSIS
+        Point CC and CXX at MSVC's cl.exe for every CMake configure this script runs.
+
+    .DESCRIPTION
+        A fresh configure takes CC / CXX before any PATH search, so a user's CXX naming another
+        compiler would win over the developer environment. With both naming cl.exe the choice no
+        longer depends on what the environment or PATH holds. Kept caches are Repair-StaleToolchainCache's
+        concern; CMake never re-reads CC / CXX for them. [MSVC-GUARD-2026-11-19]
+    #>
+    $cl = Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cl) {
+        Write-Fail "cl.exe is not on PATH after loading the MSVC x64 environment"
+        return $false
+    }
+    foreach ($name in 'CC', 'CXX') {
+        $old = [Environment]::GetEnvironmentVariable($name)
+        if ($old -and $old -ne $cl.Source) { Write-Info "$name named $old; configuring with $($cl.Source) instead" }
+        [Environment]::SetEnvironmentVariable($name, $cl.Source)
+    }
+    return $true
+}
+
 function Enter-VsDevEnvironment() {
     <#
     .SYNOPSIS
@@ -287,7 +325,7 @@ function Enter-VsDevEnvironment() {
     # command line blows past the 8191-char Windows limit (-> AOT link exits 123).
     # What a later shell put in front of PATH is repaired instead.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
-        if (-not (Repair-MsvcToolOrder)) { return $false }
+        if (-not (Repair-MsvcToolOrder) -or -not (Use-MsvcCompiler)) { return $false }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
         return $true
@@ -302,7 +340,7 @@ function Enter-VsDevEnvironment() {
     try {
         Import-Module $devShellDll
         Enter-VsDevShell -VsInstallPath $script:vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
-        if (-not (Repair-MsvcToolOrder)) { return $false }
+        if (-not (Repair-MsvcToolOrder) -or -not (Use-MsvcCompiler)) { return $false }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment loaded"
         return $true
