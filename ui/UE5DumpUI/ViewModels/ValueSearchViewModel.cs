@@ -917,7 +917,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     /// <summary>Forget both live scan sessions + drop their candidate windows so a
-    /// reconnect never shows (or acts on) addresses from the previous game (audit X5).
+    /// reconnect never shows (or acts on) addresses from the previous game.
     /// The DLL sessions die with the process and self-expire, so this is CLIENT-SIDE
     /// ONLY — it must NOT call the End* pipe teardown against the gone game. Sessions
     /// are zeroed first so any selection-changed reload early-returns on !HasSession.</summary>

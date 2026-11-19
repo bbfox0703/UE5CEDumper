@@ -164,7 +164,7 @@ public partial class ClassStructViewModel : ViewModelBase
     }
 
     /// <summary>Drop the currently-shown class so a reconnect never displays fields
-    /// (and a UClass* address) from the previous game (audit X5). Bumps the load
+    /// (and a UClass* address) from the previous game. Bumps the load
     /// ticket so an in-flight WalkClass can't repaint after this. Client-side only.</summary>
     public void ClearOnDisconnect()
     {

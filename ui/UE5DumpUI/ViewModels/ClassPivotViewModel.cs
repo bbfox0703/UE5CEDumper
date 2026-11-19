@@ -301,7 +301,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     /// <summary>Drop the live DataTable pick (process-scoped, from FindInstances) and
-    /// cancel pending work on disconnect (audit X5). Snapshot-derived rows are
+    /// cancel pending work on disconnect. Snapshot-derived rows are
     /// disk-backed and PRESERVED — a reconnect re-populates via SetEngineState.</summary>
     public void ClearOnDisconnect()
     {

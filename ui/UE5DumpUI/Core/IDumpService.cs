@@ -291,8 +291,8 @@ public interface IDumpService
     // RefineValueScanAsync for those.
     //
     // Native C++ fields (non-UPROPERTY) are not REFLECTED, so they are invisible
-    // to the default walk — but they are reachable: pass `nativeC: true` (18 lines
-    // below) and the DLL additionally scans each object's unmanaged holes (the byte
+    // to the default walk — but they are reachable: pass BeginValueScanAsync's
+    // `nativeC: true` and the DLL additionally scans each object's unmanaged holes (the byte
     // ranges inside the object that no property covers) via the Guess-What
     // heuristic, numeric types only. The UI's Value Search tab has BOTH banners —
     // str.VS.Banner names the limitation and points at the Native-C toggle,

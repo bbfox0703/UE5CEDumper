@@ -2877,7 +2877,7 @@ public sealed class DumpService : IDumpService
     /// before launching to lower the <c>list_all_functions</c> cap, so the TRUNCATION path can be
     /// reached on a title that is nowhere near 100,000 UFunctions.
     ///
-    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> capped-census wording has to be seen on screen -- Console
+    /// ⭐ WHY THIS EXISTS. The capped-census wording has to be seen on screen -- Console
     /// must stop claiming anything about the game ("this scan did not finish, so it is not evidence
     /// the game has none") and both panels must show the cap suffix
     /// (<c>[Z8-TRUNCATED-2026-08-23]</c>) -- and ordinary titles stay well short of the cap.
@@ -2887,7 +2887,7 @@ public sealed class DumpService : IDumpService
     /// ⚠ It overrides the caller's argument deliberately, because both UI call sites pass the
     /// default and the point is to reach them without a code change. Unparseable or non-positive
     /// values are IGNORED rather than clamped -- a typo must not silently truncate a real census
-    /// and hand back a partial answer that looks complete, which is the exact defect Z8 is about.
+    /// and hand back a partial answer that looks complete.
     /// Read once, at startup, like <c>UE5DUMP_PIPE_LOG_FULL</c> in PipeClient.</summary>
     internal static readonly int? AllFunctionsLimitOverride =
         int.TryParse(Environment.GetEnvironmentVariable("UE5DUMP_ALLFUNCS_LIMIT"), out var v) && v > 0

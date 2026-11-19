@@ -539,8 +539,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
 
     /// <summary>
     /// Last-write time of the newest file anywhere under <paramref name="dir"/>, falling
-    /// back to the directory's own timestamp only when it is empty. Shared by both
-    /// sweeps so they cannot disagree about which folder is "recent".
+    /// back to the directory's own timestamp only when it is empty. The directory's own
+    /// timestamp moves when an entry is added or removed, not when an existing file in
+    /// it is appended to, so it can call a folder with a live log in it stale.
     /// </summary>
     private static DateTime NewestWriteUtc(DirectoryInfo dir)
     {
@@ -603,9 +604,7 @@ public sealed class LoggingService : ILoggingService, IDisposable
                     continue;
 
                 // Judge by the NEWEST file inside, not the directory's own mtime —
-                // see NewestWriteUtc for why. Shared with CleanupProcessFolders so the
-                // two sweeps cannot disagree about which folder is "recent"; they used
-                // to, and the count-based one was the wrong half.
+                // see NewestWriteUtc for why.
                 if (NewestWriteUtc(dir) < cutoff)
                 {
                     try

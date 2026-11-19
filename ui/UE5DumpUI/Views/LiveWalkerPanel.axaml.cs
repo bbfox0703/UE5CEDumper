@@ -78,7 +78,7 @@ public partial class LiveWalkerPanel : UserControl
             ["OwnerAddress"] = DataGridSortComparers.Hex<ReferenceMatch>(r => r.OwnerAddressValue),
         };
 
-    // Audit fix #18: track the currently-subscribed VM so we can `-=` from
+    // Track the currently-subscribed VM so we can `-=` from
     // it before re-subscribing to a new one. Without this, every
     // DataContext reassignment leaves a stale handler on the previous VM
     // (keeping it alive) and adds a duplicate handler on the new one

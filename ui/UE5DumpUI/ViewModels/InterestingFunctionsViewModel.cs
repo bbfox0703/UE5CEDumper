@@ -241,7 +241,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     }
 
     /// <summary>Drop scored functions so a reconnect never shows rows (and live
-    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    /// UClass* addresses) from the previous game. Client-side only.</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();

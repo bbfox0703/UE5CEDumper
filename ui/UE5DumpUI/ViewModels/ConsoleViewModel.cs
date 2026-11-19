@@ -180,7 +180,7 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>Drop exec discovery + the pinned per-class live instance addresses so
     /// a reconnect never invokes against the previous game's instances or shows its
-    /// rows/history (audit X5). Client-side only. LoadAsync already clears
+    /// rows/history. Client-side only. LoadAsync already clears
     /// <c>_stickyInstance</c> on a re-discover; this covers the disconnect gap.</summary>
     public void ClearOnDisconnect()
     {

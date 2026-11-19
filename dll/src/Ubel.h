@@ -1270,12 +1270,12 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Returns "" for labels that have no gameplay-numeric meaning (Padding / Pointer),
 // signalling the caller to DROP the row. The human-readable guessed label is
 // carried separately (never in the property-type field). Pure.
-// === Byte-blind struct preview (audit U3) ===
+// === Byte-blind struct preview ===
 //
 // LAST RESORT ONLY. When a caller cannot resolve the UScriptStruct* it can ask
 // for a hint decoded from raw bytes. That is a guess by construction and the
 // reflected-layout decoder (Ubel.cpp WalkInstance's `{Name=Value}` preview) is
-// always preferable — see the remaining half of U3 in the register.
+// always preferable.
 //
 // Skipping 8 bytes whenever size > 8 assumes the struct begins with a vtable.
 // That is true of FGameplayAttributeData (GAS declares a virtual destructor, so
@@ -1299,14 +1299,14 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Pure: bytes in, string out. Lives here so dll_helpers_test can pin it — no
 // target compiles Ubel.cpp.
 
-// === Reflected struct preview (audit U17) ===
+// === Reflected struct preview ===
 //
-// The layout half of U3. The byte-blind decoder below cannot tell 3 doubles from
+// The byte-blind decoder below cannot tell 3 doubles from
 // 6 floats — Radar.h states the rule: the struct name does not determine the
 // width and neither does the engine version. The only thing that CAN settle it is
 // the reflected field list, and every call site that matters already holds the
 // UScriptStruct*. These two are the pure half of that decode, so the width
-// handling — which is exactly where the LWC bug lives — is unit-pinnable.
+// handling — what tells an LWC vector from six floats — is unit-pinnable.
 
 /// Format a number for a preview cell. `%g` flips to scientific past a few digits
 /// (18328.64 -> "1.833e+04"), unreadable in a value column; `%f` with trailing
@@ -1332,7 +1332,7 @@ inline std::string FormatPreviewNumber(double v) {
 }
 
 /// Decode ONE reflected scalar at `p`, using the property's OWN declared width.
-/// This is the whole point of U17: a DoubleProperty is read as 8 bytes and a
+/// This is the whole point of the reflected preview: a DoubleProperty is read as 8 bytes and a
 /// FloatProperty as 4, so an LWC FVector yields its three real components instead
 /// of six float halves, with no guessing anywhere.
 ///
@@ -1686,7 +1686,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset = 
 // Decode a struct through its REFLECTED layout — the correct answer, and the one
 // every caller holding a UScriptStruct* should use. Emits "{Name=Value, ...}".
 // Returns "" when nothing is previewable (or, for InterpretStructAt, when the
-// layout cannot be resolved) so the caller can fall back to hex. Audit U17.
+// layout cannot be resolved) so the caller can fall back to hex.
 std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
                                     const ClassInfo& si, int previewLimit);
 std::string InterpretStructAt(const uint8_t* buf, int32_t size,

@@ -101,7 +101,7 @@ static HANDLE s_hThread = nullptr;
 // almost always already request 1ms resolution for their own frame timing).
 static constexpr UINT kPollIntervalMs = 1;
 
-// Audit fix #10: depth counter for compound multi-step operations
+// Depth counter for compound multi-step operations
 // (HandleInvokeByName chains three sub-handlers). When > 0, sub-handlers'
 // SetDone/SetError write `result` and `errorMsg` only — they do NOT touch
 // `status` or `cmd`, which would prematurely signal completion to CE
@@ -920,7 +920,7 @@ static void HandleInvoke() {
 static void HandleInvokeByName() {
     LOG_INFO("Mailbox: INVOKE_BY_NAME starting...");
 
-    // Audit fix #10: chain three sub-handlers without leaking intermediate
+    // Chain three sub-handlers without leaking intermediate
     // status=DONE / cmd=IDLE writes to CE. The guard suppresses those
     // publishes inside the inner SetDone/SetError calls; on destruction
     // (any return path) it publishes the final state once.
@@ -1803,7 +1803,7 @@ static void SetError(int32_t code, const char* msg) {
     }
     LOG_WARN("Mailbox: error=%d msg='%s'", code, msg ? msg : "");
 
-    // Audit fix #10: inside a compound op (HandleInvokeByName), the outer
+    // Inside a compound op (HandleInvokeByName), the outer
     // CompoundOpGuard publishes status/cmd; suppress the intermediate
     // signal here so CE doesn't see a transient DONE between sub-steps.
     if (s_compoundDepth > 0) return;
@@ -1816,7 +1816,7 @@ static void SetError(int32_t code, const char* msg) {
 static void SetDone(int32_t resultCode) {
     Box().result = resultCode;
 
-    // Audit fix #10: see SetError comment.
+    // Compound-op suppression: see SetError comment.
     if (s_compoundDepth > 0) return;
 
     // Signal completion — MUST write status BEFORE clearing cmd

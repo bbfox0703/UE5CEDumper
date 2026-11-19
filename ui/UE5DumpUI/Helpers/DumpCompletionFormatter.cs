@@ -3,7 +3,7 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Helpers;
 
 /// <summary>
-/// Pure composition of the "Dump All" completion status line (audit X4).
+/// Pure composition of the "Dump All" completion status line.
 ///
 /// What it keeps true:
 /// <list type="bullet">

@@ -3570,7 +3570,7 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // sizeof(TLazyObjectPtr) = FWeakObjectPtr(8) + the persistent-ptr envelope + FGuid(16).
     // ⛔ NOT a fixed 0x20. FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so there is
     // no pad after the tag: 0x1C up to 5.2, and 0x18 from 5.3 where TagAtLastTest was deleted.
-    // 0x20, the FWeakObjectPtr+Tag+pad+FGuid model (audit A1), is wrong in EVERY era. A caller
+    // 0x20, the FWeakObjectPtr+Tag+pad+FGuid model, is wrong in EVERY era. A caller
     // that overrides the engine's size with this entry substitutes it for a right one, so it is
     // the envelope LazyGuidOffset answers (latched, else the version default) + sizeof(FGuid).
     if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
@@ -5196,7 +5196,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
 // Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
 // Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
 // ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
-// and 5.3 deleted the tag outright. 0x20 is the model audit A1 removed.
+// and 5.3 deleted the tag outright.
 // ============================================================
 bool IsLazyObjectArrayType(const std::string& innerTypeName) {
     return innerTypeName == "LazyObjectProperty";
@@ -5215,7 +5215,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
     result.ok = false;
 
     // ⛔ DO NOT force a constant here. A forced 0x20 — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)
-    // model, audit A1 — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
+    // model — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
     // (≥5.3), and LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so
     // the `TLazyObjectPtr payload envelope measured` line could not come from THIS path. Use the
     // envelope arithmetic the scalar path uses: it takes the envelope from a real ElementSize and
@@ -6150,7 +6150,7 @@ void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
 
 // Struct-preview scalars (float/double) are formatted WITHOUT scientific notation
 // for human-range magnitudes by FormatPreviewNumber (Ubel.h; pure, unit-pinned),
-// shared with the reflected-struct preview so the two cannot drift apart (audit U17).
+// shared with the reflected-struct preview so the two cannot drift apart.
 // `%g` flips to scientific past a few digits (e.g. 18328.64 -> "1.833e+04"), which
 // is unreadable in the Value column preview; the leaf drilldown uses %f. So: %f for
 // the broad int32/int64-ish range with trailing zeros trimmed (2245.0000 -> "2245",
@@ -7720,7 +7720,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 // Preview: one shared decoder, so this path and every container /
-                // preview / DataTable path cannot drift apart (audit U17).
+                // preview / DataTable path cannot drift apart.
                 if (hasBuf) {
                     std::string preview = InterpretStructByLayout(
                         structBuf.data(), readSize, si, previewLimit);

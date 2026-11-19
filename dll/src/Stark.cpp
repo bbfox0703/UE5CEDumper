@@ -750,7 +750,7 @@ bool InstallHook(uintptr_t processEventAddr) {
     // Before the hook goes active, so its first fire already knows whose it is.
     IdentifyGameThread();
 
-    // Audit fix #13: re-enable after soft disable. RemoveHook only flips
+    // Re-enable after soft disable. RemoveHook only flips
     // s_hookActive to false (the physical hook stays installed to avoid
     // an in-flight unhook race), so a second InstallHook on the same
     // address just flips the flag back on. No MinHook calls needed.
@@ -870,7 +870,7 @@ bool InstallHook(uintptr_t processEventAddr) {
 void RemoveHook() {
     if (!s_hookActive.load()) return;
 
-    // Audit fix #13: do NOT call MH_DisableHook + MH_RemoveHook. They patch
+    // Do NOT call MH_DisableHook + MH_RemoveHook. They patch
     // the original code page back and free the trampoline — but a game
     // thread may be executing INSIDE the trampoline at this exact moment,
     // and MinHook does not synchronize with in-flight calls. Unhooking
@@ -895,7 +895,7 @@ void RemoveHook() {
 }
 
 void Shutdown() {
-    // Soft-disable the hook (audit fix #13).
+    // Soft-disable the hook (see RemoveHook).
     RemoveHook();
 
     // Drop any pending queued invokes so waiting pipe threads get a result
@@ -915,7 +915,7 @@ void Shutdown() {
         s_queueDepth.store(0, std::memory_order_release);
     }
 
-    // Audit fix #14: do NOT call MH_Uninitialize. It patches every hooked
+    // Do NOT call MH_Uninitialize. It patches every hooked
     // module's code page back and frees all trampolines — same in-flight
     // crash risk as MH_RemoveHook. MinHook's tables stay in memory; the
     // OS reclaims them on process exit.

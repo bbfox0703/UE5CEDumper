@@ -244,7 +244,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public void OnConnected() => ConnectPrime = RefreshForcedFieldsAsync();
 
     /// <summary>Drop search results + the forced-fields mirror so a reconnect never
-    /// shows rows (and live UClass* addresses) from the previous game (audit X5).
+    /// shows rows (and live UClass* addresses) from the previous game.
     /// Client-side ONLY: this clears the mirror without calling the (gone) pipe — do NOT reset holds here. The DLL's
     /// force-holds SURVIVE a pipe drop for as long as the game lives (they die only with the process), which is why
     /// the Stealth card re-reads them on connect [A4-STEALTH-PRIME], and <see cref="OnConnected"/> re-reads this

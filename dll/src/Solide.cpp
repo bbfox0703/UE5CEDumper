@@ -67,7 +67,10 @@ std::vector<Job> s_jobs;
 
 std::mutex        s_mutex;        // serializes ops (pipe thread + worker)
 Routine::SafeThread       s_worker;   // detaches at process exit, never terminates
-std::mutex        s_workerMutex;  // guards start/stop join (never held with s_mutex)
+// Guards worker start/stop join. Lock order: s_workerMutex outer, s_mutex inner --
+// never take s_workerMutex while holding s_mutex, and release s_mutex before a stop:
+// the join waits on a worker tick that takes s_mutex.
+std::mutex        s_workerMutex;
 std::atomic<bool> s_workerStop{false};
 
 // ---- low-level reads (copied from Hemmung; public APIs only) ----

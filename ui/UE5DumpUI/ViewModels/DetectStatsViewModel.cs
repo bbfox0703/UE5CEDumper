@@ -132,7 +132,7 @@ public partial class DetectStatsViewModel : ViewModelBase
     private int _detectGen;
 
     /// <summary>Drop detected-stat rows so a reconnect never shows fields (and live
-    /// addresses) from the previous game (audit X5). Client-side only — the offline
+    /// addresses) from the previous game. Client-side only — the offline
     /// snapshot corpus is owned by the store, not here.</summary>
     public void ClearOnDisconnect()
     {

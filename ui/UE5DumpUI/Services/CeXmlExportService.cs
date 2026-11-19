@@ -494,7 +494,7 @@ public static class CeXmlExportService
     // drilled element can dereference it with Offsets=[0]. This is a STRICT subset
     // of IsObjectPropertyType and matches the DLL's Ubel::IsPointerArrayType:
     // Weak (FWeakObjectPtr {ObjectIndex, SerialNumber}), Soft (FSoftObjectPath) and
-    // Lazy (FGuid) elements are NOT raw pointers even though the DLL resolves them
+    // Lazy (an FWeakObjectPtr, then the object's FGuid) elements are NOT raw pointers even though the DLL resolves them
     // to a live UObject* — dereferencing their slot would land CE at a garbage
     // address, so they must keep their existing leaf / Phase-G handling.
     //
@@ -516,7 +516,8 @@ public static class CeXmlExportService
     /// <item><c>WeakObjectProperty</c> — <c>FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }</c>.
     /// Two ints, not an address.</item>
     /// <item><c>SoftObjectProperty</c> / <c>SoftClassProperty</c> — <c>FSoftObjectPath</c>, a string-ish struct.</item>
-    /// <item><c>LazyObjectProperty</c> — <c>FGuid</c>, four ints.</item>
+    /// <item><c>LazyObjectProperty</c> — an <c>FWeakObjectPtr</c> followed by the object's <c>FGuid</c>; its first
+    /// 8 bytes are an index+serial pair, not an address.</item>
     /// </list>
     /// <para>The DLL resolves all of those to a live <c>UObject*</c> and stamps it on
     /// <c>PtrAddress</c>, so a resolved target is no evidence of a pointer slot: the resolved

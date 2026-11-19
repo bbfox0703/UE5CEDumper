@@ -271,8 +271,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Drop the instance list + walked fields so a reconnect never shows
-    /// instances (and addresses) from the previous game or offers a stale field walk
-    /// (audit X5). Bumps the search/field tickets so an in-flight response can't
+    /// instances (and addresses) from the previous game or offers a stale field walk.
+    /// Bumps the search/field tickets so an in-flight response can't
     /// repaint after this. Client-side only. Null <see cref="SelectedInstance"/>
     /// FIRST — a non-null selection's changed-handler triggers a pipe field walk.</summary>
     public void ClearOnDisconnect()

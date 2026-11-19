@@ -384,7 +384,8 @@ public partial class SpcQueryViewModel : ViewModelBase
     /// Gates the per-row Live / Addr actions (a cross-session address is stale).</summary>
     public bool CanUseResultRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && NewestSelectedSessionId == _currentSessionId;
-    /// <summary>As above, additionally requiring GWorld for the 🌍 button.</summary>
+    /// <summary>Gates the per-row 🌍 button: the same session gate as
+    /// <see cref="CanUseResultRowActions"/>, with no GWorld requirement of its own.</summary>
     // NOT gated on the client IsGWorldAvailable flag, which can be stale: the DLL's path
     // lookup is the source of truth for GWorld (see ValueSearchViewModel.GWorldLocateBlockReason).
     public bool CanLocateResultRowInGWorld => CanUseResultRowActions;
@@ -441,7 +442,7 @@ public partial class SpcQueryViewModel : ViewModelBase
     public Task? PendingRefresh { get; private set; }
 
     /// <summary>Drop the live session id so per-row Live/Addr actions auto-disable, and
-    /// cancel any in-flight query, on disconnect (audit X5). The disk-backed corpus +
+    /// cancel any in-flight query, on disconnect. The disk-backed corpus +
     /// results are PRESERVED — a reconnect re-scopes via SetEngineState.</summary>
     public void ClearOnDisconnect()
     {

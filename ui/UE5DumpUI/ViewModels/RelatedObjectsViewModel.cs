@@ -74,8 +74,8 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     }
 
     /// <summary>Drop the related-objects graph + detected-target candidates so a
-    /// reconnect never shows (or navigates to) addresses from the previous game
-    /// (audit X5). Client-side only. <see cref="_suppressCandidateLoad"/> gates the
+    /// reconnect never shows (or navigates to) addresses from the previous game.
+    /// Client-side only. <see cref="_suppressCandidateLoad"/> gates the
     /// selection-changed pipe walk while we null the selection.</summary>
     public void ClearOnDisconnect()
     {

@@ -95,7 +95,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
     }
 
     /// <summary>Drop the class list so a reconnect never shows classes (and live
-    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    /// UClass* addresses) from the previous game. Client-side only.</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();

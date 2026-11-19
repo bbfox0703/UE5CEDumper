@@ -2094,7 +2094,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Audit fixes #16/#17: dispose owned child VMs that hold timers /
+    /// Dispose owned child VMs that hold timers /
     /// CancellationTokenSources. Called from MainWindow.Closed so timer
     /// callbacks don't fire after the window is gone. Any child VM that is
     /// IDisposable (owns a timer / CTS / SQLite handle) MUST be disposed here —
@@ -2938,10 +2938,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Clear every panel that holds PROCESS-SCOPED state on disconnect (audit X5).
-    /// The old fan-out reset only Teleport / DumpExplorer / LiveFuncs, so a reconnect
-    /// (often to a DIFFERENT game) left the other panels showing rows whose addresses
-    /// belonged to the previous process — and still offered jumps to them.
+    /// Clear every panel that holds PROCESS-SCOPED state on disconnect.
+    /// A reconnect is often to a DIFFERENT game, and a panel that kept its rows
+    /// would show addresses belonging to the previous process — and still offer
+    /// jumps to them.
     ///
     /// Every clear here is CLIENT-SIDE ONLY (the pipe is already gone), and the ones
     /// that hold live DLL state say so: ValueSearch forgets its two scan sessions

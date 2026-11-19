@@ -122,11 +122,10 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
         var top = TopDeltas(before, after, 0);
 
         // Busy is summed from the per-command deltas, NOT from the global
-        // total_busy_ms delta. The two disagreed on the first live run: the global
-        // figure includes the probe's OWN opening get_diagnostics, so a 57.7 ms
-        // Copy CE Field reported "busy 93 ms (161.2%)" — the probe measuring
-        // itself. Deriving busy from the same rows the ranking shows makes the
-        // percentage and the breakdown agree by construction.
+        // total_busy_ms delta: the global figure includes the probe's OWN opening
+        // get_diagnostics, so it would report the probe measuring itself and can
+        // exceed the operation's own wall time. Deriving busy from the same rows the
+        // ranking shows makes the percentage and the breakdown agree by construction.
         double busyMs = top.Sum(t => t.TotalMs);
         // ...and so is the COUNT, for the same reason and from the same rows. The global
         // counter, `after.TotalDispatches - before.TotalDispatches`, includes the probe's
