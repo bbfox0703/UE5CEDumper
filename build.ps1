@@ -320,7 +320,8 @@ function Enter-VsDevEnvironment() {
     # to PATH/LIB/INCLUDE every time, so re-entering stacks them until the linker's
     # command line blows past the 8191-char Windows limit (-> AOT link exits 123).
     # What a later shell put in front of PATH is repaired instead. A PATH that no longer lists the toolset at all
-    # (MSYS2's minimal PATH keeps the variables and replaces PATH) is entered afresh, which stacks nothing.
+    # (MSYS2's minimal PATH keeps the variables and replaces PATH) is entered afresh: PATH does not stack then, and
+    # INCLUDE / LIB grow once, which stays far below the limit.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
         $bin = Get-MsvcBinDir
         if ($bin -and (Test-OnPath $bin)) {
@@ -330,7 +331,20 @@ function Enter-VsDevEnvironment() {
             Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
             return $true
         }
-        Write-Info "The inherited x64 environment's PATH lists no MSVC toolset folder; entering the DevShell"
+        if ($env:VCToolsInstallDir -and -not (Test-Path -LiteralPath $env:VCToolsInstallDir)) {
+            Write-Info "The inherited x64 environment names a toolset that is no longer installed; entering the DevShell"
+        }
+        else {
+            Write-Info "The inherited x64 environment's PATH lists no MSVC toolset folder; entering the DevShell"
+        }
+    }
+
+    # A prompt left open across a Visual Studio update still names the toolset version the update removed, and
+    # VsDevCmd honours an inherited VCToolsVersion: it would refuse to load ("Version ... is not valid"). Without
+    # it, VsDevCmd picks the installed toolset. [MSVC-GUARD-2026-11-19]
+    if ($env:VCToolsVersion -and -not ($env:VCToolsInstallDir -and (Test-Path -LiteralPath $env:VCToolsInstallDir))) {
+        Write-Info "VCToolsVersion=$($env:VCToolsVersion) is not installed; the DevShell picks the installed toolset"
+        Remove-Item Env:VCToolsVersion
     }
 
     $devShellDll = Join-Path $script:vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
