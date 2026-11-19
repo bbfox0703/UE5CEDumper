@@ -10637,7 +10637,7 @@ ValueScanStats RefineGroupCandidates(
                     Sein::Warn("SCAN:grp",
                         "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
                         "metadata hop dropped it; this leaf is refined at its stale absolute "
-                        "address (audit #5 A12)",
+                        "address",
                         Radar::FieldDisplayName(descriptors[sm.descriptorIdx], sm.elementIndex).c_str());
                 }
 
