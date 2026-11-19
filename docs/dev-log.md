@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — Bare finding codes cut from the comments (pass 4), the untouched files swept, Genau.h's version log stripped `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Pass 4:** bare finding ids and plan-phase labels with no `audit` / `review` word (`(A12)`, `(AE13)`, `(B10)`,
+  `V1c:`, `the Z10 lie`, `tracked as A10`) are cut from the comments of 110 files -- about 1,020 codes, each judged
+  where it stands: real names stay (UE versions, AOB pattern and series names, compiler and trimmer warning codes,
+  game and tool names, a doc entry named with its doc). No gate counts this shape, since one prefix is a finding in
+  one place and a pattern name in another.
+- **Sweep:** every comment of the 173 product files no pass had touched was read for history without keywords,
+  plan-phase wording, claims the code contradicts and unasserted every/only claims; 93 files changed. Corrections
+  found on the way include RelatedObject's depth range (1..3), the invoke entry points InvokeFunctionResult names,
+  McpGrantTools' claims about the grant tools, a dangling cref in StructFieldValue and HelperLuaResource's callers.
+- **Genau.h's `kVersionDetectLogicRev` log**, as the maintainer decided: the bump rule stays and each rev keeps one
+  present-tense line saying what its logic does (checked against Genau.cpp); measurements, build provenance and
+  before/after stories are gone.
+- **Log text:** a RefineGroup warning no longer quotes an audit id; it ships with the next build.
+- Editor then reviewer for every batch; `comment_only_diff` passes for every file but the log string's; the DLL
+  builds; C# 8497 passed (1 skipped); 40 gates.
+
 ## 2026-11-19 (no build change) — Audit and review ids cut from the code comments (pass 3); the Snapshot group-match flake `[COMMENT-NO-HISTORY-2026-11-18]` `[SNAPSHOT-GROUPMATCH-FLAKE]`
 
 - **Comments:** `check_comment_history` counts audit and review finding ids (`audit #5 A12`, `Audit fix #10`,
