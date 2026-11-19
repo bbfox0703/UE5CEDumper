@@ -230,13 +230,14 @@
           <TextBlock DockPanel.Dock="Top" Text="{Binding ParamsNote}" TextWrapping="Wrap"
                      Foreground="#E5A050" FontSize="12" Margin="4,4,4,2"
                      IsVisible="{Binding ParamsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-          <!-- Fixed cells in a DockPanel, as the list's own header is laid out; the last one takes what is left. -->
-          <DockPanel DockPanel.Dock="Top" Margin="4,2">
-            <TextBlock DockPanel.Dock="Left" Width="110" Text="{StaticResource str.CT.Param.Col.Name}" Foreground="#888" FontSize="11"/>
-            <TextBlock DockPanel.Dock="Left" Width="64" Text="{StaticResource str.CT.Param.Col.Kind}" Foreground="#888" FontSize="11"/>
-            <TextBlock DockPanel.Dock="Left" Width="120" Text="{StaticResource str.CT.Param.Col.AtCall}" Foreground="#888" FontSize="11"/>
-            <TextBlock Text="{StaticResource str.CT.Param.Col.After}" Foreground="#888" FontSize="11"/>
-          </DockPanel>
+          <!-- The heading and every row share one column layout: Name and Kind fixed, the two values halving what is
+               left, so a long value wraps in its own half instead of running into the next. -->
+          <Grid DockPanel.Dock="Top" Margin="4,2" ColumnDefinitions="110,64,*,*">
+            <TextBlock Grid.Column="0" Text="{StaticResource str.CT.Param.Col.Name}" Foreground="#888" FontSize="11"/>
+            <TextBlock Grid.Column="1" Text="{StaticResource str.CT.Param.Col.Kind}" Foreground="#888" FontSize="11"/>
+            <TextBlock Grid.Column="2" Text="{StaticResource str.CT.Param.Col.AtCall}" Foreground="#888" FontSize="11"/>
+            <TextBlock Grid.Column="3" Text="{StaticResource str.CT.Param.Col.After}" Foreground="#888" FontSize="11"/>
+          </Grid>
           <TextBox DockPanel.Dock="Bottom" Text="{Binding ParamsHex, Mode=OneWay}" IsReadOnly="True"
                    TextWrapping="Wrap" MaxHeight="120" FontFamily="Consolas, Menlo, monospace" FontSize="11"
                    Background="#252526" Foreground="#9CA3AF"
@@ -246,25 +247,30 @@
             <ItemsControl ItemsSource="{Binding ParamRows}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:ParamRow">
-                  <DockPanel Margin="4,1">
-                    <TextBlock DockPanel.Dock="Left" Width="110" Text="{Binding Name}" Foreground="#9CDCFE" FontSize="12"
+                  <!-- A DockPanel, not a horizontal StackPanel, in each value cell: a StackPanel measures its text
+                       unbounded, so it neither wraps nor stays in its column. -->
+                  <Grid Margin="4,1" ColumnDefinitions="110,64,*,*">
+                    <TextBlock Grid.Column="0" Text="{Binding Name}" Foreground="#9CDCFE" FontSize="12"
                                FontFamily="Consolas, Menlo, monospace" TextTrimming="CharacterEllipsis"
                                ToolTip.Tip="{Binding Type}"/>
-                    <TextBlock DockPanel.Dock="Left" Width="64" Text="{Binding Kind}" Foreground="#808080" FontSize="11"
+                    <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="#808080" FontSize="11"
                                VerticalAlignment="Center"/>
-                    <StackPanel DockPanel.Dock="Left" Width="120" Orientation="Horizontal" Spacing="4">
+                    <DockPanel Grid.Column="2" Margin="0,0,8,0">
+                      <TextBlock DockPanel.Dock="Right" Text="{Binding AtCallMark}" Foreground="#808080" FontSize="10"
+                                 VerticalAlignment="Center" Margin="4,0,0,0"/>
                       <TextBlock Text="{Binding AtCall}" Foreground="#D4D4D4" FontSize="12" TextWrapping="Wrap"
                                  FontFamily="Consolas, Menlo, monospace" ToolTip.Tip="{Binding AtCall}"/>
-                      <TextBlock Text="{Binding AtCallMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                      <TextBlock Text="{StaticResource str.CT.Param.Changed}" IsVisible="{Binding Changed}"
-                                 Foreground="#E5A050" FontSize="12" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Changed}"/>
+                    </DockPanel>
+                    <DockPanel Grid.Column="3">
+                      <TextBlock DockPanel.Dock="Left" Text="{StaticResource str.CT.Param.Changed}" IsVisible="{Binding Changed}"
+                                 Foreground="#E5A050" FontSize="12" Margin="0,0,4,0"
+                                 ToolTip.Tip="{StaticResource str.Tip.CT.Param.Changed}"/>
+                      <TextBlock DockPanel.Dock="Right" Text="{Binding AfterMark}" Foreground="#808080" FontSize="10"
+                                 VerticalAlignment="Center" Margin="4,0,0,0"/>
                       <TextBlock Text="{Binding After}" Foreground="#DCDCAA" FontSize="12" TextWrapping="Wrap"
                                  FontFamily="Consolas, Menlo, monospace"/>
-                      <TextBlock Text="{Binding AfterMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
-                    </StackPanel>
-                  </DockPanel>
+                    </DockPanel>
+                  </Grid>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>

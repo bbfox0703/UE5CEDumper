@@ -613,10 +613,14 @@ public class CallTraceColumnsTests
         "bOverride_ColorContrast=False, WhiteTemp=6500.0, WhiteTint=0.0, ColorSaturation=(X=1.0,Y=1.0,Z=1.0,W=1.0))";
     private const string ShortAfter = "(bOverride_WhiteTemp=False)";
 
-    private static CallTracePanel ParamsShown(double detailPaneWidth)
+    /// <summary>The Parameters tab showing the long row, then <paramref name="more"/> short ones: enough of them make
+    /// the list scroll, which must not move its columns off the heading's.</summary>
+    private static CallTracePanel ParamsShown(double detailPaneWidth, int more)
     {
         var (_, panel, vm) = LaidIn(1000, detailPaneWidth, Row);
-        vm.ParamRows = new[] { new ParamRow { Name = "Settings", Kind = "in", AtCall = LongAtCall, After = ShortAfter } };
+        vm.ParamRows = new[] { new ParamRow { Name = "Settings", Kind = "in", AtCall = LongAtCall, After = ShortAfter } }
+            .Concat(Enumerable.Range(0, more).Select(i => new ParamRow { Name = $"F{i}", Kind = "in", AtCall = "0", After = "1" }))
+            .ToArray();
         var tabs = panel.GetVisualDescendants().OfType<TabControl>().Single();
         tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(t => Equals(t.Header, Header("str.CT.Tab.Params")));
         Dispatcher.UIThread.RunJobs();
@@ -624,12 +628,13 @@ public class CallTraceColumnsTests
     }
 
     [Theory]
-    [InlineData(520)]
-    [InlineData(700)]
-    public Task A_long_value_at_the_call_wraps_in_its_column_and_never_draws_over_the_one_after(double pane)
+    [InlineData(520, 0)]
+    [InlineData(700, 0)]
+    [InlineData(520, 80)]
+    public Task A_long_value_at_the_call_wraps_in_its_column_and_never_draws_over_the_one_after(double pane, int more)
         => Headless.Run(() =>
     {
-        var panel = ParamsShown(pane);
+        var panel = ParamsShown(pane, more);
         var at = Text(panel, LongAtCall);
         var after = Text(panel, ShortAfter);
         double atRight = VisibleRight(at, panel), afterLeft = Span(after, panel).left;
