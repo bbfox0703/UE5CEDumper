@@ -508,7 +508,7 @@ is rejected, silently changed, or stripped of its prefix.
 | VEX `vcmpss` with a memory operand: the m32 operand prints as `dqword ptr` | 7.7 | `Assemblerunit.pas:1796` (`par_xmm_m64`) |
 | Reserved NOPs `0F 18 /4-7` and `0F 19`–`0F 1E` print no text, so the error names nothing (memory and register forms, with or without `67`). `0F 1F` nop is fine | 7.7 | `disassembler.pas:2892-2945` (cases only for `0F 18 /0-3` and `0F 1F /0`) |
 | `shld` / `shrd` with the count in `cl` (16/32/64-bit, memory and register), and 16-bit `shrd` imm8 (`66 0F AC`). `shld` imm8 and 32/64-bit `shrd` imm8 are fine | 7.7 | — |
-| `prefetcht0/t1/t2/nta` (`0F 18 /0-3`): no spelling tried assembles, typed text included, and t0 prints as `prefetchto`. The t1/t2 RIP-relative forms were inferred, not measured; `prefetchw` is fine | 7.7 | `disassembler.pas:2903` (`prefetchto`); the 7.5 table names them `PREFETCH0/1/2` and `PREFETCHA` (`Assemblerunit.pas:1279-1282`) |
+| `prefetcht0/t1/t2/nta` (`0F 18 /0-3`): `reassemble()` fails (t0 prints as `prefetchto`), and typed text rejects every Intel spelling tried (`prefetcht0/t1/t2/nta`, with or without `byte ptr`); CE's own table spellings `PREFETCH0/1/2/A` were not tried. The t1/t2 RIP-relative forms were inferred, not measured; `prefetchw` is fine | 7.7 | `disassembler.pas:2903` (`prefetchto`); the 7.5 table names them `PREFETCH0/1/2` and `PREFETCHA` (`Assemblerunit.pas:1279-1282`) |
 
 *Silently assembles a different instruction* (x64 unless the row says otherwise)
 
@@ -566,7 +566,7 @@ the 7.5 source reads.
 | Defect | Seen | Where |
 |--------|------|-------|
 | RIP-relative text in a far cave (`alloc(newmem,$1000)`, no near address), e.g. `mov ecx,[game.exe+X]`, is refused at enable: `Failure assembling mov ecx,[...] at <far cave>`. No automatic absolute rewrite; only the accumulator moffs form `mov [addr],eax` enables (24 + 16 fixture rows) | 7.7 | — |
-| The syntax check (`autoAssembleCheck`) cannot see copy lines: it accepts `reassemble(INJECT)`, `readmem(...)` and RIP text in a far alloc, which a real enable treats differently or rejects. Only a real enable tests them | 7.7 | aobscan symbols become `DEFINE(x, 00000000)` (`autoassembler.pas:1070`, `:1135`, `:1209`, `:1263`), `readmem` reads nothing (`:2448-2451`, `:2466-2470`), the check returns before allocating (`:3297-3298`). The `reassemble()` part is 7.7 only: the 7.5 handler raises on address 0 (`:2517-2518`) |
+| The syntax check (`autoAssembleCheck`) cannot see copy lines: it accepted RIP text in a cave with no near address, which a real enable rejects ("Failure assembling ... at <far cave>"), and `readmem(...)`. It also accepted `reassemble(INJECT)` (and `INJECT+5`, and `reassemble(game.exe+1000)`) with `INJECT` from `aobscanmodule` while attached to the target -- which did not separate "the scan ran" from "the address-0 check is gone". Only a real enable tests copy lines | 7.7 | 7.5 source: a syntax-check aobscan becomes `DEFINE(x, 00000000)` (`autoassembler.pas:1070`, `:1135`, `:1209`, `:1263`) and the `reassemble()` handler then raises on address 0 (`:2517-2518`), so the `reassemble()` part is 7.7 only; `readmem` reads nothing (`:2448-2451`, `:2466-2470`); the check returns before allocating (`:3297-3298`) |
 
 **Disassembler text** — owner: none here. **Bites us: no.** Nothing we emit calls CE's disassembler
 or parses its text; the DLL's own disassembly is Zydis (`Denken`).
