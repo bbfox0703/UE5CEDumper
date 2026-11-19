@@ -456,8 +456,11 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 
 // UE 5.7+'s reordered item. outUE58Array (optional): TRUE when the struct matched UE 5.8's FUObjectArray,
 // which moved ObjObjects to +0x00 (Objects @+0x00, NumElements @+0x08) -- hand that base to Aura::Init,
 // whose "UE5.8" preset reads it; a UE 5.0-5.7 base goes to Aura::InitWithExtendedLayout.
+// [VND10-A1] outLicenseeArray (optional): TRUE when a licensee geometry matched; that base goes to Aura::Init too, whose
+// presets carry the licensee's rows, never to the forced 5.0-5.7 layout.
 uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr, bool* outCancelled = nullptr,
-                                   int* outItemObjOffset = nullptr, bool* outUE58Array = nullptr);
+                                   int* outItemObjOffset = nullptr, bool* outUE58Array = nullptr,
+                                   bool* outLicenseeArray = nullptr);
 
 // Find GWorld by iterating GObjects for UWorld instance, then scanning .data
 // for a static pointer to that instance.  Requires GObjects + GNames already initialized.

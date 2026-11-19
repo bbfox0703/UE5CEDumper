@@ -499,17 +499,18 @@ bool UE5_Init() {
             // layout is known — force UE5-Extended so Aura reads NumElements at +0x24.
             int staticStride = 0, staticObjOff = 0;
             bool staticCancelled = false;   // [P1-GENAU-ABORT]
-            bool staticUE58 = false;
+            bool staticUE58 = false, staticLicensee = false;
             uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,
-                                                                   &staticObjOff, &staticUE58);
+                                                                   &staticObjOff, &staticUE58, &staticLicensee);
             if (staticCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             if (staticBase) {
                 // [VND583-10] A UE 5.8 array keeps ObjObjects at +0x00, which is what Aura::Init's
                 // "UE5.8" preset reads. A 5.0-5.7 one is UE5-Extended; its stride is forced only for a
                 // classic item (Obsidian's 20 bytes), and a 5.7+ item (UObject* @+0x08) is left to the
                 // item auto-detection, which knows that shape -- InitWithExtendedLayout's forced mode
-                // would read the UObject* at +0x00.
-                if (staticUE58)
+                // would read the UObject* at +0x00. [VND10-A1] A licensee array goes to Aura::Init as well: its rows
+                // are Aura's presets, and the forced 5.0-5.7 layout would read its MaxChunks as Objects.
+                if (staticUE58 || staticLicensee)
                     Aura::Init(staticBase);
                 else
                     Aura::InitWithExtendedLayout(staticBase, staticObjOff == 0 ? staticStride : 0);

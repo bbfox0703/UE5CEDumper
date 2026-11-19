@@ -534,6 +534,10 @@ static const LayoutPreset s_chunkedPresets[] = {
     { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
     { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
     { "UE5.8",       { 0x00, 0x0C, 0x08, 0x14, 0x10 } },  // 5.8 dev: FUObjectArray fields reordered for cache locality, PreAllocatedObjects moved to end
+    // [VND10-A1] Phantom Blade Zero (UE 5.7.4): MaxChunks, NumChunks, Objects, NumElements, MaxElements. Appended last,
+    // so a stock array an earlier row takes never reaches it; this table also runs on base-anchored arrays, and
+    // ValidateChunkedLayout refuses it on each stock shape (dll_core_test's VND10-A1-01 controls).
+    { "PBZ",         { 0x08, 0x14, 0x10, 0x00, 0x04 } },
 };
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
@@ -561,6 +565,9 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
     // Appended after the rows above for the same first-match reason; on a stock UE5-Extended array +0x04 is
     // ObjLastNonGCIndex, which fails ValidateChunkedLayout's maxChunks bound, so it cannot steal one.
     { "UE5.7-Mistfall",    { 0x10, 0x20, 0x24, 0x04, 0x08 } },
+    // [VND10-A1] The s_chunkedPresets "PBZ" row, from the FUObjectArray base. Appended last for the same first-match
+    // reason; ValidateChunkedLayout refuses it on each stock shape (dll_core_test's VND10-A1-01 controls).
+    { "PBZ-Base",          { 0x18, 0x24, 0x20, 0x10, 0x14 } },
 };
 static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
 

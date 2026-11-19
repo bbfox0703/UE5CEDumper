@@ -240,7 +240,10 @@ static bool ValidateGObjects(uintptr_t addr) {
     // Includes chunk consistency checks and decryption support.
     // maxCOff/numCOff = -1 means "flat" layout (no chunk indirection).
     // Flat arrays: Objects* points directly to FUObjectItem[], not FUObjectItem*[].
-    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; } presets[] = {
+    // `wholeChunks`: the row also needs MaxElements == MaxChunks * 64K and NumChunks == NumElements / 64K + 1, the shape
+    // FUObjectArray::AllocateObjectPool leaves; a licensee row carries it because it is weaker evidence than a stock one.
+    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; bool wholeChunks = false; }
+        presets[] = {
         { 0x00, 0x10, 0x14, 0x18, 0x1C, "Default" },
         { 0x10, 0x00, 0x04, 0x08, 0x0C, "Back4Blood" },
         { 0x18, 0x10, 0x00, 0x14, 0x20, "Multiversus" },
@@ -280,6 +283,12 @@ static bool ValidateGObjects(uintptr_t addr) {
         // [VND584-03] Dumper-7's UE 5.7 "Mistfall Hunter" variant (a508058): MaxChunks +0x04, NumChunks +0x08,
         // Objects +0x10, MaxElements +0x20, NumElements +0x24, from the FUObjectArray base. Aura carries the same row.
         { 0x10, 0x20, 0x24, 0x04, 0x08, "UE5.7-Mistfall" },
+        // [VND10-A1] Phantom Blade Zero (UE 5.7.4, RE-UE4SS's MemberVariableLayout.ini): ObjObjects reordered to
+        // MaxChunks, NumChunks, Objects, NumElements, MaxElements, PreAllocatedObjects; at ObjObjects, then at the base.
+        // Appended last, so an address an earlier row takes never reaches them, and held to whole chunks, which pointer
+        // halves and GC counters do not form (dll_core_test's VND10-A1-01 controls).
+        { 0x08, 0x14, 0x10, 0x00, 0x04, "PBZ",      true },
+        { 0x18, 0x24, 0x20, 0x10, 0x14, "PBZ-Base", true },
     };
 
     for (auto& P : presets) {
@@ -295,6 +304,10 @@ static bool ValidateGObjects(uintptr_t addr) {
             if (!Macht::ReadSafe(addr + P.numCOff, numC)) continue;
             if (!Macht::ReadSafe(addr + P.maxCOff, maxC)) continue;
             if (numC < 1 || maxC < 1 || numC > maxC) continue;
+            if (P.wholeChunks
+                && (static_cast<int64_t>(max) != static_cast<int64_t>(maxC) * Grimoire::OBJECTS_PER_CHUNK
+                    || numC != num / Grimoire::OBJECTS_PER_CHUNK + 1))
+                continue;
         }
 
         uintptr_t objPtr = 0;
@@ -727,10 +740,16 @@ static bool IsCleanAsciiName(const std::string& s) {
 // and the 5.8 MaxChunks at +0x24 as "NumElements" -- as many clean names as there are chunks, and
 // a pool that holds only that many objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
 // and Num <= NumChunks * OBJECTS_PER_CHUNK, as a real array's counts always are.
-struct StaticArrayGeometry { int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; };
+// [VND10-A1] `licensee`: a game's own geometry, which Aura::Init reads by detection (its row is in Aura's presets). It is
+// listed last, held to whole chunks (MaxElements == MaxChunks * 64K, NumChunks == NumElements / 64K + 1), and loses a
+// tie to a stock geometry, so a stock array scores as it did.
+struct StaticArrayGeometry {
+    int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; bool licensee = false;
+};
 static const StaticArrayGeometry kStaticGeometries[] = {
     { 0x10, 0x24, 0x20, 0x2C, 0x28, false },   // UE 5.0-5.7: four GC int32s, then {Objects, PreAllocated, Max, Num, MaxChunks, NumChunks}
     { 0x00, 0x08, 0x0C, 0x10, 0x14, true  },   // UE 5.8: ObjObjects FIRST; {Objects, Num, Max, NumChunks, MaxChunks, PreAllocated}
+    { 0x18, 0x20, 0x24, 0x14, 0x10, false, true },   // Phantom Blade Zero: four GC int32s, then {MaxChunks, NumChunks, Objects, Num, Max, PreAllocated}
 };
 // 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
 // pair.
@@ -738,10 +757,11 @@ static const int kStaticStrides[] = { 0x14, 0x18, 0x10, 0x20, 0x28 };
 // The UObject* inside the item: +0x00 classic, +0x08 on UE 5.7+'s reordered item (FlagsAndRefCount first).
 static const int kStaticObjOffs[]  = { 0x00, 0x08 };
 
-static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr) {
+static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr,
+                                   bool* outLicensee = nullptr) {
     const int kProbe = 64;
     int bestClean = 0, bestStride = 0, bestObjOff = 0;
-    bool bestUE58 = false;
+    bool bestUE58 = false, bestLicensee = false;
     for (const StaticArrayGeometry& g : kStaticGeometries) {
         uintptr_t chunkTable = 0;
         if (!Macht::ReadSafe(base + g.objectsOff, chunkTable)) continue;     // ObjObjects.Objects
@@ -754,6 +774,8 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
             || !Macht::ReadSafe(base + g.maxChunksOff, maxC)) continue;
         if (num > maxE || numC < 1 || numC > maxC
             || static_cast<int64_t>(num) > static_cast<int64_t>(numC) * Grimoire::OBJECTS_PER_CHUNK) continue;
+        if (g.licensee && (static_cast<int64_t>(maxE) != static_cast<int64_t>(maxC) * Grimoire::OBJECTS_PER_CHUNK
+                           || numC != num / Grimoire::OBJECTS_PER_CHUNK + 1)) continue;
         uintptr_t chunk0 = 0;
         if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) continue;
 
@@ -778,6 +800,7 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
                     bestStride = stride;
                     bestObjOff = objOff;
                     bestUE58 = g.ue58;
+                    bestLicensee = g.licensee;
                 }
             }
         }
@@ -785,13 +808,16 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
     if (outStride) *outStride = bestStride;
     if (outObjOff) *outObjOff = bestObjOff;
     if (outUE58) *outUE58 = bestUE58;
+    if (outLicensee) *outLicensee = bestLicensee;
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array,
+                                   bool* outLicenseeArray) {
     if (outItemStride) *outItemStride = 0;
     if (outItemObjOffset) *outItemObjOffset = 0;
     if (outUE58Array) *outUE58Array = false;
+    if (outLicenseeArray) *outLicenseeArray = false;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
     uintptr_t modBase = Macht::GetModuleBase(nullptr);
@@ -850,26 +876,30 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* 
     // member of the struct, so step back up to ObjAvailableList (+0x58) to find the base.
     uintptr_t bestBase = 0;
     int bestScore = 0, bestStride = 0, bestObjOff = 0;
-    bool bestUE58 = false;
+    bool bestUE58 = false, bestLicensee = false;
     auto publish = [&]() {
         if (outItemStride) *outItemStride = bestStride;
         if (outItemObjOffset) *outItemObjOffset = bestObjOff;
         if (outUE58Array) *outUE58Array = bestUE58;
+        if (outLicenseeArray) *outLicenseeArray = bestLicensee;
         Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d, "
                    "item object @+0x%02X, %s array)", static_cast<unsigned long long>(bestBase), bestScore,
-                   bestStride, bestObjOff, bestUE58 ? "UE5.8" : "UE5.0-5.7");
+                   bestStride, bestObjOff, bestLicensee ? "licensee" : bestUE58 ? "UE5.8" : "UE5.0-5.7");
     };
     for (uintptr_t tgt : targets) {
         for (int off = -0x58; off <= 0x10; off += 8) {
             int stride = 0, objOff = 0;
-            bool ue58 = false;
-            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58);
-            if (score > bestScore) {
+            bool ue58 = false, licensee = false;
+            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58, &licensee);
+            // [VND10-A1] A stock geometry also takes a tie from a licensee one, so where both read the same objects
+            // the stock reading stands.
+            if (score > bestScore || (score > 0 && score == bestScore && bestLicensee && !licensee)) {
                 bestScore = score;
                 bestBase = tgt + off;
                 bestStride = stride;
                 bestObjOff = objOff;
                 bestUE58 = ue58;
+                bestLicensee = licensee;
             }
         }
         // [VND583-10] Unambiguous: a dense run of clean core objects -- but decided only once this

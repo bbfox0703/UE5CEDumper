@@ -14881,11 +14881,17 @@ int main() {
         {
             buildPbz(table, 65, 3, 153466, 4259840);
             int stride = 0, objOff = -1;
-            bool ue58 = true;
-            const int score = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58);
+            bool ue58 = true, licensee = false;
+            const int score = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58, &licensee);
             check("VND10-A1-01 ⭐: the static scorer reads a PBZ array at its base (the recovery's way back from Objects)",
                   score >= 32 && stride == 0x18 && objOff == 0 && !ue58,
                   ("score " + std::to_string(score) + " stride " + std::to_string(stride)).c_str());
+            check("VND10-A1-01 ⭐: ...as a licensee array, which Frieren hands to Aura::Init", licensee);
+            // The licensee geometry is held to whole chunks: the same array one chunk short of its MaxElements is not one.
+            buildPbz(table, 65, 3, 153466, 4259840 - 0x10000);
+            const int shortScore = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: a PBZ-shaped array whose MaxElements is not MaxChunks * 64K scores 0",
+                  shortScore == 0, ("score " + std::to_string(shortScore)).c_str());
         }
 
         // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
@@ -14945,10 +14951,15 @@ int main() {
             // The static scorer's stock geometries still answer for their own arrays, and say so.
             const uintptr_t addr = buildStock(stock[1], table, 6, 1, 0x4000, 0x60000);
             int stride = 0, objOff = -1;
-            bool ue58 = true;
-            const int score = Genau::ScoreGObjectsStaticBase(addr, &stride, &objOff, &ue58);
-            check("VND10-A1-01 control: a stock 5.0-5.7 static array still scores as one",
-                  score >= 32 && stride == 0x18 && !ue58, ("score " + std::to_string(score)).c_str());
+            bool ue58 = true, licensee = true;
+            const int score = Genau::ScoreGObjectsStaticBase(addr, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: a stock 5.0-5.7 static array still scores as one, and not as a licensee's",
+                  score >= 32 && stride == 0x18 && !ue58 && !licensee, ("score " + std::to_string(score)).c_str());
+            // 8 below that stock array, the licensee geometry reads its Objects (at +0x18) and its PreAllocatedObjects
+            // halves (0) as Num / Max: refused, so the stock base is the only reading.
+            const int below = Genau::ScoreGObjectsStaticBase(addr - 8, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: 8 below a stock 5.0-5.7 array, no geometry reads it as a licensee array",
+                  !(below > 0 && licensee), ("score " + std::to_string(below)).c_str());
         }
 
         Aura::Init(pool.Addr());
