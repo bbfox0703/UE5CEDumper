@@ -82,6 +82,69 @@ public class CeModuleViewTests
 
     // ── the consumers ──
 
+    /// <summary>[CE76-PROCESS-GLOBAL] Every AOB-scan script names the module it scans from the opened process's own
+    /// module list, not from CE's <c>process</c> global, which CE 7.6 overwrites with its own exe name once any table
+    /// registers a custom type. The expression each script hands <c>AOBScanModuleUE</c> runs on CE's Lua VM with that
+    /// state stubbed: it gives the game's first module, nil with no process open (process id 0 lists CE's own
+    /// modules), and the global only when the module list is empty.</summary>
+    [Fact]
+    public void AobScanScripts_NameTheMainModule_WithoutTheProcessGlobal()
+    {
+        const string aob = "48 8B 1D ?? ?? ?? ??";
+        var trainer = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
+        {
+            Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
+            GWorldAob = aob, GWorldAobPos = 3, GWorldAobLen = 7,
+        })[0].Script;
+        var export = CeXmlExportService.ExtractAssemblerScript(CeXmlExportService.GenerateAobWrappedXml(
+            "World", new[] { new BreadcrumbItem { Address = "0xA", Label = "World", FieldName = "World" } },
+            new List<LiveFieldValue> { new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 } },
+            aob: aob, aobPos: 3, aobLen: 7, moduleName: "Game-Win64-Shipping.exe"));
+        var walk = CeXmlExportService.ExtractAssemblerScript(CeXmlExportService.GenerateGWorldWalkedSymbolXml(
+            "BP_Test",
+            new List<BreadcrumbItem>
+            {
+                new() { Address = "0x1000", Label = "GWorld", FieldName = "GWorld" },
+                new() { Address = "0x2000", Label = "PersistentLevel", FieldName = "PersistentLevel",
+                        FieldOffset = 0x30, IsPointerDeref = true },
+            },
+            useAob: true, aob: aob, aobPos: 3, aobLen: 7, gworldSlotAddr: ""));
+
+        string lua = """
+            local GAME, CE = 'Game-Win64-Shipping.exe', 'cheatengine-x86_64.exe'
+            local pid, mods = 0, {}
+            function getOpenedProcessID() return pid end
+            function synchronize(f, ...) return f(...) end
+            function enumModules() return mods end
+            local function check(name, resolve)
+              process = CE   -- what CE 7.6 leaves once a table registers a custom type
+              pid, mods = 4242, { { Name = GAME, Address = 0x140000000, Size = 0x1000 },
+                                  { Name = 'ntdll.dll', Address = 0x7FF800000000, Size = 0x1000 } }
+              assert(resolve() == GAME, name .. ': scans ' .. tostring(resolve()) .. ', not the game')
+              pid, mods = 0, { { Name = CE, Address = 0x10000, Size = 0x1000 } }   -- process id 0 snapshots CE itself
+              assert(resolve() == nil, name .. ': names ' .. tostring(resolve()) .. ' with no process open')
+              pid, mods, process = 4242, {}, GAME
+              assert(resolve() == GAME, name .. ': an empty module list does not fall back to the process global')
+            end
+            """;
+        foreach (var (name, script) in new[] { ("trainer", trainer), ("export", export), ("GWorld walk", walk) })
+        {
+            var call = Regex.Match(script, @"(?<!function )AOBScanModuleUE\((\w+),");
+            Assert.True(call.Success, $"{name}: no AOBScanModuleUE call");
+            string module = call.Groups[1].Value;
+            string expr = module == "process"
+                ? module
+                : Regex.Match(script, $@"^\s*local {module} = ([^\r\n]+)", RegexOptions.Multiline)
+                    .Groups[1].Value.Trim();
+            Assert.False(expr is "process" or "", $"{name}: the scan module is CE's process global ({expr})");
+            lua += $"\ncheck('{name}', function() return {expr} end)";
+        }
+        lua += "\nprint('OK')\n";
+
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0 && output.Contains("OK"), output);
+    }
+
     [Fact]
     public async Task ObjectTree_CopyAddress_ModuleOffset_UsesCesNameForTheModule()
     {
