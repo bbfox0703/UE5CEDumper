@@ -33,7 +33,8 @@ platform-env   run `build.ps1 -Target AsanConfigure` with only Platform added to
                so it shows the clear happens, not what MSBuild then receives.
 inherited-stripped  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment whose PATH
                was replaced by the given folders, as MSYS2's minimal PATH does: VSCMD_ARG_TGT_ARCH says x64, but no
-               MSVC tool is on PATH. Include folders for Python, git and dotnet: build.ps1 checks for them first.
+               MSVC tool is on PATH. Include folders for Python, git and dotnet: build.ps1 checks for them first. For
+               git, Git's cmd folder, not its usr/bin, which holds a coreutils link.exe.
                PASS: exit 0, and the new cache names MSVC's cl.exe and link.exe.
 inherited-stale-toolset  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment in
                which the toolset version is replaced by one that is not installed, everywhere it appears: a prompt
