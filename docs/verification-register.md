@@ -1151,6 +1151,18 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
     row 1's proxy-mode `trigger_scan`.
 
+### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
+
+A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
+(dll_helpers_test, dll_core_test, PointerPanelVersionGateTests, DumpAllServiceTests) and swept over 174 exes (84 read a version
+string at some tier) with no reading changed. No 5.9 title exists, and no 5.9 engine is installed here to package a fixture.
+
+1. ⬜ **The first 5.9 title or fixture** (a DumperTest packaged with a 5.9 preview engine). Acceptance: the scan log
+   reads UE 509 at the tier that answers (the PE version resource first; a stripped one through a version string);
+   the ProcessEvent line says EXTRAPOLATED with slot `0x250` (no 5.9 row is measured) and the hook works; a
+   `ParticleSystemComponent` class is left out of a GameOnly Dump All; the AOB no-regression run includes `GWLD_SF_2`,
+   whose anchor's source changes in 5.9.
+
 ### 🟡 The scan log's linker and Wine lines (build 3770) — `[SCAN-LINKER-LOG-2026-11-19]`
 
 `FindAll` logs `main module linker = <msvc|lld|lld*|unknown> (...)` beside the PE hash, `running under Wine <version>
@@ -1442,7 +1454,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

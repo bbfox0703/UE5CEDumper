@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3772) — UE 5.9 is recognised `[VND9-05]` `[VENDOR-AUDIT10-2026-11-19]`
+
+- **What changes:**
+  - **Version detection:** a UE 5.9 game reads as 5.9 (509) at every version-string tier; before, one whose version
+    resource did not answer read as 5.8. Cached detections run once more (detection logic rev 12).
+  - **Pointer panel:** the UE version override list offers UE 5.9.
+  - **Game-only filters:** UE 5.9 moves Cascade into a plugin; its classes (`ParticleSystemComponent`, the
+    `ParticleModule*` set) now count as engine in the DLL's game-only filters, Dump All's GameOnly skip and the
+    analysis scripts.
+  - The ProcessEvent slot for 5.9 is not measured yet, so a 5.9 game uses 5.8's slot and the log says so.
+- **Vendor audit #10** (`docs/audit-2026-11-19-vendor-delta10.md`): what `sync_tools.ps1` brought in; this build is its
+  `VND10-A2`. zydis stays held (recorded in `vendor-pin-reviews.md`).
+- **Tests:** each part red, then green; `tools/verify/needle_sweep/` swept 174 exes (the corpus and both Steam
+  libraries; 84 of them read a version string at some tier) with the old and the new needle table: none reads
+  differently, none is unreadable, and a planted 5.9 control does. An
+  independent review found no fault in the shipped code; its findings on the sweep rig, a survey script, a test and
+  three comments are fixed. C# 8523 (1 skipped), headless 74, the five C++ self-tests, 40 gates.
+- AOT UI 62,868,992 bytes (sha256 fbaaa7493dc32d24...); UE5Dumper.dll 3,857,920 bytes (sha256 e9c16be431ab5e83...).
+
 ## 2026-11-19 (no build change) — Build 3771's parameter-copy memory measured on a game `[LIVEFUNCS-UI-SNAP-MEMORY]`
 
 - **Live, DumperTest58 Shipping, the run that found it** (two CameraModifier functions, the 32 MB buffer, 162 s,
