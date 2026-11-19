@@ -61,7 +61,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
     private Serilog.Core.Logger? _mirrorPipeLogger;
     private Serilog.Core.Logger? _mirrorViewLogger;
 
-    public LoggingService(string logDirectory)
+    /// <param name="writeToConsole">Also echo every message to the console. The app does; a test that writes
+    /// megabytes to exercise rolling passes false, or the test run's console fills with it.</param>
+    public LoggingService(string logDirectory, bool writeToConsole = true)
     {
         _logDirectory = logDirectory;
         Directory.CreateDirectory(logDirectory);
@@ -87,11 +89,11 @@ public sealed class LoggingService : ILoggingService, IDisposable
         _pipeLogger = CreateFileLogger(Path.Combine(_moduleDir, "pipe-0.log"));
         _viewLogger = CreateFileLogger(Path.Combine(_moduleDir, "view-0.log"));
 
-        // Console logger (shared across all categories)
-        _consoleLogger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}")
-            .CreateLogger();
+        // Console logger (shared across all categories); with no sink it drops every event.
+        var console = new LoggerConfiguration().MinimumLevel.Debug();
+        if (writeToConsole)
+            console = console.WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}");
+        _consoleLogger = console.CreateLogger();
 
         // Retention, in cheapest-first order: whole aged-out folders, then the
         // per-file orphan sweep over whatever survived.
@@ -145,8 +147,8 @@ public sealed class LoggingService : ILoggingService, IDisposable
     // ================================================================
 
     /// <summary>[PATH-SERILOG-BRACES] The one message template every category method uses: the text is a PROPERTY,
-    /// written as-is (:l = no quotes). Passed as the template itself, Serilog parsed it -- a doubled brace in a path
-    /// ("A{{B}}") was logged single, and the leftover finder recovers deploy paths from this log.</summary>
+    /// written as-is (:l = no quotes). Passed as the template itself, Serilog would parse it -- a doubled brace in a
+    /// path ("A{{B}}") would be logged single, and the leftover finder recovers deploy paths from this log.</summary>
     private const string Verbatim = "{Message:l}";
 
     public void Info(string category, string message)
@@ -226,8 +228,8 @@ public sealed class LoggingService : ILoggingService, IDisposable
             _initLogger.Information("Process mirror log started: {MirrorDir}", mirrorDir);
             newInit.Information("Mirror log started for process: {Process}", processName);
 
-            // No folder-count cleanup here — see the AF9 note above. Folder retention
-            // is CleanupOldLogFolders(LogMaxAgeDays), which the constructor already ran.
+            // No folder-count cleanup here — retention is by age (see the class summary). Folder
+            // retention is CleanupOldLogFolders(LogMaxAgeDays), which the constructor already ran.
         }
         catch (Exception ex)
         {
@@ -281,9 +283,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
                 // (Sein::RotateIfNeeded) does.
                 rollOnFileSizeLimit: true,
                 // Serilog defaults this to 31 as soon as rolling is enabled. A COUNT limit
-                // is precisely the retention policy this project deliberately replaced with
-                // an age-based one, so leaving it defaulted would reinstate generation-count
-                // eviction by the back door. Retention stays owned by PruneAgedLogs, which
+                // is precisely the retention policy this project deliberately does not use
+                // (retention is by age), so leaving it defaulted would bring generation-count
+                // eviction in by the back door. Retention stays owned by PruneAgedLogs, which
                 // still sees the rolled files ("{prefix}-0_001.log" matches its "{prefix}-*.log"
                 // glob). ⚠ Its live-file guard knows only "-0.log": in a session that has
                 // rolled, the ACTIVE file is the newest "-0_NNN.log" -- harmless to an AGE prune
@@ -303,10 +305,10 @@ public sealed class LoggingService : ILoggingService, IDisposable
     /// Slot 0 is free for the new session afterwards.
     /// </summary>
     /// <remarks>
-    /// Replaces the old fixed generation shuffle (delete N-1, shift the rest). That
-    /// scheme could not express an age: it ran on every startup, so a few restarts
-    /// discarded everything before them no matter how recent. Retention is now by
-    /// age via <see cref="PruneAgedLogs"/>, matching the DLL's Sein logger.
+    /// No fixed generation shuffle (delete N-1, shift the rest): such a scheme cannot
+    /// express an age, since it runs on every startup and a few restarts discard
+    /// everything before them no matter how recent. Retention is by age via
+    /// <see cref="PruneAgedLogs"/>, matching the DLL's Sein logger.
     /// Stamping from the file's own mtime rather than "now" is what keeps the age
     /// prune honest — otherwise archiving would reset a stale log's clock.
     /// </remarks>
@@ -317,9 +319,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
             ArchiveOne(Path.Combine(directory, $"{prefix}-0.log"), directory, prefix);
 
             // [A1-LOG-RESUME] ...and the files it ROLLED into. Serilog.Sinks.File, with no checkpoint, resumes the
-            // highest-sequence "{prefix}-0_NNN.log" it finds -- so once a category had rolled past the 8 MB cap, every
-            // later session appended to that old file and "-0.log" was never created again. Oldest first (the sequence
-            // order), so a same-second pair keeps its order in the de-duplicated names.
+            // highest-sequence "{prefix}-0_NNN.log" it finds -- so without this, once a category has rolled past the
+            // 8 MB cap, every later session would append to that old file and "-0.log" would never be created again.
+            // Oldest first (the sequence order), so a same-second pair keeps its order in the de-duplicated names.
             foreach (var rolled in Directory.GetFiles(directory, $"{prefix}-0_*.log")
                                             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
                 ArchiveOne(rolled, directory, prefix);
@@ -393,11 +395,10 @@ public sealed class LoggingService : ILoggingService, IDisposable
     /// <para><b>Why this is needed.</b> <see cref="PruneAgedLogs"/> globs
     /// <c>{prefix}-*.log</c> for each prefix in the CURRENT category list, so the
     /// moment a category is renamed or retired its files stop matching any glob and
-    /// live forever. Observed in the wild: the UI folder still held
-    /// <c>walk-0.log</c>…<c>walk-3.log</c> and <c>ui-view-1.log</c> from a 2026-03
-    /// build five months later — <c>walk</c> is no longer a UI category, and the
-    /// <c>ui-</c> mirror prefix is only ever a GAME-folder shape. Being named
-    /// <c>-0.log</c>, they also slipped past that method's live-file guard.</para>
+    /// live forever: <c>walk-0.log</c> in the UI folder, for one (<c>walk</c> is not a
+    /// UI category), or a file there with the <c>ui-</c> mirror prefix, which is only
+    /// ever a GAME-folder shape. Named <c>-0.log</c>, such files also slip past that
+    /// method's live-file guard.</para>
     ///
     /// <para><b>Why age alone is the right (and safe) rule.</b> This deliberately
     /// knows nothing about categories, which is what lets it sweep the DLL-written
@@ -486,10 +487,10 @@ public sealed class LoggingService : ILoggingService, IDisposable
                 var suffix = name[(prefix.Length + 1)..];
 
                 // Keep the live file and any legacy 1-digit generation ("...-0").
-                // Bounded to ONE digit deliberately: the original check was an
-                // unbounded int.TryParse, and "20260304" parses fine (it fits in
-                // int32), so every daily-format file took this branch — meaning
-                // this method never once deleted the format it exists to remove.
+                // Bounded to ONE digit deliberately: under an unbounded int.TryParse
+                // "20260304" parses fine (it fits in int32), so every daily-format
+                // file would take this branch — and this method would never delete
+                // the format it exists to remove.
                 if (suffix.Length == 1 && char.IsAsciiDigit(suffix[0])) continue;
 
                 // Keep our OWN archives — "YYYYMMDD-HHMMSS" (optionally "-N" on a

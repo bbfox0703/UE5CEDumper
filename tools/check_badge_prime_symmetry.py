@@ -8,24 +8,21 @@ reconnect for as long as the game lives, so the connect branch has to read each 
 back or the card lies by omission: a still-active Fly or Move Speed hold shows as "never
 asked" and the user has no sign the game is still modified.
 
-Before 2026-09-10 the connect branch primed THREE badges and the disconnect branch reset
-twelve. Nine cards were therefore permanently unprimed, which is `[BADGEPRIME]`
--- observed live on a Shipping fixture, with God Mode and Time Dilation (the two that WERE
-primed) rendering correctly as the control.
+A card the disconnect branch resets and the connect branch never primes stays unprimed
+for good, which is `[BADGEPRIME]`.
 
 ⛔ WHY A GATE AND NOT A TYPE. The obvious fix is one table of cards, each carrying its own
-reset and prime, so the two cannot diverge. That was considered and REJECTED for now:
-`SetConnected` carries four findings' worth of subtle behaviour (B9's connect/disconnect
-asymmetry, B17's pose clear, B26's pushed-symbol reset, L13's stealth card), and rewriting
-it wholesale is a poor trade against a check that costs nothing. Phase 4 of the audit-#4
-assessment says exactly this: prefer the structure, keep the gate only if the structure is
-rejected. If the table is ever built, DELETE this gate rather than keeping both.
+reset and prime, so the two cannot diverge. That is REJECTED: `SetConnected` carries
+subtle behaviour (the connect/disconnect asymmetry, the pose clear, the pushed-symbol
+reset, the stealth card), and rewriting it wholesale is a poor trade against a check that
+costs nothing. Prefer the structure, and keep the gate only while the structure is
+rejected: if the table is ever built, DELETE this gate rather than keeping both.
 
 ⚠ THE PREDICATE IS SYMMETRY, NOT A LIST. It reads both branches out of the source, so a
 card added tomorrow is covered without editing this file. There is no baseline and no
 allowlist -- the legitimate population of "reset but never primed" is empty by
-construction, which is the only kind of predicate worth gating here (proposed gate #17 was
-refuted, and 17b re-scoped, for failing exactly that test).
+construction, which is the only kind of predicate worth gating here: one whose population
+must be enumerated decays into an allowlist.
 """
 from __future__ import annotations
 
@@ -39,8 +36,9 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 VM = REPO / 'ui/UE5DumpUI/ViewModels/TeleportViewModel.cs'
 
 RESET = re.compile(r'(Apply\w+State)\s*\(\s*(?:[A-Za-z.]+\s*,\s*)?-1\s*\)')
-# [A4-STEALTH-PRIME] The TUPLE form, `(XState, XBadgeColor) = (...)`. The Stealth card was reset that way, so this gate
-# printed CHECK OK over a badge nothing primed. A tuple reset of property `XState` counts as badge `ApplyXState`.
+# [A4-STEALTH-PRIME] The TUPLE form, `(XState, XBadgeColor) = (...)`. RESET cannot see a card reset that way, so
+# without this the gate prints CHECK OK over a badge nothing primes. A tuple reset of property `XState` counts as
+# badge `ApplyXState`.
 TUPLE = re.compile(r'\(\s*(\w+)State\s*,\s*\w+\s*\)\s*=\s*\(')
 IDENT = re.compile(r'(\w+Async)')
 DECL = r'\b(?:private|public|internal)[^\r\n]*?\b%s\s*\('
@@ -81,8 +79,8 @@ def analyse(src: str) -> tuple[set, set, set]:
     reset = {m.group(1) for m in RESET.finditer(disconnect)}
     reset |= {'Apply%sState' % m.group(1) for m in TUPLE.finditer(disconnect)}
 
-    # ⚠ TRANSITIVE CLOSURE TO A FIXPOINT, not a hand-unrolled two levels. The first
-    # version walked exactly two levels and reported EVERY badge unprimed -- a checker
+    # ⚠ TRANSITIVE CLOSURE TO A FIXPOINT, not a hand-unrolled two levels. A walk of
+    # exactly two levels reports EVERY badge unprimed -- a checker
     # that is wrong in the RED direction is the dangerous kind, because it looks like a
     # finding rather than like a bug in the checker.
     #

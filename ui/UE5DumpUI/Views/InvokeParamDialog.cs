@@ -276,7 +276,7 @@ public sealed class InvokeParamDialog : Window
         };
         bottomPanel.Children.Add(_resultLabel);
 
-        // Structured-return property grid (pick #5, build 772+). Visible
+        // Structured-return property grid. Visible
         // only when the function's return param is a StructProperty
         // whose layout we can resolve (KnownStructLayouts hit OR DLL-
         // supplied dynamic StructFields). Three columns mirror the
@@ -365,7 +365,7 @@ public sealed class InvokeParamDialog : Window
                 }
                 else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
                 {
-                    // Phase B: DLL-discovered dynamic struct layout
+                    // DLL-discovered dynamic struct layout
                     expandFields = p.StructFields;
                     expandSource = "dynamic";
                 }
@@ -439,7 +439,7 @@ public sealed class InvokeParamDialog : Window
                     var structSuffix = (p.TypeName == "StructProperty" && !string.IsNullOrEmpty(p.StructName))
                         ? $" ({p.StructName})"
                         : "";
-                    // Stage 1: surface the expected UClass for pointer-flavoured
+                    // Surface the expected UClass for pointer-flavoured
                     // params so the user knows what kind of object the param wants
                     // (e.g. "UObject*: AActor" instead of bare "UObject*"). Empty
                     // ObjectClassName falls through to the original label.
@@ -448,7 +448,7 @@ public sealed class InvokeParamDialog : Window
                         : "";
                     var label = $"{p.Name}  [{shortType}{objClassSuffix}{structSuffix}, {p.Size}B, off={p.Offset}{(p.IsOut ? ", out" : "")}]";
 
-                    // Stage 2: the pickable pointer-flavoured params (see
+                    // The pickable pointer-flavoured params (see
                     // ParamBufferBuilder.IsPickablePointerType) get three extra
                     // buttons after the textbox — [Pick…] [null] [self].
                     // Non-pointer params keep the original two-column layout.
@@ -486,7 +486,7 @@ public sealed class InvokeParamDialog : Window
                     if (isPointer)
                     {
                         // [Pick…] — opens the live-instance picker pre-filtered
-                        // to the param's expected UClass (from Stage 1). Greyed
+                        // to the param's expected UClass (ObjectClassName). Greyed
                         // out when ObjectClassName is empty because the picker
                         // has nothing to pre-seed; users can still use the
                         // textbox directly or go via the full InstanceFinder
@@ -556,7 +556,7 @@ public sealed class InvokeParamDialog : Window
         Content = root;
     }
 
-    // Stage 2: pointer-param helper buttons. Each handler is light enough to
+    // Pointer-param helper buttons. Each handler is light enough to
     // inline; centralising them here keeps the row-construction code at
     // declaration site readable.
 
@@ -832,7 +832,7 @@ public sealed class InvokeParamDialog : Window
         _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
         _resultLabel.Text = string.Join("\n", lines);
 
-        // Pick #5: structured return-value DataGrid. Decode the return
+        // Structured return-value DataGrid. Decode the return
         // param's struct sub-fields (when present) and surface them as
         // a small property grid below the text decode. Hidden when the
         // return is non-struct or no layout is resolvable; the existing
@@ -990,8 +990,8 @@ public sealed class InvokeParamDialog : Window
                 if (!copied)
                 {
                     // CopyToClipboardAsync never throws — it reports failure. Claiming a
-                    // successful copy over a clipboard that does not hold the script is
-                    // the same defect as Y14 one branch up.
+                    // successful copy over a clipboard that does not hold the script would
+                    // report a delivery that never happened.
                     _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
                     _resultLabel.Text = "ERROR: could not write to the clipboard — the AA " +
                         "Script was NOT delivered. Another application may be holding the " +
@@ -1277,7 +1277,7 @@ public sealed class InvokeParamDialog : Window
     /// post-call readout above and <see cref="Services.StructReturnDecoder"/>'s return grid, so
     /// the two cannot drift.
     ///
-    /// <para>[A3-FIRE-STRUCT-BOOLMASK], the READ side (B05): a PACKED bool shares its
+    /// <para>[A3-FIRE-STRUCT-BOOLMASK], the READ side: a PACKED bool shares its
     /// byte with sibling bools (FHitResult's bBlockingHit / bStartPenetrating), so it reads only
     /// its own bit. A mask that is not a single bit — 0 (unresolved) or 0xFF — keeps the
     /// whole-byte read, the same fallback <c>Ubel::PreviewScalarValue</c> uses DLL-side; a bare

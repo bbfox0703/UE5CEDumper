@@ -26,9 +26,9 @@
 #include "Macht.h"
 #include "Grimoire.h"
 #include "Stark.h"      // Stark::kInvokeTimedOutStillQueued -- a queued Debug Camera toggle [W3-DEBUGCAM-QUEUED]
-#include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
-#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
-#include "Voll.h"      // Voll::Holds -- who holds what (Stage D2-1)
+#include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death
+#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate
+#include "Voll.h"      // Voll::Holds -- who holds what
 #include "Land.h"      // Land::MirroredState / kMaxCopies -- an earlier copy's mailbox served here
 
 #include <Windows.h>
@@ -36,7 +36,7 @@
 
 #include <atomic>
 #include <cstring>
-#include <exception>   // std::uncaught_exceptions — CompoundOpGuard's unwind branch (MB3)
+#include <exception>   // std::uncaught_exceptions — CompoundOpGuard's unwind branch
 #include <mutex>
 #include <string>
 #include <thread>
@@ -90,9 +90,9 @@ static HANDLE s_hThread = nullptr;
 
 // Mailbox poll interval. CE Lua's invokeUFunction blocks waiting for the
 // status flag to flip — every ms shaved off this interval is shaved off the
-// per-invoke wall-clock latency. Was 10ms historically; lowered to 1ms so a
-// tight Lua loop of N invokes doesn't accumulate (N × ~5ms) of pure idle
-// time inside the polling loop. CPU cost at idle: one thread ticks 1000x/sec
+// per-invoke wall-clock latency. At 1ms a tight Lua loop of N invokes does
+// not accumulate pure idle time inside the polling loop, as a 10ms interval
+// would (~5ms per invoke). CPU cost at idle: one thread ticks 1000x/sec
 // doing a handful of volatile reads — negligible. The polling thread bumps
 // the Windows timer resolution to 1ms via timeBeginPeriod so Sleep(1) really
 // delivers ~1ms on the few systems that still default to the legacy 15.6ms
@@ -441,7 +441,7 @@ static void ServeOne(MailboxData* box, bool& warnedThrow) {
 
 // Guarded thread entry. The poller resolves names, walks reflection and builds result
 // buffers straight out of a live game, so it allocates constantly — and it is a raw
-// CreateThread proc, where a throw is std::terminate. (B14)
+// CreateThread proc, where a throw is std::terminate.
 static DWORD WINAPI PollingThreadProc(LPVOID /*param*/) {
     Routine::RunThreadGuarded("Mailbox", [] { PollingThreadBody(); });
     return 0;
@@ -459,7 +459,7 @@ static void PollingThreadBody() {
     // resolvers in Wirbel/Solitar/Laufen/Hemmung — and still report scanned=<full pool>.
     // NOT MarkBackgroundWorker(): that also refuses (-8) the off-game-thread invoke
     // fallback, a policy scoped to repeating workers. These are the user's one-shot
-    // CE invokes. (B4)
+    // CE invokes.
     Tot::MarkCancelImmune();
     // [D2-3-INVOKE] Every invoke this thread queues is CE's, for the queue's owner rule: an AI invoke reports a
     // conflict with one CE has outstanding. CE never sends if_free, so its own invokes always queue.
@@ -479,7 +479,7 @@ static void PollingThreadBody() {
                  "may fall back to system default", kPollIntervalMs, tbpRc);
     }
 
-    // Audit doc #8: g_invokeMailbox is a plain struct (no atomics). Reads
+    // g_invokeMailbox is a plain struct (no atomics). Reads
     // are correct here under the assumption that the writer (CE Lua) uses
     // WriteProcessMemory, which kernel-serializes on x86/x64 with the
     // platform's strong memory model — so cross-process writes become
@@ -579,7 +579,7 @@ uintptr_t GetAddress() {
 
 // [R7-S9] The globals are published INSIDE the fence (UE5_Init after FindAll, apply_rescan after BeginApply), so read
 // them FIRST and the flag LAST: seeing a published GObjects then guarantees seeing the flag that preceded it. As
-// arguments to one call the reads had no order at all -- C++ leaves argument evaluation unspecified.
+// arguments to one call the reads would have no order at all -- C++ leaves argument evaluation unspecified.
 static bool InitSettled() {
     const bool haveGObjects = g_cachedGObjects != 0;
     const bool haveGNames   = g_cachedGNames != 0;
@@ -737,7 +737,7 @@ static void HandleInvoke() {
     // Without this short-circuit, an idle game (main menu / loading
     // screen) leaves the GameThreadDispatch queue undrained and every
     // pure-helper invoke times out at the configured deadline (default
-    // 5s, observed in ES2 logs even at 7s). The user has no clue why a
+    // 5s). The user has no clue why a
     // simple `exp(8)` math helper would time out -- the call doesn't
     // need a game thread at all.
     //
@@ -761,7 +761,7 @@ static void HandleInvoke() {
     FunctionInfo fi{};   // global scope, like Fern's Linie query path
     const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
 
-    // [UE-OVERRIDE-411] review 2: ProcessEvent writes into this fixed slab (or into the queued
+    // [UE-OVERRIDE-411] ProcessEvent writes into this fixed slab (or into the queued
     // path's owned copy of it), so the function's parameter block has to fit it -- measured by
     // its own chain, since a ParmsSize read under a wrong UE version is another field.
     // Mimic::InvokeSlabRefusal says why each case is refused.
@@ -939,10 +939,10 @@ static void HandleInvokeByName() {
 
 // [MCP-WRITE-GRANTS-2026-11-14] CMD_INVOKE and INVOKE_BY_NAME. A record that runs the debug camera's own functions (a
 // Console row baked into a CE record) changes the camera as CMD_SET_DEBUG_CAMERA does: under the hold's lock, and CE's
-// afterwards. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI session, whose end
-// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it. It never
-// waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this poller is the
-// mailbox's only one.
+// afterwards. Unrecorded, the camera it turns on would stay named for whoever held it before -- an AI session, whose
+// end would then turn it off. The function is named by the UFunction itself, as the pipe's invoke_function names it.
+// It never waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this
+// poller is the mailbox's only one.
 static void HandleInvokeHeld() {
     char name[128] = {};
     const uintptr_t ufuncAddr = Box().ufuncAddr;
@@ -1216,7 +1216,7 @@ static void HandleListInstances() {
 // with no live CheatManager.
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
-// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a hold CE changes is changed under the ledger lock the pipe's writers take
+// [PIPE-PER-PROCESS-2026-11-06] A hold CE changes is changed under the ledger lock the pipe's writers take
 // too, and is CE's afterwards (Voll::HoldLedger). An OFF leaves CE named on a hold that is off, which reads as free.
 // Called with the hold's lock held.
 static void RecordCeChange(const std::string& hold) {
@@ -1273,9 +1273,9 @@ static void HandleSetDebugCamera() {
                 sizeof(Box().errorMsg) - 1);
         Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     } else if (state == Stark::kInvokeTimedOutStillQueued) {
-        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED. Not a contract change (MB3
-        // above: a new negative result code; every script treats non-zero as failure and renders errorMsg verbatim) --
-        // so errorMsg carries what to do. A queued ON will run, and a second one is not wanted. A queued OFF drains on
+        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED. Not a contract change (see
+        // MB_ERR_HANDLER_THREW: a new negative result code; every script treats non-zero as failure and renders
+        // errorMsg verbatim) -- so errorMsg carries what to do. A queued ON will run, and a second one is not wanted. A queued OFF drains on
         // the original controller's CheatManager and leaves the camera on (stock UE 4.18-5.7), so the user sends it
         // again [DEBUGCAM-QUEUED-OFF-NOESCALATE].
         const char* queued = (req == 0)
@@ -1285,7 +1285,8 @@ static void HandleSetDebugCamera() {
         Box().errorMsg[sizeof(Box().errorMsg) - 1] = '\0';
     } else if (state == Stark::kToggleBlockedByQueued) {
         // [DBGCAM-OFF-OVER-QUEUED-ON] An earlier toggle of the OTHER direction is still queued: this one sent nothing,
-        // and the state it would have read predates that toggle. A new negative code, the same MB3 reasoning as -5.
+        // and the state it would have read predates that toggle. A new negative code, no contract change for the same
+        // reason as -5.
         const char* blocked = (req == 0)
             ? "Debug Camera: OFF not sent -- an earlier ON is still queued; send OFF again once the game responds"
             : "Debug Camera: ON not sent -- an earlier OFF is still queued; send ON again once the game responds";
@@ -1298,8 +1299,8 @@ static void HandleSetDebugCamera() {
 }
 
 // CMD_OFFSETS_VERDICT: were the DynOff offsets MEASURED? [W5-OFFSETS-MAILBOX]
-// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) both carry this verdict; the mailbox --
-// the path a CE script takes when executeCodeEx is unavailable -- did not, while ue5_dissect.lua builds
+// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) carry this verdict too; the mailbox is
+// the path a CE script takes when executeCodeEx is unavailable, and ue5_dissect.lua builds
 // CE structures out of those very offsets. No input. result = 1 measured / 0 not; paramsData[0..127]
 // carries the reason ("" when measured, "probe-not-run" before any detection).
 // Init-EXEMPT (Mimic.h CommandRequiresInit): "no probe has run" is an ANSWER here, not a failure.
@@ -1575,9 +1576,9 @@ static void HandleForeground() {
 // count (>=1, how many nearest occluders to hide), ufuncAddr = value (0/1 on/off).
 // Schlacht owns its own worker thread that does the game-thread invokes, so this
 // handler just flips the flag on the mailbox polling thread. CE is one owner of
-// it ([PIPE-PER-PROCESS-2026-11-06] Stage C): a pipe client that leaves no longer
-// turns off what CE's record turned on. Nothing in the mailbox changed, so the
-// contract version did not either.
+// it ([PIPE-PER-PROCESS-2026-11-06]): a pipe client that leaves does not
+// turn off what CE's record turned on. That ownership adds nothing to the
+// mailbox, so it is not a contract change.
 static void HandleSeeThrough() {
     if (Box().instanceAddr >= 1)
         Schlacht::SetPierceCount(static_cast<int32_t>(Box().instanceAddr));

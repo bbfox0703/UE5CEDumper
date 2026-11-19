@@ -4,15 +4,15 @@ r"""A12 step 2 — in GROUP mode a realloc must repoint every matched LEAF, not 
 
 WHY GROUP MODE IS ITS OWN ROW. A single-value candidate has one address to fix. A group candidate
 carries one address PER SLOT, each stamped with its own `ValueAnchor`, and all of them go stale
-together when the buffer moves. A11's fix repointing the candidate is not evidence that the group
-path repoints the leaves — different code, different stamps, and the "by-name hops" can drop a
+together when the buffer moves. The single-value path repointing the candidate
+(a11_step2_realloc.py) is not evidence that the group path repoints the leaves — different code, different stamps, and the "by-name hops" can drop a
 stamp silently (which is what step 6's `carries no ValueAnchor` alarm exists for).
 
 THE MUTATION. `Arr_Int` is 5 of a capacity-8 buffer, so the whole array can be slid **+4 bytes
 inside its own allocation**: copy the five elements to `data+4` and rewrite the header to
 `{data+4, 5, 7}`. Every leaf must then be found 4 bytes higher than before.
 
-⭐ **+4 is the point.** A new page (A11 step 2's approach) would also pass if the code simply
+⭐ **+4 is the point.** A new page (a11_step2_realloc.py's approach) would also pass if the code simply
 re-derived the leaf from the container base — the addresses would look right for the wrong reason.
 A 4-byte slide inside the same allocation means the old addresses are still perfectly readable and
 still contain plausible data, so "every slot address moved by exactly +4" cannot be produced by a
@@ -22,7 +22,7 @@ stale read or by luck.
 would let a count-only implementation pass.
 
 ⚠ scan-0.log, NOT offsets-0.log — and the distinction is subtle. Aura.cpp declares
-`#define LOG_CAT "OARR"` (that is where A11's marker goes, tagged [OARR]), but the group
+`#define LOG_CAT "OARR"` (that is where the single-value marker goes, tagged [OARR]), but the group
 markers are `Sein::Info("SCAN:grp", ...)` calls whose EXPLICIT category overrides the file
 default and routes to scan-0.log, tagged [SCAN:grp]. One file, two markers, two logs. Read
 the CALL, not the file. [A12-LOGPATH-2026-08-21]

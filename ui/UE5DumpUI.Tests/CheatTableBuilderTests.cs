@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Coverage for the multi-row .CT batch generator (build 758+).
+/// Coverage for the multi-row .CT batch generator.
 /// Three layers:
 ///
 /// 1. <see cref="CheatTableBuilder"/> pure-XML output. Locks the
@@ -354,7 +354,7 @@ public class CheatTableBuilderTests
     }
 
     // ------------------------------------------------------------------
-    // Audit #5 Y15 — the batch CT path must carry the engine-reported width.
+    // The batch CT path must carry the engine-reported width.
     //
     // BuildRowsFromSelection is the second of the two places a FreezeScriptParams
     // is built. Asserting the SCRIPT (not just the params) is deliberate: it fails
@@ -438,8 +438,8 @@ public class CheatTableBuilderTests
 
     // ------------------------------------------------------------------
     // [BOOL-NATIVE-SEARCH] -- a bool with NO single-bit mask is native OR unresolved, and only the DLL's
-    // bool_native tells them apart. The batch CT used to emit a whole-byte freeze for both, which on an
-    // unresolved PACKED bool stamps 0x01 / 0x00 over up to 7 siblings every tick (the AA1 corruption).
+    // bool_native tells them apart. A whole-byte freeze emitted for both would, on an unresolved PACKED
+    // bool, stamp 0x01 / 0x00 over up to 7 siblings every tick, so the batch CT skips the unresolved one.
     // ------------------------------------------------------------------
 
     [Fact]

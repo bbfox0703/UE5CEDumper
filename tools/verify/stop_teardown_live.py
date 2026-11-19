@@ -18,8 +18,8 @@ still running, and how long "UE5_Shutdown: Cleaning up" (or the Stop) took to re
 
 VERDICT ([SHUTDOWN-SEETHRU-WAIT]): it refuses to run when the DLL's own game-thread pick is not the thread it would
 freeze. Exit 0 when Stopped was seen and, for `untick`, "Cleaning up" reached "Stop entry" within --max-shutdown-ms
-(3707 measured 11.3 s at a 15 s invoke timeout), or, for `stop`, the drain read "satisfied". It also counts the DLL's
-"invoke wait cut short" lines.
+(a DLL without that change takes about 11 s at a 15 s invoke timeout), or, for `stop`, the drain read "satisfied".
+It also counts the DLL's "invoke wait cut short" lines.
 """
 from __future__ import annotations
 
@@ -133,8 +133,8 @@ def main() -> int:
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server")
     ap.add_argument("--ce-delay-ms", type=int, default=4000)
     ap.add_argument("--wait", type=float, default=40.0)
-    # [SHUTDOWN-SEETHRU-WAIT] untick: UE5_Shutdown's "Cleaning up" must reach "Stop entry" within this; 3707 measured
-    # 11.3 s at a 15 s invoke timeout.
+    # [SHUTDOWN-SEETHRU-WAIT] untick: UE5_Shutdown's "Cleaning up" must reach "Stop entry" within this; a DLL
+    # without the fix takes about 11 s at a 15 s invoke timeout.
     ap.add_argument("--max-shutdown-ms", type=int, default=2000)
     a = ap.parse_args()
     folder = LOGROOT / a.game_name

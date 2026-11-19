@@ -30,11 +30,11 @@ public sealed class SnapshotGroupSlotInput
 /// A Snapshot Group Match query: find objects in the captured snapshot(s) that
 /// hold ALL of N values at distinct numeric offsets. <see cref="SnapshotIds"/>
 /// length 1 = Mode A (single-snapshot, absolute predicates); ≥ 2 = Mode B
-/// (cross-snapshot temporal comparison, relative predicates — added in S4).
+/// (cross-snapshot temporal comparison, relative predicates).
 /// </summary>
 public sealed class SnapshotGroupQuery
 {
-    /// <summary>Oldest → newest. One = Mode A; ≥ 2 = Mode B (S4).</summary>
+    /// <summary>Oldest → newest. One = Mode A; ≥ 2 = Mode B.</summary>
     public List<long> SnapshotIds { get; set; } = new();
     public List<SnapshotGroupSlotInput> Slots { get; set; } = new();
     /// <summary>Deep (opt-in, default off): also match an object's NESTED container /

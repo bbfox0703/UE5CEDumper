@@ -2,30 +2,29 @@
 
     py launch_dumpertest.py shipping       # ⭐ THE DEFAULT -- closest analogue to a real game
     py launch_dumpertest.py dev            # Development  (UCheatManager live, full logging)
-    py launch_dumpertest.py debug          # DebugGame    (added 2026-08-23)
+    py launch_dumpertest.py debug          # DebugGame
     py launch_dumpertest.py dev --idle     # ...with -DumperTestIdle (B8's deferred half ONLY)
     py launch_dumpertest.py dev --no-wait  # return as soon as the process exists
 
 Prints the PID and writes it to out/host.pid so the injector and the killer agree
 on one target.
 
-⛔ REACH FOR `shipping` FIRST. Maintainer's standing instruction, 2026-09-09, and it is
-now handover §4 rule 5: **a Development build's offsets are a MINORITY shape in real
-games.** The layouts, reflection data and symbol surface a Development binary hands you
-are not what a shipped title hands you, so a row verified only on `dev` has been verified
+⛔ REACH FOR `shipping` FIRST. It is handover §4 rule 5: **a Development build's offsets
+are a MINORITY shape in real games.** The layouts, reflection data and symbol surface a
+Development binary hands you are not what a shipped title hands you, so a row verified only on `dev` has been verified
 against the case we meet least often. `dev` still earns its place -- it is a check IN THE
 OTHER DIRECTION (UCheatManager live, full logging, the diagnostics Shipping strips) -- but
 it is the SECOND run, not the first, and a row closed on `dev` alone must SAY so.
 ⚠ They are not interchangeable in the other direction either: see the `-ExecCmds` trap
-below, which is Shipping-only and cost a wrong measurement.
+below, which is Shipping-only and yields a wrong measurement.
 
-WHY THE ARGS ARE HERE AND NOT IN EACH CALL SITE. The maintainer asked (2026-08-19)
-that DumperTest run at **1280x720, FPS-capped to 15** so an all-night batch does not
+WHY THE ARGS ARE HERE AND NOT IN EACH CALL SITE. DumperTest runs at **1280x720,
+FPS-capped to 15** (the maintainer's setting) so an all-night batch does not
 load the machine -- this PC also drives the game under test, and a free-running UE
 sample at native resolution competes with it. Hard-coding that in one launcher means
 a later row cannot quietly launch at 4K/unbounded and skew a timing measurement.
 
-TWO ARG TRAPS, both already paid for elsewhere in this repo:
+TWO ARG TRAPS:
   * `-DumperTestIdle` is **opt-in**, never a default. The session plan calls it out
     twice: B8's deferred half REQUIRES it, and the D2 sample-heartbeat row breaks if
     it is present. So it is a flag here, not a constant.
@@ -33,33 +32,32 @@ TWO ARG TRAPS, both already paid for elsewhere in this repo:
     -FPS=15`. The latter switches UE to a FIXED TIMESTEP, which silently changes what
     every timing- or tick-sensitive row is measuring.
 
-!! AND THE THIRD, WHICH THAT SECOND BULLET WALKED STRAIGHT INTO (measured 2026-08-23):
+!! AND THE THIRD, WHICH THAT SECOND BULLET WALKS STRAIGHT INTO:
    `-ExecCmds` IS SILENTLY DISCARDED ON THE `shipping` FLAVOUR. UE 5.4's Misc/Exec.h:11-17
    defines UE_ALLOW_EXEC_COMMANDS as UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING when
    (UE_BUILD_SHIPPING && !WITH_EDITOR), and UnrealBuildTool sets that to 0 unless the
    Target.cs opts in (UEBuildTarget.cs:5147/5151); GameEngine.cpp wraps its exec handling
-   in the macro. So `-ExecCmds=t.MaxFPS 15` never reached the CVar, and a timed window
-   with AD4_GetContestWrites measured **59.8 Hz**.
+   in the macro. So `-ExecCmds=t.MaxFPS 15` never reaches the CVar.
 
-   ⚠ BUT "so Shipping ran UNCAPPED" -- said here earlier the same day -- WAS WRONG, and
-   the 59.8 is the tell. DumperTest caps ITSELF: DumperTestSubsystem.cpp ApplyMaxFPS
-   defaults t.MaxFPS to 60 and applies it from C++ with ECVF_SetByCode, which the Shipping
-   console restriction does not touch (only ProcessUserConsoleInput refuses cheat cvars).
-   Past Shipping batches ran at the sample's own 60, not unbounded.
+   ⚠ BUT THAT DOES NOT MEAN Shipping runs UNCAPPED: a ~60 Hz timed window is the tell.
+   DumperTest caps ITSELF: DumperTestSubsystem.cpp ApplyMaxFPS defaults t.MaxFPS to 60 and
+   applies it from C++ with ECVF_SetByCode, which the Shipping console restriction does not
+   touch (only ProcessUserConsoleInput refuses cheat cvars). A Shipping run without the
+   sample's switch runs at the sample's own 60, not unbounded.
 
-   The sample exposes `-DumperTestMaxFPS=N` for exactly this, so the cap is now requested
+   The sample exposes `-DumperTestMaxFPS=N` for exactly this, so the cap is requested
    through the switch that actually works in every flavour. Two lessons, and the second is
    the one that keeps costing: (1) a careful choice of MECHANISM is worthless if the
    mechanism is gated out of the build you launch; (2) when a measurement contradicts a
    configured value, the next question is "what else sets this?", not "so it is unset".
 
-!! THE STOCK-TEMPLATE SHIPPING FIXTURES (5.8, 5.1) PAID LESSON (2) AGAIN (measured 2026-10-09).
-   They have no self-cap and drop -ExecCmds, so this launcher said they ran UNCAPPED -- yet
-   DumperTest58 Shipping ran at 30.2 fps on an RTX 5090 at 12 % load. An earlier session had
-   capped it through the pipe (GameUserSettings::SetFrameRateLimit, then ApplySettings), and
-   ApplySettings SAVES the limit to the game's GameUserSettings.ini under %LOCALAPPDATA%, so
-   every later launch on that machine inherits it, and another machine may have none. The
-   launcher now reads that file and says which cap applies.
+!! THE STOCK-TEMPLATE SHIPPING FIXTURES (5.8, 5.1) ARE LESSON (2) AGAIN.
+   They have no self-cap and drop -ExecCmds, so they look UNCAPPED -- yet one can run
+   capped far below what the GPU allows. A session that capped it through the pipe
+   (GameUserSettings::SetFrameRateLimit, then ApplySettings) leaves the limit SAVED to the
+   game's GameUserSettings.ini under %LOCALAPPDATA%, so every later launch on that machine
+   inherits it, and another machine may have none. The launcher reads that file and says
+   which cap applies.
 """
 import argparse
 import os
@@ -77,24 +75,23 @@ FLAVOURS = {
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
     "debug": ROOT / "DebugGame/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-DebugGame.exe",
     # ⚠⚠ THE 5.8 FIXTURE IS A DIFFERENT PROJECT, NOT ANOTHER FLAVOUR OF THIS ONE.
-    # ⭐ UPDATED 2026-09-16: it is no longer the bare template. It now carries
+    # ⭐ It is not the bare template: it carries
     # ADumperTest58Actor + UDumperTest58Subsystem with the 5.5+ OPTIONAL FAMILY ONLY
     # (container / string / name / struct optionals, which are intrusive from 5.5, plus
     # the object optional and its mutators). Everything else below still holds: there is
     # no property zoo here, no Spawn_*, no heartbeat HUD, and no DumperTestActor.
-    # DumperTest58 is the STOCK UE 5.8 Third Person template (with the Combat /
+    # DumperTest58 is built on the STOCK UE 5.8 Third Person template (with the Combat /
     # Platforming / SideScrolling variants). It does NOT contain the property zoo --
-    # no ADumperTestActor, no Spawn_*, no mutators, no heartbeat HUD. Measured
-    # 2026-09-06: `DumperTestActor` gets zero utf-16le hits in either exe.
+    # no ADumperTestActor, no Spawn_*, none of the zoo's mutators, no heartbeat HUD:
+    # `DumperTestActor` gets zero utf-16le hits in either exe.
     #
     # So it answers ENGINE-LAYOUT questions only (FUObjectItem reorder, FFieldClass
-    # vfptr, version detection, envelope sizes) -- which is exactly what audits A1,
-    # A2 and A4 used it for. Do not point a property-shape row at it and read a
-    # missing field as a defect.
+    # vfptr, version detection, envelope sizes). Do not point a property-shape row at
+    # it and read a missing field as a defect.
     "dev58": ROOT58 / "Development/Windows/DumperTest58/Binaries/Win64/DumperTest58.exe",
     "shipping58": ROOT58 / "Shipping/Windows/DumperTest58/Binaries/Win64/DumperTest58-Win64-Shipping.exe",
-    # The UE 5.1 fixture (2026-09-24): the maintainer's stock 5.1.1 Third Person template, the first
-    # 5.0-5.2 sample on this machine (docs/reference-builds.md starts at 5.3). It is handled exactly like
+    # The UE 5.1 fixture: the maintainer's stock 5.1.1 Third Person template, a 5.0-5.2
+    # sample on this machine (docs/reference-builds.md starts at 5.3). It is handled exactly like
     # the 5.8 one -- no DumperTest switches -- until a fixture actor is added to its source. The UE 5.1
     # editor may be uninstalled later (SSD space), so a rebuild is not guaranteed; the packages are.
     "dev51": ROOT51 / "Development/Windows/DumperTest51/Binaries/Win64/DumperTest51.exe",

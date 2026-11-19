@@ -106,7 +106,7 @@ static Lineal::PackedConsts   s_packedConsts;
 // FlagsAndRefCount@+0x00, ObjectPtrLow@+0x08, SerialNumber@+0x0C (UObjectArray.h:55/75/92).
 static int         s_packedSerialOff = 0x0C;
 
-// GAP #1: Decryption hook for encrypted GObjects pointers.
+// Decryption hook for encrypted GObjects pointers.
 // Default nullptr = identity (zero overhead — no indirect call on hot path).
 // Set by SetDecryptFunc() from CE Lua export before Init().
 static Aura::DecryptFunc s_decryptFunc = nullptr;
@@ -200,7 +200,7 @@ int ScanThreadCount(int32_t workItems) {
     return n;
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
+// [PIPE-PER-PROCESS-2026-11-06] The extra worker threads of every GObjects walk running at once, drawn from
 // one budget for the whole process.
 //
 // Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once. Without a limit across walks,
@@ -495,7 +495,7 @@ uintptr_t Aura::DecryptObjectPtr(uintptr_t rawPtr) {
     return s_decryptFunc(rawPtr);
 }
 
-// GAP #2: Named preset layouts for FChunkedFixedUObjectArray (from Dumper-7 reference).
+// Named preset layouts for FChunkedFixedUObjectArray (from Dumper-7 reference).
 // Games can reorder struct members; these presets cover known variants.
 // Optional per-preset FUObjectItem hint, for licensee forks whose item stride and
 // object-pointer offset cannot be recovered by the shared stride sweep in DetectItemSize.
@@ -792,7 +792,7 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
-    // --- Tier 4: RELAXED fallback (preserves current behavior, prevents regression) ---
+    // --- Tier 4: RELAXED fallback ---
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
@@ -834,8 +834,8 @@ static bool DetectLayout(uintptr_t addr) {
     // B is tried first: the heap-pointer check below cannot tell them apart, so on a
     // UE5-Extended array B wins and reads NumElements out of +0x04 — which there is
     // ObjLastNonGCIndex, a real but FROZEN count of the startup disregard-for-GC set. The
-    // array is then enumerated only up to the CDOs (DragonSword Awakening: 37,099 of
-    // 317,810 objects) and no runtime object is ever visible to any scan.
+    // array is then enumerated only up to the CDOs (a small fraction of the objects)
+    // and no runtime object is ever visible to any scan.
     //
     // The discriminator is B's own chunk counts (Tier 1 "Back4Blood": MaxChunks@+0x08,
     // NumChunks@+0x0C). On a genuine B layout those are live chunk counts; on a
@@ -1497,9 +1497,9 @@ static void DetectItemSize() {
             //
             // A healthy pool has few nulls (genuinely free slots). Nulls at or above the
             // valid count, with essentially no bad reads, is the signature -- so say so.
-            // This does NOT reject the result: the candidate list is the fix, and a
+            // This does NOT reject the result: the candidate list is the remedy, and a
             // legitimately sparse chunk would trip this too. It exists so the NEXT item
-            // size we have not met is loud on the first log instead of silent for months.
+            // size we have not met is loud on the first log instead of silent.
             if (bestNull >= bestCount && bestCount > 0 && bestBad * 4 < bestCount) {
                 LOG_WARN("ObjectArray: stride %d accepted with null=%d >= valid=%d and bad=%d "
                          "-- if the real item is a MULTIPLE of %d whose extra field is lazily "
@@ -1831,14 +1831,9 @@ uintptr_t FindByName(const std::string& name) {
 
 uintptr_t FindByFullName(const std::string& fullName) {
     // Resolve an object written as a PATH ("/Script/Engine.Actor"), as opposed to
-    // FindByName's bare-FName match ("Actor").
-    //
-    // This was a stub returning 0 from the day it was declared, while `Aura.h`,
-    // `docs/dll-spec.md` and `UE5_FindObject`'s own `fullPath` parameter name all
-    // advertised it as working. Nothing called it, so nothing failed loudly — the
-    // path capability simply did not exist, and `ue5_dissect.lua`'s
-    // `createFromPath` (whose interactive dialog is PRE-FILLED with
-    // "/Script/Engine.Actor") could never have resolved anything.
+    // FindByName's bare-FName match ("Actor"). `ue5_dissect.lua`'s `createFromPath`
+    // (whose interactive dialog is PRE-FILLED with "/Script/Engine.Actor") reaches it
+    // through `UE5_FindObject` and FindByNameOrPath.
     //
     // Two-stage match, and the order is the point: `Ubel::GetFullName` walks the
     // whole Outer chain and allocates, so running it on all ~85K objects would make
@@ -1873,8 +1868,8 @@ uintptr_t FindByNameOrPath(const std::string& query) {
     // the more specific request: "/Game/Maps/Foo.Foo" and "/Game/Other/Foo.Foo"
     // share the leaf name "Foo", and answering either with whichever FName the
     // GObjects walk reached first is a wrong answer that looks like a right one.
-    // Bare names keep their old single-pass cost — LooksLikeObjectPath is false, so
-    // FindByName runs directly and nothing about the historical behaviour changes.
+    // Bare names cost a single pass — LooksLikeObjectPath is false, so FindByName
+    // runs directly.
     if (LooksLikeObjectPath(query)) {
         if (uintptr_t byPath = FindByFullName(query)) return byPath;
         // Deliberate fallback: an object whose FName legitimately contains a '.'
@@ -2394,7 +2389,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         const bool isCdo = tpl.kind == TemplateKind::ClassDefault;
         const bool isTemplate = tpl.kind != TemplateKind::None;
 
-        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
+        if (!v.derives) {   // the partial-name rule of the user-facing lookups: the first non-template, else the first
             // [INVOKE-PICK-GARBAGE] A destroyed object is no pick here either, not even the last resort.
             if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) { ++garbagePassed; continue; }
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
@@ -2968,8 +2963,8 @@ struct ContainerCacheEntry {
     // StructProperty (then *Struct above is used) and unused for Array/Set (whose
     // single leaf type is `innerType`). Lets WalkContainerLeaves emit scalar map
     // values/keys as leaves — `innerType` is the "K -> V" label, NOT a leaf type.
-    std::string   keyLeafType;       // P3 scalar-keyed maps
-    std::string   valueLeafType;     // P3 scalar-valued maps
+    std::string   keyLeafType;       // scalar-keyed maps
+    std::string   valueLeafType;     // scalar-valued maps
     int32_t       setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
@@ -3100,16 +3095,16 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
+    // null and when ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
     // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
     // so on a healthy class this is a cache hit, not a second walk.
     //
-    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
-    // return-type refactor across five caches; see its row. This is the separate, present-
-    // tense defect found while scoping it.
+    // ⚠ This does NOT cover a recycled UClass* (a freed class whose address a new class
+    // reuses): that needs a return-type refactor across the class caches,
+    // [A10-SCOPE-2026-08-24].
     static const std::vector<ContainerCacheEntry> s_emptyContainers;
     if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyContainers;
 
@@ -3325,7 +3320,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                 }
             }
 
-            // Scalar Map sides (P3 — scalar-valued / scalar-keyed maps, e.g.
+            // Scalar Map sides (scalar-valued / scalar-keyed maps, e.g.
             // TMap<Name,int>). The struct-side loop above handled struct key/value
             // sides; here we emit the LEAF a scalar key/value forms. The value
             // lives at slotBase+valueOffset, the key at slotBase (pair+0). Paths
@@ -3408,9 +3403,9 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
              count, static_cast<unsigned long long>(addr));
 
     // Per-call deadline so a slow / huge-class game doesn't hang the UI.
-    // 15s is comfortable on first scan even for 400K-object games (FF7
-    // Rebirth) — first scan primes the per-class cache, subsequent scans
-    // finish in ~1s. 5s was too tight for first-scan on big games.
+    // 15s leaves room for the first scan of a game with hundreds of thousands
+    // of objects — the first scan primes the per-class cache, so later scans
+    // are far faster.
     constexpr int kDeadlineMs = 15000;
     auto t0 = std::chrono::steady_clock::now();
 
@@ -3809,7 +3804,7 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
 // Per-class cache of pointer-shaped fields and Object array fields.
 // Built lazily, mirrors the container cache pattern.
 //
-// Coverage (v2 + v3):
+// Coverage:
 //   - Direct ObjectProperty / ClassProperty / InterfaceProperty
 //     (8-byte UObject* read directly at field+0)
 //   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
@@ -4178,16 +4173,16 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
+    // null and when ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
     // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
     // so on a healthy class this is a cache hit, not a second walk.
     //
-    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
-    // return-type refactor across five caches; see its row. This is the separate, present-
-    // tense defect found while scoping it.
+    // ⚠ This does NOT cover a recycled UClass* (a freed class whose address a new class
+    // reuses): that needs a return-type refactor across the class caches,
+    // [A10-SCOPE-2026-08-24].
     static const ClassReferenceMeta s_emptyRefMeta;
     if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyRefMeta;
 
@@ -4321,7 +4316,7 @@ static InvocationListView LocateInvocationList(uintptr_t mcdAddr) {
         if (Serie::GetString(comp).empty()) continue;
 
         if (best.found) {
-            // Never observed; if it ever happens the first (historical) layout wins and the
+            // Not expected; if it happens the first candidate (pad 0) wins and the
             // ambiguity is on the record rather than silently resolved.
             LOG_WARN("LocateInvocationList: BOTH pad=%d and pad=%d validate at 0x%llX — "
                      "keeping pad=%d", best.pad, pad,
@@ -4734,7 +4729,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // FWeakObjectPtr against `target`. Skipped silently when AOB scan
     // failed or UE version is unsupported.
     if (static_cast<int>(matches.size()) < maxResults && !deadlineHit &&
-        sparseEra && !sparseSkipped)   // [R7-S2] was `>= 500`: 4.23-4.27 have sparse delegates too
+        sparseEra && !sparseSkipped)   // [R7-S2] 4.23-4.27 have sparse delegates too, not only 5.x
     {
         uintptr_t storage = Genau::FindSparseDelegateStorage();
         if (storage) {
@@ -5641,8 +5636,8 @@ PropertySearchResult SearchProperties(
             match.classPath   = definingPath;
             // SuperName is the defining class's super (if we can read it
             // cheaply). For non-iterated defining-classes we'd need to
-            // read it via DynOff::USTRUCT_SUPER -> name; skip for now
-            // since it's not load-bearing for the dedup story.
+            // read it via DynOff::USTRUCT_SUPER -> name; skipped,
+            // since it's not load-bearing for the dedup.
             match.superName   = (definingAddr == obj) ? ci.SuperName : "";
             match.propName    = field.Name;
             match.propType    = field.TypeName;
@@ -5895,8 +5890,8 @@ PropertySearchResult SearchProperties(
 
         // Fall back to the CDO where nothing live exists — a default value is still the only
         // truth available, and dropping the preview entirely would lose information. But it
-        // must not be presented as a live reading: that silent substitution IS the defect
-        // this fix removes, so the row says which one it got (marked in 2c below).
+        // must not be presented as a live reading, so the row says which one it got (marked
+        // in 2c below).
         // Exact > derived > class default, decided by Aura::ChoosePreviewSource so the
         // ordering is stated in a header a test can compile. [CDOSCOPE-2026-08-20]
         std::unordered_map<uintptr_t, PreviewSource> previewSourceOf;
@@ -5939,7 +5934,7 @@ PropertySearchResult SearchProperties(
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
     // The stop reason is in the line, not just the counts. "3 matches from 8
-    // classes (scanned 24445 objects)" was self-contradictory and read as a
+    // classes (scanned 24445 objects)" contradicts itself and reads as a
     // completed sweep; "scanned 8 objects, STOPPED at the 3-row cap" cannot.
     Sein::Info("PIPE:search",
                  "SearchProperties '%s': %d matches from %d classes (scanned %d objects)%s",
@@ -6383,7 +6378,7 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
 
     // A full page means the walk collected the cap and there were more classes to
     // collect — same contract (and the same one-index-of-slack ambiguity) as
-    // SearchByName / SearchProperties. `totalClasses` now carries the real count, so a
+    // SearchByName / SearchProperties. `totalClasses` carries the real count, so a
     // truncated result reports "shown of total" honestly.
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
@@ -6402,7 +6397,7 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
     return result;
 }
 
-// === Class-noise auto-detect (class-filter Phase 3) ===
+// === Class-noise auto-detect ===
 
 bool ClassDerivesFromAny(uintptr_t classObj,
                          const std::unordered_set<std::string>& baseNames) {
@@ -6577,10 +6572,9 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
         }
     }
 
-    // "from %d classes" read as PROVENANCE and was the EXAMINED count: on P3R it
-    // said "9760 entries from 2293 classes" while ~889 classes actually produced a
-    // row, overstating coverage 2.6x. Both numbers now appear, each labelled with
-    // the question it answers. (FUNCDENOM-2026-08-26)
+    // A lone "from %d classes" reads as PROVENANCE while it is the EXAMINED count, which
+    // overstates coverage wherever many examined classes produce no row. Both numbers
+    // appear, each labelled with the question it answers. (FUNCDENOM-2026-08-26)
     //
     // ⚠ APPEND-ONLY on the format string. Nothing in dll/src carries
     // _Printf_format_string_ or __attribute__((format)), so MSVC diagnoses no
@@ -6600,7 +6594,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     return result;
 }
 
-// --- v2a: Blueprint ubergraph entry-offset table ---
+// --- Blueprint ubergraph entry-offset table ---
 //
 // Every BP event compiles into the single ExecuteUbergraph_<BP> function; each
 // event's stub UFunction calls it with an int "entry offset" into the bytecode:
@@ -6651,7 +6645,7 @@ BuildUbergraphEntryTable(uintptr_t classAddr, uintptr_t ubergraphAddr) {
     return table;
 }
 
-// v2 read/write: is the FProperty reference at byte offset p (its pointer
+// Read/write: is the FProperty reference at byte offset p (its pointer
 // position; the variable opcode sits at p-1) the DESTINATION of an assignment?
 // Detects the common direct forms (opcode values from UE EExprToken):
 //   EX_LetBool(0x14)/MulticastDelegate(0x43)/Delegate(0x44)/Obj(0x5F)/WeakObjPtr(0x60)
@@ -6788,7 +6782,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
             x.writeCount     = writeCount;
             x.kind = (precByte == 0x01) ? "instance"
                    : (precByte == 0x00) ? "local" : "ref";
-            // v2a: retain match offsets only for ubergraph hits (attributed to
+            // Retain match offsets only for ubergraph hits (attributed to
             // events in a serial post-pass). funcName.rfind(prefix,0)==0 = starts_with.
             if (funcName.rfind("ExecuteUbergraph", 0) == 0)
                 x.ubergraphOffsets = offs;  // copied (offs is reused next iter)
@@ -6805,7 +6799,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
         out.stats.functionsWithScript += tr.funcsWithScript;
     }
 
-    // v2a: attribute ubergraph hits to BP events (serial — the entry-table build
+    // Attribute ubergraph hits to BP events (serial — the entry-table build
     // walks sibling UFunctions). Cache per ubergraph address; several refs can
     // share one. Attribution = the event whose entry offset is the largest <= P.
     {
@@ -7154,7 +7148,7 @@ static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     return FuncSlot(funcAddr);
 }
 
-// [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads: every function's, the FUNC_Native gate above left
+// [A1-SCRIPT-FUNCS] The slot the native-entry index reads: every function's, the FUNC_Native gate above left
 // out. A stack frame inside the interpreter is the reason. The CE code address refuses a script function because the
 // interpreter is not that function's code; the index wants exactly that entry, so the frame names one of the functions
 // entering there and says how many share it. With the gate, no frame inside the interpreter can be named.
@@ -7238,10 +7232,10 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
     // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
     // `(flags & FUNC_Native) == 0` would refuse every function on any build where the
-    // FunctionFlags offset does not resolve, deleting Path 2 wholesale to fix a case we
-    // have no evidence of there. So: refuse only when the flags were READ and say script.
-    // The confirmed failure has readable flags by construction — the UI rendered
-    // "BC,BP,Const" for it, and that string is derived from these very bits.
+    // FunctionFlags offset does not resolve, deleting Path 2 wholesale on a build with no
+    // evidence of the case. So: refuse only when the flags were READ and say script. The
+    // case this guards has readable flags by construction — the UI shows "BC,BP,Const"
+    // for such a function, and that string is derived from these very bits.
     constexpr uint32_t FUNC_Native = 0x00000400;
     const uint32_t funcFlags = ReadFunctionFlags(funcAddr);
     if (funcFlags != 0 && (funcFlags & FUNC_Native) == 0)
@@ -7478,10 +7472,10 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // puts an 8-byte access detector in front of it (DynOff::kDelegateDetectorPad). This
     // path has no ElementSize to derive that from, so LocateInvocationList derives it from
     // the object's own invariants.
-    // ⛔ Do NOT restore `if (...) invNum = 0;` here. Clamping an unreadable or implausible
-    // header to zero is what made a delegate whose bIsBound byte READ 1 report
-    // "(0 bindings, sparse)" — the code had positive evidence the delegate WAS bound and
-    // printed the opposite. listRead stays false and the renderer says so instead.
+    // ⛔ Do NOT add `if (...) invNum = 0;` here. Clamping an unreadable or implausible
+    // header to zero makes a delegate whose bIsBound byte READS 1 report
+    // "(0 bindings, sparse)" — positive evidence the delegate IS bound, printed as the
+    // opposite. listRead stays false and the renderer says so instead.
     const InvocationListView inv = LocateInvocationList(mcdAddr);
     if (!inv.found) {
         LOG_WARN("WalkSparseDelegateBindings: no coherent InvocationList at 0x%llX at either "
@@ -7646,8 +7640,8 @@ ValueScanResult ScanForValue(
     // that match the requested DataType. Built lazily on first
     // encounter; reused across all instances of that class.
     //
-    // Phase 2C extends this with an "isArray" flag — when set, the
-    // ScanField represents an ArrayProperty whose Inner matches the
+    // A ScanField whose `container` is Array represents an
+    // ArrayProperty whose Inner matches the
     // requested DataType. The per-instance loop reads the TArray
     // header (Data ptr, Num, Max) and emits ONE candidate per matching
     // element. elemStride captures the per-element size in bytes;
@@ -7671,7 +7665,7 @@ ValueScanResult ScanForValue(
         int32_t       elemStride   = 0;   // Array elem / Set elem / Map pair stride / struct-array elem
         int32_t       valueOffset  = 0;   // MapValue: byte offset of value within the TPair
         int32_t       structInnerOffset = 0;  // StructArrayInner: leaf offset within the element struct
-        // V1c: TOptional<T> unset gate. >= 0 → this leaf is a TOptional whose
+        // TOptional<T> unset gate. >= 0 → this leaf is a TOptional whose
         // wrapped value is at offset+0 with a trailing bIsSet byte at
         // offset+optionalFlagOffset; the per-instance read skips slots whose
         // flag is 0 (unset). -1 = ordinary leaf / container (no gate).
@@ -7688,7 +7682,7 @@ ValueScanResult ScanForValue(
         // `elemStride` for a TSet is the padded sparse-array slot), and a TMap
         // the key or value half of the pair. 0 for non-vector scans.
         int32_t       vectorWidth = 0;
-        // V3-A: lazily-resolved index into the worker thread's
+        // Lazily-resolved index into the worker thread's
         // FieldDescriptor pool (the field's interned class/defining-class/
         // name/type/offset/mask). -1 until the first candidate of this
         // field is emitted, then reused by every element + every instance.
@@ -7720,7 +7714,7 @@ ValueScanResult ScanForValue(
         // scan runs the recursive WalkContainerLeaves pass after the static
         // fields (the static StructArrayInner path covers only depth 1).
         bool                    needsDeepWalk  = false;
-        // Native-C (P1): the unmanaged byte ranges of this class (complement of
+        // Native-C: the unmanaged byte ranges of this class (complement of
         // reflected coverage within [winStart, winEnd)). Computed once per class
         // (layout is build-stable) and reused by every instance. Empty unless the
         // native scan is enabled. winTruncated = PropertiesSize exceeded the 64KB
@@ -7797,7 +7791,7 @@ ValueScanResult ScanForValue(
         // costs (threads x <= kMaxBatchSpan), independent of object count.
         std::vector<uint8_t> objBodyBuf;
 
-        // Native-C (P1): reused per-object window buffer for the unmanaged-hole
+        // Native-C: reused per-object window buffer for the unmanaged-hole
         // scan ([winStart, winEnd) read once, probed in-buffer). Thread-local.
         std::vector<uint8_t> nativeBuf;
 
@@ -7888,7 +7882,8 @@ ValueScanResult ScanForValue(
         if (depth > kMaxDepth) return;
         if (out.size() >= kMaxScanFieldsPerClass) { fieldCapHit = true; return; }
         // Cycle guard along the CURRENT path only — RAII so every early return
-        // below unwinds it. A plain insert-without-erase is the A3 defect.
+        // below unwinds it. A plain insert-without-erase would also refuse a struct
+        // met again on an unrelated branch (no cycle), dropping its fields.
         Aura::StructPathGuard pathGuard(visited, structAddr);
         if (!pathGuard.Entered()) return;  // already on this path: real cycle
 
@@ -7938,7 +7933,7 @@ ValueScanResult ScanForValue(
                 continue;
             }
 
-            // Phase 2C: TArray<T> container scan. When the inner
+            // TArray<T> container scan. When the inner
             // FProperty's type matches the requested DataType, emit a
             // ScanField with container=Array + the per-element stride.
             // The per-instance loop branches on sf.container to walk the
@@ -8016,7 +8011,7 @@ ValueScanResult ScanForValue(
                 }
             }
 
-            // V1c: TOptional<T> scan. FOptionalProperty stores the wrapped
+            // TOptional<T> scan. FOptionalProperty stores the wrapped
             // value inline at field+0 (same Inner probe as TArray), with a
             // trailing bIsSet byte for non-intrusive optionals. When the inner
             // type matches the requested DataType, emit a LEAF ScanField at
@@ -8074,7 +8069,7 @@ ValueScanResult ScanForValue(
                 }
             }
 
-            // V1a: TSet<T> container scan. The element type must match the
+            // TSet<T> container scan. The element type must match the
             // requested DataType (+ struct name for vectors). Per-instance
             // loop walks the FSetProperty's TSparseArray (allocated slots
             // only); each element is read at slot+0.
@@ -8113,7 +8108,7 @@ ValueScanResult ScanForValue(
                 }
             }
 
-            // V1a: TMap<K,V> container scan. Key and value are scanned
+            // TMap<K,V> container scan. Key and value are scanned
             // independently: a TMap<int,int> with dt=Int32 emits BOTH a
             // MapKey and a MapValue ScanField. Per-instance loop walks the
             // FMapProperty's TSparseArray of TPair; key at pair+0, value at
@@ -8173,9 +8168,9 @@ ValueScanResult ScanForValue(
             // recurse with the cumulative offset + dotted name prefix.
             // TOptional<T> whose value directly matches the DataType
             // (TOptional<int>/<float>/<FVector>/<FString>) is scanned via the
-            // dedicated OptionalProperty branch above (V1c); drilling INTO an
-            // optional's wrapped struct for nested leaves is a further step
-            // and is intentionally not recursed here.
+            // dedicated OptionalProperty branch above; drilling INTO an
+            // optional's wrapped struct for nested leaves is intentionally not
+            // recursed here.
             //
             // For vector data types, skip recursion -- we only want
             // leaves whose own type IS the vector struct, not nested
@@ -8219,7 +8214,7 @@ ValueScanResult ScanForValue(
         expandFields(expandFields, classAddr, /*baseOffset=*/0,
                      /*namePrefix=*/"", sci.fields, visited, /*depth=*/0);
         // Never truncate silently. A missing leaf is indistinguishable from a
-        // value that is not there -- the scan simply reports no match (A3).
+        // value that is not there -- the scan simply reports no match.
         sci.fieldCapHit = fieldCapHit;
         if (fieldCapHit) {
             LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
@@ -8268,7 +8263,7 @@ ValueScanResult ScanForValue(
         // a container the heuristic doesn't flag is still reached.
         if (deep && !GetClassContainers(classAddr).empty()) sci.needsDeepWalk = true;
 
-        // Native-C (P1): precompute this class's unmanaged holes once. Window =
+        // Native-C: precompute this class's unmanaged holes once. Window =
         // [UObject header end, PropertiesSize) — PropertiesSize is the exact end
         // of the reflected region, so every native member lives below it. Sanity-
         // clamp huge/garbage PropertiesSize (packed / non-standard engines):
@@ -8306,14 +8301,14 @@ ValueScanResult ScanForValue(
         // instances of the same class within this thread).
         std::unordered_map<std::string, uint32_t> deepDescriptors;
 
-        // Thread-local raw-hole descriptor pool index (Native-C, P1), keyed by
+        // Thread-local raw-hole descriptor pool index (Native-C), keyed by
         // className \x02 offset \x02 canonical-type. A raw leaf has no ScanField
         // identity, so it interns here (shared across instances of the same class
         // within this thread). Built on first emit per (class, offset, width).
         std::unordered_map<std::string, uint32_t> rawDescriptors;
 
         // Thread-local descriptor pool for Native-C raw holes found INSIDE struct-
-        // array elements (Deep + Native-C, P3), keyed by container-path \x03 element-
+        // array elements (Deep + Native-C), keyed by container-path \x03 element-
         // index \x03 offset \x03 canonical-type. Separate from rawDescriptors so an
         // object-body hole and a struct-element hole at the same numeric offset don't
         // collide.
@@ -8497,7 +8492,7 @@ ValueScanResult ScanForValue(
             // Vector scans only: the source width the refine path can no longer
             // re-derive (fieldType is the bare "StructProperty").
             d.vectorWidth   = sf.vectorWidth;
-            // [A2-TOPTIONAL-REFINE] The V1c optional gate, carried so the REFINE path can apply the SAME one:
+            // [A2-TOPTIONAL-REFINE] The TOptional unset gate, carried so the REFINE path can apply the SAME one:
             // it re-reads by absolute address, and a reset optional's bytes are still its old value.
             d.optionalFlagOffset = sf.optionalFlagOffset;
             d.optionalSentinel   = static_cast<int8_t>(sf.optionalSentinel);
@@ -8690,7 +8685,7 @@ ValueScanResult ScanForValue(
         for (auto& sf : sci->fields) {
             if (static_cast<int32_t>(tr.candidates.size()) >= maxResults) break;
 
-            // Phase 2C: TArray<T> path. Read the TArray header (Data,
+            // TArray<T> path. Read the TArray header (Data,
             // Num, Max), defensively validate, then iterate elements
             // and emit one candidate per match.
             if (sf.container == ScanContainer::Array) {
@@ -8787,7 +8782,7 @@ ValueScanResult ScanForValue(
                 continue;
             }
 
-            // V1a: TSet<T> / TMap<K,V>(key|value) path. Walk the FSet/
+            // TSet<T> / TMap<K,V>(key|value) path. Walk the FSet/
             // FMapProperty's TSparseArray (allocated slots only); the value
             // lives at slot_base + slotOff (0 for Set / Map key, valueOffset
             // for Map value). The sparse Data buffer holds freed slots too,
@@ -8826,7 +8821,7 @@ ValueScanResult ScanForValue(
                 continue;
             }
 
-            // V1c: TOptional<T> unset gate. The wrapped value lives at
+            // TOptional<T> unset gate. The wrapped value lives at
             // field+0 (read like a direct leaf below), but for a non-intrusive
             // optional it's only meaningful when the trailing bIsSet byte is
             // set — skip unset slots so a scan for 0 / stale bytes doesn't
@@ -8947,7 +8942,7 @@ ValueScanResult ScanForValue(
             WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepEmit, &deepVisited);
         }
 
-        // === Native-C (P1): scan this object's UNMANAGED holes ===
+        // === Native-C: scan this object's UNMANAGED holes ===
         // The reflected loop above covered every UPROPERTY; this pass tests the
         // requested numeric value at the user's width across the byte ranges no
         // property covers (where native, non-UPROPERTY C++ members live). Holes +
@@ -9027,12 +9022,12 @@ ValueScanResult ScanForValue(
             }
         }
 
-        // === Native-C deep (P3): UNMANAGED holes INSIDE struct-array elements ===
+        // === Native-C deep: UNMANAGED holes INSIDE struct-array elements ===
         // The object-body native pass above only covers [header, PropertiesSize) of
         // the object itself — a struct-array element lives in the TArray's OWN heap
         // buffer, outside that window, so a native (non-UPROPERTY) value inside a
         // 0-reflected-field element struct (e.g. CustomAbilityEffectDuration's elapsed
-        // seconds) was unreachable by both the reflected deep pass (no fields to emit)
+        // seconds) is unreachable by both the reflected deep pass (no fields to emit)
         // and the object-body native pass. When Deep + Native-C are BOTH on, walk each
         // struct-element container of this class and probe each element's holes (the
         // bytes its element struct does not reflect — the whole element for a 0-field
@@ -9091,7 +9086,7 @@ ValueScanResult ScanForValue(
                 // Holes = the element struct's bytes NOT covered by a reflected field
                 // (the native region). For a 0-UPROPERTY struct that's the whole
                 // element; for a partially-reflected struct only its gaps.
-                const ClassInfo& eci = Ubel::WalkClassEx(elemStruct);   // memoized (B10) — by ref
+                const ClassInfo& eci = Ubel::WalkClassEx(elemStruct);   // memoized — by ref
                 const int32_t maxRegion = cfe.stride - regionOff;   // bytes available to this side
                 int32_t structSize = eci.PropertiesSize;
                 if (structSize <= 0)        structSize = maxRegion;
@@ -9317,7 +9312,7 @@ ValueScanStats RefineCandidates(
 
     for (auto& c : candidates) {
         // Per-(class,field) metadata (fieldType / boolFieldMask) lives in
-        // the shared descriptor pool the candidate indexes into (V3-A).
+        // the shared descriptor pool the candidate indexes into.
         const Radar::FieldDescriptor& desc = descriptors[c.descriptorIdx];
 
         // Re-anchor BEFORE any read of c.addr — every branch below reads it, and a
@@ -9358,10 +9353,10 @@ ValueScanStats RefineCandidates(
                     break;
             }
         }
-        // [A2-TOPTIONAL-REFINE] The gate ScanForValue's V1c applies, applied again here -- a TOptional's bytes
+        // [A2-TOPTIONAL-REFINE] The TOptional gate ScanForValue applies, applied again here -- a TOptional's bytes
         // are only a value while it is SET, and UE's MarkUnset clears bIsSet while zeroing nothing. Without this
         // an Unchanged (or Exact-the-stale-value) refine would keep a reset optional forever. Every non-optional
-        // candidate has -1 / 0 here and falls straight through; V1c emits only Direct anchors, so c.addr IS the
+        // candidate has -1 / 0 here and falls straight through; that gate emits only Direct anchors, so c.addr IS the
         // value address, and a group session leaves these at their defaults.
         if (desc.optionalFlagOffset >= 0) {
             uint8_t isSet = 0;
@@ -9517,7 +9512,7 @@ ValueScanStats RefineCandidates(
 }
 
 // ------------------------------------------------------------------
-// Snapshot capture (Phase A1a)
+// Snapshot capture
 // ------------------------------------------------------------------
 
 namespace {
@@ -9646,7 +9641,7 @@ void CaptureStructArrays(uintptr_t obj, uintptr_t cls,
                 ePos = out[aPos].elements.size();
                 Aura::SnapshotArrayElement el; el.index = lf.elemIndex;
                 if (lf.elemStructAddr) {
-                    const ClassInfo& eci = Ubel::WalkClassEx(lf.elemStructAddr);  // memoized (B10) — by ref
+                    const ClassInfo& eci = Ubel::WalkClassEx(lf.elemStructAddr);  // memoized — by ref
                     std::vector<std::string> types, names;
                     types.reserve(eci.Fields.size()); names.reserve(eci.Fields.size());
                     for (const auto& ff : eci.Fields) { types.push_back(ff.TypeName); names.push_back(ff.Name); }
@@ -9687,7 +9682,7 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
     const auto& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // not a meta scope -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized — BY REF, no copy
     constexpr int kMaxStructLeafFields = 512;        // per object, defensive
     int added = 0;
     for (const auto& f : ci.Fields) {
@@ -9745,11 +9740,11 @@ struct GroupLeafMeta {
     int32_t     offset       = 0;   // bytes from the OWNING object base (direct); 0 for deep container leaves
     int32_t     elementIndex = -1;  // -1 direct field; >=0 container element index
     uintptr_t   leafAddr     = 0;   // ABSOLUTE value address (direct: owner+offset; deep: element addr)
-    uintptr_t   ownerAddr    = 0;   // object directly holding the leaf (actor, or owned sub-object for P4)
-    std::string ownerClass;         // class name of ownerAddr's object (P4 inc 2; drives the Pivot handoff)
+    uintptr_t   ownerAddr    = 0;   // object directly holding the leaf (the actor, or a sub-object it owns)
+    std::string ownerClass;         // class name of ownerAddr's object (drives the Pivot handoff)
     uint8_t     boolMask     = 0xFF;
-    bool        isNativeC    = false;  // P2: raw-hole leaf (unmanaged, non-UPROPERTY)
-    std::string guessedType;           // P2: interpreted width label (e.g. "Int32"); "" for reflected
+    bool        isNativeC    = false;  // raw-hole leaf (unmanaged, non-UPROPERTY)
+    std::string guessedType;           // interpreted width label (e.g. "Int32"); "" for reflected
     // Relayed verbatim to GroupSlotMatch so refine can re-anchor a
     // container element. Defaults to Unknown/-1, which the rule refuses to act on.
     Radar::LeafAnchor anchor;
@@ -9771,17 +9766,17 @@ Radar::GroupSlotMatch GroupSlotMatchFromMeta(const GroupLeafMeta& meta, uint32_t
     sm.elementIndex  = meta.elementIndex;
     sm.offset        = meta.offset;
     sm.leafAddr      = meta.leafAddr;
-    sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;           // P4: leaf's owning object
-    sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;   // P4 inc 2
-    sm.anchor        = meta.anchor;                                     // A12: relay the container identity
+    sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;           // the leaf's owning object
+    sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;   // that owner's class
+    sm.anchor        = meta.anchor;                                     // relay the container identity
     std::memcpy(sm.prevValue, leafBytes, 8);
     return sm;
 }
 
 // The key a group leaf's descriptor is interned under. The TYPE is part of it: a native-C hole emits one leaf per width
 // that satisfies a slot, all named "<raw@0xNN>" at one offset, and refine reads each leaf's width from its descriptor --
-// keyed without the type, every width got the first one's (Int16) and was refined and shown as that. A reflected leaf has
-// one type per class / name / offset, so its descriptors are as before. [GROUP-RAW-WIDTH-INTERN]
+// keyed without the type, every width would get the first one's (Int16) and be refined and shown as that. A reflected
+// leaf has one type per class / name / offset, so the type does not split its descriptors. [GROUP-RAW-WIDTH-INTERN]
 std::string GroupDescInternKey(const std::string& className, const GroupLeafMeta& meta) {
     std::string key = className; key += '|'; key += meta.fieldName;
     key += '|'; key += std::to_string(meta.offset);
@@ -9829,8 +9824,8 @@ inline bool GroupNumericLeafType(const std::string& typeName, bool wantByte,
 }
 
 // Collect an object's numeric scalar leaves: direct fields + depth-capped
-// direct-StructProperty descent (mirrors ScanForValue's reach for P1). Numeric
-// containers (TArray/TSet/TMap) are P3 and intentionally not followed here.
+// direct-StructProperty descent (mirrors ScanForValue's direct-field reach).
+// Numeric containers (TArray/TSet/TMap) are intentionally not followed here.
 // `obj` is the instance base; `structAddr` is the UStruct being walked;
 // `baseOffset` accumulates obj->structAddr. leaves[k] <-> metas[k].
 void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
@@ -9845,7 +9840,7 @@ void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
     for (uintptr_t v : visited) if (v == structAddr) return;  // cycle guard
     visited.push_back(structAddr);
 
-    const ClassInfo& ci = Ubel::WalkClassEx(structAddr);  // memoized per struct (B10)
+    const ClassInfo& ci = Ubel::WalkClassEx(structAddr);  // memoized per struct
     for (const auto& f : ci.Fields) {
         if (leaves.size() >= leafCap) break;
         Radar::DataType dt;
@@ -9869,7 +9864,7 @@ void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
             m.ownerAddr     = obj;                            // the object directly holding this leaf
             m.ownerClass    = ownerClassName;                 // class of obj (constant across this walk)
             m.boolMask      = f.boolFieldMask;
-            m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: not a container element
+            m.anchor        = Radar::MakeDirectLeafAnchor();   // not a container element
             metas.push_back(std::move(m));
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
@@ -9886,7 +9881,7 @@ void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
 // True when `child`'s Outer chain reaches `actor` within `maxHops` steps. A
 // UActorComponent's Outer is the actor (1 hop); a GAS UAttributeSet's Outer is
 // the UAbilitySystemComponent whose Outer is the actor (2 hops). Bounds the
-// cross-object reach (P4) to objects the actor genuinely OWNS — a pointer to a
+// cross-object reach to objects the actor genuinely OWNS — a pointer to a
 // shared / global object (another actor, the world, GameInstance) fails the test
 // and is never followed.
 bool IsOwnedBy(uintptr_t child, uintptr_t actor, int maxHops) {
@@ -9899,7 +9894,7 @@ bool IsOwnedBy(uintptr_t child, uintptr_t actor, int maxHops) {
     return false;
 }
 
-// Cross-object block assembly (P4, approach C). Append the numeric leaves of the
+// Cross-object block assembly. Append the numeric leaves of the
 // sub-objects `actor` OWNS to the actor's block (`leaves`/`metas`), so a group
 // whose values are distributed across {actor, its components, its GAS
 // AttributeSets} is matched as ONE block. A bounded 2-level BFS over OWNED objects:
@@ -9911,7 +9906,7 @@ bool IsOwnedBy(uintptr_t child, uintptr_t actor, int maxHops) {
 // Sub-objects are discovered with EnumerateOutgoingObjectPtrs (the same
 // outgoing-pointer adapter Locate-in-GWorld uses — direct ObjectProperty fields
 // AND object-pointer CONTAINERS like OwnedComponents TSet / SpawnedAttributes
-// TArray, which neither P1 nor Deep walks) and kept only when the actor OWNS them
+// TArray, which neither CollectGroupLeaves nor Deep walks) and kept only when the actor OWNS them
 // (IsOwnedBy: Outer chains back to the actor within 2 hops). Selectivity is the
 // value AND across slots, NOT a class-name filter (a Mesh's RelativeLocation simply
 // won't equal the searched values). Each sub-object leaf carries its own ownerAddr
@@ -9955,7 +9950,7 @@ void AppendOwnedSubObjectLeaves(uintptr_t actor, bool wantByte,
                 if (elemIdx >= 0) { prefix += "["; prefix += std::to_string(elemIdx); prefix += "]"; }
                 subVisited.clear();
                 // Each cross-object leaf is OWNED by this sub-object, so its Pivot
-                // handoff class is the sub-object's class, not the actor's (P4 inc 2).
+                // handoff class is the sub-object's class, not the actor's.
                 std::string childClassName = Ubel::GetName(childCls);
                 CollectGroupLeaves(child, childClassName, childCls, 0, prefix, wantByte, 0,
                                    subVisited, leaves, metas, leafCap);
@@ -9988,13 +9983,13 @@ bool GroupCandidateFeasible(const Radar::GroupCandidate& gc) {
 
 // === Related-object graph (forward, owned) — see Aura.h for the contract ===
 // Reuses EnumerateOutgoingObjectPtrs (the outgoing-pointer adapter) + IsOwnedBy
-// (the Outer-chain ownership gate) — the SAME pieces the P4 cross-object group
+// (the Outer-chain ownership gate) — the SAME pieces the cross-object group
 // scan uses, here collecting OBJECTS instead of numeric leaves. Bounded + fast.
 std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults,
                                              RelatedObjectsStats* stats, const RelatedObjectsLimits& limits) {
     std::vector<RelatedObject> out;
     if (maxResults <= 0) maxResults = 128;
-    // [W4-RELATED-STOPS] Every stop records its OWN cause (P5), into a local published once at the end.
+    // [W4-RELATED-STOPS] Every stop records its OWN cause, into a local published once at the end.
     RelatedObjectsStats st;
     st.maxResults   = maxResults;
     st.maxOwnedSubs = limits.maxOwnedSubs;
@@ -10144,7 +10139,7 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
     return out;
 }
 
-// Native-C (P2, opt-in). Append an object's UNMANAGED-hole leaves to its group
+// Native-C (opt-in). Append an object's UNMANAGED-hole leaves to its group
 // block, so a group whose values include native (non-UPROPERTY) C++ members is
 // matched. Computes the class's holes (complement of reflected coverage within
 // [UObject header, PropertiesSize), via Ubel::ComputeClassHoles), reads the window
@@ -10169,7 +10164,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                          std::vector<GroupLeafMeta>& metas, size_t leafCap) {
     if (widths.empty() || leaves.size() >= leafCap) return;
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;
@@ -10237,7 +10232,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                 m.boolMask      = 0xFF;
                 m.isNativeC     = true;
                 m.guessedType   = Radar::NameOf(w);
-                m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: a raw hole in the object body
+                m.anchor        = Radar::MakeDirectLeafAnchor();   // a raw hole in the object body
                 metas.push_back(std::move(m));
                 if (++rawAdded >= kMaxRawGroupLeaves) break;
             }
@@ -10257,8 +10252,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
     const size_t nSlots = slots.size();
     // Set if any object had more satisfying leaves than the per-slot cap. Reported once
     // at the end: a truncated set is still a correct FIRST scan, but a later
-    // Changed/Decreased refine can only re-read what was kept -- which is how a cap of 8
-    // hid every derived-class field behind AActor's.
+    // Changed/Decreased refine can only re-read what was kept -- so a small cap can hide
+    // every derived-class field behind AActor's.
     bool capHit = false;
     if (nSlots < 2) return result;                       // a group needs >= 2 values
     for (const auto& sp : slots)
@@ -10270,7 +10265,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         if (sp.dt == Radar::DataType::NumericAll ||
             sp.dt == Radar::DataType::Int8 || sp.dt == Radar::DataType::UInt8) { wantByte = true; break; }
 
-    // Native-C (P2): the union of widths any slot can represent (distinct dt across
+    // Native-C: the union of widths any slot can represent (distinct dt across
     // all slots' target entries). The raw-hole pass reads only these widths at each
     // hole offset, so an int-only group never probes float holes, etc.
     std::vector<Radar::DataType> nativeWidths;
@@ -10331,7 +10326,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         d.fieldType         = meta.fieldType;
         d.fieldOffset       = meta.offset;
         d.boolFieldMask     = meta.boolMask;
-        d.isNativeC         = meta.isNativeC;     // P2: native-C badge flows via the descriptor
+        d.isNativeC         = meta.isNativeC;     // the native-C badge flows via the descriptor
         d.guessedType       = meta.guessedType;
         uint32_t idx = static_cast<uint32_t>(result.descriptors.size());
         result.descriptors.push_back(std::move(d));
@@ -10409,9 +10404,9 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         m.definingClass = curClassName;
         m.leafAddr      = lf.leafAddr;
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
-        m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)
+        m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class
         m.boolMask      = lf.boolMask;
-        m.anchor        = lf.anchor;      // A12: the container this element lives in
+        m.anchor        = lf.anchor;      // the container this element lives in
         blk.metas.push_back(std::move(m));
     };
 
@@ -10421,7 +10416,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
             if (std::chrono::steady_clock::now() - t0 > kDeadline) { result.stats.deadlineHit = true; break; }
         }
         // Newest-first (coupled with native-C in the UI): walk high-index first so
-        // that when the deadline truncates a huge game (FF7 Rebirth ~433K
+        // that when the deadline truncates a huge game (hundreds of thousands of
         // objects), the survivors are the most-recently-allocated objects — the
         // just-spawned UI widgets / actors that hold native values — rather than
         // low-index CDOs/templates. `idx` is the true GObjects index used everywhere.
@@ -10569,16 +10564,15 @@ ValueScanStats RefineGroupCandidates(
         if (gc.slotMatches.size() != nSlots) continue;
         if (gc.instanceIdx >= instances.size()) continue;   // defensive
         bool alive = true;
-        // Per-slot drop tally for the first few candidates. A refine that prunes to zero
-        // says only "0 surviving" today, which is the same output for six different causes:
-        // the leaf could not be read, its width has no target, the predicate rejected it, or
-        // the survivors could not form a distinct assignment. Three separate hypotheses were
-        // written and abandoned against that silence on 2026-08-05 -- so it now counts.
+        // Per-slot drop tally for the first few candidates. Without it a refine that prunes to
+        // zero says only "0 surviving", the same output for different causes: the leaf could
+        // not be read, its width has no target, the predicate rejected it, or the survivors
+        // could not form a distinct assignment.
         const bool diag = (dbgCandidates < kDiagCandidates);
         int dRead = 0, dWidth = 0, dNoTarget = 0, dPredicate = 0, dKept = 0, dEntered = 0;
-        int dReanchor = 0;   // A12: dropped because its container moved/shrank under it
+        int dReanchor = 0;   // dropped because its container moved/shrank under it
         for (size_t s = 0; s < nSlots && alive; ++s) {
-            // P2: per-slot predicate. Prev-value types (Changed/Increased/...)
+            // Per-slot predicate. Prev-value types (Changed/Increased/...)
             // compare each leaf's re-read bytes against its own stored prevValue;
             // targeted types (Exact/Bigger/Smaller) against the slot's new target
             // for that leaf's width. prevValue is updated to the latest bytes on
@@ -10596,7 +10590,7 @@ ValueScanStats RefineGroupCandidates(
                 const size_t sz = Radar::SizeOf(width);
                 if (sz == 0 || sz > 8) { ++dWidth; continue; }
 
-                // A12: re-anchor BEFORE reading leafAddr. `Unknown` / `Direct` /
+                // Re-anchor BEFORE reading leafAddr. `Unknown` / `Direct` /
                 // `UnverifiableNested` fall straight through unchanged.
                 const Radar::LeafAnchor& an = sm.anchor;
                 if (an.kind == Radar::ValueAnchor::ArrayElement
@@ -10636,7 +10630,7 @@ ValueScanStats RefineGroupCandidates(
                     Sein::Warn("SCAN:grp",
                         "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
                         "metadata hop dropped it; this leaf is refined at its stale absolute "
-                        "address (audit #5 A12)",
+                        "address",
                         Radar::FieldDisplayName(descriptors[sm.descriptorIdx], sm.elementIndex).c_str());
                 }
 
@@ -10687,7 +10681,7 @@ ValueScanStats RefineGroupCandidates(
     stats.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
     // Only when it actually fired. `repointed` is the half that is a GAIN: a grown container
-    // leaves every element address stale, and without the re-anchor those leaves would be lost (A12).
+    // leaves every element address stale, and without the re-anchor those leaves would be lost.
     if (reanchorDropped || reanchorRepointed) {
         Sein::Info("SCAN:grp",
                    "RefineGroup re-anchor: %d container element(s) repointed after a realloc, "
@@ -10697,7 +10691,7 @@ ValueScanStats RefineGroupCandidates(
     return stats;
 }
 
-// Native-C (P3): append an object's UNMANAGED-hole guesses as synthetic snapshot
+// Native-C: append an object's UNMANAGED-hole guesses as synthetic snapshot
 // fields, so a captured snapshot ALSO carries native (non-UPROPERTY) values for the
 // SPC diff / Class Pivot consumers. Reuses the "Guess What" engine (Ubel::GuessGapTypes)
 // over each hole, then NORMALIZES each guessed type to the canonical UE property-type
@@ -10708,7 +10702,7 @@ ValueScanStats RefineGroupCandidates(
 // gameplay numerics; they'd pollute the Pivot value picker). Field names are
 // "<raw@0xNN>" — offset-only, so the same hole joins across snapshots regardless of the
 // guessed value, and so SPC/Pivot (which key on prop_name + offset) treat it uniformly;
-// matches the P1/P2 discriminator. Honors the snapshot numericScope (e.g. Byte guesses
+// matches the value and group scans' raw-hole discriminator. Honors the snapshot numericScope (e.g. Byte guesses
 // drop under NumericNoByte). Bounded per object (kMaxRawSnapFields).
 void AppendRawHoleFields(uintptr_t obj, uintptr_t cls, Radar::DataType numericScope,
                          std::vector<SnapshotField>& out,
@@ -10716,7 +10710,7 @@ void AppendRawHoleFields(uintptr_t obj, uintptr_t cls, Radar::DataType numericSc
     const std::vector<Radar::DataType>& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // numericScope isn't a meta type -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;
@@ -10820,9 +10814,9 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 
     if (result.scanned <= 0) return result;
 
-    // Parallel capture: the chunk's objects are walked across worker threads — the
-    // single-threaded walk was the dominant cost on huge games (FF7 Rebirth ~433K
-    // objects: snapshot ran 10+ min and didn't finish). Every per-object dependency
+    // Parallel capture: the chunk's objects are walked across worker threads — a
+    // single-threaded walk is the dominant cost on huge games (hundreds of thousands
+    // of objects). Every per-object dependency
     // is parallel-safe: Ubel's class/name/struct caches are mutex-guarded and return
     // value copies (the same primitives ScanForValue already parallelizes), the
     // Native-C GuessGapTypes pass uses a thread_local buffer, and Macht reads are
@@ -10879,7 +10873,7 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
             // never dropped. Verdict is thread-local memoized per class.
             if (skipNoiseClasses && IsSnapshotNoiseClass(cls, classPath)) continue;
 
-            const ClassInfo& ci = Ubel::WalkClassEx(cls);  // memoized per class (B10) — no copy
+            const ClassInfo& ci = Ubel::WalkClassEx(cls);  // memoized per class — no copy
             if (ci.Fields.empty()) continue;
 
             typeNames.clear();
@@ -10928,7 +10922,7 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
             CaptureStructArrays(obj, cls, numericScope, arrayCap, so.arrays, family,
                                 /*captureTopLevelScalarArrays*/ IsSnapshotGameplayClass(cls));
 
-            // Native-C (P3, opt-in): append this object's unmanaged-hole guesses as
+            // Native-C (opt-in): append this object's unmanaged-hole guesses as
             // synthetic "<raw@0xNN>" fields so the snapshot also carries native
             // (non-UPROPERTY) values for SPC diff / Class Pivot.
             if (captureNativeC)
@@ -10969,7 +10963,7 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 }
 
 
-// [LIVEFUNCS-STEP3] S3-A1 follow-up. A region VirtualQuery reports has one state, type and protection throughout, so
+// [LIVEFUNCS-STEP3] A region VirtualQuery reports has one state, type and protection throughout, so
 // its verdict holds for every address in it; non-code regions are kept too, so a run of bad pointers asks once each.
 bool CodeRangeCache::IsCode(uintptr_t p) {
     if (p < 0x10000) return false;
@@ -10988,7 +10982,7 @@ bool CodeRangeCache::IsCode(uintptr_t p) {
     return r.code;
 }
 
-// [LIVEFUNCS-STEP3] S3-A1.
+// [LIVEFUNCS-STEP3] The native-entry index (Aura.h).
 void SortCodeEntries(std::vector<CodeEntry>& entries) {
     std::sort(entries.begin(), entries.end(), [](const CodeEntry& a, const CodeEntry& b) {
         return a.code != b.code ? a.code < b.code : a.ufunc < b.ufunc;

@@ -7,10 +7,10 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the two X4 defects in the Dump All completion line:
-/// (1) success was announced from the file's byte length, so a zero-class /
-/// all-errored dump still read as an export; (2) the size was integer division
-/// (<c>length/1024/1024</c>), which printed "3.0 MB" for 3.7 MB and "0.0 MB" for
+/// Pins two rules of the Dump All completion line:
+/// (1) success is not announced from the file's byte length, or a zero-class /
+/// all-errored dump would read as an export; (2) the size is not integer division
+/// (<c>length/1024/1024</c>), which prints "3.0 MB" for 3.7 MB and "0.0 MB" for
 /// anything under a megabyte. Both halves get negative controls.
 /// </summary>
 public class DumpCompletionFormatterTests
@@ -29,16 +29,16 @@ public class DumpCompletionFormatterTests
     [InlineData(512L, "512 B")]
     [InlineData(1023L, "1023 B")]
     [InlineData(1024L, "1.0 KB")]
-    [InlineData(500_000L, "488.3 KB")]     // old int-div => "0.0 MB"
+    [InlineData(500_000L, "488.3 KB")]     // int-div => "0.0 MB"
     [InlineData(1_048_576L, "1.0 MB")]
-    [InlineData(3_879_731L, "3.7 MB")]     // old int-div => "3.0 MB"
+    [InlineData(3_879_731L, "3.7 MB")]     // int-div => "3.0 MB"
     public void FormatSize_UsesFloatingDivision_AndStepsDownToKbBytes(long bytes, string expected)
         => Assert.Equal(expected, Invariant(() => DumpCompletionFormatter.FormatSize(bytes)));
 
     [Fact]
     public void FormatSize_NegativeControl_DoesNotRoundRealFileToZeroOrIntegerMb()
     {
-        // These are the exact strings the buggy `length/1024/1024:F1` produced.
+        // These are the exact strings an integer-division `length/1024/1024:F1` produces.
         Assert.NotEqual("3.0 MB", Invariant(() => DumpCompletionFormatter.FormatSize(3_879_731L)));
         Assert.NotEqual("0.0 MB", Invariant(() => DumpCompletionFormatter.FormatSize(500_000L)));
     }
@@ -88,7 +88,7 @@ public class DumpCompletionFormatterTests
     [Fact]
     public void Format_NamesTheStructsBesideTheClasses()
     {
-        // [EXTPR-539-540-2026-10-02] D1: Dump All writes struct lines too, and the message says how many.
+        // [EXTPR-539-540-2026-10-02] Dump All writes struct lines too, and the message says how many.
         var s = Invariant(() => DumpCompletionFormatter.Format(
             new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
                            StructsEmitted: 340),
@@ -101,7 +101,7 @@ public class DumpCompletionFormatterTests
     [Fact]
     public void Format_NamesTheEnumsToo()
     {
-        // [EXTPR-539-540-2026-10-02] D2.
+        // [EXTPR-539-540-2026-10-02] Dump All writes enum lines, and the message says how many.
         var s = Invariant(() => DumpCompletionFormatter.Format(
             new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
                            StructsEmitted: 340, EnumsEmitted: 56),
@@ -118,8 +118,8 @@ public class DumpCompletionFormatterTests
     [InlineData(false, false, false, "enum list could not be read")]
     public void Format_SaysWhatTheEnumListCouldNotSay(bool listed, bool truncated, bool namesFailed, string expected)
     {
-        // [EXTPR-539-540-2026-10-02] D2 review: a dump whose enums are empty or partial must not end on a bare
-        // success line, as USMAP's did before [P1-ENUMNAMES].
+        // [EXTPR-539-540-2026-10-02] A dump whose enums are empty or partial must not end on a bare
+        // success line; USMAP's completion follows the same rule ([P1-ENUMNAMES]).
         var s = Invariant(() => DumpCompletionFormatter.Format(
             new DumpResult(ClassesEmitted: 10, ClassesSkippedEngine: 0, Errors: listed ? 0 : 1, ObjectsScanned: 900,
                            EnumsEmitted: listed ? 5 : 0, EnumsListed: listed, EnumNamesFailed: namesFailed,

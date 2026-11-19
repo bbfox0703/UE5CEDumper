@@ -3,7 +3,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. The DLL's rules for an AI's invoke, mirrored so that an invoke grant that
+/// [MCP-WRITE-GRANTS-2026-11-14] The DLL's rules for an AI's invoke, mirrored so that an invoke grant that
 /// could never be used is refused when it is asked for, not at its first call: a grant on <c>K2_DestroyActor</c> is
 /// never recorded (the host's prompt comes before the tool runs, so the user may still see one asked for). The DLL
 /// still decides at every call (Voll::InvokeRefusedForBackground and, under a grant, Voll::InvokeParamIndirection);

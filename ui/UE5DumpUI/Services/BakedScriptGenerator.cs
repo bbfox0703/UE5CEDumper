@@ -41,11 +41,11 @@ public static class BakedScriptGenerator
     internal const int ParamsRegionBytes = 1024;
 
     /// <summary>
-    /// [UE-OVERRIDE-411] review 2: the <c>parmsSize</c> a baked invoke carries. ue5_invoke_helper.lua refuses one
+    /// [UE-OVERRIDE-411] The <c>parmsSize</c> a baked invoke carries. ue5_invoke_helper.lua refuses one
     /// past the mailbox's paramsData slab, and bounds every write and the zero-fill by it, so it has to be where
     /// the function's parameter chain ends -- never only the ParmsSize the DLL read from the UFunction's tail: under
-    /// a wrong UE version that read is another field (NumParms, a few bytes), which let a 1 KB+ out parameter past
-    /// the helper's gate. The chain end is <see cref="InvokeScriptGenerator.RequiredSpan(int, IEnumerable{FunctionParamModel})"/>
+    /// a wrong UE version that read is another field (NumParms, a few bytes), which would let a 1 KB+ out parameter
+    /// past the helper's gate. The chain end is <see cref="InvokeScriptGenerator.RequiredSpan(int, IEnumerable{FunctionParamModel})"/>
     /// over the parameters, or the DLL's own <c>buffer_bytes</c> where only a list_all_functions row is at hand.
     /// </summary>
     internal static int BakedParmsSize(int parmsSize, IEnumerable<FunctionParamModel> parameters)
@@ -256,7 +256,7 @@ public static class BakedScriptGenerator
         // Verify mode: emit a Before/After raw-byte dump around the invoke
         // so the user can distinguish "function didn't run" (After == Before)
         // from "wrong return offset" (return value lands somewhere else).
-        // Width is chosen so the RETURN SLOT is inside the window (Y13); the
+        // Width is chosen so the RETURN SLOT is inside the window; the
         // complex-return message below consults the same number rather than
         // asserting the value is visible.
         int dumpLen = ComputeDumpLength(parmsSize, returnParam);
@@ -306,9 +306,8 @@ public static class BakedScriptGenerator
             // point to zero it after a call (would race with Lua reading
             // the return value), and the helper's writeBakedParams zero
             // happens AFTER this dump. Without this pre-zero, the Before
-            // dump shows leftover bytes from the previous invoke (e.g.
-            // ES2 / Geri 2026-05-11 test: scen 2's Before showed scen 1's
-            // [3, 4, 7] payload). Pre-zeroing here makes Before always
+            // dump shows leftover bytes from the previous invoke's
+            // payload. Pre-zeroing here makes Before always
             // appear clean, so Before vs After unambiguously isolates
             // what THIS invoke wrote.
             //
@@ -333,8 +332,7 @@ public static class BakedScriptGenerator
         // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the function is not static and
         // the object was a class default object or another template, once the call reached dispatch, whether or not
         // it then succeeded (nil when the helper's own wait ran out first). An older embedded helper returns two
-        // values, so `warn` is nil there and the record
-        // behaves as it did.
+        // values, so `warn` is nil there and the record shows no warning.
         Line(sb,
             $"local ok, err, warn = invokeUFunction('{EscapeLua(className)}', " +
             $"'{EscapeLua(funcName)}', {parmsSize}, PARAMS)");
@@ -390,15 +388,13 @@ public static class BakedScriptGenerator
                           + $"{dumpLen}-byte dump window above -- read it in CE's memory "
                           + "viewer at g_invokeMailbox + 0x328";
                     // hint MUST go through EscapeLua like every other interpolated piece
-                    // on this line. It did not, and the does-not-fit branch above contains
-                    // an apostrophe ("CE's"), which closed the single-quoted Lua string
-                    // early and made the WHOLE [ENABLE] block a syntax error:
+                    // on this line: the does-not-fit branch above contains an apostrophe
+                    // ("CE's"), which unescaped closes the single-quoted Lua string
+                    // early and makes the WHOLE [ENABLE] block a syntax error:
                     //   Lua error ... ')' expected near 's'
                     // CE then refuses to enable the record and reverts Active to false
                     // with NO dialog, so the script simply never runs and says nothing.
-                    // Measured in CE 7.7 on SequenceCameraShakeTestUtil::GetCameraCachePOV
-                    // (ParmsSize 2064, FMinimalViewInfo return at +16, 2048B) while running
-                    // Y10 step 4. [INVOKEHINTQUOTE-2026-08-22]
+                    // [INVOKEHINTQUOTE-2026-08-22]
                     Line(sb,
                         $"  print('[Invoke] OK: {EscapeLua(className)}::{EscapeLua(funcName)} " +
                         $"-> {EscapeLua(returnParam.ParamName)} ({displayType}@{returnParam.Offset}, " +
@@ -444,7 +440,7 @@ public static class BakedScriptGenerator
             // helper's mailbox is resolved here (getAddressSafe + module-prefixed
             // fallback, mirroring findMailbox) so the raw slot can be read.
             // Bounded by the mailbox's paramsData slab too: ParmsSize 0 (unknown) bounds nothing,
-            // and a slot past the slab would decode whatever follows MailboxData (review of 9abc03c8).
+            // and a slot past the slab would decode whatever follows MailboxData.
             if (returnParam != null &&
                 returnParam.Offset >= 0 &&
                 (parmsSize <= 0 || returnParam.Offset < parmsSize) &&
@@ -546,7 +542,7 @@ public static class BakedScriptGenerator
     /// Size-less overload. Every type whose width is fixed by its NAME maps
     /// identically; <c>EnumProperty</c> — the one type whose width is not — falls back
     /// to the legacy <c>int32</c>. Callers holding a real param should pass its size.
-    /// Same shape as <c>FreezeScriptGenerator.MapToHelperType</c>, which Y15 built.
+    /// Same shape as <c>FreezeScriptGenerator.MapToHelperType</c>.
     /// </summary>
     public static string MapToHelperType(string ueTypeName)
         => MapToHelperType(ueTypeName, 0);
@@ -575,10 +571,10 @@ public static class BakedScriptGenerator
             or "WeakObjectProperty"
             or "InterfaceProperty"                    => "pointer",
         // [VND584-01] A lazy pointer is found by a GUID nothing can make: the helper refuses any value but 0 for it,
-        // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it was written as an address.
+        // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it would be written as an address.
         "LazyObjectProperty"                          => "lazy",
         // [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's asset pointer: its path is an FString the helper cannot build, so it is
-        // empty-only too, under its own token (helper 1.5). The int32 default wrote a typed value over its weak index.
+        // empty-only too, under its own token (helper 1.5). The int32 default would write a typed value over its weak index.
         "AssetObjectProperty" or "AssetClassProperty" => "asset",
         // Complex multi-byte buffer types -- the helper has no scalar
         // decoder for these, so the verify-mode emit treats them as a
@@ -691,7 +687,7 @@ public static class BakedScriptGenerator
             // so the parse "succeeds" and MarkUnparsed never fires — then ToString("R")
             // emits those bare words, which are not Lua number literals. Lua reads them
             // as an undefined global, i.e. `nil`, and the baked param silently becomes
-            // nothing at all. Input is unvalidated upstream (InvokeParamDialog). (B23)
+            // nothing at all. Input is unvalidated upstream (InvokeParamDialog).
             if (double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
                 && double.IsFinite(d))
             {
@@ -724,10 +720,10 @@ public static class BakedScriptGenerator
     /// True when <see cref="RenderLiteral"/> would give up on this input and bake a 0.
     ///
     /// <para>Defined by RUNNING the real renderer rather than re-deriving the rule, so it
-    /// cannot disagree with what the script actually contains — a second parser here is
-    /// how "the report and the reality are computed by different code paths" gets
-    /// re-introduced. The dialog's export message uses it to name the params that failed to
-    /// parse instead of reporting a clean "N baked param(s)".</para>
+    /// cannot disagree with what the script actually contains — with a second parser here,
+    /// the report and the reality would be computed by different code paths. The dialog's
+    /// export message uses it to name the params that failed to parse instead of reporting
+    /// a clean "N baked param(s)".</para>
     /// </summary>
     public static bool IsUnparsedLiteral(string ueTypeName, string text)
         => RenderLiteral(ueTypeName, text).StartsWith(UnparsedMarker, StringComparison.Ordinal);

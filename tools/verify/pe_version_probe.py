@@ -3,20 +3,20 @@ r"""Replay Genau's Tier-0 (PE VERSIONINFO) decision offline, over any set of UE 
 Why this exists: version-detection rows in the register keep prescribing candidate
 titles by ENGINE version, but which tier a title reaches is decided by its PE
 version RESOURCE, not by what engine built it. G2 step 3 needs a title that FALLS
-THROUGH Tier 0 to the memory-string needle -- and five candidates were listed that
-structurally cannot, for the same reason Lushfoil could not. One offline sweep
+THROUGH Tier 0 to the memory-string needle -- and a candidate picked by engine version
+can structurally be unable to, for the same reason Lushfoil is. One offline sweep
 answers "which titles can even reach the tier I want" before anything is launched.
 
 Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order -- `read_resource()` reads the fields,
 `decide()` makes the decision (pure, so `--selftest` runs it on every dll/tests/res fixture's own .rc fields):
   1. VS_FIXEDFILEINFO.dwProductVersionMS   5.x -> 500+minor | 4.x -> 400+minor
   2. VS_FIXEDFILEINFO.dwFileVersionMS      same
-     (rev 10) either fixed reading yields to the file's own engine build string when that names another version
+     either fixed reading yields to the file's own engine build string when that names another version
      (`fixed_reading`): ProductVersion's string, then FileVersion's, read by `engine_build_string_code`; the result is
      a 'build string' reading recording the fixed code it `overruled`
   3. StringFileInfo ProductVersion, then FileVersion, each the first non-empty value over EVERY
      VarFileInfo translation (`first_nonempty`): a '++UEn+Release-' prefix found anywhere whose
-     %u.%u gives a version code, else (rev 9) the engine's own build string --
+     %u.%u gives a version code, else the engine's own build string --
      `engine_build_string_code`, a port of Grimoire::EngineBuildStringCode (`string_reading`).
      Such a code came from a string, so below the 4.11 floor it cannot corroborate itself: only an
      agreeing CrashReportClient makes it refuse the scan.
@@ -110,7 +110,7 @@ _SELFTEST = [
 ]
 
 
-# ── Genau's string fallback (ReadUeVersionFromFile), ported ([VER-410-GATE] second review) ───────────
+# ── Genau's string fallback (ReadUeVersionFromFile), ported [VER-410-GATE] ──────────────────────────
 # tier_triage.py and tier1_host_survey.py read their Tier-0 verdict through read_resource() below, so a title is
 # planned for the tier the DLL will really reach.
 _PREFIXES = ("++UE5+Release-", "++UE4+Release-")
@@ -162,7 +162,7 @@ def string_reading(strs):
     return None
 
 
-# (strings, translations-to-values, want). Each mirrors a branch of the C++ reader the old port did not.
+# (strings, translations-to-values, want). Each mirrors a branch of the C++ reader.
 _READER_SELFTEST = [
     ("branch-first prefix", {"ProductVersion": "++UE4+Release-4.15-CL-0"}, ("STRING", "ProductVersion", 415)),
     ("version-first with a full 4.18+ branch reads through the prefix",
@@ -195,7 +195,7 @@ def build_string_of(strs):
 
 def fixed_reading(fixed_key, fixed_code, strs):
     """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports.
-    ([VER-410-FIXED-VS-STRING] rev 10) The fixed fields are the game's to set; where the file's own engine build string
+    [VER-410-FIXED-VS-STRING] The fixed fields are the game's to set; where the file's own engine build string
     names another version, the string's is taken, as a 'build string' reading that records the code it `overruled`."""
     b = build_string_of(strs)
     if b and b[2] != fixed_code:
@@ -207,9 +207,9 @@ def decide(pmaj, pmin, fmaj, fmin, strs):
     """What ReadUeVersionFromFile takes from one file once its VS_FIXEDFILEINFO and strings are in hand: the fixed
     ProductVersion, then the fixed FileVersion, each through `fixed_reading`; with neither a version code, the strings
     (`string_reading`); else 'unrecognised'. -> the decision fields read_resource() reports (kind, code, key, string,
-    overruled). Pure, and split from the reading, so --selftest runs the whole decision: while it sat inline in
-    read_resource, the fixed-field branch could be reverted to rev 9 with every selftest case still green
-    ([VER-410-FIXED-VS-STRING] review)."""
+    overruled). Pure, and split from the reading, so --selftest runs the whole decision: were it inline in
+    read_resource, the fixed-field branch could be reverted with every selftest case still green
+    ([VER-410-FIXED-VS-STRING])."""
     for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
         code = ue_version_code(maj, mnr)
         if code:
@@ -221,7 +221,7 @@ def decide(pmaj, pmin, fmaj, fmin, strs):
 
 
 _IS_DEFENSE = "4.10.2-0+++depot+UE4-Releases+4.10"
-# ([VER-410-FIXED-VS-STRING] rev 10) (name, fixed key, fixed code, strings, want (kind, key, code, overruled)). The first
+# [VER-410-FIXED-VS-STRING] (name, fixed key, fixed code, strings, want (kind, key, code, overruled)). The first
 # three are dll_core_test's fixtures game_fixed405_buildstring_415 / game_fixed501_buildstring_415 /
 # game_fixed420_buildstring_410; the agreeing and bare ones are b25c's and b25d's.
 _FIXED_SELFTEST = [
@@ -256,10 +256,10 @@ _TRANSLATION_SELFTEST = [
     ("no translation, no value", [], {}, ""),
 ]
 
-# ── dll_core_test's VERSIONINFO fixtures, read from their own .rc scripts ([VER-410-FIXED-VS-STRING] review) ──────────
+# ── dll_core_test's VERSIONINFO fixtures, read from their own .rc scripts [VER-410-FIXED-VS-STRING] ──────────────────
 # dll_core_test builds each dll/tests/res/*.rc into a resource-only DLL and asserts what Genau reads from it. --selftest
 # reads the same scripts' fields and runs `decide` on them, so the port is held to the C++ test's answers on the same
-# bytes -- that agreement had been checked by hand. A fixture with no row here fails, so a shape the C++ test gains is one
+# bytes, rather than to an agreement checked by hand. A fixture with no row here fails, so a shape the C++ test gains is one
 # this port must answer too. Each row is dll_core_test's assertion on that fixture: (kind, key, code, overruled).
 _RES_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "dll", "tests", "res"))
 _RC_EXPECT = {

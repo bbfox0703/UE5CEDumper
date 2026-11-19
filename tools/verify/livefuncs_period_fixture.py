@@ -17,8 +17,9 @@ So this asks the profiler what it actually produces, and reports whether a DISCR
 exists. It does not click anything — it establishes whether clicking would be worth doing, and
 names the two rows to look at.
 
-⚠ THE ORDER MATTERS: init -> trigger_scan -> invoke -> profile. Starting the profiler first used
-to poison the ProcessEvent hook for the life of the process, so this rig never leads with it.
+⚠ THE ORDER MATTERS: init -> trigger_scan -> invoke -> profile. A profiler started before the scan
+has no ProcessEvent hook until the scan re-runs detection ([PEHOOKONCE-2026-08-18]), so this rig
+never leads with it.
 
 ⚠ The Period column is fed by Linie's CADENCE phase (Welford inter-arrival mean/cv), so a function
 needs at least a couple of fires in the window to get a period at all. A short window yields mostly
@@ -64,8 +65,8 @@ def discriminating(a, b):
     ⚠ A DISPLAY TIE IS NOT A DISAGREEMENT. 66.65 and 66.749 are different floats that both
     render "66.7 ms"; the naive `(a < b) != (sa < sb)` calls that pair discriminating, because the
     numbers order and the equal strings do not. It is the exact opposite: two rows that LOOK
-    identical can never show you which comparer ran. The first version of this rig had that bug and
-    reported "9 discriminating pairs, PASS" over six values that were all 66.7 ms.
+    identical can never show you which comparer ran: counting them reports discriminating pairs,
+    and a PASS, over values that all render the same.
     """
     sa, sb = fmt(a), fmt(b)
     if sa == sb or a == b:

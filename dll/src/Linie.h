@@ -56,7 +56,7 @@ inline constexpr int kIdentityTries = 3;
 // it triggers (widget creation, On* notifications), so a smaller firstSeq among
 // the diff's NEW rows ranks the true entry point above its downstream effects.
 //
-// CADENCE (Phase E): meanPeriodMs / cv summarise the wall-clock inter-arrival
+// CADENCE: meanPeriodMs / cv summarise the wall-clock inter-arrival
 // gaps between fires (Welford, computed from the timestamp Stark already reads —
 // zero extra clock reads on the hot path). A steady TIMER callback fires at a
 // regular period (low cv); Tick fires every frame (low cv too, but in the frame
@@ -107,7 +107,8 @@ struct ArmHint {
     uint16_t copy  = 0;    // bytes to copy from the parameter block
     uint8_t  flags = 0;
     // [LIVEFUNCS-STEP3] The stack ring of the choice this address is armed for, numbered among the stack rings
-    // (0..S-1); -1: no stack. Last, so the hint keeps its size and every aggregate initializer means what it did.
+    // (0..S-1); -1: no stack. Last: it fills the tail padding, so the hint stays 24 bytes, and a positional
+    // initializer of the fields above means the same fields.
     int32_t  stackRing = -1;
 };
 static_assert(sizeof(ArmHint) == 24, "the hint lives in the hook's frame: stackRing fills what was padding");
@@ -154,7 +155,7 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs);
 void IdentitiesOf(const std::vector<uintptr_t>& addrs, std::vector<FuncIdentity>& out);
 
 // The functions IsPerFrame picks out of the table as it stands. pe_profile_start reads it BEFORE StartRecording
-// clears the table, so the trace can leave out what the previous recording found firing every frame (T5 (b)).
+// clears the table, so the trace can leave out what the previous recording found firing every frame.
 std::vector<uintptr_t> PerFrameFuncs();
 
 // ============================================================
@@ -179,12 +180,12 @@ inline constexpr uint64_t kTraceSeqMask   = kTraceReturnBit - 1;
 inline constexpr uint32_t kTraceScopeRoot = 1;
 inline constexpr uint32_t kTraceSnapTaken = 1u << 1;   // [LIVEFUNCS-STEP2] a snapshot ring holds this call's parameters
 // [LIVEFUNCS-STEP2] A chosen call the scope would not record, recorded alone for what it was chosen for -- its
-// parameters, its stack, or both (T11): it opened no scope, so the calls it made are not in the trace.
+// parameters, its stack, or both: it opened no scope, so the calls it made are not in the trace.
 inline constexpr uint32_t kTraceSnapLone     = 1u << 2;
 // A chosen call on the per-frame exclusion list, kept inside an open scope for its parameters or its stack; its
 // callees are traced as the scope's are.
 inline constexpr uint32_t kTraceSnapExcluded = 1u << 3;
-// A call chosen for its parameters that the budget left them out of (T9 item 3: the first calls of each second
+// A call chosen for its parameters that the budget left them out of (the first calls of each second are
 // kept). A lone or excluded call carries it only when its stack was taken: with nothing taken it is not recorded.
 inline constexpr uint32_t kTraceSnapBudget   = 1u << 4;
 // [LIVEFUNCS-STEP3] A stack ring holds this call's native return addresses, taken at its entry.
@@ -214,14 +215,14 @@ using BytesCopier = bool (*)(uintptr_t src, void* dst, size_t n);
 // happened. Linie knows nothing of stack walks, as it knows nothing of SEH: the pipe installs Macht's.
 using StackCapturer = uint32_t (*)(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
 // The stack choice's limits. The UI pins each.
-inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (plan section 3)
+inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (docs/live-funcs-timeline-plan.md, section 3)
 inline constexpr uint32_t kStackMaxDepth             = 62;
-// The budget (T17): 50 captures a second in all, sized for a capture cost of about 28 us, the conservative figure in
+// The budget: 50 captures a second in all, sized for a capture cost of about 28 us, the conservative figure in
 // docs/live-funcs-step3-items.md ("8.0 Results") -- about 1.4 ms of the game thread a second; a function may take half
 // of it. Re-weigh against a real game's capture cost before raising it.
 inline constexpr uint32_t kStackDefaultPerRingPerSec = 25;
 inline constexpr uint32_t kStackDefaultTotalPerSec   = 50;
-// The UI's Low budget (T20): half the defaults, rounded down, for a slower machine or a game where a capture costs more.
+// The UI's Low budget: half the defaults, rounded down, for a slower machine or a game where a capture costs more.
 inline constexpr uint32_t kStackLowPerRingPerSec     = 12;
 inline constexpr uint32_t kStackLowTotalPerSec       = 25;
 inline constexpr uint16_t kSnapNoCapturer            = 0x8000;   // Linie's one stack-slot bit; the rest are the capturer's
@@ -230,7 +231,7 @@ inline uint32_t StackRingCap(uint32_t depth) {
     return (depth < 1 ? 1u : depth > kStackMaxDepth ? kStackMaxDepth : depth) * 8u;
 }
 
-// The slider's range (T1): powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
+// The slider's range: powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
 // so a test can wrap a small ring; the pipe handler holds the user to this range.
 inline constexpr uint64_t kTraceMinBytes = 32ull << 20;
 inline constexpr uint64_t kTraceMaxBytes = 512ull << 20;
@@ -251,24 +252,24 @@ private:
 
 struct TraceConfig {
     uint64_t bytes = 0;
-    std::vector<uintptr_t> ticked;    // T5 (a): not empty = record only the calls of these and what they call
-    std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope or its
+    std::vector<uintptr_t> ticked;    // not empty = record only the calls of these and what they call
+    std::vector<uintptr_t> exclude;   // never record these, unless the call opens a ticked scope or its
                                       // parameters are chosen ([LIVEFUNCS-STEP2]: lone or kTraceSnapExcluded)
     // [LIVEFUNCS-STEP2] The names this recording follows. StartTrace stamps them with its gen and keeps them for the
     // trace's readers; they go when the trace is freed.
     std::shared_ptr<ArmState> arms;
-    // Scoped: record only inside ticked calls (and, with step 2, the chosen calls alone). Fixed from what the Start
+    // Scoped: record only inside ticked calls (and the chosen calls alone). Fixed from what the Start
     // ASKED -- ticks by address or by name, or choices -- never from what is armed so far: a tick waiting for its
     // function to load must not turn the trace into one of every call. Ticked addresses scope it whatever this says.
     bool   scoped      = false;
     size_t tickedNames = 0;   // ticks by name, for the trace's info
-    bool   snapOnly    = false;   // chosen functions and no ticks: only the chosen calls are recorded (T11)
+    bool   snapOnly    = false;   // chosen functions and no ticks: only the chosen calls are recorded
     // The snapshot rings, one per chosen function in one allocation of at most `snapBytes`: each ring's slot payload
     // (RingCapFor of its choice). Every ring keeps the same number of calls, so a busy choice laps only its own ring.
     std::vector<uint32_t> snapRingCaps;
     uint64_t              snapBytes = 0;
     BytesCopier           copier = nullptr;   // nullptr: every copy is a fault
-    // The budget, the guarantee (T9 item 3): at most this many snapshots a second per ring and in all; the first calls
+    // The budget, the guarantee: at most this many snapshots a second per ring and in all; the first calls
     // of each second are kept. The pipe clamps what the UI sends.
     uint32_t              snapPerRingPerSec = 1000;
     uint32_t              snapTotalPerSec   = 10000;
@@ -288,7 +289,7 @@ enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy, SnapTooSmall, SnapNo
 // Stops and frees any earlier trace, allocates the ring and touches every page on the calling thread (so the game
 // thread never takes the first lap's page faults), then arms the hook.
 TraceStartStatus StartTrace(const TraceConfig& cfg);
-// Disarms the hook and waits until no hook is inside a write (TR2). Afterwards the ring does not change.
+// Disarms the hook and waits until no hook is inside a write. Afterwards the ring does not change.
 void StopTrace();
 // StopTrace, then releases the memory.
 void FreeTrace();
@@ -448,7 +449,7 @@ inline constexpr uint32_t kSnapMaxCopy     = 2048;   // bytes copied per call at
 inline constexpr uint32_t kSnapUnknownCopy = 256;    // copied when the parameter size could not be read
 inline constexpr uint32_t kSnapMinSlots    = 8;      // a ring that keeps fewer calls refuses the Start
 inline constexpr uint32_t kSnapHeaderBytes = 24;     // per slot, before its copy
-inline constexpr uint64_t kSnapMinBytes    = 8ull << 20;     // the slider's range (T12); the pipe holds the user to it
+inline constexpr uint64_t kSnapMinBytes    = 8ull << 20;     // the slider's range; the pipe holds the user to it
 inline constexpr uint64_t kSnapMaxBytes    = 128ull << 20;
 inline constexpr uint32_t kFuncHasOutParms = 0x00400000;     // UFunction::FunctionFlags: an out parameter (a lone return: no)
 

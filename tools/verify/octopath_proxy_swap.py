@@ -7,7 +7,7 @@ r"""PROXYLOAD step 1 -- back up / swap / restore OCTOPATH's deployed proxy, veri
 WHY A RIG AND NOT THREE COPY COMMANDS
   This writes into a REAL game installation, authorised once by the maintainer for one purpose.
   The deployed winmm.dll is **not** byte-identical to `dist/proxy/winmm.dll` (same SIZE,
-  different sha -- the 2026-08-20 rebuild), so "just redeploy from dist" does NOT put the install
+  different sha), so "just redeploy from dist" does NOT put the install
   back as found. The only safe restore is a byte copy of what was there, verified by hash.
 
   `backup` refuses to overwrite an existing backup, so re-running it cannot destroy the original.

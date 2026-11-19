@@ -3,8 +3,8 @@
     py tools/verify/hold_exclusive.py <file> [seconds]      # default 300; Ctrl+C or kill ends it early
 
 WHY. FileVersionInfo returns the same null ProductName for a file with no version resource, one an ACL denies, and one
-held with FileShare.None (measured). The row made the last two a third state, UNREADABLE: never written or deleted,
-and said so. Python's open() shares the file, so nothing would be tested; this calls CreateFileW directly, and proves
+held with FileShare.None (measured). The last two are a third state, UNREADABLE: never written or deleted, and
+said so. Python's open() shares the file, so nothing would be tested; this calls CreateFileW directly, and proves
 the hold by a second open that must fail with ERROR_SHARING_VIOLATION (32) -- without that self-check a run could pass
 against a file nobody was holding (the se1_log_reroute.py pattern).
 """

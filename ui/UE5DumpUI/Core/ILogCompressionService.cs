@@ -6,8 +6,8 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Core;
 
 /// <summary>
-/// Compresses archived log files in place so the 21-day retention window stops costing
-/// 100+ MB. Platform-specific by nature (NTFS transparent compression), so it lives behind
+/// Compresses archived log files in place so the logs kept for the retention window cost
+/// less disk. Platform-specific by nature (NTFS transparent compression), so it lives behind
 /// this interface per the repo's platform-abstraction rule — <c>Core</c> never spawns a
 /// process or calls Win32.
 ///
@@ -15,8 +15,8 @@ namespace UE5DumpUI.Core;
 /// re-extension or archive-container the files: <c>LoggingService</c>'s retention globs
 /// <c>{prefix}-*.log</c> / <c>*.log</c> and keys on <c>LastWriteTime</c>, and every
 /// diagnostic workflow in <c>docs/log-verification-checklist.md</c> greps these files as
-/// plain text. A <c>.gz</c> route compresses ~1.6 % better and breaks all of it — see
-/// <c>docs/log-compression-eval.md</c> §3 for the measurements behind that decision.</para>
+/// plain text. A <c>.gz</c> route compresses only slightly better and breaks all of it —
+/// <c>docs/log-compression-eval.md</c> §3 has the comparison.</para>
 /// </summary>
 public interface ILogCompressionService
 {
@@ -29,9 +29,8 @@ public interface ILogCompressionService
 
     /// <summary>
     /// Sweep every <c>*.log</c> under <paramref name="logRoot"/> (recursively) and compress
-    /// the ones the policy accepts: larger than <paramref name="minSizeBytes"/>, untouched
-    /// for at least <paramref name="minIdle"/>, not a live <c>-0.log</c>, not already
-    /// compressed.
+    /// the ones <c>LogCompressionPolicy</c> accepts, given the size floor
+    /// <paramref name="minSizeBytes"/> and the idle window <paramref name="minIdle"/>.
     ///
     /// <para>Must never throw for an ordinary I/O reason — a locked or unreadable file is a
     /// counted failure. Must run at background priority: this can be invoked while a game

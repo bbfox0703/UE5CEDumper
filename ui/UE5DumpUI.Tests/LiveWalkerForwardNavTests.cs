@@ -12,7 +12,7 @@ namespace UE5DumpUI.Tests;
 /// Browser-style forward history for the Live Walker.
 ///
 /// Breadcrumbs is a PATH, not a history: Back and a breadcrumb jump truncate it.
-/// The removed crumbs now land on a forward stack so they can be re-entered, and a
+/// The removed crumbs land on a forward stack so they can be re-entered, and a
 /// fresh navigation invalidates that stack — the same contract a browser has. The
 /// invalidation is driven off Breadcrumbs.CollectionChanged rather than a call at
 /// each navigation site, so these tests poke the collection directly to prove the
@@ -162,9 +162,8 @@ public class LiveWalkerForwardNavTests
     // ── View state (selection + scroll anchor) ──────────────────────────────
 
     // [LW-BACK-SCROLL] Back must hand the View the row it drilled through. Replaying the saved
-    // top row alone scrolled that row to the BOTTOM edge ("make visible" from the top of a
-    // rebuilt grid), and the drilled row -- below it -- stayed off screen: measured on build
-    // 3567, DumperTestActor, drill Children [] from mid-list, Back, and Children was not visible.
+    // top row alone scrolls that row to the BOTTOM edge ("make visible" from the top of a
+    // rebuilt grid), and the drilled row -- below it -- stays off screen.
     [Fact]
     public async Task Back_HandsTheViewTheRowItDrilledThrough()
     {
@@ -343,8 +342,8 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task NavigateToAddress_LetsBackReturnToTheSpineItReplaced()
     {
-        // Before this, the re-root nulled the slot and Back at the new root did
-        // nothing at all — the Find Refs drill was a one-way door.
+        // A re-root that nulls the slot leaves Back at the new root doing
+        // nothing at all — the Find Refs drill would be a one-way door.
         var vm = WithThreeLevelSpine(out _);
 
         await vm.NavigateToAddressCommand.ExecuteAsync("0x5000");
@@ -372,10 +371,10 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task SteppingOutOfARerootedSpine_KeepsTheForwardHistoryBuiltInsideIt()
     {
-        // THE regression. Walking out of a re-rooted spine builds forward entries;
-        // the Back that leaves the spine used to Clear+Add the collection, which
-        // reached the invalidation hook as a fresh navigation and wiped every one of
-        // them — greying Forward on the press that most obviously ought to be undoable.
+        // THE hazard. Walking out of a re-rooted spine builds forward entries; a Back
+        // that leaves the spine by Clear+Add of the collection reaches the invalidation
+        // hook as a fresh navigation and wipes every one of them — greying Forward on
+        // the press that most obviously ought to be undoable.
         var vm = WithThreeLevelSpine(out _);
         await vm.NavigateToAddressCommand.ExecuteAsync("0x5000");
 
@@ -496,8 +495,8 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task BookmarkLoad_StepsOutThroughTheSameOneBack()
     {
-        // The bookmark path was the original owner of this slot; it now shares the
-        // mechanism with the address re-root, so its Back must still behave.
+        // The bookmark path shares this slot's mechanism with the address re-root,
+        // so its Back must behave the same way.
         var vm = WithThreeLevelSpine(out _);
         var slot = new BookmarkSlot
         {
@@ -511,7 +510,7 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(new[] { "Marked" }, Names(vm));
 
         // Walk one level deeper and back out, so there is an inner forward entry for
-        // the step-out to preserve — the bookmark path is where this was first broken.
+        // the step-out to preserve.
         vm.Breadcrumbs.Add(Crumb("Deeper", "0x9100"));
         await vm.GoBackCommand.ExecuteAsync(null);   // drop Deeper
         await vm.GoBackCommand.ExecuteAsync(null);   // step out of the bookmark spine
@@ -552,9 +551,9 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task OpenReferenceOwner_ItsHintSurvivesTheNavigationThatUsedToWipeIt()
     {
-        // The hint was assigned BEFORE calling NavigateToAddressAsync, whose first
-        // statement is ClearStatus() — so it was written and wiped inside one click
-        // and never reached the screen.
+        // A hint assigned BEFORE calling NavigateToAddressAsync, whose first
+        // statement is ClearStatus(), is written and wiped inside one click and
+        // never reaches the screen.
         var vm = WithThreeLevelSpine(out _);
         var match = new ReferenceMatch
         {
@@ -592,8 +591,8 @@ public class LiveWalkerForwardNavTests
     //
     // A container drill renders without a walk, so the header's address and the Functions list stay the OWNER's,
     // inherited from the owner's walk. Back, a crumb jump, the Back out of a re-root and Refresh render the same view
-    // without a walk too, and left both on whatever was walked last: measured live on build 3660, the header's Addr
-    // chip copied the element's address after Back. The Functions list matters most -- PIPE fires the selected
+    // without a walk too, and must not leave both on whatever was walked last -- the header's Addr chip would copy the
+    // element's address after Back. The Functions list matters most -- PIPE fires the selected
     // function at the header's address, so the two must describe one object.
 
     private const string Owner = "0x10000", OwnerCls = "0xC100", Elem = "0x20000", ElemCls = "0xC200",
@@ -738,8 +737,8 @@ public class LiveWalkerForwardNavTests
     // ── A container view re-entered after its container moved ── [LEAD-LW-BACK-CACHED-ELEMENTS]
     //
     // Back, Forward and a crumb jump render a container view from the crumb's held reading, made at the drill or the
-    // last refresh inside the view. A container that reallocated since then kept showing element addresses in the
-    // freed allocation until Refresh. The owner is re-read once on re-entry; the view is re-rendered only when the
+    // last refresh inside the view. A container that reallocated since then would go on showing element addresses in
+    // the freed allocation until Refresh, so the owner is re-read once on re-entry; the view is re-rendered only when the
     // container's data address or count moved, so an unchanged view keeps the scroll it came back to.
 
     /// <summary>The owner's Gear array moved to a new allocation, now holding <see cref="Other"/>.</summary>
@@ -856,10 +855,9 @@ public class LiveWalkerForwardNavTests
         Assert.False(LiveWalkerViewModel.ContainerChanged(Floats("1.5"), Floats("2.5")));   // display, not an address
     }
 
-    // Review round 2: the re-check ran inside the navigation, so Back / Forward / a crumb jump stayed disabled for the
-    // whole owner walk (up to the refresh timeout), and it re-rendered through RefreshAsync, which cleared the
-    // navigation's own status line. It now runs after the navigation returns (ReentryRecheck), and renders the reading
-    // it took.
+    // The re-check runs after the navigation returns (ReentryRecheck), and renders the reading it took. Run inside the
+    // navigation, it would keep Back / Forward / a crumb jump disabled for the whole owner walk (up to the refresh
+    // timeout); re-rendered through RefreshAsync, it would clear the navigation's own status line.
 
     [Fact]
     public async Task Back_IntoAContainerView_ReturnsBeforeTheOwnerReRead()
@@ -912,9 +910,9 @@ public class LiveWalkerForwardNavTests
         AssertGearShowsTheMovedAllocation(vm);
     }
 
-    // Review round 2 (MED): when the owner was gone, or no longer had the field, the re-check returned without a word,
-    // and the held rows stayed on screen and editable, their addresses in memory the game may have freed. Refresh
-    // inside the view already said so for a gone owner; the re-entry now does too, and both say so for a missing field.
+    // When the owner is gone, or no longer has the field, the re-entry must not return without a word: the held rows
+    // would stay on screen and editable, their addresses in memory the game may have freed. Refresh inside the view and
+    // the re-entry both say so, for a gone owner and for a missing field.
 
     [Fact]
     public async Task Back_IntoAContainerWhoseOwnerIsGone_DropsTheRows_AndSaysWhy()
@@ -931,9 +929,9 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(LiveWalkerViewModel.GoneObjectStatus(new InstanceWalkResult { IsStale = true }), vm.StatusText);
     }
 
-    // Review round 2: the re-check matched the field by name and offset only, so another object now at the owner's
-    // address -- another instance of the class (the bookmark-recycle case), or another class with a same-named field --
-    // had its container rendered as this one's. The crumb knows its owner's class and, for a UObject owner, its name.
+    // Matched by field name and offset only, another object now at the owner's address -- another instance of the class
+    // (the bookmark-recycle case), or another class with a same-named field -- would have its container rendered as this
+    // one's. The crumb knows its owner's class and, for a UObject owner, its name, and the re-check checks both.
 
     private static void PutAnotherOwnerAt(OwnerStub dump, string name, string cls, string clsAddr)
     {
@@ -971,9 +969,8 @@ public class LiveWalkerForwardNavTests
         Assert.Contains(name, vm.StatusText);
     }
 
-    // Review round 2: a pointer array rewritten in place -- same allocation, same count, slot [0] now another object --
-    // kept its old target, though the re-check had just read the new one; drilling [0] then walked the old, perhaps
-    // freed, object.
+    // A pointer array rewritten in place -- same allocation, same count, slot [0] now another object -- must show the new
+    // target the re-check just read; keeping the old one, drilling [0] would walk the old, perhaps freed, object.
     [Fact]
     public async Task Back_IntoAPointerArrayRewrittenInPlace_ShowsTheNewTarget()
     {
@@ -1252,7 +1249,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task ARowMapLoadStartedOnATable_DoesNotLandInThatTablesRowViewRestoredAtTheSameDepth()
     {
-        // Review of d206a4ad: a container render now puts the header back on its owner, so a RowMap row view restored
+        // A container render puts the header back on its owner, so a RowMap row view restored
         // by the Back out of a re-root matches a row load started on the same table at the same depth by address AND
         // depth. The load would append a drillable RowMap row to the rows grid.
         var (dump, vm, _) = OwnerWalker();
@@ -1284,7 +1281,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task ARowMapLoad_DoesNotLandWhileTheTablesRowViewIsStillOnScreen()
     {
-        // Review round 2: the trail can run ahead of the grid. Back pops the row view's crumb before the table's walk
+        // The trail can run ahead of the grid. Back pops the row view's crumb before the table's walk
         // returns, so the trail already says "the table" -- same address, depth and crumb as a load started on it --
         // while the grid still holds the row view's rows, which the load would append a RowMap row to.
         var (dump, vm, _) = OwnerWalker();
@@ -1306,11 +1303,11 @@ public class LiveWalkerForwardNavTests
         Assert.True(vm.RowMapLoadStillCurrent(vm.LastRowMapLoad!));   // control: the table's own walk loads it again
     }
 
-    // Review rounds of d206a4ad: the header moves to the new object at once, the Functions list only when its walk
-    // returns. In between, PIPE would fire a row of the OLD list at the NEW address, and the DLL finds the function by
-    // name on that object's class: a name both classes have runs the new class's function with arguments laid out for
-    // the old one. Emptying the list for that time resized the Functions section -- and the field grid with it, under a
-    // scroll restore. So the rows stay, and every row action refuses until the new class's list lands.
+    // The header moves to the new object at once, the Functions list only when its walk returns. In between, PIPE would
+    // fire a row of the OLD list at the NEW address, and the DLL finds the function by name on that object's class: a
+    // name both classes have runs the new class's function with arguments laid out for the old one. Emptying the list
+    // for that time would resize the Functions section -- and the field grid with it, under a scroll restore. So the
+    // rows stay, and every row action refuses until the new class's list lands.
 
     /// <summary>On a list still loading for another class, every row action is refused under its button's label, and
     /// nothing is copied.</summary>
@@ -1378,7 +1375,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task TheRefusalLine_GoesWhenTheListLands_AndNoOtherLineDoes()
     {
-        // Review round 4: "still loading" outlived the load, over rows that were usable by then.
+        // "Still loading" must not outlive the load, over rows that are usable by then.
         var (dump, vm, _) = OwnerWalker();
         await OnOwnersContainer(vm, "Gear");
         var elementsList = dump.GateFunctions(ElemCls);
@@ -1625,7 +1622,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task FindRefs_OnAContainerView_UnderALocateSpinesElementCrumb_NamesTheOwner_NotTheIndex()
     {
-        // Review of 4159e0e7..f092ec12: a Locate spine labels the crumb of an object-array hop "[0]" (its address is
+        // A Locate spine labels the crumb of an object-array hop "[0]" (its address is
         // the object reached), so the crumb before a container drilled there names an index, not the owner.
         var (dump, vm, _) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Other);
@@ -1647,9 +1644,9 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task FindRefs_OnAContainerInAnInlineStruct_KeepsTheStructViewsName_AfterARefresh()
     {
-        // Review round 2: a walk of an inline struct names the struct's TYPE (or whatever FName its bytes decode to),
-        // which the struct view's header replaces with its crumb's label. The owner name a Refresh re-learned from that
-        // walk did not, so the scan's name changed on a Refresh.
+        // A walk of an inline struct names the struct's TYPE (or whatever FName its bytes decode to), which the struct
+        // view's header replaces with its crumb's label. The owner name a Refresh re-learns from that walk must be
+        // replaced the same way, or the scan's name changes on a Refresh.
         const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
         var (dump, vm, _) = OwnerWalker();
         dump.RegisterStruct(Holder, new InstanceWalkResult
@@ -1679,9 +1676,9 @@ public class LiveWalkerForwardNavTests
     }
 
     // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] A container crumb rebuilt from a bookmark file or a Locate spine has no
-    // ContainerField, and is re-hydrated by walking its owner. It walked the owner with the CONTAINER crumb's class,
-    // which a container crumb never has: an inline-struct owner's bytes were read as a UObject, the field was not found,
-    // and the view fell through to a plain walk of that address. Refresh walks with the owner crumb's class.
+    // ContainerField, and is re-hydrated by walking its owner with the owner crumb's class. A container crumb has no
+    // class of its own: walked with it, an inline-struct owner's bytes are read as a UObject, the field is not found,
+    // and the view falls through to a plain walk of that address.
 
     private const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
 
@@ -1734,7 +1731,7 @@ public class LiveWalkerForwardNavTests
 
         await LoadStructOwnedGearBookmark(vm);
 
-        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());   // was the struct read as a UObject
+        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());   // not the struct read as a UObject
         Assert.Equal(StatsCls, vm.Breadcrumbs[^1].OwnerClassAddr);
     }
 
@@ -1753,7 +1750,7 @@ public class LiveWalkerForwardNavTests
     }
 
     // [LEAD-DT-EXPORT-64ROWS] Copy CE Field on a container view exports the elements selected, by choice fewer than the
-    // total: the export's limit warning reported that as the container being cut short.
+    // total, and the export's limit warning must not report that as the container being cut short.
 
     [Fact]
     public async Task CopyCeField_OfOneSelectedElement_DoesNotCallTheContainerCutShort()
@@ -1779,14 +1776,14 @@ public class LiveWalkerForwardNavTests
 
         Assert.NotNull(platform.LastClipboard);
         Assert.StartsWith("Copied:", vm.StatusText);
-        Assert.DoesNotContain("Container element limit", vm.StatusText);   // was "Items (Array: 300 total, 1 loaded)"
+        Assert.DoesNotContain("Container element limit", vm.StatusText);   // not "Items (Array: 300 total, 1 loaded)"
     }
 
     [Fact]
     public async Task CopyCeField_OfEveryLoadedElement_StillCallsTheContainerCutShort()
     {
-        // Review round 1 of [LEAD-DT-EXPORT-64ROWS]: a selection of every loaded row is not a choice to leave the rest
-        // out -- the rest were never read. Ctrl+A in a view of 2 of 300 lost the warning the export used to give.
+        // [LEAD-DT-EXPORT-64ROWS] A selection of every loaded row is not a choice to leave the rest out -- the rest were
+        // never read. Ctrl+A in a view of 2 of 300 must keep the cut-short warning the export gives.
         const string Big = "0x90000";
         var (dump, vm, platform) = OwnerWalker();
         dump.RegisterStruct(Big, new InstanceWalkResult
@@ -1839,7 +1836,7 @@ public class LiveWalkerForwardNavTests
         await vm.ExportCeXmlCommand.ExecuteAsync(null);
 
         Assert.NotNull(platform.LastClipboard);
-        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);   // was no warning at all
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);   // the cut is named, not left unsaid
     }
 
     [Fact]
@@ -1876,7 +1873,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task ExportCsx_SaysANestedContainerWasCutAtTheArrayLimit()
     {
-        // Review round 1: Export CSX (to a file) passed the walked fields too, and no test held that wiring.
+        // Export CSX (to a file) passes the walked fields too; this holds that wiring.
         var dump = NestedArrayStub();
         var file = Path.Combine(Path.GetTempPath(), $"UE5DumpNestedCsx_{Guid.NewGuid():N}.csx");
         var platform = new MockPlatformService(Path.GetTempPath()) { NextSavePath = file };
@@ -1895,7 +1892,7 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task CopyCeXml_SaysAContainerWasCutInAPointerTargetItWalked()
     {
-        // Review round 1: the pointer-target half of the nested scan (the resolver's resolvedInstances) had no test.
+        // Holds the pointer-target half of the nested scan (the resolver's resolvedInstances).
         const string Ptr = "0x93000";
         var dump = NestedArrayStub();
         dump.RegisterStruct("0x94000", new InstanceWalkResult
@@ -1945,8 +1942,8 @@ public class LiveWalkerForwardNavTests
     public async Task ARefreshThatKeepsTheRows_CountsTheMatchesOnTheRowsShown()
     {
         // [LEAD-LW-INPLACE-SEARCHCOUNT] A refresh of the same object with the same layout copies the values onto the
-        // rows shown and keeps their type label. The match count came from the fresh rows and the highlights from the
-        // kept ones, so a guessed row whose label gained its "?" counted a match nothing showed.
+        // rows shown and keeps their type label. The match count is taken from those rows, as the highlights are:
+        // counted on the fresh rows, a guessed row whose fresh label gains a "?" would count a match nothing shows.
         const string Obj = "0x96000";
         var (dump, vm, _) = OwnerWalker();
         InstanceWalkResult Walk(string type) => new()
@@ -1965,7 +1962,7 @@ public class LiveWalkerForwardNavTests
         dump.RegisterStruct(Obj, Walk("IntProperty?"));
         await vm.RefreshCommand.ExecuteAsync(null);
 
-        Assert.Equal(vm.Fields.Count(f => f.IsSearchMatch), vm.SearchMatchCount);   // was 1 counted, 0 highlighted
+        Assert.Equal(vm.Fields.Count(f => f.IsSearchMatch), vm.SearchMatchCount);   // not 1 counted, 0 highlighted
     }
 
     [Fact]
@@ -1997,17 +1994,17 @@ public class LiveWalkerForwardNavTests
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
 
-        Assert.Null(platform.LastClipboard);   // was 0x40008: the table + FNameSize
+        Assert.Null(platform.LastClipboard);   // not 0x40008: the table + FNameSize
         Assert.StartsWith("⚠ Addr:", vm.StatusText);
     }
 
     [Fact]
     public async Task CopyAddr_OnARowsViewTheSpineHasLeft_CopiesNothing_AndSaysTheRowHasNoAddress()
     {
-        // Review of 60fff318..f092ec12: Back pops the rows view's crumb before the table's walk returns, so the trail
-        // says "the table" while the grid still shows its rows -- and the trail is not a container view, so the old
-        // fallback copied the table + the row's offset again. Round 2: the row has no address at ANY level, so it is
-        // told so; "wait and try again" would end in the same refusal.
+        // Back pops the rows view's crumb before the table's walk returns, so the trail says "the table" while the grid
+        // still shows its rows -- and the trail is not a container view, so a table + row-offset fallback would copy a
+        // wrong address. The row has no address at ANY level, so the user is told so; "wait and try again" would end in
+        // the same refusal.
         var (dump, vm, platform) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Table);
         var rows = OwnerStub.TableRows();
@@ -2021,7 +2018,7 @@ public class LiveWalkerForwardNavTests
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
 
-        Assert.Null(platform.LastClipboard);               // was 0x40008 again
+        Assert.Null(platform.LastClipboard);               // not the fallback's 0x40008
         Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
         dump.UngateWalk(Table);
         tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
@@ -2031,10 +2028,9 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task TheTablesRowMapRow_CarriesTheRowMapsAddress_SoCopyAddrCopiesIt()
     {
-        // Review round 4: f4d19e45 refused every row without an address, and the RowMap row a table's own view appends
-        // after its walk had none -- the removed fallback's table + RowMapOffset was its right address (the RowMap's
-        // TSparseArray, where the DLL reads the rows). The row lands through the UI dispatcher, so its builder is
-        // what is held here.
+        // Copy Addr refuses a row without an address, so the RowMap row a table's own view appends after its walk must
+        // carry one: the table + RowMapOffset (the RowMap's TSparseArray, where the DLL reads the rows). The row lands
+        // through the UI dispatcher, so its builder is what is held here.
         var rowMap = LiveWalkerViewModel.SyntheticRowMapField(OwnerStub.TableRows(), Table);
         Assert.Equal("0x40030", rowMap.FieldAddress);   // the table + RowMapOffset 0x30: the Address column, Hex, +CE
 
@@ -2047,9 +2043,9 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task CopyAddr_OnARowsGridLeftOverByAFailedReRoot_CopiesNothing()
     {
-        // Review round 3: a re-root that fails after clearing the spine leaves the rows with no crumb at all, so neither
-        // "the view is a container" nor "the spine has left it" could be told, and the fallback copied the table + the
-        // row's offset. Every row a walk renders carries its address, so that fallback never had a right answer.
+        // A re-root that fails after clearing the spine leaves the rows with no crumb at all, so neither "the view is a
+        // container" nor "the spine has left it" can be told, and a table + row-offset fallback would copy a wrong
+        // address. Every row a walk renders carries its address, so no fallback has a right answer.
         var (_, vm, platform) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Table);
         var rows = OwnerStub.TableRows();
@@ -2063,15 +2059,15 @@ public class LiveWalkerForwardNavTests
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
 
-        Assert.Null(platform.LastClipboard);                                 // was 0x40008
+        Assert.Null(platform.LastClipboard);                                 // not the fallback's 0x40008
         Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
     }
 
     [Fact]
     public async Task CopyAddr_ThatCopies_TakesDownTheDefinitionViewsRefusal_Too()
     {
-        // Review round 2: the definition-view refusal returned before _addrRefusal was set, so an Addr that copied once
-        // the instance's walk landed left "this is a type definition" up over it.
+        // The definition-view refusal must set _addrRefusal like any other, or an Addr that copies once the instance's
+        // walk lands leaves "this is a type definition" up over it.
         const string Definition = "0xDEF00";
         var (dump, vm, platform) = OwnerWalker();
         dump.RegisterStruct(Definition, new InstanceWalkResult
@@ -2116,7 +2112,7 @@ public class LiveWalkerForwardNavTests
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
 
-        Assert.Null(platform.LastClipboard);   // was 0x10000: the owner's own first qword
+        Assert.Null(platform.LastClipboard);   // not 0x10000: the owner's own first qword
         Assert.StartsWith("⚠ Addr:", vm.StatusText);
     }
 

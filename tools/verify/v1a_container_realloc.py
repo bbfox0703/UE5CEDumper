@@ -2,10 +2,10 @@
 
     py tools/verify/v1a_container_realloc.py
 
-THE ROW, and why its wording needed re-deriving before it could be judged.
+THE ROW, and why its wording needs re-deriving before it can be judged.
 The row says the candidate must be "discarded (an SEH-safe read failure eliminates
-it)" and must not report a wrong hit address. That was written before audit #5's A11
-re-anchor landed. What the code does NOW is richer, and better:
+it)" and must not report a wrong hit address. That wording predates the container
+re-anchor. What the code does is richer, and better:
 
     Radar.h  RefineContainerAnchor(...)
       2. if (elementIndex < 0 || numAtScan < 0 || !dataAtScan || !nowData) KeepAddress
@@ -32,9 +32,9 @@ THE TWO WAYS THIS RIG COULD LIE TO ITSELF, both closed:
 
   * "The candidate vanished, so the anchor logic dropped it." NOT NECESSARILY -- it
     may simply have failed the VALUE test because freed memory no longer reads 7001.
-    That is the allocator's luck, not our correctness, and the first run of this rig
-    hit exactly that and had to report INCONCLUSIVE.
-      The fix is to refine with a predicate that CANNOT eliminate anything:
+    That is the allocator's luck, not our correctness, and a value refine leaves the
+    rig nothing to report but INCONCLUSIVE.
+      So the rig refines with a predicate that CANNOT eliminate anything:
     `Between INT32_MIN..INT32_MAX` matches every possible int32. Under it the byte
     comparison is a tautology, so the only things left that can remove a candidate
     are the container-anchor rule and a failed SEH read. A candidate that survives a

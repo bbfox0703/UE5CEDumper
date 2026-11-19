@@ -5,7 +5,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Wire seam for Solide's pool-truncation flag (build 2531).
+/// Wire seam for Solide's pool-truncation flag.
 ///
 /// The flag exists so the UI can tell "the class/field resolved nothing" from "it resolved
 /// more instances than the DLL's cap and silently threw the rest away". That distinction is
@@ -44,7 +44,7 @@ public class SolideTruncationWireTests
     [Fact]
     public async Task ForceField_missing_truncated_defaults_false_for_an_older_dll()
     {
-        // No "truncated" key at all — a DLL from before build 2531, or the held<=0 path
+        // No "truncated" key at all — an older DLL that predates the flag, or the held<=0 path
         // where the DLL deliberately omits it.
         _pipe.SetHandler(_ => new JsonObject
         {

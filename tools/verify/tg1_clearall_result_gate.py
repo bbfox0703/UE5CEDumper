@@ -4,17 +4,18 @@ r"""`[TG1-CLEARALL-RESULT-2026-09-09]` — make "Clear all markers" REALLY fail,
     py tools/verify/tg1_clearall_result_gate.py spin --seconds 25    # arm, then tick the row in CE
     py tools/verify/tg1_clearall_result_gate.py restore              # courtesy teardown + read-back
 
-THE ROW. `GenerateClearAll` claimed success from the ATTEMPT: it wrote CMD_TELEPORT, waited on
-`AppendMailboxWait`, and reported "all markers cleared". ⛔ **`STATUS_DONE` IS NOT A SUCCESS
-SIGNAL** — `Mimic.cpp`'s `SetError` writes the negative code to `result` and THEN sets
-`status = STATUS_DONE`, and `AppendMailboxWait` polls `OffStatus` **only**. So a REJECTED command
-satisfied that wait exactly like a successful one: the row auto-closed the Lua Engine window (this
-repo's documented clean-success-ONLY signal) and unticked silently. The fix re-reads `OffResult`
-and gates on it. This rig is the live proof, because a unit test can only pin the emitted TEXT.
+THE ROW. `GenerateClearAll` must claim success from the RESULT, not the ATTEMPT: writing
+CMD_TELEPORT, waiting on `AppendMailboxWait` and reporting "all markers cleared" is not enough.
+⛔ **`STATUS_DONE` IS NOT A SUCCESS SIGNAL** — `Mimic.cpp`'s `SetError` writes the negative code to
+`result` and THEN sets `status = STATUS_DONE`, and `AppendMailboxWait` polls `OffStatus` **only**.
+So a REJECTED command satisfies that wait exactly like a successful one: a script gated on the wait
+alone would auto-close the Lua Engine window (this repo's documented clean-success-ONLY signal) and
+untick silently. The script re-reads `OffResult` and gates on it. This rig is the live proof,
+because a unit test can only pin the emitted TEXT.
 
 ⭐ THE MANUFACTURE, and why it is this one. The emitted loop writes the slot itself
-(`writeQword(mb + 0x18, slot)`) and the DLL reads it back at `Mimic.cpp:1049` **after** it has
-seen `cmd != 0`. `Wirbel::ClearMarker` opens with
+(`writeQword(mb + 0x18, slot)`) and the DLL reads it back in `Mimic.cpp`'s `HandleTeleport`
+**after** it has seen `cmd != 0`. `Wirbel::ClearMarker` opens with
 `if (slot < 0 || slot >= Grimoire::TELEPORT_SLOTS) return TP_ERR_EMPTY_MARKER;` — a real, SHIPPED
 rejection path (-6). So overwriting that one input word between the Lua's write and the DLL's read
 makes the actual owner of the op reject it for its own reason. Nothing is faked: not the result

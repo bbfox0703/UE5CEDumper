@@ -8,14 +8,14 @@ using UE5DumpUI.Views;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D2-3: raw memory writes and UFunction invokes, to the maintainer's decisions of
-/// 2026-11-11. Wherever the host writes, both are asked about on every call, since no grant covers them
-/// (<see cref="McpGrants.PerCallCommands"/>), and both need the DLL from
+/// [PIPE-PER-PROCESS-2026-11-06] Raw memory writes and UFunction invokes. Wherever the host writes, both are asked about
+/// on every call, since no grant covers them (<see cref="McpGrants.PerCallCommands"/>), and both need the DLL from
 /// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself. The exceptions,
-/// [MCP-WRITE-GRANTS-2026-11-14], run unasked what a grant names: Phase 1b's <c>write_invoke_granted_function</c> runs
-/// write_invoke's call for the one function an invoke grant names, in the DLL's grant mode (DLL 3717+), which checks that
-/// function again, and Phase 2's <c>write_field</c> (<see cref="McpFieldTools"/>) sends this write_mem for the one field
-/// a field grant names, at the one address the gate then holds it to:
+/// [MCP-WRITE-GRANTS-2026-11-14], run unasked what a grant names: <c>write_invoke_granted_function</c> runs
+/// write_invoke's call for the one function an invoke grant names, in the DLL's grant mode (from
+/// <see cref="Constants.McpMinDllBuildForInvokeGrants"/>), which checks that function again, and <c>write_field</c>
+/// (<see cref="McpFieldTools"/>) sends this write_mem for the one field a field grant names, at the one address the gate
+/// then holds it to:
 ///
 /// <para><b>write_memory</b> writes data only. The DLL refuses code, read-only, guard and uncommitted pages for every
 /// client and never changes page protection; this tool also sends the bytes the AI read (<c>expect</c>), so memory the
@@ -28,10 +28,8 @@ namespace UE5DumpUI.Mcp;
 /// the parameter's declared class or a subclass, by short name (a top-level argument; a class parameter takes a class
 /// object, and an interface parameter and a struct's object field are held to liveness only). It
 /// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
-/// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
-/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera, and since
-/// [INVOKE-DENY-INDIRECTION] timers and property setters by name, ubergraph entries, RemovePlayer and the
-/// achievement / leaderboard / purchase calls, and since 3717 a latent call and an async action's Activate), never
+/// outstanding (each queued request records its client), refuses, for a background client, the calls on its deny list
+/// (Voll::InvokeRefusedForBackground; the write_invoke description names them for the model), never
 /// runs it off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
 /// one of its own is still queued, so a -5 call is never sent again. It never sends direct_call or
 /// set_invoke_timeout.</para>
@@ -147,7 +145,7 @@ internal static class McpRawTools
         ReadOnly: false, (a, ct) => RunInvokeAsync(game, grants, a, ct, granted: false), Idempotent: false,
         Destructive: true, Role: McpToolRole.PerCallWrite);
 
-    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: write_invoke's twin for a function an invoke grant names. Never marked:
+    // [MCP-WRITE-GRANTS-2026-11-14] write_invoke's twin for a function an invoke grant names. Never marked:
     // the grant's prompt was the user's check, and the gate and the DLL both hold the call to that one function.
     private static McpTool InvokeGranted(IMcpGame game, McpGrants grants) => new(
         Constants.McpInvokeGrantedTool, "Invoke a granted UFunction",

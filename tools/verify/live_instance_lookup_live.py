@@ -3,10 +3,9 @@ r"""Live check for [MAINWINDOW-NAVIGATE-EXACT-NAME]: find_live_instance answers 
 
     py tools/verify/live_instance_lookup_live.py [--process DumperTest]
 
-Written for the row [MAINWINDOW-NAVIGATE-EXACT-NAME] (docs/todo.md). Ten MainWindow handlers and Detect Stats' probe
-looked for "a live instance" with find_instances(exact_match, limit 5) and skipped names starting Default__. This rig
-puts that OLD pick beside the NEW one, find_live_instance, for the same class names, so each line shows what the
-user's click used to land on and what it lands on now.
+Written for the row [MAINWINDOW-NAVIGATE-EXACT-NAME] (docs/todo.md). This rig puts the OLD exact-name pick -- "a live
+instance" by find_instances(exact_match, limit 5), skipping names starting Default__ -- beside find_live_instance for
+the same class names, so each line shows where each pick lands a user's click.
 
 The template test is the rig's OWN, not the DLL's word: listinstances_templates_live.Rig.template_kind reads the
 object's ObjectFlags with ReadProcessMemory and follows its outer chain through get_object (a class default object, a

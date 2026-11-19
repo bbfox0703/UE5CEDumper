@@ -15,8 +15,8 @@ the row's "small value" nor "near 32767", so there are two arms:
             10..70000 -> I16, as single scans AND as group slot 0 (slot 1 = FrozenInt 424242 anchors
             the actor); restored and re-read afterwards.
 
-Pre-fix, the Between bounds were encoded per width and a width that could not hold one bound was
-dropped, so the field was never a candidate. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
+Without the fix, the Between bounds are encoded per width and a width that cannot hold one bound is
+dropped, so the field is never a candidate. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 """
 import os
 import struct

@@ -8,11 +8,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [CEXPORT-STRIDE-NOTE] When the object-array stride is a guess, the top-bar badge and the dump's header say so, but
-/// an exported CE table or CSX did not: a table built on an aliased pool carried no word of it once it left the app.
-/// Each export now opens with the badge's words as a comment, passed in by the view model that holds the engine state
-/// (a parameter, not ambient state: a test that turned a process-wide flag on would put the note into every export
-/// built meanwhile by tests running in parallel).
+/// [CEXPORT-STRIDE-NOTE] When the object-array stride is a guess, the top-bar badge and the dump's header say so, and
+/// so must an exported CE table or CSX: a table built on an aliased pool would otherwise carry no word of it once it
+/// left the app. Each export opens with the badge's words as a comment, passed in by the view model that holds the
+/// engine state (a parameter, not ambient state: a test that turned a process-wide flag on would put the note into
+/// every export built meanwhile by tests running in parallel).
 /// </summary>
 public class CeExportStrideNoteTests
 {
@@ -41,7 +41,7 @@ public class CeExportStrideNoteTests
     [Fact]
     public void ACommentLine_HoldsNoDoubleDash_HoweverManyDashesTheNoteHas()
     {
-        // Review round 1: one Replace("--", "- -") pass leaves "--" from a run of three ("---" -> "- --").
+        // One Replace("--", "- -") pass leaves "--" from a run of three ("---" -> "- --").
         var line = CeXmlExportService.XmlCommentLines(new[] { "a---b----c" });
         var body = line["<!--".Length..line.LastIndexOf("-->", StringComparison.Ordinal)];
         Assert.DoesNotContain("--", body);
@@ -104,7 +104,7 @@ public class CeExportStrideNoteTests
     }
 
     // ── [CEXPORT-ENUMNAMES-NOTE] When UEnum::Names was never located, every enum field arrives with no entries and the
-    // exported dropdowns come out empty. The walk now says so, and an export holding an enum field says why. ──
+    // exported dropdowns come out empty. The walk says so, and an export holding an enum field says why. ──
 
     private static StubDumpService EnumDump(bool namesFailed, string typeName = "EnumProperty")
     {
@@ -178,7 +178,7 @@ public class CeExportStrideNoteTests
         Assert.Contains("Enum member names", vm.StatusText);
     }
 
-    // Review round 1 of [CEXPORT-ENUMNAMES-NOTE].
+    // [CEXPORT-ENUMNAMES-NOTE], continued.
 
     /// <summary>A stub whose walks of one address say the latch is set: the DLL detects UEnum::Names lazily, so the walk
     /// that finds the first enum is the one whose reply first carries the flag.</summary>
@@ -232,7 +232,7 @@ public class CeExportStrideNoteTests
 
         await vm.ExportCeXmlCommand.ExecuteAsync(null);
 
-        Assert.Contains("<!-- Enum member names", platform.LastClipboard);   // was silent until a Refresh
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);   // said without waiting for a Refresh
     }
 
     [Fact]
@@ -274,8 +274,8 @@ public class CeExportStrideNoteTests
     [Fact]
     public void TheNote_CoversADataTablesRowEnums()
     {
-        // Review round 2: a DataTable is exported through its synthetic RowMap field, whose own type says nothing; its
-        // rows' fields are where the enums are, and the note never looked there.
+        // A DataTable is exported through its synthetic RowMap field, whose own type says nothing; its rows' fields are
+        // where the enums are, so the note must look there.
         var rowMap = new LiveFieldValue
         {
             Name = "RowMap", TypeName = "DataTableRows",
@@ -310,7 +310,7 @@ public class CeExportStrideNoteTests
         Assert.DoesNotContain("Enum member names", bridge.AaScripts[0].Script);
     }
 
-    // Review round 1 of [CEXPORT-STRIDE-NOTE]: each export's wiring of the note, held.
+    // [CEXPORT-STRIDE-NOTE]: each export's wiring of the note, held.
 
     private static (LiveWalkerViewModel vm, MockPlatformService platform) GuessedWalker(string? savePath = null)
     {

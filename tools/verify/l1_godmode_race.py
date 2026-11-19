@@ -2,12 +2,12 @@
 
     py tools/verify/l1_godmode_race.py
 
-THE FIX UNDER TEST (7f3898ff): `Solitar::SetGodMode` mutated `s_wantGod` under `s_mutex`,
-released it, then decided Start/StopWorker on the `on` PARAMETER outside any worker mutex.
-A concurrent ON/OFF (pipe `set_god_mode` + CE-mailbox `CMD_PROTECT`) could therefore join a
-worker that was still wanted, or leave an orphan running after the final state was OFF. The
-fix holds `s_workerMutex` across the mutate AND the decision, and decides on the FINAL
-`s_wantGod` rather than the argument (Solitar.cpp:383-400).
+THE FIX UNDER TEST (7f3898ff): a `Solitar::SetGodMode` that mutates `s_wantGod` under
+`s_mutex`, releases it, then decides Start/StopWorker on the `on` PARAMETER outside any worker
+mutex lets a concurrent ON/OFF (pipe `set_god_mode` + CE-mailbox `CMD_PROTECT`) join a worker
+that is still wanted, or leave an orphan running after the final state is OFF. `SetGodMode`
+holds `s_workerMutex` across the mutate AND the decision, and decides on the FINAL
+`s_wantGod` rather than the argument.
 
 THE TWO FAILURE MODES, both checked BEHAVIOURALLY rather than from a status flag:
 
@@ -20,14 +20,14 @@ the wrong value and see whether anything puts it back.
 
 THE ANTI-VACUITY CHECK, and it is the point of the whole rig. A race test that never actually
 races proves nothing. `SetGodMode` logs `GodMode: set <ON|OFF> -> rc=<n> (want=<0|1>)`, where
-the first token is the ARGUMENT and `want` is the final `s_wantGod`. Those disagree exactly
-when another thread interleaved between the store and the log - so counting the disagreements
-MEASURES how much genuine interleaving the storm produced. Zero means the storm serialised
-and the run must not be scored as a pass.
+the first token is the ARGUMENT. One lane only ever sends ON and the other only OFF, so every
+ON<->OFF transition in the logged sequence is a point where both lanes were in flight - the
+count MEASURES how much genuine interleaving the storm produced. Too few means the storm
+serialised and the run must not be scored as a pass.
 
 NOTE the parameter is `enable`, not `enabled` (Fern.cpp). An unknown key silently defaults to
-false and the reply still says ok:true - that mistake cost a whole invalid L8 result earlier
-in this session.
+false and the reply still says ok:true, so a misspelt key yields a run that looks valid and
+tests nothing.
 """
 from __future__ import annotations
 
@@ -63,11 +63,11 @@ def _sizes():
 def log_since(mark):
     """Text appended to the live logs since a _sizes() snapshot.
 
-    This used to concatenate sorted(LOGDIR.glob("*.log")) and slice by TOTAL length. Two
-    things break that: the directory keeps every past session archive, and name-sorting
-    puts the live walk-0.log BEFORE walk-2026..., so slicing by length cut inside an
-    archive and returned a PREVIOUS process lines. That is how the first run of this rig
-    read a dead pawn address and then reported the worker broken."""
+    Per live file, not a concatenation of sorted(LOGDIR.glob("*.log")) sliced by TOTAL
+    length. Two things break that: the directory keeps every past session archive, and
+    name-sorting puts the live walk-0.log BEFORE walk-2026..., so slicing by length cuts
+    inside an archive and returns a PREVIOUS process's lines -- a dead pawn address, and
+    then a worker reported broken."""
     out = []
     for f in LOGDIR.glob("*-0.log"):
         try:
@@ -127,8 +127,8 @@ def main(argv=None):
         # ---------- discover the pawn + protection bit from the DLL's own log ----------
         # Parse ONLY what THIS enable appends. The log directory accumulates every session,
         # so `findall(...)[-1]` over the whole corpus returns the PREVIOUS process's pawn --
-        # a dead address, which is why the first run of this rig got "read_mem returned
-        # nothing" four times and still reported a FAIL as if the worker were broken.
+        # a dead address, on which read_mem returns nothing and the rig would report a FAIL
+        # as if the worker were broken.
         c.request("set_god_mode", enable=False)
         time.sleep(0.8)
         mark = _sizes()
@@ -195,10 +195,10 @@ def main(argv=None):
 
         # Did the two lanes ACTUALLY overlap in time?
         #
-        # NOT by counting lines where the argument and `want` disagree. That was the first
-        # version of this check and it is structurally always zero POST-FIX: the fix holds
-        # s_workerMutex across the store AND the log line, so no other SetGodMode can be
-        # between them. A metric the fix makes impossible cannot measure concurrency.
+        # NOT by counting lines where the argument and `want` disagree: that count is
+        # structurally always zero POST-FIX, because the fix holds s_workerMutex across the
+        # store AND the log line, so no other SetGodMode can be between them. A metric the
+        # fix makes impossible cannot measure concurrency.
         #
         # Lane 0 only says ON and lane 1 only says OFF, so every ON<->OFF transition in the
         # line sequence is a point where the two lanes were both in flight. A serialised run

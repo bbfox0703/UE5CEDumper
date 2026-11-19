@@ -137,6 +137,15 @@ function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
 }
 
+# Every vcvarsall prompt (x64, x86, arm64) sets Platform to its target architecture, some OEM Windows images set a
+# machine-wide one, and MSBuild reads every environment variable as a property: the C# projects would build into bin\<platform>\ rather than bin\, one level
+# deeper than the tests that find repository files by walking up from their output folder can reach. Nothing this
+# script runs needs it, so it goes before anything does, -Clean's dotnet clean included. [MSVC-GUARD-2026-11-19]
+if ($env:Platform) {
+    Write-Info "Platform=$($env:Platform) cleared: MSBuild would read it and move the C# outputs out of bin\"
+    Remove-Item Env:Platform
+}
+
 function Repair-NinjaHeaderDeps([string]$Dir = $BUILD_DIR) {
     <#
     .SYNOPSIS
@@ -196,6 +205,107 @@ function Repair-NinjaHeaderDeps([string]$Dir = $BUILD_DIR) {
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
+function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
+    <#
+    .SYNOPSIS
+        Drop the build dir if CMakeCache.txt names a compiler, linker or SDK tool that no longer exists,
+        or a compiler that is not MSVC's cl.exe.
+
+    .DESCRIPTION
+        CMake records the full path of every tool it found at configure time
+        (CMAKE_CXX_COMPILER = ...\VC\Tools\MSVC\<version>\bin\Hostx64\x64\cl.exe, and the
+        C compiler, linker, mt and rc beside it) and never re-checks it. A Visual Studio
+        update installs the toolset under a new <version> folder and removes the old one,
+        so a kept build dir then fails every configure and every build step with "is not
+        a full path to an existing compiler tool" -- the C++ DLLs and the C++ tests do not
+        build at all, while the C# side carries on. A tree configured from another shell
+        can name another compiler (MSYS2's g++), which CMake keeps using as well -- and,
+        once the root CMakeLists refuses it, refuses on every run. The entry's type does
+        not matter: FILEPATH when CMake found the tool, STRING or UNINITIALIZED when a -D
+        named it. A fresh configure picks MSVC (Invoke-CMakeConfigure sets CC / CXX), so
+        remove the dir and let the caller's configure run. No-op when every recorded tool
+        exists and both compilers are cl.exe, or when nothing is configured yet.
+        [MSVC-GUARD-2026-11-19]
+    #>
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path $cache)) { return }
+    $missing = @()
+    $foreign = @()
+    foreach ($line in [System.IO.File]::ReadAllLines($cache)) {
+        $m = [regex]::Match($line,
+            '^(CMAKE_(?:CXX_COMPILER|C_COMPILER|LINKER|MT|RC_COMPILER)):(?:FILEPATH|STRING|UNINITIALIZED)=(.+)$')
+        if (-not $m.Success) { continue }
+        $toolPath = $m.Groups[2].Value.Trim()
+        if ([System.IO.Path]::IsPathRooted($toolPath) -and -not (Test-Path -LiteralPath $toolPath)) {
+            $missing += "$($m.Groups[1].Value) = $toolPath"
+        }
+        elseif ($m.Groups[1].Value -in 'CMAKE_CXX_COMPILER', 'CMAKE_C_COMPILER' -and
+                (Split-Path $toolPath -Leaf) -ne 'cl.exe') {
+            $foreign += "$($m.Groups[1].Value) = $toolPath"
+        }
+    }
+    if ($missing.Count -eq 0 -and $foreign.Count -eq 0) { return }
+
+    if ($missing.Count -gt 0) {
+        Write-Step "Stale toolchain paths in $cache (the toolset they name is gone, e.g. after a Visual Studio update):"
+        foreach ($entry in $missing) { Write-Info $entry }
+    }
+    if ($foreign.Count -gt 0) {
+        Write-Step "Non-MSVC compiler in $cache (configured from another shell?):"
+        foreach ($entry in $foreign) { Write-Info $entry }
+    }
+    Write-Info "Removing the build dir to force a clean re-configure with the installed MSVC toolset."
+    Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
+}
+
+function Get-MsvcBinDir() {
+    <#
+    .SYNOPSIS
+        The folder of the loaded toolset's cl.exe and link.exe (VCToolsInstallDir, bin\Host<host>\<target>),
+        or $null when the developer environment names none that holds both.
+    #>
+    if (-not $env:VCToolsInstallDir -or -not $env:VSCMD_ARG_HOST_ARCH -or -not $env:VSCMD_ARG_TGT_ARCH) { return $null }
+    $bin = (Join-Path $env:VCToolsInstallDir "bin\Host$($env:VSCMD_ARG_HOST_ARCH)\$($env:VSCMD_ARG_TGT_ARCH)").TrimEnd('\')
+    if ((Test-Path (Join-Path $bin 'cl.exe')) -and (Test-Path (Join-Path $bin 'link.exe'))) { return $bin }
+    return $null
+}
+
+function Test-OnPath([string]$Dir) {
+    # Whether PATH lists $Dir (case-insensitive, trailing backslash ignored).
+    return [bool]($env:PATH -split ';' | Where-Object { $_.TrimEnd('\') -eq $Dir } | Select-Object -First 1)
+}
+
+function Repair-MsvcToolOrder([string]$Bin) {
+    <#
+    .SYNOPSIS
+        Put the loaded toolset's folder first on PATH when another cl.exe or link.exe comes before it.
+
+    .DESCRIPTION
+        A shell started from a developer environment (Git Bash, MSYS2) may put its own folders in front of PATH,
+        and build.ps1 reuses such an environment as it is: Git's and MSYS2's usr\bin hold a coreutils link.exe.
+        Only cl and link are checked. CMake and Ninja are left where they are: the DevShell appends Visual
+        Studio's, so a standalone CMake earlier on PATH is the one every run uses, and moving it would change
+        which cmake owns build\. [MSVC-GUARD-2026-11-19]
+    #>
+    $moved = $false
+    foreach ($tool in 'cl.exe', 'link.exe') {
+        $first = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $first -or (Split-Path $first.Source -Parent).TrimEnd('\') -ne $Bin) {
+            $found = if ($first) { $first.Source } else { 'nothing' }
+            Write-Info "$tool resolved to $found; putting $Bin first on PATH"
+            $moved = $true
+        }
+    }
+    if ($moved) { $env:PATH = "$Bin;$env:PATH" }
+}
+
+function Set-MsvcToolPaths([string]$Bin) {
+    # The loaded toolset's cl.exe and link.exe, by full path: Invoke-CMakeConfigure hands cl.exe to every configure,
+    # and the AOT publish names link.exe.
+    $script:msvcCl = Join-Path $Bin 'cl.exe'
+    $script:msvcLink = Join-Path $Bin 'link.exe'
+}
+
 function Enter-VsDevEnvironment() {
     <#
     .SYNOPSIS
@@ -209,10 +319,32 @@ function Enter-VsDevEnvironment() {
     # this same session), DON'T enter it again. Enter-VsDevShell PREPENDS the VC paths
     # to PATH/LIB/INCLUDE every time, so re-entering stacks them until the linker's
     # command line blows past the 8191-char Windows limit (-> AOT link exits 123).
+    # What a later shell put in front of PATH is repaired instead. A PATH that no longer lists the toolset at all
+    # (MSYS2's minimal PATH keeps the variables and replaces PATH) is entered afresh: PATH does not stack then, and
+    # INCLUDE / LIB grow once, which stays far below the limit.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
-        $script:vsDevShellLoaded = $true
-        Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
-        return $true
+        $bin = Get-MsvcBinDir
+        if ($bin -and (Test-OnPath $bin)) {
+            Repair-MsvcToolOrder $bin
+            Set-MsvcToolPaths $bin
+            $script:vsDevShellLoaded = $true
+            Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
+            return $true
+        }
+        if ($env:VCToolsInstallDir -and -not (Test-Path -LiteralPath $env:VCToolsInstallDir)) {
+            Write-Info "The inherited x64 environment names a toolset that is no longer installed; entering the DevShell"
+        }
+        else {
+            Write-Info "The inherited x64 environment's PATH lists no MSVC toolset folder; entering the DevShell"
+        }
+    }
+
+    # A prompt left open across a Visual Studio update still names the toolset version the update removed, and
+    # VsDevCmd honours an inherited VCToolsVersion: it would refuse to load ("Version ... is not valid"). Without
+    # it, VsDevCmd picks the installed toolset. [MSVC-GUARD-2026-11-19]
+    if ($env:VCToolsVersion -and -not ($env:VCToolsInstallDir -and (Test-Path -LiteralPath $env:VCToolsInstallDir))) {
+        Write-Info "VCToolsVersion=$($env:VCToolsVersion) is not installed; the DevShell picks the installed toolset"
+        Remove-Item Env:VCToolsVersion
     }
 
     $devShellDll = Join-Path $script:vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
@@ -224,6 +356,13 @@ function Enter-VsDevEnvironment() {
     try {
         Import-Module $devShellDll
         Enter-VsDevShell -VsInstallPath $script:vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
+        $bin = Get-MsvcBinDir
+        if (-not $bin) {
+            Write-Fail "The DevShell named no MSVC toolset folder holding cl.exe and link.exe"
+            return $false
+        }
+        Repair-MsvcToolOrder $bin
+        Set-MsvcToolPaths $bin
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment loaded"
         return $true
@@ -260,6 +399,31 @@ function Invoke-CmdInVsEnv([string]$Commands) {
         if ($LASTEXITCODE -ne 0) { return $false }
     }
     return $true
+}
+
+function Invoke-CMakeConfigure([string]$Command) {
+    <#
+    .SYNOPSIS
+        Run one CMake configure with CC and CXX naming the loaded toolset's cl.exe.
+
+    .DESCRIPTION
+        A fresh configure takes CC / CXX before any PATH search, so a user's CXX naming another compiler, or
+        MSYS2's mingw64\bin with its c++.exe ahead on PATH, would otherwise decide which compiler the tree gets.
+        They name cl.exe for this call only and get their old values back after, so the calling session keeps its
+        own. Kept caches are Repair-StaleToolchainCache's concern: CMake never re-reads CC / CXX for them.
+        [MSVC-GUARD-2026-11-19]
+    #>
+    if (-not (Enter-VsDevEnvironment)) { return $false }
+    $saved = @{}
+    foreach ($name in 'CC', 'CXX') {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        if ($saved[$name] -and $saved[$name] -ne $script:msvcCl) {
+            Write-Info "$name named $($saved[$name]); this configure uses $script:msvcCl"
+        }
+        [Environment]::SetEnvironmentVariable($name, $script:msvcCl)
+    }
+    try { return (Invoke-CmdInVsEnv $Command) }
+    finally { foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) } }
 }
 
 function Invoke-CppSelfTest {
@@ -409,9 +573,16 @@ if (-not $NoIdentityCheck) {
         throw "Identity guard could not run (no Python). Re-run with -NoIdentityCheck to skip deliberately."
     }
     & $py (Join-Path $ROOT_DIR "tools/check_no_local_paths.py")
-    if ($LASTEXITCODE -ne 0) {
+    $identityExit = $LASTEXITCODE
+    # 1 is the checker's EXIT_FINDING and the only code that means a name leaked. Any other non-zero
+    # code is a tree that was never checked: its EXIT_CANNOT_RUN, or a launcher that never started it.
+    if ($identityExit -eq 1) {
         Write-Fail "a tracked file carries a machine-local path or this machine's account/computer name"
         throw "Identity guard FAILED. The names are REDACTED above on purpose. Fix the files it lists, or re-run with -NoIdentityCheck if you are deliberately committing a placeholder."
+    }
+    if ($identityExit -ne 0) {
+        Write-Fail "the identity guard could not check the tree (exit $identityExit) — nothing was found and nothing was checked; the reason is printed above"
+        throw "Identity guard could not run (exit $identityExit). Fix the cause it printed, or re-run with -NoIdentityCheck to skip deliberately."
     }
     Write-Ok "no machine-local paths or identifiers in tracked files"
 }
@@ -617,8 +788,9 @@ if ($Target -eq "AsanConfigure") {
     Write-Banner "AddressSanitizer tree (configure only)"
     $asanDir = Join-Path $ROOT_DIR "build_asan"
     if ($Clean -and (Test-Path $asanDir)) { Remove-Item $asanDir -Recurse -Force }
+    Repair-StaleToolchainCache $asanDir
     Repair-NinjaHeaderDeps $asanDir
-    $asanOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
+    $asanOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
     if (-not $asanOk) {
         Write-Fail "CMake configure of build_asan failed"
         exit 1
@@ -691,11 +863,13 @@ if ($cppTargets.Count -gt 0) {
     # NOTE: no clean here. -Clean already removed $BUILD_DIR in the Clean phase;
     # otherwise we keep it for an incremental Ninja build (the whole point).
     # A tree configured under a different console code page has dead header-dep
-    # tracking; drop it first so the configure below is fresh. No-op when healthy.
+    # tracking, and one configured against a since-removed toolset cannot build at all;
+    # drop either first so the configure below is fresh. No-op when healthy.
+    Repair-StaleToolchainCache
     Repair-NinjaHeaderDeps
 
     Write-Step "Configuring CMake (Ninja + MSVC, all DLL targets)..."
-    $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
+    $configOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
 
     if (-not $configOk) {
         Write-Fail "CMake configure failed"
@@ -786,13 +960,11 @@ if ($cppTargets.Count -gt 0) {
 if ($Target -in "All", "UI", "Test") {
     Write-Banner "C# Avalonia UI  |  $CSharpConfig ($Mode)"
 
-    # Native AOT links with MSVC's link.exe. `-Mode Publish` on its own (or with
-    # -Target UI) never touched the C++ path, so the DevShell was never entered and
-    # ILCompiler died with `link ... exited with code 9009` -- command not found, which
-    # reads like a broken toolchain rather than a missing environment. Entering it here
-    # is idempotent (Enter-VsDevEnvironment early-outs on $script:vsDevShellLoaded and on
-    # an already-active VCINSTALLDIR) and costs nothing for a non-AOT build, so it is
-    # unconditional rather than gated on yet another combination of flags.
+    # Native AOT links with MSVC's link.exe, so a publish loads the developer
+    # environment even when no C++ target ran; without it ILCompiler fails with
+    # "exited with code 9009", which reads like a broken toolchain. Entering is
+    # idempotent (Enter-VsDevEnvironment returns at once when loaded, and reuses an
+    # inherited x64 environment), so it does not depend on which other targets ran.
     if ($Mode -eq "Publish") {
         if (-not (Enter-VsDevEnvironment)) {
             Write-Fail "Native AOT needs the MSVC linker; VS DevShell could not be loaded"
@@ -918,20 +1090,21 @@ if ($Target -in "All", "UI", "Test") {
             # No .NET runtime bundled — much smaller than self-contained single-file.
             Write-Step "Publishing UE5DumpUI (Native AOT, Release)..."
 
-            # IlcUseEnvironmentalTools: use the MSVC linker already on PATH (loaded by
-            # Enter-VsDevEnvironment above) instead of letting ILCompiler run its own
-            # findvcvarsall.bat discovery. That discovery captures cmd.exe stdout to
-            # locate link.exe, so when the inherited environment is bloated (e.g. this
-            # shell already ran another repo's vcvars/DevShell publish, stacking
-            # PATH/LIB/INCLUDE), cmd.exe emits "The input line is too long." and that
-            # text leaks into the linker path -> link.exe exits 123. Using the
-            # environmental tools skips that fragile step entirely.
+            # IlcUseEnvironmentalTools: ILCompiler takes LIB from the environment
+            # Enter-VsDevEnvironment loaded instead of running its own findvcvarsall.bat
+            # discovery, which captures cmd.exe output to locate link.exe: in a stacked
+            # environment cmd.exe prints "The input line is too long." and that text
+            # leaks into the linker path (link.exe exits 123). In this mode ILCompiler
+            # runs a bare `link`, which a coreutils link.exe ahead on PATH (Git's or
+            # MSYS2's usr\bin) would answer, so CppLinker names MSVC's by full path.
+            # [MSVC-GUARD-2026-11-19]
             Use-DotnetTemp {
                 & dotnet publish $UI_PROJ `
                     -c Release `
                     -r win-x64 `
                     -p:PublishAot=true `
                     -p:IlcUseEnvironmentalTools=true `
+                    "-p:CppLinker=$script:msvcLink" `
                     -o $publishDir `
                     --nologo
             }
@@ -1066,13 +1239,15 @@ if ($Target -in "All", "Test") {
     # `build test` run on its own (no DLL build this invocation) the dir may be
     # empty/unconfigured — configure it now (cheap; only the requested test
     # targets are compiled below, not the DLLs).
-    # Removes the build dir when its header-dep tracking is dead, which also clears
-    # CMakeCache.txt and so makes the configure below run. No-op when healthy.
+    # Removes the build dir when its recorded toolset is gone or its header-dep tracking
+    # is dead, which also clears CMakeCache.txt and so makes the configure below run.
+    # No-op when healthy.
+    Repair-StaleToolchainCache
     Repair-NinjaHeaderDeps
 
     if (-not (Test-Path (Join-Path $BUILD_DIR "CMakeCache.txt"))) {
         Write-Step "Configuring CMake for tests (Ninja + MSVC)..."
-        $testCfgOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
+        $testCfgOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
         if (-not $testCfgOk) {
             Write-Fail "CMake configure (tests) failed"
             $exitCode = 1

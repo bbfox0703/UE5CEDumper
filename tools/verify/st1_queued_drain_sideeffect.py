@@ -5,8 +5,8 @@ r"""ST1 steps 4 and 6 — the queued invoke must still DRAIN, and drain cleanly.
 WHY THIS RIG EXISTS: the obvious signals for both steps are undecidable.
   step 4  "the queued request runs on the game thread" — the completion line is written by the
           WAITING pipe thread, which has already timed out and gone, so an abandoned request that
-          drains leaves **no log line at all**. A previous run recorded this honestly as *not
-          decidable from that signal*.
+          drains leaves **no log line at all**, so step 4 is *not decidable from that
+          signal*.
   step 6  "no `SEH exception during queued PE call`, no 0xC0000409" — an absence. On its own it is
           equally satisfied by a drain that never happened, which is precisely the regression the
           step exists to catch (*"the `thread_local` guard did not suppress the legitimate drain"*).
@@ -49,12 +49,10 @@ from mailbox_poke import Mem, pid_of  # noqa: E402
 
 LOG_ROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 # [ST1RIG-LOGPATH-STALE] Resolved in main() from the injected process's IMAGE, never
-# hardcoded. This used to read `Logs/DumperTest`, which is the DEVELOPMENT flavour's
-# folder -- a Shipping run writes to `Logs/DumperTest-Win64-Shipping`. So on the flavour
-# the house rules say to reach for FIRST, count() globbed a stale folder, both crash
-# signatures came back 0 on every run, and the gates below passed VACUOUSLY. Measured
-# 2026-09-16: Logs/DumperTest-Win64-Shipping was current while Logs/DumperTest had not
-# been written since 09-12.
+# hardcoded. `Logs/DumperTest` is the DEVELOPMENT flavour's folder -- a Shipping run
+# writes to `Logs/DumperTest-Win64-Shipping`. A hardcoded folder on the flavour the house
+# rules say to reach for FIRST would glob a stale folder, both crash signatures would come
+# back 0 on every run, and the gates below would pass VACUOUSLY.
 LOG = None
 OFF_BHIDDEN, MASK_BHIDDEN = 0x58, 0x80
 FUNC_NATIVE, FUNC_STATIC = 0x400, 0x2000
@@ -72,13 +70,12 @@ def say(s):
 def resolve_log_dir(pid):
     """The folder the DLL is writing to for THIS process.
 
-    Mirrors `Sein::InitProcessMirror` (dll/src/Sein.cpp:581-601): the image name with its
+    Mirrors `Sein::InitProcessMirror` (dll/src/Sein.cpp): the image name with its
     extension dropped and the reserved characters replaced by '_'.
 
     ⛔ It FAILS rather than returning a plausible-looking empty folder. A rig whose crash
     gates compare a before-count with an after-count reports a clean PASS when both are 0,
-    so a wrong path is indistinguishable from 'no crash happened' -- which is precisely how
-    this went unnoticed.
+    so a wrong path is indistinguishable from 'no crash happened'.
     """
     out = subprocess.run(["tasklist", "/fi", "PID eq %d" % pid, "/fo", "csv", "/nh"],
                          capture_output=True, text=True, errors="replace").stdout
@@ -147,21 +144,20 @@ def main():
         fn = next((f for f in fl if f.get("func_name") == "SetActorHiddenInGame"
                    and f.get("class_name") == "Actor"), None)
         # The subject MUST be an instance whose class DECLARES the function, not merely one
-        # that inherits it: [INVOKEINHERIT-2026-08-20] -- `UE5_FindFunctionByName` never
-        # climbs SuperStruct, so a `StaticMeshActor` returns "Function not found" for
-        # `SetActorHiddenInGame` and the whole rig reports a false "the drain was suppressed".
-        # That is exactly how that defect was found. `ChaosDebugDrawActor`'s class is
-        # literally `Actor`, so it resolves.
+        # that inherits it, so the verdict never rests on base-class resolution: a DLL whose
+        # `UE5_FindFunctionByName` does not climb SuperStruct (one without
+        # [INVOKEINHERIT-2026-08-20]) returns "Function not found" for a `StaticMeshActor`'s
+        # `SetActorHiddenInGame`, and the whole rig reports a false "the drain was suppressed".
+        # `ChaosDebugDrawActor`'s class is literally `Actor`, so it resolves.
         # [ST1RIG-MAXRESULTS-IGNORED] The parameter is `limit`. `find_instances` reads
         # `request.value("limit", 500)` (Fern.cpp, CMD_FIND_INSTANCES) and never looks at
-        # `max_results` -- so the 400 written here was silently dropped and the DEFAULT 500
-        # applied. ⚠ Two other commands DO spell it `max_results` (find_functions_by_class,
-        # find_property_xrefs), which is what makes this easy to get wrong; check the handler
+        # `max_results` -- so a `max_results` here is silently dropped and the DEFAULT 500
+        # applies. ⚠ Other commands DO spell it `max_results`, which is what makes this
+        # easy to get wrong; check the handler
         # rather than copying a neighbouring call.
-        # Measured on a freshly booted Shipping fixture 2026-09-17: this query returns 250 rows
-        # whatever the cap is (400 / 500 / 2000 all give 250), so the cap has never been the
-        # binding constraint here and correcting the name changes nothing about what this rig
-        # sees. It matters anyway: a cap that is silently ignored is a bound nobody has.
+        # On a freshly booted Shipping fixture this query returns 250 rows whatever the cap is
+        # (400 / 500 / 2000 all give 250), so the cap is not the binding constraint here. The
+        # name matters anyway: a cap that is silently ignored is a bound nobody has.
         sm = [i for i in (c.request("find_instances", class_name="Actor",
                                     limit=400,
                                     exact_match=False).get("instances") or [])

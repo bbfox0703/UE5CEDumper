@@ -66,10 +66,9 @@ public sealed class WindowsGlobalHotkeyService : IGlobalHotkeyService
         private readonly Thread _thread;
         // IMPORTANT: this event is NOT disposed in the ctor. ManualResetEventSlim
         // forbids Dispose() concurrent with Set() (docs), and the worker calls
-        // Set() right as the ctor's Wait() returns — a `using` here raced Set()
-        // against Dispose() and crashed the process natively (the "CTD right
-        // after 'cursor hotkey bound'" symptom). It is disposed in Dispose()
-        // only AFTER the worker thread has joined, so Set() is fully finished.
+        // Set() right as the ctor's Wait() returns — a `using` here races Set()
+        // against Dispose() and crashes the process natively. It is disposed in
+        // Dispose() only AFTER the worker thread has joined, so Set() is fully finished.
         private readonly ManualResetEventSlim _ready = new(false);
         private uint _threadId;
         private volatile bool _disposed;

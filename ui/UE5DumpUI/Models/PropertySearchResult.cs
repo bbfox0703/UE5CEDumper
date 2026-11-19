@@ -6,7 +6,7 @@ namespace UE5DumpUI.Models;
 /// <summary>
 /// A single property match from the search_properties command.
 ///
-/// Build 610+: results are deduped by (definingClass, propName, offset)
+/// Results are deduped by (definingClass, propName, offset)
 /// so a field declared on AActor and inherited by 4823 children only
 /// emits one row keyed by the defining class. <see cref="ClassName"/>
 /// and <see cref="DefiningClassName"/> will be the same value after
@@ -23,7 +23,7 @@ public partial class PropertySearchMatch : ObservableObject
     /// <summary>
     /// FProperty* address (UProperty* on UE4 &lt;4.25) — the key for
     /// find_property_xrefs ("which methods use this field?"). Emitted by
-    /// search_properties / search_properties_batch since build 842.
+    /// search_properties / search_properties_batch; empty from an older DLL.
     /// </summary>
     public string FieldAddr { get; set; } = "";
     public string SuperName { get; set; } = "";
@@ -66,7 +66,7 @@ public partial class PropertySearchMatch : ObservableObject
     /// key -- all three must not be written whole. [BOOL-NATIVE-SEARCH]</summary>
     public bool BoolNative { get; set; }
 
-    // === Inheritance-aware fields (build 610+) ===
+    // === Inheritance-aware fields ===
     public string DefiningClassName { get; set; } = "";
     public string DefiningClassAddr { get; set; } = "";
     public string DefiningClassPath { get; set; } = "";
@@ -116,8 +116,8 @@ public partial class PropertySearchMatch : ObservableObject
     public bool CanForceBool => ShowScalarActions && PropType == "BoolProperty";
 
     /// <summary>Row is a strong ObjectProperty or a WeakObjectProperty → "Force → null" applies.
-    /// A weak pointer is held at UE's own reset value: SerialNumber 0 is its null, so the old
-    /// "nulling the index hits GObjects[0]" exclusion was wrong. Soft / Lazy pointers stay
+    /// A weak pointer is held at UE's own reset value: SerialNumber 0 is its null, so a weak
+    /// pointer whose index is 0 still resolves to null, not to GObjects[0]. Soft / Lazy pointers are
     /// excluded, because their asset path / GUID re-resolves the pointer, so a null would not
     /// hold. The DLL gate is Solide::ObjectNullShapeFor. [VND583-DOC D7-04]</summary>
     public bool CanForceNull => ShowScalarActions && PropType is "ObjectProperty" or "WeakObjectProperty";

@@ -3,9 +3,9 @@ does not fit.
 
     py tools/verify/solide_int8_signed.py     (DumperTest running + injected, no UI)
 
-THE DEFECT. `int8` was read back through an unsigned path, so a held **-5** was reported as **251**.
-The re-assert worker compares what it reads against what it wants, so every tick saw a mismatch,
-rewrote the same byte, and the UI showed permanent drift on a field that was in fact correct.
+THE DEFECT. An `int8` read back through an unsigned path reports a held **-5** as **251**. The
+re-assert worker compares what it reads against what it wants, so every tick sees a mismatch,
+rewrites the same byte, and the UI shows permanent drift on a field that is in fact correct.
 
 TWO STEPS, and the second is the one that makes the first mean something:
   1. force a negative value and read it back — must be the negative, not its unsigned image.
@@ -15,10 +15,9 @@ TWO STEPS, and the second is the one that makes the first mean something:
 through a signed path that happens to have no bounds. Only the out-of-range case separates "reads
 back correctly" from "reads back correctly AND knows what an int8 is".
 
-⚠ RE-VERIFICATION, and why: the maintainer marked both of these ✅ on 2026-08-21 at 10:08, on a
-copy of the checklist held outside the repo (`Y:\`). The marks never reached git and the rows read
-as untested. Rather than transcribe a tick with no evidence behind it, this re-runs them and
-records what it actually saw. [ZHTW-MARKS-2026-08-21]
+⚠ RE-VERIFICATION, and why: a tick held only in a copy of the checklist outside the repo has no
+evidence behind it in git. Rather than transcribe such a tick, this re-runs both steps and records
+what it actually saw.
 """
 import pathlib
 import sys
@@ -49,7 +48,7 @@ def main():
         c.ensure_scanned()
 
         # ⚠ get_pointers has NO "data" wrapper — the keys are top level. Reading through a
-        # non-existent "data" gave a silent 0 and would have been reported as "no GWorld".
+        # non-existent "data" gives a silent 0 that reads as "no GWorld".
         _p = c.request("get_pointers")
         gw = str(_p.get("gworld") or (_p.get("data") or {}).get("gworld") or "0")
         say("gworld = %s" % gw)

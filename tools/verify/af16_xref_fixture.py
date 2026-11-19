@@ -5,10 +5,10 @@
     py tools/verify/af16_xref_fixture.py --top 15        # show more candidates
 
 The row needs the Xref dialog to return >= 2 rows so its six headers can be sorted.
-Five earlier hunts picked fields by intuition and every one returned 0 or 1. The
-reason was structural rather than unlucky: the class they used owns 2 UFunctions,
-one of which is an event stub. So this does not guess at all -- it inverts the
-mapping the DLL already exposes:
+A field picked by intuition tends to return 0 or 1 for a structural reason, not bad
+luck: a class that owns 2 UFunctions, one of them an event stub, has only one function
+of its own that can reference its field. So this does not guess at all -- it inverts
+the mapping the DLL already exposes:
 
     for each script-backed UFunction:  walk_function_props -> the props it touches
     invert:                            prop_addr -> {functions that touch it}
@@ -94,12 +94,12 @@ def main() -> int:
             if is_bytecode:
                 bytecode_seen += 1
             else:
-                # MEASURED 2026-08-23: the other path is `disasm`, the native-disassembly
-                # HEURISTIC (Path 2). Counting it here manufactures fixtures that the dialog
-                # can never show: DOLLCharacter::AutoPossessPlayer came back from 16 disasm
-                # replies and `find_property_xrefs` -- a Kismet BYTECODE xref (Aura.cpp `IsWriteContext`),
-                # i.e. a different question -- correctly returned 0 for it, with and without
-                # game_only. Skipping keeps this rig's candidates answerable by the dialog.
+                # The other path is `disasm`, the native-disassembly HEURISTIC (Path 2).
+                # Counting it here manufactures fixtures that the dialog can never show: a
+                # prop reached only through disasm replies can get 0 from `find_property_xrefs`
+                # -- a Kismet BYTECODE xref (Aura.cpp `IsWriteContext`), i.e. a different
+                # question -- with and without game_only, and that 0 is correct. Skipping
+                # keeps this rig's candidates answerable by the dialog.
                 continue
             for p in (w.get("props") or []):
                 pa = p.get("prop_addr")

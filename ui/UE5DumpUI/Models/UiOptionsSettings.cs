@@ -50,7 +50,7 @@ public sealed class UiOptionsSettings
     public CallTraceUiOptions CallTrace { get; set; } = new();
 }
 
-/// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
+/// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options. Both OFF by default: a default report is the
 /// script's default, the game's own types in full.</summary>
 public sealed class DumpExplorerUiOptions
 {
@@ -88,8 +88,9 @@ public sealed class MainUiOptions
     public int PreviewLimit { get; set; } = 2;
     public int DeepScanElemCapExponent { get; set; } = 8;
     public int CeStringLengthExponent { get; set; } = 8;   // 2^8 = 256 (CE String leaf <Length>)
+    public bool CeEditableStrings { get; set; }   // [CEXML-STRING-CAPACITY] off = exported String records are read-only in CE
     public int FabricateArrayCountExponent { get; set; } = 2;   // 2^2 = 4 rows (default); 0 = off, 2^N = Copy CE Field array fabricate count
-    /// <summary>[EXTPR-539-540-2026-10-02] D4.1: Dump All also writes the object index. OFF by default; a
+    /// <summary>[EXTPR-539-540-2026-10-02] Dump All also writes the object index. OFF by default; a
     /// remembered ON still shows the estimate and asks on every export.</summary>
     public bool DumpAllObjectIndex { get; set; }
 }
@@ -225,7 +226,7 @@ public sealed class ConsoleUiOptions
     public bool GameOnly { get; set; }
 }
 
-/// <summary>[LIVEFUNCS-STEP2] U10: the Call Trace list's column widths and its detail pane's width, in pixels, as the
+/// <summary>[LIVEFUNCS-STEP2] The Call Trace list's column widths and its detail pane's width, in pixels, as the
 /// user dragged them. The defaults are the tab's undragged layout; the view model
 /// clamps a hand-edited value.</summary>
 public sealed class CallTraceUiOptions
@@ -251,7 +252,7 @@ public sealed class LiveFuncsUiOptions
     public int TraceBufferExponent { get; set; } = 6;
     /// <summary>Leave the previous recording's per-frame functions out of the trace. OFF by default.</summary>
     public bool TraceExcludePerFrame { get; set; }
-    /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32 (T12). The choices
+    /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32. The choices
     /// themselves are never kept: they are name keys of one game process.</summary>
     public int SnapshotBufferExponent { get; set; } = 5;
     /// <summary>[LF-COMPACT-TOP] The capture settings folded under their header line. Off by default, so a settings

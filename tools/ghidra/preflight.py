@@ -87,7 +87,7 @@ Extra:  UE5_STEAM_ROOT, or --steam-root
       // Optional. false = the original binary is KNOWN to be unrecoverable (Steam
       // serves only the current build, the archive copy is gone, ...). Absence means
       // unknown, never "fine". This has to be a FIELD and not a sentence in `notes`:
-      // UE5.5-Everspace2 is a measured live example — the file at its recorded path is
+      // UE5.5-Everspace2 is a live example — the file at its recorded path is
       // a newer build than the .rep was imported from, and with the fact living only in
       // prose the row reads as "present, nothing to verify" instead of "the .rep is now
       // the only copy of this corpus member".
@@ -332,8 +332,8 @@ def scan_steam(explicit_root: str | None) -> SteamIndex:
             # single ones, and then `"D:\SteamLibrary"` decodes to `D:SteamLibrary` —
             # the tool would report a perfectly good library as GONE. Cheap fix: keep the
             # raw token too and prefer whichever one actually exists on disk. (The C#
-            # VdfParser.Tokenize has the same blind spot; it has not bitten there because
-            # it only ever reads Steam's own file.)
+            # VdfParser.Tokenize has the same blind spot, harmless there because it only
+            # ever reads Steam's own file.)
             raw = vdf_values_at_depth(vdf_tokenize(content, unescape=False), "path", 2)
             if len(raw) == len(roots):
                 roots = [_pick_path_variant(dec, rw) for dec, rw in zip(roots, raw)]
@@ -429,7 +429,7 @@ def find_game_exe(game_dir: Path) -> Path | None:
     """Port of ScanGameFolder's ordering: primary roots before Engine roots, and
     within each tier SHALLOWEST DEPTH WINS.
 
-    Both rules are load-bearing and both were bugs once (see the comment block in
+    Both rules are load-bearing (see the comment block in
     ProxyDeployService.ScanGameFolder): depth 1 alone misses NEKOPALIVE's
     <Game>/Package/<Sub>/Binaries/Win64, and an unordered depth-3 walk turns
     P3R's Artbook/ and Soundtrack/ into phantom hits — they are genuine UE apps,
@@ -631,12 +631,10 @@ def check_project(projs: Path, name: str, glob: str, want_sizes: bool) -> dict:
             st["bytes"] = dir_size(rep)
 
     # Ghidra renames a second import of the same file to "<name>.0", and a `-process -`
-    # row does visit both. MEASURED (out/sweep/log_UE4.27-Maelstrom_.txt): these are
-    # MS-DOS/MZ-loader imports that map only the 1104-byte DOS stub — "scanning … CODE_0
-    # size=1104" at image base 0000:0000 — and their scan TSVs are hits=0 on all 151
-    # patterns. aggregate_sweep.py already drops them (`exec_mb <= 0` -> "broken import"),
-    # which is why out/sweep/REPORT.md reads "programs scanned: 51" and not 55. So they do NOT
-    # double-score truth, do NOT inflate any statistic and do NOT lengthen the run
+    # row does visit both. These are MS-DOS/MZ-loader imports that map only the 1104-byte
+    # DOS stub — "scanning … CODE_0 size=1104" at image base 0000:0000 — so their scan TSVs
+    # hit nothing, and aggregate_sweep.py drops them (`exec_mb <= 0` -> "broken import").
+    # So they do NOT double-score truth, do NOT inflate any statistic and do NOT lengthen the run
     # meaningfully. What they DO cost is disk inside a kept project (Ghidra stores the
     # whole original file), and they trip a real output bug — see dup_note() below.
     base_names = set(st["programs"])
@@ -916,11 +914,11 @@ def main(argv: list[str]) -> int:
         elif needs_pdb is None:
             # MEASURED GAP, not a pass. The inventory probe sets needs_pdb by stat()ing
             # next to the located binary, so a row it could not locate keeps null — and
-            # null here used to fall through to "N/A" and vanish from the PDB section
-            # entirely. That is exactly backwards: UE4.27-DropIn is a SYMBOLISED oracle
-            # (sweep.sh lists it under "full PDB") that is not installed, so it is the
-            # row most in need of a PDB, and it was the one being silently dropped.
-            # "0 pdb gaps" must never mean "2 rows were never measured".
+            # null falling through to "N/A" would vanish from the PDB section entirely.
+            # That is exactly backwards: a SYMBOLISED oracle (sweep.sh lists it under
+            # "full PDB") that is not installed is the row most in need of a PDB, and it
+            # would be the one silently dropped.
+            # "0 pdb gaps" must never mean "some rows were never measured".
             pdb_state = "UNKNOWN_UNCHECKABLE"
 
         results.append({
@@ -934,10 +932,10 @@ def main(argv: list[str]) -> int:
 
     blocking = [x for x in results if x["ghidra"]["state"] in PROJECT_BLOCKING]
     ok_rows = [x for x in results if x["ghidra"]["state"] == "OK"]
-    # Detected since the first version, but it used to be reachable only via --json —
-    # i.e. invisible in the report a human actually reads, which for a pre-sweep check
-    # is the same as not detected. It is the one finding here that skews the SWEEP
-    # RESULT rather than the re-import story, so it goes directly under BLOCKING.
+    # Shown in the human report, not only via --json: invisible in the report a human
+    # actually reads is, for a pre-sweep check, the same as not detected. It is the
+    # finding here that skews the SWEEP RESULT rather than the re-import story, so it
+    # goes directly under BLOCKING.
     dup_rows = [x for x in results if x["ghidra"].get("duplicate_imports")]
 
     # ── ORPHAN .rep ──────────────────────────────────────────────────────────
@@ -1235,7 +1233,7 @@ def main(argv: list[str]) -> int:
         print(BAR)
 
     code = EXIT_OK
-    # dup_rows is deliberately NOT here: stub re-imports are measured to have zero effect on
+    # dup_rows is deliberately NOT here: stub re-imports hit nothing, so they have zero effect on
     # sweep results, so they must not fail --strict alongside genuine reconstructability gaps.
     if args.strict and (to_install or pdb_missing or wrong_build or collisions):
         code = EXIT_GAPS

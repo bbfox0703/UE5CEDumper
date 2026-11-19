@@ -88,10 +88,11 @@ public sealed class FunctionParamModel
     public bool? IsParm { get; init; }
     /// <summary>UScriptStruct name for StructProperty params (e.g. "Vector", "Rotator"). Empty for non-struct types.</summary>
     public string StructName { get; init; } = "";
-    /// <summary>DLL-discovered sub-fields for StructProperty params (Phase B fallback). Empty for non-struct or when struct layout is unknown.</summary>
+    /// <summary>DLL-discovered sub-fields for StructProperty params (the fallback behind KnownStructLayouts). Empty for
+    /// non-struct or when struct layout is unknown.</summary>
     public IReadOnlyList<DynamicStructField> StructFields { get; init; } = [];
     /// <summary>
-    /// Stage 1 (Invoke param picker): expected UClass name for pointer-flavoured
+    /// Invoke param picker: expected UClass name for pointer-flavoured
     /// params (ObjectProperty / ClassProperty / SoftObject / WeakObject / Lazy /
     /// Interface). The DLL extracts this from FObjectPropertyBase::PropertyClass.
     /// Empty for scalar / struct / container params, and on older DLLs that

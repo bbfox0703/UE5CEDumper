@@ -12,13 +12,13 @@
 //
 // Pure memory write — NO UFunction invoke, NO game thread, so it works in menus
 // too. A re-assert worker re-applies the bit on a short timer (write-on-drift)
-// so it survives respawns / level changes. Self-contained (Path B): uses only
+// so it survives respawns / level changes. Self-contained: uses only
 // public Ubel / Aura / Macht APIs + DynOff — no coupling to Wirbel.
 //
 // Every property name is on an engine base class (AActor / AController /
 // UPlayer), so the lookup is game- and UE-version-agnostic. No cached instance
-// pointers — the pawn is re-resolved on every operation and every re-assert tick
-// (the stale-pointer crash class from the 2026-06-10 audit).
+// pointers — the pawn is re-resolved on every operation and every re-assert tick,
+// so a pointer the game has freed is never written through.
 // ============================================================
 
 #define LOG_CAT "WALK"
@@ -27,8 +27,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick (R5/B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel
+#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick
 #include "Ubel.h"
 
 #include <atomic>
@@ -61,7 +61,7 @@ Routine::SafeThread       s_worker;   // detaches at process exit, never termina
 std::mutex        s_workerMutex;
 std::atomic<bool> s_workerStop{false};
 
-// T2 generic scan: cached protection-bool targets for the current pawn class —
+// Generic scan: cached protection-bool targets for the current pawn class —
 // bCanBeDamaged + every reflected invincibility bool matched by
 // MatchProtectionBool. Rebuilt only when the resolved pawn class changes (the
 // offsets/masks are class-stable, so the worker reuses them across ticks).
@@ -202,7 +202,7 @@ std::string ToLower(const std::string& s) {
     return r;
 }
 
-// T2 generic scan: walk the pawn class (incl. inherited fields) for damage /
+// Generic scan: walk the pawn class (incl. inherited fields) for damage /
 // invincibility FBoolProperty fields and cache them as protection targets.
 // Universal keyword table (MatchProtectionBool) — no per-game config. Rebuilt
 // only when the pawn class changes. Logs the discovered flags when verbose
@@ -241,7 +241,7 @@ void BuildTargets(uintptr_t pawnClass, bool verbose) {
 
 // Apply the desired GodMode state to the live pawn. Caller MUST hold s_mutex.
 // Writes EVERY cached protection target (bCanBeDamaged + any invincibility bool
-// the T2 scan matched on the pawn class): ON ⇒ each bool's "protect" value, OFF ⇒
+// the generic scan matched on the pawn class): ON ⇒ each bool's "protect" value, OFF ⇒
 // the inverse (its normal-gameplay value). Returns the OBSERVED godmode state
 // (1 = immune, 0 = can be damaged) from the canonical bCanBeDamaged target, or a
 // negative ProtectResult. verbose: log the scan + summary (once per explicit
@@ -254,7 +254,7 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
     int32_t rc = ResolvePawnRef(p);
     if (rc != PR_OK) return rc;
 
-    // Rebuild the protection-target set when the pawn class changes (T2 scan).
+    // Rebuild the protection-target set when the pawn class changes.
     if (p.pawnClass != s_targetsClass)
         BuildTargets(p.pawnClass, verbose);
     if (s_targets.empty())
@@ -295,7 +295,7 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
 
 void WorkerLoop() {
     // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop (R5 / B14). Only the tick is ours.
+    // all live in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("GodMode", Grimoire::PROTECT_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -321,7 +321,7 @@ void WorkerLoop() {
 // state mutate — concurrent ON/OFF (pipe SetGodMode + CE-mailbox CMD_PROTECT) then
 // can't join a wanted worker or leave an orphan (the same discipline as Laufen).
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;   // already running
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -368,7 +368,7 @@ int32_t SetGodMode(bool on) {
     // decide on the FINAL s_wantGod (not the `on` arg), so a concurrent ON/OFF from the
     // pipe + CE mailbox can't join a wanted worker or leave an orphan. s_mutex (inner) is
     // released before the start/stop — the worker locks s_mutex per tick, so joining
-    // under it would deadlock. (L1)
+    // under it would deadlock.
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     int32_t rc;
     {

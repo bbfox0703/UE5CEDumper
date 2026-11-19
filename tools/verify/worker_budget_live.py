@@ -3,8 +3,8 @@ r"""Several heavy commands at once: how many threads does the game gain? [PIPE-P
     py tools/verify/worker_budget_live.py --pid <game pid> [--clients 4] [--rounds 8]
 
 WHY. Stage B lets the pipe take 6 clients, so several heavy commands can walk GObjects at once. Each walk
-(Aura::ParallelGObjectsScan) used to spawn ScanThreadCount() - 1 workers with no limit across walks: k walks put k
-times that many threads in the game. The process-wide WorkerBudget holds the workers of every walk together to what
+(Aura::ParallelGObjectsScan) spawns up to ScanThreadCount() - 1 workers; with no limit across walks, k walks would put
+k times that many threads in the game. The process-wide WorkerBudget holds the workers of every walk together to what
 one walk alone spawns.
 
 WHAT IT DOES. `--clients` connections (each its own PipeClient, its own DLL thread) each send `find_refs_to_uobject`
@@ -18,7 +18,7 @@ allows:
 cancel watcher, hence + clients; a walk's own first chunk runs on its connection's thread, which already exists).
 It also counts the DLL's "ParallelGObjectsScan: N of M threads" lines written during the run: walks the budget cut.
 
-THE CONTROL. Run it against a DLL from before Stage B (build 3695): the same load must exceed the bound, or the run
+THE CONTROL. Run it against a DLL without Stage B's WorkerBudget: the same load must exceed the bound, or the run
 proves nothing about the budget. `--expect over` says that is the expected outcome.
 
 Exit codes: 0 the expectation held; 1 it did not; 2 nothing measurable (no pipe, no GWorld, no budget in the log).
@@ -77,7 +77,7 @@ def thread_count_toolhelp(pid: int) -> int:
 
 
 # NtQuerySystemInformation(SystemProcessInformation): one call lists every process with its thread count, far faster
-# than a Toolhelp thread snapshot (measured: 7 Toolhelp samples in 2.4 s). x64 SYSTEM_PROCESS_INFORMATION offsets:
+# than a Toolhelp thread snapshot. x64 SYSTEM_PROCESS_INFORMATION offsets:
 # NextEntryOffset 0x00, NumberOfThreads 0x04, NumberOfThreadsHighWatermark 0x14, UniqueProcessId 0x50.
 ntdll = ctypes.WinDLL("ntdll")
 ntdll.NtQuerySystemInformation.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,

@@ -14,7 +14,7 @@ namespace UE5DumpUI.Tests;
 /// [SNAPINTERVAL-2026-08-20] — a below-minimum or emptied NumericUpDown must not reach a
 /// non-nullable binding.
 ///
-/// <para>The premise these rest on was <b>measured</b>, not assumed:
+/// <para>The premise these rest on is <b>pinned</b>, not assumed:
 /// <c>NumericUpDown.ValueProperty.PropertyType</c> is <c>decimal?</c> in Avalonia 12.1.1, the
 /// control exposes nothing to suppress the null, and <c>ClipValueToMinMax</c> defaults to
 /// <c>false</c>. <see cref="NumericUpDownSurfaceTests"/> pins all three so an Avalonia upgrade that
@@ -45,7 +45,7 @@ public class NumericInputCoercionTests : IDisposable
 
     /// <summary>
     /// An emptied box is mid-edit, not a request to change anything, so the value in force
-    /// survives. This is the case that produced the reported InvalidCastException.
+    /// survives. This is the case that would otherwise raise an InvalidCastException.
     /// </summary>
     [Fact]
     public void Coerce_Null_KeepsTheValueInForce()
@@ -63,7 +63,7 @@ public class NumericInputCoercionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(30, 60)]          // the reported input: below the floor -> the floor
+    [InlineData(30, 60)]          // below the floor -> the floor
     [InlineData(59, 60)]
     [InlineData(60, 60)]          // boundary, inclusive
     [InlineData(900, 900)]
@@ -116,8 +116,8 @@ public class NumericInputCoercionTests : IDisposable
     }
 
     /// <summary>
-    /// The reported repro, as a unit: type 30, commit it. The old code let this reach an int
-    /// binding as null on the click-away path; now it is simply the floor either way.
+    /// The user's path, as a unit: type 30, commit it. It must not reach an int binding as null on
+    /// the click-away path; it is simply the floor either way.
     /// </summary>
     [Fact]
     public void IntervalFacade_BelowMinimum_ClampsToTheFloor()
@@ -147,7 +147,7 @@ public class NumericInputCoercionTests : IDisposable
         Assert.Equal(1800m, vm.AutoSnapshotIntervalSecValue);
     }
 
-    /// <summary>All four inputs on the panel, not just the one that was reported.</summary>
+    /// <summary>All four inputs on the panel, not just one.</summary>
     [Fact]
     public void EveryFacadeOnThePanel_AbsorbsAnEmptyBox()
     {
@@ -217,10 +217,9 @@ public class NumericInputCoercionTests : IDisposable
     /// <summary>
     /// The rule, app-wide: no NumericUpDown anywhere may bind a non-nullable property.
     ///
-    /// <para>The reported defect was one control on one panel, but the shape is the control's, not
-    /// the panel's — a sweep at the time of the fix found <b>18</b> NumericUpDowns and every single
-    /// one carried it. Scoping this test to SnapshotPanel would have pinned the reported instance
-    /// and left the other seventeen to be re-discovered one bug report at a time.</para>
+    /// <para>The shape is the control's, not one panel's: any NumericUpDown bound straight at a
+    /// non-nullable property carries it. Scoping this test to SnapshotPanel would pin one instance
+    /// and leave the rest to be found one bug report at a time.</para>
     ///
     /// <para>The convention checked is the <c>Value</c>-suffixed façade. It is a naming convention
     /// rather than a type check because the AXAML is read as text — but the compiler backs it up:
@@ -242,11 +241,11 @@ public class NumericInputCoercionTests : IDisposable
             {
                 seen++;
                 // ⚠ The path may be followed by binding modifiers (`, Mode=TwoWay`), so do NOT
-                // anchor on the closing brace. An earlier version did, and silently skipped the one
-                // control in the app written that way — PointerPanel's InvokeTimeoutMs — which was
-                // therefore left carrying the defect while this test reported everything clean.
+                // anchor on the closing brace: a pattern that did would silently skip a control
+                // written that way — PointerPanel's InvokeTimeoutMs is one — and report it clean
+                // while it carries the hazard.
                 var bound = Regex.Match(tag.Value, @"Value=""\{Binding\s+(?<p>[A-Za-z0-9_.]+)");
-                if (!bound.Success) continue;      // bound some other way; not this defect's shape
+                if (!bound.Success) continue;      // bound some other way; not this hazard's shape
                 parsed++;
                 var prop = bound.Groups["p"].Value;
                 if (!prop.EndsWith("Value", StringComparison.Ordinal))
@@ -259,7 +258,7 @@ public class NumericInputCoercionTests : IDisposable
 
         // Every one of them must actually have had its binding path read. A tag whose Value binding
         // the regex cannot parse is skipped above, and a skip is indistinguishable from a pass —
-        // which is exactly how InvokeTimeoutMs stayed broken through a green run.
+        // a broken control would stay broken through a green run.
         Assert.True(parsed == seen,
             $"{seen - parsed} NumericUpDown control(s) had a Value binding this test could not parse, "
             + "so they were neither checked nor reported. Widen the regex rather than the tolerance.");
@@ -320,7 +319,7 @@ public class NumericInputCoercionTests : IDisposable
     [InlineData(1e30)]
     public void ToControlValue_HandlesWhatAPlainCastThrowsOn(double v)
     {
-        Assert.Throws<OverflowException>(() => (decimal)v);   // what the generated code did first
+        Assert.Throws<OverflowException>(() => (decimal)v);   // the obvious getter's plain cast
         _ = NumericInput.ToControlValue(v);                   // must not throw
     }
 

@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Phase C4 — DataTable-native pivot engine. A DataTable is already a
+/// DataTable-native pivot engine. A DataTable is already a
 /// RowName→struct map, so the pivot is zero-config: one group per row keyed by
 /// RowName, struct fields as projected columns. Pure C#, no pipe.
 /// </summary>

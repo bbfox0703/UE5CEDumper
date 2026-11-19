@@ -7,12 +7,12 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #3 M10: the client-side ResultFilter box must follow the shared keyword-box
+/// The client-side ResultFilter box must follow the shared keyword-box
 /// MUST-rule — space = AND (term-level AND, field-level OR) via
 /// ObjectTreeFilter.MatchesAllTerms, and per-keyword memory via KeywordSearchMemory.
-/// Before the fix it matched the whole string with one Contains per field, so a
-/// two-word query like "max health" (never a literal substring of any single field)
-/// found nothing.
+/// Matching the whole string with one Contains per field would make a two-word
+/// query like "max health" (never a literal substring of any single field) find
+/// nothing.
 /// </summary>
 public class PropertySearchFilterTests
 {
@@ -98,7 +98,7 @@ public class PropertySearchFilterTests
         vm.ApplyResultFilter();   // deterministic (bypass the 150 ms debounce)
 
         // Term-level AND + field-level OR: only MaxHealth has BOTH terms (each matching
-        // some field). The old whole-string Contains found the literal "max health" in
+        // some field). A whole-string Contains would find the literal "max health" in
         // no field → zero rows.
         Assert.Single(vm.Results);
         Assert.Equal("MaxHealth", vm.Results[0].PropName);
@@ -140,8 +140,8 @@ public class PropertySearchFilterTests
     }
 
     // [UE4-ASSETPTR-EXPORTS] The DLL walks and searches UE 4.11-4.17's soft pointers by their own names
-    // ([UE4-ASSETPTR-PROPS]); the Type Filter's suggestions listed only the 4.18+ Soft* spellings, so on such a title
-    // "asset" suggested nothing and "soft" suggested two types the game has none of.
+    // ([UE4-ASSETPTR-PROPS]), so the Type Filter suggests those names too: the 4.18+ Soft* spellings alone would leave
+    // "asset" suggesting nothing on such a title and "soft" suggesting two types the game has none of.
     [Theory]
     [InlineData("AssetObjectProperty")]
     [InlineData("AssetClassProperty")]
@@ -152,8 +152,8 @@ public class PropertySearchFilterTests
         vm.Dispose();
     }
 
-    // [VND9-04] UE 5.5's narrow strings: the DLL walks, previews and value-scans them, and "str" suggested only the
-    // wide FString's type.
+    // [VND9-04] UE 5.5's narrow strings: the DLL walks, previews and value-scans them, so "str" suggests them beside
+    // the wide FString's type.
     [Theory]
     [InlineData("Utf8StrProperty")]
     [InlineData("AnsiStrProperty")]
@@ -165,7 +165,7 @@ public class PropertySearchFilterTests
     }
 
     // ==================================================================
-    // Audit #5 Z4 / Z10 — the cap must reach BOTH surfaces, and the advice
+    // The cap must reach BOTH surfaces, and the advice
     // must name a control the panel actually has.
     // ==================================================================
 
@@ -238,11 +238,10 @@ public class PropertySearchFilterTests
     }
 
     /// <summary>
-    /// Z10, then [PROPSEARCHCAP-2026-08-19]. The rule Z10 established is "never name a lever
-    /// the user cannot reach", and it happened to be satisfied by deleting "raise Max" because
-    /// this panel had no Max. It has one now, so the SAME rule requires the advice back —
-    /// while the cap can still go up. ⚠ This test was rewritten rather than deleted: the
-    /// invariant did not change, only which side of it the panel is on.
+    /// [PROPSEARCHCAP-2026-08-19]. The rule is "never name a lever the user cannot reach". This
+    /// panel owns a Max, so the SAME rule requires the "raise Max" advice — while the cap can
+    /// still go up. ⚠ The invariant is the lever's reachability, not the wording: without a Max
+    /// on the panel the advice would have to go.
     /// </summary>
     [Fact]
     public async Task Cap_advice_offers_Max_only_because_the_panel_now_owns_that_lever()
@@ -255,14 +254,14 @@ public class PropertySearchFilterTests
 
         Assert.Contains("STOPPED at the 200-row cap", vm.StatusText);
         Assert.Contains("raise Max above 200", vm.StatusText);
-        // ...and it still names the levers it always did.
+        // ...and it still names the panel's other levers.
         Assert.Contains("Type filter", vm.StatusText);
         vm.Dispose();
     }
 
     /// <summary>
     /// The other half of the same rule, and the one that keeps this honest as the cap moves:
-    /// at the ceiling "raise Max" is exactly the lie Z10 removed, just in a new place.
+    /// at the ceiling "raise Max" names a lever the user cannot reach.
     /// </summary>
     [Fact]
     public async Task Cap_advice_stops_offering_Max_once_the_cap_is_at_the_ceiling()

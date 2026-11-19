@@ -8,8 +8,8 @@ r"""Force a window to the foreground by owning process name, and REPORT what won
 computer-use refuses to click while a non-allowlisted app is frontmost, and
 `open_application` will not re-front an already-running single-instance app.
 WORSE, for an app that is NOT single-instance: it LAUNCHES ANOTHER ONE. Cheat Engine
-is the case that bit -- using open_application to front it accumulated THREE CE
-processes, and only one can own \\.\pipe\AOBMakerCEBridge; the rest retry-spam
+is the case that matters -- each open_application to front it adds a CE process,
+and only one can own \\.\pipe\AOBMakerCEBridge; the rest retry-spam
 CreateNamedPipe err=231 and the AOBMaker bridge is dead while every window looks fine.
 Launch CE once, then use THIS script for every later focus change. The
 AttachThreadInput + SetForegroundWindow dance is what actually moves focus on

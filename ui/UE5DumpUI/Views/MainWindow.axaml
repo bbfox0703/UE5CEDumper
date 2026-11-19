@@ -31,11 +31,11 @@
                   ToolTip.Tip="{StaticResource str.Tip.Disconnect}"
                   Padding="12,4" Width="106" HorizontalContentAlignment="Center"/>
           <!-- The status slot: a FIXED width, so nothing in it moves the controls after it. Fixed, not just
-               capped ([W1-PIPEBUSY-LOG], the L64 run): a capped status line took its text's width, so each new
-               status moved every control after it, and the AOBMaker ⟳ jumped out from under the cursor when its
-               own probe wrote the result here. Start Scan and the error line share the slot
-               ([L64-TOOLBAR-FIXED-SLOT] review, [TOOLBAR-OTHER-MOVERS]): beside it they moved ⟳ too, and this
-               StackPanel does not wrap, so at the minimum window width a visible error ran past the edge. The
+               capped ([W1-PIPEBUSY-LOG]): a capped status line takes its text's width, so each new
+               status moves every control after it, and the AOBMaker ⟳ jumps out from under the cursor when its
+               own probe writes the result here. Start Scan and the error line share the slot
+               ([L64-TOOLBAR-FIXED-SLOT], [TOOLBAR-OTHER-MOVERS]): beside it they move ⟳ too, and this
+               StackPanel does not wrap, so at the minimum window width a visible error would run past the edge. The
                status (ellipsis + tooltip) gets 360 when alone and what the other two leave when they show. -->
           <Grid Width="368" ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
             <Button Grid.Column="0"
@@ -63,7 +63,7 @@
                        ToolTip.Tip="{Binding ErrorMessage}"
                        IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
           </Grid>
-          <!-- The global stale-DLL badge now lives next to the version label (right
+          <!-- The global stale-DLL badge lives next to the version label (right
                edge of the toolbar) where users look for build info — see below. -->
         </StackPanel>
 
@@ -102,8 +102,8 @@
           <StackPanel Orientation="Horizontal" Spacing="3" Background="Transparent"
                       IsVisible="{Binding IsAobMakerUiConfigured}"
                       ToolTip.Tip="{Binding AobMakerUi.Tip}">
-            <!-- #999999, not darker: at #666666 the separator did not show at all on the 225 % laptop (measured
-                 2026-09-29), and the maintainer's layout is "DLL (dot) / UI (dot)". -->
+            <!-- #999999, not darker: at #666666 the separator does not show at all on a 225 % laptop panel,
+                 and the maintainer's layout is "DLL (dot) / UI (dot)". -->
             <TextBlock Text="/" Foreground="#999999" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}"
                        Foreground="{StaticResource AobMakerUiAccent}" FontSize="12" VerticalAlignment="Center"/>
@@ -195,6 +195,11 @@
                             Minimum="4" Maximum="12"
                             TickFrequency="1" IsSnapToTickEnabled="True"
                             ToolTip.Tip="{StaticResource str.Tip.StringLength}"/>
+                    <!-- [CEXML-STRING-CAPACITY] Off by default, so an exported String record is read-only in Cheat Engine. -->
+                    <CheckBox Content="{StaticResource str.Toolbar.EditableStrings}"
+                              IsChecked="{Binding CeEditableStrings}"
+                              ToolTip.Tip="{StaticResource str.Tip.EditableStrings}"
+                              Foreground="#CCCCCC" FontSize="12"/>
                   </StackPanel>
 
                   <!-- Copy CE Field: fabricate empty array slots (0 = off) -->
@@ -457,7 +462,7 @@
       <TabControl x:Name="MainTabs" Grid.Column="2" Background="#1E1E1E" Padding="4"
                   SelectedIndex="{Binding SelectedTabIndex}"
                   SelectionChanged="MainTabs_SelectionChanged">
-        <!-- [UI-SPACE-2026-09-25] Fluent's tab headers are 24 px in 48 DIP rows. With 18 tabs that wrapped to THREE
+        <!-- [UI-SPACE-2026-09-25] Fluent's tab headers are 24 px in 48 DIP rows, which wraps this strip to THREE
              rows on a 4K screen at 225 % (1707 DIP wide), ~144 DIP taken from every tab's content. 18 px in 36 DIP rows
              fits the strip in two rows there and at FullHD. Both keys are read by Fluent's TabItem theme as
              DynamicResource, so this scope overrides them for these tabs only. -->

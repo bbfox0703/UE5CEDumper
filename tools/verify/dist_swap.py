@@ -5,16 +5,16 @@ r"""Run ANOTHER UI build from the granted `dist\UE5DumpUI.exe` path for one red 
     py tools/verify/dist_swap.py install <bindir>    copy every file of <bindir> over dist\ (backup must exist)
     py tools/verify/dist_swap.py restore             put every backed-up file back, delete extras, VERIFY the manifest
 
-WHY. A red arm often needs the PRE-FIX UI (`git archive <fix>^` + `dotnet build` into out\). But the
-computer-use grant is by exe PATH, so a UI started from out\ can be neither seen nor clicked -- and
-scripting input into an ungranted app would bypass the grant. So the pre-fix build runs from dist\ for
-that arm only. `dist\` is the AOT handover build, so it goes back byte-exact and is VERIFIED.
+WHY. A red arm often needs a UI WITHOUT the fix (`git archive <fix>^` + `dotnet build` into out\). But
+the computer-use grant is by exe PATH, so a UI started from out\ can be neither seen nor clicked -- and
+scripting input into an ungranted app would bypass the grant. So the build without the fix runs from
+dist\ for that arm only. `dist\` is the AOT handover build, so it goes back byte-exact and is VERIFIED.
 
-⛔ NOTHING MAY HOLD A FILE IN dist\ WHILE THIS RUNS. Measured 2026-09-22: a game still had
-dist\UE5Dumper.dll LOADED (it had been injected from there), the old restore's rmtree deleted half of
-dist\ and then died on that file. So `install` and `restore` refuse while a DumperTest* or UE5DumpUI
-process exists, and `restore` copies file by file OVER dist\ (deleting only files the manifest does
-not know) instead of removing the directory first.
+⛔ NOTHING MAY HOLD A FILE IN dist\ WHILE THIS RUNS. A game that still has dist\UE5Dumper.dll LOADED
+(injected from there) makes a whole-directory rmtree delete half of dist\ and then die on that file.
+So `install` and `restore` refuse while a DumperTest* or UE5DumpUI process exists, and `restore`
+copies file by file OVER dist\ (deleting only files the manifest does not know) instead of removing
+the directory first.
 """
 import hashlib
 import json

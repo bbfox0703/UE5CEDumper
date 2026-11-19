@@ -15,7 +15,7 @@
 #include "Aura.h"
 #include "Serie.h"
 #include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
-#include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded (B18)
+#include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded
 #include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby
 
 #include <string>
@@ -58,6 +58,36 @@ static bool ComputePEHash(char* out, size_t bufSize) {
              nt->FileHeader.TimeDateStamp,
              nt->OptionalHeader.SizeOfImage);
     return true;
+}
+
+// [SCAN-LINKER-LOG-2026-11-19] The main module's linker verdict, read once by FindAll. The AOB sets are mined from MSVC
+// builds, so a target whose every pattern missed says so in its warning when the game is an lld (clang) build.
+static Macht::LinkerVerdict s_mainLinker;
+
+// The tail of a "patterns failed" warning: what the linker verdict adds, "" for any build but lld.
+static const char* LinkerNote() {
+    const bool lld = s_mainLinker.kind == Macht::LinkerKind::Lld || s_mainLinker.kind == Macht::LinkerKind::LldNoDebug;
+    return lld ? " (this game is an lld / clang build; the patterns come from MSVC builds)" : "";
+}
+
+// The Wine version when the game runs under Wine (Proton included): Wine's ntdll exports wine_get_version, and
+// Windows' does not. `host` receives "<sysname> <release>" when wine_get_host_version is exported too. "" on Windows.
+static std::string WineVersion(std::string& host) {
+    host.clear();
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return {};
+    using GetVersionFn = const char*(__cdecl*)();
+    using GetHostFn = void(__cdecl*)(const char**, const char**);
+    const auto getVersion = reinterpret_cast<GetVersionFn>(GetProcAddress(ntdll, "wine_get_version"));
+    if (!getVersion) return {};
+    if (const auto getHost = reinterpret_cast<GetHostFn>(GetProcAddress(ntdll, "wine_get_host_version"))) {
+        const char* sysname = nullptr;
+        const char* release = nullptr;
+        getHost(&sysname, &release);
+        if (sysname) host = std::string(sysname) + (release ? std::string(" ") + release : std::string());
+    }
+    const char* version = getVersion();
+    return version ? version : "?";
 }
 
 // UE4 TNameEntryArray detection state (set by ValidateGNamesUE4, read by FindAll)
@@ -141,7 +171,7 @@ static bool LooksLikeDataPtr(uintptr_t ptr) {
     return true;
 }
 
-// Cyclic class pointer validation (GAP #10):
+// Cyclic class pointer validation:
 // Reads UObject pointers from chunk[0] and follows obj->Class chain.
 // Valid UObjects have a chain that terminates at UClass (Class == itself).
 // Returns true if >= 2 objects pass with any common FUObjectItem stride.
@@ -221,12 +251,12 @@ static bool ValidateGObjects(uintptr_t addr) {
         //
         // Why it has to exist: the "Flat" row below is written ObjObjects-RELATIVE
         // ({0x00,0x08,0x0C}), which silently assumes a flat array is only ever handed to us at
-        // ObjObjects. That held only because five of ~56 GObjects patterns carry
-        // adjustment = -0x10 (GOBJ_V10 / AV1 / AV2 / RE2 / V12) and so offer ObjObjects as a
-        // second candidate. On UE 4.11 and 4.13 those five all MISS, every pattern that does hit
-        // resolves the BASE, and the ObjObjects-relative row then reads NumElements out of the
-        // OpenForDisregardForGC *bool* at +0x0C. That is why both titles failed with all 55
-        // patterns "no winner" — a preset gap, not a pattern gap.
+        // ObjObjects. That holds where a GObjects pattern carrying adjustment = -0x10 (GOBJ_V10 /
+        // AV1 / AV2 / RE2 / V12) hits, because each offers ObjObjects as a second candidate. On
+        // UE 4.11 and 4.13 those all MISS, every pattern that does hit resolves the BASE, and the
+        // ObjObjects-relative row then reads NumElements out of the OpenForDisregardForGC *bool*
+        // at +0x0C, so without this row such a title finds no winner at all — a preset gap, not
+        // a pattern gap.
         //
         // Ordered BEFORE UE4-Extended deliberately: otherwise whether a flat title is read as
         // flat depends on whether the FCriticalSection dwords at +0x20/+0x24 happen to look like
@@ -289,7 +319,7 @@ static bool ValidateGObjects(uintptr_t addr) {
                 if (!LooksLikeDataPtr(chunk0)) continue;
             }
 
-            // Cyclic class chain validation (GAP #10): verify actual UObject instances
+            // Cyclic class chain validation: verify actual UObject instances
             uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
             if (!ValidateCyclicClassChain(validateBase)) continue;
         }
@@ -300,7 +330,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         return true;
     }
 
-    // --- Tier 2: Relaxed fallback (prevents regression) ---
+    // --- Tier 2: Relaxed fallback for an address no Tier 1 preset validates ---
     // Only check NumElements range + Objects pointer validity.
     // isFlat: objPtr is FUObjectItem[] directly (no chunk indirection).
     // maxOff/maxCOff/numCOff mirror the corresponding Tier 1 preset above (A/C<-Default,
@@ -322,13 +352,13 @@ static bool ValidateGObjects(uintptr_t addr) {
     // and has a plausible-looking count slot wins. On a UE5-Extended layout that is B, whose
     // numOff (+0x04) lands on ObjLastNonGCIndex: a real, in-range, but FROZEN count of the
     // startup disregard-for-GC set. The array is then enumerated only up to the CDOs and
-    // every runtime object is silently missing (DragonSword Awakening: 37,099 of 317,810).
+    // every runtime object is silently missing.
     //
     // Pass 1 requires the row's CHUNK fields to be self-consistent — the same numC/maxC check
     // Tier 1 applies, which is exactly what makes B reject on such a layout (its numCOff
-    // +0x0C is OpenForDisregardForGC, a bool that reads 0). Pass 2 is byte-identical to the
-    // historical behaviour, so nothing that resolves today can stop resolving: this only
-    // decides WHICH row wins when more than one would have.
+    // +0x0C is OpenForDisregardForGC, a bool that reads 0). Pass 2 drops that requirement, so
+    // the two passes accept exactly the addresses a single pass without it would: Pass 1
+    // only decides WHICH row wins when more than one would.
     for (int pass = 0; pass < 2; ++pass) {
         const bool requireChunks = (pass == 0);
         for (auto& L : relaxed) {
@@ -337,13 +367,13 @@ static bool ValidateGObjects(uintptr_t addr) {
             if (numElements < 0x1000 || numElements > 0x400000) continue;
 
             // Upper-bound sanity check on the MaxElements slot. A heap blob whose "num" slot
-            // happens to fall in range is still betrayed by its "max" slot: MindsEye's
-            // ICU-like locale blob read max = 0x0DE62600 (233M) because that dword is really
-            // the low half of a module pointer. Deliberately WEAKER than Tier 1 (which also
+            // happens to fall in range is still betrayed by its "max" slot: in an ICU-like
+            // locale blob, for one, that dword can be the low half of a module pointer and read
+            // in the hundreds of millions. Deliberately WEAKER than Tier 1 (which also
             // rejects `max < num`): we apply a loose ceiling only, and skip the check entirely
             // if the read fails. A title that raises gc.MaxObjectsInGame past our strict cap —
             // or whose max field is not where this row assumes — therefore still reaches the
-            // relaxed accept path exactly as it did before.
+            // relaxed accept path.
             int32_t maxElements = 0;
             if (Macht::ReadSafe(addr + L.maxOff, maxElements) &&
                 static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
@@ -376,7 +406,7 @@ static bool ValidateGObjects(uintptr_t addr) {
                     if (!LooksLikeDataPtr(chunk0)) continue;
                 }
 
-                // Cyclic class chain validation (GAP #10): verify actual UObject instances
+                // Cyclic class chain validation: verify actual UObject instances
                 uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
                 if (!ValidateCyclicClassChain(validateBase)) continue;
             }
@@ -564,7 +594,7 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
     std::vector<StaticPtr> bag;
 
     for (uintptr_t scan = codeStart; scan + 7 < codeEnd; ++scan) {
-        // (G2) Whole-.text walk. RECOVERY path (reached only when the normal GObjects
+        // Whole-.text walk. RECOVERY path (reached only when the normal GObjects
         // resolve came back empty), so an abort means "recovery did not run" and the user
         // sees an unexplained empty object list — which is why the log line is not
         // decoration. void: the caller reads the (partial) bag and reports no winner.
@@ -703,7 +733,7 @@ static const StaticArrayGeometry kStaticGeometries[] = {
     { 0x00, 0x08, 0x0C, 0x10, 0x14, true  },   // UE 5.8: ObjObjects FIRST; {Objects, Num, Max, NumChunks, MaxChunks, PreAllocated}
 };
 // 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
-// pair (09-05 A5, whose static-resolver half this is).
+// pair.
 static const int kStaticStrides[] = { 0x14, 0x18, 0x10, 0x20, 0x28 };
 // The UObject* inside the item: +0x00 classic, +0x08 on UE 5.7+'s reordered item (FlagsAndRefCount first).
 static const int kStaticObjOffs[]  = { 0x00, 0x08 };
@@ -791,7 +821,7 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* 
     std::vector<uintptr_t> targets;
     targets.reserve(1u << 16);
     for (uintptr_t scan = codeStart; scan + 7 < codeEnd; ++scan) {
-        // (G2) Whole-.text walk, and the sibling of DataScanGObjectsCandidates' above.
+        // Whole-.text walk, and the sibling of DataScanGObjectsCandidates' above.
         // Also a RECOVERY path; returning 0 makes Frieren fall through to the heap
         // fallback, and Flamme::UpdateGObjectsMethod is inside the success branch only,
         // so an aborted run memoizes nothing.
@@ -1161,8 +1191,7 @@ static Genau::AnchorState CurrentAnchorState() {
 /// the impure part — asking Windows which module each address belongs to — here.
 ///
 /// Does NOT log: a pattern with N matches all resolving to the same foreign pointer would
-/// print N identical lines, and the first live run did exactly that -- 8 to 11 copies per
-/// pattern, five patterns deep. The caller accumulates and prints one line per pattern.
+/// print N identical lines. The caller accumulates and prints one line per pattern.
 static Genau::ModuleAdmission AdmitCandidate(uintptr_t resolved, bool producesAnchor,
                                              std::string* outModule) {
     if (!resolved) return Genau::ModuleAdmission::Accept;
@@ -1224,9 +1253,9 @@ static uintptr_t ScanForTarget(
                 // walks them until one validates. On the first match alone, a pattern whose
                 // first match fails validation would be logged as a MISS and then ERASED from
                 // the pattern set below — hiding it from the very path that would find the
-                // later, valid match — and the false "not found" PERSISTED over a good hint, so
-                // the failure oscillates: fail -> hint destroyed -> cold scan succeeds -> hint
-                // saved -> fail again.
+                // later, valid match — and the false "not found" would PERSIST over a good hint,
+                // so the failure would oscillate: fail -> hint destroyed -> cold scan succeeds ->
+                // hint saved -> fail again.
                 auto hintT0 = std::chrono::high_resolution_clock::now();
                 std::vector<uintptr_t> hintHits = Macht::AOBScanAll(hintSig->pattern);
                 auto hintT1 = std::chrono::high_resolution_clock::now();
@@ -1284,7 +1313,7 @@ static uintptr_t ScanForTarget(
                          static_cast<long long>(hintUs));
 
                 // NOTHING is erased: the hint path must never be weaker than the scan that
-                // produced the hint (G10). Macht::AOBScanAll with no moduleBase answers "no
+                // produced the hint. Macht::AOBScanAll with no moduleBase answers "no
                 // match in the MAIN module" (it defaults to GetModuleBase(nullptr)), while
                 // Pass 2 below exists precisely for patterns with zero main-module hits and
                 // re-scans them across every loaded module. Erasing on an empty result would
@@ -1301,7 +1330,7 @@ static uintptr_t ScanForTarget(
         }
     }
 
-    // ── Phase 1: Handle non-AOB patterns sequentially (unchanged) ────
+    // ── Phase 1: Handle non-AOB patterns sequentially ────
     // Symbol exports, CallFollow, etc. are rare (priority 0-5) and don't
     // benefit from batching. Process them first with immediate early exit.
     std::vector<const AobSignature*> aobPatterns;
@@ -1384,7 +1413,7 @@ static uintptr_t ScanForTarget(
     auto batchT0 = std::chrono::high_resolution_clock::now();
 
     for (int batchIdx = 0; batchIdx < totalBatches; ++batchIdx) {
-        // (MA1) Cancellation lives HERE, at the pattern boundary, and deliberately not
+        // Cancellation lives HERE, at the pattern boundary, and deliberately not
         // inside Macht: the largest indivisible unit below this line is one AOBScanBatch,
         // short against CE's 5000 ms ceiling. Polling
         // inside Macht's AVX2 strides would cost a relaxed atomic load per 32 bytes, for
@@ -1507,7 +1536,7 @@ static uintptr_t ScanForTarget(
             for (int j = 0; j < batchCount; ++j) {
                 if (!batchResults[j].matches.empty()) continue; // processed in pass 1
 
-                // (MA1) The expensive half. One AOBScanAllModules re-enumerates every loaded
+                // The expensive half. One AOBScanAllModules re-enumerates every loaded
                 // module and scans each one it admits — seconds on a title with hundreds of modules, where it
                 // is nearly all of the SparseDelegates phase.
                 if (Tot::Requested()) {
@@ -1582,7 +1611,7 @@ static uintptr_t ScanForTarget(
                                    (unsigned long long)refusedAddr, refusedModule.c_str());
                     } else if (refusedWhy == Genau::ModuleAdmission::RefuseHeapAnchored) {
                         // [A2-HEAP-ANCHOR-TEXT] GObjects DID validate -- on the heap, where the data-scan fallback's
-                        // FUObjectArray lives. The unanchored text above said it never validated.
+                        // FUObjectArray lives. The unanchored text above says it never validated.
                         Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
                                    "— GObjects validated on the HEAP (a data-scan FUObjectArray lives in no module), "
                                    "so no module anchors this build; a match in a foreign module is not admissible",
@@ -1738,7 +1767,8 @@ uintptr_t FindGObjects(const char* hintPatternId) {
         s_gobjectsMethod = ScanMethodFor(report);
     } else {
         // Fallback: exhaustive data-section pointer scan
-        Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
+        Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed%s, trying data-section scan fallback...",
+                   LinkerNote());
         result = FindGObjectsByDataScan(&s_gobjectsReport.cancelled);   // [P1-GENAU-ABORT]
         if (result) s_gobjectsMethod = "data_scan";
     }
@@ -2206,7 +2236,7 @@ static uintptr_t FindGNamesByPointerScan() {
             uintptr_t ptr = 0;
             // Cooperative cancel. UE5_Shutdown runs on the CE Lua caller's thread and
             // joins the accept thread, so an unbounded sweep here freezes CE's UI for its
-            // whole duration. Aura's idiom: poll cheaply every 4096 slots. (B18)
+            // whole duration. Aura's idiom: poll cheaply every 4096 slots.
             if ((off & 0xFFF) == 0 && Tot::Requested()) {
                 // [A2-GNAMES-PTRSCAN-ABORT] The bail leaves a log line and a flag, or UE5_Init could latch with
                 // GNames missing. Recorded AT THE BAIL, in [P1-GENAU-ABORT]'s shape.
@@ -2388,7 +2418,7 @@ static uintptr_t FindGNamesByStringRef() {
         size_t markerLen = strlen(marker);
 
         // Search .rdata for the ASCII string.
-        // (G2) The heaviest byte-walk in this file: it calls the OUT-OF-LINE SEH-guarded
+        // The heaviest byte-walk in this file: it calls the OUT-OF-LINE SEH-guarded
         // ReadBytesSafe once per offset, not the inline ReadSafe the sibling walks use,
         // and its break fires only when a marker is FOUND — an absent marker walks the
         // whole section. Bailing here is benign: FindGNames falls through to the next
@@ -2501,7 +2531,7 @@ uintptr_t FindGNames(const char* hintPatternId) {
         s_gnamesMethod = ScanMethodFor(report);
     } else {
         // Tier 2: string-reference fallback — find FNamePool via code that uses FName
-        Sein::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying string-ref fallback...");
+        Sein::Warn("SCAN:GNam", "FindGNames: All patterns failed%s, trying string-ref fallback...", LinkerNote());
         result = FindGNamesByStringRef();
         if (result) {
             s_gnamesMethod = "string_ref";
@@ -2567,7 +2597,7 @@ uintptr_t FindGWorld(const char* hintPatternId) {
     if (result) {
         s_gworldMethod = ScanMethodFor(report);
     } else {
-        Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
+        Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)%s", LinkerNote());
     }
     return result;
 }
@@ -2660,7 +2690,7 @@ static std::atomic<bool>      s_sparseDelegatesScanned{false};
 // the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
 // file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
 // confused verdict. The `cancelled` flag is consumed locally by the no-latch branch below.
-// ⛔ NOT std::call_once: the MA1 branch below deliberately does NOT latch a cancelled scan so
+// ⛔ NOT std::call_once: the branch below deliberately does NOT latch a cancelled scan so
 // the next call retries, and call_once would burn the one-shot on that cancelled attempt.
 static std::mutex             s_sparseScanMutex;
 
@@ -2696,7 +2726,7 @@ uintptr_t FindSparseDelegateStorage() {
         Sein::Warn("SCAN:Sparse", "FindSparseDelegateStorage: All patterns failed (non-critical, sparse drill-down disabled)");
     }
 
-    // (MA1) The latch means "we looked, and this build has none" — which a CANCELLED run has
+    // The latch means "we looked, and this build has none" — which a CANCELLED run has
     // not established. Nothing in dll/src ever resets s_sparseDelegatesScanned (declaration,
     // the fast-path read, and this store are its only three references), so latching a
     // cancelled scan would permanently disable MulticastSparseDelegateProperty drill-down for
@@ -2891,8 +2921,8 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     if (!fi || len < sizeof(VS_FIXEDFILEINFO)) return 0;
 
     // [VER-410-FIXED-VS-STRING] The fixed fields are the game's to set, and a game version can land inside 4.0-4.27 /
-    // 5.0-5.9 (a game at 4.5 on engine 4.15 read 405 and was scanned with 4.05's UFunction tail; at 5.1 it read 501 at
-    // tier 1). The engine's build string is stamped by UBT from Version.h whatever the fixed fields say, and
+    // 5.0-5.9 (a game at 4.5 on engine 4.15 reads 405 and would be scanned with 4.05's UFunction tail; at 5.1 it reads 501
+    // at tier 1). The engine's build string is stamped by UBT from Version.h whatever the fixed fields say, and
     // EngineBuildStringCode only answers for a UE<M> branch that agrees with its version half, so where the two name
     // different versions the string's is taken -- as a STRING reading (fromFixedField false): below the floor it
     // cannot corroborate itself, and refuses only beside an agreeing CrashReportClient. ProductVersion's string first,
@@ -2956,7 +2986,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
         }
         // The engine's own build string, version first (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`), in the
         // shapes the prefixes above miss: UBT stamps it from Version.h whatever the game put in the fixed fields, and
-        // without it an exe carrying a game version read nothing unless its string held a `++UE<n>+Release-` branch.
+        // without it an exe carrying a game version reads nothing unless its string holds a `++UE<n>+Release-` branch.
         // EngineBuildStringCode demands a UE<M> branch that agrees with the leading M.m, so a game's own version
         // string does not read as one -- an agreement the prefix path above does not check (it takes the M.m after
         // the prefix, wherever the prefix sits). `fromFixedField` stays false: a code read out of this string cannot
@@ -3102,8 +3132,8 @@ static bool HasPreUE4EpicCopyright() {
 //
 // The three string markers are found in ONE pass over the image, not one pass each. That
 // matters because this runs on the version==0 path, which is shared with stripped-tag but
-// fully SUPPORTED titles — Elliot is a 482 MB image, and six full naive sweeps over it would
-// be a visible regression on a game that must keep working.
+// fully SUPPORTED titles — an image can run to hundreds of MB, and six full naive sweeps over
+// it would visibly slow a game that must keep working.
 static int CountPreUE4Markers() {
     static const char* kMarkerNames[kPreUE4MarkerCount] = {
         "UnrealEngine3", "SeqAct_ (UE3 Kismet)", "PhysXLoader64 (PhysX 2.8)",
@@ -3241,9 +3271,8 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
     //
     // ⭐ They are read BEFORE either is used, so they can be compared. Two detectors that agree is
     // the strongest evidence this file can produce (working-lessons.md 1.4), and where they
-    // disagree the disagreement is itself the finding: both poisoned hint-cache entries this repo
-    // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
-    // have been caught here, because CrashReportClient reports 503 for both.
+    // disagree the disagreement is itself the finding: a hint-cache entry poisoned by a persisted
+    // runtime version raise shows up here wherever CrashReportClient reports the unraised version.
     const uint32_t crcVer = !crcPath ? DetectVersionFromCrashReportClient(exePath)
                           : *crcPath ? ReadUeVersionFromFile(crcPath, "CrashReportClient ProductVersion",
                                                              "CrashReportClient FileVersion")
@@ -3279,7 +3308,7 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
         // refused [VER-410-GATE]. An uncorroborated reading
         // still falls through to the memory scan; if that cannot agree, the terminal branch keeps
         // the value at tier 3, which sets bLowConfidence, which the refusal gate requires to be
-        // false. The cost of being wrong that way is a wasted sweep (short, behind the G2 gate);
+        // false. The cost of being wrong that way is a wasted sweep (short, behind the needle sweep's first-byte gate);
         // the cost of being wrong the other way is refusing to scan a game that works.
         if (rv.tier == 1) {
             if (rv.version < Grimoire::MIN_SUPPORTED_UE_VERSION) {
@@ -3487,7 +3516,7 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
 }
 
 static VersionScanResult DetectVersionDetailed() {
-    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
+    // An empty path (GetModuleFileNameW failed) reads nothing from either source.
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     return DetectVersionDetailed(exePath, Macht::GetModuleBase(nullptr), Macht::GetModuleSize(nullptr));
@@ -3742,7 +3771,7 @@ static void DetectCasePreservingName() {
         Sein::Info("DYNO", "DetectCasePreservingName: Standard FName — UObject::Outer = +0x20");
     }
 
-    // [VND583-07, A9 step 11] Where FName::Number sits -- see DynOff::FNAME_NUMBER. Only a case-preserving
+    // [VND583-07] Where FName::Number sits -- see DynOff::FNAME_NUMBER. Only a case-preserving
     // build has a DisplayIndex to find; a standard one resets to +4 (a re-detection must not keep a stale +8).
     int displayAt4 = 0, displayAt8 = 0;
     if (DynOff::bCasePreservingName) {
@@ -4176,8 +4205,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     DynOff::FPROPERTY_OFFSET = bestProbe;
                     DynOff::FPROPERTY_ELEMSIZE = bestProbe - 0x10;
                     DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
-                    // (G12) Third writer of the same family — coherent, but hand-rolled,
-                    // which is precisely how it and Step 2.5 drifted apart. One expression now.
+                    // Another writer of the same family: one expression, so it and Step 2.5 cannot
+                    // drift apart.
                     DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe, DynOff::bCasePreservingName));   // [VND583-11]
                 } else if (bestProbe >= 0) {
                     Sein::Info("DYNO", "Phase B: Confirmed default FPROPERTY_OFFSET=0x%02X", DynOff::FPROPERTY_OFFSET);
@@ -4505,8 +4534,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             // Fallback: use the default (may fail downstream but at least log it)
             nextOff = defaultNext;
             Sein::Warn("DYNO", "ValidateAndFixOffsets: UField::Next probe failed, falling back to +0x%02X", nextOff);
-            // Same give-up as the FProperty arm above, in the UE4 UProperty arm — found by
-            // grepping for siblings while fixing G1, which named only the FProperty site.
+            // Same give-up as the FProperty arm above, in the UE4 UProperty arm.
             unmeasured |= UNMEASURED_FFIELD_NEXT;
         }
 
@@ -4668,8 +4696,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
-        // [VND583-02] UField::Next is only used by function walks here, and it was never
-        // measured in this mode. A failed probe keeps the default WITHOUT flipping validated:
+        // [VND583-02] UField::Next is only used by function walks here, and the steps above
+        // measure FField::Next, not it. A failed probe keeps the default WITHOUT flipping validated:
         // property walks do not use it, so the run's other offsets are still measured.
         const int ufieldNext = ProbeUFieldNextFProperty();
         if (ufieldNext > 0) {
@@ -4688,9 +4716,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // FStructProperty::Struct = Offset_Internal + 0x2C
     if (DynOff::bUseFProperty && propOffsetOff >= 0) {
-        // (G12) One expression for all five — see DynOff::PropertyFamilyFor. This site was
-        // already coherent; routing it through the helper is what stops it and Step 2.5's
-        // default block from drifting apart again.
+        // One expression for all five — see DynOff::PropertyFamilyFor. Routing it through
+        // the helper is what stops it and Step 2.5's default block from drifting apart.
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff, DynOff::bCasePreservingName));   // [VND583-11]
     } else if (propOffsetOff >= 0) {
         // UProperty mode derives UBOOLPROP_FIELDSIZE too: on a shifted UE4 <4.25 game the true
@@ -4761,7 +4788,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     DynOff::g_offsetsFallbackReason = kUnmeasuredReason[unmeasured & 0x0F];
     DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
 
-    // G7: publish the validated verdict on EVERY run and flag a state CHANGE. The
+    // Publish the validated verdict on EVERY run and flag a state CHANGE. The
     // one-time UE5_Init "DynOff: ... validated=..." scan-log summary goes stale the moment
     // apply_rescan (Fern) re-runs this and flips NO->YES, so a reader following
     // log-verification-checklist would read validated=NO while get_offsets on the live process
@@ -4785,7 +4812,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     }
 
     // Summary log — the header states the CURRENT verdict so every run's summary is
-    // self-describing (G7): a later successful re-run leaves validated=YES in the log.
+    // self-describing: a later successful re-run leaves validated=YES in the log.
     Sein::Info("DYNO", "=== Dynamic Offset Summary (validated=%s%s%s) ===",
                allMeasured ? "YES" : "NO",
                allMeasured ? "" : " reason=",
@@ -4898,7 +4925,7 @@ uintptr_t ExtraScanGObjects() {
             if ((addr & 0xFFF) == 0 && Tot::Requested()) {
                 Sein::Warn("SCAN:GObj", "ExtraScanGObjects: cancelled (%d candidates tested)",
                            candidatesTested);
-                return 0;   // (B18)
+                return 0;
             }
             // Mode 1: Inline — the FUObjectArray struct starts at addr
             if (ValidateGObjects(addr)) {
@@ -5001,7 +5028,7 @@ uintptr_t ExtraScanGWorld() {
     // skipped) — and prefer the highest-index world (most recently created = the active map).
     std::vector<std::pair<uintptr_t, int32_t>> worlds;   // (instance addr, index), sorted by addr
     for (int32_t i = 0; i < count; ++i) {
-        if ((i & 0xFFF) == 0 && Tot::Requested()) return 0;   // (B18)
+        if ((i & 0xFFF) == 0 && Tot::Requested()) return 0;
         uintptr_t obj = Aura::GetByIndex(i);
         if (!obj) continue;
         uintptr_t cls = 0;
@@ -5044,7 +5071,7 @@ uintptr_t ExtraScanGWorld() {
         size_t    secSize = section->Misc.VirtualSize;
         for (size_t off = 0; off + sizeof(uintptr_t) <= secSize; off += sizeof(uintptr_t)) {
             uintptr_t val = 0;
-            if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;   // (B18)
+            if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;
             if (!Macht::ReadSafe(secBase + off, val) || val < 0x10000) continue;
             auto it = std::lower_bound(worlds.begin(), worlds.end(), std::make_pair(val, 0));
             if (it != worlds.end() && it->first == val) {
@@ -5479,6 +5506,18 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     ComputePEHash(out.peHash, sizeof(out.peHash));
     LOG_INFO("FindAll: PE hash = %s", out.peHash);
 
+    // [SCAN-LINKER-LOG-2026-11-19] What built the game and what hosts it: the first questions when the AOBs miss.
+    s_mainLinker = Macht::ClassifyMainModuleLinker();
+    LOG_INFO("FindAll: main module linker = %s (Rich header %s, linker %u.%02u, %u debug entries%s)",
+             Macht::LinkerKindName(s_mainLinker.kind), s_mainLinker.rich ? "yes" : "no",
+             static_cast<unsigned>(s_mainLinker.linkerMajor), static_cast<unsigned>(s_mainLinker.linkerMinor),
+             s_mainLinker.debugEntries, s_mainLinker.msvcDebugEntry ? ", VC_FEATURE / POGO among them" : "");
+    std::string wineHost;
+    const std::string wine = WineVersion(wineHost);
+    if (!wine.empty()) {
+        LOG_INFO("FindAll: running under Wine %s%s%s", wine.c_str(), wineHost.empty() ? "" : " on ", wineHost.c_str());
+    }
+
     // Load hint cache: previously-winning pattern IDs for this game version
     auto hints = Flamme::LoadHints(out.peHash);
 
@@ -5747,7 +5786,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
                           s_gobjectsReport.winningSig->resolve == AobResolve::SymbolExport)
                          ? s_gobjectsReport.winningSig->pattern : nullptr;
 
-    // (MA1) Aggregate the cancel verdict in ONE place, in the same block that already reads
+    // Aggregate the cancel verdict in ONE place, in the same block that already reads
     // all four reports, rather than at the four call sites — C++ has no `required`, and a
     // missed target would reintroduce hint destruction for that target only: quiet, per-game,
     // and invisible until someone notices a warm launch got slow. s_gengineReport is
@@ -5812,7 +5851,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         std::string processName(sz > 0 ? sz - 1 : 0, '\0');
         if (sz > 0)
             WideCharToMultiByte(CP_UTF8, 0, nameW, -1, processName.data(), sz, nullptr, nullptr);
-        // (MA1) A cancelled scan must never reach the hint cache. Flamme::SaveResults writes
+        // A cancelled scan must never reach the hint cache. Flamme::SaveResults writes
         // rec["gObjects"/"gNames"/"gWorld"] unconditionally from ptrs.*Method, and those stay
         // at their "not_found" reset value when the scan bailed early — while ExtractHint
         // refuses to load anything whose method is not "aob". So one impatient untick during a

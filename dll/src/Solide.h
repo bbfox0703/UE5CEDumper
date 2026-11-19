@@ -112,14 +112,14 @@ struct IntWidth {
 // `bytes == 0` means "not one of ours"; the caller must not read or write it.
 //
 // THIS TABLE IS THE ONLY LIST. `IsIntType` below is derived from it rather than
-// spelling the same names a second time — two lists that must agree is how the
-// read and the write came to disagree in the first place, and a type admitted by the
+// spelling the same names a second time — two lists that must agree drift apart, and
+// a read and a write can then disagree on a type; a type admitted by the
 // gate but unknown to the table would be accepted by Force and then fail every
 // read and write with no explanation.
 inline IntWidth IntWidthOf(const std::string& typeName) {
     if (typeName == "IntProperty")    return { 4, true  };
     if (typeName == "Int64Property")  return { 8, true  };
-    if (typeName == "Int8Property")   return { 1, true  };   // was read as UNSIGNED
+    if (typeName == "Int8Property")   return { 1, true  };   // SIGNED: a uint8_t read breaks the hold (above)
     if (typeName == "ByteProperty")   return { 1, false };
     return { 0, false };
 }
@@ -131,16 +131,17 @@ inline bool IsIntType(const std::string& typeName) {
 
 // The inclusive value range a held integer field can represent. A target outside
 // it cannot be held: the write truncates and the read then disagrees forever, which
-// is the same non-convergence AF8 produced by a different route. Callers clamp (and
-// say so) rather than spin.
+// is the same non-convergence a read/write signedness mismatch produces by a
+// different route. Callers clamp (and say so) rather than spin.
 inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
     switch (w.bytes) {
         case 1: lo = w.isSigned ? -128.0 : 0.0;  hi = w.isSigned ? 127.0 : 255.0; break;
         case 4: lo = -2147483648.0;              hi = 2147483647.0;               break;
         // 2^63 is not representable as a double bound that round-trips; the widest
         // exactly-representable integer either side is used instead. Solide's wire is
-        // a double end to end (AddForce takes one), so nothing past 2^53 was ever
-        // holdable exactly — see the AF6 fix for the same limit stated UI-side.
+        // a double end to end (AddForce takes one), so nothing past 2^53 is
+        // holdable exactly — PropertySearchPanel's ParseForceLiteral states the same
+        // limit UI-side.
         case 8: lo = -9007199254740992.0;        hi =  9007199254740992.0;        break;
         default: lo = 0.0; hi = 0.0; break;
     }
@@ -153,7 +154,7 @@ inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
 // half and re-resolves the pointer, so a held null would not hold.
 // `elementSize` is the property's reflected ElementSize. A weak pointer is held ONLY at the stock 8 bytes:
 // UE_WITH_REMOTE_OBJECT_HANDLE (5.6+, off by default) adds an FRemoteObjectId (16 bytes in all), and there
-// SerialNumber 0 no longer means null -- a remote pointer is {0, 0, RemoteId}, and Get() re-resolves
+// SerialNumber 0 does not mean null -- a remote pointer is {0, 0, RemoteId}, and Get() re-resolves
 // through the RemoteId -- so an 8-byte write neither tests nor makes a null. Refused, as Soft is.
 enum class ObjectNullShape { Refused, Strong, Weak };
 inline ObjectNullShape ObjectNullShapeFor(const std::string& typeName, int32_t elementSize) {

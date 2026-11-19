@@ -10,7 +10,7 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.ViewModels;
 
 /// <summary>
-/// ViewModel for the Interesting Properties Finder panel (B' / round 1).
+/// ViewModel for the Interesting Properties Finder panel.
 ///
 /// Pragmatic loading strategy: rather than add a new DLL command, the VM
 /// issues N parallel <c>search_properties</c> calls — one per seed
@@ -21,8 +21,7 @@ namespace UE5DumpUI.ViewModels;
 ///
 /// Trade-offs:
 ///   - Captures the ~80-95% of high-relevance hits without needing
-///     a new pipe command (saves a DLL build + protocol change for
-///     round 1).
+///     a new pipe command (saves a DLL build + protocol change).
 ///   - Misses long-tail keywords not in the seed list. Iterate by
 ///     adding to <see cref="PropertyScoringTable.SeedQueries"/>.
 ///
@@ -75,9 +74,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
 
     // ------------------------------------------------------------------
     // Cross-tab navigation events. MainWindow routes these to the right
-    // destination. Single event for now (the cheat workflow lives in
-    // Live Walker on a real instance); add Class Struct fallback if a
-    // user reports finding zero live instances of a class repeatedly.
+    // destination.
     // ------------------------------------------------------------------
 
     public event Action<string, string>? NavigateToProperty;
@@ -86,14 +83,11 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> would return at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy was even attempted, and the bool the handler eventually got would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
@@ -117,7 +111,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
 
 
     /// <summary>Raised to pivot the selected property in the experimental Class
-    /// Pivot tab (className, propName, propOffset). C5 right-click handoff.</summary>
+    /// Pivot tab (className, propName, propOffset): the right-click handoff.</summary>
     public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>Gates the "Pivot this property" context-menu item — true only when
@@ -222,7 +216,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -298,12 +292,10 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     /// Send ONE batched search_properties_batch call carrying all
     /// SeedQueries. DLL walks GObjects + class fields once and checks
     /// every property against every keyword, returning per-query result
-    /// envelopes. Wall-time drops from ~42s (legacy sequential pipe
-    /// loop, build 681-682) to ~1.5s for a 4400-class game.
+    /// envelopes: one walk instead of one pipe round-trip per keyword.
     ///
-    /// Why progress is now one-shot: the speedup is so large that the
-    /// per-keyword loop disappears entirely on the wire. Status text
-    /// just shows the single round-trip + scoring phase.
+    /// Progress is one-shot because there is no per-keyword loop on the
+    /// wire. Status text just shows the single round-trip + scoring phase.
     /// </summary>
     [RelayCommand]
     private async Task LoadAsync()
@@ -500,7 +492,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
-        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
         FilterText     = "";
         CategoryFilter = null;
         UnusualOnly    = false;

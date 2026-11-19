@@ -7,7 +7,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. The "Block AI writes" file: the window writes it, every MCP server reads it on
+/// [MCP-WRITE-GRANTS-2026-11-14] The "Block AI writes" file: the window writes it, every MCP server reads it on
 /// every call that would change the game. A stop control, so a save that did not land must say so, a server's read
 /// must never make the window's save fail, and a file the server cannot read must block.
 /// </summary>
@@ -110,8 +110,8 @@ public sealed class AiWriteBlockGateTests : IDisposable
         Assert.False(AiWriteBlockGate.ReadState(FilePath).Blocked);
     }
 
-    // Review round 2: the read runs off the UI thread, so the user's click can land between the read and its apply,
-    // which then put the box back to what the file said before the click -- a state no server sees.
+    // The read runs off the UI thread, so the user's click can land between the read and its apply; an apply that
+    // wins would put the box back to what the file said before the click -- a state no server sees.
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

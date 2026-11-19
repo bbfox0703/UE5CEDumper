@@ -197,7 +197,7 @@ public class ParamBufferBuilderTests
         Assert.Equal(expected, ParamBufferBuilder.ShortTypeName(typeName));
     }
 
-    // --- IsPickablePointerType (Stage 2) ---
+    // --- IsPickablePointerType ---
 
     [Theory]
     [InlineData("ObjectProperty")]
@@ -246,7 +246,8 @@ public class ParamBufferBuilderTests
     //
     // An FAssetPtr is FWeakObjectPtr +0, TagAtLastTest +8 and the path as one FString at +0x10 (0x20). Nothing a
     // textbox holds can become one: the path needs engine-allocated storage, and the DLL converts only weak / soft /
-    // lazy slots ([VND584-01]). A typed value went through WriteParam's size fallback as 4 bytes over the weak index.
+    // lazy slots ([VND584-01]). A typed value would go through WriteParam's size fallback as 4 bytes over the weak
+    // index.
     // All-zero is its null (an empty FString and an unset weak pair), so an untouched box still sends that.
 
     [Theory]
@@ -405,10 +406,10 @@ public class ParamBufferBuilderTests
     }
 
     // --- Contract: every IsPickablePointerType=true type must be handled
-    //     end-to-end (default text + buffer writer). Catches the
-    //     SoftClassProperty truncation regression where the picker UI
-    //     was wired up but downstream consumers fell through to the
-    //     size-based default (writing 4 bytes of a 64-bit address).
+    //     end-to-end (default text + buffer writer). Catches a type
+    //     (SoftClassProperty, say) whose picker UI is wired up while a
+    //     downstream consumer falls through to the size-based default
+    //     (writing 4 bytes of a 64-bit address).
 
     public static readonly TheoryData<string> PickablePointerTypes = new()
     {
@@ -456,18 +457,18 @@ public class ParamBufferBuilderTests
         Assert.Equal("CDAB3412F67F0000", hex);
     }
 
-    // --- FIRE must agree with the exported script (audit #5 Y2/Y3/Y4/Y5) ------
+    // --- FIRE must agree with the exported script ------
     //
     // The FIRE path (this builder) and Copy AA Script (BakedScriptGenerator) parse the
-    // SAME dialog text. They used to disagree, so one dialog produced two different calls
-    // into a live game. Each test below pins a case where FIRE previously sent the wrong
-    // bytes; the "baked" column in each comment is what the exported script always sent.
+    // SAME dialog text, so one dialog must not produce two different calls into a live
+    // game. Each test below pins a case where the two can disagree; the "baked" column in
+    // a comment is what the exported script sends.
 
     [Fact]
     public void OneByteEnum_IsWritten_NotSilentlyDropped()
     {
-        // Y2: EnumProperty was grouped with IntProperty and gated on `available >= 4`, so a
-        // 1-byte `enum class : uint8` wrote NOTHING and the game got 0.  baked: 3
+        // Grouped with IntProperty and gated on `available >= 4`, EnumProperty would write
+        // NOTHING for a 1-byte `enum class : uint8`, and the game would get 0.  baked: 3
         var @params = new List<FunctionParamModel>
         {
             new() { Name = "State", TypeName = "EnumProperty", Size = 1, Offset = 0 },
@@ -502,7 +503,7 @@ public class ParamBufferBuilderTests
     [InlineData("0", "00")]
     public void BoolParam_AcceptsTheSameSpellingsAsTheExportedScript(string typed, string expected)
     {
-        // Y3: `true` went through a byte parser, failed, and FIRE sent 0 while baked sent 1.
+        // Through a byte parser `true` fails, and FIRE would send 0 where baked sends 1.
         var @params = new List<FunctionParamModel>
         {
             new() { Name = "Flag", TypeName = "BoolProperty", Size = 1, Offset = 0 },
@@ -516,7 +517,7 @@ public class ParamBufferBuilderTests
     [Fact]
     public void SignedByteParam_AcceptsNegatives()
     {
-        // Y5: byte.TryParse rejects any negative outright, so -1 silently became 0.
+        // byte.TryParse rejects any negative outright, so through it -1 would silently become 0.
         var @params = new List<FunctionParamModel>
         {
             new() { Name = "Delta", TypeName = "Int8Property", Size = 1, Offset = 0 },
@@ -530,9 +531,9 @@ public class ParamBufferBuilderTests
     [Fact]
     public void FloatParam_RejectsThousandsSeparators()
     {
-        // Y4: the default TryParse overload allows thousands separators, so `1,5` fired as
-        // 15.0 while the baked script refused it. Refusing (0) is the honest answer, and it
-        // matches the sibling.
+        // The default TryParse overload allows thousands separators, so through it `1,5`
+        // would fire as 15.0 while the baked script refuses it. Refusing (0) is the honest
+        // answer, and it matches the sibling.
         var @params = new List<FunctionParamModel>
         {
             new() { Name = "Scale", TypeName = "FloatProperty", Size = 4, Offset = 0 },
@@ -549,7 +550,7 @@ public class ParamBufferBuilderTests
     [InlineData("-Infinity")]
     public void FloatParam_RefusesNonFiniteValues(string typed)
     {
-        // Y4: TryParse ACCEPTS these, so they reached the game as real floats.
+        // TryParse ACCEPTS these, so unrefused they would reach the game as real floats.
         var @params = new List<FunctionParamModel>
         {
             new() { Name = "Scale", TypeName = "FloatProperty", Size = 4, Offset = 0 },
@@ -574,16 +575,16 @@ public class ParamBufferBuilderTests
         Assert.Equal("0000C03F", hex);   // 1.5f
     }
 
-    // ── audit #5: the width family on the FIRE path ─────────────────────────
+    // ── the width family on the FIRE path ─────────────────────────
     //
     // Every integer write in ParamBufferBuilder masks to the field width
-    // ((short), (int), unchecked((byte)u)), so an out-of-range value used to
-    // reach the game truncated with nothing said. The masks stay — they are Y5's
-    // fix, so a signed -1 still reaches the game as 0xFF — and a range check now
-    // sits in front of them.
+    // ((short), (int), unchecked((byte)u)), so without a check an out-of-range
+    // value would reach the game truncated with nothing said. The masks stay —
+    // they let a signed -1 reach the game as 0xFF — and a range check sits in
+    // front of them.
 
     [Theory]
-    // Fits: the exact unsigned max, and the negative that Y5 requires to survive.
+    // Fits: the exact unsigned max, and a negative that must survive as all-ones.
     [InlineData("ByteProperty", 1, "255", true)]
     [InlineData("ByteProperty", 1, "-1", true)]
     [InlineData("Int8Property", 1, "-128", true)]
@@ -628,10 +629,9 @@ public class ParamBufferBuilderTests
         => Assert.True(ParamBufferBuilder.TryValidateScalar(typeName, size, text, out _));
 
     [Theory]
-    // Y5 fixed "a negative silently fires 0" for ByteProperty only; every unsigned
-    // path kept the bug, so FIRE sent 0 while the exported script baked 0xFFFF...
-    // for the same input. Found at fix time by the width-family sweep, not by a
-    // finder. (audit #5, root cause #4's eighth occurrence.)
+    // A negative on an unsigned param fires all-ones, as the exported script bakes
+    // it (0xFFFF...), never a silent 0 — on the wider unsigned params as well as
+    // ByteProperty.
     [InlineData("UInt16Property", 2, "-1", "FFFF")]
     [InlineData("Int16Property", 2, "-1", "FFFF")]
     [InlineData("ByteProperty", 1, "-1", "FF")]
@@ -674,8 +674,8 @@ public class ParamBufferBuilderTests
         // The buffer starts zeroed, so write -1: all-ones at EVERY width, which
         // makes the number of non-zero leading bytes exactly the width written.
         // (Writing 0 measures nothing at all — it leaves a zeroed buffer zeroed,
-        // which is how the first version of this test managed to "pass" its own
-        // premise while measuring the buffer length.)
+        // so a version that wrote 0 would "pass" its own premise while measuring
+        // only the buffer length.)
         var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "-1" }, parmsSize: 16);
         var bytes = Convert.FromHexString(hex);
 

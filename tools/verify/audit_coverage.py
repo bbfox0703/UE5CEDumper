@@ -5,10 +5,10 @@ r"""`[A4-ASSESS-2026-09-09]` — which audit's scope could have contained each s
     py tools/verify/audit_coverage.py blank LO..HI      # ...that no LATER audit doc names
 
 ⛔ WHY THIS EXISTS, AND WHAT IT CAN AND CANNOT SAY.
-The audit #3 re-check (2026-09-08) established the argument this tool automates: **a line still
-blamed into a commit range is a line no later commit touched**, so any audit whose baseline sits at
-or after that range covers exactly ZERO of those lines *by construction* — not as an estimate.
-That is what makes "never re-swept" a measurement rather than a guess.
+The argument this tool automates: **a line still blamed into a commit range is a line no later
+commit touched**, so any audit whose baseline sits at or after that range covers exactly ZERO of
+those lines *by construction* — not as an estimate. That is what makes "never re-swept" a
+measurement rather than a guess.
 
 ⚠ It measures SCOPE, not attention. A line inside an audit's window is a line that audit *could*
 have read; nothing here says a human did. And `blank`'s "no later audit document names this file" is
@@ -16,13 +16,14 @@ a GENEROUS proxy in both directions — being mentioned is not being audited —
 LOWER BOUND on the blank, never an upper one.
 
 ⚠ Bucket boundaries are AUTHOR-TIME, which is what `git blame --line-porcelain` reports and what
-audit #5's own scoping measurement used. Committer-time would drift on any rebase.
+the early-code audit's own scoping used. Committer-time would drift on any rebase.
 
 The audit windows, taken from the audit documents themselves (derive, never hand-edit):
-  audit #3  88ee170..af2ce50   2026-07-03 .. 07-15   (build 1872 -> 2168)
-  audit #4  af2ce50..7cc3d5e2  2026-07-15 .. 08-03   (build 2168 -> 2554)
-  audit #5  predicate: authored before 2026-06-01    -> disjoint from BOTH by construction
-  audit #6  vendor UE 5.8.2, ProcessEvent vtable     -> narrow
+  docs/audit-2026-07-14-findings.md              88ee170..af2ce50   2026-07-03 .. 07-15
+  docs/audit-2026-08-04-findings.md              af2ce50..7cc3d5e2  2026-07-15 .. 08-03
+  docs/audit-2026-08-13-early-code-findings.md   predicate: author-time < 2026-06-01
+                                                 -> disjoint from BOTH by construction
+  docs/audit-2026-09-05-vendor-ue582.md          vendor UE 5.8.2, ProcessEvent vtable -> narrow
 """
 from __future__ import annotations
 
@@ -58,14 +59,12 @@ SRC_EXT = ('.cpp', '.h', '.hpp', '.cs', '.py', '.lua', '.axaml', '.ps1', '.asm',
 
 # ⛔ SELF-REFERENCE GUARD. `docs/todo.md` is in LATER_AUDIT_DOCS because the sweeps live
 # there — but it also carries `[A4-ASSESS-2026-09-09]`, whose whole content is the LIST of
-# blank files. Left in, the report of the blank is what erases the blank: the first run
-# after the section landed reported 22 files / 1,178 lines where the run that produced the
-# section reported 31 / 3,409. Any section whose heading carries one of these tags is cut
+# blank files. Left in, the report of the blank is what erases the blank: every file it
+# lists counts as named. Any section whose heading carries one of these tags is cut
 # from the corpus before matching. Add a tag here if a later section ever re-lists them.
 # ⚠ `[BLANK-0601-PLAN-2026-09-10]` names `Grausam.cpp` in its "what this does NOT cover" list.
 #   ONE file is enough to matter: the trap is not volume, it is that a PLAN to sweep a file
-#   reads identically to a RECORD of having swept it. Tagged the moment the section was
-#   written, and the audit-#4 blank re-measured afterwards to prove the guard held.
+#   reads identically to a RECORD of having swept it.
 SELF_REFERENTIAL_TAGS = ('[A4-ASSESS-2026-09-09]', '[BLANK-0601-PLAN-2026-09-10]',
                           '[BLANK-AUG-PLAN-2026-09-10]')
 

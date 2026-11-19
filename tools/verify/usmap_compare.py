@@ -1,4 +1,4 @@
-r"""Keyed diffs over USMAP exports -- the measurements that closed L30 and L39.
+r"""Keyed diffs over USMAP exports -- the measurements behind the L30 and L39 register rows.
 
     py tools/verify/usmap_compare.py census   <a.usmap> [<b.usmap> ...]
     py tools/verify/usmap_compare.py enums    <old.usmap> <new.usmap> [<reference.usmap>]
@@ -14,7 +14,8 @@ WHAT EACH SUBCOMMAND SETTLES
   census   the anti-self-comparison guard, and the only honest source of a record count.
   enums    `[A4-USMAP-ENUM-UNDERLYING]`: every TOP-LEVEL enum property's underlying width,
            old vs new, plus how each compares with a reference writer. A single-bucket
-           histogram (`{Byte: N}`) is the pre-fix signature -- no correct writer produces it.
+           histogram (`{Byte: N}`) is the signature of a writer without the fix -- no correct
+           writer produces it.
   inners   `[A4-USMAP-CONTAINER-ENUM]`: every CONTAINER INNER, old vs new, split into the
            three things that must be told apart --
              A1  Enum[under=W][None]  -> a named enum      (the inner's name reached the file)
@@ -24,18 +25,17 @@ WHAT EACH SUBCOMMAND SETTLES
            ByteProperty inner would show a large A2 and an empty C, and that is a FAILURE.
   slots    which container ARM each enum inner sits in (Array / Set / MapKey / MapValue /
            Optional). The four arms are separate wire keys (`inner_enum` / `elem_enum` /
-           `key_enum` / `value_enum`, `Fern.cpp:2244-2247`), so a total hides which of them an
-           artifact never exercised. Measured 2026-09-16, our post-fix DumperTest export had
-           Array 22 / MapKey 18 / MapValue 1 / **Set 0 / Optional 0**.
+           `key_enum` / `value_enum`, `Fern.cpp`'s `EncodeClassInfoToJson`), so a total hides
+           which of them an artifact never exercised: an export whose **Set or Optional count
+           is 0** says nothing about that arm.
   schema   `[USMAP-INHERITED-DUPES]`: per struct, the record count and the schema index of
            each property against a reference writer. A child that repeats its super's
            properties shows a record count equal to its own PLUS its chain's, and every own
            index shifted by exactly the chain's size.
 
 ⚠ EVERY COUNT IS OVER SHARED KEYS. Two exports of the "same" fixture are not a controlled
-before/after -- measured on ours, 7,885 vs 7,689 structs and 209 struct names present only in
-the older file. Whole-file deltas mix the fix with twenty days of unrelated walker changes;
-only a key-by-key diff attributes anything.
+before/after -- their struct counts differ and each holds struct names the other lacks. Whole-file
+deltas mix the fix with unrelated walker changes; only a key-by-key diff attributes anything.
 
 ⚠ "BYTE-IDENTICAL" IS THE WRONG WORD for two writers agreeing. A descriptor ends in a
 name-table index and the tables are per-file, so the bytes can never match. What matches is
@@ -188,10 +188,10 @@ def cmd_inners(paths):
     if ref is None:
         return
     R = _inner_slots(ref)
-    # ⚠ MISSING is the category that matters most on a PRE-fix file and the one a naive
-    # enum-vs-enum comparison cannot see: the reference calls the inner an enum and we emit a
+    # ⚠ MISSING is the category that matters most on a file written WITHOUT the fix and the one a
+    # naive enum-vs-enum comparison cannot see: the reference calls the inner an enum and we emit a
     # bare ByteProperty, so there is no enum on our side to compare names with. Counting only
-    # NAME/WIDTH disagreements would report a pre-fix file as nearly clean.
+    # NAME/WIDTH disagreements would report such a file as nearly clean.
     for label, table in (("NEW", N), ("OLD", O)):
         agree = name_bad = width_bad = missing = extra = 0
         detail = []

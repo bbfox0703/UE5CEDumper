@@ -36,7 +36,7 @@
                  IsVisible="{Binding IsBusy}"
                  Height="2" Margin="0,0,0,4"/>
 
-    <!-- Target candidates (Phase 2 / Edel). Shown after "Detect target"; the
+    <!-- Target candidates (Edel). Shown after "Detect target"; the
          top candidate is auto-loaded into the grid below, but the user can
          click another to inspect it instead. -->
     <StackPanel DockPanel.Dock="Top" IsVisible="{Binding HasCandidates}" Margin="0,0,0,6">

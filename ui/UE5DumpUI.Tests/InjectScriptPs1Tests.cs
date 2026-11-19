@@ -17,8 +17,9 @@ public class InjectScriptPs1Tests
     public void TheElevatedRelaunch_QuotesThePathsItPasses()
     {
         // [PATH-PS1-ELEVATE-QUOTE] Start-Process joins -ArgumentList with single spaces and quotes nothing (its docs:
-        // a value with a space must carry escaped double quotes). So '-File C:\Program Files\...\inject-ue.ps1' --
-        // or a profile with a space, or 'DragonSword  Awakening' -- split after the user had accepted UAC.
+        // a value with a space must carry escaped double quotes). So an unquoted
+        // '-File C:\Program Files\...\inject-ue.ps1' -- or a profile with a space, or 'DragonSword  Awakening' -- splits
+        // after the user has accepted UAC.
         string s = Script();
         Assert.Matches(@"'-File',\s*\('""\{0\}""'\s*-f\s*\$PSCommandPath\)", s);
         Assert.Matches(@"'-Dll',\s*\('""\{0\}""'\s*-f\s*\$dllPath\)", s);
@@ -30,7 +31,7 @@ public class InjectScriptPs1Tests
     public void ResolveDll_ReadsPathsLiterally()
     {
         // [PATH-PS1-LITERALPATH] Test-Path / Resolve-Path bind a positional path to -Path, which expands wildcards:
-        // a folder named 'UE5CEDumper [3554]' is the character class [345], so the DLL beside the script was
+        // a folder named 'UE5CEDumper [3554]' is the character class [345], so the DLL beside the script reads as
         // "not found". -LiteralPath takes the path as written.
         string s = Script();
         var fn = Regex.Match(s, @"function Resolve-Dll \{(?<body>.*?)\n\}", RegexOptions.Singleline);

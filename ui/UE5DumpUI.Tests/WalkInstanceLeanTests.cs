@@ -12,8 +12,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The safety net for the LEAN walk payload (build 2351, measured in
-/// docs/multipipe-eval.md §10.6).
+/// The safety net for the LEAN walk payload (docs/multipipe-eval.md §10.6).
 ///
 /// <para><b>The claim being defended.</b> `lean: true` asks the DLL to omit the
 /// keys a CE XML export never reads — the per-instance header and every decoded

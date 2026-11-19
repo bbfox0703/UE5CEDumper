@@ -230,7 +230,7 @@ def main():
     if gobj is None:
         # Pre-4.11 the array is a FUNCTION-LOCAL STATIC, so it has no public symbol at all and
         # "NOT FOUND" is correct rather than a decoder bug. Point at the recovery route instead of
-        # leaving a dead end — measured on UE 4.10.4, where the guarded init inside GetUObjectArray
+        # leaving a dead end: on UE 4.10.4 the guarded init inside GetUObjectArray
         # does `lea rbx,[rip+X]`, passes rbx as `this` to the ctor and returns rbx.
         gua = find(syms, "?GetUObjectArray@@YAAEAVFUObjectArray@@XZ")[1]
         if gua is not None:
@@ -257,8 +257,8 @@ def main():
     # FNamePool at all, GNames is the `TNameEntryArray*` that `FName::GetNames` lazily allocates.
     # Its prologue is `sub rsp,0x28; mov rax,[rip+Names]; test rax,rax; ...`, so the load sits at
     # +4 and needs NO -0x10 (that adjustment is an FNamePool/Blocks artifact and applying it here
-    # would silently land 16 bytes low). Validated against the UE4.15-Flying Shipping row already
-    # in sweep.sh: this reproduces its recorded GNames=142c92508 exactly.
+    # would silently land 16 bytes low). The UE4.15-Flying Shipping row in sweep.sh is the check:
+    # this must reproduce its recorded GNames=142c92508 exactly.
     n, r = find(syms, "?GetNames@FName@@")
     if r is not None:
         gn = base + r

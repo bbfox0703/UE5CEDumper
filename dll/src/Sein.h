@@ -5,7 +5,9 @@
 // Logger: 5-category per-process file logging with rotation
 //
 // Each log message is routed to a category-specific file under
-// the per-process folder based on its category tag prefix:
+// the per-process folder based on its category tag prefix. The main
+// tags are below; s_catMap in Sein.cpp is the full routing, and a tag
+// it does not match goes to init.log:
 //
 //   init.log    — INIT, CEP, SUMMARY (lifecycle)
 //   scan.log    — SCAN:*, MEM        (AOB scanning, pointers)
@@ -41,13 +43,10 @@ void InitProcessMirror(const std::wstring& processName);
 // Grimoire::LOG_RETENTION_DAYS. Retention is by AGE, not by file or folder count
 // — see the retention block in Sein.cpp for why a count could not express it.
 //
-// SPLIT OUT of InitProcessMirror for AB9: it ran inline under the LOADER LOCK, and
-// it is unbounded work — two directory sweeps plus a recursive remove_all over a
-// tree that grows with every game ever run. Measured over 407 real sessions in the
-// 3,023-file / 32-folder log corpus on this machine, the DllMain window that
-// CONTAINS it (`UE5Dumper DLL loaded` -> `auto-start thread created OK`) has a
-// median of 138 ms and a max of 475 ms, against a floor of 15 ms on a small tree.
-// Every DLL_PROCESS_ATTACH in the process is serialized behind that.
+// Kept out of InitProcessMirror, which runs under the LOADER LOCK: this is
+// unbounded work — two directory sweeps plus a recursive remove_all over a tree
+// that grows with every game ever run — and every DLL_PROCESS_ATTACH in the
+// process is serialized behind whatever runs under that lock.
 //
 // CONTRACT:
 //   * Idempotent, and latched: only the FIRST call does work.
@@ -58,8 +57,8 @@ void InitProcessMirror(const std::wstring& processName);
 //     unlocked — holding it across the sweep would merely move the stall from the
 //     loader lock onto every logging thread.
 //
-// ⚠ CALLER OWNS THE THREADING DECISION, and it is not free: AB1 forbids creating a
-// thread in a CE plugin host, where the module is deliberately NOT pinned
+// ⚠ CALLER OWNS THE THREADING DECISION, and it is not free: no thread may be
+// created in a CE plugin host, where the module is deliberately NOT pinned
 // (Heiter.cpp `DllMain` — CE FreeLibrary's its plugins, and a thread in an unmapped image
 // takes CE down). So DllMain calls this INLINE there and on a thread elsewhere.
 void RunRetentionSweep();

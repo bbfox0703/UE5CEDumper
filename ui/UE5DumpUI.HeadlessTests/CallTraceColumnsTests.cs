@@ -17,9 +17,9 @@ namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
 /// [CT-COLUMNS-OVERLAP] The Call Trace list as Avalonia 12.1.3 lays it out when it is narrower than its four fixed
-/// columns, as the step-3 walkthrough saw it. Each column keeps the width shown, none draws into the visible part of
+/// columns. Each column keeps the width shown, none draws into the visible part of
 /// the one on its left, and what does not fit is cut at the list's edge instead of drawing over the detail pane. A
-/// source test cannot show this: the overlap came from where DockPanel puts a fixed width cell that no longer fits,
+/// source test cannot show this: an overlap comes from where DockPanel puts a fixed width cell that no longer fits,
 /// which no attribute in the file states. [CT-DETAIL-COVERS-LIST]: the list keeps its floor beside the detail pane
 /// however wide the pane is remembered or dragged, and its rows can be clicked.
 /// </summary>
@@ -201,8 +201,9 @@ public class CallTraceColumnsTests
             }
     });
 
-    /// <summary>A guard for the wide layout, which a fix must leave as it was: with room to spare, Object stays docked at
-    /// the list's right edge in the header and in the row, and Function takes what the fixed columns leave between them.
+    /// <summary>A guard for the wide layout, which the narrow-list handling must leave as it is: with room to spare,
+    /// Object stays docked at the list's right edge in the header and in the row, and Function takes what the fixed
+    /// columns leave between them.
     /// The edge is the list's, not the row panel's own: a row panel aligned left shrinks to its text and takes Object
     /// with it.</summary>
     [Fact]
@@ -250,10 +251,10 @@ public class CallTraceColumnsTests
         return (grid, where);
     }
 
-    /// <summary>[CT-DETAIL-COVERS-LIST] Why the list's floor is 208 (the maintainer's choice, 2026-10-09): at the app's
-    /// default 1400 window with the object tree unfolded, a pane remembered wide shows the Call stack's columns side by
-    /// side, Where at its 420 or more, with no sideways scroll. A floor that also kept Function's slice beside the pane
-    /// capped it near 502 there, and Where scrolled.</summary>
+    /// <summary>[CT-DETAIL-COVERS-LIST] Why the list's floor is 208: at the app's default 1400 window with the object
+    /// tree unfolded, a pane remembered wide shows the Call stack's columns side by side, Where at its 420 or more, with
+    /// no sideways scroll. A floor that also kept Function's slice beside the pane would cap it near 502 there, and
+    /// Where would scroll.</summary>
     [Fact]
     public Task At_the_default_window_a_wide_pane_shows_the_Call_stack_with_Where_whole() => Headless.Run(() =>
     {
@@ -280,9 +281,9 @@ public class CallTraceColumnsTests
                     $"Where is {where.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#} whose other columns take {others:0.#}");
     });
 
-    /// <summary>The guard the fixed widths were there for: in a narrow pane Where keeps 420 and Address its 170, and the
-    /// grid scrolls sideways instead of squeezing either. With Where a star column, the DataGrid takes a narrow pane's
-    /// shortfall out of the other columns down to their floors: build 3644 showed Address cut to "Dump...".</summary>
+    /// <summary>The guard the fixed widths exist for: in a narrow pane Where keeps 420 and Address its 170, and the
+    /// grid scrolls sideways instead of squeezing either. With Where a star column, the DataGrid would take a narrow
+    /// pane's shortfall out of the other columns down to their floors, cutting Address to "Dump...".</summary>
     [Fact]
     public Task A_narrow_stack_pane_keeps_Where_420_and_Address_170_wide() => Headless.Run(() =>
     {
@@ -301,7 +302,7 @@ public class CallTraceColumnsTests
     };
 
     /// <summary>The list's floor, as the view model states it: a row's item padding and Time and Duration at their
-    /// default widths, so a call can be told by when it ran and clicked (the maintainer's choice, 2026-10-09).</summary>
+    /// default widths, so a call can be told by when it ran and clicked.</summary>
     private const double ListFloor = 24 + 96 + 88;
     private const double FunctionSlice = 160;
     /// <summary>The narrowest list a row's columns are fitted to: the floor, Thread at its default and Object at its
@@ -401,11 +402,11 @@ public class CallTraceColumnsTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    /// <summary>The maintainer's report on build 3645: a remembered pane wider than the panel covered the list, so no
-    /// row could be clicked and the pane had nothing to show. However wide the pane is remembered, the list keeps its
-    /// floor beside it and a click selects a row. The panel is its window's only content here, with no object tree
-    /// beside it: a panel of 800 is the app's window at about 1160 with the tree unfolded, not its narrowest window. A
-    /// panel of 1000 with 766, the width remembered on the maintainer's machine, leaves the list 210.</summary>
+    /// <summary>A remembered pane wider than the panel must not cover the list, or no row can be clicked and the pane
+    /// has nothing to show. However wide the pane is remembered, the list keeps its floor beside it and a click selects
+    /// a row. The panel is its window's only content here, with no object tree beside it: a panel of 800 is the app's
+    /// window at about 1160 with the tree unfolded, not its narrowest window. A panel of 1000 with 766, a width a real
+    /// ui-options.json holds, leaves the list 210.</summary>
     [Theory]
     [InlineData(800, 4096)]
     [InlineData(1000, 766)]
@@ -420,10 +421,10 @@ public class CallTraceColumnsTests
     });
 
     /// <summary>Narrower than the list's floor and the pane's 200 together, the pane gives way, to nothing if it must,
-    /// and the list keeps its floor: a row's Time and Duration whole, to click (the maintainer's choice, 2026-10-09).
+    /// and the list keeps its floor: a row's Time and Duration whole, to click.
     /// The object tree's splitter has no limit and takes the panel there. A panel of 300 leaves the pane 68. One of 220
-    /// has 196 after its margin and the pane's handle, all of it the list's. Before, the pane kept its 200 and the list
-    /// had 76, then nothing: the reported symptom again.</summary>
+    /// has 196 after its margin and the pane's handle, all of it the list's. A pane that kept its 200 would leave the
+    /// list 76, then nothing.</summary>
     [Theory]
     [InlineData(300)]
     [InlineData(220)]
@@ -522,8 +523,8 @@ public class CallTraceColumnsTests
     });
 
     /// <summary>[CT-FLOOR-208] A press on the pane's handle that moves only down, with the pane shown narrower than it is
-    /// remembered, leaves the remembered width: written, the width shown replaced it in ui-options.json and a wider
-    /// window never gave it back (the round-1 review's probe: a remembered 766 became the 464 shown).</summary>
+    /// remembered, leaves the remembered width: written, the width shown would replace it in ui-options.json and a wider
+    /// window would never give it back (a remembered 766 would become the 464 shown).</summary>
     [Fact]
     public Task A_pane_handle_pressed_and_moved_only_down_keeps_the_remembered_width() => Headless.Run(() =>
     {
@@ -571,8 +572,8 @@ public class CallTraceColumnsTests
     });
 
     /// <summary>A first view model given to a panel already laid out is fitted too, though the panel's size never
-    /// changed. This case alone is fitted without the panel's own remeasure (a mutation pass removed it with this test
-    /// still green): from no view model, the pane's width comes from its binding for the first time, Avalonia
+    /// changed. This case alone is fitted without the panel's own remeasure (removing the remeasure leaves this test
+    /// green): from no view model, the pane's width comes from its binding for the first time, Avalonia
     /// measures up to the panel again, and that tells the view model the room. A view model that replaces another is
     /// not, which the next test pins.</summary>
     [Fact]
@@ -589,9 +590,9 @@ public class CallTraceColumnsTests
     });
 
     /// <summary>[CT-FLOOR-208] A view model that replaces another on a panel already laid out is fitted too. The new one
-    /// has never been told the room, and nothing about the panel's own size changes to measure it again: the round-1
-    /// review's probe swapped a pane of 380 for one of 4096 and found the pane at 4096 and the list at nothing in 1000
-    /// and 1600 windows.</summary>
+    /// has never been told the room, and nothing about the panel's own size changes to measure it again: unfitted, a
+    /// pane of 380 swapped for one of 4096 leaves the pane at 4096 and the list at nothing in 1000 and 1600
+    /// windows.</summary>
     [Theory]
     [InlineData(1000)]
     [InlineData(1600)]

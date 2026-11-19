@@ -35,8 +35,8 @@ public interface IPipeClient : IDisposable
     event Action<PipeLogEntry>? Activity;
 
     /// <summary>Connect to the named pipe server <paramref name="pipeName"/>, bare (no \\.\pipe\ path): one game's
-    /// <see cref="PipeTargets.NameFor"/>. There is no default: since [PIPE-PER-PROCESS-2026-11-06] each game serves its
-    /// own name, and a connect that named none would have to guess the game.</summary>
+    /// <see cref="PipeTargets.NameFor"/>. There is no default: each game serves its own name
+    /// [PIPE-PER-PROCESS-2026-11-06], and a connect that named none would have to guess the game.</summary>
     Task ConnectAsync(string pipeName, CancellationToken ct = default);
 
     /// <summary>Disconnect from the pipe server.</summary>

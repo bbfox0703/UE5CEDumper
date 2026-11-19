@@ -10,8 +10,7 @@ namespace UE5DumpUI.Services;
 /// One function gets exactly one category -- the one with the highest
 /// total keyword hit score (ties broken by table order: Stats &gt;
 /// Inventory &gt; Movement &gt; Combat &gt; Utility &gt; GameplayAction &gt;
-/// Other). Keeps the UI chip filter unambiguous; multi-tag UI can come
-/// later if needed.
+/// Other). Keeps the UI chip filter unambiguous.
 /// </summary>
 public enum FunctionCategory
 {
@@ -27,7 +26,7 @@ public enum FunctionCategory
 /// <summary>
 /// Keyword + class + flag heuristic that ranks UFunctions by
 /// "interesting-to-cheat-engine-user" probability. All scoring is
-/// hardcoded here (no settings.json hooks yet) so a single static
+/// hardcoded here (no settings.json hooks) so a single static
 /// review tells you exactly what shows up in the finder UI.
 ///
 /// Add a keyword:
@@ -38,7 +37,7 @@ public enum FunctionCategory
 ///      keyword (ensures coverage doesn't regress when bucket
 ///      arrays get reshuffled).
 ///
-/// Categories use substring matching across the FUNCTION name and
+/// Categories use whole-token matching across the FUNCTION name and
 /// the CLASS name (e.g. "AddMoney" hits Inventory via 'Money'; a
 /// "Damage" function on PlayerCharacter hits Stats via 'Damage' AND
 /// gets the Character class bonus).
@@ -51,26 +50,20 @@ public static class KeywordScoringTable
     public const int InterestingThreshold = 5;
 
     // ------------------------------------------------------------------
-    // Keyword tables (per category). Substring matched against
+    // Keyword tables (per category). Matched as whole tokens against
     // funcName + className, case-insensitive.
     // ------------------------------------------------------------------
 
-    // Tokenisation history (build 597-607 -> build 608+):
+    // Why whole tokens (KeywordTokenizer), not substrings: a substring
+    // match fires wherever a short acronym sits inside a common engine word:
+    //   "Component" contains "mp" -> Stats false hit
+    //   "Spawn" contains "sp"     -> Stats false hit
+    //   "GetTPSStream" contains "tp" -> Movement false hit
     //
-    // Original substring matching false-positived everywhere short
-    // acronyms appeared inside common engine words:
-    //   "Component" contained "mp" -> Stats false hit
-    //   "Spawn" contained "sp"     -> Stats false hit
-    //   "GetTPSStream" contained "tp" -> Movement false hit
-    // Resolution at the time was to drop HP/MP/SP/XP/TP/Drop/Time/Clock/
-    // Create/Destroy entirely.
-    //
-    // After switching to KeywordTokenizer (whole-token match against
-    // tokens like "Component" / "Spawn" / "Stream"), short acronyms are
-    // safe again -- "MP" only matches when it appears as its own
+    // Against tokens like "Component" / "Spawn" / "Stream", short acronyms
+    // are safe -- "MP" only matches when it appears as its own
     // token (GetMP / PlayerMP / SetMaxMP), never as a buried letter
-    // pair. The dropped keywords are restored below; comments record
-    // which ones came back and why.
+    // pair. The comments below say why a plausible keyword is left out.
 
     /// <summary>Per-hit score for each Stats keyword.</summary>
     public const int StatsKeywordScore = 5;
@@ -88,7 +81,7 @@ public static class KeywordScoringTable
         // total"). SPELLING variants (Defense/Defence, Coin/Coins) are still
         // needed.
         "HP", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
-        // Experience / level / score. XP restored.
+        // Experience / level / score.
         "XP", "Exp", "Experience", "Level", "Score",
         // Combat-stat verbs (still primarily affect a stat field).
         "Damage", "Heal", "Hurt", "Kill", "Revive", "Death",
@@ -100,22 +93,21 @@ public static class KeywordScoringTable
         "Gold", "Money", "Coin", "Currency", "Cash", "Credit",
         "Item", "Inventory", "Pickup", "Loot", "Drop", "Equip",
         "Wallet", "Stack",
-        // 'Drop' restored -- token-based match means DropItem ->
-        // ["Drop","Item"] hits Inventory cleanly without false-positiving
-        // "DropDownList" (which tokenises to ["Drop","Down","List"] --
-        // OK, that one DOES match. UI penalty offsets it though.)
+        // 'Drop': token-based match means DropItem ->
+        // ["Drop","Item"] hits Inventory cleanly. "DropDownList"
+        // (["Drop","Down","List"]) matches too; the UI penalty offsets it.
     };
 
     public const int MovementKeywordScore = 5;
     public static readonly string[] MovementKeywords =
     {
-        // TP restored -- only matches "TP" as a standalone token (rare
+        // TP only matches "TP" as a standalone token (rare
         // in cheat-relevant func names but legit when present).
         "Teleport", "Warp", "TP",
         "Move", "Location",  // multi-token "SetLocation"/"SetActorLocation"
                               // collapsed to the meaningful single token
         "Speed", "Velocity", "Walk", "Sprint", "Jump",
-        // 'Run' still dropped -- even tokenised, "Run" appears in
+        // 'Run' left out -- even tokenised, "Run" appears in
         // RunCallback/RunGameMode plumbing too often to be cheat-relevant.
     };
 
@@ -144,14 +136,14 @@ public static class KeywordScoringTable
     {
         "Save", "Load", "Checkpoint",
         "Spawn", "Summon",
-        // Create/Destroy still dropped -- even tokenised they fire on
+        // Create/Destroy left out -- even tokenised they fire on
         // engine plumbing (CreateWidget / DestroyComponent / etc) far
         // more often than cheat-relevant code. Use Spawn/Summon for
         // gameplay-actor creation instead.
         "Timer", "Time", "Clock", "Countdown",
-        // Time/Clock restored -- "Time" only fires on actual timing
-        // tokens now (TimeRemaining, ClockTick) not on "Lifetime" etc.
-        // L1 timer methods: cooldown/dilation getters+setters that the
+        // "Time" only fires on actual timing tokens
+        // (TimeRemaining, ClockTick), not on "Lifetime" etc.
+        // Timer methods: cooldown/dilation getters+setters that the
         // "Timer"/"Time" tokens above miss (GetCooldownRemaining,
         // SetGlobalTimeDilation, ResetRecharge, DelayedCall). Whole-token,
         // so "Dilation" only fires standalone; all additive to Utility.
@@ -200,8 +192,8 @@ public static class KeywordScoringTable
     };
 
     // ------------------------------------------------------------------
-    // Class-name boosts moved to ClassLocationScorer.FunctionBonus so
-    // both Function side and Property side (B' / Interesting Properties)
+    // Class-name boosts live in ClassLocationScorer.FunctionBonus so
+    // both Function side and Property side (Interesting Properties)
     // share the same bag-of-substrings pattern. Property side has its
     // OWN table because the relevant noise / signal classes differ —
     // e.g. LocalPlayer / GameViewportClient / HUD are "unusual but
@@ -234,9 +226,9 @@ public static class KeywordScoringTable
     /// </summary>
     /// <param name="includeGameplayActions">Opt-in: when true, also score
     /// the <see cref="GameplayActionKeywords"/> pack (Dash/Interact/Open/
-    /// Buy/Sell/Shop/…). Defaults false so the built-in categorisation is
-    /// byte-identical to before this pack existed — the panel's "Gameplay
-    /// Actions" checkbox flips it on.</param>
+    /// Buy/Sell/Shop/…). Defaults false so the built-in categorisation does
+    /// not depend on this pack — the panel's "Gameplay Actions" checkbox
+    /// flips it on.</param>
     public static ScoreResult Score(AllFunctionEntry entry, bool includeGameplayActions = false)
     {
         // Tokenise the function + class names once. The tokeniser already
@@ -257,7 +249,7 @@ public static class KeywordScoringTable
         int combatHits    = CountTokenHits(tokens, CombatKeywords);
         int utilityHits   = CountTokenHits(tokens, UtilityKeywords);
         // Opt-in pack: only tallied when the caller enables it, so the
-        // default path scores exactly as it did before this pack existed.
+        // default path's scores do not depend on it.
         int gameplayHits  = includeGameplayActions
                           ? CountTokenHits(tokens, GameplayActionKeywords) : 0;
 
@@ -320,8 +312,7 @@ public static class KeywordScoringTable
 
     /// <summary>
     /// Count distinct keywords whose tokens all appear in
-    /// <paramref name="tokens"/>. Replaces the v1 substring-matching
-    /// <c>CountHits</c>.
+    /// <paramref name="tokens"/>.
     ///
     /// Multi-token keywords are common (e.g. "NoClip" tokenises to
     /// ["no","clip"], "SetActorLocation" to ["set","actor","location"])
@@ -339,8 +330,8 @@ public static class KeywordScoringTable
         int hits = 0;
         foreach (var k in keywords)
         {
-            // Re-tokenise the keyword (cheap; keyword count is ~40
-            // total across all buckets). Result is already lowercased
+            // Re-tokenise the keyword (cheap; the keyword lists are
+            // short). Result is already lowercased
             // by the tokeniser so direct HashSet lookup is fine.
             var keyTokens = KeywordTokenizer.Tokenize(k);
             if (keyTokens.Length == 0) continue;
@@ -358,7 +349,7 @@ public static class KeywordScoringTable
     /// when the UI is translated, this changes and <see cref="CtGroupName"/> does not.</summary>
     public static string DisplayName(FunctionCategory cat) => CtGroupName(cat);
 
-    /// <summary>[I18N-READINESS-2026-11-04] P4. The group a generated CT files a category's records under. ⛔ DO NOT
+    /// <summary>[I18N-READINESS-2026-11-04] The group a generated CT files a category's records under. ⛔ DO NOT
     /// LOCALIZE: an artifact, so a table saved under one UI language keeps its groups under another.</summary>
     public static string CtGroupName(FunctionCategory cat) => cat switch
     {

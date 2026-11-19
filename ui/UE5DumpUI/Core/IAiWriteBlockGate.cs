@@ -3,7 +3,7 @@ using System;
 namespace UE5DumpUI.Core;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. The window's "Block AI writes" switch. While it is on, every MCP server on this
+/// [MCP-WRITE-GRANTS-2026-11-14] The window's "Block AI writes" switch. While it is on, every MCP server on this
 /// machine (for this Windows user) refuses every change but an OFF or a reset of its own holds, and each turn-on ends
 /// every AI session's grants. Only the window writes it; the servers only read it (Services.AiWriteBlockGate.ReadState),
 /// so a forged file can at most block or revoke, never grant.

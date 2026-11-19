@@ -11,9 +11,10 @@ namespace UE5DumpUI.Services;
 /// <c>Int64</c> — and it reports the SAME message,
 /// <i>"An element of type 'Number' cannot be converted to a 'System.Int64'"</i>,
 /// for two very different causes: a fractional value, and a value merely out of
-/// range. That ambiguity cost real debugging time: a DLL sentinel of
-/// <c>UINT64_MAX</c> (18446744073709551615, "game-thread hook never fired") blew
-/// up the whole Diagnostics card, and the message pointed at decimals.</para>
+/// range. The ambiguity misleads: a DLL sentinel of <c>UINT64_MAX</c>
+/// (18446744073709551615, "game-thread hook never fired") is merely out of range,
+/// yet a strict read throws on it, blanking a whole Diagnostics card with a message
+/// that points at decimals.</para>
 ///
 /// <para><b>The rule these encode:</b> a diagnostics/telemetry read must degrade,
 /// never throw. One unexpected field is worth a wrong number in one cell — it is

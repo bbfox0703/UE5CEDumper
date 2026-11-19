@@ -6,9 +6,9 @@ r"""[DEBUGCAM-FORCEON-CDO] A Debug Camera Force ON with no live CheatManager is 
     py tools/verify/dbgcam_cdo_refusal.py --process DumperTest58  # another fixture (a prefix of its image name)
     py tools/verify/dbgcam_cdo_refusal.py --allow-live-toggle     # live CheatManager (Development): ON=1, OFF=0
 
-Written for the row [DEBUGCAM-FORCEON-CDO] (docs/todo.md); the refusal ships from build 3682. With no live
-CheatManager -- the usual Shipping state, since UE 5 compiles it out (UE_WITH_CHEAT_MANAGER) -- the Debug Camera state
-read lands on Default__CheatManager, where ToggleDebugCamera does nothing. From 3682 that toggle is never sent: an ON
+Written for the row [DEBUGCAM-FORCEON-CDO] (docs/todo.md). With no live CheatManager -- the usual Shipping state,
+since UE 5 compiles it out (UE_WITH_CHEAT_MANAGER) -- the Debug Camera state read lands on Default__CheatManager, where
+ToggleDebugCamera does nothing. A DLL with the refusal (3682 or later, see BLD) never sends that toggle: an ON
 answers -17 at once, with no game-thread call and no ProcessEvent hook install. An OFF is never refused.
 
 PREREQUISITES

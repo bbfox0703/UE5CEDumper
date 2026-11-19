@@ -252,8 +252,8 @@ public class PivotDiscoveryEngineTests
     }
 
     // [DISCOVER-SHADOWED-POOL] A class can carry two properties of one name and type at different offsets (a shadowed
-    // name). Rank grouped by (class, prop, type), so the two copies became ONE candidate: their changed counts pooled,
-    // and the sample was whichever copy's instance sorted first. Each copy is its own candidate, labelled with its offset.
+    // name). Grouped by (class, prop, type), the two copies would be ONE candidate: their changed counts pooled, and
+    // the sample whichever copy's instance sorted first. Each copy is its own candidate, labelled with its offset.
     private static DiscoveryInput At(DiscoveryInput d, int offset) { d.PropOffset = offset; return d; }
 
     [Fact]
@@ -277,7 +277,7 @@ public class PivotDiscoveryEngineTests
     public void OneMovedCopyOfANameTheSnapshotShadows_IsStillLabelledWithItsOffset()
     {
         // The Strict path feeds only the CHANGED rows: when one copy did not move, Rank sees one offset. The store passes
-        // the names the snapshot shows at more than one offset, so the label matches Class Pivot's picker (review).
+        // the names the snapshot shows at more than one offset, so the label matches Class Pivot's picker.
         var r = PivotDiscoveryEngine.Rank(new[]
         {
             At(In("Shot", "PrerollTime", "FloatProperty", "/c", new[] { "10", "20" }), 0x128),
@@ -289,8 +289,8 @@ public class PivotDiscoveryEngineTests
     [Fact]
     public void TwoCopiesTiedOnEveryScore_ComeOutInOffsetOrder()
     {
-        // Review: the last tie-break (offset) was unpinned -- the shadowed-name test's copies differ in changed count, so
-        // they never reach it, and it re-sorted before asserting. Fed in REVERSE offset order, fully tied copies must
+        // Pins the last tie-break (offset): the shadowed-name test's copies differ in changed count, so they never
+        // reach it, and it re-sorts before asserting. Fed in REVERSE offset order, fully tied copies must
         // still come out +0xC4 first: List.Sort alone keeps no order.
         var r = PivotDiscoveryEngine.Rank(new[]
         {

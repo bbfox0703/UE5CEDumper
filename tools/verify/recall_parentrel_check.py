@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Live check for [TELEPORT-RECALL-PARENTREL] (build 3680 on): DumperTest Shipping, headless, no CE.
+r"""Live check for [TELEPORT-RECALL-PARENTREL] (a DLL with that tag): DumperTest Shipping, headless, no CE.
 
     py tools/verify/l78_parentrel_arm.py find          # once per launch, then:
     py tools/verify/recall_parentrel_check.py

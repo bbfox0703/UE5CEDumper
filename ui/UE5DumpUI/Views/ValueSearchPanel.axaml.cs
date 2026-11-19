@@ -8,7 +8,7 @@ namespace UE5DumpUI.Views;
 public partial class ValueSearchPanel : UserControl
 {
     // Maps a result column's SortMemberPath to the server-side sort key
-    // (query_candidates wire string). The DataGrid is windowed (V3-C), so a
+    // (query_candidates wire string). The DataGrid is windowed, so a
     // client-side column sort would only reorder the loaded page — instead a
     // header click re-sorts the WHOLE session set in the DLL. "Class.Field"
     // sorts by class (the label leads with the owning class).

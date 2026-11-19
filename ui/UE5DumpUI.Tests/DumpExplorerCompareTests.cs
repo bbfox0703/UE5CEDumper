@@ -9,7 +9,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [DUMPDIFF-UI] Dump Explorer's Compare: the loaded class dump against one the user picks, written as an HTML
-/// report and opened. The maintainer's decision (2026-10-06): HTML only, started from this panel. The diff itself
+/// report and opened -- HTML only, started from this panel. The diff itself
 /// is <see cref="DumpDiffParityTests"/>'s; these pin the panel's part — which file is old, what is refused, what is
 /// written where, and the two options.
 /// </summary>
@@ -316,7 +316,7 @@ public class DumpExplorerCompareTests : IDisposable
         Assert.Contains("Changed Classes (1)", html);
     }
 
-    // ---- the two options persist (D8) ----
+    // ---- the two options persist ----
 
     [Fact]
     public void The_options_default_off_and_survive_a_restart()

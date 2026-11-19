@@ -4,7 +4,7 @@
     py tools/verify/invoke_expect_class.py --class BP_Player_C --func K2_GetActorRotation
 
 Headless, through the pipe (the UI must NOT be connected). A PIPE dialog stays open across FIREs with the address it
-opened with, and the DLL finds the function by NAME on the class read at that address at FIRE time; since build 3666
+opened with, and the DLL finds the function by NAME on the class read at that address at FIRE time; with the tag above
 the dialog sends the class its function list was read from, and the DLL refuses an object of another class there.
 Freeing an object and having its slot reused cannot be arranged on demand, so this sends the mismatch directly: the
 instance's own class (invoked), the class of its outer (refused, nothing dispatched), and no key at all (invoked, as

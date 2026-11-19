@@ -350,7 +350,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             ClearError();
             IsLoading = true;
             StatusText = "Loading...";
-            _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (L17)
+            _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
             _allNodes.Clear();
             NodesView.Forget();   // the program empties the box, not the user
             FilterText = "";
@@ -446,7 +446,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             ClearError();
             IsLoading = true;
             StatusText = "Searching...";
-            _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (L17)
+            _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
             NodesView.Forget();   // the program empties the box, not the user
             FilterText = "";
             SelectedClassFilterIndex = 0;

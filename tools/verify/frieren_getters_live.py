@@ -4,10 +4,10 @@
     py tools/verify/frieren_getters_live.py --pid <game pid> --build <N> --label <name> --slot 0x78   # UProperty
 
 WHY THIS EXISTS. `UE5_GetFieldStructClass` and `UE5_GetFieldPropertyClass` are C-ABI exports reached
-only from CE Lua (`ue5_dissect.lua` flattens a StructProperty through the first), so no pipe rig had
-ever called them. [STRUCTPROBE-ANY-NAME] gave both a kind check: before build 3595 each took the first
-NAMED object near the subclass slot, so the struct getter answered an object property with its UClass
-and the PropertyClass getter (which delegated to it) answered a StructProperty with its UScriptStruct.
+only from CE Lua (`ue5_dissect.lua` flattens a StructProperty through the first), so no pipe command
+reaches them: this rig calls them through CE. [STRUCTPROBE-ANY-NAME] gives both a kind check: without it each takes the first NAMED
+object near the subclass slot, so the struct getter answers an object property with its UClass and
+the PropertyClass getter (which delegates to it) answers a StructProperty with its UScriptStruct.
 
 HOW. Three steps; the pipe and CE can overlap, because the copy of the DLL that CE loads as a plugin
 starts no pipe server (its DllMain refuses when the host is CE).

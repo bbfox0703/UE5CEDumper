@@ -4,9 +4,8 @@
 
 A6's whole point is that `Aura::FindInstancesDerivedFrom` performs a real super-chain
 test with a per-UClass verdict cache -- NOT a name substring, so forcing on "Enemy"
-must not reach "EnemyProjectile". Steps 1, 2 and 4 were closed by the maintainer, but
-**step 3 was explicitly left open because nothing so far distinguishes a super-chain
-walk from a prefix match** -- both hold "hundreds".
+must not reach "EnemyProjectile". **Steps 1, 2 and 4 cannot distinguish a super-chain
+walk from a prefix match** -- both hold "hundreds" -- so step 3 needs a pair that does.
 
 THE PAIR USED HERE, and why it is a stronger trap than `Enemy`/`EnemyProjectile`:
 

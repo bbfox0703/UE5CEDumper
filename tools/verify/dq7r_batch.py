@@ -6,7 +6,7 @@ DQ7R is the right host for all three and DumperTest is the wrong one for all thr
 own reason:
 
   U7                  needs a **localized** title, i.e. a `StrProperty` holding non-ASCII text over
-                      50 bytes. Before the fix the whole search returned zero rows with an error;
+                      50 bytes. Without the fix the whole search returns zero rows with an error;
                       success is *rows come back and the preview ends in an ellipsis*.
   Solide `capped`     needs a class with **more than 256 live instances**, because the assertion is
                       `held == 256 AND truncated == true` — the cap must be ADMITTED, not silently
@@ -20,7 +20,7 @@ shipping one, and `pid_of` refuses to guess between same-prefixed names, so the 
 everywhere.
 
 ⚠ Proxy mode starts the pipe server ONLY — no scan. `ensure_scanned` is what triggers and waits for
-it; on a 149,370-object title that is not instant.
+it; on a title of ~150k objects that is not instant.
 
 SAFETY: the force in part 2 is released in the same run (`reset_field`, then `reset_all_fields`) and
 what remains held is reported afterwards, so a leak is visible rather than assumed.

@@ -12,8 +12,7 @@ namespace UE5DumpUI.Helpers;
 /// the status strings live in en.axaml ([VM-INLINE-STRINGS]): a view model assigning the returned string adds no
 /// literal of its own.</para>
 ///
-/// <para>The per-row buttons Live Walker already had do the same work inline; they predate this helper and are
-/// left alone.</para>
+/// <para>Live Walker's per-row buttons do the same work inline rather than through this helper.</para>
 /// </summary>
 internal static class AobMakerActions
 {
@@ -296,7 +295,7 @@ internal static class AobMakerActions
     /// <summary>
     /// [AOBM-FUNC-DISASM] Resolve a UFunction's native entry (<c>UFunction::Func</c>) through the DLL, add a ByteArray
     /// record labelled "<paramref name="funcName"/> (code)" and move CE's disassembler there. The sequence is the one
-    /// <c>PropertyXrefDialog</c>'s "Disassemble in CE" introduced; that dialog keeps its own copy because it colours
+    /// <c>PropertyXrefDialog</c>'s "Disassemble in CE" uses; that dialog keeps its own copy because it colours
     /// each outcome.
     /// <para>A native function lands on its exec thunk. A Blueprint function has no code of its own (its Func is the
     /// shared script interpreter), so the DLL returns no address for it and the text says so.</para>

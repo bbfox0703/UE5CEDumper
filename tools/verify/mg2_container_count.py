@@ -9,9 +9,10 @@ THE VACUITY QUESTION COMES FIRST, because if the two numbers share a source the
 check can only ever agree with itself. They do not, and it is checked in code
 before it is checked in the game:
 
-    Ubel.cpp:4410   fv.mapCount = sa.MaxIndex - sa.NumFreeIndices;   <- TSparseArray HEADER
-    Ubel.cpp:4721   fv.setCount = sa.MaxIndex - sa.NumFreeIndices;
-    Ubel.cpp:3682   WalkInstance(..., int32_t arrayLimit, ...)       <- the LIST is a capped walk
+    Ubel.cpp, in WalkInstance:
+      TMap arm   fv.mapCount = sa.MaxIndex - sa.NumFreeIndices;   <- TSparseArray HEADER
+      TSet arm   fv.setCount = sa.MaxIndex - sa.NumFreeIndices;
+      signature  WalkInstance(..., int32_t arrayLimit, ...)       <- the LIST is a capped walk
 
 The count is read out of the container's own header; the element list is a separate
 iteration bounded by arrayLimit. Independent.
@@ -27,10 +28,10 @@ is not enough: a broken decode still produces N rows. So the FName set is checke
 against its known seeded names, and the object set is RE-WALKED at the addresses it
 reported, requiring each to be a real UObject of the expected class.
 
-  !! The "open any UDataTable" half of step 2 is BLOCKED, not skipped, by
-     [DTROWMAP-2026-08-23]: Ubel::ProbeRowMapOffset locates the wrong RowMap and can
-     serve a NEIGHBOURING table's rows. Judging a DataTable render before that is
-     fixed would be judging the wrong table's data.
+  !! The "open any UDataTable" half of step 2 is NOT run here. A DataTable render
+     check means something only while Ubel::ProbeRowMapOffset finds the table's OWN
+     RowMap ([DTROWMAP-2026-08-23]): a RowMap found at the wrong offset can serve a
+     NEIGHBOURING table's rows, and the check would judge the wrong table's data.
 
 THIS RIG MUTATES THE FIXTURE, and the next thing to run on the same process must know:
   * it removes one entry from Map_Churn and one from Set_Name (that is the test), so

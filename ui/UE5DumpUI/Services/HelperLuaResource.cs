@@ -12,9 +12,9 @@ namespace UE5DumpUI.Services;
 /// of the physical source path (file lives under <c>scripts/</c> in the
 /// repo, not <c>Resources/</c>).
 ///
-/// Called by <see cref="ViewModels.MainWindowViewModel.ExportCeHelperLuaAsync"/>
-/// from the Tools menu so users can drop the helper next to their .CT
-/// and add it via <c>Table -&gt; Add File...</c>.
+/// The Tools menu either saves it so users can drop the helper next to
+/// their .CT and add it via <c>Table -&gt; Add File...</c>, or injects it
+/// into the open CE table through the AOBMaker plugin.
 /// </summary>
 public static class HelperLuaResource
 {

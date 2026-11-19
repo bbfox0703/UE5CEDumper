@@ -10,7 +10,7 @@ namespace UE5DumpUI.Models;
 /// Sourced from a <see cref="PropertySearchMatch"/> row + a single value
 /// the user types in <c>FreezeValueDialog</c>. The "defining class" is
 /// what flows in here -- that's the class where the property is actually
-/// declared (build 610+ PropertySearch dedupe), and writing at the offset
+/// declared, and writing at the offset
 /// hits every instance of that class or its subclasses.
 /// </summary>
 public sealed class FreezeScriptParams

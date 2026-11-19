@@ -9,18 +9,18 @@ namespace UE5DumpUI.Tests;
 /// The GWorld actor list is NOT a list of fields, and a CE pointer chain must not pretend
 /// it is.
 ///
-/// <para>Reported on P3R (build 3358): "Start from GWorld" listed KernelActor / TaskActor /
-/// RecastNavMesh-Enemy, the user drilled one and hit Copy CE XML, and CE resolved
+/// <para>The hazard: "Start from GWorld" lists actors such as KernelActor / TaskActor /
+/// RecastNavMesh-Enemy. Drill one and Copy CE XML, and an actor row exported with
+/// <c>Offset = 0</c> as if that were a real field offset makes CE resolve
 /// <c>base P-&gt;603BB0A0</c> then <c>KernelActor (0) P-&gt;144AF6408</c> — an address inside
 /// the executable image. <c>144AF6408</c> is the value at <c>UWorld + 0</c>, i.e. the world's
-/// VTABLE POINTER, because the actor row was published with <c>Offset = 0</c> and exported as
-/// if that were a real field offset.</para>
+/// VTABLE POINTER.</para>
 ///
 /// <para>The rows come from <c>Aura::FindActorsInLevel</c>, which reconstructs the list from
-/// each actor's <c>Outer</c> — <c>ULevel::Actors</c> carries no UPROPERTY (audit #5 F8/F9), so
+/// each actor's <c>Outer</c> — <c>ULevel::Actors</c> carries no UPROPERTY, so
 /// there is no offset AND no element index from the world to an actor. The Locate-in-GWorld
-/// path already knew this (<c>PathStepToBreadcrumbs</c> stamps <c>FieldOffset = -1</c> for a
-/// "LevelActor" step); the actor list was the copy that never got the marker.</para>
+/// path marks the same thing (<c>PathStepToBreadcrumbs</c> stamps <c>FieldOffset = -1</c> for a
+/// "LevelActor" step), and the actor list must carry the same marker.</para>
 /// </summary>
 public class LiveWalkerGWorldActorChainTests
 {
@@ -93,7 +93,7 @@ public class LiveWalkerGWorldActorChainTests
         var comp = Assert.Single(vm.Fields, f => f.Name.Trim() == "KernelActor.SceneComp");
 
         // PersistentLevel IS a real reflected field of UWorld and must stay chainable — if
-        // this ever flips, the fix has over-reached and killed the one honest hop here.
+        // this ever flips, the marker has over-reached and killed the one honest hop here.
         Assert.False(pLevel.HasNoParentOffset);
         Assert.Equal(0x30, pLevel.Offset);
         Assert.Equal("0x30", pLevel.OffsetDisplay);
@@ -158,11 +158,11 @@ public class LiveWalkerGWorldActorChainTests
     }
 
     /// <summary>
-    /// The second victim of the same root cause. "Copy CE AA Script" emits a RESTART-STABLE
+    /// The same hazard in a second export. "Copy CE AA Script" emits a RESTART-STABLE
     /// script that walks GWorld -> ... -> the object at enable time, gated on every hop
-    /// below the root having a real offset (<c>FieldOffset &gt;= 0</c>). The gate was
-    /// already correct — the actor crumb simply lied to it with a 0, so the script walked
-    /// <c>[GWorld] + 0</c> into the world's vtable and registered a symbol there.
+    /// below the root having a real offset (<c>FieldOffset &gt;= 0</c>). The gate is only as
+    /// good as the crumb: an actor crumb that says 0 sends the script walking
+    /// <c>[GWorld] + 0</c> into the world's vtable to register a symbol there.
     /// </summary>
     [Fact]
     public async Task CeAaScript_FromAWorldActor_RefusesTheGWorldWalk()
@@ -170,7 +170,7 @@ public class LiveWalkerGWorldActorChainTests
         var (vm, platform) = MakeVm();
         // A resolvable GWorld base, so the "walk from GWorld" branch is genuinely available
         // — without it the fallback would be taken for an unrelated reason and the test
-        // would pass on the broken code too.
+        // would pass even with an actor crumb that says 0.
         vm.SetEngineState(new EngineState { GWorldAddr = "0x4C8003" });
 
         await vm.StartFromWorldCommand.ExecuteAsync(null);
@@ -189,13 +189,12 @@ public class LiveWalkerGWorldActorChainTests
     /// <summary>
     /// The re-anchor must be stated in the LOG, not only in StatusText.
     ///
-    /// <para>Found by auditing a real P3R session (2026-08-26): the only trace the
-    /// re-anchor left in the logs was a <c>bcCount</c> smaller than the crumb count in
-    /// the same line's <c>BC=</c> trace. That is a real witness, but it reads as a
-    /// contradiction, and it is indistinguishable from an export legitimately rooted on a
-    /// one-crumb spine — the same session rooted a walk on GameEngine minutes later,
-    /// which would produce the identical <c>bcCount=1 / AOB=False</c> pair. StatusText
-    /// reaches no log and is overwritten by the next status.</para>
+    /// <para>Without its own line, the only trace the re-anchor leaves in the logs is a
+    /// <c>bcCount</c> smaller than the crumb count in the same line's <c>BC=</c> trace.
+    /// That is a real witness, but it reads as a contradiction, and it is
+    /// indistinguishable from an export legitimately rooted on a one-crumb spine — a walk
+    /// rooted on GameEngine produces the identical <c>bcCount=1 / AOB=False</c> pair.
+    /// StatusText reaches no log and is overwritten by the next status.</para>
     /// </summary>
     [Fact]
     public async Task CopyCeXml_FromAWorldActor_SaysInTheLogThatItReanchored()
@@ -319,9 +318,9 @@ public class LiveWalkerGWorldActorChainTests
     }
 
     /// <summary>
-    /// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Copy Addr on a row with no address of its own fell back to the object shown
-    /// + the row's Offset. An actor row has no slot in the world -- its Offset 0 is "unknown" -- so that copied the
-    /// world's own address. PersistentLevel, a real field, still copies its slot.
+    /// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Copy Addr on a row with no address of its own falls back to the object shown
+    /// + the row's Offset. An actor row has no slot in the world -- its Offset 0 is "unknown" -- so that fallback would
+    /// copy the world's own address; it copies nothing and says why. PersistentLevel, a real field, still copies its slot.
     /// </summary>
     [Fact]
     public async Task CopyAddr_OnAnActorRow_CopiesNothing_AndSaysWhy_WhilePersistentLevelCopiesItsSlot()
@@ -331,7 +330,7 @@ public class LiveWalkerGWorldActorChainTests
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "KernelActor"));
 
-        Assert.Null(platform.LastClipboard);   // was the world's own address
+        Assert.Null(platform.LastClipboard);   // not the world's own address
         Assert.StartsWith("⚠ Addr:", vm.StatusText);
 
         await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "PersistentLevel"));
@@ -339,8 +338,8 @@ public class LiveWalkerGWorldActorChainTests
         Assert.Contains("603BB0D0", platform.LastClipboard);   // the world + 0x30
     }
 
-    /// <summary>Review of the fix above: a successful Addr writes no status line, so the refusal an earlier Addr put up
-    /// stayed and said the copy that worked had done nothing.</summary>
+    /// <summary>A successful Addr writes no status line of its own, so it must take down the refusal an earlier Addr put
+    /// up, or that refusal stays and says the copy that worked did nothing.</summary>
     [Fact]
     public async Task CopyAddr_ThatCopies_TakesDownTheRefusalAnEarlierAddrPutUp()
     {

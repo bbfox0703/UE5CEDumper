@@ -22,7 +22,7 @@ The message appears only if FAILED is the last write (or the poll catches it in 
 which happened ("UE5_Init ABORTED ... initState=3"); a run that missed says so and can be repeated.
 
 PRECONDITIONS: game P with no UE5Dumper loaded; ONE Cheat Engine with the AOBMaker plugin (ce_lua_eval.py's bridge).
-PASS (exit 0): the capture holds the CT's INIT_FAILED message -- a headline naming both outcomes (build 3708,
+PASS (exit 0): the capture holds the CT's INIT_FAILED message -- a headline naming both outcomes (a .CT with
 [CT-INITFAILED-HEADLINE]) and its causes sentence -- and game P's own init log has the aborted init with initState=3.
 The game is left for the caller to kill (it holds a half-started DLL).
 """
@@ -48,7 +48,7 @@ OUT = ROOT / "out" / "initfailed"
 RECORD = "Inject DLL + Start Pipe Server"
 INIT_RECORD = "init <== enable after process attached"
 # Both halves of the message. The headline must name the outcome this rig provokes (init aborted, the server started):
-# before build 3708 it said only "initialised, but the Pipe Server failed to start" ([CT-INITFAILED-HEADLINE]).
+# a .CT without [CT-INITFAILED-HEADLINE] says only "initialised, but the Pipe Server failed to start".
 HEADLINE_TEXT = "its start-up did not finish: the scan was cut short, or the Pipe Server did not start"
 CAUSES_TEXT = "Most likely the scan was stopped part-way"
 

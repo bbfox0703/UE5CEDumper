@@ -22,7 +22,7 @@ public sealed partial class ScoredPropertyRow : ObservableObject
     public required int                 ClassBonus       { get; init; }
     public required bool                IsUnusualLocation{ get; init; }
 
-    // Structural signals (P2a). StructuralBonus = GAS boost + type prior;
+    // Structural signals. StructuralBonus = GAS boost + type prior;
     // PairBonus = Current/Max stat-family bonus (both already folded into
     // FinalScore, surfaced here for the score breakdown tooltip).
     public int                          StructuralBonus  { get; init; }

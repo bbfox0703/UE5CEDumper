@@ -4,10 +4,10 @@ r"""Create, remove or inspect a Start Menu Startup shortcut for UE5DumpUI.exe.
 Python twin of startup-shortcut.ps1 -- same CLI verbs, same resolution order, same
 refusal rules, same exit codes. Two reasons it exists rather than one script:
 
-  * Bitdefender's Advanced Threat Defense quarantined the .ps1 (and build.ps1, and two
-    other tools) the first time it ran. The detection was BEHAVIOURAL and fired on the
+  * Bitdefender's Advanced Threat Defense can quarantine the .ps1 (and build.ps1, and
+    other tools). The detection is BEHAVIOURAL and fires on the
     process chain -- an unsigned parent spawning pwsh spawning powershell, which then
-    wrote a .lnk into the Startup folder. That is a textbook persistence shape and an AV
+    writes a .lnk into the Startup folder. That is a textbook persistence shape and an AV
     is right to look at it. Nothing here tries to look like anything else; a second
     implementation simply gives a machine where the PowerShell host is the problem a way
     to do the same job through a different interpreter.

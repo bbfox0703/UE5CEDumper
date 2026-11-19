@@ -57,12 +57,12 @@ internal interface IMcpGame
 }
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. The MCP server's one connection to a game's pipe.
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP server's one connection to a game's pipe.
 ///
 /// <para><b>One connection, one request at a time.</b> The DLL serves each connection on a thread of its own, one
 /// command after another, so a second connection would only buy a second queue, at the cost of a second of the six
 /// slots. The UI keeps its own two; nothing this server sends waits behind the UI, or the UI behind it. Value-scan
-/// sessions belong to the connection that began them (Stage C), so they live as long as this connection does. Every
+/// sessions belong to the connection that began them, so they live as long as this connection does. Every
 /// request is marked <c>"background"</c>: a GObjects walk it starts takes at most half of the DLL's free workers
 /// (Aura::BackgroundWalkScope), so the user's own scan or snapshot in the UI is never left on one thread.</para>
 ///

@@ -160,7 +160,7 @@ public class SnapshotNumericTests
     [Theory]
     // Non-finite floats must NOT yield a numeric value: SQLite's REAL column
     // rejects NaN ("Cannot store 'NaN' values") and NaN/Inf are meaningless for
-    // SPC/diff. The deep recursive capture (build 1205) can reach such leaves.
+    // SPC/diff. The deep recursive capture can reach such leaves.
     // (Little-endian hex as the DLL emits.)
     [InlineData("FloatProperty",  "0000C07F")]          // float qNaN  0x7FC00000
     [InlineData("FloatProperty",  "0000807F")]          // float +Inf  0x7F800000

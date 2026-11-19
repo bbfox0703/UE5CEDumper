@@ -70,9 +70,9 @@ enum class CollisionApply : int32_t {
 };
 
 /// May the caller commit its collision record from this outcome? Pure, so
-/// `dll_helpers_test` can pin the B8 rule without linking Dunste.cpp.
+/// `dll_helpers_test` can pin the rule without linking Dunste.cpp.
 inline bool ShouldCommitCollision(CollisionApply a) {
-    return a != CollisionApply::Refused;      // Applied, Absent (B8) AND Queued all commit
+    return a != CollisionApply::Refused;      // Applied, Absent AND Queued all commit
 }
 
 /// The same rule at a commit site, with the direction and whether a shutdown is under way. A Queued request runs when

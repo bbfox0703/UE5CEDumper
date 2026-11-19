@@ -140,7 +140,7 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
         // Share of the operation's own wall-clock spent inside the DLL dispatcher.
         // THE number: high means the DLL is the bottleneck and non-blocking dispatch
         // would help; low means the cost is elsewhere (UI thread, serialisation,
-        // the game thread) and multipipe Phase 1 would not.
+        // the game thread) and non-blocking dispatch would not.
         double busyPct = wallMs > 0 ? busyMs * 100.0 / wallMs : 0.0;
 
         var sb = new StringBuilder();

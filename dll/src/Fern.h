@@ -17,9 +17,9 @@
 // ============================================================
 
 #include <Windows.h>
-#include "Routine.h"   // Routine::SafeThread — ~std::thread on a joinable thread terminates (B14)
-#include "Voll.h"      // Voll::Holder -- who holds the pipe's connections (Stage C)
-#include "Kanne.h"     // Kanne::WatchKey / WatchSlot -- a watch's key and the samples its thread leaves (Stage C)
+#include "Routine.h"   // Routine::SafeThread — ~std::thread on a joinable thread terminates
+#include "Voll.h"      // Voll::Holder -- who holds the pipe's connections
+#include "Kanne.h"     // Kanne::WatchKey / WatchSlot -- a watch's key and the samples its thread leaves
 #include <string>
 #include <thread>
 #include <atomic>
@@ -56,7 +56,7 @@ public:
     }
 
 private:
-    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06] Stage B):
+    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06]):
     // the UI's 2 lanes (interactive + bulk), a rig (tools/verify/pipe_client.py), an MCP
     // client, and 2 for a two-lane reconnect whose old instances are still unwinding (each
     // is closed by its own thread after its command returns). The listener is itself an
@@ -83,7 +83,7 @@ private:
         // and a raw pointer cannot answer "is that same connection still live" once
         // the object is gone and the allocator has reused the address.
         uint64_t           seq{0};
-        // Who connected, and when ([PIPE-PER-PROCESS-2026-11-06] Stage C: pipe_clients and the at-capacity line).
+        // Who connected, and when ([PIPE-PER-PROCESS-2026-11-06]: pipe_clients and the at-capacity line).
         // Written by the accept thread BEFORE the connection is registered in m_conns and never again, so a reader that
         // got it from m_conns needs no lock.
         DWORD              clientPid{0};      // GetNamedPipeClientProcessId; 0 when it failed
@@ -92,7 +92,7 @@ private:
         // Who owns what this connection turns on: its client process, so the UI's two lanes are one owner
         // (Voll::ClientOwnerKey). Set with seq, under m_connMutex, before the connection is registered.
         uint64_t           ownerKey{0};
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: this connection marks its requests "background" (the MCP server).
+        // [PIPE-PER-PROCESS-2026-11-06] This connection marks its requests "background" (the MCP server).
         // Latched by its first such request; what its process holds is released when that process leaves.
         std::atomic<bool>  background{false};
         std::mutex         writeMutex;
@@ -190,7 +190,7 @@ private:
     // copy of the DLL created keeps that copy's limit. This build's until the first instance exists.
     std::atomic<DWORD>      m_capInForce{kMaxPipeInstances};
 
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the connections now, for pipe_clients and the at-capacity log
+    // [PIPE-PER-PROCESS-2026-11-06] Who holds the connections now, for pipe_clients and the at-capacity log
     // line. `selfSeq` marks the asking connection (0: none). Takes m_connMutex only to copy the list.
     std::vector<Voll::Holder> SnapshotHolders(uint64_t selfSeq);
 
@@ -198,13 +198,13 @@ private:
     // MUST be called with m_connMutex ALREADY HELD.
     void ReevaluatePerCommandCancel();
 
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C: what a client process turned on is its own, and goes when the last
+    // [PIPE-PER-PROCESS-2026-11-06] What a client process turned on is its own, and goes when the last
     // connection of that process does. A connection's teardown calls this with its ownerKey. Takes m_profileMu and
     // m_connMutex (in that order) and Schlacht's lock; call it holding none of them.
     void ReleaseOwnedBy(uint64_t owner);
     bool OwnerStillConnected(uint64_t owner);   // takes m_connMutex
 
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the owners (client processes) that mark their requests background, whose
+    // [PIPE-PER-PROCESS-2026-11-06] The owners (client processes) that mark their requests background, whose
     // holds (Voll::HoldLedger) go when they leave. Guarded by m_connMutex; an owner leaves the set when it leaves.
     std::set<uint64_t> m_backgroundOwners;
     bool IsBackgroundOwner(uint64_t owner);     // takes m_connMutex

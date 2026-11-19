@@ -92,7 +92,7 @@
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#888" Margin="0,0,0,4" TextWrapping="Wrap"/>
 
-    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7). -->
+    <!-- Failure surface — see the note in LiveWalkerPanel.axaml. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
                Foreground="#F48771" TextWrapping="Wrap" Margin="0,0,0,4"
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>

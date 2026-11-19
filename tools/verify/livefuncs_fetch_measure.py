@@ -2,11 +2,11 @@ r"""How long `pe_profile_get` takes, and how big its reply is, at the fetch limi
 
     py tools/verify/livefuncs_fetch_measure.py --label <game> [--record-s 60] [--limits 300,512,8192,32768]
 
-`[EXTPR-539-540-2026-10-02]` L1 raises the fetch limit from a fixed 300 to a slider whose max is
-2^15 = 32768. `pe_profile_get` runs on the UI's INTERACTIVE pipe lane, and its reply is one JSON
-line, so while it is being built and sent, Live Walker and every other interactive command wait
-behind it. The plan says to measure this on a game that fires many functions before deciding
-whether the command has to move to the bulk lane -- and not to move it on a guess.
+`[EXTPR-539-540-2026-10-02]` L1 makes the fetch limit a slider whose max is 2^15 = 32768.
+`pe_profile_get` runs on the UI's INTERACTIVE pipe lane, and its reply is one JSON line, so while
+it is being built and sent, Live Walker and every other interactive command wait behind it.
+Whether the command has to move to the bulk lane is decided by measuring this on a game that
+fires many functions -- never on a guess.
 
 What it does, on the game whose DLL is serving the pipe (one game at a time):
 

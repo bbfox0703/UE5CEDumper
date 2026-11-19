@@ -12,9 +12,9 @@ branch be tested at all: no installed game disagrees with our detector except Dr
 disagreement comes from the runtime ladder rather than from the resource.
 
 ⚠ THE DISAGREE RUN IS THE NEGATIVE CONTROL, and it is the half that actually proves something
-(1.2). The agree run passes even if the new code never executes -- detection already returned 504
-for this fixture. Only the disagree run can distinguish "CrashReportClient was read and won" from
-"nothing happened".
+(1.2). The agree run passes even if the CrashReportClient read never executes -- detection returns
+504 for this fixture without it. Only the disagree run can distinguish "CrashReportClient was read
+and won" from "nothing happened".
 
 ⚠ Each run must start from a MISS in the hint cache, or FindAll skips detection entirely and the
 test measures nothing. The fixture's record is removed before every launch and the whole cache is

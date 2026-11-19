@@ -53,10 +53,10 @@ public class ConsoleViewModelTests
         /// <see cref="InvokeResultQueue"/>. A null entry means "do not throw on this call".
         /// A dead pin does not come back as a failed result: DumpService.CheckResponse throws
         /// on the DLL's `ok:false, "Function not found"`, so a fake that can only return
-        /// results cannot express the defect at all.</summary>
+        /// results cannot express that case at all.</summary>
         public Queue<Exception?>? InvokeThrowQueue { get; set; }
 
-        // ── Debug Camera helper plumbing (logic now lives DLL-side; the VM
+        // ── Debug Camera helper plumbing (logic lives DLL-side; the VM
         //    is a thin bridge over these two pipe calls) ─────────────────
         public int NextDebugCameraState { get; set; }          // get_debug_camera_state
         /// <summary>set_debug_camera result; null = echo (enable ? 1 : 0).</summary>
@@ -163,7 +163,7 @@ public class ConsoleViewModelTests
     private const uint FUNC_BlueprintCallable  = 0x0400_0000;
     private const uint FUNC_Native             = 0x0000_0400;
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-26: Enter in the command line runs the typed command, as Run does, and
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] Enter in the command line runs the typed command, as Run does, and
     /// the box's tooltip says so.</summary>
     [Fact]
     public void Command_line_runs_on_Enter()
@@ -188,8 +188,8 @@ public class ConsoleViewModelTests
     }
 
     // ClassAddr is populated because list_all_functions really does supply it per row —
-    // and the handoff events now carry it so MainWindow never re-derives an address from
-    // the CAPPED list_classes page (audit #5 X2).
+    // and the handoff events carry it so MainWindow never re-derives an address from
+    // the CAPPED list_classes page.
     private static List<AllFunctionEntry> BuildSampleEntries() => new()
     {
         // 4 exec entries — different classes + arities
@@ -277,17 +277,16 @@ public class ConsoleViewModelTests
     }
 
     // ==================================================================
-    // Audit #5 Z8 — a capped list_all_functions cannot support a claim
+    // A capped list_all_functions cannot support a claim
     // about the GAME, only about the page that was scanned.
     // ==================================================================
 
     /// <summary>
-    /// The panel used to state "No UFUNCTION(exec) commands found in this game (scanned
-    /// 100,000 functions…)" from a walk that stopped at its row cap, possibly before
-    /// ever reaching the classes in question. The DLL emitted no truncation marker of
-    /// any kind, and the one field that could have exposed it (<c>total_functions</c>)
-    /// is identically <c>entries.size()</c> by construction. With the flag on the wire
-    /// the sentence must become a claim about the SCAN.
+    /// "No UFUNCTION(exec) commands found in this game (scanned 100,000 functions…)" must
+    /// not be said of a walk that stopped at its row cap, possibly before ever reaching
+    /// the classes in question. <c>total_functions</c> cannot expose the cap: it is
+    /// identically <c>entries.size()</c> by construction. With the truncation flag on the
+    /// wire the sentence becomes a claim about the SCAN.
     /// </summary>
     [Fact]
     public async Task Load_with_no_exec_on_a_TRUNCATED_scan_does_not_claim_the_game_has_none()
@@ -398,7 +397,7 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task ClearOnDisconnect_drops_exec_rows_and_resets_status()
     {
-        // X5: a reconnect (often to a different game) must not leave the previous
+        // A reconnect (often to a different game) must not leave the previous
         // game's exec rows — each carries a live ClassAddr the Run action would use.
         var fake = new FakeDumpService
         {
@@ -484,8 +483,8 @@ public class ConsoleViewModelTests
     }
 
     /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's Run button runs ITS row. A click on a button inside a DataGrid cell
-    /// does not select the row (measured on build 3676: "Pick an exec command from the list first." with nothing
-    /// selected), so a button that ran the selection ran whatever row was selected before -- another command.</summary>
+    /// does not select the row (with nothing selected, Run Selected says "Pick an exec command from the list first."),
+    /// so a button that ran the selection would run whatever row was selected before -- another command.</summary>
     [Fact]
     public async Task RunRow_runs_its_own_row_not_the_selected_one()
     {
@@ -524,8 +523,8 @@ public class ConsoleViewModelTests
         Assert.Equal("Fly", fake.LastInvokeFunc);
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] review: the row's Run button no longer shares Run Selected's command, so
-    /// nothing disabled it while a toolbar run was in flight. A second invoke sent while the first waits on a busy game
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] The row's Run button does not share Run Selected's command, so nothing
+    /// disables it while a toolbar run is in flight. A second invoke sent while the first waits on a busy game
     /// thread could run the command twice (a timed-out invoke stays queued), so every run path refuses while one is
     /// in flight.</summary>
     [Fact]
@@ -592,9 +591,9 @@ public class ConsoleViewModelTests
         Assert.Equal(2, vm.History.Count);
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: a refused row Run leaves the selection on the row that is running,
-    /// and the refusal does not call the running command "another" -- it can be the same one, reached through a second
-    /// path, and "run it again" was then the advice that sends it twice.</summary>
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A refused row Run leaves the selection on the row that is running, and the
+    /// refusal does not call the running command "another" -- it can be the same one, reached through a second path,
+    /// and "run it again" would then be the advice that sends it twice.</summary>
     [Fact]
     public async Task RunRow_refused_while_a_run_is_in_flight_leaves_the_selection()
     {
@@ -624,7 +623,7 @@ public class ConsoleViewModelTests
         }
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: the Debug Camera Force and a run of ToggleDebugCamera each queue a
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] The Debug Camera Force and a run of ToggleDebugCamera each queue a
     /// toggle on a busy game thread, and two cancel out. Neither is sent while the other is in flight.</summary>
     [Fact]
     public async Task Force_while_a_run_is_in_flight_sends_nothing()
@@ -671,7 +670,7 @@ public class ConsoleViewModelTests
         }
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: the Force's in-flight flag is cleared when it finishes, whether it
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] The Force's in-flight flag is cleared when it finishes, whether it
     /// answered or threw -- left set, it would refuse every later run.</summary>
     [Theory]
     [InlineData(false)]
@@ -690,7 +689,7 @@ public class ConsoleViewModelTests
         Assert.Equal(1, fake.InvokeCallCount);
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: a Refresh is a state query and toggles nothing, so a run is not
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A Refresh is a state query and toggles nothing, so a run is not
     /// refused while one is in flight -- the reason the Force has its own flag rather than IsDebugCameraBusy.</summary>
     [Fact]
     public async Task A_run_during_a_Refresh_is_sent()
@@ -757,7 +756,7 @@ public class ConsoleViewModelTests
         Assert.Equal("MyGameCheatMgr", capturedClass);
         Assert.Equal("GiveItem", capturedFunc);
         // The row's own UClass address rides along, so the handler never has to look the
-        // class up in the capped list_classes page (audit #5 X2).
+        // class up in the capped list_classes page.
         Assert.Equal("0x2000", capturedAddr);
         Assert.Equal(0, fake.InvokeCallCount);
         Assert.Empty(vm.History);
@@ -830,7 +829,7 @@ public class ConsoleViewModelTests
         await vm.RunCommandTextCommand.ExecuteAsync(null);
 
         Assert.Equal("GiveItem", capturedFunc);
-        Assert.Equal("0x2000", capturedAddr);   // typed-command path carries it too (X2)
+        Assert.Equal("0x2000", capturedAddr);   // typed-command path carries it too
         Assert.Equal(0, fake.InvokeCallCount);
     }
 
@@ -897,7 +896,7 @@ public class ConsoleViewModelTests
     }
 
     // ------------------------------------------------------------------
-    // Sticky-instance pinning (the "Debug Camera won't turn off" fix).
+    // Sticky-instance pinning (so a Debug Camera toggled on can be toggled off).
     //
     // Stateful exec toggles must land on the SAME UObject across invokes.
     // The first invoke resolves by classname (instanceAddr=null); the DLL
@@ -938,8 +937,8 @@ public class ConsoleViewModelTests
     }
 
     // [FINDINSTANCE-SUBSTRING-USERFACING] A class name resolves to the class's own default object when nothing of it is
-    // live, and to the Debug Camera's object when that is the only live one. Pinning either kept every later run of the
-    // class on it -- after a CheatManager spawned, after the Debug Camera was destroyed. Those picks re-resolve instead.
+    // live, and to the Debug Camera's object when that is the only live one. Pinning either would keep every later run
+    // of the class on it -- after a CheatManager spawned, after the Debug Camera was destroyed. Those picks re-resolve.
 
     private async Task<(FakeDumpService fake, ConsoleViewModel vm)> RunFlyThenGod(string pick)
     {
@@ -1071,8 +1070,8 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task A_live_pick_from_a_contract7_dll_is_pinned_control()
     {
-        // Review of bfdd4116: a new DLL always sends instance_template "" for a live object; `template is null` would have
-        // pinned nothing against it, and only an older DLL's null was tested.
+        // A current DLL always sends instance_template "" for a live object; a `template is null` check would pin
+        // nothing against it, and an older DLL's null alone would not show that.
         var (fake, _) = await RunFlyThenGodWith(new InvokeFunctionResult
         {
             Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "live",
@@ -1086,7 +1085,7 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task A_pin_whose_run_comes_back_as_a_template_is_dropped()
     {
-        // Review of bfdd4116: a pin is made only from a live object, but a pinned run answering "template" kept it.
+        // A pin is made only from a live object, so a pinned run answering "template" must not keep it.
         var fake = new FakeDumpService
         {
             NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
@@ -1167,7 +1166,7 @@ public class ConsoleViewModelTests
         Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("partial_name", "X_0", "X"));
         Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
                      InvokePickText.Note("class_default", "Default__X", "X"));
-        // Review of fbedfa9a: a partial-name pick that is a default object is one too, with no live object of its class.
+        // A partial-name pick that is a default object is one too, with no live object of its class.
         Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
                      InvokePickText.Note("partial_name_default", "Default__X", "X"));
         Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
@@ -1176,7 +1175,7 @@ public class ConsoleViewModelTests
 
     // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The pin is an address, and the DLL looks the function up by name on whatever
     // object sits there: a pinned object freed and its memory reused by an object of another class with a same-named
-    // function ran that one. The pin now keeps the class the DLL read at the address, and a pinned run sends it.
+    // function would run that one. The pin keeps the class the DLL read at the address, and a pinned run sends it.
 
     [Fact]
     public async Task APinnedRun_SendsTheClassThePinnedObjectHad()
@@ -1198,7 +1197,7 @@ public class ConsoleViewModelTests
         await vm.RunSelectedCommand.ExecuteAsync(null);
 
         Assert.Equal(new string?[] { null, "0x1A2B3C" }, fake.InstanceAddrHistory);
-        Assert.Equal(new string?[] { null, "0xC0DE" }, fake.ExpectClassHistory);   // was { null, null }
+        Assert.Equal(new string?[] { null, "0xC0DE" }, fake.ExpectClassHistory);   // not { null, null }
     }
 
     [Fact]
@@ -1287,9 +1286,9 @@ public class ConsoleViewModelTests
     public async Task DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin()
     {
         // [W3-CONSOLE-REINVOKE] -5 is the game-thread dispatch TIMEOUT, and the DLL says verbatim
-        // "The request stays queued" (Stark.cpp): it WILL run when the game thread drains. The
-        // self-heal retry fired on every non-zero code, so a -5 enqueued the same exec command a
-        // second time and a stateful one (give, spawn, teleport) ran twice.
+        // "The request stays queued" (Stark.cpp): it WILL run when the game thread drains. A
+        // self-heal retry on every non-zero code would enqueue the same exec command a second
+        // time on a -5, and a stateful one (give, spawn, teleport) would run twice.
         var fake = new FakeDumpService
         {
             NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
@@ -1318,8 +1317,7 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task StalePin_minus4_is_still_retried()
     {
-        // The half of the finding the row REFUSES: a stale pin produces -2 / -4, never -5, so -4
-        // must keep self-healing. Green before and after.
+        // The other half: a stale pin produces -2 / -4, never -5, so -4 must keep self-healing.
         var fake = new FakeDumpService
         {
             NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
@@ -1346,13 +1344,13 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task StalePin_that_THROWS_still_self_heals()
     {
-        // [CONSOLE-PIN-THROWS] The defect: a pin whose object is gone does not come back as a
-        // failed RESULT. The DLL reads the class from the instance and then the function from
-        // that class, and on freed-and-reused memory the class read succeeds with a garbage
+        // [CONSOLE-PIN-THROWS] A pin whose object is gone does not come back as a failed
+        // RESULT. The DLL reads the class from the instance and then the function from that
+        // class, and on freed-and-reused memory the class read succeeds with a garbage
         // pointer while the lookup fails -- so it answers `ok:false, "Function not found"` and
-        // DumpService.CheckResponse THROWS. The retry was gated on `!result.Success`, so control
-        // jumped to the outer catch, the pin was never dropped, and the command stayed broken
-        // until the user pressed Load. Measured live on 2026-09-17.
+        // DumpService.CheckResponse THROWS. A retry gated only on `!result.Success` would jump
+        // to the outer catch, never drop the pin, and leave the command broken until the user
+        // pressed Load.
         var fake = new FakeDumpService
         {
             NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
@@ -1441,7 +1439,7 @@ public class ConsoleViewModelTests
     [Fact]
     public async Task DispatchTimeout_on_the_self_heal_retry_is_reported_as_queued()
     {
-        // (review of 3561c93c) A stale pin (-4) triggers the self-heal, and the class-name retry goes
+        // A stale pin (-4) triggers the self-heal, and the class-name retry goes
         // through the same queued dispatch, so it can time out too. That queued retry WILL run: it
         // needs the note, and it must not be sent a third time.
         var fake = new FakeDumpService
@@ -1566,7 +1564,7 @@ public class ConsoleViewModelTests
                 FunctionFlags=FUNC_Exec | FUNC_Native2, NumParms=0, ParmsSize=0 },
     };
 
-    // The two-hop state read + controller-swap now live DLL-side; the VM is a
+    // The two-hop state read + controller-swap live DLL-side; the VM is a
     // thin bridge over GetDebugCameraStateAsync / SetDebugCameraAsync. These
     // tests assert the VM calls the right pipe op and maps the tri-state
     // (1=ON / 0=OFF / -1=unknown) onto the badge + status.
@@ -1636,8 +1634,8 @@ public class ConsoleViewModelTests
     public async Task ForceOn_whose_toggle_ran_on_the_class_default_object_says_so()
     {
         // [INVOKE-NONSTATIC-ON-CDO] With no live CheatManager (a Shipping build) the toggle runs on its class default
-        // object and does nothing; the line used to say only "the game may re-drive the camera". Only a DLL from builds
-        // 3676-3681 answers this way: a newer one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).
+        // object and does nothing, and the line must say so, not only "the game may re-drive the camera". Only an older
+        // DLL answers this way: a current one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).
         var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = true };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
@@ -1715,7 +1713,7 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         // [DEBUGCAM-FORCEON-CDO] -1 is a read or a toggle that failed; "no live CheatManager" is -17's, and it never
-        // came back as -1 (that read lands on the class default object and answers 0 or 1).
+        // comes back as -1 (that read lands on the class default object and answers 0 or 1).
         Assert.Contains(DebugCameraText.ForceFailed(wantOn: true), vm.StatusText, StringComparison.Ordinal);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
     }
@@ -1742,10 +1740,10 @@ public class ConsoleViewModelTests
     public async Task Force_reports_a_queued_toggle_as_queued_not_as_a_failure()
     {
         // [W3-DEBUGCAM-QUEUED] -5: the toggle timed out on the game thread and STAYS QUEUED -- it will run. Read as "no
-        // live CheatManager", it invited a second Force ON, which queued a second toggle behind the first.
+        // live CheatManager", it would invite a second Force ON, which queues a second toggle behind the first.
         // [DBGCAM-QUEUEDON-UNDO-TEXT] The advice not to press again stays, but its reason must hold on every engine: what
         // the second toggle does when it drains depends on the engine (on stock UE 4.18-5.7 nothing, by
-        // [DEBUGCAM-QUEUED-OFF-NOESCALATE]'s reading), so "a second toggle would undo the first" was not the reason.
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE]'s reading), so "a second toggle would undo the first" is not the reason.
         var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
@@ -1790,7 +1788,7 @@ public class ConsoleViewModelTests
         // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's
         // CheatManager, which on stock UE 4.18-5.7 can only enable -- only a COMPLETED OFF's swap back turns it off.
         // So the text must not say it will run, and must ask for Force OFF again once the game responds.
-        // (review) Nor may the badge: "Queued" read as an OFF on its way. The DLL queues an OFF only after reading the
+        // Nor may the badge: "Queued" reads as an OFF on its way. The DLL queues an OFF only after reading the
         // camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on -- so the badge reads ON.
         var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake);
@@ -1804,8 +1802,8 @@ public class ConsoleViewModelTests
         Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
     }
 
-    // [DBGCAM-OFF-OVER-QUEUED-ON] review: -6 is a Force the DLL did NOT send, because an earlier one of the other direction
-    // is still queued. Read as -5 it described a toggle of its own direction as queued; as an unknown code, a refusal.
+    // [DBGCAM-OFF-OVER-QUEUED-ON] -6 is a Force the DLL did NOT send, because an earlier one of the other direction is
+    // still queued. Read as -5 it would describe a toggle of its own direction as queued; as an unknown code, a refusal.
     // An OFF over a queued ON: the camera is not on yet, the ON will turn it on -- the badge reads Queued, as the ON's did.
     // An ON over a queued OFF: the camera is still on -- the badge reads ON.
     [Theory]
@@ -1858,8 +1856,8 @@ public class ConsoleViewModelTests
     [Fact]
     public void IsExec_decoder_matches_FUNC_Exec_bit()
     {
-        // Belt-and-braces guard against the wrong bit literal — historically
-        // 0x4 was confused for FUNC_Exec (it's actually FUNC_BlueprintAuthorityOnly).
+        // Belt-and-braces guard against the wrong bit literal — 0x4 is easily
+        // confused for FUNC_Exec (it's actually FUNC_BlueprintAuthorityOnly).
         // UE5 ObjectMacros.h: FUNC_Exec = 0x00000200.
         var exec = new AllFunctionEntry { FunctionFlags = 0x0000_0200 };
         Assert.True(exec.IsExec);
@@ -1988,12 +1986,11 @@ public class ConsoleViewModelTests
         Assert.False(vm.ShowCheatManagerHint);
     }
 
-    // [CONSOLE-CHEATMGR-HINT] The warning's text used to be a C# literal that ended
-    // "See memory feedback_ucheatmanager_stripped." -- a developer's private note name,
-    // meaningless to every user. The text now lives only in en.axaml and the panel binds
-    // it with StaticResource; these pin the key, its wording and the binding.
+    // [CONSOLE-CHEATMGR-HINT] The warning's text lives only in en.axaml and the panel binds
+    // it with StaticResource; it must name no developer's private note (a "See memory ..."
+    // pointer is meaningless to every user). These pin the key, its wording and the binding.
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-28: the Console's tooltips name the parameter dialog by the title the user
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The Console's tooltips name the parameter dialog by the title the user
     /// sees, not by its C# class.</summary>
     [Theory]
     [InlineData("str.Tip.Con.CommandInput")]
@@ -2040,9 +2037,9 @@ public class ConsoleViewModelTests
     /// <summary>
     /// The OVER-SWAP control for [FUNCDENOM-2026-08-26]. Two of this panel's three
     /// sentences read as PROVENANCE ("N functions from M classes") and must quote the
-    /// CONTRIBUTING count; the third says "N classes scanned", which was always correct
-    /// and must keep quoting the EXAMINED count. A fix that swapped all three would be
-    /// wrong in the opposite direction, and nothing else would catch it.
+    /// CONTRIBUTING count; the third says "N classes scanned", which must keep quoting the
+    /// EXAMINED count. A change that swapped all three would be wrong in the opposite
+    /// direction, and nothing else would catch it.
     /// </summary>
     [Fact]
     public async Task The_scanned_sentence_keeps_the_examined_count_while_provenance_uses_contributing()

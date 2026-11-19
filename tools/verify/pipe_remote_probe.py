@@ -5,14 +5,14 @@ r"""Who can open the DLL's named pipe: local vs remote clients, default vs expli
     py tools/verify/pipe_remote_probe.py live --pid N   # that game's, when several run
 
 WHY THIS RIG EXISTS ([PIPE-REJECT-REMOTE], docs/todo.md)
-  Fern created its pipe without PIPE_REJECT_REMOTE_CLIENTS, so a client holding this user's (or an
-  admin's) credentials on ANOTHER machine could open \\host\pipe\UE5DumpBfx_<pid> over SMB and drive the
-  DLL. Proving the fix needs a remote client, and this PC has no second machine on hand. It does
-  not need one: an open of \\localhost\pipe\<name> goes through this machine's own SMB server
-  (LanmanServer / srv2), and the pipe treats it as a remote client: PIPE_REJECT_REMOTE_CLIENTS
-  refuses it. Its TOKEN is not a remote one, though: measured 2026-11-06, the loopback client
-  presents the caller's own interactive token (INTERACTIVE, no NETWORK), so it stands in for a
-  remote host on the remote bit but not on a deny-NETWORK ACE -- `matrix` says so when it runs.
+  A pipe created without PIPE_REJECT_REMOTE_CLIENTS lets a client holding this user's (or an
+  admin's) credentials on ANOTHER machine open \\host\pipe\UE5DumpBfx_<pid> over SMB and drive the
+  DLL. Proving the fix needs a remote client, but not a second machine: an open of
+  \\localhost\pipe\<name> goes through this machine's own SMB server (LanmanServer / srv2), and the
+  pipe treats it as a remote client: PIPE_REJECT_REMOTE_CLIENTS refuses it. Its TOKEN is not a
+  remote one, though: the loopback client presents the caller's own interactive token
+  (INTERACTIVE, no NETWORK), so it stands in for a remote host on the remote bit but not on a
+  deny-NETWORK ACE -- `matrix` says so when it runs.
 
   ⚠ A REFUSED remote open proves nothing on its own. If the SMB server is stopped, or policy blocks
   loopback, EVERY \\localhost open fails, and "refused" reads like the flag working. Both modes
@@ -21,8 +21,8 @@ WHY THIS RIG EXISTS ([PIPE-REJECT-REMOTE], docs/todo.md)
 
 WHAT `matrix` MEASURES (no game needed)
   Four probe pipes this process serves, each opened locally (\\.\pipe) and remotely (\\localhost):
-    default SD                 -- what Fern had: nullptr security, no flag (the control)
-    default SD + flag          -- what Fern ships after [PIPE-REJECT-REMOTE]
+    default SD                 -- nullptr security, no flag (the control)
+    default SD + flag          -- what Fern ships with [PIPE-REJECT-REMOTE]
     explicit DACL              -- the candidate: deny NETWORK, allow SYSTEM + this user
     explicit DACL + flag
   It also prints this token's user / owner / integrity / elevation and the SDDL that nullptr
@@ -212,8 +212,8 @@ def say(line):
 
 def sddl_of(handle):
     """The handle's owner, group, DACL and label as SDDL. SE_KERNEL_OBJECT, not SE_FILE_OBJECT: on a
-    probe pipe with the DEFAULT descriptor the file-object path failed with err 87 for every request,
-    the DACL alone included, while the kernel-object path read the same handle (2026-11-06)."""
+    probe pipe with the DEFAULT descriptor the file-object path fails with err 87 for every request,
+    the DACL alone included, while the kernel-object path reads the same handle."""
     what = (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
             | LABEL_SECURITY_INFORMATION)
     psd = ctypes.c_void_p()

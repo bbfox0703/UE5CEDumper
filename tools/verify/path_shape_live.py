@@ -6,7 +6,7 @@
 
 WHAT `run` CHECKS, per exe-name shape (one game at a time; each is killed before the next starts):
   * the DLL answering is dist's build (pipe_client.assert_build -- a stale proxy serves a confident wrong answer);
-  * `module_name` is the exe's REAL name, UTF-8 ([PATH-MODULE-NAME-UTF8]; it used to be '?' for every char >= 128);
+  * `module_name` is the exe's REAL name, UTF-8 ([PATH-MODULE-NAME-UTF8]; not '?' for every char >= 128);
   * `get_ce_pointer_info`'s `ce_base` names the module as CE does -- the ANSI Module32First view: narrowed to the
     system code page ('?' for a character it lacks) and cut after the LAST 0x5C byte (Big5 功 = A5 5C, so
     功夫-… is 夫-… to CE) ([PATH-CE-MODULE-VIEW] / MODVIEW-5C-TRAIL);
@@ -130,9 +130,9 @@ def check_one(work, exe):
     try:
         c.connect(retries=90, delay=1.0)   # not `with`: its connect gives a booting game only 10 retries
         c.assert_build()
-        # Let the engine BOOT first (handover 3: a process that exists is not a game that booted). Measured
-        # 2026-09-25: a trigger_scan ~1 s after launch hit 'RunScan: UNCAUGHT non-standard exception -- contained'
-        # in 4 of 5 launches and never rescanned. Wait, then retrigger a scan that came back empty.
+        # Let the engine BOOT first (handover 3: a process that exists is not a game that booted). A trigger_scan
+        # ~1 s after launch can hit 'RunScan: UNCAUGHT non-standard exception -- contained' and never rescan.
+        # Wait, then retrigger a scan that came back empty.
         time.sleep(BOOT_WAIT_S)
         ptr = None
         for attempt in range(1, SCAN_TRIES + 1):

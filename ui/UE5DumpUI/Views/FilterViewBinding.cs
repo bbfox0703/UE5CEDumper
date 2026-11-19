@@ -17,14 +17,14 @@ namespace UE5DumpUI.Views;
 /// Scrolling a row to the TOP: <c>ScrollIntoView</c> means "make visible", and a row BELOW the
 /// viewport lands on the bottom edge while a row ABOVE it lands on the top edge. After a rebuild
 /// the control is at its first row, so it is scrolled to the last row first; the target is then
-/// above the viewport and comes back as the first visible row (the recipe `[LW-BACK-SCROLL]`
-/// measured on the Live Walker grid).
+/// above the viewport and comes back as the first visible row (the Live Walker grid's
+/// `[LW-BACK-SCROLL]` recipe).
 /// </remarks>
 public static class FilterViewBinding
 {
     /// <summary>Where every restore decision is logged (Debug, "view"), set once at startup: the
-    /// selection and scroll outcome is timing-dependent and only visible on a live UI, and the
-    /// first failure measured on it could not be explained without it.</summary>
+    /// selection and scroll outcome is timing-dependent and only visible on a live UI, so a
+    /// failure there cannot be explained without this log.</summary>
     public static ILoggingService? Log { get; set; }
 
     /// <summary>Attach <paramref name="grid"/> to the keeper <paramref name="pick"/> returns from
@@ -142,7 +142,7 @@ public static class FilterViewBinding
             if (queue.IsNewest(ticket)) scrollIntoView(row);
         }
 
-        // After the rebuild's own layout pass, like every restore in this UI.
+        // After the rebuild's own layout pass.
         Dispatcher.UIThread.Post(() =>
         {
             if (!queue.Begin(ticket))

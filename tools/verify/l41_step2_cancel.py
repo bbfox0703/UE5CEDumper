@@ -6,7 +6,7 @@ walk must detect the names -- on DumperTest58 (UE 5.8), where the default Legacy
 
 PRECONDITIONS (the rig refuses or reports vacuity otherwise): a FRESH game process (the detection flags latch per
 process), injected with a staged DLL that stalls the first DetectUEnumNames search 3 s --
-`out\staged\l41-step2-first-search-stall` (HEAD's fix, green) or `out\staged\l41-step2-prefix-stall` (7e5a71fc
+`out\staged\l41-step2-first-search-stall` (with the fix, green) or `out\staged\l41-step2-prefix-stall` (7e5a71fc
 reversed + defcb56e's guards removed, red). NO UI connected: it would make the first enum lookup itself.
 
 WHAT IT DOES. A PipeClient resolves the live DumperTest58Actor (find_instances touches no enum) and disconnects.
@@ -16,8 +16,8 @@ The server's monitor must log `client gone mid-command` in pipe-0.log (anti-vacu
 never seen in flight and the run measured nothing). After the stall, a fresh PipeClient walks the same actor
 again. The rig reports, from the lines each log gained during the run, and from that second walk:
 
-  * offsets-0.log: `search cancelled ... not latching FAILED` (fixed) vs `DetectUEnumNames: FAILED` (pre-fix);
-    `UEnum::Names detected at UEnum+0x40 (UE5.6+ FNameData ...)` after the reconnect walk (fixed);
+  * offsets-0.log: `search cancelled ... not latching FAILED` (with the fix) vs `DetectUEnumNames: FAILED`
+    (without it); `UEnum::Names detected at UEnum+0x40 (UE5.6+ FNameData ...)` after the reconnect walk (with it);
   * walk-0.log: `has no cached table -- truncated read, retry pending` must be ABSENT;
   * the second walk's enum fields (Role / RemoteRole ...): a non-empty `enum_name` and `enum_entries`.
 """

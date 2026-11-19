@@ -6,10 +6,10 @@ namespace UE5DumpUI.Services;
 /// The C++ name of every TYPE the SDK header spells — a struct's own name, its super, and every
 /// pointee / struct / enum a member names — so a definition and every reference to it agree.
 ///
-/// <para>They were emitted verbatim. Measured on a real whole-pool export (DumperTest 5.4, 7,894
-/// structs): every AnimBlueprint carries its own <c>AnimBlueprintGeneratedConstantData</c>, so two
-/// AnimBPs define one struct twice (C2011), and a child AnimBP's came out as
-/// <c>struct X : public X</c>. <c>NameTypes.h</c>'s <c>INVALID_OBJECTNAME_CHARACTERS</c> allows
+/// <para>A pool name emitted verbatim breaks the header: every AnimBlueprint carries its own
+/// <c>AnimBlueprintGeneratedConstantData</c>, so two AnimBPs would define one struct twice (C2011),
+/// and a child AnimBP's would come out as <c>struct X : public X</c>. <c>NameTypes.h</c>'s
+/// <c>INVALID_OBJECTNAME_CHARACTERS</c> allows
 /// <c>-</c>, so an asset name can carry one into a class name; and a pool type named like a type
 /// this header spells itself (<c>TArray</c>) collides with it (C2990).</para>
 ///
@@ -153,7 +153,7 @@ internal sealed class SdkTypeNames
                 foreach (int h in fitting)
                 {
                     // The first token is the mount point (Game, Script): every /Game type shares it, so
-                    // it is not locality -- counting it made any /Game holder beat the engine's own.
+                    // it is not locality -- counting it would let any /Game holder beat the engine's own.
                     int shared = Math.Max(0, CommonPrefix(_pathTokens[h], from) - 1);
                     int score = shared * 2 + (IsNative(h) ? 1 : 0);
                     if (score > bestScore || (score == bestScore && Before(h, best)))

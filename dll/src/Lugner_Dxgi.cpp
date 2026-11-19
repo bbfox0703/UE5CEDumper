@@ -132,7 +132,7 @@ extern "C" void DxgiProxy_EnsureResolved()
     // the measured stack. Bail out and let the nested thunk answer 0 without forwarding.
     //
     // ⚠ There is NO LOCK here: an SRWLOCK across LoadLibraryW self-deadlocks on exactly that
-    // re-entry. None is needed, for the same reason as in winmm (B43): the stores are aligned
+    // re-entry. None is needed, for the same reason as in winmm: the stores are aligned
     // and pointer-sized, racers write identical values, and the thunk's own null test is what
     // stops anyone seeing a half-filled table.
     Lugner::ResolveReentry guard;
@@ -140,10 +140,10 @@ extern "C" void DxgiProxy_EnsureResolved()
 
     wchar_t realPath[MAX_PATH] = {};
     // false => refuse, rather than format an empty buffer into a drive-root-relative
-    // `\dxgi.dll`. (AD18)
+    // `\dxgi.dll`.
     HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
                  ? LoadLibraryW(realPath) : nullptr;
-    // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
+    // Captured AT the failure, before GetProcAddress/logging clobber it.
     const DWORD loadErr = real ? 0 : GetLastError();
     int resolved = 0;
     if (real) {

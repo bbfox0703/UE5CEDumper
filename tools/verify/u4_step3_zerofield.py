@@ -4,9 +4,9 @@ r"""U4 step 3 -- a legitimately ZERO-FIELD UScriptStruct must still be MEMOIZED.
     py tools/verify/u4_step3_zerofield.py survey     # just the survey
 
 THE PREDICATE UNDER TEST
-  ShouldPublishClassWalk (dll/src/Ubel.h:550) is
+  ShouldPublishClassWalk (dll/src/Ubel.h) is
       propsSizeReadOk && IsPlausiblePropertiesSize(propertiesSize)
-  and its own comment (Ubel.h:541-545) says why it may NOT be tightened:
+  and its own header comment in Ubel.h says why it may NOT be tightened:
       * NEVER gate on Fields.empty() -- InjectIntrinsicStructFields exists precisely
         because an empty field list is a LEGITIMATE outcome (FDateTime/FTimespan and
         every UCLASS that declares no own UPROPERTYs).
@@ -16,9 +16,11 @@ THE PREDICATE UNDER TEST
   cached, while a non-UStruct address is still refused?
 
 WHAT IS OBSERVED, AND WHY IT CANNOT BE FAKED
-  A COLD walk logs two lines (dll/src/Ubel.cpp:904 and :980); a cache HIT logs neither,
+  A COLD walk logs two lines (WalkClassImpl's "WalkClass: <name> (super=..." header and
+  its "WalkClass: <name> — N fields" line, dll/src/Ubel.cpp); a cache HIT logs neither,
   because WalkClass returns from the memo before reaching them. So "walked 4x, logged
-  once" IS the memo, observed rather than asserted. The refusal line is Ubel.cpp:1007.
+  once" IS the memo, observed rather than asserted. The refusal line is WalkClassImpl's
+  "WalkClass: refusing to cache" Warn.
 
   Negative control, free and in the same run: an INSTANCE address is not a UStruct, so
   it must be refused every time -- 4 walks, 4 refusals, 4 cold walks, never memoized.
@@ -26,9 +28,8 @@ WHAT IS OBSERVED, AND WHY IT CANNOT BE FAKED
 
   ⚠ THE SURVEY IS THE OTHER HALF OF THE TEST. `walk_class` returns its payload NESTED
   under "class"; reading `fields` off the TOP level returns [] for every object, which
-  reports all 500 ScriptStructs as field-less and would pick a garbage fixture while
-  looking like a rich survey. Measured while writing this: 500/500 "zero-field" via the
-  top level vs 68/500 read correctly. Hence `props_size > 0` and a non-empty name are
+  reports every ScriptStruct as field-less and would pick a garbage fixture while
+  looking like a rich survey. Hence `props_size > 0` and a non-empty name are
   required of a candidate -- a struct with real storage and a resolved name cannot be a
   read failure masquerading as an empty struct.
 """

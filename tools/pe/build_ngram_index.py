@@ -211,9 +211,9 @@ def write_index(path, meta, ns, threshold, tables):
 
     FORMAT 2 stores each table COLUMN by column — every record's first key byte, then every second
     byte, ... then every bucket — instead of record by record. The keys are sorted, so the leading
-    columns are long runs and gzip takes them almost for free: the same 107.0 MB of records is
-    26.5 MB this way against 51.4 MB as rows (measured 2026-10-01, 126 sources). The reader turns
-    the columns back into rows in memory, so lookups are unchanged.
+    columns are long runs and gzip takes them almost for free: about half the compressed size of
+    the same records stored as rows. The reader turns the columns back into rows in memory, so
+    lookups are unchanged.
 
     Key bytes are big-endian so lexicographic byte order == numeric order, which lets the query
     tool binary-search the records with no unpacking. gzip, because it is stdlib and the query

@@ -1,17 +1,17 @@
-r"""Live arm for the audit-#4 fix pass, on DumperTest **Shipping**.
+r"""Live arm for the fix-pass rows below, on DumperTest **Shipping**.
 
     py tools/verify/a4_fixpass_arm.py
 
-⛔ WHAT THIS CAN AND CANNOT DECIDE, said first because most of the eight rows are NOT
+⛔ WHAT THIS CAN AND CANNOT DECIDE, said first because most of the rows are NOT
 reachable from the pipe and a rig that quietly skips them would read as a clean bill.
 
   REACHABLE HERE
-    [SOLIDE-REFUSAL]   MANUFACTURABLE. A K_OBJECT_NULL hold on a Soft/Lazy pointer (and,
-                       since 2026-09-24, no longer on an 8-byte Weak one, which is held at UE's
-                       own reset value) is type-refused on every instance -- FR_ERR_WEAK_PTR.
+    [SOLIDE-REFUSAL]   MANUFACTURABLE. A K_OBJECT_NULL hold on a Soft/Lazy pointer (but
+                       not on an 8-byte Weak one, which is held at UE's own reset value)
+                       is type-refused on every instance -- FR_ERR_WEAK_PTR.
                        Arm it TWICE: the first call is `newlyAdded`, the second is the
-                       RE-ARM that used to answer plain held=0 and make the UI say "no live
-                       instance ... exists right now".
+                       RE-ARM, which must not answer plain held=0 -- the UI would then say
+                       "no live instance ... exists right now".
     anti-over-shout    Both teleport flags must be ABSENT on a healthy read. A fix that
                        always sets them would pass a naive "the field exists" check and cry
                        wolf on every pawn in the game.
@@ -55,19 +55,18 @@ def main() -> int:
             return 2
 
         # ── [SOLIDE-REFUSAL] ────────────────────────────────────────────────────
-        # ⛔ THE OBVIOUS REPRODUCER DOES NOT REACH THE FIX, and a before/after is what
-        #    proved it. Arming a PERMANENTLY-refused field twice looks like a re-arm and is
-        #    not one: arm #1 is refused, the job is ERASED (it never persisted), so arm #2
-        #    is another `newlyAdded`. Measured pre-fix and post-fix on rebuilt DLLs: both
-        #    returned -12, i.e. no difference, because the re-arm branch never ran.
+        # ⛔ THE OBVIOUS REPRODUCER DOES NOT REACH THE FIX. Arming a PERMANENTLY-refused
+        #    field twice looks like a re-arm and is not one: arm #1 is refused, the job is
+        #    ERASED (it never persisted), so arm #2 is another `newlyAdded` -- it returns
+        #    -12 with or without the fix, because the re-arm branch never runs.
         #
         #    The real sequence needs a hold that SUCCEEDS first, so the job persists, and
         #    is then refused on a re-arm with a different kind:
         #      1. force MaxWalkSpeed as `numeric`  -> holds on the live CMCs, job persists
         #      2. re-arm the SAME field as `object_null` -> refused (a FloatProperty is not
         #         a strong ObjectProperty), lastRefusal set, newlyAdded FALSE
-        #    Pre-fix that answered code 0 / held 0, which PropertySearch renders as the
-        #    positively false "no live instance ... exists right now".
+        #    A build without the fix answers code 0 / held 0 there, which PropertySearch
+        #    renders as the positively false "no live instance ... exists right now".
         print()
         print('[SOLIDE-REFUSAL] hold a field, then RE-ARM it with a refused kind')
         CN, FN = 'CharacterMovementComponent', 'MaxWalkSpeed'
@@ -89,7 +88,7 @@ def main() -> int:
             check('[SOLIDE-REFUSAL] ⭐ the RE-ARM reports the refusal, not a silent held=0',
                   (second.get('code') or 0) < 0, str(second.get('code')))
         finally:
-            # ⚠ MaxWalkSpeed was really written on 7 live components -- restore, always.
+            # ⚠ MaxWalkSpeed was really written on the live components -- restore, always.
             c.request('reset_field', class_name=CN, field_name=FN)
             left = c.request('get_forced_fields')
             n_left = len(left.get('fields') or left.get('results') or [])

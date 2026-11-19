@@ -1,31 +1,30 @@
-r"""Audit A6 — `UBoolProperty::FieldSize` is now DERIVED, on a live UProperty-mode game.
+r"""`UBoolProperty::FieldSize` is DERIVED, checked on a live UProperty-mode game.
 
     py tools/verify/a6_boolfieldsize.py "<LogFolderName>"
     py tools/verify/a6_boolfieldsize.py "DRAGON QUEST XI S"          # the positive host
     py tools/verify/a6_boolfieldsize.py Octopath_Traveler-Win64-Shipping   # negative control
 
-THE QUESTION. `c0b4e709`: `DynOff::UBOOLPROP_FIELDSIZE` had ZERO writers repo-wide against nine
-readers, so every UE4 <4.25 game kept the `0x70` default no matter what its `Offset_Internal`
-actually probed to. It is now derived from the probe (`Genau.cpp` `ValidateAndFixOffsets`), with a
-version-dependent delta -- `0x28` for 4.11-4.17, `0x2C` for 4.18+, `+8` more under
-CasePreservingName.
+THE QUESTION. `DynOff::UBOOLPROP_FIELDSIZE` is derived from the probe (`Genau.cpp`
+`ValidateAndFixOffsets`), with a version-dependent delta -- `0x28` for 4.11-4.17, `0x2C` for
+4.18+, `+8` more under CasePreservingName. Without the derivation, every UE4 <4.25 game would keep
+the `0x70` default no matter what its `Offset_Internal` actually probed to.
 
-WHY A SHIFTED HOST IS REQUIRED. On a stock layout the derived value equals the old default
+WHY A SHIFTED HOST IS REQUIRED. On a stock layout the derived value equals the `0x70` default
 (`0x44 + 0x2C == 0x70`), so a stock title is a NEGATIVE CONTROL and cannot show a behaviour change.
 DQ XI S carries a whole-layout `+0x10` shift: `Offset_Internal` probes to `+0x54`, so the true
 FieldSize is `0x80` -- and Ubel's probe spread is `{base, base-4, base+4, base+8, base-8}`, i.e.
-`{0x68, 0x6C, 0x70, 0x74, 0x78}` around the old `0x70`. `0x80` is ABOVE that ceiling, so before this
-fix NO probe could reach it: `boolFieldMask` stayed 0 and every native bitfield bool fell back to
-`byteVal != 0`, which reports a bool as **true whenever any sibling in its byte is set**.
+`{0x68, 0x6C, 0x70, 0x74, 0x78}` around a `0x70` base. `0x80` is ABOVE that ceiling, so without the
+derivation NO probe can reach it: `boolFieldMask` stays 0 and every native bitfield bool falls back
+to `byteVal != 0`, which reports a bool as **true whenever any sibling in its byte is set**.
 
 ⛔ THE UI OBSERVABLE IS THE **LIVE WALKER**, NOT ClassStructPanel. The register row says
 "ClassStructPanel | two sibling bitfield bools showing DIFFERENT values". ClassStructPanel renders
-NO value column at all -- its DataGrid is Offset / Name / Type / Size / Address and nothing else
-(`ClassStructPanel.axaml:108-125`), so no bool value and no mask can ever appear there. What exists
-is `WalkInstance`'s value: `"%s (bit %d, mask 0x%02X)"` when the FieldSize probe landed
-(`Ubel.cpp:5162-5170`), and a bare `"true"`/`"false"` when it did not. That suffix is a DIRECT
-readout of whether the probe landed, so ONE field settles it -- the "two siblings with different
-values" construction is both harder to stage and weaker as evidence.
+NO value column at all -- its DataGrid is Offset / Name / Type / Size / Address and an xref button
+(`ClassStructPanel.axaml` `ClassFieldsGrid`), so no bool value and no mask can ever appear there.
+What exists is `WalkInstance`'s value: `"%s (bit %d, mask 0x%02X)"` when the FieldSize probe landed
+(`Ubel.cpp` `WalkInstance`, its BoolProperty branch), and a bare `"true"`/`"false"` when it did not.
+That suffix is a DIRECT readout of whether the probe landed, so ONE field settles it -- the "two
+siblings with different values" construction is both harder to stage and weaker as evidence.
 
 ⭐ THE STRONGEST FORM, and this rig looks for it: a native C++ bitfield packs siblings into one
 byte, so a landed probe yields masks marching `0x01, 0x02, 0x04 ... 0x80` across bits 0-7 on ONE

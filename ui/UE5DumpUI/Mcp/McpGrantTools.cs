@@ -4,14 +4,14 @@ using System.Text.Json.Nodes;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phases 1, 1b and 2. The tools that give, list and end the session's write grants: the
+/// [MCP-WRITE-GRANTS-2026-11-14] The tools that give, list and end the session's write grants: the
 /// two kind grants, an invoke grant naming one UFunction, and a field grant naming one field of one class.
 ///
 /// <para><b>A grant tool is where the user is asked.</b> Claude Code's prompt shows a tool's name and its arguments,
-/// nothing else (Phase 0, M1 and M10), so each grant's name states what it unlocks, and its one required argument,
-/// <c>scope_ack</c>, must be a fixed sentence that says the same and how long it lasts: the user approves those words,
-/// not a summary the model wrote. Both are destructive (they unlock destructive tools), so a host that runs
-/// non-destructive tools on its own does not approve consent on the user's behalf.</para>
+/// nothing else, so each grant's name states what it unlocks, and its required <c>scope_ack</c> argument must be a
+/// fixed sentence that says the same and how long it lasts: the user approves those words, not a summary the model
+/// wrote. A grant tool is marked destructive (it unlocks destructive tools), so a host that runs non-destructive tools
+/// on its own does not approve consent on the user's behalf.</para>
 ///
 /// <para><b>read_grants and revoke_grants never touch the pipe.</b> read_grants is read-only, so a user's
 /// <c>read_*</c> allow rule admits it; revoke_grants only narrows what the AI may do, so it is not asked about, and it
@@ -82,8 +82,8 @@ internal static class McpGrantTools
 
     private const int LookupSeconds = 30;
 
-    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b (docs/mcp-write-approval-eval.md §4.4). One UFunction, named by its function
-    // and its class's full path, shown to the user in that order (the prompt shows a long string whole, Phase 0 M1).
+    // [MCP-WRITE-GRANTS-2026-11-14] The invoke grant (docs/mcp-write-approval-eval.md §4.4): one UFunction, named by
+    // its function and its class's full path, shown to the user in that order (the prompt shows a long string whole).
     // The prompt comes first (Claude Code asks before the tool runs); the tool then looks the function up, so a grant
     // that could never be used -- one the DLL refuses an AI's call of, or one whose arguments reach other functions or
     // properties by name, as far as walk_functions shows them -- is refused here instead of recorded.
@@ -168,10 +168,10 @@ internal static class McpGrantTools
                                             + McpGrants.FunctionNameOf(target) + " (read_functions lists them).");
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] Phase 2 (docs/mcp-write-approval-eval.md §4.5). One field of one class, named by the
-    // field and the class's full path, in that order, as the invoke grant names its function. The class bounds the
-    // instances (its own and its subclasses'); the field must be a type write_field writes, so a grant that could never
-    // be used is refused here instead of recorded.
+    // [MCP-WRITE-GRANTS-2026-11-14] The field grant (docs/mcp-write-approval-eval.md §4.5): one field of one class,
+    // named by the field and the class's full path, in that order, as the invoke grant names its function. The class
+    // bounds the instances (its own and its subclasses'); the field must be a type write_field writes, so a grant that
+    // could never be used is refused here instead of recorded.
     private static McpTool FieldGrantTool(IMcpGame game, McpGrants grants, IReadOnlyList<McpTool> catalogue) => new(
         Constants.McpGrantToolField, "Grant: one field of one class",
         "Asks the user for one grant, for one game run: afterwards " + Constants.McpFieldGrantedTool + " writes this "

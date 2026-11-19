@@ -1,5 +1,5 @@
 r"""Z12 phase A — find an address that ONLY the deep container descent can attribute, and make
-`FindInContainersDeep: hit` fire for the first time.
+`FindInContainersDeep: hit` fire.
 
     py tools/verify/z12_deep_hit.py      (DumperTest dev running + injected, UI CLOSED)
 
@@ -9,13 +9,11 @@ The INNER array's buffer address is therefore not a direct element of anything �
 only by descending into a container element and reading a container out of it. That is precisely
 what the deep pass exists for and what a shallow pass structurally cannot see.
 
-⚠ TWO CORRECTIONS TO THE RECIPE THIS CAME FROM, both measured:
+⚠ TWO FACTS THE RECIPE NEEDS:
   * `find_by_address` takes `scan_containers`, `container_depth` and `container_elem_cap`. The deep
     pass runs only when the shallow one found NOTHING **and** `container_depth > 1`.
-  * "`FindInContainersDeep` has never fired on this machine" is not right. It has RUN several times
-    (`maxDepth=5, maxElemProbe=256/1024`, on DumperTest and DQ7R, 2026-08-20) and always found
-    **0 matches**. The accurate statement is that it has never **HIT** — `FindInContainersDeep: hit`
-    has never appeared in any log. That is the line to watch for.
+  * A RUN of `FindInContainersDeep` is not a **HIT**: the pass can run and find **0 matches**.
+    `FindInContainersDeep: hit` is the line to watch for.
 
 ⚠ THE NEGATIVE CONTROL IS THE SAME ADDRESS AT depth=1. If depth=1 also finds it, the address was
 shallow-attributable all along and the deep pass proved nothing.

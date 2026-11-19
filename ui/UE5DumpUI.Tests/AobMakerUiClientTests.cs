@@ -86,7 +86,7 @@ public class AobMakerUiClientTests
     public async Task A_timeout_on_a_listed_pipe_is_Busy_not_NotRunning()
     {
         // [AOBM-UI-BUSY] AOBMaker.UI has ONE pipe instance. While it serves someone else a connect times out although
-        // the app runs, and the user was told to start an app that was already open.
+        // the app runs, and NotRunning would tell the user to start an app that is already open.
         var client = new AobMakerUiClient(new MockLoggingService(), NobodysPipe(), 150, 500, _ => true);
         var r = await client.GenerateAobAsync(Address, 4242, TestContext.Current.CancellationToken);
         Assert.Equal(GenerateAobFailure.Busy, r.Failure);

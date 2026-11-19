@@ -9,8 +9,7 @@
 // includes it recompiles on EVERY build. Routing consumers through these
 // out-of-line accessors keeps the volatile macros confined to a single tiny TU
 // (BuildStamp.cpp) plus the resource script (version.rc). A build-number bump
-// then recompiles only that small file — not the heavy consumers (Fern /
-// Frieren / Sein / Heiter).
+// then recompiles only that small file — not the heavy consumers.
 // ============================================================
 namespace BuildStamp {
     // "1.0.0.1812 abc1234 (Release, 2026-...)" — BUILD_VERSION_STRING

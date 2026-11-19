@@ -15,11 +15,10 @@ namespace UE5DumpUI.Services;
 /// NTFS in-place log compression via <c>compact.exe /C /EXE:LZX</c> (Windows' "Compact OS"
 /// WOF algorithm — write-once/read-many, which is exactly what an archived log is).
 ///
-/// <para>Measured on the maintainer's real 111.9 MB log folder: <b>102.05 MB → 7.98 MB
-/// (12.8:1) in 2.8 s</b>, and — the property this whole feature depends on —
-/// <b>LastWriteTime was unchanged on all 289 files</b>, so
-/// <see cref="LoggingService"/>'s age-based retention needs no change at all. Full numbers
-/// and method: <c>docs/log-compression-eval.md</c>.</para>
+/// <para>The property this whole feature depends on: compressing a file leaves its
+/// <b>LastWriteTime unchanged</b>, so <see cref="LoggingService"/>'s age-based retention
+/// works on compressed logs as it does on plain ones. Ratios, timings and method:
+/// <c>docs/log-compression-eval.md</c>.</para>
 ///
 /// <para><b>Reading stays transparent.</b> The files keep their name and extension and
 /// decompress on read, so <c>rg</c> / <c>Select-String</c> / Notepad / "Open Log Folder"
@@ -63,10 +62,11 @@ public sealed class WindowsLogCompressionService : ILogCompressionService
     /// <inheritdoc/>
     public bool IsSupported(string anyPath)
     {
-        // [VOLUMEROOT-2026-08-19] was Path.GetPathRoot + DriveInfo.DriveFormat, i.e. the
-        // filesystem of the HOST volume when anyPath lives on a mount point. Near-theoretical
-        // for logs under %LOCALAPPDATA%, but it is the same defect as the disk-space pair and
-        // leaving one copy behind is how the pattern survives a fix. See VolumeRoot.
+        // [VOLUMEROOT-2026-08-19] Path.GetPathRoot + DriveInfo.DriveFormat would report the
+        // filesystem of the HOST volume when anyPath lives on a mount point, so the volume
+        // comes from VolumeRoot, as for the disk-space checks. Near-theoretical for logs under
+        // %LOCALAPPDATA%, but one copy of the host-volume shortcut left behind is how the
+        // pattern spreads again. See VolumeRoot.
         string? root = VolumeRoot.Resolve(anyPath);
         if (root is null) return false;
         try
@@ -166,15 +166,15 @@ public sealed class WindowsLogCompressionService : ILogCompressionService
 
         foreach (var batch in batches)
         {
-            // Cancellation lands between batches. A batch is ~0.35 s at the measured rate,
-            // so this is responsive enough without killing a compact.exe mid-rewrite.
+            // Cancellation lands between batches. A batch is small, so this is responsive
+            // enough without killing a compact.exe mid-rewrite.
             ct.ThrowIfCancellationRequested();
             RunCompact(batch);
         }
 
         // Re-measure rather than parse compact.exe's stdout. It prints "N files were
         // compressed" for a batch in which individual files failed, and exits 1 while still
-        // reporting success text — the eval caught it silently skipping 23 files.
+        // reporting success text, so a file it skipped would go unnoticed.
         long after = 0;
         int compressed = 0;
         foreach (var p in plan.ToCompress)

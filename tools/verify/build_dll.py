@@ -20,9 +20,9 @@ build agree with the bytes cmake recorded during that configure.
 
 The dep-health check is CLAUDE.md's own: `ninja -t deps`, where a C++ object sitting
 at `#deps 0` is the broken state (`.rc.res` / `.asm.obj` legitimately have none) --
-plus a third exception this script had to learn the hard way, an EMPTY translation
-unit; see `deps_health`. It runs after every build because the failure mode is silent
-by construction -- the build succeeds, and only the *staleness* of the objects is wrong.
+plus a third exception, an EMPTY translation unit; see `deps_health`. It runs after every
+build because the failure mode is silent by construction -- the build succeeds, and only the
+*staleness* of the objects is wrong.
 
 Deliberately does NOT touch `dist/` or bump `build_number.txt`; both are build.ps1
 behaviours that a verification-only build must not trigger.
@@ -45,11 +45,10 @@ def find_vcvars():
 
     ⚠ DO NOT HARDCODE A PATH HERE. This machine has TWO Visual Studio
     installations -- `2022\\Community` (MSVC 14.44.35207 only) and `18\\Community`
-    (14.29, 14.38, 14.44 and, since a VS update on 2026-11-12, **14.52.37025**, which replaced
-    14.51.36231) -- and `build.ps1` resolves the newest. A VS update moves the compiler out
-    from under a configured tree: build\\'s cache still named the removed 14.51 directory, and
-    the tree had to be configured again by build.ps1 (2026-11-15). Toolset numbers drift; read
-    `build/CMakeCache.txt`'s CMAKE_CXX_COMPILER for the one a tree uses.
+    (14.29, 14.38, 14.44 and **14.52.37025**) -- and `build.ps1` resolves the newest. A VS
+    update moves the compiler out from under a configured tree: build\\'s cache still names
+    the removed toolset directory, and build.ps1 must configure the tree again. Toolset
+    numbers drift; read `build/CMakeCache.txt`'s CMAKE_CXX_COMPILER for the one a tree uses.
 
     Pointing this script at 2022's vcvars64 mixes toolsets inside ONE build
     directory. The compile stage succeeds, and the failure surfaces at LINK time
@@ -58,13 +57,14 @@ def find_vcvars():
         Radar.cpp.obj : error LNK2019: unresolved external __std_rotate
         Radar.cpp.obj : error LNK2019: unresolved external __std_find_last_not_ch_pos_1
 
-    Those are 14.51 vectorized-algorithm helpers; no .lib under 14.44.35207
-    defines either (checked with dumpbin over every lib in its x64 dir). It reads
+    Those are newer-toolset vectorized-algorithm helpers; no .lib under 14.44.35207
+    defines either (dumpbin over every lib in its x64 dir shows it). It reads
     like "the STL is broken" or "my edit broke the build" -- it is neither. It
     means the objects and the libs came from different toolsets.
     """
     if VSWHERE.is_file():
-        # -requires matches build.ps1's filter EXACTLY. Both drive the same build        # directory, so two vswhere calls that disagree pick two toolsets -- and 14.51
+        # -requires matches build.ps1's filter EXACTLY. Both drive the same build
+        # directory, so two vswhere calls that disagree pick two toolsets -- and newer
         # objects linked against 14.44 libs is the unresolved-STL-symbol failure this
         # function's own docstring is about.
         r = subprocess.run([str(VSWHERE), "-latest", "-prerelease", "-products", "*",
@@ -142,7 +142,7 @@ def run_tests(env, targets, asan):
     failures = 0
     tests = [t for t in targets if t.endswith("_test")]
     if not tests:
-        # Measured in review (2026-11-15): `--asan --run` with the default target (the DLL) ran nothing and exited 0.
+        # Without this, `--asan --run` with the default target (the DLL) runs nothing and exits 0.
         print("run: FAIL -- no *_test target among --targets, so zero tests ran")
         return 1
     for t in tests:
@@ -198,20 +198,19 @@ def run_tests(env, targets, asan):
     return failures
 
 
-# An object emitted from a translation unit that preprocessed to NOTHING. Measured on this
-# tree: the six empty proxy objects are 527-535 bytes, the smallest real one is 10,985 — a
-# 20x gap with nothing in between, because an empty MSVC COFF is just a handful of section
-# headers plus the source-path debug record. 2 KB sits safely in the gap. [PROXYDEPS]
+# An object emitted from a translation unit that preprocessed to NOTHING. On this tree an
+# empty proxy object is ~530 bytes and the smallest real one ~11 KB — a 20x gap with nothing
+# in between, because an empty MSVC COFF is just a handful of section headers plus the
+# source-path debug record. 2 KB sits safely in the gap. [PROXYDEPS]
 EMPTY_TU_MAX_BYTES = 2048
 
 
 def deps_health(env, verbose=False):
     """Return (bad_objects, total_cxx_objects). Bad = a NON-EMPTY C++ object with #deps 0.
 
-    ⚠ `#deps 0` alone is NOT the broken state, which is what [PROXYDEPS-2026-08-19] filed and
-    what this function used to report. CLAUDE.md names two legitimate exceptions (`.rc.res`,
-    `.asm.obj`); there is a **third**, and it is the one that produced that whole finding: a
-    translation unit that preprocessed to nothing. Every `Lugner*.cpp` is wrapped head-to-toe
+    ⚠ `#deps 0` alone is NOT the broken state ([PROXYDEPS-2026-08-19]). `.rc.res` and `.asm.obj`
+    legitimately have none; there is a **third** exception, and it is the easy one to mistake for
+    breakage: a translation unit that preprocessed to nothing. Every `Lugner*.cpp` is wrapped head-to-toe
     in `#ifdef UE5_PROXY_<FLAVOUR>_BUILD` with its `#include`s INSIDE the guard, and all four
     are compiled into all four proxy targets. In the three targets that do not define a given
     flavour the file is empty, `/showIncludes` prints nothing, and ninja records zero deps —
@@ -322,11 +321,10 @@ def main(argv=None):
     # text raises UnicodeEncodeError and HIDES the compile error behind a traceback.
     print(tail.encode(sys.stdout.encoding or "utf-8", "replace")
               .decode(sys.stdout.encoding or "utf-8", "replace"))
-    # The tail above is cut at 4000 characters, so a build with many diagnostics hid most of them: measured
-    # 2026-11-15, a [[nodiscard]] batch raised C4834 at 21 sites and the tail showed 19, with no sign of the cut.
-    # Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to the cut: C-numbered ones
-    # from the compiler, and D-numbered ones from the cl driver ("Command line warning D9025 : overriding ..."), which
-    # are how a rejected or overridden /we or /fsanitize flag shows.
+    # The tail above is cut at 4000 characters, so a build with many diagnostics loses some of them to it, with
+    # no sign of the cut. Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to
+    # the cut: C-numbered ones from the compiler, and D-numbered ones from the cl driver ("Command line warning
+    # D9025 : overriding ..."), which are how a rejected or overridden /we or /fsanitize flag shows.
     diag = sorted({ln.strip() for ln in (r.stdout or "").splitlines()
                    if re.search(r"\b(warning|error) [CD]\d{4}\b", ln)})
     if diag:
@@ -340,11 +338,10 @@ def main(argv=None):
 
     bad, total = deps_health(env, verbose=True)
     if bad:
-        # Now a hard FAIL, not a warning. It used to warn because six proxy objects sat at
-        # #deps 0 and hard-failing would have blocked every build — but those six were
-        # measured to be EMPTY translation units, not broken deps, and deps_health no longer
-        # counts them. A permanent warning is worse than either verdict: it is the state in
-        # which a real breakage arrives and reads as the noise everyone already ignores.
+        # A hard FAIL, not a warning. The proxy objects at #deps 0 are EMPTY translation
+        # units, not broken deps, and deps_health does not count them, so what remains is
+        # real. A permanent warning is worse than either verdict: it is the state in which a
+        # real breakage arrives and reads as the noise everyone already ignores.
         print(f"build_dll: FAILED -- {len(bad)} C++ object(s) with real content record NO "
               f"header deps. A .h edit will not rebuild these, so a green build measures "
               f"nothing (CLAUDE.md: msvc_deps_prefix). Re-configure via build.ps1:")

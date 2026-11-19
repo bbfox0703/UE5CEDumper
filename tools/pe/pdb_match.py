@@ -47,11 +47,11 @@ def pe_build_stamp(path):
 
     With `/Brepro` the linker overwrites the COFF TimeDateStamp with a CONTENT HASH and emits a
     debug-directory entry of type 16 (IMAGE_DEBUG_TYPE_REPRO). That entry is the flag — so never
-    guess from plausibility. Measured on this corpus, plausibility is actively misleading:
+    guess from plausibility. On this corpus, plausibility is actively misleading:
     Hogwarts Legacy (4.27) reads `2025-11-12` and Elliot (5.4) reads `2026-07-15`; BOTH are hashes.
     Roughly a fifth of 32-bit hashes land in a 2000-2030 window.
 
-    Rules of thumb, measured 2026-07-29 and NOT a version rule:
+    Rules of thumb, read off the corpus and NOT a version rule:
       * Epic's UBT enables /Brepro on **SHIPPING only**, from ~5.3. Development and DebugGame keep
         real link times at every version tested (4.10 -> 5.7).
       * UE 5.8 non-Shipping writes TimeDateStamp = 0 outright — a third state, neither time nor

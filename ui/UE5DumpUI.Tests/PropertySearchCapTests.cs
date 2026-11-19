@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PROPSEARCHCAP-2026-08-19] — Property Search now has a Max control, so the three things
+/// [PROPSEARCHCAP-2026-08-19] — Property Search has a Max control, so the three things
 /// that can silently come apart are pinned here: the clamp range agreeing between the UI and
 /// the DLL, the default staying 200 rather than drifting to Instance Finder's 5000, and the
 /// status line only offering "raise Max" while raising it is actually possible.
@@ -29,7 +29,7 @@ public class PropertySearchCapTests
     [Fact]
     public void TheDefaultStaysAtTwoHundredAndIsNotInstanceFinders()
     {
-        // ⚠ The whole point of this work is the LEVER, not a bigger default. A property-search
+        // ⚠ The point of the Max control is the LEVER, not a bigger default. A property-search
         // row is a match per property per class WITH a resolved preview value, so it is far
         // heavier than an instance address; quietly raising the default would make every user
         // pay for the minority of searches that need it. If someone deliberately changes this,
@@ -76,7 +76,7 @@ public class PropertySearchCapTests
 
         Assert.Contains("if (limit < 1) limit = 1;", handler);
         Assert.Contains($"if (limit > {Constants.MaxSearchCap}) limit = {Constants.MaxSearchCap};", handler);
-        // The WIRE default must stay 200 even though the UI now always sends a limit — an older
+        // The WIRE default must stay 200 even though the UI always sends a limit — an older
         // client that sends none would otherwise change behaviour on a DLL upgrade alone.
         Assert.Contains($"request.value(\"limit\", {Constants.DefaultPropertySearchCap})", handler);
     }
@@ -84,9 +84,8 @@ public class PropertySearchCapTests
     [Fact]
     public void TheCapAdviceOffersRaiseMaxOnlyWhileRaisingItIsPossible()
     {
-        // Audit #5 Z10 removed "raise Max" because the panel had no Max. Now it has one, so the
-        // advice is back — but at the ceiling it would be the same lie in a new place, and that
-        // is the exact failure this pair of changes exists to avoid. Mirrors the VM's rule.
+        // "raise Max" is offered only while raising it is possible: at the ceiling the advice
+        // would be a lie, which is the exact failure this test guards. Mirrors the VM's rule.
         static string Advice(int cap, bool gameOnly)
         {
             string a = "narrow it with a longer property name or a Type filter";
@@ -107,9 +106,9 @@ public class PropertySearchCapTests
     [Fact]
     public void TheViewModelSourceStillPassesTheCapToTheSearch()
     {
-        // The defect was not a missing control — it was that the panel never sent a limit at
-        // all, so the wire default won. A control bound to a property nothing reads would look
-        // exactly like a fix and behave exactly like the bug.
+        // A control alone is not enough: unless the panel SENDS the limit, the wire default
+        // wins. A control bound to a property nothing reads would look exactly like a working
+        // cap and behave as if there were none.
         string vm = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\PropertySearchViewModel.cs"));
         int at = vm.IndexOf("_dump.SearchPropertiesAsync(", StringComparison.Ordinal);
         Assert.True(at > 0, "the SearchPropertiesAsync call site was not found");

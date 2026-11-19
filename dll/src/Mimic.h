@@ -52,7 +52,8 @@ enum Cmd : int32_t {
                               //           an OFF did not complete -- send it again once the game responds.
                               //           -6 = not sent: an earlier toggle of the other direction is still
                               //           queued -- send again once the game responds.
-                              //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
+                              //           [W3-DEBUGCAM-QUEUED]; no contract bump, see
+                              //           MB_ERR_HANDLER_THREW in Mimic.cpp)
                               //           -17 = an ON not sent: no CheatManager is live, and the toggle does
                               //           nothing on its class default object (DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
                               //           an OFF is never refused). [DEBUGCAM-FORCEON-CDO]
@@ -264,7 +265,7 @@ enum ProtectOp : uint64_t {
                                 //   observed state.
     PROTECT_OP_GET_GODMODE = 1, // Output result = observed state.
     PROTECT_OP_GET_STATE   = 2, // Output paramsData[0..2] = want / live / resolvable.
-    // Reserved (v2 — docs/godmode-spec.md §5.4): PROTECT_OP_SET_ACTOR_BOOL = 3,
+    // Reserved, not implemented (docs/godmode-spec.md §5.4): PROTECT_OP_SET_ACTOR_BOOL = 3,
     // generic "force any reflected bool" using instanceAddr=obj + className=prop.
 };
 
@@ -433,8 +434,9 @@ struct MailboxData {
                                         //   instances of many concrete classes, so one page witness
                                         //   would refuse every write except the one class it named.
                                         //   Dropping the witness instead was not an option — that IS
-                                        //   the AA2 defect — so the derived format carries the UClass*
-                                        //   per entry and halves the page to 64.
+                                        //   the recycled-slot write it exists to refuse — so the
+                                        //   derived format carries the UClass* per entry and halves
+                                        //   the page to 64.
 
     volatile uint32_t cmdFlags;         // 0x728: IN  — per-command input flags (contract 3+).
                                         //        Today only CMD_LIST_INSTANCES reads it
@@ -481,7 +483,7 @@ constexpr uint32_t ListInstancesPerPage(bool derived) {
 // Result caps. TWO of them, because the pools are not the same size and the cost
 // that matters is cap ÷ page size: the CE Lua caller re-runs a full GObjects walk
 // for EVERY page, on EVERY rescan (5 s by default). Both caps land on the same
-// 16-page ceiling the helper enforces, so widening the scope did not double the
+// 16-page ceiling the helper enforces, so the derived scope does not double the
 // per-rescan walk count.
 //
 // The derived cap is also a fact about the consumer, not just about the walk: the

@@ -9,9 +9,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [VALUESCAN-NONFINITE-TARGET] Infinity or 1e400 as a numeric target gave different answers live and in the snapshot
-/// search: the DLL's stod throws on "1e400" and its float leaves take an infinity that GroupMatch's TargetFitsWidth
-/// refuses, while .NET parses "1e400" as +Infinity. Nonsense input on both sides, so it is refused before either
+/// [VALUESCAN-NONFINITE-TARGET] Infinity or 1e400 as a numeric target would give different answers live and in the
+/// snapshot search: the DLL's stod throws on "1e400" and its float leaves take an infinity that GroupMatch's
+/// TargetFitsWidth refuses, while .NET parses "1e400" as +Infinity. Nonsense input on both sides, so it is refused before either
 /// matcher sees it, in every place a numeric target is typed.
 /// </summary>
 public class ValueTargetCheckTests
@@ -30,9 +30,9 @@ public class ValueTargetCheckTests
             Assert.NotNull(ValueTargetCheck.NonFiniteError(dt, value));
     }
 
-    // Review round 2: the DLL reads a target with std::stod, whose strtod family takes C99's spellings that .NET's
-    // invariant parse does not -- "inf" reached the live matcher as +inf ("Smaller than inf" matched every leaf) while
-    // the snapshot store answered "enter a numeric value". The check refuses what either side would read as non-finite.
+    // The DLL reads a target with std::stod, whose strtod family takes C99's spellings that .NET's invariant parse does
+    // not -- unrefused, "inf" would reach the live matcher as +inf ("Smaller than inf" matches every leaf) while the
+    // snapshot store answers "enter a numeric value". The check refuses what either side would read as non-finite.
     [Theory]
     [InlineData("inf")]
     [InlineData("-INF")]
@@ -69,9 +69,9 @@ public class ValueTargetCheckTests
     public void TheSecondValue_IsCheckedToo()
         => Assert.NotNull(ValueTargetCheck.NonFiniteError(ValueScanDataType.Float, "1", "1e400"));
 
-    // Review round 2: the check read every box, shown or not. Value2 is sent only for Between and a prev-value type
-    // (Changed / Unchanged / Increased / Decreased) sends no Value, so a value left in a hidden box blocked a valid
-    // scan and named a value the user could not see -- and the snapshot match checked Value on prev-value rows too.
+    // The check reads only the boxes that are shown. Value2 is sent only for Between and a prev-value type
+    // (Changed / Unchanged / Increased / Decreased) sends no Value, so a value left in a hidden box must not block a
+    // valid scan or name a value the user cannot see -- in the snapshot match's prev-value rows too.
 
     [Theory]
     [InlineData(ValueScanType.Bigger, "0", "Infinity")]
@@ -170,8 +170,8 @@ public class ValueTargetCheckTests
         public override Task EndGroupScanAsync(ulong sessionId, CancellationToken ct = default) => Task.CompletedTask;
     }
 
-    // Review round 2: Next Scan and group Next Scan refuse too, and nothing held them -- removing either check left every
-    // test green. Each asserts its session is live first, so a refusal cannot pass by the command simply returning.
+    // Next Scan and group Next Scan refuse too, and these tests are what hold those two checks. Each asserts its
+    // session is live first, so a refusal cannot pass by the command simply returning.
 
     [Fact]
     public async Task NextScan_OfANonFiniteTarget_SendsNothing_AndSaysWhy()

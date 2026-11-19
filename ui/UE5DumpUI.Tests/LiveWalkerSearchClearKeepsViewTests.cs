@@ -5,19 +5,18 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [LW-SEARCH-CLEAR-KEEP] Clearing the Live Walker field-search keyword re-sets the grid's items
-/// (ApplySearch swaps the collection so the highlight styles re-evaluate), which put the grid back
-/// on its first row and dropped the selection: find a field at 0x1138 with ▲/▼, clear the keyword
-/// to look for something else, and scroll all the way back down by hand. The maintainer's rule:
+/// [LW-SEARCH-CLEAR-KEEP] Clearing the Live Walker field-search keyword must not put the grid back
+/// on its first row and drop the selection: find a field at 0x1138 with ▲/▼, clear the keyword to
+/// look for something else, and the user would scroll all the way back down by hand. The rule:
 /// ONLY when the keyword goes from 2+ characters to empty in one edit (select all, Delete) —
 /// <list type="bullet">
 /// <item>the selection contains the match ▲/▼ landed on → the view stays where it is;</item>
 /// <item>it does not → the first selected row (grid order) comes to the top.</item>
 /// </list>
-/// With nothing selected the view stays where it is too (the maintainer's follow-up). Typing,
-/// pasting, shortening, a partial delete, and 1 → 0 characters keep today's behaviour.
-/// The grid stays put because no keyword edit re-sets its items any more; the one case that
-/// moves it, the VM hands the View as a restore (selection, top row, row to keep visible) —
+/// With nothing selected the view stays where it is too. Typing, pasting, shortening, a partial
+/// delete, and 1 → 0 characters keep today's behaviour.
+/// The grid stays put because no keyword edit re-sets its items; the one case that moves it,
+/// the VM hands the View as a restore (selection, top row, row to keep visible) —
 /// these pin that, and the scrolling itself is the View's, proven live.
 /// </summary>
 public class LiveWalkerSearchClearKeepsViewTests
@@ -50,7 +49,7 @@ public class LiveWalkerSearchClearKeepsViewTests
     private static LiveFieldValue Named(LiveWalkerViewModel vm, string name) => vm.Fields.First(f => f.Name == name);
 
     [Theory]
-    [InlineData("", "I")]         // the first character: the maintainer's follow-up
+    [InlineData("", "I")]         // the first character typed
     [InlineData("I", "I3")]       // the search becomes active
     [InlineData("I32", "I3")]
     [InlineData("I3", "I")]       // down to one character
@@ -58,9 +57,9 @@ public class LiveWalkerSearchClearKeepsViewTests
     [InlineData("I32", "")]
     public void No_keyword_edit_replaces_the_grid_items(string from, string to)
     {
-        // [LW-SEARCH-CLEAR-KEEP] Re-setting the grid's items is what threw the grid back to its
-        // first row -- on the first character typed as much as on a clear. The highlight is a
-        // style BOUND to IsSearchMatch since [LWREFRESH-2026-08-21], so nothing needs re-setting.
+        // [LW-SEARCH-CLEAR-KEEP] Re-setting the grid's items throws the grid back to its first
+        // row -- on the first character typed as much as on a clear. The highlight is a style
+        // BOUND to IsSearchMatch ([LWREFRESH-2026-08-21]), so nothing needs re-setting.
         var vm = VmWithRows();
         vm.SearchText = from;
         var items = vm.Fields;
@@ -129,7 +128,7 @@ public class LiveWalkerSearchClearKeepsViewTests
     [Fact]
     public void One_character_to_empty_keeps_todays_behaviour()
     {
-        // The maintainer's own limit: 1 -> 0 cannot be told apart from backspacing a keyword away.
+        // The rule's own limit: 1 -> 0 cannot be told apart from backspacing a keyword away.
         var vm = VmWithRows();
         var got = AttachView(vm, new BookmarkFieldRef("Beta", 0x700));
         vm.SearchText = "I";
@@ -143,7 +142,7 @@ public class LiveWalkerSearchClearKeepsViewTests
     [Fact]
     public void Clearing_with_nothing_selected_stays_where_it_is()
     {
-        // The maintainer's follow-up (2026-09-27): with nothing selected the view stays put too.
+        // With nothing selected the view stays put too.
         var vm = VmWithRows();
         var got = AttachView(vm, new BookmarkFieldRef("Beta", 0x700));
         vm.SearchText = "I32";

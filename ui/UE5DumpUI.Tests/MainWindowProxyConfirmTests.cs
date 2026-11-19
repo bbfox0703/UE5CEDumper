@@ -4,11 +4,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #3 M8: the LKG proxy-confirm dwell must record a proxy as working ONLY
-/// when the SAME connection that scheduled it is still up after the dwell. Before
-/// the fix the callback checked only IsConnected, so a proxy that loaded, connected,
-/// then crashed the game at t=5s could be recorded as confirmed-working if the user
-/// reconnected (to the same or a DIFFERENT game) before the 20 s dwell elapsed.
+/// The LKG proxy-confirm dwell must record a proxy as working ONLY when the SAME
+/// connection that scheduled it is still up after the dwell. A check of IsConnected
+/// alone would record as confirmed-working a proxy that loaded, connected, then
+/// crashed the game at t=5s, if the user reconnected (to the same or a DIFFERENT
+/// game) before the 20 s dwell elapsed.
 ///
 /// The gate is factored into the pure <see cref="MainWindowViewModel.ShouldConfirmProxy"/>
 /// so the epoch logic is unit-testable without the timer / dispatcher / proxy VM.

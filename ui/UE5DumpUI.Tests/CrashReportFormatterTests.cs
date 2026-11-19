@@ -4,12 +4,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The crash.log headline used to be the hard-coded phrase
-/// <c>"UE5DumpUI startup crash"</c> for every crash, which filed a fault 31
-/// minutes into a live session as a startup failure
-/// (<c>[PASTECRASH-2026-08-18]</c>). These pin the replacement: the headline must
-/// name the real phase, the real uptime, and must not be able to reproduce the
-/// old lie.
+/// The crash.log headline names the real phase and the real uptime
+/// (<c>[PASTECRASH-2026-08-18]</c>): a fixed phrase such as
+/// <c>"UE5DumpUI startup crash"</c> for every crash would file a fault 31 minutes
+/// into a live session as a startup failure. These pin that the headline names
+/// both, and that a mid-session crash cannot be called a startup crash.
 /// </summary>
 public class CrashReportFormatterTests
 {
@@ -25,7 +24,7 @@ public class CrashReportFormatterTests
     [Fact]
     public void MidSessionCrash_IsNotCalledAStartupCrash()
     {
-        // The exact regression: 31 minutes in, phase Running.
+        // A crash 31 minutes in, phase Running.
         var line = CrashReportFormatter.Headline(
             AppPhase.Running, TimeSpan.FromMinutes(31) + TimeSpan.FromSeconds(12));
 
@@ -50,8 +49,8 @@ public class CrashReportFormatterTests
         // 54 MB AOT binary, a cold cache). The headline must surface both readings
         // and commit to neither: asserting "the marker was never advanced" would
         // print an accusation of a second defect on top of every slow-start crash —
-        // the same "state a guess as a fact" mistake as the hard-coded phrase this
-        // formatter replaced.
+        // the same "state a guess as a fact" mistake as a fixed "startup crash"
+        // headline.
         var line = CrashReportFormatter.Headline(AppPhase.Startup, TimeSpan.FromMinutes(31));
 
         Assert.Contains("UNCERTAIN", line, StringComparison.Ordinal);

@@ -116,9 +116,7 @@
               ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Inject}"
               Padding="12,4"/>
       <!-- One Cancel for the whole panel: the operations are mutually exclusive
-           (TryBeginExclusive), so "the current operation" is unambiguous. Before
-           audit #5 AE20 five of the seven token-taking commands — including the
-           Recycle-Bin delete — had no way to be cancelled at all. -->
+           (TryBeginExclusive), so "the current operation" is unambiguous. -->
       <Button Content="{StaticResource str.ProxyDeploy.CancelOperation}"
               Command="{Binding CancelOperationCommand}"
               IsEnabled="{Binding IsBusy}"
@@ -159,9 +157,9 @@
                   ToolTip.Tip="{StaticResource str.ProxyDeploy.Orphans.ScanTip}"
                   Classes="accent" Padding="12,4"/>
           <!-- Bound to IsScanningOrphans, NOT to the shared IsScanning and NOT to
-               IsRemovingOrphans: this cancels the ORPHAN SCAN specifically. The shared flag is set
-               by three different commands, so it used to render this button during the Steam-library
-               scan and the drive scan too — wired to a command that could not run. (B45) -->
+               IsRemovingOrphans: this cancels the ORPHAN SCAN specifically. The shared flag is
+               TryBeginExclusive's and other operations hold it too, so bound to it this button would
+               show during them — wired to a command that cannot run. -->
           <Button Content="{StaticResource str.ProxyDeploy.CancelScan}"
                   Command="{Binding ScanOrphansCancelCommand}"
                   IsVisible="{Binding IsScanningOrphans}"
@@ -186,8 +184,8 @@
                    Foreground="#7EC97A" FontSize="11"
                    IsVisible="{Binding ShowNoOrphansFound}"/>
         <!-- MaxHeight + scroller is load-bearing, not polish: a DockPanel measures its Top children
-             with infinite available height, so an unbounded list of 9 rows (the measured count on a
-             real machine) takes the space the game DataGrid needs and pushes it out of the panel.
+             with infinite available height, so even a short unbounded list takes the space the
+             game DataGrid needs and pushes it out of the panel.
              IsVisible keeps the list costing nothing until a scan has run. -->
         <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
@@ -294,7 +292,7 @@
                     IsChecked="{Binding ForceOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Force}"
                     Foreground="#CCCCCC" VerticalAlignment="Center" Margin="8,0"/>
-          <!-- Separate from Force Overwrite on purpose (audit #5 AC1): this one
+          <!-- Separate from Force Overwrite on purpose: this one
                destroys a third party's file and is NOT persisted, so it cannot
                become standing consent carried in from an earlier session. -->
           <CheckBox Content="{StaticResource str.ProxyDeploy.ForeignOverwrite}"
@@ -323,17 +321,13 @@
 
     <!-- Main: Game list DataGrid
          IsReadOnly is set per-column (with the checkbox column editable)
-         instead of on the grid itself. Marking the whole grid IsReadOnly=True
-         caused row visuals to lag behind item PropertyChanged events from the
-         background-thread Refresh, requiring a second click to repaint.
+         instead of on the grid itself, because the checkbox column needs to be
+         editable.
 
-         That "background-thread Refresh" was the real defect, not a repaint quirk:
-         ProxyDeployService raised PropertyChanged from inside Task.Run, and the same
-         race that made rows repaint late also crashed the app (0xc0000005 in
-         libSkiaSharp) on Scan Steam -> Update all. The service now applies every
-         DetectedGame write on the caller's thread, so this per-column arrangement is
-         no longer load-bearing — it is kept because the checkbox column still needs
-         to be editable. -->
+         ProxyDeployService applies every DetectedGame write on the caller's thread:
+         PropertyChanged raised from inside Task.Run makes rows repaint late and
+         races the renderer into a crash (0xc0000005 in libSkiaSharp) on
+         Scan Steam -> Update all. -->
     <DataGrid ItemsSource="{Binding Games}"
               AutoGenerateColumns="False"
               CanUserReorderColumns="False"
@@ -373,14 +367,13 @@
 
         <!-- Load observation: whether the DLL was actually SEEN to load (per-process log folder),
              NOT the disk state in Status. "DeployedCurrent" + "not observed" is the silent-failure
-             the [PROXYLOAD] fix surfaces; "not observed" is honest unknown, never a failure claim. -->
-        <!-- (sixth review, R6-03) The header's tooltip explains the leading "shared · " tag, which the column's
-             width keeps visible where a trailing mark was clipped. The header is a TextBlock; the column stays a
-             text column (Binding == SortMemberPath), so sorting stays compiled-binding safe under AOT. -->
-        <!-- (seventh review, R7-05; eighth, R8-01) 240: the cell font is the DataGrid theme's 15 px Inter, not the
-             grid's 12, with 12 px margins each side. 'shared · loaded 2026-09-25' measures about 201 px, so 210 still
-             cut the day. Marks (shared, stale) lead the text, so only a date can be clipped.
-             (ninth review, R9-02) 280: the LONGEST text is 'shared · stale · loaded <date>', ~248 px + 24 = ~272. -->
+             [PROXYLOAD] surfaces; "not observed" is honest unknown, never a failure claim. -->
+        <!-- The header's tooltip explains the leading "shared · " tag, which the column's width keeps visible.
+             The header is a TextBlock; the column stays a text column (Binding == SortMemberPath), so sorting
+             stays compiled-binding safe under AOT. -->
+        <!-- Width 280: the cell font is the DataGrid theme's 15 px Inter, not the grid's 12, with 12 px margins
+             each side, and the LONGEST text, 'shared · stale · loaded <date>', is ~248 px + 24 = ~272.
+             Marks (shared, stale) lead the text, so only a date can be clipped. -->
         <DataGridTextColumn Binding="{Binding LoadObservation}" SortMemberPath="LoadObservation"
                             Width="280" MinWidth="100" IsReadOnly="True">
           <DataGridTextColumn.Header>

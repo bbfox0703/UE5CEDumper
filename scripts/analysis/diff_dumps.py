@@ -6,7 +6,7 @@ that silently break cheat tables when a game ships an update.
 
 USAGE
     python diff_dumps.py <old.jsonl> <new.jsonl>
-    python diff_dumps.py <old.jsonl> <new.jsonl> -o diff-report.md
+    python diff_dumps.py <old.jsonl> <new.jsonl> -o out/diff-report.md
     python diff_dumps.py <old.jsonl> <new.jsonl> --minimal
     python diff_dumps.py <old.jsonl> <new.jsonl> --include-engine
     python diff_dumps.py --self-test
@@ -122,9 +122,9 @@ class Dump:
     def ue_version(self) -> int:
         return int(self.meta.get("ue_version", 0))
 
-    # [EXTPR-539-540-2026-10-02] What the file can say about structs and enums. Dump All writes struct lines
-    # from build 3620 and enum lines from 3621, and its summary names both from then on; a file without
-    # either has none to compare, which is not the same as having none.
+    # [EXTPR-539-540-2026-10-02] What the file can say about structs and enums. Dump All writes struct lines and
+    # enum lines, and its summary names both; an older file without either has none to compare, which is not the
+    # same as having none.
     @property
     def carries_structs(self) -> bool:
         return bool(self.structs) or "structs_emitted" in self.summary
@@ -151,14 +151,14 @@ class Dump:
 
 
 class ObjectIndexFile(Exception):
-    """[EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl lists objects, not types: diffing it as a class
+    """[EXTPR-539-540-2026-10-02] A <name>.objects.jsonl lists objects, not types: diffing it as a class
     dump would report every class removed. Raised by load_dump with the class dump's name to use instead."""
 
 
 # [DUMPDIFF-UI] The keys the diff reads, with the JSON type Dump All writes for each. The UI's C# port reads lines
 # into typed fields (DumpDiffModels.cs) and cannot read a line where one of these holds another type, so this script
-# skips such a line too and both say so: before this, the script compared 0.0 with 0, took 1 for true, and crashed on
-# a string props_size. null is allowed anywhere and means the key is absent (_drop_nulls), as the port's `??` reads it.
+# skips such a line too and both say so -- otherwise it would compare 0.0 with 0, take 1 for true, and crash on a
+# string props_size. null is allowed anywhere and means the key is absent (_drop_nulls), as the port's `??` reads it.
 _PARAM_KEYS = {"name": "str", "type": "str", "struct_type": "str", "obj_class": "str", "out": "bool", "ret": "bool",
                "offset": "int", "size": "int"}
 _PROP_KEYS = {"name": "str", "type": "str", "inner_type": "str", "struct_type": "str", "obj_class": "str",
@@ -371,7 +371,7 @@ class DumpDiff:
     removed_classes: list[dict] = field(default_factory=list)
     changed: list[ClassDiff] = field(default_factory=list)
     unchanged_count: int = 0
-    # [EXTPR-539-540-2026-10-02] D5. A *_skipped reason is "" when that kind was compared.
+    # [EXTPR-539-540-2026-10-02] A *_skipped reason is "" when that kind was compared.
     added_structs: list[dict] = field(default_factory=list)
     removed_structs: list[dict] = field(default_factory=list)
     changed_structs: list[ClassDiff] = field(default_factory=list)
@@ -481,7 +481,7 @@ def _params_key(f: dict) -> tuple:
 
 
 def _params_differ(a: dict, b: dict) -> bool:
-    """[EXTPR-539-540-2026-10-02] D5. Only when both sides carry `params` (Dump All from build 3622): an
+    """[EXTPR-539-540-2026-10-02] Only when both sides carry `params` (a Dump All that writes them): an
     older file has none, and that is not a change."""
     return "params" in a and "params" in b and _params_key(a) != _params_key(b)
 
@@ -583,7 +583,7 @@ def _missing_lines(label: str, d: Dump, what: str, since: int) -> str:
 
 
 def _diff_enums(out: DumpDiff, old_dump: Dump, new_dump: Dump, include_engine: bool) -> None:
-    """[EXTPR-539-540-2026-10-02] D5. What a list could not say is not reported as a change: with no
+    """[EXTPR-539-540-2026-10-02] What a list could not say is not reported as a change: with no
     member names an enum's entries are empty, and a cut-short list lacks enums it never reached."""
     names_ok = True
     for label, d in (("old", old_dump), ("new", new_dump)):
@@ -847,7 +847,7 @@ def _render_listing(lines: list[str], title: str, records: list[dict], tag=None)
 
 
 def _render_structs(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
-    """[EXTPR-539-540-2026-10-02] D5: structs, laid out as the classes are."""
+    """[EXTPR-539-540-2026-10-02] Structs, laid out as the classes are."""
     if not minimal:
         _render_listing(lines, "Added Structs", diff.added_structs, _failed_tag(diff.old_dump, "old"))
         _render_listing(lines, "Removed Structs", diff.removed_structs, _failed_tag(diff.new_dump, "new"))
@@ -865,7 +865,7 @@ def _render_structs(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
 
 
 def _render_enums(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
-    """[EXTPR-539-540-2026-10-02] D5: enums, each changed one with its enumerators."""
+    """[EXTPR-539-540-2026-10-02] Enums, each changed one with its enumerators."""
     if not minimal:
         _render_listing(lines, "Added Enums", diff.added_enums)
         _render_listing(lines, "Removed Enums", diff.removed_enums)
@@ -1276,7 +1276,7 @@ def run_self_test() -> int:
 
 
 # ---------------------------------------------------------------------
-# [EXTPR-539-540-2026-10-02] D5: structs, enums and function params.
+# [EXTPR-539-540-2026-10-02] Structs, enums and function params.
 # Kept apart from run_self_test so the class fixtures above stay as they were.
 # ---------------------------------------------------------------------
 
@@ -1291,7 +1291,7 @@ def _enum(name: str, path: str, entries: list[tuple[str, int]]) -> dict:
 
 
 def _summary(**flags) -> dict:
-    """A summary line from build 3622 on: it names structs, enums and the enum list's flags."""
+    """A summary line of the current format: it names structs, enums and the enum list's flags."""
     s = {"kind": "summary", "classes_emitted": 0, "structs_emitted": 0, "enums_emitted": 0,
          "enums_listed": True, "enum_names_failed": False, "enums_truncated": False,
          "params_from_num_parms": 0}
@@ -1430,7 +1430,7 @@ def run_self_test_types(errors: list[str]) -> None:
 
 
 def run_self_test_review(errors: list[str]) -> None:
-    """[EXTPR-539-540-2026-10-02] Review of 513fdd16: what the first D5 self-test left unpinned."""
+    """[EXTPR-539-540-2026-10-02] What the structs / enums / params self-test above leaves unpinned."""
     # --- a dump with no summary line was cut off mid-write: what it lacks is not "removed" ---
     full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
                       structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],

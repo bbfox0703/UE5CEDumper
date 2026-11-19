@@ -189,9 +189,8 @@ inline std::string EncodeUtf16(const wchar_t* data, size_t len) {
 }
 
 // [PATH-MODULE-NAME-UTF8] The last component of a wide path ('\' or '/' separated), as exact UTF-8. The
-// module / exe name the DLL reports (module_name, load_mode, get_ce_pointer_info) was built by turning every
-// UTF-16 unit >= 128 into '?', so a non-ASCII exe name reached the UI as a name no file has, and every key built
-// on it (the confirmed-working proxy, the teleport library, the log mirror folder) was wrong. A trailing
+// module / exe name the DLL reports goes through this: turning each UTF-16 unit >= 128 into '?' would hand the
+// UI a name no file has for a non-ASCII exe, and every key the UI builds on that name would be wrong. A trailing
 // separator gives "" (no leaf). Stops at a NUL inside len, as EncodeUtf16 does.
 inline std::string LeafUtf8(const wchar_t* path, size_t len) {
     if (!path || len == 0) return {};
@@ -255,7 +254,7 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
         sawMultiByte = true;
         i += need + 1;
     }
-    hasMultiByte = sawMultiByte;   // committed only here — see the AD25 note above
+    hasMultiByte = sawMultiByte;   // committed only here — see the header note above
     return true;
 }
 
@@ -276,8 +275,7 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
 // already malformed, in which case the byte-exact cut is kept — this helper
 // shortens strings, it does not repair them.
 //
-// `maxBytes` is a budget for the TEXT only; the ellipsis is added on top, exactly
-// as the open-coded version it replaces did.
+// `maxBytes` is a budget for the TEXT only; the ellipsis is added on top.
 inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
                                 const char* ellipsis = "\xe2\x80\xa6" /* U+2026 */) {
     if (s.size() <= maxBytes) return s;

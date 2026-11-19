@@ -13,23 +13,22 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Composition-root wiring tests — the class of defect no other test can catch.
 ///
-/// <para><b>Why this file exists.</b> Audit #4 B27: <c>App.axaml.cs</c> constructed a
-/// <see cref="CoordinateLibraryStore"/> and then called
-/// <c>new MainWindowViewModel(...)</c> with 11 positional arguments, while the
-/// constructor's 12th parameter is <c>CoordinateLibraryStore? coordLibrary = null</c>.
-/// The store bound to its default, was forwarded as null into
-/// <see cref="TeleportViewModel"/>, and every Coordinate Library persistence path
-/// silently early-returned on its null guard. The whole feature never persisted — no
-/// exception, no log line, no compiler warning.</para>
+/// <para><b>Why this file exists.</b> <see cref="MainWindowViewModel"/>'s service
+/// parameters are optional, so an <c>App.axaml.cs</c> that constructs a
+/// <see cref="CoordinateLibraryStore"/> and then calls <c>new MainWindowViewModel(...)</c>
+/// one positional argument short still compiles: the store's parameter binds to its
+/// default, null is forwarded into <see cref="TeleportViewModel"/>, and every Coordinate
+/// Library persistence path silently early-returns on its null guard. The whole feature
+/// never persists — no exception, no log line, no compiler warning.</para>
 ///
-/// <para><b>Why the existing tests missed it.</b> Every other test that builds
+/// <para><b>Why other tests cannot see it.</b> Every other test that builds
 /// <c>MainWindowViewModel</c> passes <i>named</i> arguments for the handful of services
-/// it cares about (see <c>MainWindowInjectHelperTests.BuildVm</c>, 7 named args). That
-/// is the right thing for a unit test and structurally incapable of catching a
-/// composition-root omission: the test supplies what it needs, so it can never notice
-/// what <c>App</c> forgot.</para>
+/// it cares about (see <c>MainWindowInjectHelperTests.BuildVm</c>). That is the right
+/// thing for a unit test and structurally incapable of catching a composition-root
+/// omission: the test supplies what it needs, so it can never notice what <c>App</c>
+/// forgot.</para>
 ///
-/// <para><b>Why the wiring moved to <see cref="AppComposition"/>.</b> A test that builds
+/// <para><b>Why the wiring lives in <see cref="AppComposition"/>.</b> A test that builds
 /// the VM itself would have the same blind spot — it would assert that <i>the test</i>
 /// passes the store. The construction is therefore behind one helper that both
 /// <c>App</c> and this file call, whose parameters are all <b>required</b>, so the
@@ -87,7 +86,7 @@ public class CompositionRootWiringTests : IDisposable
     public void Teleport_ReceivesTheAiWriteBlockGate_AppBuilt()
     {
         // [MCP-WRITE-GRANTS-2026-11-14] A gate not passed leaves the "Block AI writes" switch hidden, and the user with no
-        // way to stop an AI session from the window: B27's class.
+        // way to stop an AI session from the window: the omission this file exists for.
         Assert.True(BuildVmAsAppDoes().Teleport.HasAiWriteBlock);
     }
 
@@ -150,7 +149,8 @@ public class CompositionRootWiringTests : IDisposable
     /// <summary>
     /// The structural guard. <see cref="MainWindowViewModel"/>'s service parameters are
     /// optional (that is the hazard), so the composition helper's must not be — otherwise
-    /// a future service can be dropped at the call site and compile, exactly as B27 did.
+    /// a future service can be dropped at the call site and compile, exactly as the
+    /// coordinate store can be at the VM's constructor.
     /// </summary>
     [Fact]
     public void AppComposition_TakesEveryServiceAsRequired()
@@ -177,17 +177,16 @@ public class CompositionRootWiringTests : IDisposable
     }
 
     // ------------------------------------------------------------------
-    // The dispatcher fault guard's attachment. Same class of defect as B27 above:
+    // The dispatcher fault guard's attachment. Same class of defect as the coordinate store above:
     // a service that is constructed and then not connected to anything.
     // ------------------------------------------------------------------
 
     /// <summary>
     /// A guard that is never attached is indistinguishable from one that works —
     /// no exception, no log line, nothing to notice — and the app quietly goes back
-    /// to dying on a bad paste ([PASTECRASH-2026-08-18]). Deleting the
-    /// <c>Attach</c> call used to fail no test at all.
+    /// to dying on a bad paste ([PASTECRASH-2026-08-18]).
     ///
-    /// <para>Construction and subscription are now one call, and this exercises that
+    /// <para>Construction and subscription are one call, and this exercises that
     /// call — so the only way to lose the subscription is to delete the whole thing
     /// from <c>App</c>, which is a visible edit rather than a silent one.</para>
     /// </summary>
@@ -256,10 +255,10 @@ public class CompositionRootWiringTests : IDisposable
         public void Dispose() { }
     }
 
-    /// <summary>[LEAD-SECOND-UI-CRASHLOG] A second launch found the instance mutex taken inside
-    /// <c>OnFrameworkInitializationCompleted</c> and called <c>Shutdown(1)</c> there, after which the lifetime's
-    /// <c>StartCore</c> threw "the Dispatcher shut down". Program.Main caught it and wrote it to crash.log, over the
-    /// first instance's real one. The check belongs before Avalonia starts at all, so no exception is made.</summary>
+    /// <summary>[LEAD-SECOND-UI-CRASHLOG] A second launch checks the instance mutex before Avalonia starts at all, so
+    /// no exception is made. Checked inside <c>OnFrameworkInitializationCompleted</c>, a <c>Shutdown(1)</c> there would
+    /// make the lifetime's <c>StartCore</c> throw "the Dispatcher shut down", and Program.Main would write that to
+    /// crash.log, over the first instance's real one.</summary>
     [Fact]
     public void ASecondInstance_LeavesBeforeAvaloniaStarts()
     {
@@ -273,15 +272,15 @@ public class CompositionRootWiringTests : IDisposable
         // The app keeps the platform service Main made (and the mutex it holds), rather than making a second one.
         Assert.Contains("StartupPlatform", app);
 
-        // Review round 2: a check by name passed even if App took the mutex again (the one instance would then find it
-        // held by its own Main and shut down), and nothing held the window raise (B42). App takes it only when Main
-        // did not start it; Main raises the first instance's window before it leaves.
+        // A check by name alone would pass even if App took the mutex again (the one instance would then find it held
+        // by its own Main and shut down). App takes it only when Main did not start it; Main raises the first
+        // instance's window before it leaves.
         Assert.Contains("if (StartupPlatform == null && !_platform.TryAcquireSingleInstance())", app);
         int raise = program.IndexOf("ActivateExistingInstance()", check, StringComparison.Ordinal);
         int leave = program.IndexOf("return 1;", check, StringComparison.Ordinal);
         Assert.True(raise > check && raise < leave, "Main must raise the first instance's window before it leaves");
 
-        // Review round 2: the mutex is taken INSIDE Main's crash.log catch, so a failure there is written down
+        // The mutex is taken INSIDE Main's crash.log catch, so a failure there is written down
         // rather than killing the process without a word.
         var tryStmt = System.Text.RegularExpressions.Regex.Match(program[main..], @"\n\s*try\s*\{");
         int guard = tryStmt.Success ? main + tryStmt.Index : -1;
@@ -291,7 +290,7 @@ public class CompositionRootWiringTests : IDisposable
     [Fact]
     public void AMutexAnElevatedInstanceHolds_ReadsAsAnotherInstance_NotACrash()
     {
-        // Review round 2: a first instance run as administrator holds the mutex where an unelevated second launch may
+        // A first instance run as administrator holds the mutex where an unelevated second launch may
         // not open it, and new Mutex(...) then throws UnauthorizedAccessException. That is another instance.
         bool taken = UE5DumpUI.Services.WindowsPlatformService.TakeSingleInstanceMutex(
             () => throw new UnauthorizedAccessException("the elevated instance's mutex"), out var held);

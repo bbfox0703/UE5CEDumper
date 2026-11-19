@@ -4,8 +4,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [DUMPER-SECOND-COPY-AUTOSTART] Two copies of the dumper in one game process: the later copy takes over (maintainer,
-/// 2026-11-17). Which copy is retired, when a mailbox is served, what it says afterwards, and where an export call goes
+/// [DUMPER-SECOND-COPY-AUTOSTART] Two copies of the dumper in one game process: the later copy takes over. Which copy
+/// is retired, when a mailbox is served, what it says afterwards, and where an export call goes
 /// are unit-tested in dll_helpers_test (Land.h). The wiring sits in Land.cpp, Frieren.cpp, Heiter.cpp and Mimic.cpp,
 /// which reach no C++ test target, so it is pinned here from the source.
 /// </summary>
@@ -64,18 +64,17 @@ public sealed class SecondCopySourceTests
 
     /// <summary>The exports a copy that handed over does NOT forward: the yield itself begins the hand-off, and its
     /// shutdown and pipe stop do nothing there -- a CE untick reaching it must not stop the copy that took over, which
-    /// that record never started (B30's rule; review wf_67396083-685 FWD-SHUTDOWN-B30). The hidden-actor hand-over is
-    /// answered from this copy's own record, for the copy it would be forwarded to (review wf_1b9e937b-a0d DLL-2).</summary>
+    /// that record never started (a record stops only what it started). The hidden-actor hand-over is answered from
+    /// this copy's own record, for the copy it would be forwarded to.</summary>
     private static readonly string[] NotForwarded =
         { "UE5_YieldToLaterCopy", "UE5_Shutdown", "UE5_StopPipeServer", "UE5_HandOverHiddenActors" };
 
-    /// <summary>The class walk's state is the copy's own, so a walk begun here finishes here (FWD-WALK-SPLIT).</summary>
+    /// <summary>The class walk's state is the copy's own, so a walk begun here finishes here.</summary>
     private static readonly string[] ForwardedUnlessWalkOpen = { "UE5_WalkClassGetField", "UE5_WalkClassEnd" };
 
     /// <summary>A copy that handed over passes every other C ABI call to the copy that took over, so a CE script that
     /// resolved the earlier copy's export reaches the live one. The first statement names the export EXACTLY: a prefix
-    /// match let LAND_FORWARD(UE5_AutoStartBlocking) inside UE5_AutoStart pass, which never forwards
-    /// (PIN-FWD-PREFIX).</summary>
+    /// match would let LAND_FORWARD(UE5_AutoStartBlocking) pass inside a UE5_AutoStart that never forwards.</summary>
     [Fact]
     public void EveryExportForwardsOnceYielded_ButTheFourThatMustNot()
     {
@@ -94,7 +93,7 @@ public sealed class SecondCopySourceTests
                 Assert.DoesNotContain("LAND_FORWARD", body);
             else if (name == "UE5_WalkClassBegin")
             {
-                // A forwarded Begin first closes a walk left open here (review R2-WALK-STALE-FLAG).
+                // A forwarded Begin first closes a walk left open here.
                 Assert.StartsWith("if (Land::Forwards(Land::State()))", first);
                 InOrder(body, name, "s_walkCache = ClassInfo{}", "s_walkOpenHere.store(false",
                         "LAND_FORWARD(UE5_WalkClassBegin, uclassAddr)");
@@ -107,7 +106,7 @@ public sealed class SecondCopySourceTests
     }
 
     /// <summary>The yielded copy's shutdown and pipe stop are no-ops; the hand-off's own shutdown leaves the mailbox
-    /// whole and says SKIPPED until the later copy serves it (MBX-5), where an untick clears it and says IDLE.</summary>
+    /// whole and says SKIPPED until the later copy serves it, where an untick clears it and says IDLE.</summary>
     [Fact]
     public void AHandedOverCopysShutdownStopsNothing_AndTheHandOffKeepsTheMailbox()
     {
@@ -125,8 +124,8 @@ public sealed class SecondCopySourceTests
     }
 
     /// <summary>The later copy takes over inside its pipe start, after its own scan and before it asks who holds the
-    /// pipe; a copy that is handing over refuses before, and a copy taken over DURING its pass refuses after it
-    /// (LAND-NO-RECHECK-AFTER-PASS). Every server start re-checks under the start lock.</summary>
+    /// pipe; a copy that is handing over refuses before, and a copy taken over DURING its pass refuses after it.
+    /// Every server start re-checks under the start lock.</summary>
     [Fact]
     public void ThePipeStartRetiresEarlierCopiesBeforeItsProbe()
     {
@@ -143,8 +142,7 @@ public sealed class SecondCopySourceTests
 
     /// <summary>The paths that start something of this copy's own refuse once it is handing over: UE5_Init's scan
     /// (after its already-initialised returns, so the teardown's own calls still work), the auto-start's restarts under
-    /// the start lock (MBX-6), its pipe start after a scan a take-over interrupted (AUTOSTART-AFTER-YIELD), and the
-    /// claim watcher.</summary>
+    /// the start lock, its pipe start after a scan a take-over interrupted, and the claim watcher.</summary>
     [Fact]
     public void AYieldingCopyStartsNothing()
     {
@@ -158,7 +156,7 @@ public sealed class SecondCopySourceTests
         InOrder(FunctionBody(frieren, "static bool AutoStartWork() {"), "AutoStartWork",
                 "Land::LockStart()", "Land::RefusesStart(Land::State())", "Tot::ResetShutdown()", "Mimic::StartThread()",
                 "UE5_Init()", "Land::RefusesStart(Land::State())", "UE5_StartPipeServer()",
-                // ...and nothing published over a take-over that landed while the pipe started (R2-AUTOSTART-PUBLISH-AFTER-YIELD)
+                // ...and nothing published over a take-over that landed while the pipe started
                 "Land::LockStart()", "Land::RefusesStart(Land::State())", "initState =");
         Assert.Matches(@"\}\s*if \(Land::RefusesStart\(Land::State\(\)\)\) \{[^}]*return false;\s*\}\s*bool ok = UE5_StartPipeServer\(\)",
                        FunctionBody(frieren, "static bool AutoStartWork() {"));
@@ -180,7 +178,7 @@ public sealed class SecondCopySourceTests
         Assert.Matches(@"else\s+if\s*\(\s*deferToHolder\s*\)", heiter);
     }
 
-    /// <summary>Land.cpp ties the unit-tested decisions to the running DLL (PIN-LAND-CPP-UNPINNED): only earlier copies,
+    /// <summary>Land.cpp ties the unit-tested decisions to the running DLL: only earlier copies,
     /// latest first, never while a later copy has started; the pass stops once this copy is taken over; the mailbox is
     /// taken by the hand-off's own thread after the earlier copy's shutdown, with the layout-range rule, else SKIPPED
     /// and the magic cleared; the yield checks the order; an export call goes where RouteCall says.</summary>
@@ -200,8 +198,8 @@ public sealed class SecondCopySourceTests
             "void TakeMailbox(const CopySeen& seen, Mimic::MailboxData* box, Mimic::MailboxContract* contract, bool forwards) {");
         InOrder(take, "TakeMailbox", "if (!forwards)", "now != Mimic::INIT_IDLE", "return;",
                 "CanServeMailbox(", "AdoptMailbox(", "PublishedState(false", "&contract->magic");
-        // The verdict gates the adoption, with every argument in place (review R2-SRC-PIN-MBX-GAPS: `||` and swapped
-        // arguments passed the order check).
+        // The verdict gates the adoption, with every argument in place (an order check alone passes `||` and swapped
+        // arguments).
         Assert.Matches(@"CanServeMailbox\(seen\.current, seen\.minimum, Mimic::MAILBOX_CONTRACT,\s*" +
                        @"Mimic::MAILBOX_CONTRACT_MIN, Mimic::MAILBOX_LAYOUT_SINCE\)", take);
         Assert.Contains("if (layoutOk && Mimic::AdoptMailbox(box, forwards))", take);
@@ -225,24 +223,23 @@ public sealed class SecondCopySourceTests
         Assert.Contains("static MailboxData& Box()", mimic);
         string poller = FunctionBody(mimic, "static void PollingThreadBody() {");
         Assert.Matches(@"ServeOne\(&g_invokeMailbox,\s*warnedThrow\)", poller);
-        // Each adopted mailbox says this copy's state -- strictly, for a copy that cannot forward -- before it is served
-        // (review R2-SRC-PIN-MBX-GAPS: deleting the mirror passed every test).
+        // Each adopted mailbox says this copy's state -- strictly, for a copy that cannot forward -- before it is served.
         InOrder(poller, "the adopted mailboxes", "s_adopted[slot].load(", "box->initState = Land::MirroredState(g_invokeMailbox.initState,",
                 "s_adoptedForwards[slot].load(", "ServeOne(box, warnedThrow)");
-        // A mailbox another poller is mid-command on is left to it (R2-STOPTHREAD-TIMEOUT-REPLAY).
+        // A mailbox another poller is mid-command on is left to it.
         string serve = FunctionBody(mimic, "static void ServeOne(MailboxData* box, bool& warnedThrow) {")[1..].TrimStart();
         Assert.Matches(@"^s_box = box;\s*const int32_t seen = Box\(\)\.status;\s*if \(seen == STATUS_PROCESSING\) return;", serve);
-        // ...and one finishing -- DONE written, its cmd = IDLE not yet (review wf_2875eae9-da5, R3-PROCESSING-SKIP-DONE-WINDOW).
+        // ...and one finishing -- DONE written, its cmd = IDLE not yet.
         Assert.Matches(@"if \(cmd != CMD_IDLE && seen == STATUS_DONE\) \{\s*Sleep\(1\);\s*if \(Box\(\)\.cmd == CMD_IDLE\) return;", serve);
-        // One poller's mailbox is not another's: a copy can run two (a stop that gave up, then a restart; R3-SBOX-SHARED-POLLERS).
+        // One poller's mailbox is not another's: a copy can run two (a stop that gave up, then a restart).
         Assert.Contains("static thread_local MailboxData* s_box", mimic);
-        // A stop marks the adopted mailboxes by how they stop being served (R2-MBX4-IDLE-ORPHAN).
+        // A stop marks the adopted mailboxes by how they stop being served.
         Assert.Contains("Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,",
                         FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
     /// <summary>The layout pin holds whatever MAILBOX_LAYOUT_SINCE says: moving it fails the build until the pin is
-    /// restated for the new layout (review R3-LAYOUT-PIN-SELF-DISABLING: a conditional pin switched itself off).</summary>
+    /// restated for the new layout (a conditional pin would switch itself off).</summary>
     [Fact]
     public void TheMailboxLayoutPinIsUnconditional()
     {
@@ -262,7 +259,7 @@ public sealed class SecondCopySourceTests
         string gen = sb.ToString();
         InOrder(gen, "the generated contract check", "if _cmagic == 0 then", "_tm >= 1 and _tc >= _tm",
                 "another copy of UE5Dumper took over this game process",
-                // Either copy can be the stale one: the later copy takes over even when it is older (R3-TAKEOVER-ADVICE-NEWER-EARLIER).
+                // Either copy can be the stale one: the later copy takes over even when it is older.
                 "of the two copies is out of date", "the proxy DLL in the game folder or the DLL injected later",
                 "if _cmagic ~= ");
         foreach (string helper in new[] { "ue5_invoke_helper.lua", "ue5_freeze_helper.lua" })
@@ -275,7 +272,7 @@ public sealed class SecondCopySourceTests
 
     /// <summary>The yield is listed in all four proxy .def files. A proxy exports it either way -- every proxy links the
     /// shared objects, and /DEF merges with __declspec(dllexport) rather than replacing it (ProxyDxgi.def's header) -- so
-    /// this is the list check_proxy_exports and CE's getAddress readers see, kept complete (PIN-DEF-RATIONALE).</summary>
+    /// this is the list check_proxy_exports and CE's getAddress readers see, kept complete.</summary>
     [Fact]
     public void EveryProxyListsTheYield()
     {
@@ -286,35 +283,35 @@ public sealed class SecondCopySourceTests
         }
     }
 
-    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 T8-1 / R8-1: an adoption trusts a deferred restore that
-    /// is already running, and that restore's last pass decided it was done from its own snapshot -- actors adopted during
-    /// the pass were left with no restore waiting, and the card promised they would reappear. The loop decides from the
-    /// record, under the lock an adoption takes, and clears its running flag in that same section: an adoption lands
-    /// before the decision (another pass takes it) or sees no restore running (and starts one). R8-3: a new deferred
-    /// restore clears an earlier "gave up".</summary>
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] An adoption trusts a deferred restore that is already running, so that
+    /// restore's last pass must not decide it is done from its own snapshot -- actors adopted during the pass would be
+    /// left with no restore waiting, while the card promises they reappear. The loop decides from the record, under the
+    /// lock an adoption takes, and clears its running flag in that same section: an adoption lands before the decision
+    /// (another pass takes it) or sees no restore running (and starts one). A new deferred restore clears an earlier
+    /// "gave up".</summary>
     [Fact]
     public void ADeferredRestoreTakesWhatWasAdoptedDuringItsPass()
     {
         string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
         string loop = FunctionBody(schlacht, "void PendingRestoreLoop() {");
         Assert.DoesNotContain("done = kept.empty();", loop);
-        // Review wf_eec7e89a-a4a R9-2: each flag store INSIDE the section that decides the exit -- moved after its closing
-        // brace, or left to the store at the loop's end, the race is back. One regex per section, braces included.
+        // Each flag store INSIDE the section that decides the exit -- moved after its closing brace, or left to the store
+        // at the loop's end, it races an adoption. One regex per section, braces included.
         Assert.Matches(@"std::lock_guard<std::mutex> lk\(s_mutex\);\s*nothingToDo = s_state\.active \|\| " +
                        @"s_state\.hiddenActors\.empty\(\);\s*if \(nothingToDo\) s_pendingRunning\.store\(false\); \}", loop);
         Assert.Matches(@"\{\s*std::lock_guard<std::mutex> lk\(s_mutex\);\s*RecordUnhideLeftoversLocked\(kept\);\s*" +
                        @"done = s_state\.active \|\| s_state\.hiddenActors\.empty\(\);\s*left = s_state\.hiddenActors\.size\(\);\s*" +
                        @"if \(done\) s_pendingRunning\.store\(false\);\s*\}", loop);
-        // R9-1: it gives up only on this pass's own failures; actors adopted while it ran were never tried.
+        // It gives up only on this pass's own failures; actors adopted while it ran were never tried.
         Assert.Contains("if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS)", loop);
         InOrder(FunctionBody(schlacht, "bool StartPendingLocked() {"), "a new restore",
                 "if (Tot::ShutdownRequested()) return false;", "s_state.restoreAbandoned = false;",
                 "s_pendingWorker = std::thread(PendingRestoreLoop);");
     }
 
-    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_846108f2-663 R8-2: KeepAddedDuringTick was tested as a helper, and its
-    /// call in Tick could go -- Schlacht.cpp is in no C++ test target. Under the write-back's lock, before the record is
-    /// replaced: after the assignment it would merge the record with itself.</summary>
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] KeepAddedDuringTick is tested as a helper; this pins its call in Tick, since
+    /// Schlacht.cpp is in no C++ test target. Under the write-back's lock, before the record is replaced: after the
+    /// assignment it would merge the record with itself.</summary>
     [Fact]
     public void ATickKeepsWhatWasAdoptedWhileItRan()
     {
@@ -323,8 +320,8 @@ public sealed class SecondCopySourceTests
                 "KeepAddedDuringTick(applied, s_state.hiddenActors, old);", "s_state.hiddenActors = std::move(applied);");
     }
 
-    /// <summary>[WRITEMEM-ANY-COPY] Review wf_bbd1bbfe-20d U7-5: the helper is tested, the call site was not -- Fern.cpp
-    /// is in no C++ test target. A background client's write_mem asks about every copy's image before it classifies the
+    /// <summary>[WRITEMEM-ANY-COPY] The helper is tested elsewhere; this pins the call site, since Fern.cpp is in no C++
+    /// test target. A background client's write_mem asks about every copy's image before it classifies the
     /// range, so a write into the earlier copy's adopted mailbox never reaches the classification.</summary>
     [Fact]
     public void AnAiWriteMemIsRefusedInsideAnyCopysImage()
@@ -339,7 +336,7 @@ public sealed class SecondCopySourceTests
         Assert.DoesNotContain("RangeInOwnImage(addr", fern);
     }
 
-    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: the hand-off's See-through OFF keeps on a stalled
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] The hand-off's See-through OFF keeps on a stalled
     /// game thread what it could not un-hide, "for the next ON" -- which a copy that handed over never gets. The later
     /// copy takes that record after a hand-off it began, before anything else can take this copy over; the earlier copy
     /// answers only once it has handed over, from its own record.</summary>
@@ -347,7 +344,7 @@ public sealed class SecondCopySourceTests
     public void TheLaterCopyTakesOverTheActorsSeeThroughLeftHidden()
     {
         string land = CodeOnly(DllSrc("Land.cpp"));
-        // Review wf_bbd1bbfe-20d D7-1: asked after "already handing over" too -- that copy is still handing over, to a copy
+        // Asked after "already handing over" too -- that copy is still handing over, to a copy
         // this one took over -- and asked again until it has, bounded.
         string retire = FunctionBody(land, "DWORD WINAPI RetireThread(LPVOID param) {");
         InOrder(retire, "the hand-off thread", "reply == YIELD_NOT_LATER", "PollHiddenActors(call->hidden);",
@@ -366,7 +363,7 @@ public sealed class SecondCopySourceTests
         InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
                 "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
         string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
-        // Review wf_bbd1bbfe-20d D7-3 / U7-4: adopted while off, they get this copy's deferred restore, as after an OFF
+        // Adopted while off, they get this copy's deferred restore, as after an OFF
         // that could not finish -- so the card's "they reappear" and "gave up" are true for them; "gave up" is set only
         // when no restore can wait (a shutdown), not for every adoption.
         InOrder(FunctionBody(schlacht, "void AdoptLeftovers(const uint64_t* actors, int32_t n) {"), "the adoption",

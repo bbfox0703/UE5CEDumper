@@ -13,8 +13,8 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [PATH-CE-MODULE-VIEW] Cheat Engine never sees a module's Unicode name. Its symbol handler names a module
 /// <c>WinCPToUTF8(szModule)</c> from ANSI <c>Module32First</c>, and Lua <c>enumModules</c> / <c>process</c> hand
-/// out the raw ANSI bytes. Measured on this PC (ACP 950) against ANSI <c>Module32First</c> itself, which gives
-/// exactly <c>WideCharToMultiByte(CP_ACP, 0)</c>, best fit included: <c>遊戲-…</c> keeps its name (Big5 holds it),
+/// out the raw ANSI bytes. ANSI <c>Module32First</c> itself gives exactly <c>WideCharToMultiByte(CP_ACP, 0)</c>, best
+/// fit included; under ACP 950: <c>遊戲-…</c> keeps its name (Big5 holds it),
 /// <c>ゲーム-…</c> is <c>???-…</c>, <c>Game™-…</c> is <c>Game?-…</c>, <c>Café-…</c> is <c>Cafe-…</c>,
 /// <c>Game®-…</c> is <c>GameR-…</c>. Every string the UI hands to CE must use THAT name.
 /// </summary>
@@ -33,7 +33,7 @@ public class CeModuleViewTests
     [InlineData("Game™-Win64-Shipping.exe", 1252u, "Game™-Win64-Shipping.exe")] // and ™ (0x99)
     [InlineData("遊戲-Win64-Shipping.exe", 1252u, "??-Win64-Shipping.exe")]
     [InlineData("", 950u, "")]
-    // (skeptic MODVIEW-5C-TRAIL, measured) ANSI Module32First cuts the ANSI path at its LAST 0x5C byte, and a DBCS
+    // ANSI Module32First cuts the ANSI path at its LAST 0x5C byte, and a DBCS
     // character's trail byte can be 0x5C: Big5 功 = A5 5C, Shift-JIS ソ = 83 5C. CE never sees what precedes it.
     [InlineData("功夫-Win64-Shipping.exe", 950u, "夫-Win64-Shipping.exe")]
     [InlineData("ソード-Win64-Shipping.exe", 932u, "ード-Win64-Shipping.exe")]
@@ -63,8 +63,8 @@ public class CeModuleViewTests
     [Fact]
     public void DumpService_TheCodePageIsRequired_AndTheAppPassesTheSystemOne()
     {
-        // (skeptic T2) An OPTIONAL code page let a composition root forget it and silently fall back to identity --
-        // the Audit #4 B27 shape CompositionRootWiringTests exists for. Required: the compiler finds every site.
+        // An OPTIONAL code page would let a composition root forget it and silently fall back to identity -- the
+        // shape CompositionRootWiringTests exists for. Required: the compiler finds every site.
         var p = typeof(DumpService).GetConstructors().Single().GetParameters()
             .Single(x => x.ParameterType == typeof(ISystemCodePage));
         Assert.False(p.IsOptional);
@@ -81,6 +81,69 @@ public class CeModuleViewTests
     }
 
     // ── the consumers ──
+
+    /// <summary>[CE76-PROCESS-GLOBAL] Every AOB-scan script names the module it scans from the opened process's own
+    /// module list, not from CE's <c>process</c> global, which CE 7.6 overwrites with its own exe name once any table
+    /// registers a custom type. The expression each script hands <c>AOBScanModuleUE</c> runs on CE's Lua VM with that
+    /// state stubbed: it gives the game's first module, nil with no process open (process id 0 lists CE's own
+    /// modules), and the global only when the module list is empty.</summary>
+    [Fact]
+    public void AobScanScripts_NameTheMainModule_WithoutTheProcessGlobal()
+    {
+        const string aob = "48 8B 1D ?? ?? ?? ??";
+        var trainer = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
+        {
+            Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
+            GWorldAob = aob, GWorldAobPos = 3, GWorldAobLen = 7,
+        })[0].Script;
+        var export = CeXmlExportService.ExtractAssemblerScript(CeXmlExportService.GenerateAobWrappedXml(
+            "World", new[] { new BreadcrumbItem { Address = "0xA", Label = "World", FieldName = "World" } },
+            new List<LiveFieldValue> { new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 } },
+            aob: aob, aobPos: 3, aobLen: 7, moduleName: "Game-Win64-Shipping.exe"));
+        var walk = CeXmlExportService.ExtractAssemblerScript(CeXmlExportService.GenerateGWorldWalkedSymbolXml(
+            "BP_Test",
+            new List<BreadcrumbItem>
+            {
+                new() { Address = "0x1000", Label = "GWorld", FieldName = "GWorld" },
+                new() { Address = "0x2000", Label = "PersistentLevel", FieldName = "PersistentLevel",
+                        FieldOffset = 0x30, IsPointerDeref = true },
+            },
+            useAob: true, aob: aob, aobPos: 3, aobLen: 7, gworldSlotAddr: ""));
+
+        string lua = """
+            local GAME, CE = 'Game-Win64-Shipping.exe', 'cheatengine-x86_64.exe'
+            local pid, mods = 0, {}
+            function getOpenedProcessID() return pid end
+            function synchronize(f, ...) return f(...) end
+            function enumModules() return mods end
+            local function check(name, resolve)
+              process = CE   -- what CE 7.6 leaves once a table registers a custom type
+              pid, mods = 4242, { { Name = GAME, Address = 0x140000000, Size = 0x1000 },
+                                  { Name = 'ntdll.dll', Address = 0x7FF800000000, Size = 0x1000 } }
+              assert(resolve() == GAME, name .. ': scans ' .. tostring(resolve()) .. ', not the game')
+              pid, mods = 0, { { Name = CE, Address = 0x10000, Size = 0x1000 } }   -- process id 0 snapshots CE itself
+              assert(resolve() == nil, name .. ': names ' .. tostring(resolve()) .. ' with no process open')
+              pid, mods, process = 4242, {}, GAME
+              assert(resolve() == GAME, name .. ': an empty module list does not fall back to the process global')
+            end
+            """;
+        foreach (var (name, script) in new[] { ("trainer", trainer), ("export", export), ("GWorld walk", walk) })
+        {
+            var call = Regex.Match(script, @"(?<!function )AOBScanModuleUE\((\w+),");
+            Assert.True(call.Success, $"{name}: no AOBScanModuleUE call");
+            string module = call.Groups[1].Value;
+            string expr = module == "process"
+                ? module
+                : Regex.Match(script, $@"^\s*local {module} = ([^\r\n]+)", RegexOptions.Multiline)
+                    .Groups[1].Value.Trim();
+            Assert.False(expr is "process" or "", $"{name}: the scan module is CE's process global ({expr})");
+            lua += $"\ncheck('{name}', function() return {expr} end)";
+        }
+        lua += "\nprint('OK')\n";
+
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0 && output.Contains("OK"), output);
+    }
 
     [Fact]
     public async Task ObjectTree_CopyAddress_ModuleOffset_UsesCesNameForTheModule()
@@ -114,7 +177,7 @@ public class CeModuleViewTests
             .ToList();
         Assert.Empty(offenders);
 
-        // (skeptic T10) The GWorld-walk export's module argument is unused -- its script scans CE's `process` --
+        // The GWorld-walk export's module argument is unused -- its script scans CE's own name for the main module --
         // so it is not pinned here; its doc says so.
 
         string pointer = File.ReadAllText(Path.Combine(dir, "PointerPanelViewModel.cs"));
@@ -124,14 +187,14 @@ public class CeModuleViewTests
     [Fact]
     public void Trainer_ScansCesOwnMainModule_NeverTheBakedName()
     {
-        // CE's `process` and enumModules()' Name are the SAME ANSI bytes; a baked UTF-8 name is not.
+        // enumModules()' Name is the ANSI bytes CE matches; a baked UTF-8 name is not.
         var setup = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
         {
             Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
             Module = "遊戲-Win64-Shipping.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
         })[0].Script;
 
-        Assert.Contains("local mod = process", setup);
+        Assert.Contains("local mod = " + CeLuaHygiene.MainModuleNameLua, setup);
         Assert.DoesNotContain("local mod = UE5T.module", setup);
         // No process opened: say so and untick, instead of string.lower(nil) inside the helper.
         Assert.Matches(@"if mod == nil or mod == '' then\s+showMessage\('\[UE5 Trainer\][^']*[Aa]ttach", setup);
@@ -156,7 +219,7 @@ public class CeModuleViewTests
     [Fact]
     public async Task PointerPanel_SymbolScripts_HandAobMakerCesName()
     {
-        // (skeptic T8) Behavioural, where a negative text pin guarded it before.
+        // Behavioural, not a negative text pin.
         var bridge = new RecordingBridge();
         var vm = new PointerPanelViewModel(new MockPlatformService(Path.GetTempPath()), aobMaker: bridge)
             { IsAobMakerAvailable = true };
@@ -176,7 +239,7 @@ public class CeModuleViewTests
     [Fact]
     public void AobScanHelper_OnCesVm_MatchesTheAnsiBytesAndCesUtf8Name()
     {
-        // (skeptic T10) The either-encoding clause, RUN on CE's own Lua VM (skips where the host is not built).
+        // The either-encoding clause, RUN on CE's own Lua VM (skips where the host is not built).
         var setup = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
         {
             Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
@@ -213,7 +276,7 @@ public class CeModuleViewTests
     [Fact]
     public void FernSendsTheRealName_AndCesViewOnlyWhereCeResolvesIt()
     {
-        // (skeptic T3) No test target compiles Fern.cpp, so the red tests could only exercise the helpers. Pin that
+        // No test target compiles Fern.cpp, so the helper tests cannot reach its call sites. Pin that
         // the three sites USE them and that no '?' narrowing survives.
         string fern = File.ReadAllText(Path.Combine(RepoRoot(), "dll", "src", "Fern.cpp"));
         Assert.DoesNotContain("(wc < 128) ? static_cast<char>(wc) : '?'", fern);
@@ -226,9 +289,8 @@ public class CeModuleViewTests
     [Fact]
     public void TheRigsThatPrintModuleName_WriteUtf8()
     {
-        // (skeptic RIG-PRINT-NONASCII) With the real non-ASCII name, print() to a cp950 pipe raises
-        // UnicodeEncodeError. run_version_evidence.py and sweep_title.py already reconfigure stdout; dumpgate_case3.py
-        // did not.
+        // With the real non-ASCII name, print() to a cp950 pipe raises UnicodeEncodeError, so the rigs that print a
+        // module name reconfigure stdout to UTF-8.
         foreach (var rig in new[] { "run_version_evidence.py", "sweep_title.py", "dumpgate_case3.py" })
             Assert.Contains("sys.stdout.reconfigure(encoding=\"utf-8\"",
                 File.ReadAllText(Path.Combine(RepoRoot(), "tools", "verify", rig)));

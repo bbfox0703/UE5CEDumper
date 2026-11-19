@@ -8,11 +8,10 @@
 // Why: MinHook's CreateTrampolineFunction trusts its own length decoder (hde64). When hde64 misreads an instruction
 // and does not flag it, MinHook returns MH_OK with a trampoline that runs different code from the original: the
 // game crashes or misbehaves the first time the hooked function runs, and nothing is logged. Both the pinned hde64
-// and the upstream rewrite have such a class, measured over 3.68M real function starts (docs/vendor-pin-reviews.md
-// § minhook): the pinned one mis-measures popcnt, 67-addressing and 66+REX.W immediates; the rewrite fixes those but
-// leaves trampoline.c reading a VEX / EVEX / XOP opcode 0x80-0x8F as a Jcc, so the instruction is dropped. A
-// refusal is safe -- the feature is unavailable and the log says why. Zydis is the reference both measurements used,
-// and the DLL links it already.
+// and the upstream rewrite have such a class (docs/vendor-pin-reviews.md § minhook): the pinned one mis-measures
+// popcnt, 67-addressing and 66+REX.W immediates; the rewrite fixes those but leaves trampoline.c reading a VEX /
+// EVEX / XOP opcode 0x80-0x8F as a Jcc, so the instruction is dropped. A refusal is safe -- the feature is
+// unavailable and the log says why. Zydis is the reference decoder, and the DLL links it already.
 //
 // The check replays CreateTrampolineFunction's x64 walk over a COPY of the target's bytes: which instructions it
 // copies, how it classifies each one, what it writes in their place, and where it stops. For every instruction
@@ -87,7 +86,7 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
 bool ReadTarget(uintptr_t target, uint8_t (&out)[kSpan], std::string& why);
 
 /// ReadTarget, then CheckTrampoline with the linked hde64: what every hook that gets ENABLED runs before
-/// MH_CreateHook.
+/// MH_CreateHook (EveryEnabledHook_IsVettedBeforeMinHookBuildsItsTrampoline pins it).
 Report VetHookTarget(uintptr_t target);
 
 }  // namespace Falsch

@@ -1,14 +1,12 @@
-r"""Audit A2 — the ProcessEvent vtable-slot table, on a retail UE 5.6 build (EVERSPACE 2).
+r"""The ProcessEvent vtable-slot table, on a retail UE 5.6 build (EVERSPACE 2).
 
     py tools/verify/a2_es2_pehook.py
 
-THE QUESTION. `1d647a08` replaced an unreachable `>= 550` band (under which every UE5 game
-silently took `0x220`) with a measured per-version table, `DynOff::ProcessEventVTableSlotFor`
-(`dll/src/Grimoire.h`). The table is deliberately NON-monotonic: `505 -> 0x278`, then
-`506/507 -> 0x260`. EVERSPACE 2 was patched from UE 5.5.4 to 5.6.1 on 2026-09-01, so it crossed
-that boundary. Its `0x278` was measured twice on the OLD binary (2026-05-11 and
-`[PEHOOK-6-2026-08-20]`), which makes it a confirmed live witness for the 5.5 row. This run asks
-what the 5.6 build does, and either corroborates the 506 row or falsifies it. Both are results.
+THE QUESTION. `DynOff::ProcessEventVTableSlotFor` (`dll/src/Grimoire.h`) is a measured
+per-version table, and it is deliberately NON-monotonic: `505 -> 0x278`, then `506/507 -> 0x260`.
+EVERSPACE 2 on UE 5.6 sits on the far side of that boundary from its 5.5 build, whose `0x278` is a
+live witness for the 5.5 row (`[PEHOOK-6-2026-08-20]`). This run asks what the 5.6 build does,
+and either corroborates the 506 row or falsifies it. Both are results.
 
 WHY A RIG AND NOT A PLAY-TEST. Every observable here is DLL-side. The UI can show a plausible
 `Connected — UE506` and a `HookActive: true` over a WRONG slot; what discriminates is that the
@@ -20,9 +18,10 @@ line was written. A human looking at the UI cannot see either.
 The invoke is not a nicety, it is what makes the row measurable.
 
 ⛔ THE GREP MUST FAIL LOUDLY, NOT RETURN ZERO. `lushfoil_pehook_batch.py:count()` swallows OSError
-and returns 0. Build 3370 opened every live log with `_wfopen_s` (EXCLUSIVE), so every read raised
-ERROR_SHARING_VIOLATION -- and every "this line must be ABSENT" check would have passed VACUOUSLY
-while measuring nothing. Fixed in Sein.cpp for 3371; this rig refuses to guess regardless.
+and returns 0. A DLL that opens its live logs EXCLUSIVELY (`_wfopen_s`) makes every read raise
+ERROR_SHARING_VIOLATION -- and every "this line must be ABSENT" check would then pass VACUOUSLY
+while measuring nothing. Sein.cpp opens them readable (`_wfsopen`, `_SH_DENYWR`); this rig refuses
+to guess regardless.
 """
 import pathlib
 import sys
@@ -34,7 +33,7 @@ from pipe_client import PipeClient  # noqa: E402
 
 # The log-folder name, i.e. the image name without .exe. Defaults to EVERSPACE 2 (the row's own
 # host) but takes any host, because the table has ONE row per UE version and each row needs its own
-# live witness -- 508 in particular had none until DumperTest58 existed.
+# live witness -- DumperTest58 is the one for 508.
 PROC = sys.argv[1] if len(sys.argv) > 1 else "ES2-Win64-Shipping"
 LOG = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs" / PROC
 
@@ -89,11 +88,11 @@ def main():
                          % p.get("object_count"))
 
         # --- scan-0.log: prove WHICH binary this is -------------------------------
-        # ⚠ TWO WAYS the version legitimately arrives, and an earlier version of this rig knew only
-        # one. `FindAll` SKIPS DetectVersion entirely when UE5CEDumper.{Machine}.json already holds
+        # ⚠ TWO WAYS the version legitimately arrives, and the rig must accept both. `FindAll`
+        # SKIPS DetectVersion entirely when UE5CEDumper.{Machine}.json already holds
         # a verdict for this PE hash, so on any host scanned before, scan-0.log has ZERO
         # `DetectVersion:` lines and a `FindAll: UE Version = N (cached...)` line instead. Demanding
-        # the first produced a false FAIL on DumperTest58.
+        # only the first is a false FAIL on every such host.
         dv = grep("scan", "DetectVersion:") + grep("scan", "FindAll: UE Version =")
         say("\n[scan-0.log] version lines: %d" % len(dv))
         for l in dv[-3:]:
@@ -158,11 +157,11 @@ def main():
     # "FAILED" -- the hook is deliberately KEPT. A mis-detected pattern slot therefore produces
     # exactly the log the naive grep set calls a pass. So the discriminator is the POSITIVE
     # line, not the absent one, and the zero-fire line is a HARD FAIL.
-    # ⚠ THE VALIDATOR IS ARMED FOR 1500 ms AND THIS RIG USED TO RACE IT. `hook installed …
+    # ⚠ THE VALIDATOR IS ARMED FOR 1500 ms, SO DO NOT RACE IT. `hook installed …
     # validator armed (1500ms)` is written at install; the verdict lands ~1.5 s later. On a host
-    # where listing functions and invoking is quick, the log read happened FIRST and the rig
-    # reported "no validation OK line" -- a false FAIL, and precisely the "report and reality
-    # computed by different paths" shape this whole exercise is about. Wait for the verdict.
+    # where listing functions and invoking is quick, a log read that happens FIRST reports
+    # "no validation OK line" -- a false FAIL, and precisely the "report and reality computed
+    # by different paths" shape this whole exercise is about. Wait for the verdict.
     deadline = time.time() + 15.0
     while time.time() < deadline:
         if grep("init", "GameThreadDispatch: validation OK") or grep("init", "fired 0 times in") \

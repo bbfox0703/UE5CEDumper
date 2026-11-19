@@ -54,7 +54,7 @@ constexpr int32_t RecallMarkerRefusal(bool stored, bool parentRelative, bool for
 }
 
 // [TELEPORT-RECALL-PARENTREL] Whether the pose read just before a jump becomes the undo ("last") point. A pose that is
-// not world coordinates does not: the slot keeps its previous pose, as it already did for a pose it could not read, so
+// not world coordinates does not: the slot keeps its previous pose, as it does for a pose it could not read, so
 // Recall last never drives relative numbers into the pawn -- at the cost of returning to an older place.
 constexpr bool StoresUndoPoint(bool readOk, bool parentRelative) {
     return readOk && !parentRelative;
@@ -181,10 +181,9 @@ int32_t GetTrainerOffsets(TrainerOffsets& out);
 // outParentRelative (optional): TRUE when the pawn is ATTACHED (vehicle / mount /
 // moving platform) and the world-space invoke failed, so X/Y/Z are the raw
 // RelativeLocation -- parent-relative numbers, NOT world coordinates. Required by
-// docs/teleport-spec.md:218-220 ("return the raw values anyway ... and a warning
-// flag"); the fallback shipped in 2026-07 and the flag did not, so a degraded read
-// was indistinguishable from a healthy one and got saved into markers and driven
-// back as a world destination. [POSEATTACH-2026-09-10]
+// docs/teleport-spec.md ("return the raw values anyway ... and a warning flag"):
+// without the flag a degraded read is indistinguishable from a healthy one, and
+// gets saved into markers and driven back as a world destination. [POSEATTACH-2026-09-10]
 int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
                 bool* outParentRelative = nullptr);
 
@@ -218,7 +217,7 @@ int32_t GetPov(Pov& out);
 
 // Teleport to an explicit pose (BugItGo interop, pipe-only path). Bypasses
 // the marker store and the map check. hasRot: also restore Pitch/Yaw/Roll.
-// keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: the slot is one for the whole
+// keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] The slot is one for the whole
 // process, and an AI's teleport through the MCP server must not replace the place the user's "Recall last" returns to.
 [[nodiscard]] int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo = false);
 

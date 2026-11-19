@@ -13,7 +13,7 @@
 #include "Voll.h"
 #include "Land.h"      // Land::AnyCopyToRetire -- a later copy does not defer to an earlier one [DUMPER-SECOND-COPY-AUTOSTART]
 #include "Utf8Helpers.h"
-#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate
 #include "Stark.h"     // Stark::HoldTrampolineBlock ([MH-PRERESERVE-PROXY])
 #ifdef UE5_PROXY_BUILD
 #include "Lugner.h"    // Lugner::MarkCrtReady — the latch the forwarding thunks gate on
@@ -73,9 +73,9 @@ extern "C" void UE5_Shutdown();
 // whole process. The OS reclaims it on process exit.
 static HANDLE g_primaryProxyMutex = nullptr;
 // False when CreateMutexW itself failed — the guard is then not armed at all and a
-// second proxy in this process would run alongside us. Logged once Sein exists. (B47)
+// second proxy in this process would run alongside us. Logged once Sein exists.
 static bool   g_primaryProxyMutexArmed = false;
-// GetLastError() captured AT the CreateMutexW call. The B47
+// GetLastError() captured AT the CreateMutexW call. The mutex-failure
 // warning below is logged only after Sein::Init + several Win32/CRT calls, each of
 // which clobbers the thread's last-error, so a live GetLastError() there names the
 // wrong API. Stored here at the point of failure so the warning blames the right one.
@@ -90,7 +90,7 @@ static DWORD  g_primaryProxyMutexErr = 0;
 static void AutoStartBody();
 
 // Guarded entry: AutoStartBody runs the whole AOB scan + pipe start, which allocates
-// heavily, and this is a raw CreateThread proc where a throw is std::terminate. (B14)
+// heavily, and this is a raw CreateThread proc where a throw is std::terminate.
 static DWORD WINAPI AutoStartThreadProc(LPVOID)
 {
     Routine::RunThreadGuarded("DllMain AutoStart", [] { AutoStartBody(); });
@@ -155,7 +155,7 @@ static void AutoStartBody()
 static void AutoStartBody();
 
 // Guarded entry: AutoStartBody runs the whole AOB scan + pipe start, which allocates
-// heavily, and this is a raw CreateThread proc where a throw is std::terminate. (B14)
+// heavily, and this is a raw CreateThread proc where a throw is std::terminate.
 static DWORD WINAPI AutoStartThreadProc(LPVOID)
 {
     Routine::RunThreadGuarded("DllMain AutoStart", [] { AutoStartBody(); });
@@ -299,7 +299,7 @@ static void AutoStartBody()
 }
 #endif
 
-// AB9 — the log retention sweep, off the loader lock.
+// The log retention sweep, off the loader lock.
 //
 // ⚠ THIS MUST LIVE IN THE COMMON REGION, i.e. AFTER the #endif above and outside both
 // halves of the UE5_PROXY_BUILD split. Heiter.cpp defines AutoStartThreadProc TWICE —
@@ -309,7 +309,7 @@ static void AutoStartBody()
 // and NO test target compiles Heiter.cpp, so only a `-Target DLL` build catches it.
 //
 // RunThreadGuarded for the same reason the auto-start proc uses it: std::filesystem
-// throws, and a throw out of a raw thread proc is std::terminate. (B14)
+// throws, and a throw out of a raw thread proc is std::terminate.
 static DWORD WINAPI RetentionSweepThreadProc(LPVOID) {
     Routine::RunThreadGuarded("Sein Retention", [] { Sein::RunRetentionSweep(); });
     return 0;
@@ -351,8 +351,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             swprintf_s(mutexName, L"Local\\UE5CEDumper_PrimaryProxy_%lu",
                        GetCurrentProcessId());
             g_primaryProxyMutex = CreateMutexW(nullptr, FALSE, mutexName);
-            // Capture last-error NOW: everything below (and the deferred B47 warning)
-            // clobbers it, so reading it later blames the wrong call. (AB10/AB11)
+            // Capture last-error NOW: everything below (and the deferred mutex-failure
+            // warning) clobbers it, so reading it later blames the wrong call.
             const DWORD mutexErr = GetLastError();
             if (g_primaryProxyMutex != nullptr &&
                 mutexErr == ERROR_ALREADY_EXISTS) {
@@ -453,7 +453,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
 
 #ifdef UE5_PROXY_BUILD
             // The first moment this can be said out loud. A dedup that is not armed
-            // must not look like a dedup that found nothing. (B47)
+            // must not look like a dedup that found nothing.
             if (!g_primaryProxyMutexArmed) {
                 LOG_WARN("Proxy: first-loaded-wins guard is NOT armed (CreateMutexW failed, "
                          "err=%lu) — a second UE5CEDumper proxy in this process would run "
@@ -505,7 +505,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
 
             // Retention runs INLINE here, and that is deliberate, not an oversight.
-            // AB1: in a CE host the module is NOT pinned (see the PIN below, which is in
+            // In a CE host the module is NOT pinned (see the PIN below, which is in
             // the other branch for exactly this reason), so creating ANY thread here
             // risks CE's FreeLibrary unmapping the image out from under it. A ~140 ms
             // stall inside a plugin-list refresh costs nothing.
@@ -516,8 +516,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             Sein::RunRetentionSweep();
         } else {
             // Our threads live in this image, so the image must not become unmappable
-            // while they run. Nothing in this repo calls FreeLibrary on us — but "nothing
-            // in this repo" is exactly the assumption AB1 falsified, and pinning costs one
+            // while they run. Nothing in this repo calls FreeLibrary on us — but a host
+            // can (Cheat Engine unloads its plugin DLLs), and pinning costs one
             // call. Deliberately NOT done in the CE branch above: with no threads running
             // there is nothing to protect, and CE should stay free to unload us cleanly.
             HMODULE pinned = nullptr;
@@ -535,8 +535,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
 
             // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
             // is set true by CEPlugin_InitializePlugin within 1 second. Nothing
-            // joins it (see the note by the removed g_hAutoStartThread), so close
-            // our handle at once and let it run detached rather than leak it. (AB8)
+            // joins it, so close our handle at once and let it run detached rather
+            // than leak it.
             HANDLE hAutoStart = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
             if (hAutoStart) {
                 LOG_INFO("DllMain: auto-start thread created OK");
@@ -545,13 +545,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                 LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
             }
 
-            // AB9 — retention on its own thread, so the sweep is off the loader lock.
+            // Retention on its own thread, so the sweep is off the loader lock.
             //
             // ⚠ UNCONDITIONAL within this branch, i.e. OUTSIDE the `if (hAutoStart)`
             // above. Putting it after the CloseHandle inside that `if` would run
             // retention only while auto-start thread creation is SUCCEEDING and stop it
             // silently when that starts failing — a feature switched off by an unrelated
-            // failure, which is the B19 shape.
+            // failure.
             //
             // The module PIN a few lines above has already run, so this thread cannot be
             // left executing in an unmapped image. A thread created during
@@ -559,7 +559,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // is precisely the property being bought here.
             HANDLE hSweep = CreateThread(nullptr, 0, RetentionSweepThreadProc, nullptr, 0, nullptr);
             if (hSweep) {
-                CloseHandle(hSweep);   // detached, like the auto-start thread (AB8)
+                CloseHandle(hSweep);   // detached, like the auto-start thread
             } else {
                 LOG_WARN("DllMain: retention sweep thread failed (err=%lu) — running it inline",
                          GetLastError());
@@ -570,7 +570,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     }
 
     case DLL_PROCESS_DETACH:
-        // Audit findings #1, #2, #14: heavy work in DLL_PROCESS_DETACH
+        // Heavy work in DLL_PROCESS_DETACH
         // (thread joins, MinHook teardown, FreeLibrary, log file flushes)
         // risks loader-lock deadlocks because joined threads or unhooked
         // code may take the loader lock that DllMain already holds.
@@ -581,7 +581,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         //
         // Active shutdowns still go through the full UE5_Shutdown path:
         //   - CE Lua "Disable" → ue5_callDLL("UE5_Shutdown")
-        //   - Future hooks for proxy-mode graceful exit
         // Only the implicit process-exit DETACH is a no-op.
         break;
 

@@ -7,7 +7,7 @@ WHAT IT SETTLES
                       and carries the inheritor count the "+N inheritors" badge renders.
   FREEZESCOPE step 9  the cross-feature CONTROL: Force (Solide) on that same row must report an
                       instance count comparable to Freeze's derived sweep. "Force and Freeze sit on
-                      one row and must not scope oppositely" is what started the whole finding, so
+                      one row and must not scope oppositely" is the heart of the finding, so
                       this is the half that can be checked without Cheat Engine.
   Solide `capped`     the wire half of the long-tail row: on a base class with far more than 256
                       live instances, `force_field` must report `held == 256` AND `truncated == true`
@@ -16,7 +16,7 @@ WHAT IT SETTLES
 WHY `Actor` IS THE RIGHT SUBJECT
   `bCanBeDamaged` is declared on `Actor` and inherited by hundreds of classes, so an EXACT-class
   pool would hold almost nothing while a DERIVED sweep holds the whole level. That gap is the
-  finding: pre-fix Freeze held one incidental actor and the player pawn died normally.
+  finding: an exact-class Freeze holds one incidental actor and the player pawn dies normally.
 
 SAFETY
   The force is applied and then released in the same run (`reset_field`, then `reset_all_fields`),
@@ -90,7 +90,7 @@ def main():
         held, trunc = fr.get("held"), fr.get("truncated")
         if not fr.get("resolved"):
             fails.append("step 9: force_field did not resolve the field at all")
-        # The pre-fix value on THIS host (25,179 objects) was 1 -- that is the number to beat.
+        # Without the fix the count is 1 (one incidental object) -- that is the number to beat.
         if held is None or held < 2:
             fails.append("step 9: held=%r -- Force scoped to ~one object while Freeze sweeps "
                          "derived; that is exactly the opposite-scoping the finding is about"

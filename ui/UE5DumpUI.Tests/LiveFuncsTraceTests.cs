@@ -6,9 +6,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [LIVEFUNCS-TIMELINE-2026-10-04] What Live Funcs' Start and Stop do for the call trace: experimental only (T6),
-/// the buffer and its estimate (T1), ticks deciding the scope (T3, T5), the once-per-session question when nothing
-/// is ticked but there is something to tick (T7), and what a stopped trace leaves for the Call Trace tab.
+/// [LIVEFUNCS-TIMELINE-2026-10-04] What Live Funcs' Start and Stop do for the call trace: experimental only, the
+/// buffer and its estimate, ticks deciding the scope, the once-per-session question when nothing is ticked but there
+/// is something to tick, and what a stopped trace leaves for the Call Trace tab.
 /// </summary>
 public class LiveFuncsTraceTests
 {
@@ -32,7 +32,7 @@ public class LiveFuncsTraceTests
         /// <summary>A DLL that predates the trace: it ignores the `trace` key and answers no trace object.</summary>
         public bool StartOmitsTrace { get; set; }
         public bool StartThrows { get; set; }
-        /// <summary>What the traced Start's reply says the DLL left out of the ticks (review UI-1).</summary>
+        /// <summary>What the traced Start's reply says the DLL left out of the ticks.</summary>
         public int StartTickedDropped { get; set; }
         public bool StopThrows { get; set; }
         /// <summary>[LIVEFUNCS-STEP2] A DLL that predates names: it answers the trace but no trace.names.</summary>
@@ -386,7 +386,7 @@ public class LiveFuncsTraceTests
     [Fact]
     public async Task A_refused_traced_Start_withdraws_the_offer_of_the_previous_trace()
     {
-        // The DLL releases the previous trace before it tries the new buffer (review DLL-4).
+        // The DLL releases the previous trace before it tries the new buffer.
         var (vm, dump) = MakeVm();
         vm.TraceEnabled = true;
         dump.StopTrace = new TraceInfo { Allocated = true, Quiesced = true, Written = 50 };
@@ -441,12 +441,12 @@ public class LiveFuncsTraceTests
         Assert.Empty(vm.TickedFunctions);
     }
 
-    // [TRACE-UI-LOAD-MEMORY] D3: what a full buffer costs, beside the slider, from the buffer alone -- before any
+    // [TRACE-UI-LOAD-MEMORY] What a full buffer costs, beside the slider, from the buffer alone -- before any
     // recording, at any call rate: the game holds N MB from Start; the UI holds the window and the trace's columns
     // while it loads (about twice N, plus a page in flight) and the columns after (about N).
-    // Calibrated live on build 3636 (Avowed, 2026-10-07): a full 128 MB load peaked 303 MB over its start; a full
-    // 512 MB one 1,054 MB over its start. "Up to" holds over the load's start at 2.25 x N + 45 (333 and 1,197); from a
-    // freshly started UI that 512 MB run came to 1,206 MB, the 152 MB the UI already held before the load included.
+    // "Up to" is 2.25 x N + 45 over the load's start (333 at 128 MB, 1,197 at 512 MB), above what a full live load
+    // peaks at over its start (303 and 1,054 MB on Avowed); a freshly started UI adds what it already held before the
+    // load (about 150 MB).
     [Theory]
     [InlineData(5, 32, 117, 32)]
     [InlineData(6, 64, 189, 64)]
@@ -472,7 +472,7 @@ public class LiveFuncsTraceTests
 
         int reads = platform.AvailableMemoryReads;
         await vm.StartCommand.ExecuteAsync(null);
-        Assert.True(vm.IsRecording);                      // a warning, never a refusal (D3)
+        Assert.True(vm.IsRecording);                      // a warning, never a refusal
         Assert.Equal(1, dump.StartCalls);
         Assert.True(platform.AvailableMemoryReads > reads);   // read again at Start: memory moves while the slider waits
 
@@ -495,7 +495,7 @@ public class LiveFuncsTraceTests
     [Fact]
     public void The_free_memory_is_read_again_when_the_tab_is_shown_and_when_the_experimental_tabs_come_on()
     {
-        // Review INT-4 / UI-7: read once at startup, the line kept a figure from before the game was launched.
+        // Read once at startup, the line would keep a figure from before the game was launched.
         var platform = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 64L << 30 };
         var gate = new RaisingGate();
         var vm = new LiveFuncsViewModel(new FakeDumpService(), new NoopLogger(), platform, experimentalGate: gate);
@@ -529,8 +529,8 @@ public class LiveFuncsTraceTests
     [Fact]
     public void The_UI_figures_say_they_are_a_reference_from_the_developers_PC()
     {
-        // The maintainer, 2026-10-07: the game's N MB is the buffer itself, but the UI's peak and what it keeps were
-        // measured on one machine; another PC, game or trace can differ, and every place that shows them says so.
+        // The game's N MB is the buffer itself, but the UI's peak and what it keeps come from one machine; another PC,
+        // game or trace can differ, and every place that shows them says so.
         var strings = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
         foreach (var key in new[] { "str.LF.Trace.Memory", "str.LF.Trace.MemoryOver", "str.LF.Trace.MemoryWarnStart",
                                     "str.Tip.LF.Trace.Memory" })
@@ -541,7 +541,7 @@ public class LiveFuncsTraceTests
         }
     }
 
-    // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded since it fired keeps its row, named from its first call,
+    // [TRACE-UNLOADED-NAMES] A function the game unloaded since it fired keeps its row, named from its first call,
     // but its address is dead: never ticked, never sent.
     private static PeProfileEntry Unloaded(string cls, string func, string addr, long count = 10)
         => new() { ClassName = cls, FuncName = func, FuncAddr = addr, Count = count, IsUnloaded = true };
@@ -555,7 +555,7 @@ public class LiveFuncsTraceTests
     [Fact]
     public async Task An_unloaded_keyed_row_ticks_by_name_and_its_dead_address_is_never_sent()
     {
-        // [LIVEFUNCS-STEP2] T10: the name follows the function to wherever it loads next.
+        // [LIVEFUNCS-STEP2] The name follows the function to wherever it loads next.
         var (vm, dump) = MakeVm();
         var key = new NameKey(70, 0, 90, 0);
         dump.NextGet = ResultOf(10_000, Keyed(Unloaded("WBP_Inventory_C", "OnOpen", "0x100"), key));
@@ -653,7 +653,7 @@ public class LiveFuncsTraceTests
         int startsBefore = dump.StartCalls;
 
         await vm.StartCommand.ExecuteAsync(null);
-        Assert.Equal(0, asked);                        // not T7's question: something IS ticked
+        Assert.Equal(0, asked);                        // not the nothing-ticked question: something IS ticked
         Assert.Equal(startsBefore, dump.StartCalls);   // and not a trace of every call either: refused
         Assert.False(vm.IsRecording);
 
@@ -669,7 +669,7 @@ public class LiveFuncsTraceTests
     [Fact]
     public async Task A_traced_Start_says_how_many_ticks_the_DLL_left_out()
     {
-        // Review UI-1: a tick whose function unloaded after the last fetch (its row cut by the fetch limit) is caught by
+        // A tick whose function unloaded after the last fetch (its row cut by the fetch limit) is caught by
         // the DLL at Start; the UI says so instead of tracing fewer functions in silence.
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(10_000, Row("Character", "Jump", "0x100"), Row("WBP_Inventory_C", "OnOpen", "0x200"));
@@ -811,8 +811,8 @@ public class LiveFuncsTraceTests
         var raised = new List<string>();
         vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
         gate.Turn(false);
-        // The round-3 review's LOW, by the maintainer's rule (an untick tears down at once what the features keep): the
-        // buffer and its parameter block go back to the game now, not at the next Start or when the client leaves.
+        // An untick tears down at once what the features keep: the buffer and its parameter block go back to the game
+        // now, not at the next Start or when the client leaves.
         Assert.Equal(new[] { KeptGen }, dump.Released);
         Assert.False(vm.HasTraceToOpen);
         Assert.Null(vm.LastTraceInfo);
@@ -894,7 +894,7 @@ public class LiveFuncsTraceTests
         Assert.False(vm.CanOpenCallTrace);
     }
 
-    /// <summary>The round-3 re-review's LOW: the untick releases only a trace the last Stop's reply already brought, and
+    /// <summary>The untick releases only a trace the last Stop's reply already brought, and
     /// a reply can still be in flight when the box is unticked -- Linie's stop waits up to two seconds for the hooks to
     /// leave. What lands after the untick is given back as it lands, as the untick would have done.</summary>
     private static async Task AssertGivenBackAsItLands(LiveFuncsViewModel vm, RaisingGate gate, FakeDumpService dump,
@@ -1018,8 +1018,8 @@ public class LiveFuncsTraceTests
         return (vm, gate, dump);
     }
 
-    /// <summary>The review's R2: the Stop sentences that offer nothing were moved into the switched clause with the
-    /// offer, and nothing read them across the switch, so keying the clause on the offer instead of the switch passed.</summary>
+    /// <summary>The Stop sentences that offer nothing sit in the switched clause with the offer, so they are read across
+    /// the switch here: otherwise keying the clause on the offer instead of the switch would pass.</summary>
     [Theory]
     [InlineData("empty", "str.LF.Trace.Empty")]
     [InlineData("not allocated", "str.LF.Trace.NoneKept")]
@@ -1046,8 +1046,8 @@ public class LiveFuncsTraceTests
         Assert.Equal(on, vm.StatusText);
     }
 
-    /// <summary>The review's LOW: a disconnect withdrew the offer but left the sentences, so the line kept sending the
-    /// user to a trace the DLL had dropped with the client, and a switch turned off and on again put them back.</summary>
+    /// <summary>A disconnect withdraws the offer AND the sentences: left behind, they would send the user to a trace the
+    /// DLL dropped with the client, and a switch turned off and on again would put them back.</summary>
     [Fact]
     public async Task A_disconnect_takes_the_trace_sentences_off_the_status_line()
     {

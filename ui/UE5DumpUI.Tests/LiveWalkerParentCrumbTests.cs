@@ -10,16 +10,16 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [A4-PARENT-CRUMB-VTABLE] The Parent (Outer) crumb claimed <c>[child + 0]</c> with a dereference.
+/// [A4-PARENT-CRUMB-VTABLE] The Parent (Outer) crumb must not claim <c>[child + 0]</c> with a dereference.
 ///
-/// <para>An Outer is reached by a BACK-reference: no forward offset leads from a child to it. The
-/// Parent crumb was pushed as <c>FieldOffset = 0, IsPointerDeref = true</c>, so a CE export through
-/// a Parent hop emitted <c>[E + 0]</c> — E's vtable — and applied every parent record to it.
-/// PathStepToBreadcrumbs already stamped the offset-less-hop marker (<c>-1</c>) on its LevelActor /
-/// WorldLevel steps, and e88190ba gave it to the GWorld actor list; <c>GoToParentAsync</c> was the
-/// third producer of such a hop, and was missed.</para>
+/// <para>An Outer is reached by a BACK-reference: no forward offset leads from a child to it. A
+/// Parent crumb pushed as <c>FieldOffset = 0, IsPointerDeref = true</c> would make a CE export through
+/// a Parent hop emit <c>[E + 0]</c> — E's vtable — and apply every parent record to it.
+/// PathStepToBreadcrumbs stamps the offset-less-hop marker (<c>-1</c>) on its LevelActor /
+/// WorldLevel steps, the GWorld actor list carries it too, and <c>GoToParentAsync</c> produces the
+/// same kind of hop, so it must carry it as well.</para>
 ///
-/// <para>⛔ The finding's own fix — stamp <c>-1</c> unconditionally — breaks the commonest Parent use:
+/// <para>⛔ Stamping <c>-1</c> unconditionally breaks the commonest Parent use:
 /// Actor › RootComponent › Parent. Both XML commands re-anchor at the last <c>-1</c> hop BEFORE the
 /// cycle collapse, so a restart-stable GWorld chain would become a session-only address. The recorded
 /// safe shape (a): when the Outer is already on the spine, Parent IS a breadcrumb jump to it; only
@@ -77,7 +77,7 @@ public class LiveWalkerParentCrumbTests
     public async Task Parent_WhenTheOuterIsAlreadyOnTheSpine_JumpsBackToIt_KeepingARestartStableChain()
     {
         // GWorld › PersistentLevel › Hero › RootComponent, then Parent. The component's Outer IS the
-        // Hero crumb: the commonest Parent gesture, and the one the unconditional -1 broke.
+        // Hero crumb: the commonest Parent gesture, and the one an unconditional -1 would break.
         var dump = new StubDumpService();   // default world: 0xA8B0, PersistentLevel 0x4500 at +0x30
         dump.RegisterStruct("0x4500", new InstanceWalkResult
         {
@@ -124,12 +124,12 @@ public class LiveWalkerParentCrumbTests
         Assert.False(vm.CanGoForward);
     }
 
-    // ── From the batch's adversarial review ──────────────────────────────────────
+    // ── Outers the spine reaches another way ─────────────────────────────────────
 
     /// <summary>The Outer is the UWorld, and the only crumb at its address is the synthetic GWorld
-    /// ROOT, whose view is the cached actor list, not the UWorld object. Jumping there swapped
+    /// ROOT, whose view is the cached actor list, not the UWorld object. Jumping there would swap
     /// "walk the Outer as an instance" for the actor list (IsGWorldActorListRoot's doc calls that
-    /// swap a defect), and lost the UWorld's own fields and its further Parent. So Parent from
+    /// swap a defect), and lose the UWorld's own fields and its further Parent. So Parent from
     /// PersistentLevel pushes the offset-less hop and walks the UWorld.</summary>
     [Fact]
     public async Task Parent_WhoseOuterIsTheGWorldRoot_WalksTheUWorld_NotTheActorList()
@@ -162,10 +162,10 @@ public class LiveWalkerParentCrumbTests
 
     /// <summary>A Parent DETOUR: from Hero's ASC, Parent goes to its Outer, the PlayerState, which is
     /// off the spine (a -1 hop), and PlayerState.PawnPrivate drills straight back to Hero. The spine
-    /// now holds a cycle Hero…Hero. The XML exports anchored at the last -1 hop BEFORE collapsing
-    /// cycles, so the collapse never saw it and a restart-stable GWorld chain became a session-only
-    /// address — the harm the record called PARTLY HARMFUL, reached by a detour. Now: clean, then
-    /// anchor (the record's option (b)).</summary>
+    /// now holds a cycle Hero…Hero. An XML export that anchored at the last -1 hop BEFORE collapsing
+    /// cycles would hide it from the collapse, and a restart-stable GWorld chain would become a
+    /// session-only address — the harm the record calls PARTLY HARMFUL, reached by a detour. So the
+    /// exports clean, then anchor (the record's option (b)).</summary>
     [Fact]
     public async Task ParentDetour_ThatReturnsToTheSpine_ExportStaysGWorldRooted()
     {

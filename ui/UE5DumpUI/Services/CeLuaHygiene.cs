@@ -110,6 +110,24 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("-- ").Append(Attribution).Append('\n');
     }
 
+    /// <summary>
+    /// [CE76-PROCESS-GLOBAL] A Lua expression naming the main module of the process Cheat Engine has open, as the
+    /// AOB-scan helpers compare it: the <c>Name</c> of the first <c>enumModules()</c> entry. CE names its
+    /// <c>process</c> global after the first entry of its own module snapshot of the same process, so on a healthy CE
+    /// the two are the same ANSI bytes, and every copy of <c>AOBScanModuleUE</c> a session may already hold matches
+    /// it. The global is read only when the list names nothing (a failed module snapshot): CE 7.6 overwrites it with
+    /// its own exe name once any table registers a custom type (docs/CE-Bugs-Minesweeper.md).
+    ///
+    /// <para>Nil when no process is open: <c>enumModules</c> with process id 0 lists CE's own modules, and a custom
+    /// type assembled before any process was opened leaves <c>process</c> naming CE's own exe.</para>
+    ///
+    /// <para>One line, so each emitter writes it after its <c>local name = </c> in its own line-ending style.</para>
+    /// </summary>
+    public const string MainModuleNameLua =
+        "(function() if getOpenedProcessID() == 0 then return nil end "
+        + "local m synchronize(function() m = enumModules() end) m = type(m) == 'table' and m[1] or nil "
+        + "if m and m.Name and m.Name ~= '' then return m.Name end return process end)()";
+
     /// <summary>Emit the DEBUG preamble. Place it right after
     /// <c>if syntaxcheck then return end</c> in each <c>{$lua}</c> block that
     /// prints diagnostics or auto-closes. Every block is its own Lua chunk in CE,
@@ -131,7 +149,7 @@ public static class CeLuaHygiene
     /// chunk runs. In an autorun script that point is CE start-up, so the file's own
     /// instruction — "set UE5_DEBUG = 1 in the Lua console" — could never work: by the
     /// time the console exists, <c>DEBUG</c> has already been fixed at 0 and nothing
-    /// re-reads it. Here <c>dbg</c> reads the global on every call instead. (B23)</para>
+    /// re-reads it. Here <c>dbg</c> reads the global on every call instead.</para>
     ///
     /// <para>Emits no <c>DEBUG</c> local, deliberately: a stale local is exactly the
     /// bug. Anything needing the value at call time uses <c>ue5_debugOn()</c>.</para>
@@ -157,7 +175,7 @@ public static class CeLuaHygiene
     ///
     /// <para><paramref name="onBusy"/> is the Lua statement to run on timeout — the
     /// callers differ (a <c>return nil, msg</c> inside a helper vs. setting
-    /// <c>hadError</c> in a flat block), so the emitter does not assume one. (R3)</para>
+    /// <c>hadError</c> in a flat block), so the emitter does not assume one.</para>
     ///
     /// <para>The bound is a REAL <c>getTickCount()</c> deadline, for the same reason
     /// <see cref="AppendMailboxWait"/>'s is: <c>sleep(1)</c> costs 15.47 ms in CE, so
@@ -909,7 +927,7 @@ public static class CeLuaHygiene
         Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
         // [A1-SLOTSYM-FAILED] Release only what THIS record registered. A record whose enable failed never reached the
         // register step, so it is not a holder -- and its [DISABLE] (CE runs it on the deferred untick) releases nothing.
-        // Without memrec (a hand-run chunk) the count alone decides, as before.
+        // Without memrec (a hand-run chunk) the count alone decides.
         Line(sb, indent, $"{SlotSymHolders} = {SlotSymHolders} or {{}}");
         Line(sb, indent, $"local _hs = {SlotSymHolders}['{sym}']");
         Line(sb, indent, "local _mine = true");

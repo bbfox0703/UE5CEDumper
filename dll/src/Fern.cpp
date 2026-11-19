@@ -5,12 +5,10 @@
 
 // BEFORE every include, not just before Sein.h. Fern.h pulls in Routine.h, which
 // EXPANDS LOG_WARN / LOG_ERROR in its own inline bodies — so the category is bound
-// at that point, and defining it afterwards was both a C4005 redefinition warning
-// and a real misrouting: the B14 thread guard's "UNCAUGHT exception - contained"
-// messages were logging under "" (init-0.log) instead of PIPE:svr (pipe-0.log),
-// i.e. the one place a torn-down pipe server reports itself was in the wrong file.
-// Fern.cpp was the only TU with this ordering; the other nine Routine.h users
-// already defined it first.
+// at that point. Defined afterwards, it is a C4005 redefinition warning, and the
+// thread guard's "UNCAUGHT exception - contained" messages log under "" (init-0.log)
+// instead of PIPE:svr (pipe-0.log) -- the one place a torn-down pipe server reports
+// itself would be in the wrong file.
 #define LOG_CAT "PIPE:svr"
 
 #include "Fern.h"
@@ -28,7 +26,7 @@
 #include "Stark.h"
 #include "Radar.h"
 #include "Tot.h"
-#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate
 #include "Wirbel.h"
 #include "Laufen.h"
 #include "Hemmung.h"  // Hemmung::SetDilation/ResetDilation/GetSnapshot for time_* commands
@@ -338,7 +336,7 @@ std::vector<std::string> ParseExcludeClasses(const json& request) {
 
 // Build the wire JSON for one candidate. Per-(class,field) metadata and
 // per-object metadata are pulled from the session's shared descriptor /
-// instance pools the candidate indexes into (V3-A) — the wire shape is
+// instance pools the candidate indexes into — the wire shape is
 // unchanged, the fields are just reassembled from the interned pools.
 json CandidateToJson(const Radar::Candidate& c,
                      Radar::DataType dt,
@@ -358,7 +356,7 @@ json CandidateToJson(const Radar::Candidate& c,
     item["field_name"]          = Radar::FieldDisplayName(desc, c.elementIndex);
     item["field_type"]          = desc.fieldType;
     item["bool_field_mask"]     = desc.boolFieldMask;
-    // Native-C (P1): badge a raw-hole hit + the width it was interpreted at, so
+    // Native-C: badge a raw-hole hit + the width it was interpreted at, so
     // the UI can distinguish unmanaged native values from reflected ones. Only
     // emitted when set (absent => reflected, keeps the wire lean + back-compat).
     if (desc.isNativeC) {
@@ -379,8 +377,8 @@ json CandidateToJson(const Radar::Candidate& c,
 // Shared by the row's REPRESENTATIVE leaf and by query_group_slot_leaves' full
 // list, so the two can never disagree about what a leaf is called or holds. The
 // value comes from Radar::GroupSlotValueString — the same call the server-side
-// filter matches against, which is the whole point: this area's entire bug
-// history is two code paths answering one question differently.
+// filter matches against, which is the whole point: this area goes wrong when
+// two code paths answer one question differently.
 json GroupLeafToJson(const Radar::GroupSlotMatch& m,
                      const Radar::SlotSpec& spec,
                      const std::vector<Radar::FieldDescriptor>& descriptors) {
@@ -391,7 +389,7 @@ json GroupLeafToJson(const Radar::GroupSlotMatch& m,
     lj["field_offset"]    = m.offset;
     lj["field_type"]      = d.fieldType;
     lj["bool_field_mask"] = d.boolFieldMask;
-    // Native-C (P2): badge a raw-hole leaf + its interpreted width (omitted for
+    // Native-C: badge a raw-hole leaf + its interpreted width (omitted for
     // reflected leaves — back-compat / lean wire).
     if (d.isNativeC) {
         lj["is_native_c"]  = true;
@@ -399,10 +397,10 @@ json GroupLeafToJson(const Radar::GroupSlotMatch& m,
     }
     // Absolute leaf address (direct: owner+offset; deep: container element).
     lj["addr"]        = Renge::AddrToStr(m.leafAddr);
-    // Owning object of the leaf (P4): the candidate actor for an own-block leaf,
+    // Owning object of the leaf: the candidate actor for an own-block leaf,
     // or an owned sub-object for a cross-object leaf — drives handoffs.
     lj["owner_addr"]  = Renge::AddrToStr(m.ownerAddr);
-    // Owning object's class (P4 inc 2) — drives the per-slot Pivot handoff.
+    // Owning object's class — drives the per-slot Pivot handoff.
     lj["owner_class"] = m.ownerClass;
     lj["leaf_value"]  = Radar::GroupSlotValueString(m, spec, descriptors);
     return lj;
@@ -466,7 +464,7 @@ json GroupCandidateToJson(const Radar::GroupCandidate& gc,
                                   : GroupLeafToJson(matches[picks[s]], spec, descriptors);
         sj["slot_index"] = static_cast<int>(s);
         sj["value"]      = spec.value;
-        sj["scan_type"]  = Radar::NameOf(spec.st);  // per-slot predicate (P2)
+        sj["scan_type"]  = Radar::NameOf(spec.st);  // per-slot predicate
         if (spec.st == Radar::ScanType::Between)
             sj["value2"] = spec.value2;             // Between upper bound
 
@@ -606,7 +604,7 @@ void Fern::Stop(bool graceful) {
     // a long scan finishes). Sticky — never auto-cleared.
     Tot::RequestShutdown();
 
-    // Unblock everyone (Path A multi-connection teardown). CancelIoEx every live
+    // Unblock everyone (multi-connection teardown). CancelIoEx every live
     // connection so a thread blocked in ReadFile/WriteFile returns
     // ERROR_OPERATION_ABORTED and runs its OWN cleanup (each connection handle is
     // closed by its owning thread — no cross-thread close race). A thread inside
@@ -696,7 +694,7 @@ void Fern::Stop(bool graceful) {
     // is each job's own cancel token, raised by StopAndJoin, and Tot::RequestShutdown()
     // above, read by the cancel polls Genau's loops carry; without those, and since
     // UE5_Shutdown runs on the CE Lua caller's thread, CE's UI would freeze for the
-    // remainder of the sweep. (B18)
+    // remainder of the sweep.
     // No `running` is cleared first: that would let a connection still dispatching
     // start a job and join the same thread beside this one. m_running is already false,
     // so no job starts now. [PIPE-PER-PROCESS-2026-11-06]
@@ -793,7 +791,7 @@ void Fern::Stop(bool graceful) {
         Linie::Reset();   // drop any live PE-profile recording + free the table
         m_profileOwner = 0;
     }
-    Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
+    Ubel::ClearNameCache();   // same reason as the last-connection teardown
 
     m_clientConnected = false;
     LOG_INFO("PipeServer: Stopped");
@@ -1138,7 +1136,7 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
 }
 
 void Fern::MonitorLoop() {
-  // Allocates while peeking the pipe and formatting logs; a raw thread proc. (B14)
+  // Allocates while peeking the pipe and formatting logs; a raw thread proc.
   Routine::RunThreadGuarded("PipeServer: MonitorLoop", [&] {
     bool warnedOwedRelease = false;   // one WARN per session, not one per tick
     while (m_running.load()) {
@@ -1274,7 +1272,7 @@ std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
 
 void Fern::AcceptLoop() {
   // The accept thread allocates (Connection, the registry, log formatting). A throw here
-  // is std::terminate — and it also silently ends the server, so the guard reports it. (B14)
+  // is std::terminate — and it also silently ends the server, so the guard reports it.
   Routine::RunThreadGuarded("PipeServer: AcceptLoop", [&] {
     // Capacity latch (accept-thread-local; this lambda is the only reader/writer, so a
     // plain bool is race-free). When all kMaxPipeInstances are in use CreateNamedPipe
@@ -1449,7 +1447,7 @@ void Fern::AcceptLoop() {
         LOG_INFO("PipeServer: Client connected (conns=%zu)", connCount);
         // Guarded: a throw from ReadLine / the JSON pre-parse / WriteLine, outside
         // DispatchCommand's own handler, would escape a DETACHED thread —
-        // std::terminate, i.e. the game dies. (B14)
+        // std::terminate, i.e. the game dies.
         std::thread([this, conn]() {
             Routine::RunThreadGuarded("PipeServer: connection",
                                       [&] { HandleConnection(conn); });
@@ -2249,7 +2247,7 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     return fj;
 }
 
-// [LIVEFUNCS-STEP3] S3-A1: the native-entry index of the stopped recording a stack page is read from -- one pass over
+// [LIVEFUNCS-STEP3] The native-entry index of the stopped recording a stack page is read from -- one pass over
 // the object array, kept for that recording's other pages. Only a whole pass is kept: a cancel leaves a partial one,
 // which serves the page that asked and is built again for the next.
 static std::mutex g_codeIndexMu;
@@ -2272,7 +2270,7 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
     t["record_size"] = sizeof(Linie::TraceRecord);
     t["ticked"]      = i.ticked;
     t["excluded"]    = i.excluded;
-    // [LIVEFUNCS-STEP2] What the trace follows: a scope by address or by name, or only the chosen calls (T11).
+    // [LIVEFUNCS-STEP2] What the trace follows: a scope by address or by name, or only the chosen calls.
     t["scoped"]       = i.scoped;
     t["ticked_names"] = i.tickedNames;
     t["snap_only"]    = i.snapOnly;
@@ -2309,10 +2307,10 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
 }
 
 // ============================================================
-// [LIVEFUNCS-STEP2] The arms' layouts, read in the background (F4). A chosen function is armed on the hook at its
+// [LIVEFUNCS-STEP2] The arms' layouts, read in the background. A chosen function is armed on the hook at its
 // first call; its parameters are read here, on a thread of its own, while it is alive -- never on the hook, never on
 // the interactive lane (the first enum detection can walk GObjects for seconds), and not in MonitorLoop, whose job is
-// the disconnect and the cancel (the second design critic); the owed camera release it also serves waits only when the
+// the disconnect and the cancel; the owed camera release it also serves waits only when the
 // game thread stalls again, never for seconds of work. One worker per traced Start with snapshot choices; Stop
 // gives it a deadline, runs the last pass itself, then seals what is left raw-only.
 // ============================================================
@@ -2444,7 +2442,7 @@ json ArmsSummaryToJson() {
     return out;
 }
 
-// ---- pe_snap_layouts / pe_snap_get: the snapshots after Stop (F5) ----
+// ---- pe_snap_layouts / pe_snap_get: the snapshots after Stop ----
 
 const char* ParamKindName(Ubel::ParamKind k) {
     switch (k) {
@@ -2901,7 +2899,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // string per object costs ~19 MB over 486K objects, so a caller asks
             // for it only when it needs paths.
             bool includePath = request.value("include_path", false);
-            // [EXTPR-539-540-2026-10-02] D4 (R3): opt-in GObjects slot per object, for the object index. The
+            // [EXTPR-539-540-2026-10-02] Opt-in GObjects slot per object, for the object index. The
             // rows skip null and unnamed slots, so a reader cannot work the slot out from a row's position.
             bool includeIndex = request.value("include_index", false);
 
@@ -2965,7 +2963,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int  limit    = request.value("limit", 100);
             int  arrayCap = request.value("array_cap", 256);
             bool gameOnly = request.value("game_only", true);
-            // Native-C (P3, opt-in): also capture each object's unmanaged-hole
+            // Native-C (opt-in): also capture each object's unmanaged-hole
             // guesses as synthetic "<raw@0xNN>" fields (normalized canonical type).
             bool nativeC  = request.value("native_c", false);
             // Auto-detect Engine/System noise (source-level skip; UI default ON).
@@ -3045,7 +3043,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // A scan worker faulted: this chunk is missing an index range even though
             // `scanned` reports the full window. The UI finalises the snapshot UNUSABLE on
             // it. Its own key, never `deadline_hit` wording -- a fault is not a timeout, and
-            // P5 records why one flag must not carry several causes. [W1-SNAP-FAULT]
+            // one flag must not carry several causes. [W1-SNAP-FAULT]
             data["worker_faulted"] = chunk.workerFaulted;
             data["serialize_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - serT0).count();
@@ -3087,7 +3085,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (path.empty()) return Renge::MakeError(id, "Missing path").dump();
 
             // The field is named "path" and clients send real UE paths; FindByName
-            // only ever matched a bare FName, so every path-shaped request failed.
+            // alone matches only a bare FName, so every path-shaped request would fail.
             uintptr_t obj = Aura::FindByNameOrPath(path);
             if (!obj) return Renge::MakeError(id, "Object not found").dump();
 
@@ -3886,9 +3884,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             static const std::unordered_set<std::string> kActorComponentBase{ "ActorComponent" };
 
             if (levelActors.aborted) {
-                // A cancelled pass must not publish a total — that is the D5/F6 lesson
-                // this handler exists to carry, and `0` would positively assert an empty
-                // level where -1 documents "never fully read".
+                // A cancelled pass must not publish a total: `0` would positively assert
+                // an empty level where -1 documents "never fully read".
                 data["error"] = "actor enumeration was cancelled (client gone / shutdown) "
                                 "— the list below is partial and the total is unknown";
             } else if (derivedTotal == 0 && levelActors.scanned > 0) {
@@ -4288,7 +4285,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Opt-in deep-container pass (default off): reach values buried in
             // deeply-nested containers the auto heuristic doesn't flag.
             bool deep = request.value("deep", false);
-            // Native-C (P1, opt-in, default off): also scan each object's
+            // Native-C (opt-in, default off): also scan each object's
             // unmanaged holes (non-UPROPERTY bytes) for the value, at native_align
             // stride (1/2/4/8, default 4). newest_first walks GObjects high-index
             // first so truncated results keep the newest instances (the UI couples
@@ -4399,11 +4396,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 dt, std::move(scanResult.candidates),
                 std::move(scanResult.descriptors), std::move(scanResult.instances));
 
-            // V3-C: the DLL session OWNS the full candidate set; the UI is a
+            // The DLL session OWNS the full candidate set; the UI is a
             // windowed view. Return `total` (full count) + only the FIRST PAGE
             // in scan order. The UI pages / filters / sorts via the separate
-            // query_candidates command (server-side over the full set). Before
-            // V3-C this echoed back ALL candidates, which didn't scale.
+            // query_candidates command (server-side over the full set), so the
+            // reply's size follows page_size, not the candidate count.
             int pageSize = request.value("page_size", 1000);
             if (pageSize < 0) pageSize = 0;
             json candidates = json::array();
@@ -4466,7 +4463,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Unknown scan_type: " + stStr).dump();
             }
 
-            // V3-C: like begin, refine returns `total` (surviving count) + only
+            // Like begin, refine returns `total` (surviving count) + only
             // the FIRST PAGE in scan order; the UI re-pages/filters/sorts via
             // query_candidates over the pruned set.
             int pageSize = request.value("page_size", 1000);
@@ -4609,8 +4606,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump();
         }
 
-        // === query_candidates: server-side window over a value-scan session
-        // (V3-C). The DLL owns the full candidate set; this filters
+        // === query_candidates: server-side window over a value-scan session.
+        // The DLL owns the full candidate set; this filters
         // (case-insensitive substring over the displayed columns) + sorts
         // (by sort_key/sort_desc) over the WHOLE set and returns only the
         // requested [offset, offset+limit) window. Pure data work over the
@@ -4682,14 +4679,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // element as its own block so a group hidden in a deeply-nested array
             // (e.g. ...WeaponTuneList[0].Tunes[N]) is found.
             bool deep = request.value("deep", false);
-            // Opt-in cross-object mode (P4): fold each actor's OWNED sub-object
+            // Opt-in cross-object mode: fold each actor's OWNED sub-object
             // (components + GAS AttributeSets) numeric leaves into the actor's block.
             bool crossObject = request.value("cross_object", false);
-            // Opt-in Native-C mode (P2): also fold each object's unmanaged-hole
+            // Opt-in Native-C mode: also fold each object's unmanaged-hole
             // leaves (non-UPROPERTY bytes) into its block — object block only,
             // bounded per object. Intentionally noisy on first scan.
             bool nativeC = request.value("native_c", false);
-            // Newest-first (P2): walk high-index objects first so a deadline-
+            // Newest-first: walk high-index objects first so a deadline-
             // truncated huge game keeps the newest objects (UI coupled with native).
             bool newestFirst = request.value("newest_first", false);
             // User-adjustable scan deadline (Value Search "Timeout" slider, 10-60s).
@@ -4720,11 +4717,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     return Renge::MakeError(id, "Unknown data_type in values: " + dtStr).dump();
                 }
                 // Slots fan out over numeric widths (NumericNoByte default /
-                // NumericAll); concrete per-slot widths remain a later extension.
+                // NumericAll); concrete per-slot widths are not supported.
                 if (!Radar::IsMultiNumericDataType(dt)) {
                     return Renge::MakeError(id, "group slot data_type must be NumericNoByte or NumericAll: " + dtStr).dump();
                 }
-                // P2: per-slot first-scan predicate (default Exact). The targeted
+                // Per-slot first-scan predicate (default Exact). The targeted
                 // types make sense on the first scan — Exact / Bigger / Smaller /
                 // Between (the last carries an upper bound in `value2`). Prev-value
                 // types have no baseline yet, and substring types are string-only.
@@ -5261,9 +5258,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // work does not lengthen the stretch traced before the table starts.
             const Ubel::FunctionCaptureSetup captureSetup = Ubel::PrepareFunctionCapture();
 
-            // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
+            // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording. Asked for: the ring is
             // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
-            // a smaller buffer instead of getting a recording without the trace they asked for (T1).
+            // a smaller buffer instead of getting a recording without the trace they asked for.
             // [LIVEFUNCS-STEP2] A worker the last Stop left past its deadline belongs to the trace this Start replaces.
             JoinArmWorker();
             json traceReply;
@@ -5278,7 +5275,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
                 Linie::TraceConfig cfg;
                 cfg.bytes = bytes;
-                // [LIVEFUNCS-STEP2] Ticks and snapshot choices by NAME (T10). The previous trace goes first, whatever
+                // [LIVEFUNCS-STEP2] Ticks and snapshot choices by NAME. The previous trace goes first, whatever
                 // follows: every refusal below then leaves the game as the UI assumes, any Start having given it up.
                 // Nothing is classified and no layout is read here -- each key costs two GetString -- because every
                 // address is first-sight in the new recording and is armed on the hook when its call matches.
@@ -5427,7 +5424,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
                     }
                 }
-                // [TRACE-UNLOADED-NAMES] UI-1. A tick is an address from an earlier fetch. A function unloaded
+                // [TRACE-UNLOADED-NAMES] A tick is an address from an earlier fetch. A function unloaded
                 // since -- its row cut by the fetch limit, so the UI never learned -- would scope the trace on a freed
                 // address: nothing, or whatever function took it. Checked here against the previous recording's table,
                 // which StartRecording has not cleared yet: only a tick that still holds the function it named stays.
@@ -5450,10 +5447,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     }
                     cfg.ticked.swap(live);
                 }
-                // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
+                // The per-frame functions to exclude are the previous recording's, read before StartRecording clears
+                // its table.
                 if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
                 // Chosen functions -- for their parameters or [LIVEFUNCS-STEP3] their stacks -- and nothing ticked
-                // records only the chosen calls (T11).
+                // records only the chosen calls.
                 cfg.snapOnly = (!cfg.snapRingCaps.empty() || cfg.stackRings != 0) && cfg.tickedNames == 0 &&
                                cfg.ticked.empty();
                 const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
@@ -5498,7 +5496,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Ubel::SetFunctionCapture(captureSetup);
             Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
             m_profileOwner = conn->ownerKey;   // the starter's: it goes when that client process leaves
-            // Snapshot choices need their layouts read while their functions are alive (F4); ticks alone need none.
+            // Snapshot choices need their layouts read while their functions are alive; ticks alone need none.
             if (arms && arms->capacity != 0) StartArmWorker(arms);
             const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - startT0).count();
@@ -5563,7 +5561,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::lock_guard<std::mutex> profileLock(m_profileMu);   // one writer at a time (Fern.h)
             // [LIVEFUNCS-STEP2] The trace before the table: a name arms its address on the table's read, so arms keep
             // applying until the trace itself has stopped -- no call between the two loses its hint.
-            // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
+            // Waits until no hook is inside a trace write: after this the ring is fixed and pe_trace_get reads it.
             Linie::StopTrace();
             Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
             FinishArms();             // the last layout reads, then the seal
@@ -5584,7 +5582,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
             }
             // A trace that wrote nothing has nothing to read: give its ring back now instead of leaving it in the game
-            // until the next Start (DLL-5). The reply still reports it, empty, so the UI can say so.
+            // until the next Start. The reply still reports it, empty, so the UI can say so.
             const bool hadTrace = ti.allocated;
             if (hadTrace && Linie::ReleaseIfEmpty()) ti.allocated = false;
             Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen (trace: %llu records written, %llu kept%s)",
@@ -5835,7 +5833,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 const bool gone = fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled;
                 if (fd.state == Ubel::FuncState::Unnamed) continue;   // nothing says what it was: counted, not emitted
                 if (gone && !includeUnloaded) continue;              // an older UI: no row with a dead address
-                // [LIVEFUNCS-STEP2] The row's name key (T10): the four ints its strings are rendered from, read once,
+                // [LIVEFUNCS-STEP2] The row's name key: the four ints its strings are rendered from, read once,
                 // so a key the UI sends back names exactly the row it showed. A live function's now; a gone one's, or
                 // one whose slot no longer reads as a Function, from its first call.
                 std::string cls = fd.className, fname = fd.name;
@@ -5870,7 +5868,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                                     : Aura::ClassDerivesFromAny(Ubel::GetOuter(snap[i].func), kWidgetBases);
                 if (gone) item["unloaded"] = true;
                 if (fd.state == Ubel::FuncState::Recycled) item["recycled"] = true;
-                // DLL-3: another function took this address during the recording; the count is both.
+                // Another function took this address during the recording; the count is both.
                 if (snap[i].ident.reused) item["reused"] = true;
                 item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence: inter-arrival mean
                 item["cv"]             = snap[i].cv;             //   + coefficient of variation (regularity)
@@ -5906,7 +5904,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
             // [LIVEFUNCS-TIMELINE-2026-10-04] The window the counts cover, so the UI can turn total_calls into a
-            // call rate: the trace slider's estimate of how many seconds a buffer keeps (T1).
+            // call rate: the trace slider's estimate of how many seconds a buffer keeps.
             data["window_ms"]      = windowMs;
             data["functions"]      = functions;
             // [TRACE-UNLOADED-NAMES] Always sent: an absent key tells the UI this DLL predates them.
@@ -5936,7 +5934,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (maxRecs > kPageMax) maxRecs = kPageMax;
 
             // The state reported is the one the copy saw, under the same lock: a Start between a separate read and
-            // the copy would hand back another recording's state with this one's records (DLL-1).
+            // the copy would hand back another recording's state with this one's records.
             Linie::TraceInfo ti;
             std::vector<Linie::TraceRecord> recs;
             uint64_t next = from;
@@ -5975,7 +5973,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["kind"] = kind;
             const bool have = Linie::TraceDistinct(funcs, objs, &gen, &idents);
             data["gen"] = gen;
-            // Asked for one recording's names while the DLL holds another: answer nothing and say so (DLL-1).
+            // Asked for one recording's names while the DLL holds another: answer nothing and say so.
             if (have && request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
                 data["stale"] = true;
                 data["total"] = 0;
@@ -6026,9 +6024,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled)
                         it["unloaded"] = true;
                     if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
-                    // DLL-3: the address held another function during the recording; its calls are mixed.
+                    // The address held another function during the recording; its calls are mixed.
                     if (i < idents.size() && idents[i].reused) it["reused"] = true;
-                    // [LIVEFUNCS-STEP2] F6: where a live native function's code is, for a CE address; "" for a script
+                    // [LIVEFUNCS-STEP2] Where a live native function's code is, for a CE address; "" for a script
                     // function (its Func is the interpreter) or one not found. Never for a dead address.
                     if (fd.state == Ubel::FuncState::Live) {
                         constexpr uint32_t kFuncNative = 0x00000400;
@@ -6049,8 +6047,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
         // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
-        // a reader sends for what it read never frees a newer recording (DLL-1).
-        // [LIVEFUNCS-STEP2] F5. pe_snap_layouts: every arm of the stopped trace -- one load of a chosen function --
+        // a reader sends for what it read never frees a newer recording.
+        // [LIVEFUNCS-STEP2] pe_snap_layouts: every arm of the stopped trace -- one load of a chosen function --
         // with its layout, paged by arms; layouts shared by several arms are sent once per page. Read once per load.
         if (cmd == Renge::CMD_PE_SNAP_LAYOUTS) {
             int64_t offset = request.value("offset", int64_t(0));
@@ -6210,7 +6208,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             if (cs.unwind) {
                                 sj["fn"] = Renge::AddrToStr(cs.fnBegin);
                                 if (inModule) sj["fn_rva"] = cs.fnBegin - cs.moduleBase;
-                                // [LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry this is, ProcessEvent or
+                                // [LIVEFUNCS-STEP3] The UFunction whose native entry this is, ProcessEvent or
                                 // not; `shared` when several enter there (the interpreter, identical code folded).
                                 // [A1-INTERP-LABEL] `script` when it is the script functions' entry, the interpreter:
                                 // the function named is then only the lowest-addressed of them, not the one running.
@@ -6884,7 +6882,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["method"]       = res.method;
             data["unmapped"]     = res.unmappedAccesses;
             // Path 2 only: the disassembler hit its instruction budget, so `props`
-            // is a prefix rather than the whole story (AF7).
+            // is a prefix rather than the whole story.
             data["budget_hit"]   = res.budgetHit;
             json arr = json::array();
             for (const auto& r : res.refs) {
@@ -6951,7 +6949,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::wstring moduleNameNoExt = (dotPos != std::wstring::npos)
                 ? moduleFileName.substr(0, dotPos) : moduleFileName;
 
-            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (was '?' per non-ASCII character).
+            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (an older DLL sends '?' per non-ASCII character).
             std::string moduleName = Utf8Helpers::EncodeUtf16(moduleNameNoExt.c_str(), moduleNameNoExt.size());
 
             json data;
@@ -7207,7 +7205,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     m_rescan.phase.store(0);
                 },
                 [this, needGObj, needGWld] {
-                    // Phase 3 on every way out, a throw included, so rescan_status reports the run as over. (B14)
+                    // Phase 3 on every way out, a throw included, so rescan_status reports the run as over.
                     struct Done { std::atomic<int>& phase; ~Done() { phase.store(3); } } done{m_rescan.phase};
                     RunRescanBody(needGObj, needGWld);
                     return true;
@@ -7233,7 +7231,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             RescanResult found;
             {
                 // One snapshot. A start claims `running` and then resets under this lock, so here the flag and the
-                // result belong to the same run: read apart, a start between them answered "finished, nothing found".
+                // result belong to the same run: read apart, a start between them would answer "finished, nothing found".
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
                 running = m_rescan.job.Running();
                 phase   = m_rescan.phase.load();
@@ -7320,7 +7318,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
             // every reachable path here — CMD_RESCAN only scans pointers that are already 0
             // and the UI only sends apply_rescan when something was found — so gating on it
-            // would be a never-firing predicate (see G11's lesson). `!bOffsetsProbeRan` says
+            // would be a never-firing predicate (docs/working-lessons.md §4.3f). `!bOffsetsProbeRan` says
             // exactly "init never probed", because UE5_Init skips detection when GObjects was
             // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
             // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
@@ -7342,11 +7340,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     g_cachedIsLowConfidence = true;
             }
 
-            // GEngine's second pass is HOISTED out of the block above (G3): it must still run
+            // GEngine's second pass is HOISTED out of the block above: it must still run
             // when the offsets were already probed at init, which is exactly the GWorld-only
-            // recovery case the gate now skips. Keeping it nested would have traded one defect
-            // for another — "GEngine reports AOB not found forever" is the bug the comment
-            // below was written to fix.
+            // recovery case the gate skips. Nested, it would leave GEngine reporting "AOB not
+            // found" forever on that path (see the comment below).
             if (g_cachedGObjects && g_cachedGNames) {
                 // Same second pass UE5_Init does: &GEngine can only be VALIDATED once the
                 // offsets exist, so a recovery rescan that revives GObjects/GNames has to
@@ -7757,7 +7754,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             catch (...) {
                 // A malformed str_params element (a nlohmann type_error thrown mid-loop)
                 // must not leak the heap buffers earlier iterations allocated. Free them
-                // and rethrow — the dispatch envelope turns it into an error response. (L12)
+                // and rethrow — the dispatch envelope turns it into an error response.
                 for (void* p : strAllocs) free(p);
                 throw;
             }
@@ -8425,12 +8422,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["source"] = (source == 1) ? "invoke" : "raw";
                 // ⛔ "raw" alone cannot tell a HEALTHY unattached world-space read from a
                 // DEGRADED parent-relative one, and the UI's model documents "raw" as
-                // MEANING not-attached -- so those numbers were shown as world coords,
-                // saved into a marker that passes the map guard, and later driven back
-                // into the pawn as a world destination. teleport-spec.md:218-220 asked
-                // for this flag when the fallback was designed. [POSEATTACH-2026-09-10]
+                // MEANING not-attached -- so without this flag those numbers would be shown
+                // as world coords, saved into a marker that passes the map guard, and later
+                // driven back into the pawn as a world destination. This is the warning
+                // flag teleport-spec.md §5.4 specifies for the raw fallback. [POSEATTACH-2026-09-10]
                 if (parentRel) data["parent_relative"] = true;
-                // Feature B: the resolved pawn — for the "Locate in GWorld" handoff
+                // The resolved pawn — for the "Locate in GWorld" handoff
                 // (hex string, matching find_path's object_addr / get_current_target's
                 // player_pawn). "0x0" when unresolved.
                 data["pawn_addr"] = Renge::AddrToStr(mv.PawnAddr);
@@ -8449,7 +8446,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["rot_field_offset"] = mv.RotFieldOffset;
                     data["rot_field_name"]   = "ControlRotation";
                 }
-                // Feature A: live velocity/acceleration off the CharacterMovement.
+                // Live velocity/acceleration off the CharacterMovement.
                 // has_movement=false on vehicle / custom-framework pawns (no CMC):
                 // the vel/acc fields are then absent and the UI shows "unavailable".
                 data["has_movement"] = mv.HasMovement;
@@ -8770,7 +8767,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 // ============================================================
 bool Fern::RunScan() {
     // The job runs this guarded -- UE5_Init allocates heavily against a live game, and a throw must still end the job,
-    // or the UI waits on a scan that is never coming (B14) -- and bound to its own cancel token.
+    // or the UI waits on a scan that is never coming -- and bound to its own cancel token.
     Sein::Info("PIPE:scan", "RunScan: started");
     const bool ok = UE5_Init();
     Sein::Info("PIPE:scan", "RunScan: finished (%s)", ok ? "initialized" : "not initialized: cancelled");
@@ -8780,7 +8777,7 @@ bool Fern::RunScan() {
 // ============================================================
 // RunRescanBody — the Extra Scan job's work: aggressive pointer recovery
 // ============================================================
-// Runs guarded (Genau's Extra Scan allocates against a live process, B14) and bound to the job's own cancel token.
+// Runs guarded (Genau's Extra Scan allocates against a live process) and bound to the job's own cancel token.
 void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
     Sein::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)",
                  scanGObjects, scanGWorld);
@@ -8875,7 +8872,7 @@ std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t 
         try {
         entry->watchThread = std::thread([slot, addr, size, interval_ms]() {
           // It allocates on every read (the slot's copy of the sample); a bad_alloc out of a thread proc terminates
-          // the game. (B14)
+          // the game.
           Routine::RunThreadGuarded("PipeServer: watch", [&] {
             std::vector<uint8_t> buf(size);
             do {

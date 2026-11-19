@@ -4,20 +4,20 @@ r"""executeCodeEx negative control — stage a GAME-THREAD stall so CE's timeout
     py tools/verify/execcodeex_negctl.py check     # re-read the witnesses while stalled
     py tools/verify/execcodeex_negctl.py release   # resume the game thread
 
-THE ROW (build 2792): `ue5_callDLL` must give CE a FINITE deadline and report CE's OWN reason
+THE ROW: `ue5_callDLL` must give CE a FINITE deadline and report CE's OWN reason
 string. PASS is CE printing
 
     executeCodeEx failed for UE5_CallProcessEvent: Execution timeout
 
-⛔ THE PRESCRIBED FORM WAS REFUTED — do not go back to it. Suspending the whole PROCESS
+⛔ SUSPENDING THE PROCESS CANNOT TEST THIS — do not use it. Suspending the whole PROCESS
 (`NtSuspendProcess`) cannot make this fail: `executeCodeEx` runs the target on a **newly created
-remote thread**, and suspension only freezes threads that already exist. Measured 2026-08-18:
-`elapsed=1422 ms ok=true` for a call issued 3 s into an 18 s suspension (todo.md:9869). The
-dissect's exports are pure memory work needing no game thread either, so nothing blocked.
+remote thread**, and suspension only freezes threads that already exist, so a call issued in the
+middle of a suspension returns promptly. The dissect's exports are pure memory work needing no
+game thread either, so nothing blocks.
 
 ⭐ SO THE STALL MUST BE THE GAME THREAD, AND THE CALL MUST NEED IT. `UE5_CallProcessEvent` is the
 one shipped export that queues onto the game thread via `Stark::EnqueueInvoke`, and
-`ue5_callDLL(name, ret, ...)` (`scripts/UE5CEDumper.CT:485`) is the only 5000 ms call site that
+`ue5_callDLL(name, ret, ...)` (in `scripts/UE5CEDumper.CT`) is the only 5000 ms call site that
 takes varargs and can therefore reach it.
 
 ⚠⚠ TWO SILENT-PASS TRAPS, and this rig exists mainly to close them — both make the run look like a
@@ -27,7 +27,7 @@ PASS while testing nothing:
      DIRECT synchronous call that never touches the queue, returns promptly, and looks fine. The hook
      must be WARMED and observed true.
   2. **The two deadlines are identical.** `Stark::kDefaultInvokeTimeoutMs` is **5000**
-     (`Stark.h:53`) and `UE5_CALL_TIMEOUT_MS` in the `.CT` is **5000** (`UE5CEDumper.CT:483`). At
+     (`Stark.h`) and `UE5_CALL_TIMEOUT_MS` in the `.CT` is **5000**. At
      defaults they race, and if Stark answers first CE's timeout path is never exercised. Stark's is
      raised to 60000 so CE's 5000 is unambiguously the shorter one.
 

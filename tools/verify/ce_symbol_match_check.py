@@ -2,11 +2,12 @@
 
     py tools/verify/ce_symbol_match_check.py <pid> <module name> <aob> <pos> <aoblen> <out dir>
 
-WHY ([PATH-AOBMAKER-ANSI-MATCH], fixed in AOBMaker ce8247c). The plugin's generated AOBScanModuleUE compared only CE's
-ANSI mod.Name with the UTF-8 module string, so a non-ASCII name the ACP holds (DumperTest51遊戲-… on cp950) never
-matched BY NAME. It still "worked" for the main exe, because the script then falls back to `process` and prints
-"[SymbolScanner] module <name> not found or no match; falling back to <process>". So the symbol's address alone cannot
-tell the fix from the fallback; this rig also captures CE's print() output and reports whether the fallback ran.
+WHY ([PATH-AOBMAKER-ANSI-MATCH]; an AOBMaker plugin older than ce8247c fails it). A generated AOBScanModuleUE that
+compares only CE's ANSI mod.Name with the UTF-8 module string never matches a non-ASCII name the ACP holds
+(DumperTest51遊戲-… on cp950) BY NAME. It still "works" for the main exe, because the script then falls back to
+`process` and prints "[SymbolScanner] module <name> not found or no match; falling back to <process>". So the symbol's
+address alone cannot tell the fix from the fallback; this rig also captures CE's print() output and reports whether the
+fallback ran.
 
 STEPS (all through \\\\.\\pipe\\AOBMakerCEBridge, see the AOBMaker repo's API-CEPlugin.md):
   1. an AA record whose {$lua} hooks print() to <out dir>\\ce_print.txt, then openProcess(<pid>) and

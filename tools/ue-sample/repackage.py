@@ -5,26 +5,26 @@
     py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest --compile-only
 
 WHY THIS EXISTS. `README.md` step 6 still describes packaging through the editor --
-*Platforms -> Windows -> Build Configuration -> Package Project* -- and that was the only step in
-the whole recipe a human had to drive. It turned out that was not a policy, just an assumption
-neither side had tested: `RunUAT BuildCookRun` does the same job headless. The maintainer's words,
-2026-09-06: "Package Project 要我做不是規則, 是我不知道可自動".
+*Platforms -> Windows -> Build Configuration -> Package Project* -- the only step in the whole
+recipe a human would have to drive. It is not a rule that a human drives it: `RunUAT BuildCookRun`
+does the same job headless, and this script runs it.
 
 ⛔ THE VISUAL STUDIO IDE IS NOT IN THE LOOP AND MUST NOT BE PUT BACK IN IT.
 `Build.bat` / `RunUAT.bat` invoke MSVC directly through UBT, which is shipped precompiled and
 carries its own .NET. Building the GENERATED SOLUTION is the broken path -- it drags in the
 engine's own `EpicGames.*` C# programs, which target net6.0 that this machine has no targeting
-pack for, and VS 2026 additionally runs a one-way upgrade on the .sln first. See README.md:102.
+pack for, and VS 2026 additionally runs a one-way upgrade on the .sln first. See README.md's
+"Build it" step 4.
 
-⭐ MEASURED 2026-09-06, so the toolchain claim is not inherited from a version table:
+⭐ WHAT BUILDS ON THE DEV MACHINE, measured, so the toolchain claim is not inherited from a
+version table:
 
     UE 5.4  DumperTestEditor    MSVC 14.38.33130 (inside the VS *18* install) + SDK 10.0.26100.0
                                 9 actions, 20.51 s, exit 0
     UE 5.8  DumperTest58Editor  up to date, 4.81 s, exit 0
     UE 4.27 UE427_3rdPersonEditor  MSVC 14.51.36231 + SDK 10.0.26100.0, 11 actions, 37 s, exit 0
 
-⭐ RE-MEASURED 2026-09-09, after VS2017 was installed and UE_4.23's permissions were opened.
-The two blockers above were real and BOTH are now cleared for 4.23:
+⭐ The older engines, with VS2017 installed and UE_4.23's permissions opened:
 
     UE 4.23  UE423_FlyingEditor   VS2017 14.16.27023, 9 actions, 51.8 s, exit 0
              ...and a full Development package, exit 0, 83.6 s.
@@ -34,8 +34,8 @@ The two blockers above were real and BOTH are now cleared for 4.23:
     UE 4.27  UE427_3rdPersonEditor  compiles (exit 0) and COOKS BY HAND (exit 0), but
              BuildCookRun still fails: UAT writes its cook log to
              <engine>\\Engine\\Programs\\AutomationTool\\Saved\\Cook-*.txt and that path is not
-             writable. Same class as 4.23's old blocker; opening UE_4.27 the way UE_4.23 was
-             opened is what unblocks it. ⚠ `uebp_LogFolder` does NOT redirect it -- tried.
+             writable. Same class as 4.23's permission blocker; opening UE_4.27 the way UE_4.23
+             is opened is what unblocks it. ⚠ `uebp_LogFolder` does NOT redirect it.
     UE 4.15  UE415_Flyinh  still blocked, and on the SAME permission axis, one step earlier:
              UnauthorizedAccessException on
              <engine>\\Engine\\Intermediate\\Build\\LastBuiltTargets.txt.
@@ -49,17 +49,18 @@ RunUAT.bat line 12 sets `UATExecutable=AutomationToolLauncher.exe` before jumpin
 branch and is unreachable. `AutomationTool.exe` is present and works; this script calls it
 directly when the launcher is the only thing missing.
 
-⚠ A FAILED OLD-ENGINE BUILD IS NOT AUTOMATICALLY A TOOLCHAIN ANSWER. 4.15 and 4.23 first died on
-`System.UnauthorizedAccessException` and never reached compiler detection at all; 4.27 is *also*
-non-writable there and built fine, because newer UBT writes user-local. Read the exception.
+⚠ A FAILED OLD-ENGINE BUILD IS NOT AUTOMATICALLY A TOOLCHAIN ANSWER. 4.15 and 4.23 die on
+`System.UnauthorizedAccessException` in a non-writable install and never reach compiler detection
+at all; 4.27 is *also* non-writable there and builds, because newer UBT writes user-local. Read the
+exception.
 
 CONSEQUENCES OF A REPACKAGE -- stated up front because they are not obvious:
   * the `pe_hash` changes, which ORPHANS the per-game app-data folders keyed by it
     (`Snapshots\\`, `Bookmarks\\`, `TeleportCoords\\` under %LOCALAPPDATA%\\UE5CEDumper);
   * `package-identity.json` is invalidated until re-captured (this script does it for you);
   * the configs are packaged SEPARATELY -- a fixture added today reaches Development and NOT
-    Shipping until Shipping is built too. That asymmetry has caused a wrong "the fixture is
-    missing" conclusion before.
+    Shipping until Shipping is built too, and that asymmetry invites a wrong "the fixture is
+    missing" conclusion.
 
 ⛔ It refuses to archive into `Varies Version builds\\`: `inventory_builds.py` and `preflight.py`
 treat that tree as the AOB corpus and CI asserts its row counts, so a new folder there drifts them.
@@ -83,10 +84,10 @@ DEFAULT_ARCHIVE = "D:\\UE_Analyze_data\\For Testing"
 def _mirror_sources():
     """The files package-identity.json hashes — PARSED from capture_package_identity.py.
 
-    ⚠ This used to be a hand-copied duplicate of that list, justified as "a rename there fails
-    loudly here". It does not fail loudly; it fails SILENTLY, by syncing fewer files than the
-    identity record covers. Since 2026-09-06 `check_ue_sample_values.py` gates that list against
-    the mirror directory, so the single source of truth is that list and this reads it.
+    ⚠ Parsed, never hand-copied: a duplicate of that list does not fail loudly on a rename; it
+    fails SILENTLY, by syncing fewer files than the identity record covers.
+    `check_ue_sample_values.py` gates that list against the mirror directory, so the single
+    source of truth is that list and this reads it.
     """
     import re
     p = os.path.join(HERE, "capture_package_identity.py")
@@ -138,11 +139,10 @@ def mirror_files(project):
     """The files the in-repo mirror carries for `project`, or None when it has no mirror.
 
     DumperTest: the hashed list above (package-identity.json covers exactly those).
-    DumperTest58: every file in its mirror directory. ⛔ Until 2026-09-22 this function knew only
-    DumperTest, so `--sync-mirror` on DumperTest58 printed "no in-repo mirror" and packaged the
-    LIVE project's source while the edit sat in the repo -- found when an L86 fixture change
-    compiled clean against the old header. The README has called that directory a mirror since
-    2026-09-16.
+    DumperTest58: every file in its mirror directory. ⛔ Every mirrored project must be known here:
+    for one this function does not know, `--sync-mirror` prints "no in-repo mirror" and packages
+    the LIVE project's source while the edit sits in the repo, so a fixture change compiles clean
+    against the old header.
     """
     if project == "DumperTest":
         return list(MIRROR_SOURCES)
@@ -268,7 +268,7 @@ def main():
     runuat = os.path.join(eng, "Engine", "Build", "BatchFiles", "RunUAT.bat")
 
     # ⛔ UE4 LAUNCHER INSTALLS CANNOT RUN THEIR OWN RunUAT.bat, and the error names nothing
-    # useful. Measured 2026-09-09 on UE 4.27 and 4.23: both ship `Build\InstalledBuild.txt`,
+    # useful. UE 4.27 and 4.23 both ship `Build\InstalledBuild.txt`,
     # so RunUAT.bat jumps straight to :RunPrecompiled and executes
     # `%UATExecutable%` -- which line 12 set to **AutomationToolLauncher.exe**, a file neither
     # install contains. cmd answers with ERRORLEVEL 9009 ("not recognized as an internal or
@@ -334,11 +334,10 @@ def main():
                 # since I last ran", regenerates nothing, and UBT compiles the module
                 # against the PREVIOUS reflection data.
                 #
-                # ⚠ The failure is the one this repo keeps finding: it reports
-                # `BUILD SUCCESSFUL`. Measured 2026-09-09 -- two new UPROPERTYs and a
-                # UFUNCTION were packaged away, the game booted fine, and the fields were
-                # simply absent from `walk_instance`; the only tell was
-                # `DumperTestActor.generated.h` still carrying the previous day's mtime.
+                # ⚠ The failure reports `BUILD SUCCESSFUL`: new UPROPERTYs and UFUNCTIONs
+                # are packaged away, the game boots fine, and the fields are simply absent
+                # from `walk_instance`; the only tell is a `.generated.h` (such as
+                # `DumperTestActor.generated.h`) still carrying an mtime from before the edit.
                 # A stale `.generated.h` that DOES still compile is worse again: the cook
                 # succeeds and the fixture quietly answers for the old source.
                 os.utime(d, None)
@@ -392,7 +391,7 @@ def main():
     # packaging DumperTest58 and it hashes a directory that does not exist, then OVERWRITES the
     # DumperTest record -- which is the committed evidence for a closed row -- with 5.8 data and
     # nine "missing source" problems. Nothing about that failure looks like "wrong project".
-    # Until it grows a project axis, refuse rather than corrupt. Steps 1 and 2 are the ones that
+    # Without a project axis there, refuse rather than corrupt. Steps 1 and 2 are the ones that
     # produce the package; step 3 only describes it.
     if args.project != "DumperTest":
         print("\n[3/3] capture_package_identity.py -- SKIPPED for %s" % args.project)
@@ -409,7 +408,7 @@ def main():
     # os.path.join(args.project, "Source", "DumperTest"). Passing the bare name resolves it
     # against the CWD, every one of the hashed sources comes back missing, and the record fills
     # with "project source 'X' is missing" -- which reads exactly like a real staleness problem.
-    # That cost a restore-from-git on 2026-09-06. Pass proj_dir.
+    # Pass proj_dir.
     rc, _ = run([sys.executable, cap, archive, "--project", proj_dir], "capture", 900)
 
     print("\n" + "=" * 78)

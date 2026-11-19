@@ -7,7 +7,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The MCP server's one connection to a game: which game it dials, the pid
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP server's one connection to a game: which game it dials, the pid
 /// check after connecting, and what a timeout, a cancel or a dead pipe leave behind. The pipe and the process list
 /// are doubles; McpToolsTests covers what is sent over the connection.
 /// </summary>
@@ -56,7 +56,7 @@ public sealed class McpGameLinkTests
         public string? ConnectedTo { get; private set; }
         public HashSet<string> Busy { get; } = new();
         /// <summary>Names served by an elevated game: Windows refuses a non-elevated client, as NamedPipeClientStream
-        /// reports it (measured 2026-11-11, verification-register item 18).</summary>
+        /// reports it (verification-register item 18).</summary>
         public HashSet<string> Elevated { get; } = new();
         /// <summary>The pid get_pointers reports, per pipe name; default: the name's own pid.</summary>
         public Dictionary<string, int> ReportedPid { get; } = new();
@@ -498,7 +498,7 @@ public sealed class McpGameLinkTests
     [Fact]
     public async Task AnElevatedGame_IsNamedAsSuch_NotAnInternalError()
     {
-        // Measured 2026-11-11: a non-elevated server against a game running as administrator got "Internal error in
+        // A non-elevated server against a game running as administrator must not answer "Internal error in
         // read_status: Access to the path is denied." -- UAC refuses the pipe, and the model needs to know why.
         var rig = new Rig(100);
         rig.Pipe.Elevated.Add("UE5DumpBfx_100");
@@ -515,8 +515,8 @@ public sealed class McpGameLinkTests
     public async Task AnElevatedServerRefused_DoesNotSayTheServerIsNotElevated()
     {
         // [UI-ELEVATED-ACCESS-DENIED] The DLL's pipe always lets an administrator in, so a refusal to an elevated server
-        // means something else set that pipe's permissions. The text used to say "this server does not" run elevated
-        // without asking.
+        // means something else set that pipe's permissions. The text names another process, and must not say "this
+        // server does not" run elevated when it does.
         var rig = new Rig(100);
         rig.Platform.ElevatedSelf = true;
         rig.Pipe.Elevated.Add("UE5DumpBfx_100");

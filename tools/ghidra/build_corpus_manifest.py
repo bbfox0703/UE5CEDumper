@@ -235,16 +235,15 @@ def pick_anchor(progs):
 
 # Roots searched for a SECOND copy of a binary that Steam cannot re-serve. "This file exists"
 # is not the same question as "is this the ONLY copy" — and the second question is the one that
-# decides what to back up. MEASURED: UE4.23-Flying has a bit-identical twin on X: that a
-# same-path check cannot see, while UE4.15-Flying and both StackOBots have exactly one copy.
+# decides what to back up. A bit-identical twin on another drive is invisible to a same-path
+# check.
 #
 # D:\UE_Analyze_Data is listed FIRST and is the one that matters operationally: X: is a
 # spinning-disk backup (800k+ files, slow to walk) while D: is the fast working copy, so a row
 # whose only recorded path is on X: should still resolve to a D: twin if one exists.
-# MEASURED 2026-07-29: all six rows the manifest called "binary GONE" — DQ I&II, FF7 Remake,
-# FF7 Rebirth, Hogwarts Legacy, Manor Lords, Octopath — have md5-IDENTICAL copies under
-# 'D:\UE_Analyze_Data\Game Binary backup'. They were reported missing only because this list
-# did not include that root, not because anything was lost.
+# ⚠ A root missing from this list makes every row whose only surviving copy lives there read
+# "binary GONE" although nothing was lost, so a backup root belongs here before a GONE row is
+# trusted.
 DUPE_ROOTS = [r'D:\UE_Analyze_Data', r'X:\UE_Analyze_Data',
               r'D:\tmp\Game archive', r'D:\Unreal Projects']
 
@@ -255,9 +254,9 @@ _DUPE_INDEX = None
 def _dupe_index(roots=None):
     """Lazy ONE-PASS basename -> [paths] index over DUPE_ROOTS, built once and reused.
 
-    The previous design walked every root inside every call. That was tolerable only while the
-    search was skipped for Steam rows; now that it is not (see the call site), 38 rows x a walk
-    of X: — a spinning disk carrying 800k+ files — would dominate the runtime."""
+    Every row is searched, Steam rows included (see the call site), so walking every root inside
+    every call would make rows x a walk of X: — a spinning disk carrying 800k+ files — dominate
+    the runtime."""
     global _DUPE_INDEX
     if _DUPE_INDEX is not None:
         return _DUPE_INDEX
@@ -276,24 +275,22 @@ def _dupe_index(roots=None):
 
 def find_duplicate_copies(target, want_md5, roots=None, name_hint=None, size_prefilter=True):
     """Other paths holding byte-identical bytes. Name-indexed, then md5-confirmed — a same-name
-    same-size file is NOT proof (a repackage emits a fresh PE at identical size; measured on
-    UE423_Flying, 43f6b130 vs f61ec1be).
+    same-size file is NOT proof (a repackage emits a fresh PE at identical size).
 
     `name_hint` lets a GONE row still be searched: the filename comes from the Ghidra record
     rather than from a file that no longer exists. That case is the whole point — a row whose
     binary is missing is exactly the one where a surviving copy matters most.
 
     ⚠ `size_prefilter` MUST be False unless the file at `target` IS the corpus build. The md5 test
-    below has always compared against `want_md5` (Ghidra's import-time hash = the corpus build), so
-    the comparison was never the problem — but the prefilter sized candidates against the file
-    *currently* at `target`, which on a DRIFTED row is the build that REPLACED the corpus one. The
-    surviving corpus copy has the old size, so it was skipped before its md5 was ever computed.
-    Measured 2026-07-29: Palworld reported `duplicate_copies: []` and the note "the .rep is the
-    last copy" while TWO byte-identical copies sat in `Game Binary backup`. That is worse than a
-    nulled field — a null reads as *unknown*, this was a positive false claim, and it fired only on
-    drifted rows, i.e. exactly the rows the field exists to protect. Classic shape: an optimisation
-    correct only under an assumption ("the file on disk is the corpus build") that is precisely
-    false where it matters."""
+    below compares against `want_md5` (Ghidra's import-time hash = the corpus build), but the
+    prefilter sizes candidates against the file *currently* at `target`, which on a DRIFTED row is
+    the build that REPLACED the corpus one. The surviving corpus copy has the old size, so it would
+    be skipped before its md5 was ever computed, and the row would report `duplicate_copies: []`
+    and "the .rep is the last copy" while byte-identical copies exist. That is worse than a nulled
+    field — a null reads as *unknown*, this is a positive false claim, and it fires only on drifted
+    rows, i.e. exactly the rows the field exists to protect. Classic shape: an optimisation correct
+    only under an assumption ("the file on disk is the corpus build") that is precisely false where
+    it matters."""
     if not want_md5:
         return []
     base = os.path.basename(name_hint or target or '').lower()
@@ -342,9 +339,9 @@ def write_json(entries, path):
                         + f'; anchor = {a["program"]}')
         if a['state'] == 'DRIFTED':
             # "the .rep is the last copy" is a claim about the WHOLE machine, so it may only be
-            # made when the duplicate search came back empty. It was previously unconditional and
-            # therefore printed next to a DUPLICATE COPIES line listing two surviving copies —
-            # self-contradictory, and the wrong half is the one that drives a keep/drop decision.
+            # made when the duplicate search came back empty. Made unconditionally, it would print
+            # next to a DUPLICATE COPIES line listing surviving copies — self-contradictory, and
+            # the wrong half is the one that drives a keep/drop decision.
             note.append('BINARY DRIFTED — the file at this path is NOT the build Ghidra '
                         'imported. Steam serves only the current build, so a reinstall cannot '
                         'restore it'
@@ -360,9 +357,8 @@ def write_json(entries, path):
                         'version installed plus a repackage.')
             # A build-output directory is not storage. `Binaries*/Win64` under a live
             # Unreal project is rewritten by the next build and emptied by Clean.
-            # MEASURED trap: the X:\UE_Analyze_Data packaged copy of UE423_Flying is a
-            # DIFFERENT binary (md5 43f6b130..) from the imported one (f61ec1be..) — a
-            # repackage produces a fresh PE, so it is NOT a backup of this row.
+            # ⚠ A packaged copy of the same project elsewhere is NOT a backup of this row
+            # either: a repackage produces a fresh PE with a different md5.
             if '\\Unreal Projects\\' in (a['ghidra_path'] or ''):
                 note.append('VOLATILE LOCATION — this is a live Unreal project build-output '
                             'dir, not an archive. A rebuild or Clean destroys THIS copy, and a '
@@ -493,11 +489,9 @@ def main():
                     m, sha = hashes(probe)
                     state = 'MATCH' if m == rec['exe_md5'] else 'DRIFTED'
             # Search EVERY row, including STEAM and including GONE ones.
-            # Both old guards were wrong. "A Steam row's second copy is the store" is false
-            # whenever the store has moved on — measured on ES2-0517, whose live file no longer
-            # matches the md5 Ghidra imported. And skipping GONE rows meant the search was
-            # skipped precisely when a surviving copy matters most: all six GONE rows turned out
-            # to have md5-identical twins under "D:\UE_Analyze_Data\Game Binary backup".
+            # "A Steam row's second copy is the store" is false whenever the store has moved on
+            # and the live file no longer matches the md5 Ghidra imported. And skipping GONE rows
+            # would skip the search precisely when a surviving copy matters most.
             # size_prefilter ONLY when today's file IS the corpus build. On DRIFTED/GONE it would
             # size candidates against the wrong build and hide the surviving copy — see the
             # warning in find_duplicate_copies.

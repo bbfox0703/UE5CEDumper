@@ -20,129 +20,96 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // rules + publisher bias). The HintCache stamps each saved version with this value so
 // a later launch can trust a cached version and SKIP the slow memory string scan.
 //
-// Because DetectVersionDetailed scans the module's own STATIC image (deterministic per
-// binary), re-detecting the same peHash always yields the same answer — so a cache hit
-// is safe regardless of publisher or confidence. The only reason to re-detect is if this
-// logic changed and an older cached value might now be detected differently.
+// Because DetectVersionDetailed reads only STATIC inputs (the module's own image and the
+// VERSIONINFO resources of the exe and of any CrashReportClient beside it), re-detecting the
+// same peHash always yields the same answer — so a cache hit is safe regardless of publisher
+// or confidence. The only reason to re-detect is if this logic changed and an older cached
+// value might now be detected differently.
 //
-// >>> BUMP THIS whenever DetectVersionFromPEResource / DetectVersionDetailed / tier rules /
-//     HasUEAnchorNearby / publisher-bias change, so every cached version is recomputed once
-//     under the new logic. Do NOT tie it to the build number — that would re-detect on every
-//     rebuild and defeat the cache for stripped-version games (SquareEnix).
+// >>> BUMP THIS whenever DetectVersionDetailed or anything it calls (the resource readers, the
+//     tier rules, HasUEAnchorNearby, the pre-UE4 markers) or the publisher bias changes, so every
+//     cached version is recomputed once under the new logic. The cache-reuse branch trusts every
+//     record whose stamp matches — a low-confidence one, and the fallback default a title that
+//     detected nothing was saved with — so a rule that would answer differently reaches an
+//     already-cached title ONLY through this bump. Do NOT tie it to the build number — that
+//     would re-detect on every rebuild and defeat the cache for stripped-version games
+//     (SquareEnix).
 // >>> ALSO BUMP IT when a cached VALUE is found that the current detection cannot produce.
-//     The rule above is about the logic; this clause is about the DATA, and it was added
-//     because rev 6 needed it. A record stamped with the CURRENT rev is skipped forever by
-//     the cache-reuse branch no matter how wrong its value is, so the stamp is the ONLY
-//     mechanism that can reach an entry which is already poisoned.
-// rev 2 (build ~2394): VERSIONINFO StringFileInfo ProductVersion/FileVersion fallback,
-// UTF-16LE pass in the Tier-1 memory scan, and Tier 1 no longer requires the needle
-// table's trailing '.' (real tags are "++UE4+Release-4.27", so it never matched before).
-// rev 3: pre-UE4 (UE3) marker check in DetectVersionDetailed's terminal branch, returning
-// Grimoire::PRE_UE4_SENTINEL_VERSION. The bump is MANDATORY, not cosmetic: a UE3 game that
-// already ran under rev 2 is cached as ueVersion=504, and the cache-reuse branch would restore
-// that forever without ever re-detecting — i.e. the fix would silently not apply to the very
-// machine that hit the problem.
-// rev 4: TIER RULES CHANGED, so this bump is mandatory under the rule
-// above. (a) Tier 2's context test was an 8-byte strstr while its comment and buffer both
-// said 16; it is now a raw 16-byte clamped search (NUL-immune, unlike a wider strstr) AND
-// carries the same UE-anchor gate Tier 3 always had, so widening cannot manufacture a
-// confident hit out of a "Release Notes 5.4.0". (b) A Tier 3 candidate no longer retires
-// its pattern, so a later Tier 2 hit on the SAME needle is found; without that, a stray
-// bundled "5.5.0" out-raced a real "Release-4.27" later in the module, which is verbatim
-// the case DetectVersionDetailed's own comment claims the design prevents.
-// Both were measured NO-OPS on all 85 real PE images in the local corpus (Tier 2 has never
-// fired on any of them — see the trailing-dot finding in the audit register), so the bump
-// costs one re-detect per cached game at ~0.35 s, not a re-scan of anything expensive.
-// rev 5: Tier 2 now matches the BARE needle. The table's trailing '.' is a
-// Tier 3 device (it forces a three-component "X.Y.Z"); applying it to Tier 2 meant Tier 2
-// could never match UE's own TWO-component tag "++UE4+Release-4.27", and MEASURED over the
-// 170 PE images in the local corpus it had fired 0 times. Post-fix it fires on 6, and on
-// all six it AGREES with the version Tier 1 independently reports — two detectors
-// cross-validating. Tier 1 answers first on all six, so no effective verdict changed on any
-// binary we own; the gain is a working fallback for images whose full "++UEx+Release-" tag
-// is stripped but a "Release-X.Y" fragment survives. Bump is mandatory: a game cached under
-// rev 4 would keep its old tier/confidence without ever re-detecting.
-// rev 6 (2026-09-06): NOT a logic change — a DATA one, and the first bump of that kind.
-// MEASURED on Avowed: its cached record held ueVersion=504, and a forced fresh detection
-// re-stamped it 503. 504 is a value DetectVersionDetailed CANNOT PRODUCE for that binary — it
-// is the runtime CMC::GravityDirection raise (Frieren.cpp), which runs in UE5_Init AFTER
-// Flamme::SaveResults (Genau.cpp, end of FindAll) and therefore never writes back. So the 504
-// is residue of a write path that no longer exists, and nothing would ever have re-derived it.
-// ⚠ The cache-reuse branch justifies itself with "the same binary always yields the same
-// answer". That is true OF DETECTION and false of anything else that ever wrote to the field:
-// a raised value breaks the very invariant the cache rests on, and — being stamped current —
-// is unreachable by every mechanism except this one.
-// ⚠ This does NOT make the A4 decision wrong. audit-2026-09-05-vendor-ue582.md and
-// verification-register.md both say "do not bump for the 507/508 ladder", and that stands: the
-// ladder is runtime-only and re-applied on every init, so it needs no invalidation. This bump
-// is for the RESIDUE OF AN OLDER WRITE PATH, not for the ladder.
-// Cost: one re-detect per cached game (~0.35 s, per rev 4's measurement), after which the cache
-// holds a value detection actually produces. A raise that is still warranted is re-applied at
-// runtime exactly as before, so no verdict the user sees changes — Avowed still badges 504.
-// rev 7 (2026-09-06): DetectVersionDetailed gained a SECOND independent resource source --
-// CrashReportClient.exe, found by walking up from the game exe to <root>/Engine/Binaries/Win{64,32}.
-// Mandatory under the rule at the top: a title cached under rev 6 holds a verdict reached without
-// that source and would never consult it. This is a LOGIC change, unlike rev 6's data one.
-// Why it is worth a file probe: CrashReportClient ships WITH THE ENGINE and is never authored by
-// the game team, so unlike the game exe its version can never be the GAME's version (measured:
-// OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744 all sit in the game exe's field). Its value
-// is not the hit rate but WHERE it hits -- DQ I&II HD-2D carried a misdetected "UE5.05" in this
-// repo's docs for months, across the UE4/UE5 boundary, and its CrashReportClient says 4.27.2.0.
-// ⚠ Coverage is a per-machine sample, not a rate: 8 of 66 folders on the maintainer's PC ship one,
-// and Avowed / DQ XI S / OCTOPATH / DumperTest ship none -- absence is the common path.
-// ⛔ A file-HASH allow-list was proposed and MEASURED TO REJECT EVERYTHING: CrashReportClient is
-// rebuilt per game, so at one version there are three distinct binaries (4.27.2.0 = Editor
-// 19,469,792 B / DQ I&II 19,496,448 B / P3R 19,487,232 B). tools/ue-crc-oracle.json therefore pins
-// the ProductVersion -> code ARITHMETIC against 8 real Epic binaries, and is not an allow-list.
-// rev 8 (2026-10-08, [VER-410-GATE]): a reading below the 4.11 floor is accepted at tier 1 when the
-// resources corroborate it -- the exe's ProductVersion string is the engine's own build string naming
-// the same version, or a CrashReportClient agrees with the exe -- so a genuine 4.0-4.10 title is
-// refused cleanly instead of scanned. Rev 7 could not do that: its only corroboration was the memory
-// string scan, whose table floors at 4.18. The bump is MANDATORY for the very title that found it:
-// the maintainer's machine holds IS Defense (4.10.2) as {ueVersion 410, lowConfidence true, rev 7},
-// and the cache-reuse branch would restore that low confidence forever, keeping the gate off. A
-// refused title is not re-saved (the gate returns before SaveResults), so IS Defense re-detects on
-// every launch. That is cheap: a corroborated reading returns before the memory sweep, so a launch
-// pays the two resource reads (3 ms in IS Defense's rev-7 log) and not the 0.25 s sweep that log
-// also shows.
-// rev 9 (2026-10-09, [VER-410-GATE] review): the VERSIONINFO string fallback also reads the engine's
-// own VERSION-FIRST build string (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`) through
-// Grimoire::EngineBuildStringCode. Before it, the fallback knew only strings CONTAINING `++UE4+Release-` /
-// `++UE5+Release-` -- the prefix is found anywhere, so branch-first (`++UE4+Release-4.15-CL-0`) and
-// version-first with a full 4.18+ branch (`4.18.3-3832480+++UE4+Release-4.18`) both read, and still do,
-// unchanged -- and missed the `++depot+UE4-Releases+` (4.10 and earlier) and simplified `+UE<M>`
-// branches. ⚠ That prefix path checks no agreement between the branch and the leading M.m the way
-// EngineBuildStringCode does: `4.10.2-0+++UE4+Release-4.11` reads 411 through it. An exe
-// whose fixed fields carry the GAME's version read nothing from the two missed shapes, so a 4.10 title beside
-// an agreeing CrashReportClient was scanned at tier 3 (IS Defense's outcome, with two engine-shipped
-// signals agreeing), and a 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18, and
-// landed on the 504 default with the wrong UFunction tail. The string reading keeps fromFixedField
-// false, so below the floor it cannot corroborate itself: only an agreeing CrashReportClient makes it
-// tier 1. Mandatory under the rule at the top: such a title cached under rev 8 holds a verdict reached
-// without the string, and the cache-reuse branch would restore it for ever.
-// MEASURED (2026-10-09, tools/verify/pe_version_probe.py, which mirrors this reader): of the 422 exes
-// under a Binaries\Win64 or \Win32 folder in the maintainer's two Steam libraries, the local analyze
-// corpus and the Epic Games folder, 373 read through the fixed fields, 1 through a `++UE5+Release-` string and 48 read
-// nothing; none of the 48 carries an engine build string, so no reading on this machine changes.
-// The bump costs one re-detect per cached title, as rev 8's did.
-// rev 10 (2026-10-14, [VER-410-FIXED-VS-STRING]): where a file's fixed fields and its own engine build string
-// (Grimoire::EngineBuildStringCode, ProductVersion's string first, then FileVersion's) name DIFFERENT versions, the
-// string's is taken, as a string reading, and the disagreement is logged ("SOURCES DISAGREE — the fixed field ...").
-// Before it the fixed fields were returned before any string was read, so a game version inside 4.0-4.27 / 5.0-5.9 beat
-// the engine-stamped signal: a game at 4.5 on engine 4.15 read 405 (tier 3, scanned with 4.05's UFunction tail), at 5.1
-// it read 501 at tier 1. Taken from the string, a code below the floor still cannot corroborate itself; only an
-// agreeing CrashReportClient refuses on it. Mandatory under the rule at the top: every cached title re-detects once, so
-// one cached under rev 9 from an overruled fixed field is re-read.
-// MEASURED (2026-10-14, pe_version_probe.py, which mirrors this reader): of the 53 exes under a Binaries\Win64 or \Win32
-// folder in the maintainer's two Steam libraries, 36 read through the fixed fields, 14 of those beside a build string
-// that AGREES, and none is overruled; adding the local analyze corpus and the Epic Games folder, 389 exes, 343 fixed
-// readings, 206 agreeing, still none. So no reading on this machine changes, and the shape stays unmeasured in the wild.
-// rev 11 (2026-10-27, [GWT-BRANCH]): the memory scan reads a licensee's engine branch name ("++ue4+ue4_main+4.27",
-// VersionNeedleScan.h's ScanVersionBranchName) once Epic's "++UE<M>+Release-" tag is not found. Mandatory under the
-// rule at the top: the maintainer's machine holds Ghostwire: Tokyo as the 504 default {detected no, rev 10}, and the
-// cache-reuse branch would restore it for ever. MEASURED (2026-10-27): of the 64 UE exes in the two Steam libraries and
-// the analyze corpus, two carry such a branch, and Dolls Nest's PE resource answers first -- so Ghostwire's is the one
-// verdict on this machine that changes (504 default -> 427, tier 1).
+//     The rule above is about the logic; this clause is about the DATA. A record stamped with
+//     the CURRENT rev is skipped forever by the cache-reuse branch no matter how wrong its
+//     value is, so the stamp is the ONLY mechanism that can reach an entry which is already
+//     poisoned.
+//
+// One entry per rev: the rule that rev added or changed. A record stamped with a rev was
+// detected under that rev's rule and every earlier one.
+// rev 2: where VS_FIXEDFILEINFO names no UE version, the VERSIONINFO ProductVersion / FileVersion
+// strings are read for a "++UE<M>+Release-M.m" tag; the Tier-1 memory scan runs both narrow and
+// UTF-16LE; and Tier 1 matches the needle without the table's trailing '.', since the real tag
+// ("++UE4+Release-4.27") ends at the minor.
+// rev 3: when nothing in the UE4/UE5 vocabulary matched, DetectVersionDetailed's terminal branch
+// counts the pre-UE4 (UE3) markers and, at 2 or more of the 4, returns
+// Grimoire::PRE_UE4_SENTINEL_VERSION at tier 1, which the too-old gate refuses.
+// rev 4: Tier 2's "Release" context test is a raw byte search over the clamped 16 bytes before the
+// needle (NUL-immune, unlike a strstr over a copied window), and Tier 2 carries the same UE-anchor
+// gate as Tier 3, so a "Release Notes 5.4.0" with no UE anchor nearby cannot become a confident
+// hit. A Tier 3 candidate does not retire its needle, so a later Tier 2 hit on the SAME needle is
+// still found and a stray bundled "5.5.0" cannot out-race a real "Release-4.27" later in the module.
+// rev 5: Tier 2 matches the BARE needle, as a whole token (the next byte is not a digit), so it
+// matches UE's own TWO-component tag "Release-4.27"; the table's trailing '.' stays a Tier 3 device
+// that forces a three-component "X.Y.Z". Tier 2 is thereby a fallback for an image whose full
+// "++UEx+Release-" tag is stripped but a "Release-X.Y" fragment survives.
+// rev 6 (2026-09-06): NOT a logic change — a DATA bump under the second rule above. It replaces a
+// cached value DetectVersionDetailed cannot produce for its binary: a runtime version raise (504)
+// that an earlier write path persisted.
+// ⚠ The cache-reuse branch rests on "the same binary always yields the same answer", which is true
+// OF DETECTION and false of anything else that writes the cached version: a raised value breaks the
+// very invariant the cache rests on, and — stamped current — is unreachable by every mechanism
+// except a bump. So nothing but detection may write it. The structural version ladder
+// (DynOff::ApplyVersionLadder) runs in UE5_Init after FindAll's Flamme::SaveResults and is re-applied
+// on every init, so it is never persisted and no rung of it needs a bump.
+// rev 7 (2026-09-06): DetectVersionDetailed reads a SECOND, independent resource source --
+// CrashReportClient.exe, found by walking up from the game exe to <root>/Engine/Binaries/Win{64,32}
+// -- through the same reader as the game exe. Where the two disagree, the CrashReportClient's
+// version is taken and the disagreement logged: it ships WITH THE ENGINE and is never authored by
+// the game team, so unlike the game exe its version can never be the GAME's version.
+// ⚠ Absence is the common path: most game folders ship no CrashReportClient.
+// ⛔ A file-HASH allow-list cannot vet it: CrashReportClient is rebuilt per game, so one engine
+// version has many distinct binaries. tools/ue-crc-oracle.json therefore pins the ProductVersion ->
+// code ARITHMETIC against real Epic binaries, and is not an allow-list.
+// rev 8 (2026-10-08, [VER-410-GATE]): a reading below the 4.11 floor is accepted at tier 1 only when
+// the resources corroborate it -- the exe's fixed-field reading beside a ProductVersion string that
+// is the engine's own build string naming the same version, or a CrashReportClient agreeing with the
+// exe -- so a genuine 4.0-4.10 title is refused cleanly instead of scanned. An uncorroborated
+// sub-floor reading stays tier 3 and falls through to the memory scan, whose needle table floors at
+// 4.18 and so can never corroborate it. A refused title is not re-saved (the too-old gate returns
+// before SaveResults), so it re-detects on every launch; a corroborated reading returns before the
+// memory sweep, so such a launch pays only the two resource reads.
+// rev 9 (2026-10-09, [VER-410-GATE]): the VERSIONINFO string fallback also reads the engine's own
+// VERSION-FIRST build string (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`) through
+// Grimoire::EngineBuildStringCode, which answers only for a UE<M> branch that agrees with the leading
+// M.m. So an exe whose fixed fields name no UE version (they carry the game's own) reads its engine
+// version from the `++depot+UE4-Releases+` (4.10 and earlier) and simplified `+UE<M>` shapes, rather
+// than falling to the memory scan, whose needles floor at 4.18. The `++UE4+Release-` /
+// `++UE5+Release-` prefix path runs first on each string and finds the prefix anywhere, so
+// branch-first (`++UE4+Release-4.15-CL-0`) and version-first with a full 4.18+ branch
+// (`4.18.3-3832480+++UE4+Release-4.18`) read through it.
+// ⚠ That prefix path checks no agreement between the branch and the leading M.m the way
+// EngineBuildStringCode does: `4.10.2-0+++UE4+Release-4.11` reads 411 through it. The string reading
+// keeps fromFixedField false, so below the floor it cannot corroborate itself: only an agreeing
+// CrashReportClient makes it tier 1.
+// rev 10 (2026-10-14, [VER-410-FIXED-VS-STRING]): where a file's fixed fields and its own engine build
+// string (Grimoire::EngineBuildStringCode, ProductVersion's string first, then FileVersion's) name
+// DIFFERENT versions, the string's is taken, as a string reading, and the disagreement is logged
+// ("SOURCES DISAGREE — the fixed field ..."). The fixed fields are the game's to set and can carry a
+// game version inside 4.0-4.27 / 5.0-5.9, while UBT stamps the build string from the engine. Taken
+// from the string, a code below the floor still cannot corroborate itself; only an agreeing
+// CrashReportClient refuses on it.
+// rev 11 (2026-10-27, [GWT-BRANCH]): once Epic's "++UE<M>+Release-" tag is not found, the memory scan
+// reads a licensee's engine branch name ("++ue4+ue4_main+4.27", VersionNeedleScan.h's
+// ScanVersionBranchName) at tier 1, before Tiers 2/3: a UE4 or UE5 depot ("UE" in either letter
+// case) holding a whole "M.m" token of that major which is a kVersionNeedles row, so the 4.18 floor
+// holds here too.
+// It runs after Epic's tag, never before, because its grammar admits that tag as well.
 constexpr uint32_t kVersionDetectLogicRev = 11;
 
 // ============================================================
@@ -202,7 +169,7 @@ enum class ModuleAdmission : uint8_t {
 /// No parameter has a default, deliberately: a target added later must STATE its
 /// answer or fail to compile, and `false` must never silently mean "nobody said".
 ///
-/// The AA38 arm is `AnchorState::None` + foreign + !producesAnchor: in a process where
+/// The no-anchor arm is `AnchorState::None` + foreign + !producesAnchor: in a process where
 /// GObjects never validated at all, a GWorld out of some arbitrary loaded module is
 /// refused, because an unloaded world and a wrong address that happens to read 0 are
 /// indistinguishable at the validator.
@@ -217,7 +184,7 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
     switch (anchor) {
         case AnchorState::None:
             // GObjects' own Pass 2 runs before any anchor exists — refusing it would
-            // break the modular builds multi-module support was added for.
+            // break the modular builds multi-module support exists for.
             return producesAnchor ? ModuleAdmission::Accept
                                   : ModuleAdmission::RefuseUnanchored;
         case AnchorState::MainExe:
@@ -290,10 +257,9 @@ struct EnginePointers {
     /// **<=4.7** it is a flat `TArray<UObjectBase*>` at `FUObjectArray+0x10`, which `ArrayLayout`
     /// *can* express and which is blocked by the stride-8 element instead (untested — no oracle
     /// and no pattern exists below 4.8) — see docs/technical-notes.md. Scanning
-    /// anyway just burns ~4 s of AVX2 passes to reach "no winner", which is what these titles did
-    /// before this flag existed. Only ever set on a CONFIDENTLY detected version: a
-    /// low-confidence or user-overridden version is never gated, because misdetecting a working
-    /// game as "too old" is far worse than wasting a scan.
+    /// anyway just burns ~4 s of AVX2 passes to reach "no winner". Only ever set on a CONFIDENTLY
+    /// detected version: a low-confidence or user-overridden version is never gated, because
+    /// misdetecting a working game as "too old" is far worse than wasting a scan.
     bool      bVersionTooOld   = false;
     // True when any in-FindAll scan bailed on Tot::Requested(), so the pointers below are
     // PARTIAL and must not be persisted or latched. Sibling of bVersionTooOld — same job,
@@ -400,8 +366,8 @@ uintptr_t FindGWorld(const char* hintPatternId = nullptr);
 // Returns 0 if no AOB pattern matched (caller should fall back to bIsBound).
 //
 // Layout support: the outer key is a raw `UObjectBase*` at every stock version from
-// 4.23 through 5.x (PDB-verified — the long-standing "UE 4.23-4.27 uses FObjectKey"
-// note was wrong, and FObjectKey is 8 bytes there, not 16). Aura's walker still probes
+// 4.23 through 5.x (PDB-verified — 4.23-4.27 do NOT key on FObjectKey, which is 8
+// bytes there, not 16). Aura's walker still probes
 // the live key shape at runtime rather than trusting a version number, so a licensee
 // fork keyed differently fails safe instead of misreading.
 uintptr_t FindSparseDelegateStorage();
@@ -414,7 +380,7 @@ uintptr_t FindSparseDelegateStorage();
 //
 // That precondition is ENFORCED, not just documented: if DynOff::bOffsetsProbeRan is
 // still false this returns 0 immediately (method "deferred") without scanning, because the
-// validator cannot possibly succeed and the scan costs 0.2-0.7 s. Call
+// validator cannot possibly succeed and the scan would only waste time. Call
 // ResolveGEngineDeferred once the offsets are up.
 //
 // PROBE-RAN, not VALIDATED — the two diverge, since a partially probed run reports

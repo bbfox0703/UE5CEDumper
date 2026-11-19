@@ -4,9 +4,9 @@ r"""AC15 — an INDEPENDENT oracle for the Proxy Deploy Steam scan.
     py tools/verify/ac15_steam_oracle.py --verbose  # + every rejected candidate
 
 ⭐ WHY THIS EXISTS. `AC15` asks that removing a dead per-game VERSIONINFO load left the Steam
-scan "finding the same games, with the same names and paths". Two earlier sessions recorded the
-same honest limit: *no pre-fix baseline exists on this machine*, so re-running the scan shows only
-that it still returns SOMETHING — never that the set is unchanged. Re-reading the same list from
+scan "finding the same games, with the same names and paths". The honest limit: *no baseline from
+a build without that change exists on this machine*, so re-running the scan shows only that it
+still returns SOMETHING — never that the set is unchanged. Re-reading the same list from
 the same code is not a second witness.
 
 This is the second witness. It re-implements `ProxyDeployService`'s detector from the spec, in a

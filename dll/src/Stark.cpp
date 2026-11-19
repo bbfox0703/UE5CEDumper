@@ -14,7 +14,7 @@
 #include "Sein.h"
 #include "Stark.h"
 #include "Linie.h"   // Live PE profiler — opt-in per-UFunction fire counting
-#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME (B14)
+#include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME
 #include "Lager.h"     // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "Falsch.h"    // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "Tot.h"       // the shutdown flag a queued invoke's wait answers to ([SHUTDOWN-SEETHRU-WAIT])
@@ -238,7 +238,7 @@ struct OwnPeCallGuard {
 // GAME'S OWN THREAD, so an exception escaping it unwinds into a frame that has no handler
 // for us and the process fast-fails (0xC0000409, FAST_FAIL_FATAL_APP_EXIT). It allocates
 // where it is reachable while the game is tearing its object pool down: Linie's map insert.
-// Zero cost on x64 when nothing throws (table-driven EH). (B14)
+// Zero cost on x64 when nothing throws (table-driven EH).
 static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint, bool onGameThread) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
@@ -277,7 +277,7 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
         // here stays in the queue where DropQueuedInvokesOf finds it: a departed AI's call is dropped even while an
         // earlier one runs. Bounded by the count at the start, so requests queued meanwhile wait for the next
         // top-level ProcessEvent instead of keeping the game thread here; t_draining keeps a request's own ProcessEvent
-        // calls from draining the rest inside it, as the batch this replaced did.
+        // calls from draining the rest inside it.
         struct DrainScope {
             DrainScope() { t_draining = true; }
             ~DrainScope() { t_draining = false; }
@@ -350,8 +350,8 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
 
     // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body. The invokes the body
     // drained call the original ProcessEvent through the trampoline, not this hook, so they are not in the trace
-    // themselves; the calls they make come back through the hook and are, ahead of this call, as they ran (review
-    // DLL-7). The token stays in this frame across the game's call; this frame's stack address is how a ticked scope
+    // themselves; the calls they make come back through the hook and are, ahead of this call, as they ran.
+    // The token stays in this frame across the game's call; this frame's stack address is how a ticked scope
     // tells a nested call from a later one.
     Linie::TraceToken traceTok;
     Linie::ArmHint armHint;   // [LIVEFUNCS-STEP2] integers only, in this frame
@@ -375,7 +375,7 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
         s_originalPE(thisObj, ufunc, params);
     }
 
-    // The return record: our work again, so guarded again (TR3). A game exception that unwinds past this frame skips
+    // The return record: our work again, so guarded again. A game exception that unwinds past this frame skips
     // it, and the trace shows that call as never returning; Linie closes a ticked scope left open that way itself.
     if (traceTok.traced) {
         Routine::RunThreadGuarded("GameThreadDispatch", [&] {
@@ -422,13 +422,13 @@ static Lager::ImageLayout ReadMainImageLayout() {
     return Lager::ParseImageLayout(hdr, sizeof(hdr), reinterpret_cast<uint64_t>(base));
 }
 
-// A VirtualQuery was measured at about 300 µs on a game running uncapped (Aura.h, CodeRangeCache), and a heap grown
+// A VirtualQuery can cost hundreds of µs on a game running uncapped (Aura.h, CodeRangeCache), and a heap grown
 // through the window can be thousands of regions. The walk runs on a pipe thread the user is waiting on, so it stops
 // at this budget, and the summary then says its map is incomplete.
 static constexpr uint64_t kWindowWalkBudgetMs = 2000;
 // A SECOND bound, independent of the clock: the ±1 GB window holds at most ~2 GB / 4 KB regions, which would grow the
 // vector to ~16 MB. Cap the region count so memory is bounded even if the clock misbehaves (the deadline is the usual
-// stop; this is the backstop a review asked for after a deadline-removed mutant held s_mhMutex for ~157 s).
+// stop; this is the backstop, so a walk without a working deadline cannot hold s_mhMutex unbounded).
 static constexpr size_t kWindowWalkMaxRegions = 200000;
 
 // One failing Start fails twice (the automatic attempt, then the forced one), each walking the same window. Skip a
@@ -480,9 +480,8 @@ static bool LiveQueryRegion(uint64_t addr, Lager::Region& out) {
 
 // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. Walk the window GetMemoryBlock searched for `target`
 // and log what held it, so a failure on a live game says whether the space was taken, by what, and where the main
-// image sits -- the evidence [MH-PRERESERVE-PROXY] was proposed without. `lastError` is GetLastError() captured right
-// after MH_CreateHook: when the window still had room, it is what distinguishes a VirtualAlloc/heap refusal from a
-// full window.
+// image sits. `lastError` is GetLastError() captured right after MH_CreateHook: when the window still had room, it is
+// what distinguishes a VirtualAlloc/heap refusal from a full window.
 static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {
     // Throttle: a Start fails twice and would walk twice. Called only from InstallHook, which holds s_mhMutex, so
     // this static state needs no lock of its own.
@@ -520,7 +519,7 @@ static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {
 }
 
 // MinHook's own state (its private heap) is the one record of whether it is initialised, shared by every module in
-// this DLL that hooks: each accepts MH_ERROR_ALREADY_INITIALIZED (the holder is usually the first initialiser now, so
+// this DLL that hooks: each accepts MH_ERROR_ALREADY_INITIALIZED (the holder is usually the first initialiser, so
 // Grausam's later call almost always lands on that branch -- InvokeScriptTests pins that every call site ORs it in),
 // and none calls MH_Uninitialize, which would free the held block and every live trampoline with it (pinned too).
 // Call under s_mhMutex.
@@ -839,7 +838,7 @@ bool InstallHook(uintptr_t processEventAddr) {
                  peBlock == s_heldBlock ? "in" : "NOT in", (unsigned long long)s_heldBlock);
         // [MH-PRERESERVE-PROXY] Reuse ALWAYS wins over allocation, so landing in the held block proves nothing about
         // whether the hold was needed. Run buffer.c's two walks live for ProcessEvent's window: if neither could place
-        // a new block, the hold is what made this install succeed (the fix is proven); if one could, a fresh block was
+        // a new block, the hold is what made this install succeed; if one could, a fresh block was
         // free anyway (reuse happened, but the window was not starved). A few dozen queries, off the hot path.
         if (peBlock == s_heldBlock) {
             SYSTEM_INFO si{};

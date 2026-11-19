@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Live check for [FINDINSTANCE-SUBSTRING-USERFACING] where only a live CheatManager can show it (build 3675 on).
+r"""Live check for [FINDINSTANCE-SUBSTRING-USERFACING] where only a live CheatManager can show it (a DLL with that tag).
 
     py tools/verify/launch_dumpertest.py dev58
     py tools/verify/inject.py --name DumperTest58
@@ -13,7 +13,7 @@ CheatManager (AddCheats), HUD and PlayerCameraManager when the camera goes ON.
   2. For CheatManager, PlayerController, HUD and PlayerCameraManager: every live object with its GObjects index and
      whether the DCC is it or owns it, and the mailbox FIND_INSTANCE pick (a lookup; nothing is invoked).
      PASS = the pick is not the DCC's while one that is not the DCC's is live. Where no DCC-owned object sits lower,
-     the row is reported as non-discriminating: the old lowest-index pick would have been right too.
+     the row is reported as non-discriminating: a lowest-index pick would be right too.
   3. invoke_function class_name="CheatManager" func_name="ToggleDebugCamera" while the camera is ON: instance_pick
      "live", the object is the player's, and on UE 5.8 the camera goes OFF (on 4.18-5.7 the player's toggle is a
      no-op there; the rig says which it saw).

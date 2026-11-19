@@ -195,15 +195,15 @@ public class ProxyDeployTests
     }
 
     // ────────────────────────────────────────────────────────────────
-    // VDF parser — key/value position and nesting validity (audit #5 AC12)
+    // VDF parser — key/value position and nesting validity
     //
-    // The old walker tracked brace depth ONLY, so any depth-2 token reading "path"
-    // was taken for a key and a brace imbalance was invisible.
+    // A walker tracking brace depth ONLY would take any depth-2 token reading "path"
+    // for a key, and a brace imbalance would be invisible.
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// THE FINDING. A library whose label is the word "path" made the walker read the
-    /// NEXT key as a folder, injecting a directory Steam never named.
+    /// THE KEY CASE. A library whose label is the word "path" must not make the walker
+    /// read the NEXT key as a folder, injecting a directory Steam never named.
     ///
     /// NEGATIVE CONTROL: drop the key/value alternation and match on any depth-2 token
     /// equal to "path", and this returns TWO paths — the real one plus "contentid".
@@ -254,8 +254,8 @@ public class ProxyDeployTests
     [Fact]
     public void VdfParser_ExtraClosingBrace_StopsAndReports()
     {
-        // A stray '}' used to drive depth NEGATIVE, after which every later block was
-        // read one level shallow and the file silently yielded zero libraries.
+        // A stray '}' would drive depth NEGATIVE, after which every later block would be
+        // read one level shallow and the file would silently yield zero libraries.
         const string vdf = """
             "libraryfolders"
             {
@@ -374,7 +374,7 @@ public class ProxyDeployTests
     }
 
     // ────────────────────────────────────────────────────────────────
-    // Staged proxy publish (audit #5 AC11)
+    // Staged proxy publish
     // ────────────────────────────────────────────────────────────────
 
     [Theory]
@@ -427,7 +427,7 @@ public class ProxyDeployTests
     }
 
     /// <summary>
-    /// A guard, NOT the negative control: measured, the direct
+    /// A guard, NOT the negative control: the direct
     /// <c>File.Copy(src, target, overwrite: true)</c> also leaves the target alone here,
     /// because Windows opens the source before it truncates the destination. Kept because
     /// it pins the no-residue half.
@@ -446,15 +446,15 @@ public class ProxyDeployTests
     }
 
     /// <summary>
-    /// THE FINDING. A failing deploy used to TRUNCATE the live proxy: the game then fails
-    /// to start, the grid reads the wreckage as another program's DLL (no version resource
-    /// survives a truncated PE), and on that verdict BOTH removal paths refuse it — the
-    /// user's own wreckage is unremovable from the panel that produced it.
+    /// THE KEY CASE. A failing deploy must not TRUNCATE the live proxy: the game would then
+    /// fail to start, the grid would read the wreckage as another program's DLL (no version
+    /// resource survives a truncated PE), and on that verdict BOTH removal paths refuse it —
+    /// the user's own wreckage would be unremovable from the panel that produced it.
     ///
-    /// NEGATIVE CONTROL (run): put back the direct
-    /// <c>File.Copy(src, target, overwrite: true)</c> and this fails together with
-    /// <c>CopyProxyStaged_StaleStageFile_IsOverwrittenNotOrphaned</c> — 2 of 4284, and no
-    /// others. A zero-byte source is maximal truncation, which is why it is the case that
+    /// NEGATIVE CONTROL: put in the direct <c>File.Copy(src, target, overwrite: true)</c>
+    /// and this fails together with
+    /// <c>CopyProxyStaged_StaleStageFile_IsOverwrittenNotOrphaned</c>, and no others. A
+    /// zero-byte source is maximal truncation, which is why it is the case that
     /// discriminates.
     /// </summary>
     [Fact]
@@ -659,8 +659,8 @@ public class ProxyDeployTests
 
     // ────────────────────────────────────────────────────────────────
     // BuildConflictMessage — redundancy warning only when 2+ coexist
-    // (build 1165 fix: a single deployed proxy of any type is NOT a conflict,
-    //  regardless of which proxy type the UI has selected)
+    // (a single deployed proxy of any type is NOT a conflict, regardless of
+    //  which proxy type the UI has selected)
     // ────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -734,7 +734,7 @@ public class ProxyDeployTests
     }
 
     // ────────────────────────────────────────────────────────────────
-    // FindUeGames — modular vs monolithic layouts (build 691 Satisfactory fix)
+    // FindUeGames — modular (Satisfactory) vs monolithic layouts
     // ────────────────────────────────────────────────────────────────
 
     private sealed class NoopLog : ILoggingService
@@ -807,10 +807,10 @@ public class ProxyDeployTests
     [Fact]
     public void ProxyImportInfo_Imports_CoversEveryProxyFlavour()
     {
-        // The analyzer tracked version/dinput8/dxgi but NOT winmm, even though ProxyType has had
-        // a Winmm member — so winmm could never be recommended, and it is the ONLY proxy that
-        // works on Octopath Traveler. Same desync class the DumperModuleDetector comment warns
-        // about. Assert every enum value is answerable, so a fifth flavour cannot repeat it.
+        // An analyzer that tracks only some ProxyType members can never recommend the others —
+        // and winmm, for one, is the ONLY proxy that works on Octopath Traveler. Same desync
+        // class the DumperModuleDetector comment warns about. Assert every enum value is
+        // answerable, so a new flavour cannot fall out of step.
         var all = new ProxyImportAnalyzer.ProxyImportInfo(true, true, true, true);
         var none = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, false);
         foreach (var t in Enum.GetValues<ProxyType>())
@@ -985,9 +985,9 @@ public class ProxyDeployTests
         }
     }
 
-    // [PROXY-CONFIRM-SHARED-EXE] (maintainer's call, 2026-09-25: mark it ambiguous) The confirmed-working and injected
-    // records are keyed by the bare exe name, so they survive a reinstall -- but two games that ship the same exe name
-    // shared one record, and one game's proxy type was suggested (and, with "Use confirmed", deployed) for the other.
+    // [PROXY-CONFIRM-SHARED-EXE] The confirmed-working and injected records are keyed by the bare exe name, so they
+    // survive a reinstall -- but two games that ship the same exe name share one record, and one game's proxy type would
+    // be suggested (and, with "Use confirmed", deployed) for the other. Such a name is marked ambiguous.
     [Fact]
     public async Task ApplyProxySuggestions_ASharedExeName_UsesNeitherRecord_AndSaysWhy()
     {
@@ -1021,16 +1021,16 @@ public class ProxyDeployTests
             {
                 "Injected-Win64-Shipping.exe", "Both-Win64-Shipping.exe",
             };
-            // (fifth review, R5-T-SUGGEST-REMEMBERED-DROPPED) The per-game pick is keyed by the FOLDER: never ambiguous.
+            // The per-game pick is keyed by the FOLDER: never ambiguous.
             var remembered = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase) { ["GameA"] = ProxyType.Dxgi };
             var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
 
             await svc.ApplyProxySuggestionsAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, h, i }, confirmed,
                 remembered, injected, enabled: true, TestContext.Current.CancellationToken);
 
-            // (fifth review, R5-01) Exact texts: the note names the record that EXISTS and is not used.
-            // (sixth review, R6-03) The "shared · " tag LEADS: the column shows ~28 characters, and a mark at the end
-            // was clipped away. The header's tooltip says what the tag means.
+            // Exact texts: the note names the record that EXISTS and is not used.
+            // The "shared · " tag LEADS: the column shows ~28 characters, and a mark at the end would be clipped
+            // away. The header's tooltip says what the tag means.
             const string NoConfirmed = "the confirmed-working record is not used";
             Assert.Equal(ProxyType.Dxgi, a.SuggestedProxyType);                    // its own last-used pick survives
             Assert.Equal($"shared · dxgi.dll · last used · {NoConfirmed}", a.SuggestedProxy);
@@ -1143,12 +1143,11 @@ public class ProxyDeployTests
         string lib = MakeTempLibrary();
         try
         {
-            // Repro of the Satisfactory exact shape: <Game>\<Sub>\Binaries\Win64\
-            // has NO .exe at all (only the .modules manifest + game-side DLLs),
-            // so Engine fallback MUST run and pick up the real launcher exe.
-            // Regression-guard against the two-tier search accidentally
-            // skipping Engine when <Sub>\Binaries\Win64\ existed but produced
-            // no game row.
+            // The Satisfactory shape: <Game>\<Sub>\Binaries\Win64\ has NO .exe
+            // at all (only the .modules manifest + game-side DLLs), so Engine
+            // fallback MUST run and pick up the real launcher exe. Guards the
+            // two-tier search against skipping Engine when <Sub>\Binaries\Win64\
+            // exists but produces no game row.
             string game = Path.Combine(lib, "steamapps", "common", "Satisfactory");
             string engineBin  = Path.Combine(game, "Engine",      "Binaries", "Win64");
             string factoryBin = Path.Combine(game, "FactoryGame", "Binaries", "Win64");
@@ -1253,9 +1252,9 @@ public class ProxyDeployTests
     [Fact]
     public async Task RefreshDeployStatus_ASharedLogFolder_SaysTheLoadMayBeAnotherGames()
     {
-        // (fifth review, R5-03 -- the maintainer's "mark it ambiguous" carried to the third exe-keyed signal) The Load
-        // column reads Logs\<exe stem>: games in different folders that ship the same exe name share that folder, so
-        // one game's load was credited to all of them while the Suggested column said the name cannot be attributed.
+        // [PROXY-CONFIRM-SHARED-EXE]'s "mark it ambiguous", for the Load column too: it reads Logs\<exe stem>, and games
+        // in different folders that ship the same exe name share that folder, so one game's load would be credited to
+        // all of them while the Suggested column says the name cannot be attributed.
         string appData = MakeTempDir();
         try
         {
@@ -1275,7 +1274,7 @@ public class ProxyDeployTests
             var c = G("C", "Unique-Win64-Shipping.exe");
             var d = G("D", "NeverRan-Win64-Shipping.exe");
             var e = G("E", "NeverRan-Win64-Shipping.exe");
-            // (sixth review, R6-05) The key is the LOG folder: 'Game .exe' and 'Game.exe' both log into Logs\Game.
+            // The key is the LOG folder: 'Game .exe' and 'Game.exe' both log into Logs\Game.
             Directory.CreateDirectory(Path.Combine(logs, "Game"));
             File.WriteAllText(Path.Combine(logs, "Game", "init-0.log"), "x");
             var f = G("F", "Game .exe");
@@ -1290,8 +1289,8 @@ public class ProxyDeployTests
             await svc.RefreshDeployStatusAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, t1, t2 }, @"X:\missing.dll",
                 ProxyType.Version, ct: TestContext.Current.CancellationToken);
 
-            // (sixth review, R6-03) The tag LEADS: the Load column shows ~18 characters, and a mark appended after
-            // "loaded <date>" was clipped away. The header's tooltip says what it means.
+            // The tag LEADS: the Load column shows ~18 characters, and a mark appended after "loaded <date>" would be
+            // clipped away. The header's tooltip says what it means.
             foreach (var g in new[] { a, b, f, g2 })
                 Assert.StartsWith("shared · loaded ", g.LoadObservation);
             foreach (var g in new[] { t1, t2 })
@@ -1533,9 +1532,9 @@ public class ProxyDeployTests
     [Fact]
     public void PostInjectConnectWindow_IsLongEnoughForAFullScan()
     {
-        // Measured on a stock UE 5.4 Development package: pipe appeared 8.8 s after
-        // injection (1 s auto-start delay + 7.8 s AOB scan). A window that does not
-        // clear that with margin re-creates the bug it was added for.
+        // On a stock UE 5.4 Development package the pipe appears ~9 s after injection
+        // (1 s auto-start delay + the AOB scan). A window that does not clear that with
+        // margin gives up before the pipe exists.
         Assert.True(ProxyDeployViewModel.PostInjectConnectWindow >= TimeSpan.FromSeconds(30),
             "window must comfortably exceed a full AOB scan");
     }
@@ -1552,9 +1551,9 @@ public class ProxyDeployTests
     //
     // A refresh run as the TAIL of a deploy/undeploy recomputes status purely from disk.
     // For a game the deploy just FAILED on, the disk says "file absent", which classifies
-    // honestly as (NotDeployed, null) — overwriting the failure status AND its reason, so
-    // the row read "NotDeployed" with a blank Error beside a banner saying "1 failed".
-    // The reason survived only in the log. These pin the preserve-set that fixes it.
+    // honestly as (NotDeployed, null) — and would overwrite the failure status AND its
+    // reason, so the row would read "NotDeployed" with a blank Error beside a banner saying
+    // "1 failed", the reason left only in the log. These pin the preserve-set that keeps it.
 
     [Fact]
     public void ShouldApplyRefresh_NoPreserveSet_AppliesEverything()
@@ -1598,16 +1597,16 @@ public class ProxyDeployTests
     }
 
     // ────────────────────────────────────────────────────────────────
-    // Reading a log the app itself has open (measured 2026-08-12)
+    // Reading a log the app itself has open
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// The leftover scan mines our own <c>view-*.log</c> for "Deployed … : &lt;path&gt;" lines. The
     /// CURRENT run's <c>view-0.log</c> is held open by our own logger, and <c>File.ReadLines</c> —
     /// which opens with <c>FileShare.Read</c> — cannot open a file a writer already has. The caller's
-    /// per-file <c>catch</c> swallowed the exception, so that whole file contributed zero candidates:
-    /// anything deployed in the current session was invisible to "Find leftovers" until a restart
-    /// rotated the log. Measured against a real deploy, then fixed with a shared-read open.
+    /// per-file <c>catch</c> would swallow the exception, so that whole file would contribute zero
+    /// candidates: anything deployed in the current session would be invisible to "Find leftovers"
+    /// until a restart rotated the log. A shared-read open reads it.
     ///
     /// <para>This test touches the filesystem on purpose. The bug IS the sharing mode, and a
     /// fake/in-memory file has no sharing mode to get wrong.</para>
@@ -1626,7 +1625,7 @@ public class ProxyDeployTests
                 sw.Flush();
 
                 // NEGATIVE CONTROL — without it this test would pass against a file nothing holds
-                // open, i.e. it would assert nothing. This is the exact call that was shipped.
+                // open, i.e. it would assert nothing. This is the plain File.ReadLines call the scan must not use.
                 Assert.ThrowsAny<IOException>(() => File.ReadLines(path).ToList());
 
                 var lines = ProxyDeployService.ReadLinesShared(path).ToList();
@@ -1670,13 +1669,12 @@ public class ProxyDeployTests
     /// <summary>
     /// [STAGELOCK-2026-08-20] — the staged rename's failure shape is NOT an IOException.
     ///
-    /// Measured at the OS level against a really-mapped DLL:
-    ///   old File.Copy  -> ERROR_SHARING_VIOLATION (32) -> IOException
-    ///   new File.Move  -> ERROR_ACCESS_DENIED     (5)  -> UnauthorizedAccessException
+    /// At the OS level, against a really-mapped DLL:
+    ///   File.Copy  -> ERROR_SHARING_VIOLATION (32) -> IOException
+    ///   File.Move  -> ERROR_ACCESS_DENIED     (5)  -> UnauthorizedAccessException
     /// because a replacing rename must first DELETE a target that carries an image
-    /// section. The old `catch (IOException) when (...)` therefore stopped matching the
-    /// moment the write shape changed, and the user got a bare
-    /// "Access to the path is denied." with no path in it.
+    /// section. A `catch (IOException) when (...)` alone misses the rename's shape, and
+    /// the user gets a bare "Access to the path is denied." with no path in it.
     /// </summary>
     [Fact]
     public void IsTargetUnreplaceable_CatchesBothWriteShapes()

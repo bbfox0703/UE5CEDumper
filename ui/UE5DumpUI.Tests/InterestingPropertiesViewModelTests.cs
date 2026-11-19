@@ -42,21 +42,19 @@ public class InterestingPropertiesViewModelTests
     [Fact]
     public void LocateRowInGWorld_FiresEvenWhenTheClientFlagIsFalse()
     {
-        // audit #5 AE10. This assertion used to be the opposite, arguing that "a
-        // property is a class-level definition, so without a resolved GWorld there is
-        // nothing to locate against". The flaw is in the premise, not the conclusion:
-        // IsGWorldAvailable does NOT mean "GWorld is resolved". It comes from
-        // EngineState.HasGWorld, whose own definition is "the AOB scan produced a
-        // non-zero &GWorld SLOT address" — while the DLL has world-recovery fallbacks
-        // that work when that scan did not. Measured consequence: the button was dead
-        // on games where locate worked fine (TQ2, proxy mode).
+        // Locate is not gated on a client-side GWorld flag. "A property is a
+        // class-level definition, so without a resolved GWorld there is nothing to
+        // locate against" has a false premise: a client flag does NOT mean "GWorld is
+        // resolved". EngineState.HasGWorld means "the AOB scan produced a non-zero
+        // &GWorld SLOT address" — while the DLL has world-recovery fallbacks that work
+        // when that scan did not. Gated on it, the button would be dead on games where
+        // locate works fine (TQ2, proxy mode).
         //
         // The DLL's find_path_from_gworld is the source of truth and returns an
         // explicit invalid/no-path status when there really is no live UWorld, which
-        // the locate flow surfaces. Value Search was decoupled from the flag for
-        // exactly this reason; seven sibling VMs were not.
+        // the locate flow surfaces.
         var vm = MakeVm();
-        // (the IsGWorldAvailable flag is gone entirely — see pass 2 of AE10)
+        // (the VM has no GWorld-availability flag to set false)
         string? captured = null;
         vm.LocateInGWorld += a => captured = a;
 

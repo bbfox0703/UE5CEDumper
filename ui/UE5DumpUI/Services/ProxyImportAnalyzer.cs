@@ -429,7 +429,7 @@ internal static class ProxyImportAnalyzer
         if (lastWrite is not DateTime ts) return (ProxyLoadSignal.Observed, "loaded");
         string date = ts.ToString("yyyy-MM-dd");
         return (now - ts).TotalDays > staleAfterDays
-            // (R8-01) The mark LEADS: the Load column clips the end of its text, so a trailing "(stale)" would
+            // The mark LEADS: the Load column clips the end of its text, so a trailing "(stale)" would
             // not show and an old load would read as a recent one.
             ? (ProxyLoadSignal.ObservedStale, $"stale · loaded {date}")
             : (ProxyLoadSignal.Observed, $"loaded {date}");

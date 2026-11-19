@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-r"""L49 `[A2-WALKCLASSEX-UNMAPPED]`: an unreadable class address is logged once and NOT memoized as empty.
+r"""`[A2-WALKCLASSEX-UNMAPPED]`: an unreadable class address is logged once and NOT memoized as empty.
 
     py tools/verify/l49_unmapped_class.py --pid <game pid> --log-dir "%LOCALAPPDATA%\UE5CEDumper\Logs\DumperTest-Win64-Shipping"
 
-THE ROW SAYS "no live trigger" -- the 2026-09-22 survey found one. `walk_class_batch` hands ANY address to
-`Ubel::WalkClassEx`, which has no GObjects-membership check, so a page RESERVED (never committed) in
-the game from outside is exactly the transient fault dll_core_test manufactures by decommitting a page.
-⚠ Since `[WALKCLASS-STALE-OK]` (build 3734) the SINGULAR `walk_class` refuses an address that is not a live
-object before walking it, so it no longer reaches WalkClassEx with P; the arms below go through the batch, and
-the singular refusal is checked as a control (review wf_72c53295-04c L49-RIG-FALSE-FAIL).
+THE LIVE TRIGGER. `walk_class_batch` hands ANY address to `Ubel::WalkClassEx`, which has no
+GObjects-membership check, so a page RESERVED (never committed) in the game from outside is exactly the
+transient fault dll_core_test manufactures by decommitting a page.
+⚠ With `[WALKCLASS-STALE-OK]` the SINGULAR `walk_class` refuses an address that is not a live object before
+walking it, so it never reaches WalkClassEx with P; the arms below go through the batch, and the singular
+refusal is checked as a control.
 
   STEP A  walk_class_batch [P] twice + [P, P] on a reserved page: every reply has no fields, walk-0.log
           gains EXACTLY ONE "WalkClass: 0x<P> is not readable at +0x..." and ZERO "WalkClassEx: 0x<P>
           REFUSED"; and the singular walk_class P answers the "Not a live class" error.
   STEP B  commit P and copy a real UClass's first 0x400 bytes into it: walk_class_batch [P] must now return
-          that class's name and field list. ⭐ THIS is the discriminator -- pre-fix, WalkClassEx had
-          memoized {P, PropertiesSize 0} forever and answered the empty class again.
+          that class's name and field list. ⭐ THIS is the discriminator -- a build without the fix has
+          memoized {P, PropertiesSize 0} forever and answers the empty class again.
 
 ⚠ MEM_RESERVE, not a committed zero page: a committed page is "readable, PropertiesSize 0", a
 different path that is legitimately memoized as empty. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 P is released at the end. WalkClass says "not readable" ONCE PER ADDRESS for the life of the process
 (FirstUnreadableClassWarn), and a second run in the same game usually gets the same region back -- so the rig
 checks the log for P first and, when this process already said it, reserves another region while holding the
-first (review wf_d3c2ec9a-d52 L49-RERUN-SAME-P-FALSE-FAIL).
+first.
 """
 import argparse
 import ctypes
@@ -119,12 +119,12 @@ def main():
                 return 2
             # Every address THIS game launch already reported, from walk-0.log and the walk logs it rotated into (Sein
             # rotates at 8 MB). The folder also keeps earlier launches' archives; those end before this process began,
-            # so a file last written before its start is skipped (review wf_53eabd00-f5e). A reported address is HELD,
-            # so the next reservation lands elsewhere; bounded (review wf_a193c703-fe8).
+            # so a file last written before its start is skipped. A reported address is HELD, so the next
+            # reservation lands elsewhere; bounded.
             started = process_start_epoch(h)
             said = ""
             for f in glob.glob(os.path.join(os.path.dirname(walklog), "walk-*.log")):
-                try:   # a file rotated away between the glob and here is skipped (review wf_6ad0a6e1-ffa)
+                try:   # a file rotated away between the glob and here is skipped
                     if started and os.path.getmtime(f) < started:
                         continue
                     with open(f, "rb") as fh:

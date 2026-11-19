@@ -80,11 +80,10 @@ public class KeywordScoringTableTests
         Assert.Equal(FunctionCategory.Other, result.Category);
     }
 
-    // === L1 (2026-07-13) — cooldown/dilation methods that the pre-existing
-    // "Timer"/"Time" Utility tokens missed. Widened UtilityKeywords with
-    // Cooldown/Dilation/Delay/Interval/Elapsed/Recharge; all land in Utility
-    // (weight 3, so a bare hit needs a class bonus or "Show all" to clear the
-    // threshold — a dedicated weight-5 Timing bucket is the follow-up). ===
+    // === Cooldown/dilation methods, which the "Timer"/"Time" Utility tokens
+    // alone miss. UtilityKeywords carries Cooldown/Dilation/Delay/Interval/
+    // Elapsed/Recharge; all land in Utility (weight 3, so a bare hit needs a
+    // class bonus or "Show all" to clear the threshold). ===
     [Theory]
     [InlineData("SetCooldown",          "FooActor",         FunctionCategory.Utility)]  // Cooldown
                                                                                         // (neutral class — "Ability" in a
@@ -141,9 +140,9 @@ public class KeywordScoringTableTests
     [InlineData("MyGameMode",            2)]
     [InlineData("CustomGameInstance",    2)]
     [InlineData("MySaveGame",            2)]
-    [InlineData("AnimMan_Player_C",      2)]  // Player(+2) only — no longer penalised
-                                              // for "Anim" prefix (build 671 TowerOfMask regression)
-    // === Build 686 — Phase 2 function-side analyzer adds. ===
+    [InlineData("AnimMan_Player_C",      2)]  // Player(+2) only — an "Anim" prefix is not
+                                              // penalised (a TowerOfMask player class has one)
+    // === The function-side analyzer's class keywords. ===
     [InlineData("BP_Enemy_C",            2)]  // Enemy(+2)
     [InlineData("EnemyBase",             2)]
     [InlineData("WeaponHandler",         2)]  // Weapon(+2) — mirror of property side
@@ -288,20 +287,19 @@ public class KeywordScoringTableTests
     }
 
     // ==================================================================
-    // Tokenisation regression cases (build 608+)
+    // Tokenisation cases
     //
-    // These are the substring-noise traps that motivated the switch to
-    // KeywordTokenizer. Each pair documents:
-    //   - "Was a false-positive in v1": now correctly Other.
-    //   - "Was a false-negative in v1": now correctly categorised.
+    // The substring-noise traps KeywordTokenizer exists for. Each group pins:
+    //   - a substring match that is not a token match: Other.
+    //   - a short keyword that is a whole token: categorised.
     // ==================================================================
 
     [Theory]
-    [InlineData("DoNothing",        "FrobnicatorComponent")] // "Component" used to substring-hit Stats via "MP"
+    [InlineData("DoNothing",        "FrobnicatorComponent")] // "Component" holds "MP" as a substring, not a token (Stats)
     [InlineData("Update",           "MyComponent")]
     [InlineData("Initialize",       "RandomActor")]
     [InlineData("Tick",             "BaseActor")]
-    [InlineData("OnStreamReady",    "TPSStream")] // "TPS" used to substring-hit Movement via "TP"
+    [InlineData("OnStreamReady",    "TPSStream")] // "TPS" holds "TP" as a substring, not a token (Movement)
     public void TokenisationRegression_FormerSubstringFalsePositives_NowOther(
         string funcName, string className)
     {
@@ -311,7 +309,7 @@ public class KeywordScoringTableTests
     }
 
     [Theory]
-    // Acronym-ending function names that v1 had to drop (HP/MP/SP/XP/TP).
+    // Acronym-ending function names (HP/MP/SP/XP/TP), which only token matching can keep.
     [InlineData("GetHP",        "PlayerCharacter", FunctionCategory.Stats)]
     [InlineData("SetMaxMP",     "PlayerCharacter", FunctionCategory.Stats)]
     [InlineData("RestoreSP",    "PlayerCharacter", FunctionCategory.Stats)]
@@ -330,11 +328,11 @@ public class KeywordScoringTableTests
     [Fact]
     public void TokenisationRegression_RestoredKeywords_DropTimeClock()
     {
-        // 'Drop' restored to Inventory (was dropped due to substring noise).
+        // 'Drop' is an Inventory keyword (safe as a whole token, noisy as a substring).
         var drop = KeywordScoringTable.Score(MakeEntry("DropItem", "Inventory"));
         Assert.Equal(FunctionCategory.Inventory, drop.Category);
 
-        // 'Time'/'Clock' restored to Utility (Lifetime no longer false-fires).
+        // 'Time'/'Clock' are Utility keywords, and Lifetime does not fire them.
         var lifetime = KeywordScoringTable.Score(MakeEntry("GetLifetime", "Actor"));
         Assert.Equal(FunctionCategory.Other, lifetime.Category); // 'Lifetime' is single token, not 'Time'
         var realTime = KeywordScoringTable.Score(MakeEntry("GetTimeRemaining", "Timer"));
@@ -369,8 +367,8 @@ public class KeywordScoringTableTests
     //
     // The pack is only scored when the caller passes
     // includeGameplayActions:true. With the default overload every one of
-    // these verbs contributes ZERO -- that's the whole reason they were
-    // previously undiscoverable.
+    // these verbs contributes ZERO, so without the pack they stay
+    // undiscoverable.
     // ==================================================================
 
     [Theory]

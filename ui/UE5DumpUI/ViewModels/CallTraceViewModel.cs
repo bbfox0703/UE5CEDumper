@@ -14,7 +14,7 @@ namespace UE5DumpUI.ViewModels;
 /// <summary>
 /// [LIVEFUNCS-TIMELINE-2026-10-04] The Call Trace tab (experimental). It records nothing itself: a traced Live Funcs
 /// recording fills the DLL's ring, and this tab reads it after Stop, names what it saw, frees the DLL's memory, and
-/// shows the calls as a tree (T2, T3, T8). The plan and its decisions: docs/live-funcs-timeline-plan.md.
+/// shows the calls as a tree. The plan and its decisions: docs/live-funcs-timeline-plan.md.
 /// </summary>
 public partial class CallTraceViewModel : ViewModelBase
 {
@@ -22,7 +22,7 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly ILoggingService _log;
     private readonly IPlatformService? _platform;
 
-    /// <summary>The panel the trace's settings and ticks belong to; this tab shows a read-only copy of them (T8).</summary>
+    /// <summary>The panel the trace's settings and ticks belong to; this tab shows a read-only copy of them.</summary>
     public LiveFuncsViewModel LiveFuncs { get; }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] Records a page asks for. A page arrives as ONE pipe line, and StreamReader keeps
@@ -103,7 +103,7 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
-    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by the header and every row ----
+    // ---- the list's widths ([LIVEFUNCS-STEP2]): dragged from the header, shared by the header and every row ----
 
     // Each width's floor keeps its header wide enough to grab and drag back: a column dragged, or hand-edited in
     // ui-options.json, down to nothing would leave no edge to pull it out by.
@@ -112,8 +112,7 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The ceiling for every width: a hand-edited value of millions of pixels would lay the panel out far
     /// past any screen.</summary>
     internal const double MaxWidth = 4096;
-    /// <summary>The fixed layout the tab had before its widths could be dragged: where they start, and what the list's
-    /// floor is made of.</summary>
+    /// <summary>The default widths: where they start, and what the list's floor is made of.</summary>
     internal const double DefaultTimeColWidth = 96, DefaultDurationColWidth = 88, DefaultThreadColWidth = 64,
                           DefaultObjectColWidth = 260, DefaultDetailPaneWidth = 380;
     /// <summary>[CT-DETAIL-COVERS-LIST] What Function keeps of a row before the columns give way: a root row's expand
@@ -123,10 +122,10 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const double RowChrome = 24;
     /// <summary>[CT-DETAIL-COVERS-LIST] The list's floor, 208: a row's item padding (24) and Time and Duration at their
     /// default widths (96 + 88), so a call can be told by when it ran and clicked. The pane is never shown so
-    /// wide that the list has less, its own 200 included: a remembered or dragged width covered the whole list, its
-    /// rows and the pane's own handle, and the pane has nothing to show until a row is chosen. The maintainer chose 208
-    /// (2026-10-09) over a floor that kept Function's slice too: that one capped the pane near 502 px at the default
-    /// window with the object tree unfolded, too narrow for a Call stack's Where.</summary>
+    /// wide that the list has less, its own 200 included: otherwise a remembered or dragged width can cover the whole
+    /// list, its rows and the pane's own handle, and the pane has nothing to show until a row is chosen. The floor
+    /// leaves Function's slice out on purpose: keeping it too would cap the pane too narrow for a Call stack's Where
+    /// at the default window with the object tree unfolded.</summary>
     internal const double MinListWidth = RowChrome + DefaultTimeColWidth + DefaultDurationColWidth;
     /// <summary>The narrowest list a row's columns are fitted to: the floor, Thread at its default, Object at its floor
     /// and Function's slice, 512 in all.</summary>
@@ -246,7 +245,8 @@ public partial class CallTraceViewModel : ViewModelBase
     // remembered width the panel does not show, a drag past the limit would keep a margin that the next drag back has
     // to undo first, with nothing moving meanwhile. [CT-FLOOR-208] A drag that leaves the width where it was writes
     // nothing: a press with only a vertical jiggle, or a push into the limit, is not the user choosing the width
-    // shown, and written it replaced the remembered one in ui-options.json, so a wider window never gave it back.
+    // shown, and written it would replace the remembered one in ui-options.json, so a wider window would never give it
+    // back.
     internal void DragTime(double step) { if (DraggedColumn(0, step) is { } w) TimeColWidth = w; }
     internal void DragDuration(double step) { if (DraggedColumn(1, step) is { } w) DurationColWidth = w; }
     internal void DragThread(double step) { if (DraggedColumn(2, step) is { } w) ThreadColWidth = w; }
@@ -578,7 +578,7 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] A load leaves its window and every page's reply behind, and nothing makes the GC
-    /// run after it: on Avowed a 512 MB load held the working set at 3.25 GB a minute later (2026-10-07). One blocking,
+    /// run after it, so a large load keeps the working set high long after it ends. One blocking,
     /// compacting collection gives it back -- a pause after a load of seconds, the snapshot capture's precedent -- and
     /// the log line is what the memory estimate beside the trace slider is checked against.</summary>
     private void ReclaimAfterLoad()
@@ -608,7 +608,7 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t.EntriesDropped + t.OtherDropped > 0)
             sb.Append(' ').Append(Say("str.CT.Status.Dropped", t.EntriesDropped + t.OtherDropped, t.EntriesDropped,
                                       t.OtherDropped));
-        // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
+        // "Every call" only when nothing was left out; a left-out function's calls show under its caller.
         switch (ScopeKey(t.Info))
         {
             case "str.CT.Status.Scoped": sb.Append(' ').Append(Say("str.CT.Status.Scoped", t.Info.Ticked)); break;
@@ -644,8 +644,8 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>[LIVEFUNCS-STEP2] Which sentence says what the trace followed: ticked functions (by address, or by
-    /// name), and outside them the chosen calls when it had rings for parameters or a stack; only the chosen calls
-    /// (T11); or every call -- that one only when nothing was left out. A DLL that predates names sends no `scoped`:
+    /// name), and outside them the chosen calls when it had rings for parameters or a stack; only the chosen calls;
+    /// or every call -- that one only when nothing was left out. A DLL that predates names sends no `scoped`:
     /// its ticks by address say it.</summary>
     internal static string? ScopeKey(TraceInfo i)
     {
@@ -679,7 +679,7 @@ public partial class CallTraceViewModel : ViewModelBase
 
     partial void OnFilterTextChanged(string value) => ApplyCallFilter(value);
 
-    /// <summary>[LIVEFUNCS-STEP2] U13: list only the calls that carry a parameter copy -- with the filter's text, or alone
+    /// <summary>[LIVEFUNCS-STEP2] List only the calls that carry a parameter copy -- with the filter's text, or alone
     /// with none (an empty box would otherwise mean "the tree").</summary>
     [ObservableProperty] private bool _onlyWithParams;
     partial void OnOnlyWithParamsChanged(bool value) => ApplyCallFilter(FilterText);
@@ -735,7 +735,7 @@ public partial class CallTraceViewModel : ViewModelBase
         ShowStack(call);
     }
 
-    // ---- [LIVEFUNCS-STEP2] U13: the selected call's parameters (view C) ----
+    // ---- [LIVEFUNCS-STEP2] the selected call's parameters ----
 
     [ObservableProperty] private IReadOnlyList<ParamRow> _paramRows = Array.Empty<ParamRow>();
     [ObservableProperty] private string _paramsNote = "";
@@ -889,7 +889,7 @@ public partial class CallTraceViewModel : ViewModelBase
         _ => "",
     };
 
-    // ---- [LIVEFUNCS-STEP3] S3-U5: the selected call's native stack (view A), and a frame to Cheat Engine (view D) ----
+    // ---- [LIVEFUNCS-STEP3] the selected call's native stack, and a frame to Cheat Engine ----
 
     [ObservableProperty] private IReadOnlyList<StackFrameRow> _stackRows = Array.Empty<StackFrameRow>();
     [ObservableProperty] private string _stackNote = "";
@@ -949,7 +949,7 @@ public partial class CallTraceViewModel : ViewModelBase
             };
         }
         if (doubtful >= 0) notes.Add(Say("str.CT.Stack.MayBeWrong", doubtful));
-        // The walk ran after the entry was timed (D11): its cost is part of the duration the Call tab shows.
+        // The walk ran after the entry was timed: its cost is part of the duration the Call tab shows.
         if (slot.Ticks > 0 && t.Info.QpcFreq > 0)
             notes.Add(Say("str.CT.Stack.Cost", slot.Ticks * 1e6 / t.Info.QpcFreq));
         return (rows, notes);
@@ -985,7 +985,7 @@ public partial class CallTraceViewModel : ViewModelBase
     internal static string FrameAddress(StackSite s, AddressFormat f)
         => AddressHelper.FormatAddress(s.Addr.ToString("X", CultureInfo.InvariantCulture), s.CeModule, s.ModuleBaseHex, f);
 
-    /// <summary>What Copy puts on the clipboard, whatever the Address setting (D13): CE's module+RVA form, which names
+    /// <summary>What Copy puts on the clipboard, whatever the Address setting: CE's module+RVA form, which names
     /// the same code after a relaunch moves the module; outside every module, this run's absolute address.</summary>
     internal static string FrameCopyText(StackSite s)
         => s.CeModule.Length > 0 ? CeForm(s.CeModule, s.Rva) : $"0x{s.Addr.ToString("X", CultureInfo.InvariantCulture)}";
@@ -1022,7 +1022,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return StringLookup(s.Module.Length > 0 ? "str.CT.Stack.NoUnwind" : "str.CT.Stack.NoModule");
     }
 
-    /// <summary>[LIVEFUNCS-STEP3] D13: the frame in CE's module form. The status says whether it arrived: a copy that
+    /// <summary>[LIVEFUNCS-STEP3] The frame in CE's module form. The status says whether it arrived: a copy that
     /// silently failed would leave an older address to paste.</summary>
     [RelayCommand]
     private async Task CopyFrameAsync(StackFrameRow? r)
@@ -1032,7 +1032,7 @@ public partial class CallTraceViewModel : ViewModelBase
         StatusText = Say(copied ? "str.CT.Stack.Copied" : "str.CT.Stack.CopyFailed", r.CopyText);
     }
 
-    /// <summary>[LIVEFUNCS-STEP3] D13: CE's disassembler at the frame's absolute address. That address belongs to the
+    /// <summary>[LIVEFUNCS-STEP3] CE's disassembler at the frame's absolute address. That address belongs to the
     /// process the trace was read from, so a trace kept past its connection sends nothing: the game now running may
     /// hold anything there.</summary>
     [RelayCommand]
@@ -1138,7 +1138,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return template.Length == 0 ? "" : Res.FormatTemplate(template, args);
     }
 
-    // ---- the detail's addresses ([LIVEFUNCS-STEP2] U11) ----
+    // ---- the detail's addresses ([LIVEFUNCS-STEP2]) ----
 
     /// <summary>The toolbar's Address setting (an <see cref="AddressFormat"/>), fanned out by the main window as to the
     /// other tabs that show addresses.</summary>
@@ -1295,7 +1295,7 @@ public sealed class CallTraceRow
     /// <summary>Its address held another function during the recording: marked too.</summary>
     public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
-    /// <summary>[LIVEFUNCS-STEP2] U10: the Object cell's tooltip: its whole text, which a narrow column cuts; none for a
+    /// <summary>[LIVEFUNCS-STEP2] The Object cell's tooltip: its whole text, which a narrow column cuts; none for a
     /// call with no object, where an empty tooltip would still pop up.</summary>
     public string? ObjectTip => ObjectText.Length > 0 ? ObjectText : null;
     public bool ObjectStale { get; init; }

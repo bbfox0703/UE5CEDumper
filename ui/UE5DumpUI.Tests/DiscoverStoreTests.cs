@@ -221,9 +221,9 @@ public class DiscoverStoreTests : IDisposable
         // Two physical siblings of one class share a normalized path (the _N spawn
         // counter is stripped). They move to DIFFERENT values; independent per-column
         // MINs would mix them (sequence from one sibling, address from another). The
-        // fix de-dups to ONE sibling per snapshot (min gobjects_index = idx 1), so the
-        // representative is internally consistent. This would FAIL pre-fix: independent
-        // MIN picks idx 2's smaller values (100→50, ↓) but idx 1's smaller address.
+        // store de-dups to ONE sibling per snapshot (min gobjects_index = idx 1), so the
+        // representative is internally consistent. Independent MINs FAIL here: they pick
+        // idx 2's smaller values (100→50, ↓) but idx 1's smaller address.
         long s1 = await SeedAsync("a", "S", new[]
         {
             Obj(1, "BP_Enemy_C", "/G.M:L.BP_Enemy_C_0", ("HP", "IntProperty", 200)),
@@ -286,9 +286,9 @@ public class DiscoverStoreTests : IDisposable
         Assert.Equal("Aaa", res.Rows[0].PropName);
     }
 
-    // [DISCOVER-SHADOWED-POOL] review: the Strict path feeds Rank only the rows that CHANGED, so when one copy of a shadowed
-    // name stays put Rank saw one offset and gave the moved copy the bare name -- while Class Pivot's picker, built from
-    // the whole field list, lists both with offsets.
+    // [DISCOVER-SHADOWED-POOL] The Strict path feeds Rank only the rows that CHANGED, so when one copy of a shadowed name
+    // stays put Rank sees one offset -- and must still label the moved copy with its offset, as Class Pivot's picker,
+    // built from the whole field list, lists both.
     [Fact]
     public async Task OneMovedCopyOfAShadowedName_IsLabelledWithItsOffset_LikeThePicker()
     {

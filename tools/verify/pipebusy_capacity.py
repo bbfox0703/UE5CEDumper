@@ -2,27 +2,26 @@
 
     py pipebusy_capacity.py
 
-WAS: with all `kMaxPipeInstances` instances in use (3 then), the accept loop's
-`CreateNamedPipe` fails `ERROR_PIPE_BUSY` (231) every second and used to
-`LOG_ERROR("PipeServer: CreateNamedPipe failed …")` each time -- **1,826 ERROR lines
-in ~31.5 min measured on one Avowed session**, evicting real diagnostics as the 8 MB
-log rotated, and naming the wrong thing (busy is not broken).
+WHY: with all `kMaxPipeInstances` instances in use, the accept loop's
+`CreateNamedPipe` fails `ERROR_PIPE_BUSY` (231) every second. A
+`LOG_ERROR("PipeServer: CreateNamedPipe failed …")` each time floods the log, evicting
+real diagnostics as the 8 MB log rotates, and names the wrong thing (busy is not broken).
 
-NOW: `Voll` (header-only policy) special-cases `ERROR_PIPE_BUSY` -- ONE info on the
+WHAT IT CHECKS: `Voll` (header-only policy) special-cases `ERROR_PIPE_BUSY` -- ONE info on the
 transition INTO at-capacity, silence while it holds, ONE info on recovery. Any other
 errno still ERRORs every time.
 
 **This rig needs no UI**: it opens as many connections as the DLL takes, which fills the
 pool exactly as a UI plus rigs would. How many is DERIVED, not assumed
-([PIPE-PER-PROCESS-2026-11-06] Stage B raised 3 to 6, and a game with an older DLL keeps
-its own): the DLL's log states the limit in force ("takes N clients at once", or the
-start line's `maxInstances=N` before that line existed), and the rig then MEASURES it --
-with N connected, one more open must find every instance taken (WaitNamedPipeW, which
-does not connect).
+([PIPE-PER-PROCESS-2026-11-06]: the limit differs between DLL builds, and a game with an
+older DLL keeps its own): the DLL's log states the limit in force ("takes N clients at
+once", or, from a DLL without that line, the start line's `maxInstances=N`), and the rig
+then MEASURES it -- with N connected, one more open must find every instance taken
+(WaitNamedPipeW, which does not connect).
 
 WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
   * the at-capacity line must appear **exactly once**, not merely "at least once" --
-    the defect was repetition, so a count of 1 is the whole assertion;
+    the defect is repetition, so a count of 1 is the whole assertion;
   * `CreateNamedPipe failed` must appear **zero** times while at capacity;
   * releasing one client must produce **exactly one** recovery line -- proving the
     latch resets rather than sticking;
@@ -30,8 +29,8 @@ WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
     at-capacity line may appear ONLY when the session really was full -- the last
     "Client connected (conns=K)" before it had K equal to the limit in force then. So "it
     only fires when actually at capacity" is measured across many sessions rather than
-    asserted. (It first demanded no such line at all, which assumed every other session
-    had one client; a deliberately filled pipe, as the Stage A checks did, is legitimate.)
+    asserted. (A session that filled the pipe on purpose is legitimate, so the check is
+    against the limit in force, not against any such line at all.)
 """
 import os
 import pathlib

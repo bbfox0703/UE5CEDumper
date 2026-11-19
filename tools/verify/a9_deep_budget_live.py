@@ -1,4 +1,4 @@
-r"""audit L1 A9: the deep Group Scan's per-object element budget (kDeepWalkMaxTotalElems) bites before the deadline.
+r"""The deep Group Scan's per-object element budget (kDeepWalkMaxTotalElems) bites before the deadline.
 
     py tools/verify/a9_deep_budget_live.py --pid 1234
 

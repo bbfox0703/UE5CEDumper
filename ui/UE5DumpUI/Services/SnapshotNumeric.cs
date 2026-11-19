@@ -52,8 +52,8 @@ public static class SnapshotNumeric
             // [P3-SNAPNUM-ENUM] An enum is captured as ONE unsigned byte (the DLL's
             // Radar::TryDataTypeFromPropertyTypeName maps EnumProperty -> UInt8). Decode it unsigned
             // at whatever length was captured -- `b` is zero-filled past byteLen, so this is the
-            // zero-extended little-endian value. Without this arm every enum field got a NULL
-            // numeric_value, so SPC and Group Match skipped it and the grid showed raw hex.
+            // zero-extended little-endian value. Without this arm every enum field gets a NULL
+            // numeric_value, so SPC and Group Match skip it and the grid shows raw hex.
             case "EnumProperty":   value = BitConverter.ToUInt64(b); return true;
             default:               return false;
         }
@@ -148,7 +148,7 @@ public static class SnapshotNumeric
 
     /// <summary>Displayed-integer temporal compare of an OLD vs NEW value for the
     /// prev-value predicates — the "did the DISPLAYED value change/increase/decrease"
-    /// question the user asked for. Float fields reduce both sides via the mode (so
+    /// question. Float fields reduce both sides via the mode (so
     /// sub-display jitter like 100.1→100.4 reads as Unchanged); integer values are
     /// already integral. <paramref name="op"/>: +1 = Increased, -1 = Decreased,
     /// 0 = Unchanged, any other = Changed. Pure.</summary>

@@ -8,18 +8,18 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Reads a coordinate block back out of a previously generated AA script (R7 — the
+/// Reads a coordinate block back out of a previously generated AA script (the
 /// user pastes the WHOLE script and we parse only our own fenced region).
 ///
 /// The block is read as Lua tokens and the COORDS table by Lua's own grammar for a
-/// table constructor (B21). That is what makes the format tolerant of the edits a human
+/// table constructor. That is what makes the format tolerant of the edits a human
 /// actually makes — reordered fields, a missing or extra comma, an entry split over
 /// several lines, an inserted comment, unknown keys from a newer build — while a key
 /// inside a label or a comment can never be read as a field, and a stray quote is
-/// whatever Lua itself would refuse. Matching the text near each key (the AOBMaker
-/// <c>TryParseConfig</c> mechanism this started from) let <c>label='Arena z=0 plane'</c>
-/// set Z, and four rounds of checks on the characters beside each string each closed
-/// one stray-quote shape and opened another.
+/// whatever Lua itself would refuse. Matching the text near each key (AOBMaker's
+/// <c>TryParseConfig</c> mechanism) would let <c>label='Arena z=0 plane'</c> set Z, and
+/// checks on the characters beside each string close one stray-quote shape only to open
+/// another.
 ///
 /// Four defects of AOBMaker's parser are deliberately NOT inherited (each confirmed by
 /// running AOBMaker's own shipped assembly):
@@ -192,7 +192,7 @@ public static class CoordLuaParser
 
         var e = new CoordEntry
         {
-            Uid = CoordText.Normalize(Str("uid"), CoordText.MaxUidLength),   // (B7)
+            Uid = CoordText.Normalize(Str("uid"), CoordText.MaxUidLength),
         };
 
         var rawLabel = Str("label");
@@ -432,8 +432,8 @@ public static class CoordLuaParser
                     return "";
                 case 'u':
                 {
-                    // Read wide: as an int, 80000000..FFFFFFFF turned negative, passed the range
-                    // check and threw out of ConvertFromUtf32.
+                    // Read wide: as an int, 80000000..FFFFFFFF would turn negative, pass the range
+                    // check and throw out of ConvertFromUtf32.
                     int close = i < s.Length && s[i] == '{' ? s.IndexOf('}', i) : -1;
                     var digits = close > i + 1 ? s.AsSpan(i + 1, close - i - 1) : default;
                     bool allHex = close > i + 1;

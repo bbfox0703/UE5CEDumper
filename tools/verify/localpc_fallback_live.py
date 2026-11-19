@@ -22,7 +22,7 @@ PREREQUISITES
   * dist\build_number.txt names the DLL under test, built from the row's green commit or later (assert_build refuses
     any other DLL answering the pipe).
   * The UI must NOT be connected to a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B (it holds two of that DLL's three pipe
-    instances; 6 since). No Cheat Engine.
+    instances). No Cheat Engine.
   * One injected game at a time; kill the game when the row is done (handover section 4).
 
 WHAT IT WRITES: LocalPlayer.PlayerController and PersistentLevel.WorldSettings, each to 0, and nothing else in game
@@ -65,7 +65,7 @@ CHECKS -- one line each, "<ID> OK|BAD  <detail>"; the exit code is 0 only when e
   An aborted phase prints "<P>X BAD aborted: ..." (P = B, K, C, R). A separate verb that leaves a break in place
   prints "STILL IN EFFECT (...)" before its RESULT line.
 
-NOT PROVEN HERE: on DumperTest the substring scan this row replaced would have picked the same controller, so this shows
+NOT PROVEN HERE: on DumperTest a class-name substring scan would pick the same controller, so this shows
 the derivation walk running live, picking the LocalPlayer-owned controller, and every module accepting it; the ranking
 itself is pinned by dll_core_test LOCALPC. Dunste's scan runs only on the fly_set enable path, which writes the pawn's
 movement mode, so only its gate (C8) is read. Laufen, Solitar, Solide and Hemmung log no pick: their replies are the

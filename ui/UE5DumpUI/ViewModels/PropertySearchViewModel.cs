@@ -181,7 +181,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public event Action<string>? NavigateToLiveWalker;
 
     /// <summary>Raised to pivot the selected property in the experimental Class
-    /// Pivot tab (className, propName, propOffset). C5 right-click handoff.</summary>
+    /// Pivot tab (className, propName, propOffset): the right-click handoff.</summary>
     public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>Gates the "Pivot this property" context-menu item — set true only
@@ -299,9 +299,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public Func<PropertySearchMatch, Task<string?>>? FreezeValuePrompt { get; set; }
 
     /// <summary>
-    /// Last status message from a freeze-script attempt. Bound to the
-    /// existing <see cref="StatusText"/> for now — separated only so the
-    /// freeze flow can overwrite the same chrome the search uses.
+    /// Prompt for a value, generate a freeze script for the row and push it to CE
+    /// through AOBMaker. The outcome is reported on <see cref="StatusText"/>, the
+    /// same line the search uses; a cancelled prompt says nothing.
     /// </summary>
     [RelayCommand]
     private async Task CopyFreezeScriptAsync(PropertySearchMatch? match)
@@ -373,9 +373,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: a dead pipe
-        // (inside the cooldown, or with Cheat Engine closed while the value dialog was open) read as a rejection, and
-        // no reply read as "not sent" although the plugin may have made the record after the wait gave up.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: otherwise a dead
+        // pipe (inside the cooldown, or with Cheat Engine closed while the value dialog was open) reads as a rejection,
+        // and no reply reads as "not sent" although the plugin may have made the record after the wait gave up.
         StatusText = pushed.Created
             ? $"Freeze script created in CE: {description}"
             : pushed.TimedOut
@@ -457,8 +457,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>Whether to show the Force submenu at all: the experimental gate AND a
     /// selected row that can actually be forced. Both halves are needed and neither can
-    /// carry the other — the gate alone left the submenu open with nothing usable in it,
-    /// and the row alone would bypass the experimental gate. (B36)</summary>
+    /// carry the other — the gate alone would leave the submenu open with nothing usable in
+    /// it, and the row alone would bypass the experimental gate.</summary>
     public bool ForceMenuVisible => ForceEnabled && (SelectedResult?.CanForceAny ?? false);
 
     partial void OnSelectedResultChanged(PropertySearchMatch? value)
@@ -866,7 +866,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -916,7 +916,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         {
             StatusText = $"Find Funcs cancelled at {done}/{targets.Count}.";
         }
-        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled) (L14)
+        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled)
         {
             _log.Error("Batch Find Funcs failed", ex);
             StatusText = $"Find Funcs failed at {done}/{targets.Count}.";

@@ -102,7 +102,7 @@ public class FlyScriptGeneratorTests
     }
 
     // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
-    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    // deferred untick (which runs [DISABLE]) does not show a SECOND dialog.
     [Theory]
     [InlineData("fly")]
     [InlineData("fly-preset")]
@@ -115,7 +115,7 @@ public class FlyScriptGeneratorTests
         Assert.Contains("dbg('[Fly", disable);   // a DEBUG session still sees why it gave up
     }
 
-    // The control: ticking still announces and unticks its bails -- the fix is [DISABLE]-only.
+    // The control: ticking still announces and unticks its bails -- the rule is [DISABLE]-only.
     [Theory]
     [InlineData("fly")]
     [InlineData("fly-preset")]
@@ -129,12 +129,12 @@ public class FlyScriptGeneratorTests
         Assert.Contains("memrec.Active = false", enable);
     }
 
-    // FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]):
-    // Dunste::SetEnabled joins the deferred collision restore BEFORE it knows the enable will work. A refused enable --
-    // no pawn yet (a respawn, a load), or the MovementMode write failed -- never took the pawn over, so the restore it
-    // stopped was still owed and nothing polled for it: the pawn stayed non-colliding. No C++ test target compiles
-    // Dunste.cpp, so this pins the source: every refusal in the enable branch goes through RefusedEnable, which re-arms
-    // the restore while collisionOff. Negative control: return the code directly again, or drop the StartPendingLocked.
+    // FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE: Dunste::SetEnabled joins the deferred collision restore BEFORE
+    // it knows the enable will work. A refused enable -- no pawn yet (a respawn, a load), or the MovementMode write
+    // failed -- never takes the pawn over, so the restore it stopped is still owed, and unless it is re-armed nothing
+    // polls for it and the pawn stays non-colliding. No C++ test target compiles Dunste.cpp, so this pins the source:
+    // every refusal in the enable branch goes through RefusedEnable, which re-arms the restore while collisionOff.
+    // Negative control: return the code directly instead, or drop the StartPendingLocked.
     [Fact]
     public void A_refused_enable_re_arms_the_collision_restore_it_superseded()
     {

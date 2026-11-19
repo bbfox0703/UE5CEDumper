@@ -10,7 +10,7 @@ public sealed record PipeHolder(int Pid, string Exe, string LastCmd, bool InFlig
 public sealed record PipeHoldersSeen(string Time, IReadOnlyList<PipeHolder> Holders, int More, bool Superseded);
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage C. When every connection of a game's pipe is taken, no client can connect to
+/// [PIPE-PER-PROCESS-2026-11-06] When every connection of a game's pipe is taken, no client can connect to
 /// ask who holds them, so the DLL writes the holders on its at-capacity line in its pipe log
 /// (Grimoire.h PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN). This reads that line. Pure: the caller reads the file.
 /// </summary>

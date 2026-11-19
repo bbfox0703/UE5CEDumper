@@ -223,7 +223,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void SaveThenLoad_KeepsZeroValuedCoordinates()
     {
-        // The regression this guards: with DefaultIgnoreCondition=WhenWritingDefault
+        // The hazard this guards: with DefaultIgnoreCondition=WhenWritingDefault
         // a legitimately-saved 0.0 (extremely common for Pitch/Roll) is omitted from
         // the JSON and reloads as 0 BY ACCIDENT rather than by record. Assert the
         // properties are actually present in the serialized text.
@@ -319,7 +319,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void SavePreClearBackup_IsDistinctFromThePreImportBackup()
     {
-        // Audit #4 B6: the rolling .bak cannot stand in for either one-shot backup, and
+        // The rolling .bak cannot stand in for either one-shot backup, and
         // a clear must not eat an import's rollback copy (or vice versa).
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Before import" }));
         var preImport = _store.SavePreImportBackup("game", _store.Load("game"));
@@ -336,7 +336,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     public void SavePreClearBackup_OutlivesTheSavesThatEatTheRollingBackup()
     {
         // OnCoordZToleranceChanged persists on every spinner nudge, so two clicks of a
-        // NumericUpDown used to destroy the last copy of a cleared library.
+        // NumericUpDown must not destroy the last copy of a cleared library.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Only copy" }));
         var bak = _store.SavePreClearBackup("game", _store.Load("game"));
         _store.Delete("game");
@@ -353,18 +353,18 @@ public class CoordinateLibraryStoreTests : IDisposable
 
     // ── [A1-COORD-RESURRECT] + [A1-COORD-BACKUP] ─────────────────────────────────────────────
     //
-    // Load fell back to the rolling .bak when the main file was MISSING as well as corrupt, so a
-    // "Clear all" -- which deletes the main file and deliberately keeps the backups -- came back
-    // on the next connect or restart. And after a .bak recovery the file on disk is still the
-    // corrupt one (the load runs with persistence suppressed), so the one-shot backups copied
-    // garbage, and a Replace-import's Save then rolled the corrupt main over the only good .bak.
+    // A Load that fell back to the rolling .bak when the main file is MISSING, not only corrupt,
+    // would bring a "Clear all" -- which deletes the main file and deliberately keeps the backups --
+    // back on the next connect or restart. And after a .bak recovery the file on disk is still the
+    // corrupt one (the load runs with persistence suppressed), so one-shot backups copied from disk
+    // would hold garbage, and a Replace-import's Save would roll the corrupt main over the only good .bak.
 
     private void CorruptMain(string key) => File.WriteAllText(_store.FilePathFor(key), "{ this is not json");
 
     [Fact]
     public void ClearAll_ThenLoad_DoesNotResurrectTheLibrary()
     {
-        // The recorded repro: Save, Save, SavePreClearBackup, Delete, Load -> empty.
+        // The sequence: Save, Save, SavePreClearBackup, Delete, Load -> empty.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "One" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Two" }));   // .bak = "One"
         _store.SavePreClearBackup("game", _store.Load("game"));
@@ -378,9 +378,9 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void ClearAll_AfterATransientLockAtLoad_KeepsTheNewestRevision()
     {
-        // (review of 2f8d36f8) A sharing violation at Load reads as "unreadable", so Load recovers
-        // the OLDER .bak while the main on disk is the newest good file. The pre-clear backup is
-        // written from that in-memory library, and Delete then removed the only copy of the newest.
+        // A sharing violation at Load reads as "unreadable", so Load recovers the OLDER .bak while
+        // the main on disk is the newest good file. The pre-clear backup is written from that
+        // in-memory library, so Delete must not remove the only copy of the newest.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Older" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newest" }));   // .bak = "Older"
         var path = _store.FilePathFor("game");
@@ -400,8 +400,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void OneShotBackups_AreWrittenFromTheLibraryPassedIn_NotReReadFromDisk()
     {
-        // (review of 2f8d36f8) Every backup test passed `current = Load(key)`, so a store that
-        // ignored `current` and re-read the disk passed them all.
+        // A backup test passing `current = Load(key)` cannot catch a store that ignores `current`
+        // and re-reads the disk; here the two differ.
         _store.Save("game", FileWith(new CoordEntry { Uid = "d", Label = "OnDisk" }));
         var inMemory = FileWith(new CoordEntry { Uid = "m", Label = "InMemory" });
 
@@ -417,8 +417,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void OneShotBackup_KeepsTheZTolerance()
     {
-        // The one-shot backups are a hand-built copy now, not a byte copy, so every field is a line
-        // that can be forgotten. (review of 2f8d36f8)
+        // The one-shot backups are a hand-built copy, not a byte copy, so every field is a line
+        // that can be forgotten.
         var lib = FileWith(new CoordEntry { Uid = "z", Label = "Tol" });
         lib.ZTolerance = 12.25;
         Assert.Contains("12.25", File.ReadAllText(_store.SavePreClearBackup("game", lib)));
@@ -456,8 +456,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Save_DoesNotRollAnUnparseableMainOverTheGoodBak()
     {
-        // The import twin's second half: the Replace's Save rolled the corrupt main over .bak, so
-        // the pre-import library ended up in no file at all.
+        // The import twin's second half: the Replace's Save must not roll the corrupt main over
+        // .bak, or the pre-import library ends up in no file at all.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
         CorruptMain("game");
@@ -471,9 +471,9 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Save_OverAnUnparseableMain_MovesItAside_InsteadOfDestroyingIt()
     {
-        // (review of 2f8d36f8) [A1-COORD-BACKUP] stopped rolling an unparseable main over the good
-        // .bak -- and the rename then destroyed it. Whatever it still held (a half-written save a
-        // user can repair by hand) is kept aside now, bounded, with the good .bak untouched.
+        // [A1-COORD-BACKUP] An unparseable main is not rolled over the good .bak, and the rename
+        // must not destroy it either: whatever it still holds (a half-written save a user can
+        // repair by hand) is kept aside, bounded, with the good .bak untouched.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
         CorruptMain("game");
@@ -490,9 +490,9 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Save_PruningNeverDeletesTheCopyItJustMade()
     {
-        // (review of 70f9d372) The prune kept the newest N by the stamp's lexicographic order, so a
-        // copy stamped in the FUTURE (clock skew, a file copied off another machine) outranked the one
-        // just made -- and the fresh copy was the one deleted. AobUsageService excludes it; so does this.
+        // A prune keeping the newest N by the stamp's lexicographic order alone would let a copy
+        // stamped in the FUTURE (clock skew, a file copied off another machine) outrank the one just
+        // made -- and delete the fresh copy. AobUsageService excludes it; so does this.
         var path = _store.FilePathFor("game");
         var dir = Path.GetDirectoryName(path)!;
         var name = Path.GetFileName(path);
@@ -511,8 +511,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Delete_OfAnUnparseableMain_CopiesItAsideFirst()
     {
-        // (review of c002f6bf) Save stopped destroying an unparseable main; Delete -- "Clear all" after a
-        // .bak recovery -- still deleted it outright, the same loss through the second door.
+        // Save keeps an unparseable main aside; Delete -- "Clear all" after a .bak recovery -- must too,
+        // or it is the same loss through the second door.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
         CorruptMain("game");
@@ -530,8 +530,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Delete_RefusesWhenTheCorruptMainCannotBeCopiedAside()
     {
-        // (review of b496c866) "A copy that fails refuses the Delete" was pinned by nothing, so a Delete that
-        // swallowed the failure would delete a main nobody copied. A handle that shares DELETE but not READ
+        // Pins "a copy that fails refuses the Delete": a Delete that swallowed the failure would delete a
+        // main nobody copied. A handle that shares DELETE but not READ
         // makes the main unreadable (so it is quarantined, not rolled) AND the copy fail, while a delete would
         // still succeed -- the one state where the refusal is all that keeps the file.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
@@ -547,7 +547,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Delete_OfAHealthyMain_LeavesNoCorruptCopy()
     {
-        // (review of b496c866) Only an UNPARSEABLE main is quarantined. A Delete that copied every main aside
+        // Only an UNPARSEABLE main is quarantined. A Delete that copied every main aside
         // would fill the bounded .corrupt set with good files and evict a real half-written save.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));
@@ -561,7 +561,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Delete_AfterABakRecovery_DoesNotRollTheCorruptMainOverTheGoodBak()
     {
-        // (review of 70f9d372) Delete's roll is guarded on the main PARSING, exactly as Save's is; an
+        // Delete's roll is guarded on the main PARSING, exactly as Save's is; an
         // unguarded roll would put garbage over the only good copy.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
@@ -576,8 +576,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Delete_RefusesWhenTheRollFails_SoTheNewestRevisionSurvives()
     {
-        // (review of 70f9d372) Delete ignored TryRollToBackup's result, so a failed roll still deleted
-        // the one revision the roll existed to keep.
+        // Delete honours TryRollToBackup's result: ignoring it, a failed roll would still delete the one
+        // revision the roll exists to keep.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Older" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newest" }));  // .bak = "Older"
         var path = _store.FilePathFor("game");
@@ -592,8 +592,8 @@ public class CoordinateLibraryStoreTests : IDisposable
     [Fact]
     public void Save_StillRollsAGoodMainToBak()
     {
-        // The control, green before and after: the rolling backup keeps working. THREE saves, so
-        // a guard that rolls only once (or parses the wrong file) cannot pass. (review of 2f8d36f8)
+        // The control: the rolling backup keeps working. THREE saves, so a guard that rolls only
+        // once (or parses the wrong file) cannot pass.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "First" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Second" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "c", Label = "Third" }));

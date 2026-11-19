@@ -4,9 +4,9 @@ r"""M5 -- UE5_Shutdown worker-join ordering, with a detector shown able to repor
     py tools/verify/m5_shutdown_join.py run        # the actual test
 
 THE DEFECT
-  UE5_Shutdown joined the hold workers BEFORE stopping the pipe, so a mutator arriving
-  in that window respawned an unjoined worker -- and the process could then hang or crash
-  on exit.
+  A UE5_Shutdown that joins the hold workers BEFORE stopping the pipe lets a mutator
+  arriving in that window respawn an unjoined worker -- and the process can then hang or
+  crash on exit.
 
 WHY THIS RIG IS SHAPED THE WAY IT IS
   The register's acceptance is: "with a hold active, close the game while the UI is still
@@ -28,7 +28,7 @@ WHY THIS RIG IS SHAPED THE WAY IT IS
              new minidump.
 
   ⚠ It MUST be a posted WM_CLOSE, never `taskkill /F`: with /F the DLL's shutdown path
-  never runs at all and the test is vacuous. Recorded during the See-through arms.
+  never runs at all and the test is vacuous.
 
 WHAT IT DELIBERATELY DOES NOT CLAIM
   A clean exit here does not prove the ordering bug is impossible -- the racing mutator
@@ -95,10 +95,10 @@ def dumps_now():
 def main_tid(pid: int):
     """The UE game thread, taken from the row suspend.py itself labels.
 
-    ⚠ Do NOT compute this as min(tid). The first attempt did, and suspend.py's header
-    line is "DumperTest.exe (50348): 141 threads -- EARLIEST CREATED FIRST", so the
-    parser returned **141** -- the thread COUNT -- and suspending a non-existent thread
-    produced a clean exit, i.e. a control that silently failed to arm. suspend.py already
+    ⚠ Do NOT compute this as min(tid). suspend.py's header line is
+    "DumperTest.exe (50348): 141 threads -- EARLIEST CREATED FIRST", so a min(tid)
+    parse returns **141** -- the thread COUNT -- and suspending a non-existent thread
+    produces a clean exit, i.e. a control that silently fails to arm. suspend.py already
     marks the right row:
         tid=30576    cpu=    3062.5 ms  <-- main thread (UE game thread)
     """
@@ -126,10 +126,10 @@ def close_and_time(pid, hwnd, deadline=DEADLINE):
 def run(poke=False, hold=True):
     """hold=False is the BASELINE: an identical close with NO hold armed.
 
-    ⚠ It exists because "sub-second exit" turned out to be an assumption about UE, not
-    about our DLL. The first run measured 1.970s with a hold active, which reads as a
-    failure against the register's wording -- but a UE game tears down rendering, audio
-    and the engine on a normal close, and none of that is ours. The only number that can
+    ⚠ It exists because "sub-second exit" is an assumption about UE, not about our DLL.
+    A close with a hold active can take about two seconds, which reads as a failure
+    against the register's wording -- but a UE game tears down rendering, audio and the
+    engine on a normal close, and none of that is ours. The only number that can
     accuse the DLL is the DIFFERENCE between hold and no-hold on the same host, so both
     are measured and the delta is what gets reported.
     """

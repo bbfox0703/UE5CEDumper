@@ -31,7 +31,7 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     // Long and heavy: kept off the interactive lane so Live Walker stays
     // responsive. Not a race guard: the Aura class-metadata caches some of them
     // build take their mutex on every access, so two of them may run at once
-    // ([PIPE-PER-PROCESS-2026-11-06] Stage B).
+    // ([PIPE-PER-PROCESS-2026-11-06]).
     private static readonly HashSet<string> BulkCommands = new(StringComparer.Ordinal)
     {
         "begin_value_scan", "refine_value_scan", "end_value_scan", "query_candidates",

@@ -12,21 +12,21 @@ public readonly record struct TrainerEntry(string Description, string Script);
 
 /// <summary>
 /// Emits a NO-DLL standalone CE-Lua trainer for ONE game+version from baked
-/// offsets (see project-standalone-ce-lua-trainer). Each entry is a self-contained
+/// offsets. Each entry is a self-contained
 /// [ENABLE]/[DISABLE] AA script pushed into CE via AOBMaker's CreateAAScript; all
 /// entries share the CE Lua state, so the Setup entry defines globals the feature
 /// entries reuse. The trainer re-walks [[GWorld]+..] every tick (restart/respawn
-/// safe) and re-asserts via CE timers — the freeze half the DLL's worker did.
+/// safe) and re-asserts via CE timers — the freeze half the DLL's worker does on the DLL path.
 ///
-/// Portable subset only: direct memory reads/writes (Move Speed / Gravity / Super
-/// Jump / GodMode bit / coordinate TP). Anything needing a game-thread ProcessEvent
+/// Portable subset only: features that are direct memory reads/writes of baked
+/// offsets. Anything needing a game-thread ProcessEvent
 /// call (cursor-trace TP, StopMovement settle, POV set) stays DLL-only by design.
 /// Follows the CE-Lua output-hygiene MUST-rule via <see cref="CeLuaHygiene"/>.
 /// </summary>
 public static class StandaloneTrainerScriptGenerator
 {
     // ⛔ DO NOT LOCALIZE: a CE record's Description is how the emitted Lua finds it (getMemoryRecordByDescription), and
-    // how a saved table names it. [I18N-READINESS-2026-11-04] P4
+    // how a saved table names it. [I18N-READINESS-2026-11-04]
     public const string SetupDescription = "UE5 Trainer: Setup (tick this first)";
     private const string SaveDescription = "UE5 Trainer: TP Save position";
     private const string RecallDescription = "UE5 Trainer: TP Recall position";
@@ -100,8 +100,8 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, "}");
         Line(sb);
 
-        // Self-contained AOB scanner (pure CE, no DLL) — shared verbatim with the
-        // GWorld-walk export so behaviour matches.
+        // Self-contained AOB scanner (pure CE, no DLL) — a copy of the GWorld-walk
+        // export's (CeXmlExportService) so behaviour matches.
         AppendAobScanHelper(sb);
 
         Line(sb, "UE5T_ready = false");
@@ -110,10 +110,10 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
-        // [PATH-CE-MODULE-VIEW] Scan CE's OWN name for the main module. `process` and enumModules' Name are the
-        // same ANSI bytes; the baked UE5T.module is the Unicode name, which CE does not know for a non-ASCII exe
+        // [PATH-CE-MODULE-VIEW] Scan CE's OWN name for the main module (CeLuaHygiene.MainModuleNameLua, the ANSI bytes
+        // enumModules reports); the baked UE5T.module is the Unicode name, which CE does not know for a non-ASCII exe
         // (ゲーム-… is ???-… to CE on code page 950). UE5T.module stays in the table as information only.
-        Line(sb, "local mod = process");
+        Line(sb, "local mod = " + CeLuaHygiene.MainModuleNameLua);
         Line(sb, "if mod == nil or mod == '' then");
         Line(sb, "  showMessage('[UE5 Trainer] No process is opened in Cheat Engine. Attach CE to the game, then tick Setup again.')");
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
@@ -187,8 +187,8 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, "function UE5T_wrv(a, v)");
         Line(sb, "  if UE5T.vecWidth == 8 then writeDouble(a, v) else writeFloat(a, v) end");
         Line(sb, "end");
-        // Single-bit set/clear via pure arithmetic (mask is a power of two); CE Lua
-        // has no bAnd/bOr/bNot, so this stays version-proof.
+        // Single-bit set/clear via pure arithmetic (mask is a power of two): no bitwise
+        // helper (CE's bAnd/bOr) and no bitwise operator, so it runs on any Lua CE embeds.
         Line(sb, "function UE5T_setbit(a, mask, want)");
         Line(sb, "  local b = readByte(a)");
         Line(sb, "  if not b then return end");
@@ -322,7 +322,7 @@ public static class StandaloneTrainerScriptGenerator
     // invoke the standalone path avoids). Best-effort: a game that overwrites Velocity
     // every frame (e.g. FF7 Rebirth) won't move — use the DLL Fly instead.
     //
-    // The 3 presets share ONE timer + an owner tag (UE5T.fly_preset). Enabling a
+    // The presets share ONE timer + an owner tag (UE5T.fly_preset). Enabling a
     // preset takes ownership (destroys any other's timer); disabling only tears down
     // if it still owns it — so switching presets is clean and unticking the losing
     // preset's stale checkbox doesn't kill the active one.
@@ -531,12 +531,12 @@ public static class StandaloneTrainerScriptGenerator
     // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]. It looks the record up by DESCRIPTION at fire time rather
     // than capturing `memrec`.
     //
-    // The stateful toggles (Setup / Move Speed / Gravity / Jump / GodMode / Fly) use
+    // The stateful toggles use
     // CeLuaHygiene.DeferredUntickLua() at each bail-out instead: they must STAY ticked while the
     // cheat is on, so they can only untick on the paths that applied nothing.
     //
-    // ⚠ A `memrec` grep is NOT a way to audit this file — that is what made the original finding
-    // overstate its scope. This helper unticks without ever naming `memrec`.
+    // ⚠ A `memrec` grep is NOT a way to audit this file: this helper unticks without ever
+    // naming `memrec`, so the grep misses it.
     private static void AppendUntick(StringBuilder sb, string desc)
     {
         Line(sb, "createTimer(50, function()");
@@ -546,7 +546,7 @@ public static class StandaloneTrainerScriptGenerator
     }
 
     // AOBScanModuleUE — idempotent self-contained AOB scanner (mirrors the GWorld-walk
-    // export's helper so behaviour is identical).
+    // export's helper so behaviour matches).
     private static void AppendAobScanHelper(StringBuilder sb)
     {
         Line(sb, "if not AOBScanModuleUE then");
@@ -586,8 +586,8 @@ public static class StandaloneTrainerScriptGenerator
     }
 
     private static string LuaModule(string? module) =>
-        // [PATH-TRAINER-APOSTROPHE] Escaped like every other name-derived literal: an apostrophe in the exe name
-        // (Tony's-Win64-Shipping.exe) made this a Lua syntax error, so Setup could never enable.
+        // [PATH-TRAINER-APOSTROPHE] Escaped like every other name-derived literal: unescaped, an apostrophe in the
+        // exe name (Tony's-Win64-Shipping.exe) is a Lua syntax error and Setup never enables.
         string.IsNullOrWhiteSpace(module) ? "nil" : $"'{CeLuaHygiene.EscapeLuaString(module)}'";
 
     private static string Hex(int v) =>

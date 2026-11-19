@@ -5,8 +5,8 @@
              x:Class="UE5DumpUI.Views.ClassPivotPanel"
              x:DataType="vm:ClassPivotViewModel">
 
-  <!-- [UI-SPACE-2026-09-25] Measured on a 4K screen at 225 % (1067 DIP high), build 3557: ~20 lines of explanation and
-       the two setup expanders pushed the field picker and the results grid entirely below the window. Now each
+  <!-- [UI-SPACE-2026-09-25] On a short window (a 4K screen at 225 % is about 1067 DIP high) long explanations and
+       the two setup expanders would push the field picker and the results grid entirely below the window. So each
        explanation is one trimmed line with the whole text on hover, the limits box opens on demand, and the setup
        area (Discover + the pivot target) scrolls inside SetupScroller, whose MaxHeight the code-behind ties to the
        panel's height, so the field picker and the results always keep the rest. -->
@@ -140,7 +140,7 @@
                          IsVisible="{Binding UsesSnapshot}"
                          PlaceholderText="{StaticResource str.Pivot.ClassFilterHint}"/>
 
-        <!-- Snapshot Array source (Phase C6: inner-key pivot of a struct array) -->
+        <!-- Snapshot Array source (inner-key pivot of a struct array) -->
         <TextBlock Text="{StaticResource str.Pivot.ArrayField}" Foreground="#CCCCCC"
                    VerticalAlignment="Center" Margin="0,0,4,0" IsVisible="{Binding IsArraySource}"/>
         <ComboBox ItemsSource="{Binding ArrayFields}" SelectedItem="{Binding SelectedArrayField}"
@@ -152,7 +152,7 @@
           </ComboBox.ItemTemplate>
         </ComboBox>
 
-        <!-- DataTable source (Phase C4: zero-config, RowName is the key) -->
+        <!-- DataTable source (zero-config, RowName is the key) -->
         <TextBlock Text="{StaticResource str.Pivot.DataTable}" Foreground="#CCCCCC"
                    VerticalAlignment="Center" Margin="0,0,4,0" IsVisible="{Binding IsDataTableSource}"/>
         <ComboBox ItemsSource="{Binding DataTables}" SelectedItem="{Binding SelectedDataTable}"

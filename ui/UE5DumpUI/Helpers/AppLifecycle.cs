@@ -27,8 +27,8 @@ internal enum AppPhase
 /// <para>A mutable static is the right shape here and not laziness: the handler
 /// that needs these two facts is the <c>catch</c> around
 /// <c>StartWithClassicDesktopLifetime</c>, which by definition runs when the
-/// object graph that would otherwise carry them has already come apart. The
-/// phase is written from exactly three places in <c>App.axaml.cs</c>.</para>
+/// object graph that would otherwise carry them has already come apart.
+/// <c>App.axaml.cs</c> advances the phase.</para>
 /// </summary>
 internal static class AppLifecycle
 {

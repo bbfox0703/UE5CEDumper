@@ -8,7 +8,7 @@ namespace UE5DumpUI.Services;
 /// return-param metadata into a list of decoded
 /// <see cref="StructFieldValue"/> rows. Used by InvokeParamDialog to
 /// render a property-grid of the return struct's sub-fields below the
-/// raw hex line (pick #5, build 772+).
+/// raw hex line.
 ///
 /// Resolution order (matches the existing inline decoder in the dialog
 /// so the grid and the text line always agree on field values):

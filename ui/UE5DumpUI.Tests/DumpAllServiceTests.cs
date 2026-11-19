@@ -25,7 +25,7 @@ public class DumpAllServiceTests
 
     private class FakeDumpForDump : StubDumpService, IDumpService
     {
-        // [EXTPR-539-540-2026-10-02] D2: Dump All lists the enums once per run. An empty list unless a test
+        // [EXTPR-539-540-2026-10-02] Dump All lists the enums once per run. An empty list unless a test
         // fills it; the flags and the throw are the detailed list's own answers.
         public List<EnumDefinition> Enums { get; } = new();
         public bool EnumNamesFailed { get; set; }
@@ -216,7 +216,7 @@ public class DumpAllServiceTests
         dump.Objects.Add(Obj("0x2", "BP_Player_C", "BlueprintGeneratedClass", "/Game/MyGame/BP_Player_C"));
         dump.Objects.Add(Obj("0x3", "MyAnimBP_C", "AnimBlueprintGeneratedClass", "/Game/Anim/MyAnimBP_C"));
         dump.Objects.Add(Obj("0x4", "MyWidget_C", "WidgetBlueprintGeneratedClass", "/Game/UI/MyWidget_C"));
-        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // a struct line, not a class line (D1)
+        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // a struct line, not a class line
         dump.Objects.Add(Obj("0x6", "Player_Default", "BP_Player_C"));      // dropped (live instance)
         dump.Objects.Add(Obj("0x7", "MyDynamic_C", "DynamicClass"));        // accepted
 
@@ -264,7 +264,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // X4: GenerateAsync returns a DumpResult the completion line is built from
+    // GenerateAsync returns a DumpResult the completion line is built from
     // ==================================================================
 
     [Fact]
@@ -304,8 +304,8 @@ public class DumpAllServiceTests
         var dump = new FakeDumpForDump();
         // REALISTIC: get_object_list never sends a path, so obj.FullPath is "".
         // The engine-package skip must therefore key on the WALKED classInfo.FullPath.
-        // (Passing a path to Obj here would mask the bug this test guards — the old
-        // code skipped on the always-empty obj.FullPath and silently kept everything.)
+        // (Passing a path to Obj here would mask the hazard this test guards — a skip
+        // keyed on the always-empty obj.FullPath silently keeps everything.)
         dump.Objects.Add(Obj("0x1", "UActor", "Class"));
         dump.Objects.Add(Obj("0x2", "MyPlayer", "BlueprintGeneratedClass"));
         // REAL Ubel::GetFullName wire format: "//Script/Engine/Actor" (double leading
@@ -584,7 +584,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] D7: the class walk reports progress by time
+    // [EXTPR-539-540-2026-10-02] The class walk reports progress by time
     // ==================================================================
 
     /// <summary>A clock that moves only when the test moves it.</summary>
@@ -635,7 +635,7 @@ public class DumpAllServiceTests
     [Fact]
     public void Generate_WalkProgress_IsNotDrivenByTheClassCount()
     {
-        // 120 classes inside one interval: the old every-50 rule reported at 50 and 100.
+        // 120 classes inside one interval: an every-50 rule would report at 50 and 100.
         var clock = new ManualClock();
         var reports = WalkReports(new FakeDumpForDump(), clock, 120);
 
@@ -704,7 +704,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] D1: Dump All writes struct lines too. A ScriptStruct or
+    // [EXTPR-539-540-2026-10-02] Dump All writes struct lines too. A ScriptStruct or
     // UserDefinedStruct row is walked like a class (one walk_class_batch slot) and written as
     // {"kind":"struct"}: a class line's identity, super and props, without what a struct does
     // not have (functions, instances, a Blueprint-class flag). walk_functions is not called
@@ -851,7 +851,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] D2: Dump All writes enum lines. One list_enums call after the
+    // [EXTPR-539-540-2026-10-02] Dump All writes enum lines. One list_enums call after the
     // type walk; each enum becomes {"kind":"enum"} with its entries as {name, value}. The
     // summary says how many were written and skipped, whether the list was obtained at all,
     // and what the list alone cannot say (member names not locatable, a cut-short list), so a
@@ -973,7 +973,7 @@ public class DumpAllServiceTests
         Assert.Contains("2 enums", done.Phase);
     }
 
-    // Review of 0c43deae: the enum list's warnings must reach the caller, as USMAP's do [P1-ENUMNAMES].
+    // The enum list's warnings must reach the caller, as USMAP's do [P1-ENUMNAMES].
 
     [Fact]
     public async Task Generate_Result_CarriesTheEnumListsOwnWarnings()
@@ -1016,7 +1016,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] D3: every function carries its parameters. walk_functions lists the
+    // [EXTPR-539-540-2026-10-02] Every function carries its parameters. walk_functions lists the
     // UFunction's whole property chain, and a Blueprint function's locals follow its parameters there, so
     // only the entries the DLL flags as parameters (CPF_Parm, the return included) are written. A DLL that
     // predates the flag falls back to UE's own definition, the leading num_parms entries, and the summary
@@ -1114,7 +1114,7 @@ public class DumpAllServiceTests
         Assert.Equal(new[] { "Who", "Where", "ReturnValue" }, ParamNames(funcs[0]));
         Assert.Empty(ParamNames(funcs[2]));   // num_parms 0: the local is not a parameter either way
         using var summary = JsonDocument.Parse(lines[^1]);
-        // TryOpen and Recalc were decided by num_parms; Tick had nothing to decide.
+        // TryOpen and Recalc are decided by num_parms; Tick has nothing to decide.
         Assert.Equal(2, summary.RootElement.GetProperty("params_from_num_parms").GetInt32());
     }
 
@@ -1161,7 +1161,7 @@ public class DumpAllServiceTests
         Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"error\""));
     }
 
-    // Review of 6847b080. StringBuilder.Append(int) formats with the CURRENT culture, and some cultures' minus is
+    // StringBuilder.Append(int) formats with the CURRENT culture, and some cultures' minus is
     // U+2212 (sv-SE and nb-NO under ICU), which is not JSON. A parameter whose offset the DLL could not read is -1.
     [Fact]
     public void Generate_EveryLineIsJson_UnderACultureWhoseMinusIsNotAscii()

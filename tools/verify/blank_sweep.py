@@ -7,19 +7,19 @@ r"""The 06-01..07-03 blank sweep -- clusters, hunks and the per-agent diet.
 
     ... --band aug                                     # the OTHER blank (>2026-08-03)
 
-The band is author-time 2026-06-01 .. 07-03: the window that NO audit ever scoped. 50,451
-surviving production lines across 211 files, the largest never-audited block in the tree.
+The band is author-time 2026-06-01 .. 07-03: the window that NO audit ever scoped, and the
+largest never-audited block in the tree (`clusters` prints its current size).
 
-WHY CLUSTERS AND NOT "N FILES PER AGENT". The defects the 2026-09 fix pass actually found sat
-in the WIRE -- a field the DLL never creates, a consumer that never asks -- where no per-file
-read can reach them. A batch that carries the DLL side, the pipe command and the UI consumer
-together is the only shape that can see those. Line count is the SECONDARY key.
+WHY CLUSTERS AND NOT "N FILES PER AGENT". The defects this sweep hunts sit in the WIRE -- a
+field the DLL never creates, a consumer that never asks -- where no per-file read can reach
+them. A batch that carries the DLL side, the pipe command and the UI consumer together is the
+only shape that can see those. Line count is the SECONDARY key.
 
 WHY `hunks` EXISTS. `clusters` prints a `band%` column: what fraction of the files an agent
-must open is actually never-audited code. It runs 8% (CE-BRIDGE) to 95% (PIVOT-SPC). Handing
-an 8% cluster's whole files to an agent means reading 5,613 lines to audit 451 -- and, worse,
-the agent then reports findings in the 92% that five earlier audits already cleared. Low-band%
-clusters get HUNKS; high-band% clusters get whole files. The split is measured, not guessed.
+must open is actually never-audited code, and it varies widely between clusters. Handing a
+low-band% cluster's whole files to an agent means reading many lines to audit a few -- and,
+worse, the agent then reports findings in the code earlier audits already cleared. Low-band%
+clusters get HUNKS; high-band% clusters get whole files. The split is computed, not guessed.
 
 Blame and the production predicate are imported from audit_coverage.py, never re-implemented,
 so the sweep and the coverage measurement cannot drift apart.
@@ -35,8 +35,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import audit_coverage as ac  # noqa: E402
 
 # The two never-audited bands, as (label, inclusive-lo, exclusive-hi) author-time epochs.
-# `jun` is the 31.3% hole between audit #5's predicate and audit #3's window opening.
-# `aug` is everything after audit #4 closed -- 19.7%, and it is STILL GROWING, which is the
+# `jun` is the hole between one audit's predicate and another audit's window opening.
+# `aug` is everything after the last audit window closed, and it is STILL GROWING, which is the
 # one structural difference between them: `jun` is a closed interval that can be swept once,
 # `aug` accumulates every commit made since. Sweep it and it starts refilling the next day.
 BANDS = {

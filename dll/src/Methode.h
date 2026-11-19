@@ -77,7 +77,7 @@ inline std::wstring FolderAliasOf(const std::wstring& longPath, ShortOf shortOf)
     return dir.empty() ? std::wstring{} : dir + longPath.substr(slash);
 }
 
-// The production lookup: GetShortPathNameW of a folder. On a volume with 8.3 names off (D: here) it answers the folder
+// The production lookup: GetShortPathNameW of a folder. On a volume with 8.3 names off it answers the folder
 // unchanged, which NarrowForAnsiLoad then treats as no alias. "" on failure.
 inline std::wstring ShortDirOf(const std::wstring& dir)
 {
@@ -90,7 +90,7 @@ inline std::wstring ShortDirOf(const std::wstring& dir)
 // puts in szModule, which CE's symbol handler names the module with (WinCPToUTF8, symbolhandler.pas ~6040): the
 // leaf narrowed with best fit (flags 0: Café -> Cafe, ™ -> ?), then cut after its LAST byte 0x5C, because
 // Module32First keeps what follows the ANSI path's last '\\' byte and a DBCS trail byte can be 0x5C (Big5 功 = A5 5C,
-// Shift-JIS ソ = 83 5C: CE knows 功夫-….exe as 夫-….exe -- measured, skeptic MODVIEW-5C-TRAIL). Widened back and UTF-8.
+// Shift-JIS ソ = 83 5C: CE knows 功夫-….exe as 夫-….exe). Widened back and UTF-8.
 // codePage CP_ACP is read as GetACP() -- the GAME's; the UI computes its own view for everything IT hands CE
 // (ISystemCodePage.AnsiModuleName), because a game started under another locale has another ACP. Used for
 // get_ce_pointer_info's ce_base. Any API failure falls back to the plain UTF-8 name.

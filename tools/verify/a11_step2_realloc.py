@@ -2,9 +2,9 @@ r"""A11 step 2 — a container candidate must be RE-ANCHORED when the array's bu
 
     py tools/verify/a11_step2_realloc.py      (DumperTest dev running + injected, no UI)
 
-THE CLAIM (build 3253). Before the fix, a growth realloc left every container element address stale
-and the candidates were lost outright. After it, the refine notices `{dataPtr,count}` changed and
-repoints them.
+THE CLAIM. Without re-anchoring, a growth realloc leaves every container element address stale and the
+candidates are lost outright. With it, the refine notices `{dataPtr,count}` changed and repoints
+them.
 
 ⚠ WHAT THIS DOES AND DOES NOT PROVE. Nothing on DumperTest grows a UPROPERTY container on its own,
 so the buffer move is FORGED: a fresh page is allocated in the target, the elements are copied into
@@ -20,7 +20,7 @@ game's fault. `mutate_guard.Mutation` restores in `finally` and verifies by read
 fails the host must be KILLED rather than allowed to exit cleanly.
 
 ⚠ `offsets-0.log`, not `scan-0.log` — `Refine re-anchor:` is `LOG_CAT "OARR"`, which Sein routes to
-LF_Offsets. Reading the wrong file made this row's sibling step pass for a year. [A11-LOGPATH]
+LF_Offsets. Reading the wrong file makes this row's sibling step pass vacuously. [A11-LOGPATH]
 """
 import ctypes
 import pathlib

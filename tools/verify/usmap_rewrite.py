@@ -34,9 +34,8 @@ THE MODES, and what each one is for
   flipwidth  every container inner enum's declared UNDERLYING width becomes Int64Property;
              the type stays EnumProperty and the enum NAME is untouched. This is the CONTROL
              for `degrade`: `FEnumProperty::SerializeItem` writes an FName whenever
-             `Enum != nullptr`, so the declared width should change nothing. Measured
-             2026-09-16 on a commercial title: flipping all 535 inner widths changed 0 of
-             3,003 exports, over the very same packages where `degrade` changed 3.
+             `Enum != nullptr`, so the declared width should change nothing: over the very
+             same packages, this mode should change no export while `degrade` changes some.
   bytewidth  every TOP-LEVEL `EnumProperty`'s declared underlying width becomes Byte, and
              nothing else moves -- not the type, not the enum name, not one container
              inner. That is exactly the pre-`[A4-USMAP-ENUM-UNDERLYING]` shape: the old
@@ -50,9 +49,9 @@ THE MODES, and what each one is for
              A/B below would be vacuous.
   promote    the inverse of `degrade`, driven by a second mapping: a bare ByteProperty inner
              is promoted to `[26][0][E]` when the truth mapping names that same
-             `Struct.Prop` as an enum inner. Use it to ask whether a PRE-fix mapping actually
-             misread a title's content. Only enum names already in the target's name table are
-             used, so the table is never rewritten.
+             `Struct.Prop` as an enum inner. Use it to ask whether a mapping written without
+             the fix actually misread a title's content. Only enum names already in the
+             target's name table are used, so the table is never rewritten.
 
 Input compression 0 or 3 (ZStandard) is accepted; output is always written uncompressed.
 """

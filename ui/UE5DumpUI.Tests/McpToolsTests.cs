@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The MCP tool catalogue: what every tool advertises, what it sends the DLL,
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP tool catalogue: what every tool advertises, what it sends the DLL,
 /// and what it hands back. A fake game records each request and answers from a script, so no pipe is involved.
 /// </summary>
 public sealed class McpToolsTests
@@ -204,7 +204,7 @@ public sealed class McpToolsTests
     [Fact]
     public void EveryWriteTool_HasAWriteRole_AndIsMarkedDestructive()
     {
-        // Whether a write is asked about is the host's decision now ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
+        // Whether a write is asked about is the host's decision ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
         // what the catalogue fixes is each tool's role and the grant it needs.
         foreach (var t in Catalog())
         {
@@ -227,10 +227,10 @@ public sealed class McpToolsTests
         Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
             Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
         Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
-        // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: the one tool an invoke grant covers.
+        // [MCP-WRITE-GRANTS-2026-11-14] The one tool an invoke grant covers.
         Assert.Equal([Constants.McpInvokeGrantedTool],
             Named(t => t.EffectiveRole == McpToolRole.GrantedInvoke && t.GrantKind == McpGrantKind.Invoke));
-        // Phase 2: the one tool a field grant covers.
+        // The one tool a field grant covers.
         Assert.Equal([Constants.McpFieldGrantedTool],
             Named(t => t.EffectiveRole == McpToolRole.GrantedField && t.GrantKind == McpGrantKind.Field));
         Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
@@ -253,10 +253,10 @@ public sealed class McpToolsTests
         }
     }
 
-    /// <summary>[MCP-WRITE-SITES-DESC] Review wf_1b9e937b-a0d UI-2: read_function_props told the model every write_sites
-    /// entry writes the property. The DLL proves that only for the first write_sites_via_this (a store through the object
-    /// itself); the rest store through another pointer, and shared_offset says packed bools share the byte. The UI labels
-    /// both; the model was told neither, so it could offer an unproven site as the field's writer.</summary>
+    /// <summary>[MCP-WRITE-SITES-DESC] read_function_props must not tell the model every write_sites entry writes the
+    /// property. The DLL proves that only for the first write_sites_via_this (a store through the object itself); the rest
+    /// store through another pointer, and shared_offset says packed bools share the byte. The UI labels both, and so must
+    /// the description, or the model could offer an unproven site as the field's writer.</summary>
     [Fact]
     public void ReadFunctionProps_SaysWhichWriteSitesAreProven()
     {
@@ -287,9 +287,9 @@ public sealed class McpToolsTests
         }
     }
 
-    /// <summary>The DLL commands the server may send: D1's reads, D2-2's gameplay changes and the reads around them, and
-    /// D2-3's raw write and invoke. Left out, and pinned out by <see cref="NeverSent"/>: what changes state another
-    /// client shares (maintainer, 2026-11-11: an AI beside the UI must not disturb it) -- begin_snapshot clears the name
+    /// <summary>The DLL commands the server may send: the reads, the gameplay changes and the reads around them, and the
+    /// raw write and invoke. Left out, and pinned out by <see cref="NeverSent"/>: what changes state another client
+    /// shares (an AI beside the UI must not disturb it) -- begin_snapshot clears the name
     /// cache a UI snapshot uses, the LiveFuncs recording and trace are one per game, a rescan replaces the pointers the
     /// UI walks, reset_diagnostics and the version / timeout / packed overrides are process-wide (an AI must not lengthen
     /// the invoke timeout to dodge -5), reset_all_fields ends everyone's holds, and the marker slots and the undo point
@@ -303,14 +303,14 @@ public sealed class McpToolsTests
         "find_property_xrefs", "walk_function_props", "get_function_code_addr", "find_functions_by_class",
         "list_all_functions", "list_enums", "get_ce_pointer_info", "walk_datatable_rows", "begin_value_scan",
         "refine_value_scan", "query_candidates", "end_value_scan", "pipe_clients", "get_offsets",
-        // D2-2: the reads around the writes
+        // the reads around the writes
         "get_holds", "teleport_get_pose", "get_movement_params", "get_time_state", "get_forced_fields",
         "seethrough_get_state",
-        // D2-2: the writes
+        // the gameplay writes
         "set_god_mode", "set_movement_multiplier", "reset_movement", "set_gravity_direction",
         "reset_gravity_direction", "set_time_dilation", "reset_time_dilation", "set_debug_camera", "set_mouse_cursor",
         "fly_set", "set_foreground_lock", "seethrough_set", "force_field", "reset_field", "teleport_recall_marker",
-        // D2-3: the raw write and the invoke
+        // the raw write and the invoke
         "write_mem", "invoke_function",
     ];
 
@@ -346,7 +346,7 @@ public sealed class McpToolsTests
                     Assert.True(AllowedCommands.Contains(cmd), $"{t.Name} sent {cmd}");
                     Assert.DoesNotContain(cmd, NeverSent);
                 }
-                // A call off the game thread is never asked for (Stage D2-3).
+                // A call off the game thread is never asked for.
                 Assert.DoesNotContain(game.Sent, r => r.ContainsKey("direct_call"));
             }
         }
@@ -354,7 +354,7 @@ public sealed class McpToolsTests
         Assert.Empty(refused);
     }
 
-    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] §4.5) ─────────────────────────────────────────────
 
     private const string HolderPath = "//Script/DumperTest/DumperTestHolder";
     private const string DerivedPath = "//Script/DumperTest/DumperTestDerivedHolder";
@@ -724,8 +724,8 @@ public sealed class McpToolsTests
     public async Task WriteField_AnotherRunsGrantOnTheSubclass_DoesNotHideThisRunsGrantOnTheSuper()
     {
         // An earlier run of the same pid granted the subclass's field; this run granted the base class's. The chain walk
-        // starts at the subclass, so a target set taken from every run stopped there, and the admission (keyed on this
-        // run) then refused a write this run's grant covers.
+        // starts at the subclass, so a target set taken from every run would stop there, and the admission (keyed on
+        // this run) would then refuse a write this run's grant covers.
         var game = FieldGame();
         var earlier = new JsonObject { ["pid"] = 4242, ["process_creation_time"] = "1DB5F0A2C3E4D49" };
         Assert.NotNull(game.Grants.Grant(McpGrantKind.Field, earlier, out _, DerivedPath + ":HolderValue"));
@@ -1781,7 +1781,7 @@ public sealed class McpToolsTests
         Assert.Empty(game.Sent);
     }
 
-    // ── The write tools (Stage D2-2) ────────────────────────────────────────────────────────────────────
+    // ── The write tools ─────────────────────────────────────────────────────────────────────────────────
 
     private static readonly HashSet<string> HoldCommands =
     [
@@ -1793,7 +1793,7 @@ public sealed class McpToolsTests
     [Fact]
     public async Task EveryChangeToAHold_CarriesIfFree()
     {
-        // The DLL refuses an if_free change to another's hold under the hold's own lock (D2-1); a request without it
+        // The DLL refuses an if_free change to another's hold under the hold's own lock; a request without it
         // would replace or end what the user holds.
         int seen = 0;
         foreach (var t in Catalog().Where(t => t.Name.StartsWith("write_", StringComparison.Ordinal)))
@@ -1855,9 +1855,9 @@ public sealed class McpToolsTests
         Assert.Contains(cmd, on.Commands);
     }
 
-    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_bbd1bbfe-20d U7-1: write_fly's description still said Fly is
-    /// refused while experimental features are off, so a model told the user it could not turn its own Fly off. Each
-    /// experimental tool with an OFF says the OFF still works.</summary>
+    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] A description saying Fly is refused while experimental features are off
+    /// would have a model tell the user it cannot turn its own Fly off. Each experimental tool with an OFF says the OFF
+    /// still works.</summary>
     [Theory]
     [InlineData("write_fly")]
     [InlineData("write_foreground_lock")]
@@ -1870,11 +1870,11 @@ public sealed class McpToolsTests
         Assert.Matches(@"(is not|also while the UI's experimental features are off)", d);
     }
 
-    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] Review wf_1b9e937b-a0d UI-1: the switch refused the AI's own release too,
-    /// so after the user turned experimental features off, a force-field job the AI held (the untick tears down Fly,
-    /// See-through, Keep Foreground and the Stealth card's hold, not it) kept running and the AI could not end it --
-    /// against "turning off or resetting what this server holds still works". A release ends only what this server
-    /// holds (the gate checks that at the send), so the switch lets it through.</summary>
+    /// <summary>[MCP-RELEASE-EXPERIMENTAL-OFF] The switch must not refuse the AI's own release: after the user turns
+    /// experimental features off, a force-field job the AI holds (the untick tears down Fly, See-through, Keep Foreground
+    /// and the Stealth card's hold, not it) would keep running with the AI unable to end it -- against "turning off or
+    /// resetting what this server holds still works". A release ends only what this server holds (the gate checks that
+    /// at the send), so the switch lets it through.</summary>
     [Theory]
     [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
     [InlineData("write_fly", """{"enable":false}""", "fly_set")]
@@ -1968,7 +1968,7 @@ public sealed class McpToolsTests
         Assert.False(req.ContainsKey("multiplier"));
     }
 
-    // ── Stage D2-3: write_memory, write_invoke, and the debug camera's answers ───────────────────────────────
+    // ── write_memory, write_invoke, and the debug camera's answers ───────────────────────────────────────────
 
     [Fact]
     public async Task WriteMemory_SendsTheBytesItRead_AndReturnsBeforeAndAfter()
@@ -2014,7 +2014,7 @@ public sealed class McpToolsTests
     [Fact]
     public async Task WriteMemory_ThroughADllBeforeD23_IsRefused()
     {
-        // Before D2-3 write_mem patched code and ignored expect.
+        // A DLL below McpMinDllBuildForRawWrites lets write_mem patch code and ignores expect.
         var game = new FakeGame { DllBuild = Constants.McpMinDllBuildForRawWrites - 1 };
         var (_, result) = await Call(game, "write_memory",
             new JsonObject { ["addr"] = "0x1000", ["bytes"] = "00", ["expect"] = "01" });
@@ -2059,7 +2059,7 @@ public sealed class McpToolsTests
         return game;
     }
 
-    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] §4.4) ──────────────────────────────────────────────
 
     private const string ActorPath = "//Script/Engine/Actor";
     private const string HiddenFull = ActorPath + ".SetActorHiddenInGame";
@@ -2111,7 +2111,7 @@ public sealed class McpToolsTests
     [Fact]
     public void TheInvokeGrant_StatesItsScope_WithTheFunctionFirst()
     {
-        // The prompt shows the name and the arguments in order (Phase 0, M1 / M10): the function before its class.
+        // The prompt shows the name and the arguments in order: the function before its class.
         var tool = Tool(Constants.McpGrantToolInvoke, new FakeGame());
         var props = tool.InputSchema["properties"]!.AsObject().Select(p => p.Key).ToList();
         Assert.True(props.IndexOf("function") >= 0 && props.IndexOf("function") < props.IndexOf("class")
@@ -2154,8 +2154,8 @@ public sealed class McpToolsTests
         Assert.DoesNotContain(game.Grants.List(), g => g.Kind == McpGrantKind.Invoke);
     }
 
-    // Review: the case above with another class's path is refused by the later full-name match too, so it never pinned
-    // the class check. Here the path lookup lands on a class that does declare the function, by its own name, and only
+    // The case above with another class's path is refused by the later full-name match too, so it cannot pin the class
+    // check alone. Here the path lookup lands on a class that does declare the function, by its own name, and only
     // the check of the object found refuses it.
     [Fact]
     public async Task TheInvokeGrant_ChecksTheClassItFound_ByItsOwnFullName()
@@ -2763,8 +2763,8 @@ public sealed class McpToolsTests
         Assert.Contains("the UE5DumpUI window or another program (pid 4321)", payload!["error"]!.GetValue<string>());
     }
 
-    // Review round 2: the dispatcher refuses an if_free change to another's hold with ok:true and code -20, before the
-    // invoke handler; write_invoke read that as a call that failed with a made-up code -999.
+    // The dispatcher refuses an if_free change to another's hold with ok:true and code -20, before the invoke handler;
+    // write_invoke must name the holder, not read that as a call that failed with a made-up code -999.
     [Fact]
     public async Task WriteInvoke_AHoldAnotherHolds_IsNamed_NotAFailedCall()
     {
@@ -2839,7 +2839,7 @@ public sealed class McpToolsTests
     [InlineData(0, true, "still off")]   // the toggle ran and a fresh read disagrees
     public async Task WriteDebugCamera_ReadsTheGuardedCommandsState(int state, bool error, string? says)
     {
-        // It answers in state, not code: D2-2 read every refusal as success.
+        // It answers in state, not code: reading the code would take every refusal for success.
         var game = new FakeGame();
         game.Answers["set_debug_camera"] = _ => new JsonObject { ["state"] = state };
         var (_, result) = await Call(game, "write_debug_camera", new JsonObject { ["enable"] = true });

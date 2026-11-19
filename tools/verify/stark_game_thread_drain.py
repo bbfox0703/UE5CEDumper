@@ -9,9 +9,9 @@ Headless, through the pipe (the UI must NOT be connected). The first argument is
 %LOCALAPPDATA%\\UE5CEDumper\\Logs -- the game's process name -- so the DLL's own lines for this run can be read back.
 
 WHAT IT MEASURES. Stark drains the invoke queue inside the hooked ProcessEvent; engine worker threads call
-ProcessEvent too, and before the fix a drain there ran queued work off the game thread -- measured on DumperTest58
-Development: a ToggleDebugCamera failed BodyInstance.cpp's IsInGameThread check, ~1 in 50 toggles, which the DLL
-logged as "SEH exception during queued PE call". With --pairs (a Development build with a live CheatManager) the run is
+ProcessEvent too, and without the fix a drain there runs queued work off the game thread -- on a Development build
+a ToggleDebugCamera then fails BodyInstance.cpp's IsInGameThread check on roughly one toggle in fifty, which the DLL
+logs as "SEH exception during queued PE call". With --pairs (a Development build with a live CheatManager) the run is
 that same workload: Debug Camera ON/OFF through set_debug_camera. With --gc (any build) it is UKismetSystemLibrary::
 CollectGarbage, a parameterless static, as many times. Then it reads the DLL's log lines written since it started and
 reports: the game thread picked and how ("named GameThread by the engine" or "the main thread"), whether the install

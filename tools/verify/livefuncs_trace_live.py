@@ -14,7 +14,7 @@ holds the pipe), this records with and without the trace and checks what only a 
   3. paging: pe_trace_get hands the kept window back page by page in order, `next` moves forward, and paging ends
      at `written`; how long that takes, in MB/s;
   4. names: pe_trace_names names every function the ring holds -- live, or unloaded since it fired and named from
-     its first call (build 3634+) -- and says which objects are still live;
+     its first call (a DLL with [TRACE-UNLOADED-NAMES]) -- and says which objects are still live;
   5. release: pe_trace_release frees the ring, and a later read finds nothing;
   6. ticked scope (unless --skip-scope): a function that calls other UFunctions is ticked; the scoped trace holds
      only that function's calls (each flagged a scope root) and calls nested under them;
@@ -177,7 +177,7 @@ def main() -> int:
         out["plain"] = {"total_calls": total, "window_ms": window_ms, "calls_per_s": rate,
                         "distinct": plain.get("distinct_funcs"), "per_frame": len(per_frame)}
         say(f"rate: {rate:,.0f} calls/s ({total:,} calls over {window_ms:,} ms; {len(per_frame)} per-frame)")
-        if "unloaded_funcs" in plain:   # build 3634+: the table's own count of what is no longer at its address
+        if "unloaded_funcs" in plain:   # [TRACE-UNLOADED-NAMES]: the table's own count of what is no longer at its address
             out["plain"]["unloaded"] = {k: plain.get(k) for k in
                                         ("unloaded_funcs", "unloaded_calls", "unnamed_funcs", "unnamed_calls")}
             say(f"table: {plain['unloaded_funcs']} functions unloaded since they fired ({plain['unloaded_calls']:,} "
@@ -217,8 +217,8 @@ def main() -> int:
         say(f"read {len(recs):,} records in {read_s:.2f} s ({moved / 1e6:.1f} MB on the wire)")
         # The DLL leaves out a slot written out of turn (a writer the ring lapped mid-write, [LINIE-SEQ-LAST]), so a
         # LAPPED window can come back a few records short; dll_core_test's threads check takes the same view
-        # ([LINIE-THREADS-FLAKE]). Review wf_d3c2ec9a-d52 LIVE-RIG-GAPFREE. Without a lap no slot has two writers, so the
-        # window must come back whole and gap-free (review wf_a193c703-fe8).
+        # ([LINIE-THREADS-FLAKE]). Without a lap no slot has two writers, so the window must come back whole and
+        # gap-free.
         window = written - first
         seqs = [r[0] & ~RET_BIT for r in recs]
         if lapped:
@@ -249,8 +249,8 @@ def main() -> int:
         named = {addr(x["addr"]) for x in fn}
         check("names cover every function the ring holds", ring_funcs <= named,
               f"{len(ring_funcs)} in the ring, {len(named)} named")
-        # Live, or unloaded since it fired and named from its first call: either way the tab shows a name. Before
-        # build 3634 an unloaded function had none (Avowed, a 512 MB recording: 184 of 796).
+        # Live, or unloaded since it fired and named from its first call: either way the tab shows a name. A DLL
+        # without [TRACE-UNLOADED-NAMES] leaves an unloaded function nameless, and this check fails.
         check("every function has a name (live, or unloaded and named from its first call)",
               out["names"]["funcs_named"] >= 0.99 * len(fn),
               f"{out['names']['funcs_named']} of {len(fn)}: {out['names']['funcs_live']} live, "
@@ -258,9 +258,9 @@ def main() -> int:
         say(f"names: {len(fn)} functions in {fn_s:.2f} s, {len(ob)} objects in {ob_s:.2f} s "
             f"({out['names']['objs_live']} live)")
         # A function no longer at its address was unloaded before Stop (a closed UI or a map change frees its
-        # Blueprint classes). Since build 3634 it keeps the name read at its first call; one with no name at all shows
-        # as a bare address. How many calls each kind is, and when each last fired -- alive then; it went at some
-        # point after, which a last call cannot date.
+        # Blueprint classes). It keeps the name read at its first call ([TRACE-UNLOADED-NAMES]); one with no name at
+        # all shows as a bare address. How many calls each kind is, and when each last fired -- alive then; it went
+        # at some point after, which a last call cannot date.
         for label, dead in (("unloaded, named", {addr(x["addr"]) for x in fn
                                                  if not x.get("live") and x.get("func_name")}),
                             ("unnamed", {addr(x["addr"]) for x in fn if not x.get("live") and not x.get("func_name")})):

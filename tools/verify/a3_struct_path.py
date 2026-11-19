@@ -1,33 +1,33 @@
-"""A3: prove more than ONE FVector per class now contributes scan leaves.
+"""A3: prove more than ONE FVector per class contributes scan leaves.
 
     py a3_struct_path.py
 
-THE DEFECT (fixed build 3168). `expandFields`' recursion guard was WHOLE-WALK instead
-of PATH-SCOPED, so only the FIRST field of a given `UScriptStruct` type in a class
-contributed leaves. `RelativeLocation` was indexed; `RelativeScale3D`, `Velocity`,
-`Extent` never were -- subtree and all, across unrelated branches.
-The guard's CONTRACT is unit-pinned (`Test_Aura_StructPathGuard`, negative control 7
-red). The WALK THAT USES IT is not: **no test target compiles `Aura.cpp`**, so
-`expandFields` calling the guard has never run against a real class.
+THE DEFECT. A WHOLE-WALK recursion guard in `expandFields`, instead of a PATH-SCOPED
+one, lets only the FIRST field of a given `UScriptStruct` type in a class contribute
+leaves: `RelativeLocation` indexed; `RelativeScale3D`, `Velocity`, `Extent` never --
+subtree and all, across unrelated branches.
+The guard's CONTRACT is unit-pinned (`Test_Aura_StructPathGuard`, with a red negative
+control). The WALK THAT USES IT is not: `Aura.cpp` is compiled into `dll_core_test`,
+but no unit test drives `expandFields`, which needs a live engine's reflected classes
+to recurse into, so this rig is what runs it calling the guard against a real class.
 
 THE MEASUREMENT. A vector LEAF is a dotted candidate path ending `.X`/`.Y`/`.Z`; strip
-the leaf and you have the struct field that produced it. Under the defect a class could
+the leaf and you have the struct field that produced it. Under the defect a class can
 contribute AT MOST ONE distinct such parent, so the honest statistic is simply **how
-many classes contribute two or more** -- 0 would be the defect, anything above 0 refutes
-it, and no baseline capture is needed. Measured on DumperTest: **151 classes**, topped
-by `TraceQueryTestResults` with 72 distinct vector fields and `DumperTestCharacter` with
-19 (`AttachmentReplication.LocationOffset`, `AttachmentReplication.RelativeScale3D`,
-`BasedMovement.Location`, ... -- several different branches of one class).
+many classes contribute two or more** -- 0 is the defect, anything above 0 refutes
+it, and no baseline capture is needed. On DumperTest expect many such classes, some
+with fields from several different branches of one class (`DumperTestCharacter`:
+`AttachmentReplication.LocationOffset`, `AttachmentReplication.RelativeScale3D`,
+`BasedMovement.Location`, ...).
 
 ⚠ USE **Double**, NOT Float. The row's step 1 says "Float (or NumericAll)" and on a UE5
 title that is simply wrong: LWC makes `FVector` a double-precision `FVector3d`, so a
-Float scan can never see `RelativeLocation.X`. Measured side by side here -- Float/1.0
-returned **0** `*Scale3D*` and **0** `*Location*`; Double/0 returned **177** and **114**.
-Reading that Float run at face value would have condemned a working fix.
+Float scan can never see `RelativeLocation.X` -- it returns no `*Scale3D*` and no
+`*Location*` leaf at all, and read at face value would condemn a working fix.
 
 ⚠ THE ROW'S OWN WARNING, ENFORCED HERE: **do not verify with an FVector scan.** For a
 vector scan `acceptedStructNames` is non-empty, the recursion is skipped, and the guard
-never fired -- so a green FVector run proves nothing. It is run below only as step 2's
+never fires -- so a green FVector run proves nothing. It is run below only as step 2's
 CONTROL, where the expected outcome is "unchanged", and a CHANGE would mean the fix
 reached somewhere it should not have.
 """
@@ -87,9 +87,8 @@ def main():
         # ⚠ DOUBLE, not Float. The row says "Float (or NumericAll)", and on a UE5 title
         # that instruction is simply WRONG: LWC makes FVector a double-precision
         # FVector3d, so a Float scan can never see `RelativeLocation.X` and returns a
-        # confident empty set. Measured here: Float/1.0 found 0 *Scale3D* and 0
-        # *Location*; Double/0 found 177 and 114. Reading that Float run as a FAIL
-        # would have condemned a working fix.
+        # confident empty set of *Scale3D* and *Location* leaves. Reading that Float
+        # run as a FAIL would condemn a working fix.
         print("=== A3 step 1: Double Exact 0 -- distinct vector fields PER CLASS ===")
         sid, meta = scan(c, data_type="Double", scan_type="Exact", value="0",
                          game_only=True, max_results=300000, deadline_ms=120000)
@@ -100,7 +99,7 @@ def main():
         c.request("end_value_scan", session_id=sid)
 
         # A vector LEAF is a dotted path ending .X/.Y/.Z; its parent path is the struct
-        # field. The defect meant at most ONE distinct such parent per class, so the
+        # field. The defect means at most ONE distinct such parent per class, so the
         # count of classes with TWO OR MORE is the direct measurement.
         per = {}
         for x in rows:

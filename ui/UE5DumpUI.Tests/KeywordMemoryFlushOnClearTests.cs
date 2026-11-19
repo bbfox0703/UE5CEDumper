@@ -12,8 +12,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 AE16 — CLAUDE.md's keyword-search rule says "<c>Flush()</c> before clearing
-/// the box on tab-switch/navigation", and eight clear-the-box paths did not.
+/// CLAUDE.md's keyword-search rule says "<c>Flush()</c> before clearing the box on
+/// tab-switch/navigation"; these pin it on the clear-the-box paths.
 ///
 /// <para>
 /// The loss is invisible and total. <see cref="KeywordSearchMemory.Schedule"/> only ARMS
@@ -23,11 +23,10 @@ namespace UE5DumpUI.Tests;
 /// Clear" is the most ordinary sequence in every one of these panels.
 /// </para>
 /// <para>
-/// The finding named <see cref="GameClassFilterViewModel.ClearFiltersCommand"/>. The
-/// fix-time sibling grep found seven more, of which the ones reachable headless are
-/// covered here; the two Live Walker paths and the Class Pivot handoff need a loaded
-/// panel/snapshot and are covered by inspection (their edits are one line each, the
-/// identical line, beside an existing <c>Schedule</c>).
+/// The paths reachable headless are covered here, starting with
+/// <see cref="GameClassFilterViewModel.ClearFiltersCommand"/>; the two Live Walker paths and
+/// the Class Pivot handoff need a loaded panel/snapshot and are left to inspection (each is
+/// the identical one-line <c>Flush()</c> beside an existing <c>Schedule</c>).
 /// </para>
 /// <para>
 /// NEGATIVE CONTROL for every test below: delete the <c>_filterMemory.Flush()</c> line
@@ -37,7 +36,7 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class KeywordMemoryFlushOnClearTests
 {
-    /// <summary>The direct rail: this is exactly what the missing line cost.</summary>
+    /// <summary>The direct rail: this is exactly what a missing <c>Flush()</c> costs.</summary>
     [Fact]
     public void A_scheduled_keyword_is_lost_unless_something_flushes_it()
     {
@@ -187,7 +186,7 @@ public class KeywordMemoryFlushOnClearTests
         vm.FilterText = "dash";
         Assert.NotEmpty(vm.Results);
 
-        // OnLeavingTab already flushed; the Clear BUTTON did not, and it is the one
+        // OnLeavingTab flushes; the Clear BUTTON must too, as it is the one
         // reachable while the user is still looking at the matches.
         vm.ClearCommand.Execute(null);
         Assert.Contains("dash", vm.FilterHistory);

@@ -6,8 +6,8 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [SNAPSHOT-MANUAL-GATE] SnapshotViewModel.CanManualCapture (CanCapture and Auto Snapshot off)
 /// exists so the manual Capture / Estimate buttons stand down while the auto loop owns capturing,
-/// and the VM raises it on every change. The panel bound both buttons to CanCapture instead, so
-/// the gate was never wired and a manual capture could start between two auto ticks.
+/// and the VM raises it on every change. Pins that the panel binds both buttons to it: bound to
+/// CanCapture instead, the gate is never wired and a manual capture can start between two auto ticks.
 /// </summary>
 public class SnapshotManualCaptureGateTests
 {

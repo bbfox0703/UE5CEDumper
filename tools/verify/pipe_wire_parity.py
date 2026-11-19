@@ -6,30 +6,30 @@ r"""`[A4-ASSESS-2026-09-09]` — do the two sides of the named pipe agree on wha
     py tools/verify/pipe_wire_parity.py all
 
 ⛔ WHY THIS EXISTS. The CE Lua <-> DLL mailbox is version-gated AND hash-gated
-(`tools/check_mailbox_contract.py`). The NAMED PIPE — the primary UI<->DLL channel, 99 commands and
-~358 reply keys — is gated by nothing, and there is no shared constant table across the language
-boundary: the C# side hand-types the strings.
+(`tools/check_mailbox_contract.py`). The NAMED PIPE — the primary UI<->DLL channel — is gated by
+nothing, and there is no shared constant table across the language boundary: the C# side hand-types
+the strings.
 
     var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
 
 A wrong COMMAND name fails loudly (`unknown command`). A wrong KEY does not: it yields a default or
-a null and the reply still says `ok: true`. That silent half has landed three times in two days:
-`[SW7]` (a `delegate_pad` computed and never serialised), the `l12` rig (sent `addr=` where Fern
-reads `instance_addr` — 2,000 requests measured nothing and reported cleanly), and `FlyStatus.Noclip`
-(published by the DLL, never read by `ApplyFlyReadout`).
+a null and the reply still says `ok: true`. The silent half takes several shapes: a value computed
+and never serialised (`[SW7]`'s `delegate_pad`), a request key the reader names differently
+(`addr=` sent where Fern reads `instance_addr` — every request measures nothing and reports
+cleanly), and a reply key the DLL publishes that the UI never reads.
 
-⛔⛔ WHAT THIS IS NOT. It is a POPULATION PRODUCER, not a finding list — the same relationship the
-three agent sweeps had to the ~166 claims. Every hit needs a hand-read, because:
+⛔⛔ WHAT THIS IS NOT. It is a POPULATION PRODUCER, not a finding list. Every hit needs a
+hand-read, because:
 
   * a key consumed only by CE Lua, a rig, a test or an offline tool is NOT dead;
   * a key read through a variable (`obj[name]`) is invisible to a literal grep;
   * a purely informational echo (build stamps, human-readable diagnostics) is fine.
 
 ⚠ AND THE COMPARISON IS GLOBAL, NOT PER-COMMAND, SO IT UNDERSTATES THE RISK. A key that is valid
-for command X and a silent no-op for command Y matches here. The `l12` failure lived in exactly that
-layer, and reaching it needs the per-command pairing this script does not do.
+for command X and a silent no-op for command Y matches here. The `addr=` / `instance_addr` mismatch
+lives in exactly that layer, and reaching it needs the per-command pairing this script does not do.
 
-⚠ The rule audit #4 earned applies to this script itself: *a fix verified against the LIST it was
+⚠ The house rule applies to this script itself: *a fix verified against the LIST it was
 written from is not verified.* A wire checked only against the keys these regexes happen to see is
 not checked — hence `--show-idioms`, which prints what each side's extraction actually matched so a
 reader can see what it would have missed.

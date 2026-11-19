@@ -8,14 +8,14 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// The WRITE half of <c>[PASTECRASH-2026-08-18]</c>.
 ///
-/// <para>The original fix guarded the clipboard READ (Ctrl+V, which surfaces as a
-/// dispatcher fault with no frame of ours on it). The write was left unguarded, and
-/// it fails in the OPPOSITE way: <c>CopyToClipboardAsync</c> is awaited from ~60
+/// <para>The read guard covers the clipboard READ (Ctrl+V, which surfaces as a
+/// dispatcher fault with no frame of ours on it). The write fails in the OPPOSITE
+/// way: <c>CopyToClipboardAsync</c> is awaited from
 /// <c>[RelayCommand]</c> Copy buttons, CommunityToolkit's <c>AsyncRelayCommand</c>
 /// rethrows a faulted command onto the dispatcher via
 /// <c>AwaitAndThrowIfFailed</c>, and that exception DOES carry our frames — so the
 /// classifier correctly returns <c>OurCodeOnStack</c>, refuses to swallow, and the
-/// app dies. The read guard did not merely miss this case; it is structurally
+/// app dies. The read guard does not merely miss this case; it is structurally
 /// obliged to refuse it. The only place it can be stopped is at the write.</para>
 ///
 /// <para>There is no clipboard in a headless test run, so the guarded write takes
@@ -129,8 +129,8 @@ public class ClipboardWriteGuardTests
     [Fact]
     public void TheInterfaceStillReportsWhetherTheCopyHappened()
     {
-        // Structural. A refactor back to a bare Task would compile at all ~60 call
-        // sites — `await x;` is legal either way — and silently discard the one
+        // Structural. A refactor to a bare Task would compile at every call
+        // site — `await x;` is legal either way — and silently discard the one
         // signal that lets a caller say "the copy did nothing".
         var method = typeof(IPlatformService).GetMethod(nameof(IPlatformService.CopyToClipboardAsync));
 

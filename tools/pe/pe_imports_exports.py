@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Minimal standalone PE parser: dump imports (by-name + by-ordinal) and exports.
 
-No third-party deps. Used to diagnose proxy-DLL export/import mismatches.
+No third-party deps. A tool for diagnosing proxy-DLL export/import mismatches.
 Usage:
     pe_imports_exports.py imports <file.exe> [--dll dxgi]
     pe_imports_exports.py exports <file.dll>

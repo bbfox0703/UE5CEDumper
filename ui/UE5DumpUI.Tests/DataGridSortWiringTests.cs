@@ -9,13 +9,12 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The structural guard behind audit #5 AF16-AF23.
+/// The structural guard for user-sortable DataGrid columns under Native-AOT.
 ///
-/// <para>Six findings in that batch were all one defect — <i>a user-sortable DataGrid
-/// column with no AOT comparer</i> — and the sweep that fixed them found <b>four more
-/// sites no finding named</b>, including one whose comment argued the omission was
-/// deliberate. Closing six of ten is exactly how this recurs, so the rule is enforced
-/// here rather than left to review.</para>
+/// <para>One defect — <i>a user-sortable DataGrid column with no AOT comparer</i> — turns
+/// up at sites no review names, including ones whose comment argues the omission is
+/// deliberate. Fixing the named sites leaves the rest, so the rule is enforced here
+/// rather than left to review.</para>
 ///
 /// <para><b>The rule</b> (Helpers/DataGridSortComparers.cs class doc): Avalonia's default
 /// column sort resolves <c>SortMemberPath</c> by reflection. Under Native-AOT/trim that
@@ -169,13 +168,12 @@ public class DataGridSortWiringTests
     /// <c>"2 (9B)"</c>, because <c>ParamsLabel</c> is
     /// <c>$"{NumParms} ({ParmsSize}B)"</c> and ordinal order compares the first character.</para>
     ///
-    /// <para><b>That is why three of these survived audit #5 AF20.</b> The sweep asked
-    /// whether headers were inert under trimming; Live Walker's "Params" was (its value
-    /// comes from an element-syntax <c>MultiBinding</c>, which roots nothing) and was fixed,
-    /// while <c>ConsolePanel</c>, <c>InterestingFunctionsPanel</c> and <c>LiveFuncsPanel</c>
-    /// were not inert — just wrong — and passed. <c>LiveFuncsPanel.axaml.cs</c>'s own comment
-    /// listed Params among the columns that "are rooted and need nothing", which was true and
-    /// beside the point. Fixed 2026-08-22, <c>[PARAMSSORT-2026-08-22]</c>.</para>
+    /// <para><b>That is why an inert-header check cannot stand in for this rule.</b> Asking
+    /// whether a header is inert under trimming catches a column whose value comes from an
+    /// element-syntax <c>MultiBinding</c> (which roots nothing), and passes a column that is
+    /// not inert — just wrong. A code-behind comment listing Params among the columns that
+    /// "are rooted and need nothing" can be true and beside the point
+    /// (<c>[PARAMSSORT-2026-08-22]</c>).</para>
     ///
     /// <para><b>The rule enforced here:</b> no column may declare a
     /// <c>SortMemberPath</c> naming a computed <c>string</c> property whose expression
@@ -199,7 +197,7 @@ public class DataGridSortWiringTests
             // hex). Only some branches interpolate a number and they are not the same number,
             // so there is no numeric key to sort on; ordinal is the only order that exists.
             // LiveWalkerPanel.axaml.cs wires Ordinal deliberately. What the scan actually
-            // caught is one branch of the chain, not a formatted-number column.
+            // matches is one branch of the chain, not a formatted-number column.
             ["LiveWalkerPanel.axaml|DisplayValue"] =
                 "LiveFieldValue.DisplayValue is a heterogeneous fallback chain; no single " +
                 "numeric key exists, and Ordinal is wired on purpose.",
@@ -258,7 +256,7 @@ public class DataGridSortWiringTests
             "Column(s) sorting on a label that formats a number:" + Environment.NewLine +
             string.Join(Environment.NewLine, violations));
 
-        // A stale exemption is a silent hole. If the column moved or was fixed, drop the entry.
+        // A stale exemption is a silent hole. If the column moved or no longer needs it, drop the entry.
         var stale = NumericLabelSortExemptions.Keys.Except(exemptionsHit).ToList();
         Assert.True(stale.Count == 0,
             "Exemption(s) no longer matched by any column — delete them: " + string.Join(", ", stale));
@@ -271,17 +269,13 @@ public class DataGridSortWiringTests
     ///
     /// <para>An <c>Ordinal</c> comparer on an address is right often enough to look right.
     /// Equal-length UPPERCASE hex compares identically ordinally and numerically, so on a host
-    /// whose pool addresses are all the same width nothing misbehaves — measured on DumperTest
-    /// 2026-08-22: all 137 <c>Object</c> instances 13 characters. That is a property of the
+    /// whose pool addresses are all the same width nothing misbehaves. That is a property of the
     /// heap's layout, not of the comparer. One 12-character address in the set (a static
     /// <c>FUObjectArray</c>, a <c>0x7FF…</c> module-resident object) and the order is decided by
     /// the first character.</para>
     ///
-    /// <para>The tree already knew the answer: <c>DataGridSortComparers.Hex&lt;T&gt;(ulong)</c>
-    /// exists, and <c>RelatedObjectsPanel.axaml.cs</c> was its <b>only</b> user while
-    /// <c>ObjectInstancePickerDialog.cs</c>'s identically-named "Address" column used
-    /// <c>Ordinal</c>. Two panels, one column name, two answers, one of them the documented one.
-    /// Fixed 2026-08-22 with <c>[PARAMSSORT-2026-08-22]</c>.</para>
+    /// <para>The documented answer is <c>DataGridSortComparers.Hex&lt;T&gt;(ulong)</c>: two panels
+    /// with one column name must not give two answers (<c>[PARAMSSORT-2026-08-22]</c>).</para>
     /// </summary>
     private static readonly Dictionary<string, string> OrdinalOnNumericTextExemptions =
         new(StringComparer.Ordinal);
@@ -339,8 +333,7 @@ public class DataGridSortWiringTests
     /// [W4-HEXSORT] The FOURTH rule: an address column sorts NUMERICALLY even when nothing is wrong with it under the
     /// three above. A DataGridTextColumn whose Binding and SortMemberPath are both "Address" is binding-rooted (rule 1
     /// passes) and wires no comparer (so the Ordinal rule has nothing to see) -- and the default sort orders the hex
-    /// TEXT: "0x9" after "0x10", a 12-character module address after every 13-character heap one. W4 found nine such
-    /// columns in the Instance Finder / Live Walker cluster; this pin found a tenth (Class / Struct's field Address).
+    /// TEXT: "0x9" after "0x10", a 12-character module address after every 13-character heap one.
     /// </summary>
     private static readonly Dictionary<string, string> AddressColumnNumericExemptions = new(StringComparer.Ordinal)
     {
@@ -390,7 +383,7 @@ public class DataGridSortWiringTests
             }
         }
 
-        // Guard the guard: a scan that silently matches nothing passes everything. 11 when this was written.
+        // Guard the guard: a scan that silently matches nothing passes everything.
         Assert.True(seen >= 10, $"only {seen} address-like sortable column(s) found -- the scan has stopped matching");
         Assert.True(violations.Count == 0,
             "Address column(s) that sort as text -- add a ulong accessor (the AddressValue idiom) and wire " +
@@ -488,13 +481,12 @@ public class DataGridSortWiringTests
     /// <para>Trailing binding options are allowed and do not change the answer:
     /// <c>{Binding Offset, StringFormat=0x{0:X}}</c> still roots <c>Offset</c> — the
     /// format is applied to the value the compiled binding already fetched. Rejecting
-    /// those was this test's own first bug, and it disagreed with the independent Python
-    /// sweep on exactly three columns (working-lessons.md §1.4).</para>
+    /// those would flag columns that are safe (working-lessons.md §1.4).</para>
     ///
     /// <para>Deliberately null for element-syntax bindings such as
     /// <c>&lt;MultiBinding&gt;</c>: the attribute is simply absent, those are reflection
-    /// bindings, and they do NOT root the property — which is precisely what made Live
-    /// Walker's "Params" column (AF20) look safe while being dead.</para>
+    /// bindings, and they do NOT root the property — which is precisely how such a column
+    /// looks safe while being dead.</para>
     /// </summary>
     private static string? BindingPath(XElement col)
     {
@@ -541,10 +533,11 @@ public class DataGridSortWiringTests
     }
 
     /// <summary>
-    /// [TRACE-UNLOADED-NAMES] review INT-1. Ctrl+C on a DataGrid row copies each cell through its column's
+    /// [TRACE-UNLOADED-NAMES] Ctrl+C on a DataGrid row copies each cell through its column's
     /// ClipboardContentBinding; only a bound column falls back to its Binding, so a template column without one copies
-    /// an empty cell. The Live Funcs Function column became a template column (the "(unloaded)" marker), and a copied
-    /// row lost the one value the panel exists to find. Every sortable template column there now says what it copies.
+    /// an empty cell. The Live Funcs Function column is a template column (the "(unloaded)" marker), so without one a
+    /// copied row loses the one value the panel exists to find. Every sortable template column there must say what it
+    /// copies.
     /// </summary>
     [Fact]
     public void Live_Funcs_template_columns_say_what_a_row_copy_holds()

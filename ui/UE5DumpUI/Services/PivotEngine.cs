@@ -8,9 +8,9 @@ namespace UE5DumpUI.Services;
 /// Pure, AOT-safe Class Pivot core: groups a class's captured instances by
 /// intrinsic identity (normalised path) or by a chosen key field's value, then
 /// projects the requested value fields per group. Differing values inside one
-/// group render as a collision <c>⟨N: v1,v2,+M⟩</c> (ported from the Unity sister
-/// project's 29e-2 polish). Kept separate from <see cref="SnapshotStore"/> so the
-/// grouping/rendering is unit-testable without a database. See
+/// group render as a collision <c>⟨N: v1,v2,+M⟩</c>. Kept separate from
+/// <see cref="SnapshotStore"/> so the grouping/rendering is unit-testable
+/// without a database. See
 /// docs/experimental-snapshot-spc-pivot.md §"Phase C".
 /// </summary>
 public static class PivotEngine
@@ -30,7 +30,8 @@ public static class PivotEngine
         // 1. Fold the (instance, field) rows into per-instance records,
         //    preserving first-seen instance order for determinism.
         // [SNAPDIFF-SHADOWED-PROP] A row of a shadowed name is filed under its copy's label (name + offset), the label
-        // the query names it by. Filed by name, the two copies overwrote each other: the last row won, in no defined order.
+        // the query names it by. Filed by name, the two copies would overwrite each other: the last row would win, in
+        // no defined order.
         var shadowedNames = new HashSet<string>(q.ShadowedFields.Values.Select(f => f.Name), StringComparer.Ordinal);
         var byIndex = new Dictionary<long, Instance>();
         var order = new List<long>();
@@ -101,8 +102,8 @@ public static class PivotEngine
 
     /// <summary>Render one instance's composite group key: each key field's value
     /// (or "(missing)" when the instance lacks it), joined by " · ". A single key
-    /// field renders verbatim (no separator), keeping one-element keys byte-identical
-    /// to the legacy single-key path.</summary>
+    /// field renders verbatim (no separator), keeping a one-element key byte-identical
+    /// to a single <see cref="PivotQuery.KeyField"/> key.</summary>
     private static string RenderCompositeKey(Instance inst, IReadOnlyList<string> keyFields)
     {
         if (keyFields.Count == 1)

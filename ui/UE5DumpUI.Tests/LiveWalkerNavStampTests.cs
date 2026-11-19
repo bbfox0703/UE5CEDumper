@@ -15,16 +15,15 @@ namespace UE5DumpUI.Tests;
 ///
 /// <para>Those gestures change the spine FIRST (Back pops, a jump truncates, Forward and Parent
 /// push) and then await the walk. The grid keeps showing the level just left until the walk lands.
-/// A drill gesture on one of those rows captured <c>parentAtGesture = CurrentCrumb</c> — already
-/// the NEW crumb — so V4's "captured at gesture time" check passed and the old level's
-/// <c>field.Offset</c> was appended under the new parent. Copy CE XML, Copy CE Field, the AA script
-/// and a saved bookmark then persist that wrong chain. This is the re-derivation's test #2, which
-/// was never written.</para>
+/// A drill gesture on one of those rows that captured <c>parentAtGesture = CurrentCrumb</c> would
+/// get the NEW crumb, so a "captured at gesture time" check alone passes and the old level's
+/// <c>field.Offset</c> is appended under the new parent. Copy CE XML, Copy CE Field, the AA script
+/// and a saved bookmark then persist that wrong chain.</para>
 ///
-/// <para>The recorded fix: stamp WHICH crumb the rendered rows belong to, at every site that
-/// repopulates the grid, and refuse a drill of a rendered row whose stamp is not the current
-/// crumb. Each case below holds the navigation's walk on a gate, clicks a row of the level being
-/// left, and asserts nothing was grafted.</para>
+/// <para>The guard: each site that repopulates the grid stamps WHICH crumb the rendered rows belong
+/// to, and a drill of a rendered row whose stamp is not the current crumb is refused. Each case
+/// below holds the navigation's walk on a gate, clicks a row of the level being left, and asserts
+/// nothing was grafted.</para>
 /// </summary>
 public class LiveWalkerNavStampTests
 {
@@ -233,12 +232,12 @@ public class LiveWalkerNavStampTests
         await parent;
     }
 
-    // ── The same shape, found by the batch's adversarial review ─────────────────
+    // ── The same shape, through other operations ────────────────────────────────
 
-    /// <summary>Two navigations in flight: Back's walk lands AFTER a Forward pressed meanwhile. The
-    /// stamp used to record whatever crumb was current at render time, so Back's rows (A) were
-    /// installed and stamped as Forward's crumb (B) — and a drill of one of them grafted A's field
-    /// under B. A navigation whose target is no longer current must drop its render.</summary>
+    /// <summary>Two navigations in flight: Back's walk lands AFTER a Forward pressed meanwhile. A
+    /// stamp that recorded whatever crumb is current at render time would install Back's rows (A)
+    /// stamped as Forward's crumb (B), and a drill of one of them would graft A's field under B. A
+    /// navigation whose target is no longer current must drop its render.</summary>
     [Fact]
     public async Task Back_ThenForward_BeforeBacksWalkLands_BacksRenderIsDiscarded()
     {
@@ -260,8 +259,8 @@ public class LiveWalkerNavStampTests
     }
 
     /// <summary>Back's walk FAILS: the spine is on A, the grid still shows B. A Refresh (manual, or
-    /// an auto tick) re-walks what is on screen, B — and used to re-stamp B's rows as A's, reopening
-    /// the graft. Refresh re-walks the rendered object, so it must keep the stamp it found.</summary>
+    /// an auto tick) re-walks what is on screen, B; re-stamping B's rows as A's would reopen the
+    /// graft. Refresh re-walks the rendered object, so it must keep the stamp it found.</summary>
     [Fact]
     public async Task Back_WhoseWalkFails_ThenRefresh_TheOldRowsStayRefused()
     {
@@ -281,8 +280,8 @@ public class LiveWalkerNavStampTests
     }
 
     /// <summary>A Refresh in flight across a spine swap that keeps the address AND the crumb count:
-    /// a re-rooted Back (one crumb for one crumb) whose own walk has not landed. The refresh used to
-    /// check only the address and the count, so its reply was installed and stamped as the restored
+    /// a re-rooted Back (one crumb for one crumb) whose own walk has not landed. A refresh that
+    /// checked only the address and the count would install its reply stamped as the restored
     /// spine's crumb.</summary>
     [Fact]
     public async Task Refresh_AcrossASameCountSpineSwap_IsDiscarded()
@@ -316,7 +315,7 @@ public class LiveWalkerNavStampTests
 
     /// <summary>A re-root that FAILS after clearing the spine (a Go-box typo, an address the DLL
     /// rejects) leaves the previous rows on screen with no crumb. That is no graft risk — a drill
-    /// there re-roots at the pointee, as it always did — so it must not be refused forever.</summary>
+    /// there re-roots at the pointee, as any crumb-less drill does — so it must not be refused forever.</summary>
     [Fact]
     public async Task AFailedReRoot_LeavesTheOldRowsDrillable()
     {
@@ -351,8 +350,8 @@ public class LiveWalkerNavStampTests
 
     /// <summary>The same window through the commands that combine the CURRENT spine with the grid:
     /// Copy CE XML (all rows), Copy CE Field (the selection), CSX, and Save Bookmark (the address,
-    /// class, selection and anchor of the rendered level). Each used to emit or persist the new
-    /// spine with the old level's rows.</summary>
+    /// class, selection and anchor of the rendered level). In the window each would emit or persist
+    /// the new spine with the old level's rows, so each must refuse.</summary>
     [Fact]
     public async Task InTheWindow_ExportsAndBookmarkSave_AreRefused()
     {

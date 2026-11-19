@@ -1,8 +1,8 @@
 """Y1 witness: read the DropItemSpawner Owner field AND the mailbox paramsData.
 
 Both reads FAIL LOUDLY. A reader that returns 0 for "read failed" and 0 for
-"the field is zero" cannot distinguish the old Y1 bug (a 0 argument) from its own
-failure -- that is exactly how a working store got recorded as "PERSISTS = False".
+"the field is zero" cannot distinguish the Y1 defect (a 0 argument) from its own
+failure, and records a working store as "PERSISTS = False".
 """
 import sys, ctypes, subprocess, struct
 from ctypes import wintypes

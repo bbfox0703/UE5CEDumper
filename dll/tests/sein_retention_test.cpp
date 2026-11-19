@@ -1,21 +1,19 @@
 // sein_retention_test.cpp
-// UE5CEDumper — AB9: the log retention sweep, moved off the DllMain loader lock.
+// UE5CEDumper — the log retention sweep, run off the DllMain loader lock.
 //
 // WHAT THIS COVERS
 //   Sein::RunRetentionSweep and the two sweeps it drives (PruneAgedLogs,
-//   PruneStaleProcessFolders). Those two had NO tests of any kind — no test target
-//   compiled Sein.cpp — while between them they hold the only `remove_all` in the DLL
+//   PruneStaleProcessFolders). Between them they hold the only `remove_all` in the DLL
 //   and decide what gets deleted from the user's log tree on every process start.
 //
 // ⚠⚠ THE SAFETY GATE IS NOT OPTIONAL AND MUST NOT BE "SIMPLIFIED"
 //   This test drives code whose job is recursive deletion, and it does it by pointing
 //   Sein's file-static paths at a fixture. A fixture bug that left those pointing at
-//   %LOCALAPPDATA%\UE5CEDumper\Logs would delete the real log corpus — 3,000+ files
-//   across 32 process folders, which is the evidence base for several closed
-//   verification rows and is not regenerable. So EVERY case routes through Fixture,
-//   which refuses to run unless its root is: non-empty, under %TEMP%, not the live log
-//   dir, and carrying a sentinel file this test itself wrote. AssertSafe() is called
-//   again immediately before the sweep, not just at construction.
+//   %LOCALAPPDATA%\UE5CEDumper\Logs would delete the real log corpus, which is the
+//   evidence base for closed verification rows and is not regenerable. So EVERY case
+//   routes through Fixture, which refuses to run unless its root is: non-empty, under
+//   %TEMP%, not the live log dir, and carrying a sentinel file this test itself wrote.
+//   AssertSafe() is called again immediately before the sweep, not just at construction.
 //
 // WHY IT #includes THE .cpp
 //   Sein::s_logDir / Sein::s_processDir / Sein::s_processDirReady / Sein::s_sweepDone are file statics with no
@@ -46,8 +44,8 @@ static int g_pass = 0, g_fail = 0;
 
 // Print each case as it STARTS, house style (freeze_helper_test does the same). Not
 // decoration: this test drives recursive deletion and can crash, and a crash with no
-// output cannot be located -- build.ps1's `DLL_TEST_TRACE` note records that exact shape costing a CI
-// investigation in dll_helpers_test.
+// output cannot be located -- build.ps1 sets `DLL_TEST_TRACE` under CI for the same shape in
+// dll_helpers_test.
 static void blk(const char* name) { printf("- %s\n", name); }
 
 static void check(const char* label, bool cond, const char* got = nullptr) {
@@ -193,8 +191,8 @@ int main() {
         // under test is never reached. PruneStaleProcessFolders judges a folder by the
         // NEWEST FILE INSIDE it, not by the folder's own mtime — so a current init-0.log
         // here keeps the folder "fresh" and it survives whether the guard exists or not.
-        // Measured: with a fresh file, deleting the fs::equivalent guard did not fail this
-        // case at all. So put ONE aged archive in and nothing else: PruneAgedLogs deletes
+        // With a fresh file, deleting the fs::equivalent guard does not fail this case at
+        // all. So put ONE aged archive in and nothing else: PruneAgedLogs deletes
         // it, PruneStaleProcessFolders then sees an EMPTY folder — which it removes — and
         // the only thing that can save ours is the guard.
         auto ourOld = fx.proc / "init-20260101-000000.log";
@@ -225,7 +223,7 @@ int main() {
                                                                  && !Exists(ourOld));
     }
 
-    {   // ---- what THIS change added: the readiness guard ----
+    {   // ---- the readiness guard ----
         Fixture fx;
         blk("readiness guard (this change)");
         auto stale = fx.root / "StaleGame";
@@ -261,13 +259,12 @@ int main() {
         check("T11 the latch makes a second call a no-op", Exists(b));
     }
 
-    {   // ---- ⭐ THE POINT OF THE WHOLE CHANGE: the sweep does not hold the log mutex ----
+    {   // ---- ⭐ THE POINT OF THE OFF-LOCK SWEEP: the sweep does not hold the log mutex ----
         //
-        // Before AB9 the sweep ran inside InitProcessMirror, which holds Sein::s_mutex for its
-        // whole body — so moving it to a thread WITHOUT releasing the lock would have
-        // moved the stall from the loader lock onto every logging thread rather than
-        // removing it. This probes the mutex while a sweep runs over a fixture big enough
-        // to take real time.
+        // InitProcessMirror holds Sein::s_mutex for its whole body, so a sweep on another
+        // thread that still held that lock would move the stall from the loader lock onto
+        // every logging thread rather than remove it. This probes the mutex while a sweep
+        // runs over a fixture big enough to take real time.
         Fixture fx;
         blk("the sweep must NOT hold the log mutex");
         for (int i = 0; i < 400; ++i) {
@@ -297,9 +294,10 @@ int main() {
 
     {   // ---- [PATH-SEIN-TRAILING-SPACE] the per-process folder name ----
         //
-        // A stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gave Logs\Game \: create_directories
-        // succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened INSIDE "Game " fails,
-        // because an intermediate segment is not trimmed. The whole session then went unlogged, with no notice.
+        // Taken raw, a stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gives Logs\Game \:
+        // create_directories succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened
+        // INSIDE "Game " fails, because an intermediate segment is not trimmed. The whole session would go unlogged,
+        // with no notice.
         Fixture fx;
         blk("the process folder name");
         check("P1 'Game .exe' -> 'Game'", Sein::ProcessFolderName(L"Game .exe") == L"Game");
@@ -331,17 +329,17 @@ int main() {
         if (ok) fclose(ok);
     }
 
-    {   // ---- (second review, T-SEIN-MIRROR-UNTESTED) InitProcessMirror ITSELF, on the trap name ----
+    {   // ---- InitProcessMirror ITSELF, on the trap name ----
         //
-        // P1-P10 pin the name function and the trap, but nothing ran the function that USES the name: a revert of
-        // InitProcessMirror to the raw stem passed them all. This drives it and reads back what it wrote.
+        // P1-P10 pin the name function and the trap, not the function that USES the name: InitProcessMirror logging
+        // under the raw stem would pass them all. This drives it and reads back what it wrote.
         // ⚠ LAST CASE ON PURPOSE: Sein::Shutdown (needed to close the five files before the fixture removes them)
         // ends buffering for the rest of the process.
         Fixture fx;
         blk("InitProcessMirror logs into the sanitised folder");
         fx.AssertSafe("pre-mirror");
-        // (third review, T3-SEIN-M2-PRESET) Undo what Fixture() presets, so M1-M3 read what InitProcessMirror set --
-        // with s_processDirReady left true, deleting its assignment (retention then never runs) passed M2.
+        // Undo what Fixture() presets, so M1-M3 read what InitProcessMirror set -- with s_processDirReady left true,
+        // M2 would pass with that assignment deleted (retention then never runs).
         Sein::s_processDir.clear();
         Sein::s_processDirReady = false;
         Sein::s_filesOpen = false;
@@ -362,8 +360,8 @@ int main() {
     }
 
     // [DUMPER-SECOND-COPY-AUTOSTART] Each live file is opened deny-write, so a second writer of a process's logs -- a
-    // later copy of the dumper beside a proxy (measured 2026-11-17: the copy that took over logged nothing at all), or
-    // a second instance of the same game -- could open none of them.
+    // later copy of the dumper beside a proxy, or a second instance of the same game -- could open none of them, and
+    // would log nothing at all unless it logs beside the first.
     {
         Fixture fx;
         blk("InitProcessMirror: a second writer logs beside the first");

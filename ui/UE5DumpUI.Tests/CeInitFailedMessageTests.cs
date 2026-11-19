@@ -10,11 +10,10 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [CT-INITFAILED-HEADLINE] The DLL publishes INIT_FAILED for <c>!(ok &amp;&amp; inited)</c> (Frieren.cpp
 /// AutoStartWork): the pipe server did not start, OR init aborted because a shutdown landed mid-scan, in which case
-/// the server DID start. Every INIT_FAILED message used to open with only the first ("initialised, but the Pipe Server
-/// failed to start"), contradicting its own causes sentence; measured live 2026-11-12 (verification-register.md
-/// [PIPE-PER-PROCESS-2026-11-06] item 5) on exactly the aborted case. These pin that each copy names both outcomes and
-/// never claims init finished. Only the message's string literals are read, so a comment quoting the old wording
-/// cannot trip them (working-lessons 1.9).
+/// the server DID start. A message that names only the first ("initialised, but the Pipe Server failed to start")
+/// contradicts its own causes sentence on the aborted case (verification-register.md [PIPE-PER-PROCESS-2026-11-06]).
+/// These pin that each copy names both outcomes and never claims init finished. Only the message's string literals
+/// are read, so a comment quoting a one-outcome wording cannot trip them (working-lessons 1.9).
 /// </summary>
 public class CeInitFailedMessageTests
 {

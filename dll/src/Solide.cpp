@@ -17,8 +17,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick (R5/B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel
+#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick
 #include "Ubel.h"
 
 extern uint32_t g_cachedUEVersion;   // [VND583-DOC D7-04] a weak null's ObjectIndex (WeakNullObjectIndexFor)
@@ -49,10 +49,10 @@ struct Job {
     double      value = 0.0;      // desired (bool: 1/0; numeric: absolute)
     // Restore base captured PER INSTANCE (owner addr → original value / bool bit) at
     // first force, so RemoveForce writes each instance's OWN base, never a foreign one.
-    // Pruned to the live pool each re-assert tick to bound it. (L4)
+    // Pruned to the live pool each re-assert tick to bound it.
     std::unordered_map<uintptr_t, double> baseByOwner;
     // Set when the field resolved on >=1 instance but was type-refused everywhere
-    // (a soft/lazy ptr, a remote-handle weak ptr, or a wrong numeric type -- see ObjectNullShapeFor). (L2)
+    // (a soft/lazy ptr, a remote-handle weak ptr, or a wrong numeric type -- see ObjectNullShapeFor).
     int32_t     lastRefusal = 0;
     // Last-tick stats (for the UI badge + Locate handoff).
     int32_t     held         = 0;
@@ -147,7 +147,7 @@ bool ReadNumeric(uintptr_t addr, const FieldInfo& fi, double& out) {
 
     // Refuse a target the field cannot represent instead of truncating into it. A
     // truncated write reads back as a different number, so the drift check can never
-    // be satisfied — the same non-convergence AF8 caused, reached a different way.
+    // be satisfied and the hold never converges.
     double lo = 0.0, hi = 0.0;
     IntRangeOf(w, lo, hi);
     if (!(value >= lo && value <= hi)) return false;
@@ -225,7 +225,7 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     if (job.kind == K_BOOL) {
         int32_t cur = Solitar::GetActorBool(obj, cls, job.fieldName.c_str());
         if (cur < 0) return false;   // bool not resolvable on this instance
-        // Per-instance base (L4): capture this object's ORIGINAL bit on first force; on
+        // Per-instance base: capture this object's ORIGINAL bit on first force; on
         // restore, only rewrite instances we actually captured (never a foreign base).
         auto b = job.baseByOwner.find(obj);
         if (b == job.baseByOwner.end()) {
@@ -241,13 +241,13 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
         if (rc < 0) return false;
         sampleOwner  = obj;
         sampleOffset = Ubel::FindFieldOffset(cls, job.fieldName.c_str(), nullptr,
-                                             nullptr, "BoolProperty");   // exact-only (L3)
+                                             nullptr, "BoolProperty");   // exact-only
         return true;
     }
 
     // Exact field name only — the forced name comes from Property Search / the stealth
     // finder as an exact leaf name, so the fuzzy "contains" fallback (which could hit a
-    // same-prefix field like HealthRegenRate) is refused. (L3)
+    // same-prefix field like HealthRegenRate) is refused.
     FieldInfo fi{};
     if (!Ubel::FindField(cls, job.fieldName.c_str(), /*contains=*/nullptr, nullptr, nullptr, fi)
         || fi.Offset < 0)
@@ -257,7 +257,7 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     if (job.kind == K_OBJECT_NULL) {
         // A strong ObjectProperty, or -- [VND583-DOC D7-04] -- a WeakObjectProperty: in every version a weak
         // pointer with SerialNumber 0 is UE's explicit null, not a reference to the GObjects[0] slot. Soft /
-        // Lazy stay refused (Solide::ObjectNullShapeFor says why). L2
+        // Lazy stay refused (Solide::ObjectNullShapeFor says why).
         const ObjectNullShape shape = ObjectNullShapeFor(fi.TypeName, fi.Size);
         if (shape == ObjectNullShape::Refused) { refusal = FR_ERR_WEAK_PTR; return false; }
         sampleOwner = obj; sampleOffset = fi.Offset;
@@ -291,10 +291,10 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     }
 
     // K_NUMERIC
-    if (!IsNumericType(fi.TypeName)) { refusal = FR_ERR_REFLECT; return false; }   // L2
+    if (!IsNumericType(fi.TypeName)) { refusal = FR_ERR_REFLECT; return false; }
     double cur = 0;
     if (!ReadNumeric(addr, fi, cur)) return false;
-    auto b = job.baseByOwner.find(obj);   // per-instance base (L4)
+    auto b = job.baseByOwner.find(obj);   // per-instance base
     if (b == job.baseByOwner.end()) {
         if (restore) return false;
         b = job.baseByOwner.emplace(obj, cur).first;
@@ -348,7 +348,7 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
             ++held;
             if (!sampleOwner && so) { sampleOwner = so; sampleOffset = soff; }
         } else if (ref != 0) {
-            refusal = ref;   // field resolved but type-refused on this instance (L2)
+            refusal = ref;   // field resolved but type-refused on this instance
         }
     }
     if (!restore) {
@@ -365,7 +365,7 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         // NOT capped: a capped result is a shifting first-N window, so an absent owner may
         // be live-but-past-cap (not gone) — dropping its true base then recapturing our
         // own forced value later would corrupt the restore. Below the cap the pool is
-        // complete, so absent == genuinely gone. (L4)
+        // complete, so absent == genuinely gone.
         //
         // Uses Aura's own `truncated` rather than re-deriving "capped" from the result
         // size, so the prune guard and the UI badge can never disagree about whether the
@@ -390,7 +390,7 @@ std::vector<Job>::iterator FindJobLocked(const std::string& cls, const std::stri
 
 void WorkerLoop() {
     // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop (R5 / B14). Only the tick is ours.
+    // all live in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("Solide", Grimoire::SOLIDE_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -408,7 +408,7 @@ void WorkerLoop() {
 }
 
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -457,19 +457,19 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         // Field resolved on >=1 instance but was type-refused everywhere (a soft/lazy ptr,
         // or a wrong numeric type) → a futile hold. Don't persist a
         // newly-added job or start the worker; surface the reason instead of a silent
-        // held=0 (Fern maps a negative return to `code`). (L2)
+        // held=0 (Fern maps a negative return to `code`).
         // ⛔ REPORT THE REFUSAL ON A RE-ARM TOO. `newlyAdded` decides whether the job
         // is DROPPED -- it must not also decide whether the caller is TOLD. Re-arming
         // an already-armed class::field that resolves instances and is refused on
-        // every one returned plain held=0, and PropertySearch renders that as the
-        // positively false "no live instance of {Class} or any subclass exists right
-        // now ... will apply as soon as one spawns" -- when instances exist and the
-        // field was refused. [SOLIDE-REFUSAL]
+        // every one would otherwise return plain held=0, which PropertySearch renders
+        // as the positively false "no live instance of {Class} or any subclass exists
+        // right now ... will apply as soon as one spawns" -- when instances exist and
+        // the field was refused. [SOLIDE-REFUSAL]
         if (held == 0 && it->lastRefusal != 0) {
             refusal = it->lastRefusal;
-            // A job that was never persisted is dropped, exactly as before; a
-            // PRE-EXISTING hold is left alone -- the caller asked to re-arm it, not
-            // to remove it, and erasing on a refusal would silently unarm it.
+            // A job that was never persisted is dropped; a PRE-EXISTING hold is left
+            // alone -- the caller asked to re-arm it, not to remove it, and erasing on
+            // a refusal would silently unarm it.
             if (newlyAdded) { s_jobs.erase(it); keepArmed = false; }
         }
     }

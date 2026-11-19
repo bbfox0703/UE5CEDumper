@@ -8,8 +8,8 @@ namespace UE5DumpUI.Services;
 /// satisfies the directional chain + the per-snapshot absolute predicates. Kept
 /// separate from <see cref="SnapshotStore"/> (which does the in-memory intersection
 /// load) so the predicate logic is unit-testable without a database. The in-memory
-/// approach (port of the `discrete` sister project) replaced the old SQL N-way
-/// self-join, which only stayed fast with perfect composite covering indexes.
+/// approach (a port of the `discrete` sister project) avoids an SQL N-way
+/// self-join, which stays fast only with perfect composite covering indexes.
 /// </summary>
 public static class SpcEngine
 {
@@ -41,7 +41,7 @@ public static class SpcEngine
         // Directional chain: snapshot i vs i-1. Index 0 is the baseline (Any). The
         // rounding mode compares the DISPLAYED (reduced) values for Float/
         // Double leaves so sub-display jitter is "unchanged"; integer / non-finite leaves
-        // keep byte-exact hex for Changed/Unchanged (no >2^53 double-precision regression).
+        // keep byte-exact hex for Changed/Unchanged (a double cannot hold an integer above 2^53 exactly).
         for (int i = 1; i < n; i++)
         {
             switch (dir[i])

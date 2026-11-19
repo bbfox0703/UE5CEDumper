@@ -5,7 +5,7 @@ r"""The 21-day age-based retention sweep, tested by MANUFACTURING backdated file
     py tools/verify/retention_backdate.py clean     # remove every fixture
 
     Between plant and check, TRIGGER the sweep:  launch a game and inject the DLL.
-    Sein runs both sweeps during logging init (Sein.cpp:628-629).
+    Sein runs both sweeps once per process, in Sein::RunRetentionSweep.
 
 WHY THIS EXISTS
   Retention here is BY AGE, not by generation count, so the only way to exercise it is
@@ -15,15 +15,15 @@ WHY THIS EXISTS
   IS the input.
 
 WHAT IS UNDER TEST (read from the source, not assumed)
-  Sein.cpp:628  PruneAgedLogs(s_processDir)
+  Sein.cpp  PruneAgedLogs(procDir)
       per-FILE, and only in the folder THIS process owns. Removes a regular file whose
       extension is ".log" when (now - mtime) > 21 days. Note it does NOT exempt the
-      "-0.log" slot name (Sein.cpp:286-292).
-  Sein.cpp:629  PruneStaleProcessFolders(s_logDir, s_processDir)
+      "-0.log" slot name (it tests the extension alone).
+  Sein.cpp  PruneStaleProcessFolders(logDir, procDir)
       per-FOLDER, over every OTHER per-process folder. The age of a folder is the
       NEWEST file inside it -- deliberately not the folder's own mtime, which Windows
-      does not reliably bump (Sein.cpp:441-444). `keep` (this process's own folder) is
-      never removed. An EMPTY folder is deleted immediately (Sein.cpp:484).
+      does not reliably bump (the function's header comment). `keep` (this process's own
+      folder) is never removed. An EMPTY folder is deleted immediately (its `!sawFile` branch).
 
 THE CASES, AND WHAT EACH ONE RULES OUT
   Every case is a folder or file under a ZZRET- prefix, so nothing real is touched.
@@ -42,7 +42,7 @@ THE CASES, AND WHAT EACH ONE RULES OUT
   THE PAIR IS THE PROOF THAT THE SWEEP RAN. If it never executed, `doomed` survives. If
   something unrelated wiped the folder, `survivor` dies too. Only a working age sweep
   produces exactly one of each, and the two edge cases put the boundary where the
-  constant says it is (Grimoire.h:21, LOG_RETENTION_DAYS = 21) rather than merely
+  constant says it is (Grimoire::LOG_RETENTION_DAYS = 21) rather than merely
   "somewhere between 19 and 25 days".
 
 SAFETY
@@ -220,16 +220,16 @@ def clean():
 
 
 def b19():
-    r"""B19: an UNDELETABLE file must cost that file, not the rest of the sweep.
+    r"""An UNDELETABLE file must cost that file, not the rest of the sweep.
 
-    The defect (build 2603): PruneAgedLogs shared ONE std::error_code between the
-    directory iteration and the per-file fs::remove, so a failed remove set `ec`, the
-    loop's `if (ec) break` ended the sweep -- and because NTFS enumeration order is
-    stable, it ended it at the same file on every launch.
+    The defect it guards against: PruneAgedLogs sharing ONE std::error_code between the
+    directory iteration and the per-file fs::remove, so a failed remove sets `ec`, the
+    loop's `if (ec) break` ends the sweep -- and because NTFS enumeration order is
+    stable, it ends it at the same file on every launch.
 
     ⚠ ORDER IS THE WHOLE TEST. The held file must be enumerated BEFORE the deletable
-    one, or the old code would have deleted the deletable one first and the run would
-    pass on a broken build. Hence the aaa-/zzz- names, and hence this is a separate verb:
+    one, or a broken build would delete the deletable one first and the run would
+    pass. Hence the aaa-/zzz- names, and hence this is a separate verb:
     it has to hold a handle open ACROSS the sweep, which `plant` + `check` as two
     processes cannot do.
 
@@ -302,9 +302,9 @@ def b19():
 # ======================================================================
 # The C# half. DIFFERENT SWEEP, DIFFERENT TRIGGER.
 # ======================================================================
-# ⚠ THIS EXISTS BECAUSE THE FIRST RUN'S Bookmarks CASE WAS VACUOUS. It was triggered by
-# launching the GAME, and the C++ sweep (Sein) never looks at Bookmarks\ at all -- so
-# "the 400-day-old bookmark survived" was true of a sweep that was never pointed at it.
+# ⚠ THIS EXISTS BECAUSE A Bookmarks CASE TRIGGERED BY THE GAME IS VACUOUS. The C++ sweep
+# (Sein) never looks at Bookmarks\ at all -- so "the 400-day-old bookmark survived"
+# would be true of a sweep that was never pointed at it.
 # The C# sweep lives in AppDataFolderMaintenance.PruneAged and runs from each STORE's
 # constructor, i.e. it needs the UI. A no-sweep control is only meaningful when a
 # must-die case in the SAME sweep dies alongside it.
@@ -327,7 +327,7 @@ CS_CASES = [
     # tools/verify/l10_step6_age_sweep.py could catch that: both set atime and mtime
     # TOGETHER via os.utime(p, (t, t)), so a sweep reading the wrong stamp passes them
     # identically. l10's header calls that "fine"; it is fine for what l10 tests, but it
-    # does mean the hazard CLAUDE.md names was untested until now.
+    # leaves the hazard CLAUDE.md names to this case alone.
     ("Snapshots", "snapshots.ZZRETATIME.db", -30.0, True,
      "mtime -30d but atime NOW -- dies only if LastWriteTime is what is read"),
     ("Bookmarks", "bookmarks.ZZRETBM.json", -400.0, False,
@@ -383,10 +383,9 @@ def csharp():
                      "constructed?), so every LIVE result here is vacuous")
 
     # Independent witness: PruneAged's own line (AppDataFolderMaintenance.cs).
-    # ⚠ MUST be scoped to THIS run. The first version grepped every log and proudly
-    # printed lines from four days earlier, which is a witness that can never fail --
-    # exactly the shape this whole rig exists to avoid. Only lines written since the
-    # fixtures were planted count.
+    # ⚠ MUST be scoped to THIS run. Grepping every log prints lines from earlier days,
+    # which is a witness that can never fail -- exactly the shape this whole rig exists
+    # to avoid. Only lines written since the fixtures were planted count.
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
     hits = []
     for lg in LOGS.rglob("*.log"):
@@ -401,11 +400,10 @@ def csharp():
     if hits:
         for h in hits:
             say("witness (this run): %s" % h)
-        # The COUNT is the sharp part, and it is DERIVED, never hardcoded. It was a
-        # literal "deleted 1" until the last-access case became the second doomed group,
-        # and the check duly went red on a correct sweep -- a stale expectation is the
-        # same defect class this rig hunts, so it now counts the doomed Snapshots
-        # fixtures instead.
+        # The COUNT is the sharp part, and it is DERIVED, never hardcoded: a literal goes
+        # red on a correct sweep the day a doomed case is added, and a stale expectation
+        # is the same defect class this rig hunts. So it counts the doomed Snapshots
+        # fixtures.
         want = sum(1 for f, m, _ in planted
                    if m and f.parent.name == "Snapshots")
         if not any(("deleted %d " % want) in h for h in hits):
@@ -542,9 +540,8 @@ def logsvc():
         if not ok:
             fails.append("%s: wanted %s (%s)" % (path.name, "gone" if must_die else "present", why))
 
-    # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did -- and the
-    # line is recent: it used to dereference a null logger and was never once written,
-    # so the folders were deleted silently (LoggingService.cs).
+    # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did
+    # (LoggingService.cs) -- a sweep that writes no line deletes the folders silently.
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
     hits = []
     for lg in ui.glob("init-*.log"):

@@ -9,17 +9,15 @@ namespace UE5DumpUI.Tests;
 /// How the Pointers panel reads the DLL's <c>*_method</c> label.
 ///
 /// <para>The panel's two "something unusual happened" badges — <c>ShowGObjectsWarning</c>
-/// ("found via fallback") and <c>ShowGWorldRecovered</c> ("found via a recovery path") — used
-/// to be written as <c>method != "aob"</c>. That was only ever equivalent to the intended
-/// question while a successful scan could report nothing but <c>"aob"</c>, and the signature
-/// tables have always also held symbol exports and CallFollow entries. Once the DLL started
-/// labelling those honestly, the equality test would have called the STRONGEST result the
-/// scanner can produce a "fallback".</para>
+/// ("found via fallback") and <c>ShowGWorldRecovered</c> ("found via a recovery path") — must
+/// not be <c>method != "aob"</c>: the signature tables also hold symbol exports and CallFollow
+/// entries, which the DLL labels as such, and that inequality would call the STRONGEST result
+/// the scanner can produce a "fallback".</para>
 ///
-/// <para>Measured on Satisfactory (UE 5.6) 2026-08-12: GObjects, GNames, GWorld and GEngine
-/// all resolve through MSVC symbol exports (<c>GOBJ_EXP</c> / <c>GNAM_EXP_TOSTR</c> /
-/// <c>GWLD_EXP</c> / <c>GENG_EXP</c>). Every case below is that machine's real payload or a
-/// deliberate counterpart to it.</para>
+/// <para>On Satisfactory (UE 5.6), GObjects, GNames, GWorld and GEngine all resolve through MSVC
+/// symbol exports (<c>GOBJ_EXP</c> / <c>GNAM_EXP_TOSTR</c> / <c>GWLD_EXP</c> /
+/// <c>GENG_EXP</c>). Every case below is that game's real payload or a deliberate counterpart
+/// to it.</para>
 /// </summary>
 public class PointerPanelScanMethodTests
 {

@@ -3,9 +3,8 @@ r"""Shared harness for every register step that must MUTATE a live game to obser
     from mutate_guard import Mutation, assert_channel_carries
 
 A11 steps 2-5 and A12 steps 2-4 all have the same shape: read some bytes, write different bytes,
-issue one pipe command, assert what changed, and put the original bytes back. Six near-identical
-rigs written six times is how build 2743's three defects reached all seven copies of the mailbox
-wait at once, so the risky parts live here once.
+issue one pipe command, assert what changed, and put the original bytes back. Near-identical rigs
+written one by one carry a defect into every copy at once, so the risky parts live here once.
 
 WHAT THIS GUARANTEES, and why each guarantee exists:
 
@@ -21,9 +20,9 @@ WHAT THIS GUARANTEES, and why each guarantee exists:
     re-checked after the poke. A rig that intends to flip one allocation bit and in fact rewrites a
     count has produced a result about a different experiment.
   * **An absence is only evidence once the CHANNEL is shown to carry the thing.**
-    `assert_channel_carries` exists because A11 step 6 passed for a year against `scan-0.log`, a
-    file `Refine re-anchor:` can never reach — the marker is `LOG_CAT "OARR"`, which `Sein.cpp`
-    routes to `offsets-0.log`. Grepping the wrong file returns zero for both "the code did not do
+    `assert_channel_carries` exists because a check can pass against a file its marker never
+    reaches: `Refine re-anchor:` is `LOG_CAT "OARR"`, which `Sein.cpp` routes to `offsets-0.log`,
+    never `scan-0.log`. Grepping the wrong file returns zero for both "the code did not do
     it" and "I am reading the wrong channel". [A11-LOGPATH-2026-08-21]
 
 ⚠ A SYNTHETIC MUTATION IS NOT THE SAME EVENT AS THE GAME DOING IT. Writing a new `{dataPtr,count}`

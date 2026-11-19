@@ -5,8 +5,8 @@ r"""Check an exported SDK header's CLASS-VALUED members against the engine SOURC
     py tools/verify/sdk_source_oracle.py --selftest   # a synthetic engine tree + header; no install needed
 
 WHY THIS EXISTS
-  Every SDK-export row before [SDK-METACLASS] was checked against Dumper-7's conventions, i.e.
-  against another dumper. That proves agreement, not correctness: two dumpers can share a wrong
+  An SDK-export row checked against Dumper-7's conventions is checked against another
+  dumper. That proves agreement, not correctness: two dumpers can share a wrong
   reading. The engine source is the fact. `TSubclassOf<APawn> DefaultPawnClass;` in
   GameModeBase.h is what UHT turned into the ClassProperty the DLL walks, so a header line for
   that member can be checked against the declaration it came from -- for every native class the
@@ -523,7 +523,7 @@ def run(header: pathlib.Path, engine: pathlib.Path, show: int = 25, json_path: s
 
 
 # ---------------------------------------------------------------------------------------------
-# --selftest: every blind spot the review of 2026-09-27 (wf_63e981ac-5e4) found, as a fixture
+# --selftest: the parser's known blind spots, each as a fixture
 # ---------------------------------------------------------------------------------------------
 
 SELFTEST_SOURCE = r'''

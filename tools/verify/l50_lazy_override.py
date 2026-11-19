@@ -6,8 +6,8 @@ version is (mis)read as 5.0-5.2.
 
 The literal host (a real UE 5.0-5.2 title) does not discriminate: correctly resolved, its guess (0x1C) and its
 raw ElementSize (0x1C) agree. The defect is a version MIS-resolved across the 5.2/5.3 line, and DumperTest 5.4
-(raw 0x18) is pushed there IN-PROCESS with `set_ue_version_override {version: 502, persist: false}`: pre-fix,
-InferScalarSize's <=5.2 guess 0x1C then overrode the raw 0x18 and Arr_LazyPtr read at a 28-byte stride.
+(raw 0x18) is pushed there IN-PROCESS with `set_ue_version_override {version: 502, persist: false}`: without
+the fix, InferScalarSize's <=5.2 guess 0x1C then overrides the raw 0x18 and Arr_LazyPtr reads at a 28-byte stride.
 
   CONTROL  at 504: Arr_LazyPtr = 3 elements, array_elem_size 24, three distinct GUIDs with resolved holder names.
   ARM      after the override: the SAME -- 24, the same GUIDs and names -- and offsets-0.log after the override

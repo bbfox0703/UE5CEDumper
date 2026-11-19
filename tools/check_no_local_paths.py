@@ -2,6 +2,13 @@ r"""Fail CI if a machine-local user path leaked into a tracked file.
 
     py tools/check_no_local_paths.py
     py tools/check_no_local_paths.py --list      # show every hit, do not exit 1
+    py tools/check_no_local_paths.py --selftest  # the cannot-run controls only (every run does them first)
+
+Exit codes: 0 nothing found; 1 (EXIT_FINDING) a tracked file or an unpushed commit
+message carries a path or an identifier; 2 (EXIT_CANNOT_RUN) the tree was never
+looked at -- git missing, this copy not a git checkout, git listing nothing, or the
+checker itself failing. 2 is neither a finding nor a pass, and its first line says
+why; callers tell the two failures apart by the code alone.
 
 Why this exists: the repo is written on more than one PC and read by people who
 are not the maintainer, so a literal home directory in a doc is both wrong for
@@ -18,10 +25,24 @@ Use the ENVIRONMENT-VARIABLE form instead, which is correct on every machine:
 Placeholders are allowed (`C:\Users\<you>`), because they cannot be mistaken for
 a real account, as are the shared system accounts. Only concrete names fail.
 """
+import contextlib
+import io
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import traceback
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Python exits 1 on an uncaught exception, the code a finding uses, so a crash would read as a
+# leak: guarded() turns every crash into EXIT_CANNOT_RUN and leaves 1 meaning a finding only.
+EXIT_OK, EXIT_FINDING, EXIT_CANNOT_RUN = 0, 1, 2
+
+# The argv that runs git. A list so the self-test can put a stand-in in its place.
+GIT = ["git"]
 
 # A Windows user directory followed by a CONCRETE name.
 #
@@ -46,10 +67,9 @@ ALLOWED = {"public", "default", "all", "username", "user", "you", "youruser",
 
 # A second, NARROWER pattern that ALLOWED does not get to excuse.
 #
-# ⚠ Found 2026-09-06 in docs/archive/todo-completed-build-937.md, which had carried
-# `…/C:/Users/user/.claude/projects/<project>/memory/<file>.md` since it was archived. PATTERN
-# matched it and then waved it through, because `user` is a legitimate generic stand-in and the
-# path genuinely reads like one.
+# ⚠ PATTERN alone matches a path like
+# `…/C:/Users/user/.claude/projects/<project>/memory/<file>.md` and then waves it through,
+# because `user` is a legitimate generic stand-in and the path genuinely reads like one.
 #
 # The account name is the wrong thing to key on. What makes that path certainly-real and certainly
 # wrong is where it CONTINUES: `.claude/projects/` is a per-session Claude Code directory, and a
@@ -71,17 +91,16 @@ SKIP = ("tools/check_no_local_paths.py",)
 # gate must know "Xyz", and writing it into a tracked file publishes exactly what is being
 # protected. The patterns above sidestep it by matching a SHAPE (`C:\Users\<something>` that is not
 # a known placeholder) and never needing the value. But a bare hostname has no shape — it is just a
-# word — so shape matching cannot see it, and on 2026-09-06 the machine name was found in 13
-# tracked files, six of them in docs/archive/, with two rigs HARD-CODING it (which also broke them
-# on the second PC).
+# word — so shape matching cannot see it, whether it is typed into a doc or HARD-CODED in a rig
+# (which also breaks the rig on any other PC).
 #
 # Resolution: read the identifiers from the ENVIRONMENT of whichever machine is running the gate —
 # which is precisely the machine that could leak them. Nothing is committed and nothing is hashed.
 #
-# ⛔ HASHING WOULD BE SECURITY THEATRE, so it was rejected: usernames and hostnames come from a tiny
-# search space, and a stored sha256 of one is brute-forced in seconds. A CI secret was rejected too
-# — secrets are unavailable to pull requests from forks (this repo has 10), and the leak is authored
-# LOCALLY, long before CI ever runs.
+# ⛔ HASHING WOULD BE SECURITY THEATRE: usernames and hostnames come from a tiny search space, and
+# a stored sha256 of one is brute-forced in seconds. A CI secret does not help either — secrets are
+# unavailable to pull requests from forks, and the leak is authored LOCALLY, long before CI ever
+# runs.
 #
 # ⚠ ITS LIMIT, STATED RATHER THAN HIDDEN: it only knows the CURRENT machine. If PC A commits PC B's
 # name, A's gate cannot see it. This COMPLEMENTS the shape patterns; those remain the load-bearing
@@ -106,9 +125,9 @@ def runtime_identifiers():
 def mask_account(m):
     """`C:\\Users\\Alice` -> `C:\\Users\\A****`. The path stays readable; the identity does not.
 
-    ⚠ The example name here is FICTIONAL on purpose. An earlier version used this
-    machine's real account, and the gate could not see it because it skipped its own
-    file -- see SKIP below.
+    ⚠ The example name here is FICTIONAL on purpose: the two regex branches skip this
+    file (see SKIP below), so a real account name here would be caught only by the
+    identifier branch, and only on its own machine.
     """
     acct = m.group(1)
     return m.group(0).replace(acct, redact(acct))
@@ -130,16 +149,40 @@ def redact(value):
     return value[0] + "*" * (len(value) - 1)
 
 
+def ident_pattern(value):
+    """Word-bounded, so a name that is a substring of an ordinary word does not fire."""
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(value) + r"(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
+def scrub(text):
+    """`text` with each concrete account segment and this machine's identifiers redacted. For what
+    the gate says about itself: git's error text and a traceback carry paths too, and redact()'s
+    rule holds for every line the gate prints."""
+    out = PATTERN.sub(lambda m: m.group(0) if m.group(1).lower() in ALLOWED else mask_account(m),
+                      text)
+    for value in runtime_identifiers():
+        out = ident_pattern(value).sub(redact(value), out)
+    return out
 
-def unpushed_commit_messages():
+
+class CannotRun(Exception):
+    """The tree could not be listed, so nothing was checked."""
+
+
+def cannot_run(reason):
+    """Say that the tree was not checked, and why, under the exit code no caller reads as a finding
+    or a pass."""
+    print("check_no_local_paths: CANNOT RUN -- " + scrub(reason))
+    print("Nothing was checked: this is not a finding, and not a pass.")
+    return EXIT_CANNOT_RUN
+
+
+def unpushed_commit_messages(git=GIT, root=ROOT):
     """(sha, message) for every local commit not yet on any remote branch.
 
     ⭐ WHY MESSAGES, AND WHY ONLY THE UNPUSHED ONES. A file-level gate reads `git ls-files` and can
-    never see `%B`. That gap is not theoretical: on 2026-09-06 the account name was found in the
-    message of 4b4d6775 -- the commit that REMOVED the same string from a file restated it in its
-    own message, so the file was cleaned and the leak stayed.
+    never see `%B`, and the gap matters: a commit that REMOVES a leaked string from a file tends to
+    restate it in its own message, so the file is cleaned and the leak stays.
 
     Only unpushed commits are checked, because those are the only ones still fixable: an unpushed
     commit can be amended or rebased, a pushed one cannot be recalled. That is also exactly the
@@ -147,9 +190,9 @@ def unpushed_commit_messages():
     moment.
     """
     try:
-        rng = subprocess.run(["git", "log", "--branches", "--not", "--remotes",
-                              "--format=%H%x01%B%x02"],
-                             capture_output=True, text=True, encoding="utf-8",
+        rng = subprocess.run(git + ["log", "--branches", "--not", "--remotes",
+                                    "--format=%H%x01%B%x02"],
+                             cwd=root, capture_output=True, text=True, encoding="utf-8",
                              errors="replace")
     except OSError:
         return []
@@ -163,25 +206,36 @@ def unpushed_commit_messages():
     return out
 
 
-def tracked_files():
-    out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
-                         errors="replace").stdout
-    # ⚠ Everything is returned, INCLUDING this file. It used to be dropped here, which made the
-    # gate blind to a real account name sitting in one of its own docstrings (found on the public
-    # tip, not by the gate). The two REGEX branches are suppressed for it in main() instead --
-    # that is the narrow thing SKIP was ever needed for.
+def tracked_files(git=GIT, root=ROOT):
+    """Every tracked path, relative to `root`. Raises CannotRun when git does not list the tree:
+    a scan of no files would print CHECK OK over a tree it never saw."""
+    try:
+        r = subprocess.run(git + ["ls-files"], cwd=root, capture_output=True, text=True,
+                           errors="replace")
+    except OSError as e:
+        raise CannotRun("git could not be started (%s: %s) -- is git on PATH?"
+                        % (type(e).__name__, e)) from None
+    if r.returncode != 0:
+        why = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()][:1]
+        raise CannotRun("`git ls-files` exited %d%s" % (r.returncode, (": " + why[0]) if why else ""))
+    out = r.stdout
+    if not out.strip():
+        raise CannotRun("`git ls-files` listed no file")
+    # ⚠ Everything is returned, INCLUDING this file. Dropping it here would make the gate blind
+    # to a real account name sitting in one of its own docstrings. The two REGEX branches are
+    # suppressed for it in run() instead -- that is the narrow thing SKIP is needed for.
     return [f for f in out.splitlines() if f]
 
 
-def main(argv):
+def run(argv, git=GIT, root=ROOT):
+    """The scan of the tree at `root`; `git` is the argv that lists it."""
     list_only = "--list" in argv
-    files = tracked_files()
-    # Built once. Word-boundary so a name that is a substring of an ordinary word does not fire.
-    idents = runtime_identifiers()
-    ident_patterns = {
-        v: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(v) + r"(?![A-Za-z0-9_])", re.IGNORECASE)
-        for v in idents
-    }
+    try:
+        files = tracked_files(git, root)
+    except CannotRun as e:
+        return cannot_run(str(e))
+    # Built once.
+    ident_patterns = {v: ident_pattern(v) for v in runtime_identifiers()}
 
     hits = []
     for path in files:
@@ -189,14 +243,14 @@ def main(argv):
         # two branches for it; the identifier branch below still applies, and must.
         self_scan = path.replace(chr(92), "/").startswith(SKIP)
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            with open(os.path.join(root, path), "r", encoding="utf-8", errors="ignore") as fh:
                 for n, line in enumerate(fh, 1):
                     for m in (() if self_scan else PATTERN.finditer(line)):
                         if m.group(1).lower() in ALLOWED:
                             continue
-                        # ⚠ REDACT THE ACCOUNT SEGMENT. This branch used to print m.group(0) and
-                        # the raw line, i.e. it echoed the account name it had just caught -- which
-                        # is how a caught leak gets laundered into a commit message or a CI log.
+                        # ⚠ REDACT THE ACCOUNT SEGMENT. Printing m.group(0) and the raw line would
+                        # echo the account name it had just caught -- which is how a caught leak
+                        # gets laundered into a commit message or a CI log.
                         hits.append((path, n, mask_account(m), mask_account_line(line)))
                     # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
                     for m in (() if self_scan else SESSION_DIR_PATTERN.finditer(line)):
@@ -211,7 +265,7 @@ def main(argv):
 
     # Commit MESSAGES of unpushed commits -- see unpushed_commit_messages().
     msg_hits = []
-    for sha, msg in unpushed_commit_messages():
+    for sha, msg in unpushed_commit_messages(git, root):
         for line in msg.splitlines():
             for m in PATTERN.finditer(line):
                 if m.group(1).lower() in ALLOWED:
@@ -234,12 +288,12 @@ def main(argv):
         print("  git commit --amend        (the most recent one)")
         print("  git rebase -i <base>      (an older one; reword it)")
         print("A pushed commit message cannot be recalled, which is why only unpushed ones fail here.")
-        return 1
+        return EXIT_FINDING
 
     if not hits:
         print(f"CHECK OK: no machine-local user path in {len(files)} tracked files, "
               f"nor in any unpushed commit message.")
-        return 0
+        return EXIT_OK
 
     print(f"FOUND {len(hits)} machine-local path(s) in tracked files:")
     for path, n, frag, line in hits:
@@ -247,9 +301,107 @@ def main(argv):
         print(f"      {line}")
     print()
     print("Replace with %LOCALAPPDATA% / %APPDATA% / %USERPROFILE%, or a <placeholder>.")
-    return 0 if list_only else 1
+    return EXIT_OK if list_only else EXIT_FINDING
+
+
+def guarded(entry, argv):
+    """`entry(argv)`, with a crash reported as EXIT_CANNOT_RUN: see EXIT_FINDING."""
+    try:
+        return entry(argv)
+    except Exception as e:
+        print(scrub(traceback.format_exc()).rstrip())
+        return cannot_run("the checker raised %s (traceback above)" % type(e).__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Self-test. Each case is a way the check can fail to look at the tree, and each must come out
+# EXIT_CANNOT_RUN: never EXIT_FINDING, which says a name leaked, and never EXIT_OK, which says the
+# tree is clean. A finding and a clean tree are the controls, so "always 2" cannot pass. Git itself
+# is never run: a stand-in answers in its place, so the cases hold on a machine without git and
+# touch no repository.
+
+# A concrete user home that names nobody, assembled so no line of this file spells one out.
+_FIXTURE_HOME = "/".join(("C:", "Users", "Alice"))
+
+
+def _stand_in_git(listing="", rc=0, stderr=""):
+    """An argv that answers like git: `ls-files` writes `listing` and `stderr` and exits `rc`;
+    any other command writes nothing and exits 0."""
+    code = ("import sys; a = sys.argv[1:2] == ['ls-files']; "
+            "sys.stdout.write(%r if a else ''); sys.stderr.write(%r if a else ''); "
+            "sys.exit(%d if a else 0)" % (listing, stderr, rc))
+    return [sys.executable, "-I", "-c", code]
+
+
+def _crash(_argv):
+    raise RuntimeError("cannot open " + _FIXTURE_HOME + "/notes.txt")
+
+
+def _expect(what, want, call, must_say=(), must_not_say=()):
+    """-> how `call()` missed: its exit code, and what its output says or must not say."""
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            got = call()
+    except Exception as e:
+        return ["%s: raised %s instead of exiting %d" % (what, type(e).__name__, want)]
+    text = out.getvalue()
+    missed = [] if got == want else ["%s: exit %r, wanted %d" % (what, got, want)]
+    missed += ["%s: the output does not say %r" % (what, s) for s in must_say if s not in text]
+    missed += ["%s: the output says %r" % (what, s) for s in must_not_say if s in text]
+    return missed
+
+
+def selftest():
+    """-> (cases run, [how each missed])."""
+    tmp = tempfile.mkdtemp(prefix="check_no_local_paths_")
+    try:
+        with open(os.path.join(tmp, "leak.txt"), "w", encoding="utf-8") as fh:
+            fh.write("see " + _FIXTURE_HOME + "/notes.txt\n")
+        with open(os.path.join(tmp, "clean.txt"), "w", encoding="utf-8") as fh:
+            fh.write("see %LOCALAPPDATA%/notes.txt\n")
+        not_a_repo = "fatal: not a git repository (or any of the parent directories): .git"
+        not_owned = "fatal: detected dubious ownership in repository at '" + _FIXTURE_HOME + "/repo'"
+        no_git = [os.path.join(tmp, "no-such-git.exe")]
+        cases = [
+            ("git is not on PATH", EXIT_CANNOT_RUN,
+             lambda: run([], no_git, tmp), ["CANNOT RUN"], []),
+            ("this copy is not a git checkout", EXIT_CANNOT_RUN,
+             lambda: run([], _stand_in_git(rc=128, stderr=not_a_repo), tmp),
+             ["CANNOT RUN", "not a git repository"], []),
+            ("git lists no file", EXIT_CANNOT_RUN,
+             lambda: run([], _stand_in_git(), tmp), ["CANNOT RUN"], []),
+            ("git's reason names an account, which is redacted", EXIT_CANNOT_RUN,
+             lambda: run([], _stand_in_git(rc=128, stderr=not_owned), tmp),
+             ["CANNOT RUN", "dubious ownership"], ["Alice"]),
+            ("the checker crashes, and its traceback is redacted", EXIT_CANNOT_RUN,
+             lambda: guarded(_crash, []), ["CANNOT RUN", "RuntimeError"], ["Alice"]),
+            ("control: a concrete user home is a finding", EXIT_FINDING,
+             lambda: run([], _stand_in_git("leak.txt\n"), tmp), ["FOUND"], ["Alice"]),
+            ("control: a clean tree passes", EXIT_OK,
+             lambda: run([], _stand_in_git("clean.txt\n"), tmp), ["CHECK OK"], []),
+        ]
+        missed = []
+        for what, want, call, say, not_say in cases:
+            missed += _expect(what, want, call, say, not_say)
+        return len(cases), missed
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main(argv):
+    n, missed = selftest()
+    if missed:
+        for m in missed:
+            print("SELFTEST FAILED: " + m)
+        return cannot_run("the checker misses its own controls (above), so its verdict on the "
+                          "tree would mean nothing")
+    if "--selftest" in argv:
+        print("check_no_local_paths: selftest OK (%d cases)" % n)
+        return EXIT_OK
+    return run(argv)
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(guarded(main, sys.argv[1:]))

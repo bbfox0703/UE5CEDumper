@@ -53,11 +53,23 @@ public static class CeXmlExportService
     /// (default 256, floored at 16 by the toolbar slider). Read by
     /// <see cref="EmitStringLeaf"/>; 0 (unset) falls back to 256. Because the value is a
     /// fixed read window (with ZeroTerminate=1 CE still stops at the null), a generous
-    /// length never truncates a shorter live string — it only guards strings that later
-    /// grow. Copy CE XML / Copy CE Field only (CSX uses its own Bytesize).
+    /// length never truncates a shorter live string — it leaves room to show strings that
+    /// later grow. It bounds no write: CE grows it to fit a typed value, which is why the
+    /// record is read-only unless <see cref="_ceEditableStrings"/> is set
+    /// (<see cref="StringRecordReadOnlyList"/>). Copy CE XML / Copy CE Field only (CSX uses
+    /// its own Bytesize).
     /// </summary>
     [ThreadStatic]
     private static int _ceStringLength;
+
+    /// <summary>
+    /// [CEXML-STRING-CAPACITY] 2026-11-19 The export's "Editable string records" option, off by default. Off, every
+    /// String record <see cref="EmitStringLeaf"/> writes carries <see cref="StringRecordReadOnlyList"/>; on, the list
+    /// is left out and CE's value editor writes the record, past the game's buffer when the typed string is longer.
+    /// Set per Generate* entry.
+    /// </summary>
+    [ThreadStatic]
+    private static bool _ceEditableStrings;
 
     /// <summary>
     /// Copy CE Field "Fabricate empty array slots" target count (0 = off, the default and
@@ -496,7 +508,7 @@ public static class CeXmlExportService
     // Weak (FWeakObjectPtr {ObjectIndex, SerialNumber}), Soft (FSoftObjectPath) and
     // Lazy (an FWeakObjectPtr, then the object's FGuid) elements are NOT raw pointers even though the DLL resolves them
     // to a live UObject* — dereferencing their slot would land CE at a garbage
-    // address, so they must keep their existing leaf / Phase-G handling.
+    // address, so they must keep their existing leaf / soft-array handling.
     //
     // Interface is absent here for a DIFFERENT reason than Weak/Soft/Lazy: its first
     // 8 bytes ARE a UObject*, but a TScriptInterface element is 16 bytes and the DLL
@@ -533,7 +545,7 @@ public static class CeXmlExportService
         typeName is "ObjectProperty" or "ClassProperty" or "InterfaceProperty";
 
     // ========================================
-    // Unified drilldown resolver (docs/ce-export-drilldown-spec.md Phase A)
+    // Unified drilldown resolver (docs/ce-export-drilldown-spec.md, "Phase A implementation contract")
     // ========================================
 
     /// <summary>
@@ -544,8 +556,8 @@ public static class CeXmlExportService
     /// level), recursing into each so nested containers expand too. Populates
     /// <paramref name="resolvedStructs"/> (keyed by StructDataAddr) and
     /// <paramref name="resolvedInstances"/> (keyed by PtrAddress) — the same keys
-    /// the emit phase looks up. Replaces the separate ResolveStructFieldsAsync +
-    /// ResolvePointerInstancesAsync calls for CE XML export.
+    /// the emit phase looks up. CE XML export calls this in place of the separate
+    /// ResolveStructFieldsAsync + ResolvePointerInstancesAsync calls.
     /// </summary>
     public static async Task ResolveDrilldownAsync(
         IDumpService dump,
@@ -767,7 +779,7 @@ public static class CeXmlExportService
             // TArray<ObjectProperty> (object pointers, e.g. SpawnedAttributes): emit
             // each non-null element pointer so the resolver walks the target object
             // and populates resolvedInstances — without this, drilling into a
-            // selected object-array element was a no-op (the element emitted as a
+            // selected object-array element is a no-op (the element emits as a
             // plain 8-byte pointer regardless of drilldown depth). ArrayElementValue
             // carries no PtrClassAddr; WalkInstance resolves the class from the
             // pointer itself when class_addr is omitted.
@@ -1172,6 +1184,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1197,6 +1210,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -1310,6 +1324,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1331,6 +1346,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -1432,8 +1448,8 @@ public static class CeXmlExportService
     /// and a "base" pointer entry dereferences it. All breadcrumb/field children nest under base.
     /// This format survives game restarts (re-scans AOB on script activation).
     /// <para>The <c>moduleName</c> argument is NOT used: the script scans CE's own name for the main module
-    /// (<c>process</c>), which is the ANSI bytes <c>enumModules</c> compares -- a baked name is not, for a non-ASCII
-    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW] (T10)</para>
+    /// (<see cref="CeLuaHygiene.MainModuleNameLua"/>), which is the ANSI bytes <c>enumModules</c> compares -- a baked
+    /// name is not, for a non-ASCII exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW]</para>
     /// </summary>
     public static string GenerateAobWrappedXml(
         string rootName,
@@ -1458,6 +1474,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1481,6 +1498,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -1612,8 +1630,8 @@ public static class CeXmlExportService
         sb.AppendLine("}");
         sb.AppendLine();
 
-        // Use CE global 'process' for the attached process module name
-        sb.AppendLine("local module_name = process");
+        // The opened process's main module as CE names it; CeLuaHygiene.MainModuleNameLua says why not `process`.
+        sb.AppendLine("local module_name = " + CeLuaHygiene.MainModuleNameLua);
         sb.AppendLine();
 
         // Scan and register loop
@@ -1801,7 +1819,8 @@ public static class CeXmlExportService
         {
             sb.AppendLine($"local entry = {{aob='{aob}', pos={aobPos}, aoblen={aobLen}, symbol='{gworldSymbol}'}}");
             sb.AppendLine("local gworld_base = nil");
-            sb.AppendLine("local aob_addr_str = AOBScanModuleUE(process, entry.aob)");
+            sb.AppendLine("local module_name = " + CeLuaHygiene.MainModuleNameLua);
+            sb.AppendLine("local aob_addr_str = AOBScanModuleUE(module_name, entry.aob)");
             sb.AppendLine("if aob_addr_str then");
             sb.AppendLine("  local aob_addr_val = tonumber(aob_addr_str, 16)");
             sb.AppendLine("  local relative_offset = readInteger(aob_addr_val + entry.pos, true)");
@@ -2185,7 +2204,7 @@ public static class CeXmlExportService
         }
         int f = seg;
 
-        // Joined spine so the user can see exactly what was collapsed (decision #1).
+        // Joined spine so the user can see exactly what was collapsed.
         var description = string.Join(" ▸ ", descParts);
 
         if (d.Count == 0)
@@ -2195,7 +2214,7 @@ public static class CeXmlExportService
         }
 
         // CE document order: outermost (final, no-deref) offset F first, then the
-        // deref offsets in reverse depth order. Summed hex per offset (decision #2).
+        // deref offsets in reverse depth order. Summed hex per offset.
         var offsets = new int[d.Count];
         offsets[0] = f;
         for (int k = 1; k < d.Count; k++)
@@ -2346,7 +2365,7 @@ public static class CeXmlExportService
                 continue;
             }
 
-            // ArrayProperty: emit as group with element children (Phase C).
+            // ArrayProperty: emit as group with element children.
             // Multicast delegates are exposed as implicit DelegateProperty arrays.
             // ⚠ The field's first 8 bytes are the InvocationList::Data pointer only on a
             // Shipping build: a checked build (UE 5.3+, DO_CHECK on) puts an 8-byte access
@@ -2771,7 +2790,7 @@ public static class CeXmlExportService
             ? field.ArrayStructType : field.ArrayInnerType;
         var desc = DecorateDesc(field.Name, field.Offset, typeLabel);
 
-        // Phase F: struct array with resolved sub-fields → per-element group emission
+        // Struct array with resolved sub-fields → per-element group emission
         if (field.ArrayInnerType == "StructProperty"
             && field.ArrayElements is { Count: > 0 }
             && field.ArrayElements[0].StructFields is { Count: > 0 })
@@ -2805,7 +2824,7 @@ public static class CeXmlExportService
             return;
         }
 
-        // Phase G: TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
+        // TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
         // struct group with WeakPtr leaf at +0 + FName leaf(s) at SoftArrayPathOffset
         // (and +SoftArrayFNameSize for UE5.1+'s FTopLevelAssetPath layout). That offset
         // is 0x10 only up to UE 5.2 — 5.3 deleted TPersistentObjectPtr::TagAtLastTest and
@@ -2815,7 +2834,7 @@ public static class CeXmlExportService
         // this, the inner element collapses to a single 8B WeakPtr hex blob
         // and the FSoftObjectPath::AssetPathName / PackageName is invisible.
         // Soft array layout metadata (fnameSize + FTopLevelAssetPath flag)
-        // comes from the DLL — see Ubel.cpp Phase G handler.
+        // comes from the DLL — see the soft-array branch of Ubel.cpp's walk (IsSoftObjectArrayType).
         if ((field.ArrayInnerType == "SoftObjectProperty"
              || field.ArrayInnerType == "SoftClassProperty")
             && field.SoftArrayFNameSize > 0
@@ -3166,7 +3185,7 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Phase G: Emit a TArray&lt;TSoftObjectPtr|TSoftClassPtr&gt; with per-element
+    /// Emit a TArray&lt;TSoftObjectPtr|TSoftClassPtr&gt; with per-element
     /// struct groups so the FName leaf(s) at the FSoftObjectPath sub-offset
     /// are addressable in CE — instead of a single 8B WeakPtr hex blob.
     ///
@@ -3283,8 +3302,8 @@ public static class CeXmlExportService
     private const int AssetPtrPathOffset = 0x10;
 
     /// <summary>
-    /// [UE4-ASSETPTR-EXPORTS] A TArray&lt;TAssetPtr&gt; (UE 4.11-4.17) laid out as the Phase G soft array is: one group
-    /// per element at its stride, holding the WeakPtr leaf at +0 and the asset path. That path is an FString, not an
+    /// [UE4-ASSETPTR-EXPORTS] A TArray&lt;TAssetPtr&gt; (UE 4.11-4.17) laid out as EmitSoftObjectArrayProperty lays
+    /// out a soft array: one group per element at its stride, holding the WeakPtr leaf at +0 and the asset path. That path is an FString, not an
     /// FName, so it is a CE String one Data-pointer hop away -- readable as text, where the soft array needs a
     /// DropDownList to name an FName index. The stride is the DLL's: it publishes FAssetPtr's one size for these.
     /// </summary>
@@ -3321,7 +3340,7 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Phase F: Emit struct array with per-element groups containing field children.
+    /// Emit struct array with per-element groups containing field children.
     /// Array group: Offsets=[0] (deref TArray.Data)
     /// Element group: Address=+{N*elemSize}, no Offsets (inline within Data)
     /// Field leaf: Address=+{fieldOffset} (relative to element start)
@@ -3400,7 +3419,7 @@ public static class CeXmlExportService
                     else
                     {
                         // Non-scalar sub-field (nested struct / map / set / array):
-                        // the Phase F array read doesn't carry its inner data, so
+                        // the struct-array read doesn't carry its inner data, so
                         // surface it as a collapsed placeholder folder at its offset
                         // instead of dropping it silently — the user still sees every
                         // field and its address (and can add children in CE).
@@ -3420,7 +3439,7 @@ public static class CeXmlExportService
         // Fabricate (Copy CE Field, _fabricateArrayCount > 0): extend a struct array past Num
         // by replicating a resolved element's field layout at each new +i*ElemSize. Struct
         // arrays are dense (every walked slot resolves), so this is pure extend — no null slots
-        // to fill. Rich re-walked template only; the shallow Phase-F preview isn't fabricated.
+        // to fill. Rich re-walked template only; the shallow struct-array preview isn't fabricated.
         int walkedStruct = field.ArrayElements!.Count;
         if (FabricateActive && field.ArrayElemSize > 0 && canResolveElem)
         {
@@ -3943,6 +3962,24 @@ public static class CeXmlExportService
         typeName is "StrProperty" or "Utf8StrProperty" or "AnsiStrProperty";
 
     /// <summary>
+    /// [CEXML-STRING-CAPACITY] 2026-11-19 The drop-down list a String record carries, with <c>ReadOnly="1"</c>, so that
+    /// CE's value editor cannot write the string; <see cref="EmitStringLeaf"/> leaves it out when the export's "Editable
+    /// string records" option (<see cref="_ceEditableStrings"/>) is on. CE writes a typed value whole, plus its
+    /// terminator, at the FString's Data pointer whatever the record's Length (it grows Length to fit: cheat-engine
+    /// MemoryRecordUnit.pas, TMemoryRecord.SetValue), and the game's heap buffer holds TArray Max characters, a number
+    /// the live walk does not read. A record with a drop-down list gets no inline editor, and CE's list dialog, when
+    /// user input is disallowed, offers only the listed items, drops a trailing <c>*</c> entry and writes nothing when
+    /// none is picked; this list's one entry is that <c>*</c>, so there is nothing to pick. DisplayValueAsItem stays
+    /// off, so the value column still shows the live string. CE's Dropdown options dialog shows the line with
+    /// "Disallow manual user input" ticked, so the reason travels with the record.
+    /// <para>CE still writes the record from a multi-record edit begun on another record, a parent record set to pass
+    /// its value to its children, a hotkey, a freeze after the game moves the string to a smaller buffer, or Lua's
+    /// <c>memrec.Value</c>, and a user who empties the list gets the unbounded write back.</para>
+    /// </summary>
+    private const string StringRecordReadOnlyList =
+        "*:read-only -- CE would write a typed string whole, even past the buffer the game allocated";
+
+    /// <summary>
     /// Emit a CE String leaf with proper Length/Unicode/CodePage/ZeroTerminate.
     /// CE's String type encodes three modes via the Unicode + CodePage flags:
     ///   StrProperty     = FString (wchar_t*, UTF-16)  -> Unicode=1, CodePage=0
@@ -3950,6 +3987,7 @@ public static class CeXmlExportService
     ///   Utf8StrProperty = FUtf8String (char*, UTF-8)  -> Unicode=0, CodePage=1
     /// All three share the FString TArray header { Data ptr, int32 Count, int32 Max },
     /// so Offsets=[0] dereferences the Data pointer to reach the character buffer.
+    /// CE's value editor cannot write the record unless the export allows it: <see cref="StringRecordReadOnlyList"/>.
     /// </summary>
     private static void EmitStringLeaf(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool unicode, bool codepage = false)
@@ -3970,6 +4008,8 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}  <Unicode>{(unicode ? 1 : 0)}</Unicode>");
         sb.AppendLine($"{indent}  <CodePage>{(codepage ? 1 : 0)}</CodePage>");
         sb.AppendLine($"{indent}  <ZeroTerminate>1</ZeroTerminate>");
+        if (!_ceEditableStrings)
+            sb.AppendLine($"{indent}  <DropDownList ReadOnly=\"1\">{EscapeXmlContent(StringRecordReadOnlyList)}</DropDownList>");
         sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
@@ -4121,7 +4161,7 @@ public static class CeXmlExportService
     internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an EXPORT says, as an XML comment, when UEnum::Names was never located on
     /// this build. ⛔ An artifact: English, never from en.axaml -- a table written under one UI language must read the same
-    /// under another. [I18N-READINESS-2026-11-04] P4</summary>
+    /// under another. [I18N-READINESS-2026-11-04]</summary>
     internal const string EnumNamesUnavailableExportNote =
         "Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers";
     /// <summary>The same fact on the STATUS line, in the UI's words (en.axaml).</summary>
@@ -4422,7 +4462,7 @@ public static class CeXmlExportService
     /// shows the FName ComparisonIndex (paired with a DropDownList of names) rather than the whole
     /// 8- or 16-byte FName, and the pointer flavours stay 8 regardless of stride.</para>
     ///
-    /// <para>The earlier summary, kept: Map an array inner type name to CE field info.
+    /// <para>Maps an array inner type name to CE field info.
     /// Similar to MapCeField but takes a type name string (for array element types).
     /// BoolProperty in arrays = full byte (no bitfield).
     /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).
@@ -4457,29 +4497,29 @@ public static class CeXmlExportService
             // FName index
             "NameProperty" => new CeFieldInfo("4 Bytes"),
 
-            // Phase D: pointer types — 8 bytes, shown as hex
+            // Pointer types — 8 bytes, shown as hex
             "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "ClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase E: weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
+            // Weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
             "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase G: TSoftObjectPtr / TSoftClassPtr — first 8 bytes is FWeakObjectPtr
+            // TSoftObjectPtr / TSoftClassPtr — first 8 bytes is FWeakObjectPtr
             // (ObjectIndex + SerialNumber). Element stride uses ArrayElemSize so
             // consecutive elements remain aligned to TPersistentObjectPtr layout.
             "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "SoftClassProperty"  => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase H: TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
+            // TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
             "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's TAssetPtr / TAssetSubclassOf — first 8 bytes is FWeakObjectPtr too
             "AssetObjectProperty" or "AssetClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
+            // TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase J: FScriptDelegate — FWeakObjectPtr (target) at the payload's first
+            // FScriptDelegate — FWeakObjectPtr (target) at the payload's first
             // 8 bytes. Element stride uses ArrayElemSize so consecutive elements stay aligned
             // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
             // ⚠ "first 8 bytes" is relative to the PAYLOAD, not to the field: a checked build
@@ -4489,7 +4529,7 @@ public static class CeXmlExportService
             // adds per element through ElemDelegatePad. [A4-DELEGATE-ARRAY-PAD]
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase K: FMulticastScriptDelegate — the inner TArray<FScriptDelegate>::Data
+            // FMulticastScriptDelegate — the inner TArray<FScriptDelegate>::Data
             // pointer at the payload's first 8 bytes (same ⚠ about the detector), and the
             // element stride comes off the wire as ArrayElemSize, NOT from a baked 16: it is
             // 16 in Shipping/Test and 24 in a checked build.

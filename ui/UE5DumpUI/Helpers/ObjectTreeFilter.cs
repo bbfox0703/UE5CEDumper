@@ -5,8 +5,8 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// Multi-term substring matcher for the Object Tree text filter. The filter
 /// box accepts whitespace-separated terms; a node matches only when EVERY term
-/// is found (case-insensitive) in at least one of its fields. This is the
-/// "two-layer" filter the user asked for: typing "BP_ char" keeps objects whose
+/// is found (case-insensitive) in at least one of its fields. This is a
+/// "two-layer" filter: typing "BP_ char" keeps objects whose
 /// name / class / address contain BOTH "BP_" and "char", in any order — so you
 /// can narrow by one term and refine with the next without a second filter box.
 /// </summary>
@@ -29,7 +29,7 @@ public static class ObjectTreeFilter
     /// case-insensitive substring of at least one of the supplied fields.
     /// An empty term list matches everything (AND over zero terms is true).
     /// This 3-field overload is the allocation-free hot path for the Object Tree
-    /// paginate (486K nodes); other panels use the <c>params</c> overload below.
+    /// paginate; other field counts take the <c>params</c> overload below.
     /// </summary>
     public static bool MatchesAllTerms(string[] terms, string name, string className, string address)
     {
@@ -50,10 +50,11 @@ public static class ObjectTreeFilter
     /// every term must be a case-insensitive substring of at least one
     /// <paramref name="fields"/> value (term-level AND, field-level OR). Null or
     /// empty fields are skipped. An empty term list matches everything. This is the
-    /// shared "space = AND" matcher every panel's keyword filter uses — one whitespace-
-    /// separated term list, each term required against whatever fields that panel shows.
-    /// The 3-string overload takes precedence for its exact-arity callers (no array
-    /// allocation); this <c>params</c> form serves the 1/2/4/5-field filters.
+    /// shared "space = AND" matcher ui/CLAUDE.md requires of every client-side keyword
+    /// box — one whitespace-separated term list, each term required against whatever
+    /// fields that panel shows. The 3-string overload takes precedence for its
+    /// exact-arity callers (no array allocation); this <c>params</c> form serves any
+    /// other field count.
     /// </summary>
     public static bool MatchesAllTerms(string[] terms, params string?[] fields)
     {

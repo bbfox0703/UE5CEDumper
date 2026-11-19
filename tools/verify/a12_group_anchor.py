@@ -2,9 +2,10 @@ r"""A12 steps 1, 4 (the no-change half), 5 and 6 -- group-mode container anchori
 
     py tools/verify/a12_group_anchor.py
 
-THE CLAIM (`A12`, build 3261). A11's re-anchoring, but in GROUP mode, where the leaf address has
-to survive three by-name hops. The rule and the anchor factories are unit-pinned (17 assertions,
-two negative controls); the WIRING is not, because no target compiles `Aura.cpp`.
+THE CLAIM (row `A12` in docs/auto-verification-session-plan.md). The single-value re-anchoring
+(a11_container_anchor.py), but in GROUP mode, where the leaf address has to survive three by-name hops. The rule and the anchor
+factories are unit-pinned (with negative controls); the WIRING is not: `Aura.cpp` is compiled into
+`dll_core_test`, but no unit test drives a group scan and its refine over a live engine's objects.
 
 Grep by FORMAT STRING: `RefineGroup re-anchor:` (whole-pass summary), `container-moved=`
 (per-candidate drop tally), `carries no ValueAnchor` (the stamp-dropped alarm).
@@ -36,16 +37,15 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
 
-# ⚠ scan-0.log, and the reason is subtle enough that it was got wrong in BOTH directions.
+# ⚠ scan-0.log, and the reason is subtle enough to get wrong in EITHER direction.
 # Aura.cpp declares `#define LOG_CAT "OARR"`, which routes its LOG_INFO/LOG_WARN calls to
-# offsets-0.log — that is where A11's `Radar: Refine re-anchor` goes, tagged [OARR]. But the
-# THREE markers this rig greps are not LOG_* calls: they are `Sein::Info("SCAN:grp", ...)` /
-# `Sein::Debug("SCAN:grp", ...)`, which pass an EXPLICIT category that overrides the file's
+# offsets-0.log — that is where the single-value `Radar: Refine re-anchor` goes, tagged [OARR].
+# But the THREE markers this rig greps are not LOG_* calls: they are `Sein::Info("SCAN:grp", ...)`
+# / `Sein::Debug("SCAN:grp", ...)`, which pass an EXPLICIT category that overrides the file's
 # default. "SCAN:grp" matches Sein.cpp's { "SCAN", 4, LF_Scan } prefix rule -> scan-0.log,
-# tagged [SCAN:grp]. Measured: scan-0.log holds them, offsets-0.log holds none.
+# tagged [SCAN:grp]; offsets-0.log holds none of them.
 # ⭐ So one source file emits two nearly identical markers to two different logs. The file's
-# LOG_CAT is a DEFAULT, not the answer — read the CALL. (93 LOG_* vs 22 explicit Sein:: in
-# Aura.cpp.) [A12-LOGPATH-2026-08-21]
+# LOG_CAT is a DEFAULT, not the answer — read the CALL. [A12-LOGPATH-2026-08-21]
 LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
 SCANLOG = LOGDIR / "scan-0.log"
 SCAN = SCANLOG          # the name the rest of the file uses

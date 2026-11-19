@@ -9,31 +9,29 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// The exported SDK header must be valid C++.
 ///
-/// <para>It was not: <c>OptionalProperty</c> and any unresolved <c>StructProperty</c> baked the array
-/// extent into the TYPE (<c>uint8_t[0x40] CellBounds;</c>), which is a syntax error. A real
-/// 75,342-line export carried 5 of them — every one an <c>OptionalProperty</c> — against 7,543
-/// well-formed <c>uint8_t Pad_0000[0x0028];</c> padding declarations, so the padding emitter was
-/// always right and only the two fallbacks were wrong. <c>CellBounds</c> is an engine (World
-/// Partition) property, so this was not sample-only.</para>
+/// <para>An array extent baked into the TYPE (<c>uint8_t[0x40] CellBounds;</c>) is a syntax error.
+/// The padding emitter writes the well-formed <c>uint8_t Pad_0000[0x0028];</c>; the shapes at risk
+/// are the fallbacks for <c>OptionalProperty</c> and an unresolved <c>StructProperty</c>.
+/// <c>CellBounds</c> is an engine (World Partition) property, so a real export reaches them, not
+/// only a sample.</para>
 ///
-/// <para>Nothing caught it because the emitters were unit-covered but never over a
-/// <c>TOptional</c> field, and because a generated header is only ever READ in this repo's checks,
-/// never compiled. <see cref="EveryMemberDeclaratorIsWellFormed"/> is the general oracle — it walks
-/// every emitted member and rejects an extent that appears before the identifier, whatever produced
-/// it — and it also writes the compile-smoke artifact that <c>tools/verify/compile_sdk_header.py</c>
-/// feeds to a real compiler.</para>
+/// <para>Emitter unit tests cover only the field types they name, and a generated header is only
+/// ever READ in this repo's checks, never compiled. <see cref="EveryMemberDeclaratorIsWellFormed"/>
+/// is the general oracle — it walks every emitted member and rejects an extent that appears before
+/// the identifier, whatever produced it — and it also writes the compile-smoke artifact that
+/// <c>tools/verify/compile_sdk_header.py</c> feeds to a real compiler.</para>
 /// </summary>
 public class SdkHeaderDeclaratorTests
 {
     // ------------------------------------------------------------------
-    // The two fallback paths, at the level the defect actually appeared:
+    // The two fallback paths, at the level the defect actually shows:
     // the emitted declaration, not the type string in isolation.
     // ------------------------------------------------------------------
 
     [Fact]
     public void OptionalProperty_EmitsExtentAfterTheIdentifier()
     {
-        // The exact field from the export that surfaced this: FWorldPartitionCellBounds is a
+        // A real engine field of that shape: FWorldPartitionCellBounds is a
         // TOptional UPROPERTY, so the DLL reports OptionalProperty and no struct type.
         var classInfo = new ClassInfoModel
         {
@@ -94,7 +92,7 @@ public class SdkHeaderDeclaratorTests
     public void ZeroSizedRawFallback_DoesNotEmitAZeroLengthArray()
     {
         // `uint8_t Name[0x0];` is rejected by MSVC (C2466), which would reproduce the very failure
-        // this fix is about. A byte is the smallest thing C++ can express here.
+        // this file guards against. A byte is the smallest thing C++ can express here.
         var classInfo = new ClassInfoModel
         {
             Name = "FDegenerate",
@@ -113,7 +111,7 @@ public class SdkHeaderDeclaratorTests
     }
 
     // ------------------------------------------------------------------
-    // Negative controls — the paths that were already correct must not move.
+    // Negative controls — the paths that resolve plainly must not move.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -139,8 +137,8 @@ public class SdkHeaderDeclaratorTests
     [Fact]
     public void PaddingDeclarationsAreByteIdenticalToBeforeTheFix()
     {
-        // 7,543 of these in the export that found the bug. They were the correct model for the
-        // fix, so a change here would mean the fix went the wrong way.
+        // Padding declarations are the correct model the other declarators follow, so a change
+        // here would mean a declarator change went the wrong way.
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 },
@@ -340,7 +338,7 @@ public class SdkHeaderDeclaratorTests
         };
 
         // A whole-pool export whose TYPE names collide or are not identifiers (SdkTypeNameTests has
-        // one case each): the AnimBlueprint pair that used to inherit from itself, a dash, a keyword,
+        // one case each): the AnimBlueprint pair that can come out inheriting from itself, a dash, a keyword,
         // and a type named like a header built-in. Listed supers-first, as GObjects has them, because
         // the export does not reorder. Its two include lines are dropped: this unit includes nothing.
         var pool = new SdkPoolDump()

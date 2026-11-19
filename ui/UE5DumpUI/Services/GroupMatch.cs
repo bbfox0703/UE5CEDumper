@@ -83,9 +83,9 @@ public static class GroupMatch
     //
     // [W2-GROUPMATCH-ENUM] EnumProperty is a 1-byte UNSIGNED leaf, exactly as the live matcher sees
     // it: Radar maps EnumProperty -> UInt8 and admits it under kNumericAll but NOT kNumericNoByte.
-    // So it joins ALL THREE predicates below together. ⛔ Adding it to WidthBytes alone was the
-    // recorded harmful fix: IsOneByte keys on the same set, and NumericNoByte would then admit enums
-    // the live scan excludes.
+    // So it joins ALL THREE predicates below together. ⛔ Adding it to WidthBytes alone is harmful:
+    // IsOneByte keys on the same set, and NumericNoByte would then admit enums the live scan
+    // excludes.
 
     private static int WidthBytes(string t) => t switch
     {
@@ -128,8 +128,8 @@ public static class GroupMatch
     }
 
     /// <summary>[A4-AB4-BETWEEN] Does the inclusive range [a, b] -- either order -- meet the leaf's width at all? The
-    /// live matcher now clamps each bound into the width's range instead of requiring both to encode, so a width is
-    /// lost only when the range misses it entirely. A float leaf takes any finite pair, as TargetFitsWidth did.</summary>
+    /// live matcher clamps each bound into the width's range rather than requiring both to encode, so a width is
+    /// lost only when the range misses it entirely. A float leaf takes any finite pair, as TargetFitsWidth does.</summary>
     private static bool BetweenOverlapsWidth(double a, double b, string t)
     {
         if (double.IsNaN(a) || double.IsNaN(b)) return false;
@@ -163,8 +163,8 @@ public static class GroupMatch
     private static bool EveryValueSatisfies(double target, string t, bool bigger)
     {
         // +/-Infinity lies beyond every integer range, exactly as in Radar's verdict; only NaN has no
-        // answer. (review of aaf6a022) Float leaves never get here: TargetFitsWidth accepts any finite
-        // target for them and rejects a non-finite one, which the DLL does not -- older and separate.
+        // answer. Float leaves never get here: TargetFitsWidth accepts any finite target for them and
+        // rejects a non-finite one, which the DLL does not -- a separate difference from this verdict.
         if (double.IsNaN(target) || IsFloat(t)) return false;
         if (!IntegerRange(t, out double min, out double max)) return false;
         return bigger ? target < min : target > max;
@@ -232,7 +232,7 @@ public static class GroupMatch
                 // Float leaves compare the DISPLAYED (reduced) values so sub-display
                 // jitter (100.1→100.4) reads as Unchanged — the prev-value mode the user
                 // asked for. Integer / non-finite leaves keep byte-exact hex (no >2^53
-                // double-precision regression; an integer is reduce-invariant anyway).
+                // double-precision loss; an integer is reduce-invariant anyway).
                 if (SnapshotNumeric.IsFloatType(leaf.DeclaredType)
                     && leaf.Num.Count >= 2
                     && leaf.Num[0] is double f0 && leaf.Num[leaf.Num.Count - 1] is double fN)

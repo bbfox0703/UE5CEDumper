@@ -286,7 +286,7 @@ public static class CsxExportService
             && (field.TypeName is "MulticastInlineDelegateProperty" or "MulticastDelegateProperty"))
         {
             // CE follows a child structure only from a POINTER element (StructuresFrm2.pas: isPointer is
-            // vartype = vtPointer), so a drill hung on the raw block was never reachable. The raw block keeps the
+            // vartype = vtPointer), so a drill hung on the raw block would never be reachable. The raw block keeps the
             // field offset; the drill goes on InvocationList.Data, the payload's first 8 bytes, past the pad.
             EmitElementRaw(sb, offset, description, typeInfo, null, indent);
             EmitElementRaw(sb, offset + field.DelegatePad, description + " / InvocationList",
@@ -632,7 +632,7 @@ public static class CsxExportService
         if (IsObjectPropertyType(arrField.ArrayInnerType))
             return ConvertArrayPointerElementsToFields(arrField);
 
-        // Struct arrays → flatten sub-fields per element (or raw blocks if no Phase F data)
+        // Struct arrays → flatten sub-fields per element (or raw blocks if no sub-field data)
         if (arrField.ArrayInnerType == "StructProperty")
             return ConvertArrayStructElementsToFields(arrField);
 
@@ -816,7 +816,7 @@ public static class CsxExportService
 
     /// <summary>
     /// Convert ArrayProperty struct elements to flattened synthetic LiveFieldValue list.
-    /// Each element's sub-fields (from Phase F StructSubFieldValue data) are inlined with
+    /// Each element's sub-fields (from StructSubFieldValue data) are inlined with
     /// "[index] / SubFieldName" naming and absolute offsets within TArray.Data.
     /// </summary>
     private static List<LiveFieldValue> ConvertArrayStructElementsToFields(LiveFieldValue arrField)

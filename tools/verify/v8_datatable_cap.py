@@ -8,9 +8,9 @@ covered by C# tests (V8_DataTableDrill_Truncated_BadgesCrumbHeaderAndStatus,
 V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider,
 V8_DataTableDrill_Complete_SaysNothing). Those assert the VIEWMODEL's strings from
 SYNTHETIC input. They say nothing about whether the DLL hands the ViewModel a
-correct N -- and it did not: [DTROWMAP-2026-08-23] had ProbeRowMapOffset serving a
-NEIGHBOURING table's RowMap, so a 100-row table reported 8. Every one of those tests
-passed throughout. This rig closes the half they structurally cannot reach.
+correct N: a ProbeRowMapOffset that serves a NEIGHBOURING table's RowMap
+([DTROWMAP-2026-08-23]) makes a 100-row table report 8 while every one of those
+tests passes. This rig closes the half they structurally cannot reach.
 
 THE CAP IS DERIVED, NOT QUOTED: Ubel.h declares
     WalkDataTableRows(uintptr_t, int32_t offset, int32_t limit = 64)
@@ -31,8 +31,8 @@ FOUR CHECKS, and the last two are the ones a commercial game cannot give you:
                 An off-by-one or a capacity-vs-count confusion survives check 3.
 
 Also asserted throughout: the FText Caption column decodes. It is CJK by construction
-("走一步 <i>"), so a mis-decode cannot accidentally produce it -- and it was blank
-until [DTTEXT-2026-08-23] added the TextProperty branch the row reader was missing.
+("走一步 <i>"), so a mis-decode cannot accidentally produce it -- and a row reader
+without its TextProperty branch ([DTTEXT-2026-08-23]) leaves it blank.
 """
 from __future__ import annotations
 
@@ -57,8 +57,8 @@ def derived_cap():
     The Fern side must be read from INSIDE the walk_datatable_rows handler. `limit`
     is a parameter name a dozen commands share, and an unscoped
     `request.value("limit", N)` search finds whichever handler happens to come first
-    -- it returned 200 (some other command's default) and reported a disagreement
-    that did not exist. A detector has to be right about WHERE it reads, not only
+    -- some other command's default -- and reports a disagreement that does not
+    exist. A detector has to be right about WHERE it reads, not only
     about what it matches.
     """
     h = (ROOT / "dll/src/Ubel.h").read_text(encoding="utf-8", errors="replace")

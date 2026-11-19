@@ -14,7 +14,7 @@ public class SnapshotConsistencyTests
     [Fact]
     public void StableCount_IsNotSuspect()
     {
-        // The real Elliot capture: every chunk reported total=390017 (no churn).
+        // An Elliot-sized stable capture: every chunk reports total=390017 (no churn).
         Assert.False(SnapshotConsistency.IsDriftSuspect(390017, 390017, 390017));
     }
 

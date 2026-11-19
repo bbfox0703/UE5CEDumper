@@ -8,26 +8,27 @@ using CommunityToolkit.Mvvm.Input;
 namespace UE5DumpUI.Helpers;
 
 /// <summary>
-/// Reusable, client-side "class noise" filter for result-list panels whose FULL
-/// result set lives in a C# collection (Instance Finder, Interesting Functions /
-/// Properties, Property Search).
+/// Reusable "class noise" filter for result-list panels.
 ///
 /// It builds a Top-N "class → hit count" histogram from the current full result
 /// set and lets the user tick classes to HIDE (UI widgets, sound, system
 /// components, …). Ticking re-filters the list IMMEDIATELY — no Apply button —
-/// via the <c>onChanged</c> callback the owner supplies: the owner re-runs its
-/// existing ApplyFilter pass, which calls <see cref="IsExcluded"/> per row.
+/// via the <c>onChanged</c> callback the owner supplies. An owner whose full
+/// result set lives in a C# collection re-runs its filter pass, which calls
+/// <see cref="IsExcluded"/> per row; an owner whose full set lives in the DLL
+/// re-queries with <see cref="ExcludedClasses"/> and feeds the server's counts
+/// back through <see cref="RebuildFromCounts"/>.
 ///
-/// The exclusion is purely a display filter: the owner keeps its full raw list
+/// The exclusion is purely a display filter: the full raw result set stays
 /// intact, so unticking (or <see cref="ClearCommand"/>) restores hidden rows
-/// instantly — there is no risk of losing real data. The excluded set is
-/// preserved across <see cref="Rebuild"/> calls so a class the user marked as
-/// noise stays hidden across re-searches in the same session.
+/// — there is no risk of losing real data. The excluded set is preserved
+/// across rebuilds so a class the user marked as noise stays hidden across
+/// re-searches in the same session.
 ///
-/// This is the cheap CLIENT-SIDE sibling of the SPC / Diff / Pivot server-side
-/// picker (NoiseRowVm + DenylistScope), which re-runs a DLL query and persists
-/// per game. Here the full set is already in memory, so the histogram + filter
-/// are instant and need zero pipe traffic. AOT-safe: plain LINQ + an
+/// This is the cheap sibling of the SPC / Diff / Pivot picker (NoiseRowVm +
+/// DenylistScope), which persists per game; this exclusion lasts the session
+/// only. When the full set is already in memory the histogram + filter are
+/// instant and need zero pipe traffic. AOT-safe: plain LINQ + an
 /// ObservableCollection, no reflection.
 /// </summary>
 public sealed partial class ClassFacetFilter : ObservableObject
@@ -35,7 +36,7 @@ public sealed partial class ClassFacetFilter : ObservableObject
     private readonly Action _onChanged;
     private readonly HashSet<string> _excluded = new(StringComparer.Ordinal);
 
-    // Auto-detect bookkeeping (Phase 3): the matched rule per auto-flagged class
+    // Auto-detect bookkeeping: the matched rule per auto-flagged class
     // (so the green hint survives a re-scan rebuild), and the classes the user
     // explicitly UN-ticked after an auto-suggestion (so a later Auto-detect click
     // respects the keep instead of silently re-hiding them).
@@ -88,7 +89,7 @@ public sealed partial class ClassFacetFilter : ObservableObject
         OnPropertyChanged(nameof(CanOpen));
     }
 
-    // ── Phase 3: opt-in, safe auto-detect (provider-injected) ────────────────
+    // ── Opt-in, safe auto-detect (provider-injected) ─────────────────────────
 
     private Func<IReadOnlyList<string>, Task<IReadOnlyList<(string className, bool isNoise, string reason)>>>? _autoDetectProvider;
 
@@ -191,7 +192,8 @@ public sealed partial class ClassFacetFilter : ObservableObject
     }
 
     /// <param name="onChanged">Invoked whenever the exclusion set changes; the
-    /// owner re-runs its filter pass (which consults <see cref="IsExcluded"/>).</param>
+    /// owner re-applies the exclusion, by its filter pass (which consults
+    /// <see cref="IsExcluded"/>) or by a re-query with <see cref="ExcludedClasses"/>.</param>
     public ClassFacetFilter(Action onChanged)
         => _onChanged = onChanged ?? throw new ArgumentNullException(nameof(onChanged));
 
@@ -201,9 +203,9 @@ public sealed partial class ClassFacetFilter : ObservableObject
         => _excluded.Count > 0 && !string.IsNullOrEmpty(className) && _excluded.Contains(className);
 
     /// <summary>Snapshot of the currently-hidden class names. For SERVER-SIDE
-    /// owners (Value Search): pass this to the DLL window query as
-    /// <c>exclude_classes</c> so the histogram-driven exclusion is applied over
-    /// the full session, not just the loaded page. A fresh array each call so an
+    /// owners: pass this to the DLL query as its class-exclusion list so the
+    /// histogram-driven exclusion is applied over the full result set, not just
+    /// the loaded page. A fresh array each call so an
     /// in-flight async query holds a stable copy.</summary>
     public IReadOnlyList<string> ExcludedClasses
         => _excluded.Count == 0 ? System.Array.Empty<string>() : _excluded.ToArray();
@@ -237,8 +239,8 @@ public sealed partial class ClassFacetFilter : ObservableObject
 
     /// <summary>
     /// Rebuild from a PRE-COUNTED histogram (server-side path: the DLL owns the
-    /// full windowed candidate set, so it computes the class counts over the
-    /// whole session and sends back the Top-N). <paramref name="counts"/> is
+    /// full result set, so it computes the class counts over all of it and
+    /// sends back the Top-N). <paramref name="counts"/> is
     /// expected already sorted (count desc); <paramref name="distinctTotal"/> is
     /// the true number of distinct classes (≥ counts.Count when the server
     /// capped). Preserves the excluded set like <see cref="Rebuild"/>.

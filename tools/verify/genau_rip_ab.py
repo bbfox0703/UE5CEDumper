@@ -1,9 +1,9 @@
-"""A/B the Genau RIP-decode fix on one host: pre-fix DLL vs post-fix DLL.
+"""A/B the Genau RIP-decode fix on one host: a DLL without the fix vs a DLL with it.
 
     py genau_rip_ab.py run            # both sides, then the comparison
     py genau_rip_ab.py compare        # re-print the comparison from saved logs
 
-WHAT THE ROW ASKS FOR (todo.md, "Genau RIP decode ... b2544"):
+WHAT THE ROW ASKS FOR (verification-register.md, "Genau RIP decode ... b2544"):
   * candidate / probe counts should go DOWN with the fix   <- the win
   * every resolved GObjects / GNames / GWorld address stays identical <- acceptance
 
@@ -13,13 +13,12 @@ so a clean sweep diff would mean "not measured", not "no regression". The only
 evidence is the DLL's own scan log, same host, before vs after.
 
 WHY THE HOST IS A python.exe SLEEPER AND NOT A GAME. The predicate is used at five
-sites, and all five live in RECOVERY paths:
+sites, and all five live in RECOVERY paths (Genau.cpp):
 
-    Genau.cpp:572   DataScanGObjectsCandidates
-    Genau.cpp:755   FindGObjectsStaticStruct
-    Genau.cpp:901   ResolveSymbolExport
-    Genau.cpp:2323  FindGNamesByStringRef
-    Genau.cpp:2348  FindGNamesByStringRef
+    DataScanGObjectsCandidates
+    FindGObjectsStaticStruct
+    ResolveSymbolExport
+    FindGNamesByStringRef   (two sites)
 
 On a healthy game the AOB wins immediately and NONE of them runs, so a game would
 produce an identical-looking pair of logs for the worst possible reason -- the code
@@ -29,8 +28,8 @@ the "addresses unchanged" half is trivially satisfied (nothing resolves), so thi
 rig measures the COUNT half. The address half needs the separate DumperTest run.
 
 BOTH SIDES ARE BUILT IN THE SAME SESSION FROM THE SAME TREE by the same toolset,
-differing ONLY in the two-line predicate -- not "current dist vs a checkout of
-build 2544", which would differ in ~700 builds of unrelated ways.
+differing ONLY in the two-line predicate -- not "current dist vs an old checkout",
+which would differ in many unrelated ways.
 
 The per-PE-hash hint entry is deleted before EACH side: a cached result changes how
 many patterns are even attempted, which is precisely the quantity being compared.
@@ -56,12 +55,11 @@ SIDES = {"before": OUT / "before_buggy_UE5Dumper.dll",
          "after": OUT / "after_fixed_UE5Dumper.dll"}
 
 # THE HOST MUST HAVE A LARGE MAIN MODULE, and this is not a preference -- it decides
-# whether the measurement exists at all. MEASURED on a python.exe sleeper:
-# DataScanGObjectsCandidates reported code=[...0x...1000-...0x...1E4C], i.e. a code
-# section of 0xE4C = 3,660 BYTES, because python.exe is a launcher stub and all the
-# real code lives in python312.dll, which is NOT the main module. The RIP decoder
-# under test therefore barely executed, and both sides returned an identical
-# "Found 17 static pointers in data section".
+# whether the measurement exists at all. python.exe is a launcher stub: its main
+# module's code section is a few KB (DataScanGObjectsCandidates logs the range as
+# code=[...]), and all the real code lives in python312.dll, which is NOT the main
+# module. The RIP decoder under test barely executes there, so both sides log the
+# same "Found N static pointers in data section".
 # That is a NULL RESULT MANUFACTURED BY THE HOST and it is indistinguishable, in the
 # log, from "the fix changed nothing". Notepad++ is ~8.5 MB and Cheat Engine ~18.6 MB.
 HOSTS = {

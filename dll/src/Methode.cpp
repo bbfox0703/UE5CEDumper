@@ -407,7 +407,7 @@ static void __stdcall OnInjectAndConnect()
     //        applies only the export, import and relocation directories -- not TLS, not
     //        the .pdata exception table -- so exception dispatch inside the image is not
     //        something ReadSafe's everyday __except can count on. Not a certainty either
-    //        way (L53), hence "not supported", never "will crash".
+    //        way, hence "not supported", never "will crash".
     //      * The APC path and a GetExitCodeThread failure ALSO return TRUE with nothing
     //        mapped.
     //    Nothing here tells those apart, so the message names both; a manually mapped
@@ -482,7 +482,7 @@ BOOL __stdcall CEPlugin_GetVersion(CePluginVersion* pv, int /*sizeofpluginversio
     // be beaten by a human ticking a checkbox. Unclaimed, the auto-start thread would run
     // a full AOB scan and open \\.\pipe\UE5DumpBfx INSIDE cheatengine-x86_64.exe.
     // GetVersion is called for enabled and disabled plugins alike, and it is called
-    // early, which is exactly the signal the race needs. (B34)
+    // early, which is exactly the signal the race needs.
     g_isCEPlugin.store(true);
     pv->version    = CESDK_VERSION;
     pv->pluginname = g_PluginName;

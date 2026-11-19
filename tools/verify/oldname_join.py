@@ -1,4 +1,4 @@
-"""Register [PIPE-PER-PROCESS-2026-11-06] item 6: a 3707 copy whose first instance joins a name a 3695 copy made.
+"""Register [PIPE-PER-PROCESS-2026-11-06] item 6: a newer copy whose first instance joins a name an older copy made.
 
     py tools/verify/oldname_join.py --pid P [--old out/stageA/copy3695/UE5Dumper.dll] [--clients 3]
 

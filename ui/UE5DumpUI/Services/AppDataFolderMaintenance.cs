@@ -14,18 +14,17 @@ namespace UE5DumpUI.Services;
 /// MOVES anything still sitting at the old flat root into them, and — for the folders
 /// that opt in — ages out the games nobody has touched in a while.
 ///
-/// <para><b>Retention is per CALLER, not per folder.</b> <see cref="SnapshotStore"/>
-/// passes <see cref="Constants.DataMaxAgeDays"/>; <see cref="BookmarkStore"/> and
-/// <see cref="CoordinateLibraryStore"/> pass 0, which disables the sweep outright --
-/// both hold hand-made data nobody can regenerate. Migration is the shared part; what a folder is
+/// <para><b>Retention is per CALLER, not per folder.</b> A store of data that can be
+/// captured again passes an age (<see cref="SnapshotStore"/> passes
+/// <see cref="Constants.DataMaxAgeDays"/>); a store of hand-made data nobody can regenerate
+/// passes 0, which disables the sweep outright. Migration is the shared part; what a folder is
 /// worth keeping forever is the store's call, not this file's.</para>
 ///
 /// <para><b>Called from the store constructors, not from App.</b> The store that READS
 /// a folder is the one that populates it, so the ordering cannot drift: there is no way
-/// to construct a <see cref="SnapshotStore"/> or <see cref="BookmarkStore"/> that opens
-/// files before its folder has been migrated. A composition-root call site would be one
-/// reorder away from silently reading an empty new folder while the user's data sat in
-/// the old one.</para>
+/// to construct a store that opens files before its folder has been migrated. A
+/// composition-root call site would be one reorder away from silently reading an empty
+/// new folder while the user's data sits in the old one.</para>
 ///
 /// <para><b>Once per process per folder.</b> Both operations are idempotent, but a
 /// second pass is pure cost and a second set of log lines, and tests construct stores in
@@ -201,12 +200,10 @@ public static class AppDataFolderMaintenance
     ///
     /// <para><b>Last-access is not a usage signal on Windows — it is noise.</b> The
     /// obvious reading is that a write time means "unmodified" while an access time means
-    /// "unused", so the max of the two is strictly better. Measured on the maintainer's
-    /// own app-data folder, it is strictly worse: <c>fsutil behavior query
-    /// DisableLastAccess</c> reports <c>2</c> (System Managed, updates ENABLED), and every
-    /// file there had an access time of "today" against write times weeks old — a
-    /// <c>bookmarks.*.json</c> last written 2026-06-24 read as accessed 2026-08-04. Any
-    /// antivirus scan, backup pass or search indexer refreshes it. Feeding that to the
+    /// "unused", so the max of the two is strictly better. It is strictly worse: where
+    /// <c>fsutil behavior query DisableLastAccess</c> reports <c>2</c> (System Managed,
+    /// updates ENABLED), any antivirus scan, backup pass or search indexer refreshes the
+    /// access time, so a file written weeks ago reads as accessed today. Feeding that to the
     /// sweep does not make retention safer; it makes retention never fire, which is a
     /// silent no-op dressed as a feature.</para>
     ///

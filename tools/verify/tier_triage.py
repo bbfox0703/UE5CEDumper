@@ -13,11 +13,10 @@ That title is the only sample that can serve:
 
 The PE half reads through pe_version_probe.read_resource, the one offline port of
 DetectVersionFromPEResource (the same version.dll APIs, every translation, the
-engine build strings; its --selftest is a gate). It kept its own copy of the
-string fallback until the [VER-410-GATE] second review, and that copy knew only
-'++UEn+Release-': a 4.10-4.17 exe carrying its engine build string read PE_MISS
-here while the DLL took it at Tier 0. The tag half reuses tools/pe/ue_version.py's
-own regexes.
+engine build strings; its --selftest is a gate), never a copy of its own: a copy
+of the string fallback that knows only '++UEn+Release-' reads PE_MISS on a
+4.10-4.17 exe carrying its engine build string while the DLL takes it at Tier 0
+[VER-410-GATE]. The tag half reuses tools/pe/ue_version.py's own regexes.
 """
 import pathlib
 import re

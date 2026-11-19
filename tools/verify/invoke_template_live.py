@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Live check for [INVOKE-NONSTATIC-ON-CDO] (build 3676 on): DumperTest, headless, no CE.
+r"""Live check for [INVOKE-NONSTATIC-ON-CDO] (a DLL with that tag): DumperTest, headless, no CE.
 
     py tools/verify/invoke_template_live.py [--process DumperTest] [--bp-class BP_ThirdPersonCharacter_C]
 
@@ -14,7 +14,7 @@ Pipe (invoke_function):
   T3 Default__Actor by address / K2_GetActorLocation  -> result 0, pick address, class_default, WARNED
   T4 a Blueprint class default object by address      -> class_default, WARNED
   T5 that object's CapsuleComponent template / K2_GetComponentLocation -> "template", owned by it, WARNED
-  T6 FIND_INSTANCE of component classes: none lands on a template any more (it did on 3675 -- measured)
+  T6 FIND_INSTANCE of component classes: none lands on a template (a DLL without the tag can)
 Mailbox:
   M1 g_mailboxContract >= 7 / 1
   M2 FIND_FUNCTION + INVOKE K2_GetActorLocation on Default__Actor -> result 0, cmdOutFlags bit 0x2

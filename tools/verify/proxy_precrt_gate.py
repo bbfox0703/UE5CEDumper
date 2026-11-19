@@ -5,8 +5,8 @@ This is the offline stand-in for the OCTOPATH TRAVELER failure in
 docs/audit-2026-08-26-dxgi-appcompat-crash.md. There, Windows' AppCompat shim engine
 (`apphelp!SE_DllLoaded` -> `AcGenral!NS_DXGICompat`) calls
 `dxgi.dll!SetAppCompatStringPointer` after our module is MAPPED but before
-`_DllMainCRTStartup` has run. The lazy thunk then entered a resolver that logs, logging
-allocated, `__acrt_heap` was still NULL, and the process died in
+`_DllMainCRTStartup` has run. A lazy thunk that enters a logging resolver at that point
+allocates while `__acrt_heap` is still NULL, and the process dies in
 `ntdll!RtlAllocateHeap+0x54` before the EXE entry point.
 
 `LoadLibraryExW(..., DONT_RESOLVE_DLL_REFERENCES)` reproduces that state without a game,
@@ -21,15 +21,16 @@ the window the fix closes.
 ⚠ WHAT THIS DOES AND DOES NOT PROVE.
 
   PROVES: the thunk, entered before DllMain, returns instead of transferring control. That
-  is the property that was missing, and it is checked here against a real mapped image and
+  is the property under test, and it is checked here against a real mapped image and
   real machine code — not against source text.
 
   DOES NOT PROVE: that the *allocation* would have been the thing to fault. Under
-  DONT_RESOLVE_DLL_REFERENCES the IAT is not snapped either, so a pre-fix binary faults on
-  its first imported call (`AcquireSRWLockExclusive`) rather than on `HeapAlloc(NULL, ...)`.
-  Same place in OUR code, earlier instruction. The negative control below therefore shows
-  "the old binary dies inside the resolver, the new one never enters it" — which is the
-  fix — and NOT a byte-for-byte replay of the game crash. Only the game proves that.
+  DONT_RESOLVE_DLL_REFERENCES the IAT is not snapped either, so a binary without the fix
+  faults on its first imported call (`AcquireSRWLockExclusive`) rather than on
+  `HeapAlloc(NULL, ...)`. Same place in OUR code, earlier instruction. The negative control
+  below therefore shows "the binary without the fix dies inside the resolver, the one with it
+  never enters it" — which is the fix — and NOT a byte-for-byte replay of the game crash.
+  Only the game proves that.
 
 Each load+call runs in a CHILD PROCESS so that a fault is a reportable exit code rather than
 the death of this script. That is the whole reason for the --child plumbing.
@@ -124,7 +125,7 @@ def child_forward(dll_path: str, export: str) -> int:
     """The complement of child(): a NORMAL load, so DllMain runs and the CRT comes up, and the
     export must then actually FORWARD to the real System32 DLL.
 
-    This is what covers the 23 magic statics that became `static Fn fn = nullptr; if (!fn) …`.
+    This is what covers the magic statics written as `static Fn fn = nullptr; if (!fn) …`.
     A latched null would make the export permanently dead, and returning a documented failure
     value looks identical to success from the outside — so the PASS condition is not the return
     value, it is the proxy's own `Loaded real <dll>` log line, which only LoadReal*() writes.
@@ -253,7 +254,7 @@ def main() -> int:
         dll, export = args.paths[0], args.paths[1]
         # ⚠ .lower() the WHOLE marker, not just the basename — it is compared against
         # line.lower(), so a capital "L" in the prefix makes the test never match and the rig
-        # reports FAIL for a run that passed. It did exactly that first time round.
+        # reports FAIL for a run that passed.
         # The dxgi/winmm flavours resolve a whole table and log "<name> proxy: lazily
         # forwarded N/N" instead of the C forwarders' "Loaded real <dll>", so the marker is
         # overridable rather than assumed.
@@ -276,7 +277,7 @@ def main() -> int:
         # the verdict comes from the proxy's own log line. Only folders touched by THIS run
         # count -- an old folder would hand back a PASS earned by a previous build.
         # ⚠ The LINE's own timestamp must be newer than this run, not just the FILE's mtime.
-        # A 5-second file window let a previous run of the same proxy satisfy the check — which
+        # A file-mtime window lets a previous run of the same proxy satisfy the check — which
         # would mask exactly the regression this rig exists to catch (a proxy that stopped
         # forwarding would still "pass" on yesterday's line).
         hits = []

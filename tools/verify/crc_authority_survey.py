@@ -4,7 +4,7 @@
     py crc_authority_survey.py --survey          # every game folder: CRC vs game exe vs our cache
     py crc_authority_survey.py --oracle --survey
 
-⭐ THE IDEA UNDER TEST (maintainer, 2026-09-06). `CrashReportClient.exe` is shipped BY THE ENGINE,
+⭐ THE IDEA UNDER TEST (the maintainer's). `CrashReportClient.exe` is shipped BY THE ENGINE,
 not built by the game team, so a developer has no reason to ship game version A beside a CRC from
 version B. If it is present, read it; if not, skip. Worst case is absence, never a wrong answer.
 
@@ -155,8 +155,8 @@ def merge_oracle(existing, harvested):
 
     Returns (merged, added, updated, kept). An entry whose Editor is no longer installed is KEPT:
     that is the whole value of the oracle -- its hashes are unobtainable once the Editor is gone.
-    Overwriting (the old behaviour) silently dropped every such row; re-harvesting after the 5.8.2
-    Editor was upgraded in place to 5.8.3 would have deleted the 5.8.2 CRC hash.
+    Overwriting would silently drop every such row: re-harvesting after an Editor is upgraded in
+    place (5.8.2 to 5.8.3, say) would delete the 5.8.2 CRC hash.
     """
     merged = dict(existing)
     added, updated = [], []

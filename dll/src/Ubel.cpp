@@ -721,7 +721,8 @@ std::string GetName(uintptr_t uobjectAddr) {
     // input, so this replaces ReadFName rather than adding a read. Same tolerance
     // ReadFName has and for the same reason: ComparisonIndex must read, Number may
     // fail and default to 0. Kept as two reads, not one 8-byte load, so an unaligned
-    // or half-mapped address behaves exactly as it did before.
+    // or half-mapped address keeps that tolerance: a failed Number read does not lose
+    // the ComparisonIndex.
     const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
     NameWitness live{};
     if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
@@ -906,8 +907,8 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
 
 // [UPROP-INNER-TYPENAME] A property's type name in the running mode: an FField's FFieldClass name, or -- on a
 // UProperty engine, where a property IS a UObject -- its UClass name. The FField read on a UProperty lands on
-// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it was never typed there
-// (UE423_Flying: 1,016 TArray<uint8_t> in the SDK export; DQ XI S: 0 of 77 array inners).
+// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it goes untyped on such an
+// engine.
 static std::string GetPropertyTypeNameForMode(uintptr_t propAddr) {
     return DynOff::bUseFProperty ? GetFieldTypeName(propAddr) : GetUPropertyTypeName(propAddr);
 }
@@ -997,9 +998,9 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
 
         // Alignment sanity warning. See Scharf.h for the per-type rules — uses
         // the engine-reported ElemSize for variable-width types (EnumProperty), and respects
-        // CasePreservingName mode for FName layout. Earlier inline check assumed all
-        // EnumProperty was 4-byte and all NameProperty was 8-byte aligned, which produced
-        // up to ~75 false positives per game on UE 5.x AActor-derived BPs.
+        // CasePreservingName mode for FName layout. An inline check assuming every
+        // EnumProperty is 4-byte and every NameProperty 8-byte aligned would raise dozens
+        // of false positives per game on UE 5.x AActor-derived BPs.
         if (fi.Offset > 0 && !fi.TypeName.empty()
             && Scharf::IsAlignmentSuspicious(
                    fi.TypeName, fi.Offset, fi.Size, DynOff::bCasePreservingName)) {
@@ -1484,7 +1485,7 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
 
 // The name of the object in a property's subclass slot -- a StructProperty's UScriptStruct, an object property's
 // PropertyClass -- or "" when the slot does not hold that kind of object. [STRUCTPROBE-ANY-NAME] A printable name
-// was the whole test, so a named object of any other kind typed the member by ITS name.
+// alone is not the test: a named object of any other kind would type the member by ITS name.
 static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr_t)) {
     uintptr_t ptr = 0;
     if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
@@ -1602,11 +1603,10 @@ static bool IsPrintableName(const std::string& n) {
 // property's only member: 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and Dumper-7's Offsets.cpp agree
 // for the hard and soft class properties, and 4.11-4.17's UAssetClassProperty does the same (UE_4.10 UnrealType.h;
 // UE415_Flyinh's 4.15 PDB, PropertyClass +0x80 and MetaClass +0x88) -- so it is derived, never stored as a DynOff.
-// The slot is the MODE's own subclass start. On a UProperty engine FSTRUCTPROP_STRUCT was never derived before
-// [UPROP-SUBCLASS-SLOT] and sat one pointer past PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a
-// 0x70 start) -- and a family move after init can still leave it off for a while ([FAMILY-EPOCH]). That is why
-// the PropertyClass read and validated here, not the plain FSTRUCTPROP_STRUCT read, becomes a class-valued
-// property's obj_class.
+// The slot is the MODE's own subclass start. On a UProperty engine an underived FSTRUCTPROP_STRUCT sits one pointer
+// past PropertyClass -- ON the MetaClass ([UPROP-SUBCLASS-SLOT]) -- and a family move after init can still leave
+// it off for a while ([FAMILY-EPOCH]). That is why the PropertyClass read and validated here, not the plain
+// FSTRUCTPROP_STRUCT read, becomes a class-valued property's obj_class.
 // Validated before anything is published, because a wrong offset here reads a real UClass either way:
 // PropertyClass must be a class of classes (which also proves the slot), and the pointer after it a UClass.
 // Both empty when the anchor fails; metaClass alone empty when only the MetaClass fails -- the export then
@@ -1676,12 +1676,11 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields);
 
 // Memo for the ENRICHED walk. Separate from s_walkClassCache because the two hold
 // different things: that one holds WalkClass's plain fields, this one holds the same
-// fields plus the type metadata read on top of them. Four call sites were already
-// commented `// cached` — they were not, and the difference is not academic:
+// fields plus the type metadata read on top of them. Memoizing this walk matters:
 // WalkClass's Fields is the FLATTENED inheritance chain, so an Actor subclass carries
 // 100-300 FieldInfo of a few dozen std::string each, deep-copied on every call, and
 // snapshot capture / group scan reach this per struct-array ELEMENT from every
-// ParallelGObjectsScan worker at once. (B10)
+// ParallelGObjectsScan worker at once.
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassExCache;
 static std::mutex s_walkClassExCacheMutex;
 // [WALKCLASS-MEMO-REUSE] Entries a re-walk replaced. Extracted node handles keep their element where it was, so a
@@ -1691,12 +1690,12 @@ static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkCl
 //  * PER ADDRESS (the address alone, not the memo's epoch key: a re-init's epoch bump must not un-stop an address or
 //    count it twice [WALKCLASS-STOP-EPOCH]): an address whose witness keeps changing -- an engine whose witness offsets read something
 //    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
-//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY: a match against the
+//    re-walks and is answered from the memo without the witness, said in the log. The stop is STICKY: a match against the
 //    stopped entry, every other turn of an alternation, must not clear it.
 //  * Genuine reuse re-walks once and then HOLDS STILL: kHoldHitsToForgive matching hits in a row forgive an address
 //    that has not stopped, so many level changes at one address never reach the bound. The count is per address: one
 //    count for the whole process would switch the check off everywhere.
-//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers as before the
+//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers without the
 //    witness, said once) -- the last word on memory, whatever pattern the witnesses follow.
 static constexpr uint32_t kMaxRewalksPerAddress = 8;
 static constexpr uint32_t kHoldHitsToForgive    = 3;
@@ -1976,7 +1975,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // results are equal (the enrichment is a pure function of the same reads), so
     // keeping the existing one costs nothing and keeps every handed-out reference
     // valid. Node-based map, and the only removal parks the node rather than freeing
-    // it ([WALKCLASS-MEMO-REUSE]) ⇒ entries never move. (B10)
+    // it ([WALKCLASS-MEMO-REUSE]) ⇒ entries never move.
     // Only reachable for a class that passed the memoization gate above.
     StampWitness(info, witness);
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
@@ -2261,7 +2260,7 @@ bool OverrideInForceContradicted(unsigned versionInForce, bool userOverride) {
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // [VND583-01] The offset is DECIDED by the vote above when it can be; then a zero read is
     // a zero, never a reason to sweep. Otherwise the primary (the measured PropertiesSize
-    // relation, else the version table) and the sweep, as before. The table, the measurements
+    // relation, else the version table) and the sweep. The table, the measurements
     // behind it, and why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
@@ -2764,7 +2763,7 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
                 std::string err;
                 const int answer = ops.interfaceAddress(static_cast<uintptr_t>(object), p.interfaceClass, ops.ctx,
                                                         addr, err);
-                if (answer < 0) continue;   // not measured here: sent as it always was
+                if (answer < 0) continue;   // not measured here: sent unchanged
                 if (answer == 0) {
                     char a[32];
                     snprintf(a, sizeof(a), "0x%llX", static_cast<unsigned long long>(object));
@@ -3213,7 +3212,7 @@ FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitne
     if (slotLive && witnessRead) {
         if (!ident.captured) return FuncState::Live;
         if (now.comparisonIndex != ident.nameIndex || now.number != ident.nameNumber) return FuncState::Recycled;
-        // The function's own name is not enough (DLL-1): every Blueprint class has its own Construct,
+        // The function's own name is not enough: every Blueprint class has its own Construct,
         // ReceiveBeginPlay..., all one FName. Compared only when both reads have a class -- index 0 is "None",
         // which no class is called.
         if (ident.classIndex != 0 && nowClass.comparisonIndex != 0
@@ -3351,7 +3350,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
                                 param.structType = ReadStructTypeName(cur);
-                                // Phase B: walk the UScriptStruct to discover sub-fields -- only a struct
+                                // Walk the UScriptStruct to discover sub-fields -- only a struct
                                 // ([STRUCTPROBE-ANY-NAME]: the slot on a mis-derived family holds something else)
                                 uintptr_t structPtr = 0;
                                 if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr)
@@ -3361,7 +3360,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                         param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
-                            // Stage 1: Object/Class/Soft/Weak/Lazy/Interface params
+                            // Object/Class/Soft/Weak/Lazy/Interface params
                             // expose their target UClass name (FObjectPropertyBase::
                             // PropertyClass lives at the same FProperty subclass
                             // extension slot as FStructProperty::Struct — mirrors
@@ -3423,13 +3422,13 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                     std::string sn = GetName(structPtr);
                                     if (Utf8Helpers::IsPlausibleNameStart(sn))
                                         param.structType = sn;
-                                    // Phase B: walk the UScriptStruct to discover sub-fields
+                                    // Walk the UScriptStruct to discover sub-fields
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
                                         param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
-                            // Stage 1 (UE4 <4.25 path): same UProperty subclass
+                            // The UE4 <4.25 path: the same UProperty subclass
                             // extension slot as UStructProperty::Struct holds
                             // UObjectPropertyBase::PropertyClass — both are the
                             // first derived field after the UProperty base.
@@ -3467,7 +3466,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     return funcs;
 }
 
-// [VND583-07, A9 step 1] sizeof(FName), MEASURED once -- see DynOff::PickFNameSize. The modal ElementSize
+// [VND583-07] sizeof(FName), MEASURED once -- see DynOff::PickFNameSize. The modal ElementSize
 // over the first 64 NameProperty fields met: FField mode walks each UClass / UScriptStruct's own
 // ChildProperties, UProperty mode (UE4 < 4.25) reads the NameProperty objects in GObjects. Needs validated
 // offsets (FNameSize asks); a cancelled walk latches nothing, so the next ask retries. Raw reads only --
@@ -3556,10 +3555,10 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // WITH_CASE_PRESERVING_NAME (+ DisplayIndex(4), alignof 4, no trailing padding).
     // 0x10 is the UObject NamePrivate->Outer SLOT, which is a different question: that
     // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
-    // This MUST be dynamic, and it is MEASURED when it can be (FNameSize, [VND583-07] A9 step 1):
+    // This MUST be dynamic, and it is MEASURED when it can be (FNameSize, [VND583-07]):
     // ResolveInnerSize returns this before it asks the engine, so a wrong value here is
     // actively substituted for a right one. ValidateArrayElemSize does not let it override a
-    // plausible engine ElementSize (A9 step 7).
+    // plausible engine ElementSize.
     // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
     // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
     // the UNPADDED sizeof.
@@ -3602,7 +3601,7 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
     // 1 to 65536.
     if (typeName == "LazyObjectProperty")
         return LazyGuidOffset(readSize) + 0x10;
-    // [VND583-07, A9 step 7] NameProperty: our RULE does not override the engine. sizeof(FName) is one
+    // [VND583-07] NameProperty: our RULE does not override the engine. sizeof(FName) is one
     // number per process, so a MEASURED size (FNameSize) still beats a single read that disagrees with it --
     // that read is the misread. Unmeasured, a size this build's family can have is the engine's and is kept,
     // but only on validated offsets (a default FPROPERTY_ELEMSIZE can read anything). A plausible
@@ -3902,14 +3901,13 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out) {
         // Resolve key / value UScriptStruct* FIRST — the alignments below need them.
         // (Also used by the deep container scan, so a TMap<K, FStruct> (or
         // <FStruct, V>) can be descended into.)
-        // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this is the site the blind-spot sweep filed as
-        // "the same question unanswered" (docs/todo.md, round 2) and then never answered.
+        // ⛔ BOTH RETURNS ARE LOAD-BEARING.
         // On a faulted read the addr stays 0, ResolveElementAlignment two lines below is asked
         // to align a struct it cannot see, and the alignment it guesses flows into pairAlign ->
         // pairStride. The comment right under this block states the consequence out loud:
         // "the stride must be a multiple of it, or every element after index 0 lands at a wrong
-        // address." A silent 0 therefore mis-strides the WHOLE TMap -- the same shape as D3b,
-        // reached through alignment instead of through a hardcoded size.
+        // address." A silent 0 therefore mis-strides the WHOLE TMap -- the mis-stride a hardcoded
+        // element size causes, reached through alignment instead.
         bool structAddrsOk = true;
         if (keyTn == "StructProperty")
             structAddrsOk &= Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT,
@@ -3984,7 +3982,7 @@ std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
         std::string val = PreviewScalarValue(sf.TypeName, p, sfSize, sf.boolFieldMask);
         if (val.empty()) {
             if (sf.TypeName == "NameProperty" && sfSize >= 4) {
-                val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
+                val = DecodeFNameBytes(p, sfSize);   // Number included
                 if (val.empty()) val = "None";
             } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty")
                        && sfSize >= 8) {
@@ -4126,9 +4124,9 @@ static std::string PreferLayout(const uint8_t* buf, int32_t size,
 
 // ============================================================
 // IsScalarArrayType — check if an inner type name supports inline
-// element reading (Phase B). Returns true for numeric, bool, enum,
+// element reading. Returns true for numeric, bool, enum,
 // and name types. StructProperty, ObjectProperty, MapProperty, etc.
-// are NOT scalar and are handled in Phase D/E.
+// are NOT scalar and are not read here.
 // ============================================================
 bool IsScalarArrayType(const std::string& innerTypeName) {
     return innerTypeName == "FloatProperty"
@@ -4147,9 +4145,9 @@ bool IsScalarArrayType(const std::string& innerTypeName) {
 }
 
 // ============================================================
-// Phase L: FString-family arrays -- TArray<FString> / <FUtf8String> / <FAnsiString>.
+// FString-family arrays -- TArray<FString> / <FUtf8String> / <FAnsiString>.
 // [W5-STRARRAY-ELEMENTS] Reads the elements of a string array, which IsScalarArrayType admits no
-// type of and no other phase reads; without it the walk sends such an array with its count and NO
+// type of and no other reader reads; without it the walk sends such an array with its count and NO
 // elements. Not by widening IsScalarArrayType: its reader decodes RAW element bytes, and a string's
 // bytes are a header, not its text.
 // ============================================================
@@ -4173,8 +4171,8 @@ ReadArrayResult ReadStringArrayElements(
     result.ok = false;
 
     // Every member of the family is FString's { Data*, int32 Num, int32 Max } header: 16 bytes on x64.
-    // A different elemSize is a garbage FPROPERTY_ELEMSIZE read, so the stride is pinned -- as Phase D
-    // pins 8 for a pointer -- rather than trusted into an address walk.
+    // A different elemSize is a garbage FPROPERTY_ELEMSIZE read, so the stride is pinned -- as
+    // ReadPointerArrayElements pins 8 for a pointer -- rather than trusted into an address walk.
     (void)elemSize;
     constexpr int32_t kHeader = kStringArrayStride;
 
@@ -4207,8 +4205,8 @@ ReadArrayResult ReadStringArrayElements(
         elem.index = i;
         const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * kHeader;
 
-        // An unreadable HEADER is unread, never "": the same rule D3/D5 settled for delegates and lazy
-        // pointers. (A readable header whose text does not read comes back "" from the shared decoders,
+        // An unreadable HEADER is unread, never "": the same rule delegates and lazy pointers
+        // follow. (A readable header whose text does not read comes back "" from the shared decoders,
         // exactly as a scalar FString field does.)
         uint8_t hdr[kHeader];
         if (!Macht::ReadBytesSafe(elemAddr, hdr, sizeof(hdr))) {
@@ -4229,7 +4227,7 @@ ReadArrayResult ReadStringArrayElements(
 }
 
 // ============================================================
-// Phase M: TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout.
+// TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout.
 // ============================================================
 bool IsFieldPathArrayType(const std::string& innerTypeName) {
     return innerTypeName == "FieldPathProperty";
@@ -4287,8 +4285,8 @@ ReadArrayResult ReadFieldPathArrayElements(
         elem.index = i;
         const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
-        // The element itself unread is "???", never an affirmative "(unset)" -- the rule D3/D5
-        // settled for delegates and lazy pointers.
+        // The element itself unread is "???", never an affirmative "(unset)" -- the rule
+        // delegates and lazy pointers follow.
         std::vector<uint8_t> raw(static_cast<size_t>(elemSize), 0);
         if (!Macht::ReadBytesSafe(elemAddr, raw.data(), elemSize)) {
             elem.value = "???";
@@ -4348,7 +4346,7 @@ ReadArrayResult ReadFieldPathArrayElements(
 }
 
 // ============================================================
-// ReadArrayElements — read scalar elements from a TArray (Phase B).
+// ReadArrayElements — read scalar elements from a TArray.
 //
 // Reads up to `limit` elements starting at index `offset`.
 // For EnumProperty / ByteProperty-with-enum, resolves enum names
@@ -4452,9 +4450,9 @@ ReadArrayResult ReadArrayElements(
 
 // ============================================================
 // IsPointerArrayType — check if an inner type name is a pointer
-// type whose elements are raw UObject* pointers (Phase D).
+// type whose elements are raw UObject* pointers.
 // ObjectProperty and ClassProperty store UObject* (8 bytes).
-// WeakObjectProperty is deferred to Phase E.
+// WeakObjectProperty has its own reader (ReadWeakObjectArrayElements).
 // SoftObjectProperty, LazyObjectProperty, InterfaceProperty have
 // different internal layouts — handled inline by WalkInstance.
 // ============================================================
@@ -4465,7 +4463,7 @@ bool IsPointerArrayType(const std::string& innerTypeName) {
 
 // ============================================================
 // ReadPointerArrayElements — read pointer elements from a TArray
-// of UObject pointers (Phase D).
+// of UObject pointers.
 //
 // For each element, reads the 8-byte pointer, then resolves the
 // object name and class name via GetName/GetClass.
@@ -4557,7 +4555,7 @@ ReadArrayResult ReadPointerArrayElements(
 }
 
 // ============================================================
-// ResolveWeakObjectPtr — resolve FWeakObjectPtr to UObject* (Phase E).
+// ResolveWeakObjectPtr — resolve FWeakObjectPtr to UObject*.
 //
 // FWeakObjectPtr = { int32 ObjectIndex, int32 SerialNumber }.
 // ObjectIndex is a GObjects index. The SerialNumber must match the
@@ -4566,9 +4564,9 @@ ReadArrayResult ReadPointerArrayElements(
 // ============================================================
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
     // [VND583-08] UE's FWeakObjectPtr::Internal_GetObjectItem, in its order: SerialNumber == 0 is an
-    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair "resolved" to any
-    // object whose serial had never been assigned -- serials are handed out lazily, so most read 0
-    // -- and Find References listed it); a negative index is null; and index 0 is a real slot.
+    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair would "resolve" to
+    // any object whose serial had never been assigned -- serials are handed out lazily, so most read 0
+    // -- and Find References would list it); a negative index is null; and index 0 is a real slot.
     if (serialNumber == 0 || objectIndex < 0) return 0;
     uintptr_t obj = Aura::GetByIndex(objectIndex);
     if (!obj) return 0;
@@ -4613,8 +4611,8 @@ std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetN
 }
 
 // ============================================================
-// IsWeakPointerArrayType — check if inner type is a weak-pointer type
-// (Phase E). Currently only WeakObjectProperty.
+// IsWeakPointerArrayType — check if inner type is a weak-pointer type.
+// Currently only WeakObjectProperty.
 // ============================================================
 bool IsWeakPointerArrayType(const std::string& innerTypeName) {
     return innerTypeName == "WeakObjectProperty";
@@ -4622,7 +4620,7 @@ bool IsWeakPointerArrayType(const std::string& innerTypeName) {
 
 // ============================================================
 // ReadWeakObjectArrayElements — read FWeakObjectPtr elements from a
-// TArray (Phase E). Each element is { int32 ObjectIndex, int32 Serial }.
+// TArray. Each element is { int32 ObjectIndex, int32 Serial }.
 // Resolves each to a UObject* via GObjects + serial verification.
 // ============================================================
 ReadArrayResult ReadWeakObjectArrayElements(
@@ -4715,14 +4713,14 @@ ReadArrayResult ReadWeakObjectArrayElements(
 }
 
 // ============================================================
-// Phase F: IsStructArrayType
+// IsStructArrayType
 // ============================================================
 bool IsStructArrayType(const std::string& innerTypeName) {
     return innerTypeName == "StructProperty";
 }
 
 // ============================================================
-// Phase F: Cached struct field layout for struct array expansion
+// Cached struct field layout for struct array expansion
 // ============================================================
 struct CachedStructField {
     std::string name;
@@ -4794,11 +4792,11 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
                 uint8_t fieldMask = boolBytes[3];
-                // fieldSize == 1, not `>= 1 && <= 8`. Five of the seven copies of this
-                // probe already required 1; these two had drifted. FieldSize is the
-                // bitfield CONTAINER size and UHT only ever emits a 1-byte one, so the
-                // loose form bought nothing and accepted 8 -- which is exactly the low
-                // byte an 8-aligned pointer can present when the probe lands off-field.
+                // fieldSize == 1, not `>= 1 && <= 8`, as the other copies of this probe
+                // require. FieldSize is the bitfield CONTAINER size and UHT only ever
+                // emits a 1-byte one, so the loose form buys nothing and accepts 8 --
+                // which is exactly the low byte an 8-aligned pointer can present when
+                // the probe lands off-field.
                 if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
                     cf.boolFieldMask = fieldMask;
                     break;
@@ -4827,7 +4825,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
 }
 
 // ============================================================
-// Phase F: ReadStructArrayElements
+// ReadStructArrayElements
 // ============================================================
 ReadArrayResult ReadStructArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
@@ -5046,7 +5044,7 @@ ReadArrayResult ReadStructArrayElements(
 }
 
 // ============================================================
-// Phase G: IsSoftObjectArrayType — TSoftObjectPtr / TSoftClassPtr arrays.
+// IsSoftObjectArrayType — TSoftObjectPtr / TSoftClassPtr arrays.
 // Element layout: FWeakObjectPtr(8B) [+ Tag(4B) + pad(4B), UE <= 5.2 only] + FSoftObjectPath
 // Stride varies by UE version; when elemSize is invalid the reader falls back to the
 // measured (else version) envelope + the path's size. Per-element data resolves to the asset path string and (when
@@ -5058,7 +5056,7 @@ bool IsSoftObjectArrayType(const std::string& innerTypeName) {
 }
 
 // ============================================================
-// Phase G: ReadSoftObjectArrayElements — read TSoftObjectPtr elements.
+// ReadSoftObjectArrayElements — read TSoftObjectPtr elements.
 // For each element resolves the FSoftObjectPath asset name (UI display)
 // and the embedded FWeakObjectPtr to a live UObject* when the asset is
 // currently loaded (so CE / Address Finder can navigate to it).
@@ -5193,7 +5191,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
 }
 
 // ============================================================
-// Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
+// IsLazyObjectArrayType — TLazyObjectPtr arrays.
 // Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
 // ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
 // and 5.3 deleted the tag outright.
@@ -5203,7 +5201,7 @@ bool IsLazyObjectArrayType(const std::string& innerTypeName) {
 }
 
 // ============================================================
-// Phase H: ReadLazyObjectArrayElements — read TLazyObjectPtr elements.
+// ReadLazyObjectArrayElements — read TLazyObjectPtr elements.
 // Display value is the formatted FGuid; when the lazy ptr is currently
 // resolved, the embedded FWeakObjectPtr yields a live UObject*.
 // ============================================================
@@ -5217,7 +5215,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
     // ⛔ DO NOT force a constant here. A forced 0x20 — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)
     // model — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
     // (≥5.3), and LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so
-    // the `TLazyObjectPtr payload envelope measured` line could not come from THIS path. Use the
+    // the `TLazyObjectPtr payload envelope measured` line cannot come from THIS path. Use the
     // envelope arithmetic the scalar path uses: it takes the envelope from a real ElementSize and
     // falls back to the version default on garbage.
     //
@@ -5266,8 +5264,8 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
         // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
         // differently" is not available -- a faulted read and a genuinely-unset pointer
-        // produced the identical {00000000-...} string, and the fabricated one was also
-        // counted in readCount. The read's own answer is the only discriminator.
+        // would produce the identical {00000000-...} string, and the fabricated one would
+        // also count in readCount. The read's own answer is the only discriminator.
         // The four contiguous uint32s are the same bytes in the same order, so the
         // formatted output is unchanged on the success path.
         uint32_t guid[4] = {};
@@ -5327,7 +5325,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
 }
 
 // ============================================================
-// Phase I: IsInterfaceArrayType — TScriptInterface arrays.
+// IsInterfaceArrayType — TScriptInterface arrays.
 // Element layout: FScriptInterface = { UObject* +0x00, void* +0x08 } = 16
 // ============================================================
 bool IsInterfaceArrayType(const std::string& innerTypeName) {
@@ -5335,9 +5333,9 @@ bool IsInterfaceArrayType(const std::string& innerTypeName) {
 }
 
 // ============================================================
-// Phase I: ReadInterfaceArrayElements — read TScriptInterface elements.
+// ReadInterfaceArrayElements — read TScriptInterface elements.
 // Each element exposes the underlying UObject* directly — same display
-// shape as Phase D so CE XML / CSX export can treat it identically.
+// shape as ReadPointerArrayElements so CE XML / CSX export can treat it identically.
 // ============================================================
 ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
@@ -5428,7 +5426,7 @@ ReadArrayResult ReadInterfaceArrayElements(
 }
 
 // ============================================================
-// Phase J: IsDelegateArrayType — TArray<FScriptDelegate>.
+// IsDelegateArrayType — TArray<FScriptDelegate>.
 // Element layout: { FWeakObjectPtr(8B) + FName(8B|16B) } = 16 or 24
 // ============================================================
 bool IsDelegateArrayType(const std::string& innerTypeName) {
@@ -5446,7 +5444,7 @@ int32_t DelegateArrayElemPad(int32_t elemSize) {
 }
 
 // ============================================================
-// Phase J: ReadDelegateArrayElements — read FScriptDelegate elements.
+// ReadDelegateArrayElements — read FScriptDelegate elements.
 // Each element exposes the bound UObject* + FName (function), and the
 // ptrAddr is set so CE XML / Live Walker can drill into the target.
 // ============================================================
@@ -5457,18 +5455,16 @@ ReadArrayResult ReadDelegateArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    // ⛔ THE SIXTH D4b SITE, and [D4B-DELEGATEPAD]'s own enumeration said "five readers".
+    // ⛔ A [D4B-DELEGATEPAD] site too.
     // A TArray<FScriptDelegate>'s elements are the STANDALONE unicast type,
     // `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES carry UE 5.3+'s 8-byte access
     // detector on a checked build -- unlike a multicast's invocation-list elements, which are
     // the `...NotChecked...` variant and never do. Our comments call both "FScriptDelegate";
     // Grimoire.h carries the ⚠ about it, and this function is what that ⚠ was written for.
     //
-    // ⚠ It also had the two OTHER defects this file was swept for, in the same six lines:
-    // `int32_t /*elemSize*/` was an IGNORED PARAMETER while the caller passed the engine's own
-    // answer, and the local `8 + fnameSize` is the unpadded size -- so on a checked build
-    // element [0] read correctly and every index >= 1 drifted 8 bytes further, which is audit
-    // A1's fingerprint exactly.
+    // ⚠ The stride comes from `elemSize`, the engine's own answer, never from the local
+    // `8 + fnameSize`: that is the unpadded size, so on a checked build element [0] would read
+    // correctly and every index >= 1 drift 8 bytes further.
     int fnameSize = DynOff::SizeofFName();
     const int32_t kSdBase = 8 + fnameSize;      // FWeakObjectPtr + FName, no detector
     const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kSdBase);
@@ -5526,8 +5522,7 @@ ReadArrayResult ReadDelegateArrayElements(
 
         // Resolve target via FWeakObjectPtr. ⛔ BOTH RETURNS ARE LOAD-BEARING: on a faulted
         // read objIdx/serial stay 0, the weak pointer resolves to null, and the element is
-        // published as the affirmative "(unbound)" -- D3/D5 verbatim, and the third copy of
-        // that pair in this file.
+        // published as the affirmative "(unbound)" over memory nobody could read.
         int32_t objIdx = 0, serial = 0;
         const bool okIdx    = Macht::ReadSafe(elemAddr,     objIdx);
         const bool okSerial = Macht::ReadSafe(elemAddr + 4, serial);
@@ -5566,7 +5561,7 @@ ReadArrayResult ReadDelegateArrayElements(
 }
 
 // ============================================================
-// Phase K: IsMulticastDelegateArrayType — TArray<FMulticastScriptDelegate>.
+// IsMulticastDelegateArrayType — TArray<FMulticastScriptDelegate>.
 // Each element is itself a TArray<FScriptDelegate> header (16 bytes).
 // We can show binding count + a short preview of target::function names,
 // but cannot drill further (each element would need its own container view).
@@ -5779,8 +5774,8 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
                 Sein::Info("WALK", "CorrectSubclassOffsets: delta=%d, FSTRUCTPROP 0x%X -> 0x%X (validated with '%s' -> '%s')",
                     delta, static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), corrected, fi.Name.c_str(), sname.c_str());
-                // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
-                // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
+                // A writer of the sizeof(FProperty) family too — one expression, so it
+                // cannot drift from Genau's. Note FARRAYPROP_INNER may legitimately
                 // differ later (UE5.3+ puts EArrayPropertyFlags before Inner); the helper only
                 // sets the shared STARTING point, and the ArrayProperty probe further down
                 // this file re-probes it with delta=8. That probe deliberately writes that one
@@ -6382,7 +6377,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             } else {
                 // [VND583-05] The same words as the three sibling weak readers (struct member,
                 // array element, search preview): a live index whose serial no longer matches is a
-                // DEAD reference, not a null one. Unlabelled, the Value column showed the raw
+                // DEAD reference, not a null one. Unlabelled, the Value column would show the raw
                 // index+serial hex.
                 fv.typedValue = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
@@ -6483,8 +6478,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B) [+ Tag(4B) on UE <= 5.2] + FGuid.
         // ⚠ NOT +0x10, in any era: FUniqueObjectGuid is a bare FGuid at alignof 4, so there
         // is no pad after the tag -- the GUID is at +0x0C up to 5.2 and +0x08 from 5.3.
-        // See DynOff::LAZYPTR_GUID. This site was missed by the A1 sweep while all three
-        // siblings were converted, so it stayed 4 bytes off on EVERY version.
+        // See DynOff::LAZYPTR_GUID.
         // Mirror Soft path: resolve embedded FWeakObjectPtr when the lazy ptr
         // is currently bound to a live UObject.
         if (fi.TypeName == "LazyObjectProperty") {
@@ -6635,7 +6629,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             uintptr_t innerStruct = 0;
                             if (Macht::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
                                 fv.arrayInnerStructType = GetName(innerStruct);
-                                fv.arrayInnerStructAddr = innerStruct;  // Phase F: store for struct array expansion
+                                fv.arrayInnerStructAddr = innerStruct;  // store for struct array expansion
                                 // Fallback: FProperty::ElementSize often reads 0 for StructProperty inners.
                                 // Use UScriptStruct::PropertiesSize as the actual element size.
                                 if (fv.arrayElemSize <= 0) {
@@ -6663,7 +6657,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase B: read inline scalar element values (up to arrayLimit)
+                // Read inline scalar element values (up to arrayLimit)
                 if (innerFound && IsScalarArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
@@ -6683,7 +6677,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase D: read pointer array element names (up to arrayLimit)
+                // Read pointer array element names (up to arrayLimit)
                 if (innerFound && IsPointerArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
@@ -6696,7 +6690,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase E: read weak object pointer array element names (up to arrayLimit)
+                // Read weak object pointer array element names (up to arrayLimit)
                 if (innerFound && IsWeakPointerArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
@@ -6709,7 +6703,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase F: read struct array element fields (up to arrayLimit)
+                // Read struct array element fields (up to arrayLimit)
                 if (innerFound && IsStructArrayType(fv.arrayInnerType)
                     && fv.arrayInnerStructAddr != 0
                     && arr.Data && fv.arrayCount > 0
@@ -6724,7 +6718,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase G: TSoftObjectPtr / TSoftClassPtr arrays
+                // TSoftObjectPtr / TSoftClassPtr arrays
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     // Stamp soft-array layout metadata even when arr is empty
                     // — the CE XML / CSX exporter needs it to lay out the
@@ -6744,7 +6738,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase H: TLazyObjectPtr arrays
+                // TLazyObjectPtr arrays
                 if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto lazyResult = ReadLazyObjectArrayElements(
@@ -6756,7 +6750,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase I: TScriptInterface arrays
+                // TScriptInterface arrays
                 if (innerFound && IsInterfaceArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto ifaceResult = ReadInterfaceArrayElements(
@@ -6772,7 +6766,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // array still gets fabricated rows in a CE export). Never into fv.delegatePad: see Ubel.h.
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
                     fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
-                // Phase J: TArray<FScriptDelegate>
+                // TArray<FScriptDelegate>
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto delResult = ReadDelegateArrayElements(
@@ -6792,7 +6786,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase K: TArray<FMulticastScriptDelegate>
+                // TArray<FMulticastScriptDelegate>
                 if (innerFound && IsMulticastDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto mcastResult = ReadMulticastDelegateArrayElements(
@@ -6807,7 +6801,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase L: TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
+                // TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
                 // Publish the stride the reader uses, not the raw inner ELEMSIZE.
                 if (innerFound && IsStringArrayType(fv.arrayInnerType))
                     fv.arrayElemSize = kStringArrayStride;
@@ -6822,8 +6816,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase M: TArray<TFieldPath<...>> [WALK-FIELDPATH-ARRAY-NOELEMS]
-                // ⛔ The stride stays the ENGINE's ElementSize -- unlike Phase L, this one is not a
+                // TArray<TFieldPath<...>> [WALK-FIELDPATH-ARRAY-NOELEMS]
+                // ⛔ The stride stays the ENGINE's ElementSize -- unlike a string array's, this one is not a
                 // fixed header: the same FFieldPath is 32 bytes in a game build and 48 in an editor
                 // build (WITH_EDITORONLY_DATA members), and the reader derives Path from it.
                 if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
@@ -6859,8 +6853,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else {
                 // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass), the first
-                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version since
-                // [UPROP-SUBCLASS-SLOT]: a flat UPROPERTY_OFFSET + 0x2C was right on stock 4.18-4.24 only (4.11-4.17 are
+                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version
+                // ([UPROP-SUBCLASS-SLOT]): a flat UPROPERTY_OFFSET + 0x2C is right on stock 4.18-4.24 only (4.11-4.17 are
                 // + 0x28, case-preserving + 0x34), and the inner's Struct below is read at it UNPROBED.
                 int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
@@ -6906,7 +6900,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase B-F: same inline element reading as FProperty mode
+                // Same inline element reading as FProperty mode
                 if (innerFound && IsScalarArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
                     auto elemResult = ReadArrayElements(
@@ -6943,7 +6937,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(structResult.elements);
                     }
                 }
-                // Phase G: Soft object arrays (UProperty mode)
+                // Soft object arrays (UProperty mode)
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     fv.softArrayFNameSize = DynOff::SizeofFName();
                     fv.softArrayIsTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14]
@@ -6969,7 +6963,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // that stride too: the UI lays the elements out by it.
                     fv.arrayElemSize = ASSETPTR_SIZE;
                 }
-                // Phase H: Lazy object arrays (UProperty mode)
+                // Lazy object arrays (UProperty mode)
                 if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto lazyResult = ReadLazyObjectArrayElements(
@@ -6978,7 +6972,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(lazyResult.elements);
                     }
                 }
-                // Phase I: Interface arrays (UProperty mode)
+                // Interface arrays (UProperty mode)
                 if (innerFound && IsInterfaceArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto ifaceResult = ReadInterfaceArrayElements(
@@ -6990,7 +6984,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // [A4-DELEGATE-ARRAY-PAD] as the FProperty path: the per-element pad, read or not
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
                     fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
-                // Phase J: Delegate arrays (UProperty mode)
+                // Delegate arrays (UProperty mode)
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto delResult = ReadDelegateArrayElements(
@@ -7003,7 +6997,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
-                // Phase K: Multicast delegate arrays (UProperty mode)
+                // Multicast delegate arrays (UProperty mode)
                 if (innerFound && IsMulticastDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto mcastResult = ReadMulticastDelegateArrayElements(
@@ -7015,7 +7009,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
                     }
                 }
-                // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
+                // String arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
                 // Publish the stride the reader uses, not the raw inner ELEMSIZE.
                 if (innerFound && IsStringArrayType(fv.arrayInnerType))
                     fv.arrayElemSize = kStringArrayStride;
@@ -7028,7 +7022,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
-                // Phase M: TArray<TFieldPath<...>> (UProperty mode) [WALK-FIELDPATH-ARRAY-NOELEMS]
+                // TArray<TFieldPath<...>> (UProperty mode) [WALK-FIELDPATH-ARRAY-NOELEMS]
                 if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
                     auto fpResult = ReadFieldPathArrayElements(
@@ -7110,20 +7104,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                         // If key/value is StructProperty, read UScriptStruct* for navigation
                         // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
-                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either read fails, because a 0 addr makes
+                        // `GetMapPairLayout` (`[TMAPGEOM-2026-09-09]`), which REFUSES the whole
+                        // layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
                         // pairStride, mis-striding the whole map. `WalkInstance` never calls
-                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
-                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        // GetMapPairLayout -- it uses this inlined copy -- so the twins must agree
+                        // on the same input, or this one guesses SILENTLY.
                         //
-                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
-                        // agree on REFUSING. The alternative was to keep guessing here, on the
-                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
-                        // stride does not render "slightly wrong", it renders CONFIDENT values read
-                        // from the middle of the previous pair, and nothing on screen says so.
-                        // Publishing nothing and naming the reason is the same call
-                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // ⭐ `[TMAPGEOM-TWIN-2026-09-09]`: the twins agree on REFUSING. Guessing on
+                        // the grounds that a slightly-wrong map beats a blank one in a UI fails here
+                        // -- a wrong stride does not render "slightly wrong", it renders CONFIDENT
+                        // values read from the middle of the previous pair, and nothing on screen
+                        // says so. Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` makes for an unrecognised stride.
                         // The HEADER is kept either way -- name, type and element count still show;
                         // only the element VALUES are withheld.
                         //
@@ -7169,12 +7162,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
-                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
+                            // 4.11-4.21 -- [VND583-03]). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
-                            // not a layout oracle) — without it every struct-valued TMap fell
-                            // through to the size guess.
+                            // not a layout oracle) — without it every struct-valued TMap would
+                            // fall through to the size guess.
                             int32_t keyAlign = ResolveElementAlignment(
                                 keyTypeName, fv.mapKeySize, fv.mapKeyStructAddr);
                             int32_t valAlign = ResolveElementAlignment(
@@ -7299,20 +7292,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
-                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either read fails, because a 0 addr makes
+                        // `GetMapPairLayout` (`[TMAPGEOM-2026-09-09]`), which REFUSES the whole
+                        // layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
                         // pairStride, mis-striding the whole map. `WalkInstance` never calls
-                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
-                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        // GetMapPairLayout -- it uses this inlined copy -- so the twins must agree
+                        // on the same input, or this one guesses SILENTLY.
                         //
-                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
-                        // agree on REFUSING. The alternative was to keep guessing here, on the
-                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
-                        // stride does not render "slightly wrong", it renders CONFIDENT values read
-                        // from the middle of the previous pair, and nothing on screen says so.
-                        // Publishing nothing and naming the reason is the same call
-                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // ⭐ `[TMAPGEOM-TWIN-2026-09-09]`: the twins agree on REFUSING. Guessing on
+                        // the grounds that a slightly-wrong map beats a blank one in a UI fails here
+                        // -- a wrong stride does not render "slightly wrong", it renders CONFIDENT
+                        // values read from the middle of the previous pair, and nothing on screen
+                        // says so. Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` makes for an unrecognised stride.
                         // The HEADER is kept either way -- name, type and element count still show;
                         // only the element VALUES are withheld.
                         //
@@ -7357,12 +7349,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
-                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
+                            // 4.11-4.21 -- [VND583-03]). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
-                            // not a layout oracle) — without it every struct-valued TMap fell
-                            // through to the size guess.
+                            // not a layout oracle) — without it every struct-valued TMap would
+                            // fall through to the size guess.
                             int32_t keyAlign = ResolveElementAlignment(
                                 keyTypeName, fv.mapKeySize, fv.mapKeyStructAddr);
                             int32_t valAlign = ResolveElementAlignment(
@@ -7881,7 +7873,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (enumPtr) {
                 {
                     // Same gate, same reason, as the EnumProperty handler above: a faulted read
-                    // leaves rawVal at 0, which this block then published as the NAME of
+                    // leaves rawVal at 0, which this block would publish as the NAME of
                     // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
                     // the FField and survives; only the value is refused.
                     uint8_t rawVal = 0;
@@ -8089,7 +8081,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             bool isSet = false;
             // ⛔ EVERY DISCRIMINATOR READ BELOW IS LOAD-BEARING, and the two directions are both
             // wrong. `(unset)` is an AFFIRMATIVE claim that this TOptional provably holds no
-            // value — the same claim `(unbound)` makes for a delegate (D3/D5) — and on a faulted
+            // value — the same claim `(unbound)` makes for a delegate — and on a faulted
             // read the object/weak/text/flag arms all fall into it. The FString and FName arms
             // fail the OTHER way: their sentinels are -1 and 0xFFFFFFFF, so a faulted read's 0
             // reads as SET, and the field then publishes `""` or `(set)` for memory nobody
@@ -8142,8 +8134,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // [R7-B-02] The weak value's raw pair, kept for the null / null (stale) label below.
             int32_t optWeakIdx = 0, optWeakSerial = 0;
             bool optWeakRead = false;
-            // [R7-B-04] ...and its [garbage] tag, which the display builder below appends (setting typedValue here
-            // was dead: that builder overwrote it for every resolved target).
+            // [R7-B-04] ...and its [garbage] tag, which the display builder below appends (it overwrites typedValue
+            // for every resolved target, so typedValue is not the place for it).
             const char* optWeakTag = "";
 
             // Decode the value only for a SET optional whose discriminator was read -- never a
@@ -8248,9 +8240,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                                      readSize);
                     }
 
-                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy. The copy
-                    // that stood here read a packed bool as its whole byte and knew fewer scalar
-                    // widths than InterpretStructByLayout — "now the ONLY one" was not true.
+                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy: a copy
+                    // drifts, reading a packed bool as its whole byte or knowing fewer scalar
+                    // widths than InterpretStructByLayout.
                     std::string preview = hasBuf
                         ? InterpretStructByLayout(structBuf.data(), readSize, si, previewLimit)
                         : std::string();
@@ -8447,8 +8439,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.ptrName      = b.targetName;
                     elem.ptrClassName = b.targetClassName;
                 }
-                // [R7-B-04] Through the one label, so a Garbage target is tagged here too (it was the one
-                // reader of five without the tag).
+                // [R7-B-04] Through the one label, so a Garbage target is tagged here as in the other
+                // readers.
                 elem.value = DescribeDelegateBinding(b.targetObj, b.targetName,
                                                      b.objectIndex, b.serialNumber,
                                                      b.functionName);
@@ -8491,7 +8483,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         //
         // Exposes the multicast as an implicit DelegateProperty array so the UI
         // can drill in and CE XML / CSX can emit the bindings. Layout matches
-        // Phase J (TArray<FScriptDelegate>) — Offsets=[0] derefs InvocationList.
+        // a TArray<FScriptDelegate> — Offsets=[0] derefs InvocationList.
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
             int fnameSize = DynOff::SizeofFName();
@@ -8519,9 +8511,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
             fv.delegatePad = mcPad;   // exporters must add this before any Offsets=[0]
 
-            // Read TArray<FScriptDelegate> header. ⛔ Both returns are load-bearing: this is
-            // the same shape as D3/D5 -- on a faulted read `data`/`count` stay 0 and the field
-            // would publish the AFFIRMATIVE "(0 bindings)" over memory nobody could see.
+            // Read TArray<FScriptDelegate> header. ⛔ Both returns are load-bearing: on a
+            // faulted read `data`/`count` stay 0 and the field would publish the AFFIRMATIVE
+            // "(0 bindings)" over memory nobody could see.
             uintptr_t data = 0;
             int32_t count = 0;
             const bool okData  = Macht::ReadSafe(fieldAddr + mcPad,     data);
@@ -8532,7 +8524,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 continue;
             }
 
-            // ⛔ The second copy of D4's defect — see the long note in
+            // ⛔ Never clamp an implausible Num to zero — see the long note in
             // ReadMulticastDelegateArrayElements. `count = 0` here would render the
             // affirmative "(0 bindings)" for a header that is not a TArray at all.
             if (count < 0 || count > Aura::kMaxPlausibleInvocationListNum) {
@@ -8672,7 +8664,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     // Note: works with 0-field classes too — the entire [headerEnd, propsSize] becomes one gap.
     // The gap pass is bounded SEPARATELY from the plausibility gate above: a class
     // can be entirely real and still be too large to sweep byte-wise, and conflating
-    // the two is what made a live 3.6 MB USaveGame report as recycled. Say the skip
+    // the two would report a large live object (a multi-MB USaveGame) as recycled. Say the skip
     // out loud rather than silently returning no guessed rows. (SANEPROPS-2026-08-26)
     //
     // Gated on `fillGaps` as well, so a default walk (fill_gaps defaults to false)
@@ -8850,9 +8842,9 @@ void ResolvePropertyPreviews(
             if (s.empty()) {
                 m.preview = "(empty)";
             } else {
-                // Truncate long strings — on a CHARACTER boundary. `s.resize(50)` split
-                // multi-byte sequences (2 CJK strings in 3), and nlohmann's strict dump()
-                // then threw on the invalid UTF-8, turning the entire search_properties
+                // Truncate long strings — on a CHARACTER boundary. A byte cut like
+                // `s.resize(50)` splits multi-byte sequences, and nlohmann's strict dump()
+                // then throws on the invalid UTF-8, turning the entire search_properties
                 // response into {"error":...} — zero rows for a search that matched.
                 m.preview = "\"" + Utf8Helpers::TruncateUtf8(s, 50) + "\"";
             }

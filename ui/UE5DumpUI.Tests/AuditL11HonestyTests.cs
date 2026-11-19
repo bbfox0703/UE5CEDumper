@@ -13,36 +13,37 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 batch L11 — V8 / V9 / V10 / V11 / W8 / Y10-Y14.
+/// Honesty: a report must describe the thing it reports on.
 ///
-/// <para>One theme runs through all of them: <b>a report and the thing it reports on were
-/// produced by different code</b>. A drill-down printed the container's true total over a
-/// capped grid; a Cancel button was bound to an already-cancelled token; a scan's result
-/// text was erased by the refresh the scan itself triggered; a symbol registration that
-/// never reached CE looked exactly like one that did; an exporter's collector accepted a
-/// narrower set of classes than its own siblings; and the invoke dialog announced N baked
-/// params over values it had failed to parse.</para>
+/// <para>One theme runs through all of them: <b>a report and the thing it reports on are
+/// produced by different code</b>, so they can disagree. A drill-down could print the
+/// container's true total over a capped grid; a Cancel button could be bound to an
+/// already-cancelled token; a scan's result text could be erased by the refresh the scan
+/// itself triggers; a symbol registration that never reached CE could look exactly like one
+/// that did; an exporter's collector could accept a narrower set of classes than its own
+/// siblings; and the invoke dialog could announce N baked params over values it failed to
+/// parse.</para>
 ///
-/// <para>Each fact below fails on the pre-fix tree — the negative control is named in the
-/// comment beside it.</para>
+/// <para>Each fact below fails when its report and its subject come apart — the negative
+/// control is named in the comment beside it.</para>
 /// </summary>
 public class AuditL11HonestyTests
 {
-    // ══ V8 — the DataTable drill is the container path the [CONTAINERCAP] badge missed ══
+    // ══ the DataTable drill is a container path the [CONTAINERCAP] badge covers too ══
     //
     // WalkDataTableRowsAsync fetches a FIXED page of rows (its `limit` default) and the UI
-    // never pages, but the crumb printed dtResult.RowCount — the TRUE total the DLL
-    // reports. A 5,000-row table therefore announced "5000" over a grid holding 64, so a
-    // row that had simply not been fetched read as a row the table does not contain.
+    // never pages, while dtResult.RowCount is the TRUE total the DLL reports. A crumb
+    // printing it bare would announce "5000" over a grid holding 64, so a row that had
+    // simply not been fetched would read as a row the table does not contain.
     //
     // Negative control: drop the BadgeSuffix calls in NavigateToDataTableContainer /
     // PopulateDataTableRowFields / DataTableFieldPreview -> all three Truncated facts fail.
 
     // ══ [P1-WALK-UNREADABLE] / [A4-REROOT-STALE-WARNING] -- the walk's own warning survives the re-root ══
     //
-    // A re-root (the Go box, every cross-tab handoff, Find Refs' Open) walked, let UpdateDisplay say the object was
-    // freed -- then set StatusText to the Back hint, or to "" on a first navigation. The report and the thing it reports
-    // on were produced by different code, which is this class's theme.
+    // A re-root (the Go box, every cross-tab handoff, Find Refs' Open) walks and lets UpdateDisplay say the object was
+    // freed; the Back hint it sets afterwards (or "" on a first navigation) must not replace that. The report and the
+    // thing it reports on are produced by different code, which is this class's theme.
 
     private static LiveWalkerViewModel WalkerWith(params (string addr, InstanceWalkResult r)[] walks)
     {
@@ -90,8 +91,8 @@ public class AuditL11HonestyTests
         Assert.Contains("no longer readable", vm.StatusText);
     }
 
-    // [WALK-NULLCLASS-SILENT] L47: a header with a null (or unmapped) ClassPrivate came back classless and field-less with
-    // no flag, and the grid went blank with no status. The status must say so -- and claim neither "freed/recycled" nor
+    // [WALK-NULLCLASS-SILENT] A header with a null (or unmapped) ClassPrivate comes back classless and field-less, and the
+    // grid goes blank. The status must say why -- and claim neither "freed/recycled" nor
     // an implausible PropertiesSize: the Go box takes any address, which may never have been an object.
     [Fact]
     public async Task Walk_OfAnAddressWithNoUObjectHeader_SaysSo_WithoutClaimingFreed()
@@ -105,8 +106,8 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("implausible", vm.StatusText);
     }
 
-    // [WALK-NULLCLASS-SILENT] review F4: the fill_gaps auto-retry skips all three verdicts, and its log line said
-    // "object is stale or unreadable" for each -- for a no_header walk, neither. The log names the verdict it saw.
+    // [WALK-NULLCLASS-SILENT] The fill_gaps auto-retry skips all three verdicts, and one log line saying "object is stale
+    // or unreadable" for each would be wrong for a no_header walk, which is neither. The log names the verdict it saw.
     [Theory]
     [InlineData("unreadable", "unreadable")]
     [InlineData("no_header", "no UObject header")]
@@ -138,9 +139,9 @@ public class AuditL11HonestyTests
 
     // ══ [P1-SPARSEDELEGATE-REFS] -- Find References blames the game only after a complete scan ══
     //
-    // A sparse delegate whose bindings the DLL could not read was skipped, and the sweep still called itself complete,
-    // so "No references found — likely held by a non-reflected pointer" blamed the game for our gap. The same hint
-    // printed over a scan that hit its deadline (the PATTERN-P5 widening).
+    // A sweep that skips a sparse delegate whose bindings the DLL could not read is not complete, so "No references
+    // found — likely held by a non-reflected pointer" over it would blame the game for our gap. The same holds for a
+    // scan that hit its deadline.
 
     private sealed class RefsStub : StubDumpService
     {
@@ -225,8 +226,9 @@ public class AuditL11HonestyTests
 
     // ══ [A4-LW-DISCONNECT-PARENT] / [A1-DETECT-REPUBLISH] -- ClearOnDisconnect keeps its promise ══
     //
-    // Both methods promise "a reconnect never shows the previous game's ...". Live Walker's left the Parent button, the
-    // References header and the full function list; Detect Player Stats' was undone by a run already in flight.
+    // Both methods promise "a reconnect never shows the previous game's ...". Live Walker's must clear the Parent
+    // button, the References header and the full function list; Detect Player Stats' must not be undone by a run
+    // already in flight.
 
     private sealed class FuncsStub : StubDumpService
     {
@@ -265,9 +267,9 @@ public class AuditL11HonestyTests
     [Fact]
     public void LiveWalker_ClearOnDisconnect_LeavesNoStatusLine_AndNoErrorLine()
     {
-        // [LW-DISCONNECT-STALE-STATUS] Measured on DumperTest 5.4: a Find Refs line ("Found 4 reference(s) [scanned ...]")
-        // outlived the kill of its game and the connect of the next one, quoting a scan of a process that no longer
-        // exists above an empty landing view. The panel shows each of these on its own line whenever it is non-empty.
+        // [LW-DISCONNECT-STALE-STATUS] A Find Refs line ("Found 4 reference(s) [scanned ...]") must not outlive the kill
+        // of its game and the connect of the next one, quoting a scan of a process that no longer exists above an empty
+        // landing view. The panel shows each of these on its own line whenever it is non-empty.
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
                                          new MockPlatformService(Path.GetTempPath()));
         vm.StatusText = "Found 4 reference(s)  [scanned 24516/24516 in 202ms]";
@@ -341,9 +343,9 @@ public class AuditL11HonestyTests
     // ══ [W5-INSTEXPORT-TRUNC] -- Instance Finder's CE XML export says when it was truncated ══
     //
     // GenerateInstanceXml stops at its crash guard and says so through LastExportTruncated. Live Walker's two exports
-    // read it; Instance Finder's copied a truncated table without a word -- and then blanked its status.
-    // [CEXML-CAP-60K] The guard is 256 Mi characters of XML now (it was 60,000 entries), so these run under a lowered
-    // one: the fixtures below overshoot it many times over, the real one they would have to build a gigabyte to reach.
+    // read it, and Instance Finder's must too: a truncated table must not be copied without a word.
+    // [CEXML-CAP-60K] The guard is 256 Mi characters of XML, so these run under a lowered one: the fixtures below
+    // overshoot it many times over, the real one they would have to build a gigabyte to reach.
     private const int TruncationBudget = 500_000;
 
     private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
@@ -382,8 +384,8 @@ public class AuditL11HonestyTests
         Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
         // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] No toolbar setting changes THIS export's entry count: there is no container
         // for the Array Limit to clip, Collapse Pointer Nodes only folds groups and the DropDown Limit only decides
-        // whether a dropdown is attached. R7-D-03 named the Array Limit here -- the same wrong advice with another
-        // lever. What does work is exporting the part that is needed.
+        // whether a dropdown is attached; naming any of them here would be wrong advice. What does work is exporting
+        // the part that is needed.
         Assert.DoesNotContain("Array Limit", vm.StatusText);
         Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
         Assert.DoesNotContain("DropDown Limit", vm.StatusText);
@@ -421,10 +423,10 @@ public class AuditL11HonestyTests
     public async Task InstanceFinder_CeXmlExport_TruncatedByCompleteContainersUnderTheLimit_StillNamesTheArrayLimit()
     {
         using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
-        // [R7-X8] Found live (DumperTest's NestedBag, 16,000 pairs at Array Limit 16384): every container came back
-        // whole and under the limit, so none was "bound", and the notice said no toolbar setting shrinks the export --
-        // but the same copy at 8192 was complete. Lowering the limit shrinks every container LONGER than the new
-        // limit, not only one sitting at the current one. Four whole 16,000-element arrays: 64,000 entries.
+        // [R7-X8] Every container can come back whole and under the limit (DumperTest's NestedBag, 16,000 pairs at
+        // Array Limit 16384), so none is "bound" -- yet the same copy at 8192 is complete, so the notice must not say no
+        // toolbar setting shrinks the export. Lowering the limit shrinks every container LONGER than the new limit, not
+        // only one sitting at the current one. Four whole 16,000-element arrays: 64,000 entries.
         var fields = new List<LiveFieldValue>();
         foreach (var name in new[] { "PairsA", "PairsB", "PairsC", "PairsD" })
         {
@@ -446,7 +448,7 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("no toolbar setting", vm.StatusText);
     }
 
-    // [R7-X8] The X8 skeptic: a truncation driven by scalars, with only a small container beside them. Lowering the
+    // [R7-X8] A truncation driven by scalars, with only a small container beside them. Lowering the
     // limit shrinks that container a little and the export stays truncated, so the advice that does work -- export the
     // part you need -- must still be there.
     private static List<LiveFieldValue> ScalarsPlus(LiveFieldValue extra)
@@ -488,7 +490,7 @@ public class AuditL11HonestyTests
     public async Task InstanceFinder_CeXmlExport_AContainerEmittedAsOneEntry_IsNoLever(string type, string inner)
     {
         using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
-        // [R7-X8] The X8 skeptic's INFO: the DLL fills these elements up to the Array Limit, but the export writes
+        // [R7-X8] The DLL fills these elements up to the Array Limit, but the export writes
         // the field as a single entry at any limit, so lowering the limit shrinks nothing.
         var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
         {
@@ -505,7 +507,7 @@ public class AuditL11HonestyTests
     }
 
     // [R7-S11] A container inside a STRUCT field is resolved at the Array Limit too, and emitted through the resolved
-    // struct -- but the status looked at the top-level fields only, where the struct has no elements of its own.
+    // struct -- so the status must look past the top-level fields, where the struct has no elements of its own.
     private static List<LiveFieldValue> TuneStruct() => new()
     {
         new() { Name = "Tune", TypeName = "StructProperty", Offset = 0x28, Size = 0x10,
@@ -555,8 +557,8 @@ public class AuditL11HonestyTests
         Assert.Contains("64 of 16,390", vm.StatusText);
     }
 
-    // [R7-S13] The struct resolve is awaited, and nothing stops the user picking another instance meanwhile. R7-S11
-    // snapshotted the fields but not the instance, so A's layout went out under B's root address and name.
+    // [R7-S13] The struct resolve is awaited, and nothing stops the user picking another instance meanwhile. The export
+    // snapshots the instance as well as the fields, or A's layout would go out under B's root address and name.
     private sealed class GatedStructStub : StubDumpService
     {
         public readonly TaskCompletionSource Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -597,7 +599,7 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_WhileANewSelectionsWalkIsInFlight_IsRefused()
     {
-        // [R7-S14] The other ordering of R7-S13: B is picked FIRST and its walk is still running, so Fields still holds
+        // [R7-S14] The other ordering of [R7-S13]: B is picked FIRST and its walk is still running, so Fields still holds
         // A's rows and the button is still live. The export must not send A's layout out under B.
         var (dump, vm, platform) = AlphaBetaFinder();
         dump.GatedAddr = "0x20000000";
@@ -615,8 +617,8 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_AWalkStartedDuringTheExport_KeepsItsLoadingFlag()
     {
-        // [R7-S14] The export's finally cleared IsLoadingFields unconditionally, so a walk started DURING the export
-        // (the user picked B while the structs resolved) lost its progress bar while it was still running.
+        // [R7-S14] The export's finally must not clear IsLoadingFields unconditionally: a walk started DURING the export
+        // (the user picked B while the structs resolved) would lose its progress bar while it was still running.
         var (dump, vm, platform) = AlphaBetaFinder();
         vm.SelectedInstance = null;                                     // re-load A with a struct field
         var alpha = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
@@ -687,7 +689,7 @@ public class AuditL11HonestyTests
     public async Task InstanceFinder_CeXmlExport_CompleteButClipped_DisclosesTheClipping()
     {
         // [INSTEXPORT-TRUNC-ADVICE] Under the cap, but a container came back clipped (64 of 16,390): the copy is not the
-        // whole container, and the status said nothing. Disclosed the way Live Walker does, naming no lever -- the
+        // whole container, and the status must say so. Disclosed the way Live Walker does, naming no lever -- the
         // array half is also bound by the DLL's per-fetch cap, which no slider raises.
         var elems = new List<ArrayElementValue>();
         for (int i = 0; i < 64; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
@@ -765,7 +767,7 @@ public class AuditL11HonestyTests
         Assert.Contains("showing 64 of 5,000", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 64 of 5,000", vm.CurrentObjectName);
         // FixedCap wording, not the Array Limit one: that slider does NOT govern this
-        // view, so naming it would be a second false statement on top of the first.
+        // view, so naming it would be a false statement.
         Assert.Contains("64", vm.StatusText);
         Assert.Contains("5,000", vm.StatusText);
         Assert.DoesNotContain("Array Limit", vm.StatusText);
@@ -795,8 +797,8 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task V8_DataTableRefresh_KeepsItsStatusLine_AndTheCrumbTakesTheNewTotal()
     {
-        // [WALK-REFRESH-SCALAR-SHRINK] Refresh re-fetched the rows and re-rendered the header, but cleared the status
-        // line and left the crumb (its label, and the ContainerField the exporters read) on the drill's reading.
+        // [WALK-REFRESH-SCALAR-SHRINK] Refresh re-fetches the rows and re-renders the header; it must also keep the status
+        // line and move the crumb (its label, and the ContainerField the exporters read) off the drill's reading.
         var dump = new DataTableRewalkStub { Total = 5000 };
         var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
         vm.CurrentAddress = "0x10000000";
@@ -816,9 +818,9 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task DataTableRefresh_TheCrumbsRowMapField_KeepsTheShapeADrillGivesIt()
     {
-        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] review round 5: since 72ee74fd the RowMap row a drill hands the crumb
-        // carries the RowMap's address (the table + RowMapOffset); the field Refresh rebuilt for the same crumb did not,
-        // so one crumb's field changed shape on a Refresh.
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The RowMap row a drill hands the crumb carries the RowMap's address (the
+        // table + RowMapOffset); the field Refresh rebuilds for the same crumb must carry it too, or one crumb's field
+        // changes shape on a Refresh.
         var dump = new DataTableRewalkStub { Total = 5000 };
         var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
         vm.CurrentAddress = "0x10000000";
@@ -834,7 +836,7 @@ public class AuditL11HonestyTests
     [Fact]
     public void V8_DataTableDrill_RowsStillRender()
     {
-        // Guard against "fixed" by suppressing the view: the rows must still be there.
+        // Guard against a badge bought by suppressing the view: the rows must still be there.
         var vm = MakeWalker();
         var dt = DataTable(total: 5000, fetched: 64);
 
@@ -854,8 +856,8 @@ public class AuditL11HonestyTests
     }
 
     // [LEAD-DT-EXPORT-64ROWS] Copy CE XML / CSX of a table export the rows the RowMap field carries, the same fixed
-    // page, and the export's limit warning checked only Array / Map / Set: a 5,000-row table exported 64 rows and
-    // said nothing. The page is not the Array Limit, so the warning does not name the slider for it.
+    // page, so the export's limit warning covers tables as well as Array / Map / Set: a 5,000-row table that exports 64
+    // rows must say so. The page is not the Array Limit, so the warning does not name the slider for it.
 
     [Fact]
     public void LeadDtExport64_TheExportWarning_NamesATableCutToItsPage()
@@ -872,9 +874,9 @@ public class AuditL11HonestyTests
     [Fact]
     public void LeadDtExport64_TheAobFallbackNote_DoesNotReplaceTheLimitWarning()
     {
-        // Review round 2: with Use AOB Symbol on and the export re-anchored below GWorld, Copy CE XML and Copy CE Field
-        // kept "AOB skipped (no GWorld path)" and threw the limit warning away -- a table cut to its page, or a
-        // container cut at the Array Limit, then said nothing. The two are about different things; both are said.
+        // With Use AOB Symbol on and the export re-anchored below GWorld, Copy CE XML and Copy CE Field say "AOB skipped
+        // (no GWorld path)"; that note must not replace the limit warning, or a table cut to its page, or a container
+        // cut at the Array Limit, says nothing. The two are about different things; both are said.
         var line = LiveWalkerViewModel.ExportStatusExtra("AOB skipped (no GWorld path)", "⚠ RowMap cut");
         Assert.Contains("AOB skipped", line);
         Assert.Contains("RowMap cut", line);
@@ -927,8 +929,8 @@ public class AuditL11HonestyTests
         Assert.NotNull(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128));
     }
 
-    // [CEXPORT-NESTED-TRUNC-NOTE] The warning scanned only the fields the export started from; a container cut at the
-    // Array Limit inside a struct or pointer target the export walked was not reported.
+    // [CEXPORT-NESTED-TRUNC-NOTE] The warning looks past the fields the export started from: a container cut at the
+    // Array Limit inside a struct or pointer target the export walked is reported too.
 
     private static LiveFieldValue ClippedArray(string name) => new()
     {
@@ -962,8 +964,8 @@ public class AuditL11HonestyTests
     [Fact]
     public void NestedTrunc_TheSameCutInManyWalkedObjects_IsSaidOnce()
     {
-        // Review round 1: the resolver walks each element of a struct array apart, so 128 FSlot elements each holding a
-        // cut Items array put "Items (...)" into the status line 128 times.
+        // The resolver walks each element of a struct array apart, so 128 FSlot elements each holding a cut Items array
+        // must not put "Items (...)" into the status line 128 times.
         var nested = Enumerable.Range(0, 128).Select(_ => ClippedArray("Items")).ToArray();
 
         var warn = LiveWalkerViewModel.BuildContainerLimitWarning(Array.Empty<LiveFieldValue>(), 128, nested: nested);
@@ -999,11 +1001,11 @@ public class AuditL11HonestyTests
         Assert.Equal("", ContainerTruncation.FixedCapStatusLine(0, 5000, "rows"));
     }
 
-    // ══ V9 — the Object Tree's Cancel button could not cancel a search ══════════════
+    // ══ the Object Tree's Cancel button cancels a search ══════════════════════════
     //
-    // SearchAsync cancelled _loadCts and never replaced it, then called
-    // SearchObjectsAsync WITHOUT a token. For the whole (full-GObjects-sweep) search the
-    // panel's only enabled control was a Cancel bound to an already-cancelled source.
+    // SearchAsync replaces the _loadCts it cancels and hands SearchObjectsAsync a token.
+    // Without both, for the whole (full-GObjects-sweep) search the panel's only enabled
+    // control would be a Cancel bound to an already-cancelled source.
     //
     // Negative control: drop the `ct` argument at the SearchObjectsAsync call site ->
     // V9_CancelDuringSearch_ActuallyCancels hangs on its own Task.Delay ceiling and fails.
@@ -1015,7 +1017,7 @@ public class AuditL11HonestyTests
         /// <summary>Completes once the VM is actually inside the search round-trip.</summary>
         public Task Entered => _entered.Task;
 
-        /// <summary>True when the VM handed us a token at all (false = the V9 defect).</summary>
+        /// <summary>True when the VM handed us a token at all (false = a Cancel that cancels nothing).</summary>
         public bool ReceivedCancellableToken { get; private set; }
 
         public override async Task<ObjectListResult> SearchObjectsAsync(
@@ -1055,16 +1057,16 @@ public class AuditL11HonestyTests
         Assert.Null(vm.ErrorMessage);   // a user cancel is not an error
     }
 
-    // ══ V10 — Update() erased the Extra Scan's own result ═══════════════════════════
+    // ══ Update() must not erase the Extra Scan's own result ═════════════════════════
     //
     // ExtraScanAsync sets ScanResultText, then raises RescanApplied; MainWindowVM's
-    // handler re-fetches pointers and calls Update(), which blanked it milliseconds later.
-    // ApplyOverrideAsync and ApplyInvokeTimeoutAsync reach Update() the same way, and the
-    // UE-version ComboBox is gated on IsApplyingOverride — NOT IsScanning — so clearing
-    // IsScanning there re-enabled CanExtraScan mid-scan.
+    // handler re-fetches pointers and calls Update(), which must not blank it milliseconds
+    // later. ApplyOverrideAsync and ApplyInvokeTimeoutAsync reach Update() the same way,
+    // and the UE-version ComboBox is gated on IsApplyingOverride — NOT IsScanning — so
+    // clearing IsScanning there would re-enable CanExtraScan mid-scan.
     //
-    // Negative control: put the five assignments back at the end of Update() -> both
-    // V10 facts fail.
+    // Negative control: reset the scan-state properties at the end of Update() ->
+    // V10_Update_DoesNotEraseScanState fails.
 
     private static PointerPanelViewModel MakePointers()
         => new(new MockPlatformService(Path.GetTempPath()));
@@ -1126,11 +1128,11 @@ public class AuditL11HonestyTests
         Assert.Equal("", vm.ScanResultText);
     }
 
-    // ══ V11 — "Register symbol" looked identical on success and failure ═════════════
+    // ══ "Register symbol" must not look identical on success and failure ════════════
     //
-    // CreateSymbolScriptAsync's bool chose _log.Info vs _log.Warn and nothing else.
-    // Negative control: revert ReportSymbolRegistration to the two log calls -> both
-    // V11 facts fail.
+    // CreateSymbolScriptAsync's bool must reach the user, not only choose _log.Info vs
+    // _log.Warn. Negative control: reduce ReportSymbolRegistration to the two log calls
+    // -> both success/failure facts below fail.
 
     [Fact]
     public void V11_SymbolRegistrationSuccess_ReachesTheUser()
@@ -1192,14 +1194,14 @@ public class AuditL11HonestyTests
         Assert.Contains("gworld_addr", vm.SymbolStatusText);
     }
 
-    // ══ W8 — the USMAP collector dropped every Blueprint-generated class ════════════
+    // ══ the USMAP collector keeps the Blueprint-generated classes ══════════════════
     //
-    // `ClassName is "Class" or "ScriptStruct"` accepted native classes only. On a shipped
+    // `ClassName is "Class" or "ScriptStruct"` accepts native classes only. On a shipped
     // title that is a few hundred rows against thousands of BlueprintGeneratedClass ones —
     // and Blueprint classes are exactly what a .usmap consumer needs. Both sibling
-    // exporters already route through the whitelist.
+    // exporters route through the whitelist too.
     //
-    // Negative control: restore the bare check -> the four BPGC-family facts fail.
+    // Negative control: use the bare check instead -> the four BPGC-family facts fail.
 
     private sealed class MetaClassStub : StubDumpService
     {
@@ -1274,10 +1276,9 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task W8_UsmapCollector_MatchesTheSdkExporter()
     {
-        // The point of the fix is that the two exporters agree. They drifted anyway: the SDK
-        // exporter learned UserDefinedStruct and to skip class-default objects
-        // ([SDK-UDS-MISSING]) while this test compared the USMAP collector with a hand-written
-        // copy of the OLD rule, so it stayed green. [USMAP-UDS-MISSING] Now both exporters walk
+        // The two exporters must agree. A comparison with a hand-written copy of the rule
+        // stays green while the SDK exporter's rule moves on (UserDefinedStruct, skipping
+        // class-default objects: [SDK-UDS-MISSING]). [USMAP-UDS-MISSING] So both exporters walk
         // the same stub and must walk the same rows -- and the rows that decide it are named.
         var rows = new[]
         {
@@ -1303,10 +1304,10 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("N_Enum", usmap.Walked);
     }
 
-    // ══ Y10 — the baked verify script wrote into the mailbox with no contract check ══
+    // ══ the baked verify script checks the contract before it writes into the mailbox ══
     //
     // Negative control: delete the AppendContractCheck call -> the ordering fact fails.
-    // The clamp's negative control is restoring `parmsSize` in the zero loop.
+    // The clamp's negative control is an unclamped `parmsSize` in the zero loop.
 
     private static string BakedVerify(int parmsSize, BakedParamValue? ret = null) =>
         BakedScriptGenerator.Generate(
@@ -1342,8 +1343,8 @@ public class AuditL11HonestyTests
     public void Y10_NonVerifyMode_TouchesNoMailboxAndNeedsNoCheck()
     {
         // The plain baked script writes nothing to the mailbox itself (the helper does),
-        // so it must not have grown a check — that would be a new failure mode for a
-        // path that never had the defect.
+        // so it must not carry a check — that would be a new failure mode for a path
+        // that never writes to the mailbox.
         var script = BakedScriptGenerator.Generate(
             "APlayerCharacter", "AddMoney", 16, new List<BakedParamValue>());
         Assert.DoesNotContain("writeByte(_PD_dbg", script);
@@ -1360,9 +1361,9 @@ public class AuditL11HonestyTests
         Assert.Contains($"for i = 0, {expected} - 1 do writeByte(_PD_dbg + i, 0) end", script);
     }
 
-    // ══ Y13 — the 32-byte dump could not contain the return it pointed at ═══════════
+    // ══ the dump window must contain the return it points at ═══════════════════════
     //
-    // Negative control: restore `Math.Max(8, Math.Min(parmsSize, 32))` -> the widening
+    // Negative control: compute it as `Math.Max(8, Math.Min(parmsSize, 32))` -> the widening
     // facts and the emitted-hint fact fail.
 
     private static BakedParamValue Ret(string type, int size, int offset) =>
@@ -1371,8 +1372,8 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y13_DumpWindow_WidensToCoverTheReturnSlot()
     {
-        // FString return at +32, 16 bytes wide: the old flat 32 stopped one byte short of
-        // its first byte, which is the whole finding.
+        // FString return at +32, 16 bytes wide: a flat 32 stops one byte short of its first
+        // byte, which is the whole hazard.
         Assert.Equal(48, BakedScriptGenerator.ComputeDumpLength(64, Ret("StrProperty", 16, 32)));
     }
 
@@ -1381,7 +1382,7 @@ public class AuditL11HonestyTests
     {
         Assert.Equal(32, BakedScriptGenerator.ComputeDumpLength(64, Ret("IntProperty", 4, 8)));
         Assert.Equal(32, BakedScriptGenerator.ComputeDumpLength(64, null));
-        // Tiny params buffer: unchanged floor of 8, exactly as before.
+        // Tiny params buffer: the floor of 8.
         Assert.Equal(8, BakedScriptGenerator.ComputeDumpLength(4, null));
     }
 
@@ -1410,15 +1411,15 @@ public class AuditL11HonestyTests
         Assert.Contains("past the", beyond);
     }
 
-    // ══ Y11 — FIRE had no unsupported-param gate ════════════════════════════════════
+    // ══ FIRE gates the params it cannot write ═══════════════════════════════════════
     //
-    // An FText / TArray / TMap / TSet / delegate / layout-less struct param's textbox was
-    // written as a raw int32 over the structure's first pointer field and handed to
-    // ProcessEvent. The exported script's helper already refuses exactly these (AA16);
-    // the FIRE path did not, so one dialog input had two different answers.
+    // Ungated, an FText / TArray / TMap / TSet / delegate / layout-less struct param's
+    // textbox would be written as a raw int32 over the structure's first pointer field and
+    // handed to ProcessEvent. The exported script's helper refuses exactly these, so the
+    // FIRE path must too, or one dialog input has two different answers.
     //
     // Negative control: delete the IsUnwritableParam early-return in WriteParam and the
-    // two guards in TryValidateScalar -> every Y11 fact fails.
+    // two guards in TryValidateScalar -> every fact of this section fails.
 
     private static byte[] Fire(string type, int size, string text, int bufLen = 32)
     {
@@ -1439,7 +1440,7 @@ public class AuditL11HonestyTests
     [InlineData("OptionalProperty", 8)]
     public void Y11_UnwritableParam_LeavesTheSlotZeroed(string type, int size)
     {
-        // 0x11223344 would previously have landed on the structure's Data pointer.
+        // Ungated, 0x11223344 would land on the structure's Data pointer.
         var buf = Fire(type, size, "0x11223344");
         Assert.All(buf, b => Assert.Equal(0, b));
     }
@@ -1483,7 +1484,7 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y11_FText_RefusalClaimsOnlyWhatARunCannotFalsify()
     {
-        // [FTEXT-REFUSAL-OVERCLAIM] A zeroed FText sent to a body that ignores it returned
+        // [FTEXT-REFUSAL-OVERCLAIM] A zeroed FText sent to a body that ignores it returns
         // "ProcessEvent OK" on UE 5.4: copying, passing and destroying it all skip the null. The
         // refusal stays -- a callee that READS it does crash, and the dumper cannot tell which
         // kind it is calling -- but its reason must say "can", never that it always crashes.
@@ -1492,13 +1493,12 @@ public class AuditL11HonestyTests
         Assert.Contains("a function that reads it can crash the game", err);
     }
 
-    // ── Y11 step 3: the SUB-FIELD path had no gate at all ──────────────────────
+    // ── the SUB-FIELD path is gated too ───────────────────────────────────────
     //
-    // The dialog validated top-level params and then called WriteStructParam, which
-    // forwards each sub-field straight to WriteParam. WriteParam's opaque-type guard
-    // returns SILENTLY, so a nested-struct sub-field (FSlateBrush::ImageSize) had its
-    // typed value dropped while FIRE still said "ProcessEvent OK", and an out-of-range
-    // integer sub-field masked to width. Measured on DQ7R 2026-08-22.
+    // WriteStructParam forwards each sub-field straight to WriteParam, whose opaque-type
+    // guard returns SILENTLY. Gating only the top-level params would let a nested-struct
+    // sub-field (FSlateBrush::ImageSize) have its typed value dropped while FIRE still
+    // says "ProcessEvent OK", and an out-of-range integer sub-field mask to width.
     //
     // Negative control: delete the TryValidateStructSubFields call in
     // InvokeParamDialog (or make this helper always return true) -> both facts below
@@ -1525,8 +1525,8 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y11_SubField_OutOfRangeIntegerIsRefused()
     {
-        // The width family (W6/Y2/Y9/Y15/AE1) survived here because the fix was applied
-        // to top-level params only: 9999 into a 1-byte sub-field used to fire as 15.
+        // The width rule holds for sub-fields as for top-level params: 9999 into a 1-byte
+        // sub-field must be refused, not fired as 15.
         var ok = ParamBufferBuilder.TryValidateStructSubFields(
             BrushLike, ["0", "9999", "0"], out var field, out var err);
 
@@ -1539,8 +1539,8 @@ public class AuditL11HonestyTests
     public void Y11_SubField_UntouchedDefaultsStillPass()
     {
         // The control: leaving the boxes at their zero default legitimately means
-        // "send the zeroed struct", which step 2 proved is safe. Refusing that would
-        // break a passing case to fix a failing one.
+        // "send the zeroed struct", which is safe. Refusing that would break a working
+        // case.
         Assert.True(ParamBufferBuilder.TryValidateStructSubFields(
             BrushLike, ["0", "0", "0"], out _, out _));
         Assert.True(ParamBufferBuilder.TryValidateStructSubFields(
@@ -1550,10 +1550,10 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y11_SubField_TypedValueIsDroppedSilently_WhichIsWhyTheGateExists()
     {
-        // This is the defect itself, pinned: WriteStructParam does NOT write an opaque
-        // sub-field, and says nothing about it. The buffer staying zero is correct
-        // behaviour -- writing 42 over a struct's first pointer was the original Y11 bug
-        // -- so the repair had to be a refusal, never a write.
+        // The hazard itself, pinned: WriteStructParam does NOT write an opaque sub-field,
+        // and says nothing about it. The buffer staying zero is correct behaviour --
+        // writing 42 over a struct's first pointer is the hazard the gate exists for -- so
+        // the answer is a refusal, never a write.
         var buf = new byte[32];
         ParamBufferBuilder.WriteStructParam(buf, 0, BrushLike, ["0", "0", "42"]);
         Assert.All(buf, b => Assert.Equal(0, b));
@@ -1573,13 +1573,12 @@ public class AuditL11HonestyTests
     // ── [P3-INVOKE-STRUCT-FSTRING] a string MEMBER of a struct param ───────────────────
     //
     // A top-level FString goes through InvokeStringParam and the DLL builds it by value. A
-    // string SUB-FIELD took the scalar route instead: TryValidateScalar has no width for a
-    // 16-byte StrProperty and passed it, and WriteParam's size-driven default wrote the textbox
-    // as a raw integer over FString.Data -- a bogus pointer handed to ProcessEvent, a third hole
-    // beside Y11-OPAQUEDROP. The recorded safe shape: refuse a NON-EMPTY member; the all-zero
-    // FString {null,0,0} is the valid empty and must still pass. (TryValidateScalar itself keeps
-    // accepting strings -- Y11_StringAndPointerParamsAreStillAccepted -- because a TOP-LEVEL
-    // string is built for real.)
+    // string SUB-FIELD would take the scalar route instead: TryValidateScalar has no width for a
+    // 16-byte StrProperty and passes it, and WriteParam's size-driven default would write the
+    // textbox as a raw integer over FString.Data -- a bogus pointer handed to ProcessEvent. The
+    // safe shape: refuse a NON-EMPTY member; the all-zero FString {null,0,0} is the valid empty
+    // and must still pass. (TryValidateScalar itself keeps accepting strings --
+    // Y11_StringAndPointerParamsAreStillAccepted -- because a TOP-LEVEL string is built for real.)
 
     private static readonly DynamicStructField[] WithLabel =
     [
@@ -1615,17 +1614,16 @@ public class AuditL11HonestyTests
     [Fact]
     public void StructFString_EmptyMember_StillPasses()
     {
-        // The control, green before and after: an untouched string box (GetDefaultValue gives
-        // "") sends the valid empty FString.
+        // The control: an untouched string box (GetDefaultValue gives "") sends the valid
+        // empty FString.
         Assert.True(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["7", ""], out _, out _));
     }
 
-    // Review of d8a7f44f: FIRE now leaves a string member zeroed and refuses typed text, but Copy AA
-    // Script still baked it as an 'fstring' row, and the helper built a CE-allocated FString -- into
-    // an OUT struct too, where the callee's assignment frees memory UE never allocated. And Copy AA
-    // ran no gate at all, so a typed TFieldPath / TOptional value was baked as a raw int32. Both
-    // live on the Avalonia window, so they are pinned by reading the source back (the
-    // InvokeBoolMaskTests pattern).
+    // FIRE leaves a string member zeroed and refuses typed text, and Copy AA Script must agree: baked
+    // as an 'fstring' row, the helper would build a CE-allocated FString -- into an OUT struct too,
+    // where the callee's assignment frees memory UE never allocated. And Copy AA runs FIRE's gate, or
+    // a typed TFieldPath / TOptional value would be baked as a raw int32. Both live on the Avalonia
+    // window, so they are pinned by reading the source back (the InvokeBoolMaskTests pattern).
     private static string DialogSource()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -1649,7 +1647,7 @@ public class AuditL11HonestyTests
         Assert.True(add > at);
 
         // The struct branch's first row add must be preceded by the string-member skip -- the exact
-        // statement, not just the predicate's name somewhere (review of cd73ec38).
+        // statement, not just the predicate's name somewhere.
         Assert.Matches(new System.Text.RegularExpressions.Regex(
             @"(?m)^\s*if \(ParamBufferBuilder\.IsStringType\(sf\.TypeName\)\) continue;\s*$"), src[at..add]);
     }
@@ -1662,7 +1660,7 @@ public class AuditL11HonestyTests
         Assert.True(h > 0, "OnCopyBakedScriptClicked not found — re-point this pin");
         int gen = src.IndexOf("BakedScriptGenerator.Generate(", h, StringComparison.Ordinal);
         Assert.True(gen > h);
-        // The call must be a REFUSAL that returns before anything is collected (review of cd73ec38):
+        // The call must be a REFUSAL that returns before anything is collected:
         // `if (!TryValidateInputsForInvoke(out var e)) { ... return; }`, ahead of CollectBakedValues().
         var body = src[h..gen];
         var refusal = System.Text.RegularExpressions.Regex.Match(body,
@@ -1693,7 +1691,7 @@ public class AuditL11HonestyTests
         Assert.All(buf[8..24], b => Assert.Equal(0, b));
     }
 
-    // ══ Y14 — "N baked param(s)" was reported over params that failed to parse ══════
+    // ══ "N baked param(s)" must not be reported over params that failed to parse ════
     //
     // Negative control: replace IsUnparsedLiteral's body with `=> false` -> the
     // unparsed-detection facts fail.
@@ -1727,8 +1725,8 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y14_DetectionAgreesWithWhatTheScriptActuallyContains()
     {
-        // The whole root cause is "the report and the reality computed by different code",
-        // so pin that the predicate and the emitted script agree.
+        // The hazard is "the report and the reality computed by different code", so pin
+        // that the predicate and the emitted script agree.
         var values = new List<BakedParamValue>
         {
             new("Amount", "IntProperty", 4, 0, "42"),
@@ -1741,13 +1739,13 @@ public class AuditL11HonestyTests
         Assert.True(BakedScriptGenerator.IsUnparsedLiteral(values[1].UeTypeName, values[1].LiteralText));
     }
 
-    // ══ Y12 — the baked clipboard fallback shipped a bare AA body ═══════════════════
+    // ══ the baked clipboard fallback is a pasteable CheatEntry, not a bare AA body ══
     //
     // A bare [ENABLE]/[DISABLE] body cannot be pasted into CE's address list; it has to be
     // a CheatEntry with VariableType = Auto Assembler Script. Every other clipboard
     // fallback wraps. The dialog's own handler needs a window, so what is pinned here is
-    // that the wrapper survives a real baked script intact — the dialog change itself is
-    // one call and is listed for live verification.
+    // that the wrapper survives a real baked script intact — the dialog's call is one
+    // line and is listed for live verification.
 
     [Fact]
     public void Y12_WrappedBakedScript_IsAPasteableCheatEntry()

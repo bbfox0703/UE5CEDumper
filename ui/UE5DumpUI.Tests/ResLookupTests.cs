@@ -4,9 +4,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [I18N-READINESS-2026-11-04] P1. A unit test has no Avalonia application, so <see cref="Res.Get"/> answered "" for
-/// every key: a string moved into en.axaml went blank in every test that read it, and the assertions that check a
-/// sentence is ABSENT (DoesNotContain, NotEqual, Equal("")) kept passing while testing nothing. The test assembly now
+/// [I18N-READINESS-2026-11-04] A unit test has no Avalonia application, so <see cref="Res.Get"/> alone answers "" for
+/// every key: a string moved into en.axaml would go blank in every test that read it, and the assertions that check a
+/// sentence is ABSENT (DoesNotContain, NotEqual, Equal("")) would pass while testing nothing. The test assembly
 /// reads en.axaml once and gives Res that lookup, so a test sees the sentence the app shows.
 /// </summary>
 public class ResLookupTests

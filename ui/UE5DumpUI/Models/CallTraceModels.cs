@@ -58,7 +58,7 @@ public sealed class TraceInfo
     /// snapshots, the chosen calls alone. Null from a DLL that predates names: then <see cref="Ticked"/> &gt; 0 says it.</summary>
     public bool? Scoped    { get; init; }
     public int   TickedNames { get; init; }
-    /// <summary>Chosen functions and nothing ticked: only the chosen calls are recorded (T11).</summary>
+    /// <summary>Chosen functions and nothing ticked: only the chosen calls are recorded.</summary>
     public bool  SnapOnly  { get; init; }
     /// <summary>The snapshot buffer; null when none was armed (or the DLL predates snapshots).</summary>
     public SnapInfo? Snap  { get; init; }
@@ -81,7 +81,7 @@ public sealed class TraceStartOptions
     /// <summary>UFunction addresses (func_addr strings), for a DLL that predates ticks by name; one that reads
     /// <see cref="TickedNames"/> ignores them. Empty, with no names and no snapshots, traces every call.</summary>
     public IReadOnlyList<string> Ticked { get; init; } = Array.Empty<string>();
-    /// <summary>[LIVEFUNCS-STEP2] The ticks by name (T10): followed through unloads and reloads.</summary>
+    /// <summary>[LIVEFUNCS-STEP2] The ticks by name: followed through unloads and reloads.</summary>
     public IReadOnlyList<NamedFunction> TickedNames { get; init; } = Array.Empty<NamedFunction>();
     /// <summary>[LIVEFUNCS-STEP2] What the snapshot buffer takes, or null when nothing is chosen for it.</summary>
     public SnapshotStartOptions? Snapshots { get; init; }

@@ -3,17 +3,17 @@
     py mailbox_poke.py DumperTest              # CMD_QUERY_PTR x2 (GWorld, GameEngine)
     py mailbox_poke.py DumperTest --repeat 20  # hammer it: one throw would end the loop
 
-WHAT MB3 CHANGED (audit L12, build 3263), in `Mimic.cpp`, which **no test target
-compiles** -- so none of it has ever executed:
-  * the dispatch `switch` now runs inside `Routine::RunTickGuarded`, so one throwing
+WHAT IT EXERCISES (MB3 in docs/audit-2026-08-13-early-code-findings.md), in `Mimic.cpp`,
+which **no test target compiles** -- so only a live DLL runs it:
+  * the dispatch `switch` runs inside `Routine::RunTickGuarded`, so one throwing
     handler loses that command instead of ending the mailbox for the session;
   * `CompoundOpGuard`'s destructor detects unwinding (`std::uncaught_exceptions()`
     against the count at entry) and publishes `-11` instead of the stale `result` --
-    which for `HandleInvokeByName` was normally **0**, i.e. it reported SUCCESS for a
-    command that threw.
+    which for `HandleInvokeByName` is normally **0**, i.e. it would report SUCCESS for
+    a command that threw.
 
 ⚠ THE RISK IS NOT THE THROW PATH. The row says so explicitly: the throw is hard to
-trigger, but if the lambda refactor broke PLAIN dispatch then every CE command breaks
+trigger, but if the dispatch lambda broke PLAIN dispatch then every CE command breaks
 at once. So the check that matters is "do ordinary mailbox commands still work" --
 which is what this does, and it needs no Cheat Engine at all (category A rather than
 the row's category B).
@@ -71,7 +71,7 @@ class Mem:
         got = ctypes.c_size_t(0)
         ok = k32.ReadProcessMemory(self.h, ctypes.c_void_p(addr), buf, n, ctypes.byref(got))
         # FAIL LOUDLY: a zero returned for "read failed" is indistinguishable from a
-        # zero that IS the answer, and that has already produced a wrong verdict here.
+        # zero that IS the answer, so it would produce a wrong verdict.
         if not ok or got.value != n:
             raise SystemExit(f"mailbox_poke: READ FAILED at {addr:#x} "
                              f"err={ctypes.get_last_error()} got={got.value}/{n}")
@@ -117,7 +117,7 @@ def mailbox_addr(stem):
 
 
 def poke(m, base, op, timeout=10.0, cmd=CMD_QUERY_PTR, value=0):
-    """One mailbox round trip. Returns (result, paramsData[:32], elapsed, errorMsg).
+    """One mailbox round trip. Returns (result, paramsData's first 32 bytes, elapsed, errorMsg).
 
     `op` goes in instanceAddr and `value` in ufuncAddr -- the convention every
     op-coded command in Mimic.h uses (CMD_FOREGROUND, CMD_TELEPORT, CMD_QUERY_PTR...).
@@ -127,8 +127,8 @@ def poke(m, base, op, timeout=10.0, cmd=CMD_QUERY_PTR, value=0):
         raise SystemExit("mailbox_poke: mailbox is already PROCESSING -- a previous command "
                          "is wedged; that is itself the MB3 failure mode, capture the logs")
     # Clear status FIRST. The DLL leaves it at DONE after the previous command, so a
-    # poller that only waits for DONE returns instantly with the PREVIOUS result --
-    # which is how this rig first reported a bogus failure on its second dispatch.
+    # poller that only waits for DONE returns instantly with the PREVIOUS result and
+    # reports a bogus failure on its second dispatch.
     m.write(base + OFF_STATUS, struct.pack("<i", STATUS_IDLE))
     m.write(base + OFF_INSTANCE, struct.pack("<Q", op))        # inputs...
     m.write(base + OFF_UFUNC, struct.pack("<Q", value))        # ...op's value arg

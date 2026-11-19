@@ -5,7 +5,7 @@ namespace UE5DumpUI.Models;
 
 /// <summary>
 /// One auto-detected candidate player-stat field, produced by the experimental
-/// "Detect Player Stats" panel (P4). Wraps a scored <see cref="PropertySearchMatch"/>
+/// "Detect Player Stats" panel. Wraps a scored <see cref="PropertySearchMatch"/>
 /// with the live confirmation signals gathered at detect time (a live instance
 /// exists, the value is plausible, has a Max sibling, is a GAS attribute, and —
 /// opt-in — decreased across two snapshots) plus a combined confidence.
@@ -59,7 +59,7 @@ public sealed class DetectedStat
 
     /// <summary>Compact badge for the first column: confirmed / guess / never-checked.
     /// The third is not a weaker guess — it is the absence of evidence, and calling it a
-    /// guess is the AF2 defect.</summary>
+    /// guess would pass an unchecked row off as a checked one.</summary>
     public string ConfirmBadge =>
         IsConfirmed ? "✓ confirmed" : WasProbed ? "· guess" : "? not checked";
 

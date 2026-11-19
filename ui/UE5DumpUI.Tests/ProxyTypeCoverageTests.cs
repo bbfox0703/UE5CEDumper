@@ -7,14 +7,13 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Guards against the failure mode this project has already hit twice: a proxy
-/// flavour exists in the enum but some hand-maintained list elsewhere never
-/// learned about it, so a feature silently stops covering it.
+/// Guards against one failure mode: a proxy flavour exists in the enum but some
+/// hand-maintained list elsewhere never learned about it, so a feature silently
+/// stops covering it.
 ///
-/// The real instance: the double-inject guards in <c>Methode.cpp</c> and
-/// <c>UE5CEDumper.CT</c> tested `version` + `winmm` for builds while the shipped
-/// proxies were `version` / `dinput8` / `dxgi` — so a dxgi deployment had no guard
-/// at all. These tests make every C#-side list derive from <see cref="ProxyType"/>
+/// A double-inject guard (<c>Methode.cpp</c>, <c>UE5CEDumper.CT</c>) that tests a
+/// hand-written set of proxy names leaves every flavour outside that set with no
+/// guard at all. These tests make every C#-side list derive from <see cref="ProxyType"/>
 /// and fail loudly if one is added by hand instead.
 /// </summary>
 public class ProxyTypeCoverageTests
@@ -60,7 +59,7 @@ public class ProxyTypeCoverageTests
     public void Module_detector_recognises_every_proxy_flavour()
     {
         // DumperModuleDetector derives its list from the enum; this proves it,
-        // and would fail if someone replaced it with literals again.
+        // and would fail if someone replaced it with literals.
         foreach (var t in Enum.GetValues<ProxyType>())
             Assert.True(DumperModuleDetector.IsInterestingModuleName(t.GetDllName().ToLowerInvariant()),
                         $"module filter does not know {t.GetDllName()}");
@@ -77,7 +76,7 @@ public class ProxyTypeCoverageTests
     [Fact]
     public void Winmm_is_present_because_it_is_the_spare_slot()
     {
-        // Not for coverage — measured at 24/24, identical to dxgi. It exists so a
+        // Not for coverage — its reach matches dxgi's. It exists so a
         // user whose dxgi.dll slot is taken (ReShade) and whose version.dll slot is
         // taken (a game shipping its own) still has a universally-viable choice.
         Assert.Equal("winmm.dll", ProxyType.Winmm.GetDllName());

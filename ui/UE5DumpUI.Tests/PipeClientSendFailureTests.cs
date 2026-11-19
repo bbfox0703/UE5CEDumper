@@ -4,8 +4,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// audit #5 AC10 — a failed pipe WRITE has three causes and the old filters reported all
-/// of them as cancellation. The classification is pure and lives on PipeClient because the
+/// A failed pipe WRITE has three causes, and they must not all be reported as
+/// cancellation. The classification is pure and lives on PipeClient because the
 /// live path (a pipe dying between the IsConnected guard and the write) is a race that
 /// cannot be driven deterministically from outside.
 /// </summary>
@@ -26,7 +26,7 @@ public class PipeClientSendFailureTests
     public void DeliberateTeardown_IsStillCancellation()
     {
         // DisconnectAsync / Dispose cancel _cts BEFORE clearing IsConnected, so this is
-        // the state a planned shutdown produces. Behaviour deliberately unchanged.
+        // the state a planned shutdown produces, and it stays a cancellation.
         Assert.Equal(PipeClient.SendFailure.Disconnecting,
             PipeClient.ClassifySendFailure(callerCancelled: false, clientCancelled: true, connected: false));
         Assert.Equal(PipeClient.SendFailure.Disconnecting,
@@ -34,14 +34,14 @@ public class PipeClientSendFailureTests
     }
 
     /// <summary>
-    /// THE FINDING. Nobody cancelled anything and the connection is gone: ReadLoopAsync's
+    /// THE KEY ROW. Nobody cancelled anything and the connection is gone: ReadLoopAsync's
     /// finally cleared IsConnected on an unplanned exit. This must be a failure, not a
     /// cancel — it is the same event for which that finally faults every OTHER in-flight
     /// request with an IOException.
     ///
-    /// NEGATIVE CONTROL: collapse the check back to `!connected || clientCancelled` and
-    /// this is the one row that flips (to Disconnecting); every other row above and below
-    /// keeps its answer, which is why the defect survived so long.
+    /// NEGATIVE CONTROL: collapse the check to `!connected || clientCancelled` and this is
+    /// the one row that flips (to Disconnecting); every other row above and below keeps its
+    /// answer, which is how such a defect hides.
     /// </summary>
     [Fact]
     public void UnexpectedDeath_IsAFailureNotACancel()
@@ -63,8 +63,7 @@ public class PipeClientSendFailureTests
     public void TheReplyReader_ReadsThePipeInLargeBlocks()
     {
         // [TRACE-UI-READ-SPEED] A StreamReader built without a buffer size reads the pipe 1 KB at a time, so one 14 MB
-        // pe_trace_get page is ~14,000 async pipe reads. Measured (2026-11-02, a named pipe in-process, 14 MB JSON lines
-        // read with ReadLineAsync + JsonNode.Parse): ~60 MB/s at the default buffer, ~600 MB/s at 64 KB. The pipe's
+        // pe_trace_get page is ~14,000 async pipe reads; a 64 KB buffer reads it in large blocks. The pipe's
         // reader is built in one place and cannot be driven from a test without owning the fixed pipe name, so this pins
         // its construction.
         var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/PipeClient.cs"));

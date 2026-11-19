@@ -39,6 +39,7 @@
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
     <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.StringLength">String Len:</sys:String>
+    <sys:String x:Key="str.Toolbar.EditableStrings">Editable string records</sys:String>
     <sys:String x:Key="str.Toolbar.Fabricate">Fabricate:</sys:String>
     <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
     <sys:String x:Key="str.Toolbar.CsxDepth">Drill Depth:</sys:String>
@@ -242,7 +243,7 @@
     <sys:String x:Key="str.Tip.VS.FirstScan">Walk every UPROPERTY field of the chosen type across all UObject instances (including TArray elements of that type), apply the predicate, and start a session for Next Scan refines. For strings use Contains / StartsWith / EndsWith. For vectors enter "X,Y,Z".</sys:String>
     <sys:String x:Key="str.Tip.VS.NextScan">Re-read each candidate and prune by the new predicate. Changed / Unchanged / Increased / Decreased compare against the previous round.</sys:String>
     <sys:String x:Key="str.Tip.VS.NewScan">End the current session and reset for a fresh scan.</sys:String>
-    <!-- Multiple values group scan (build 1276) -->
+    <!-- Multiple values group scan -->
     <sys:String x:Key="str.VS.Mode.Single">Single value</sys:String>
     <sys:String x:Key="str.VS.Mode.Group">Multiple values (group)</sys:String>
     <sys:String x:Key="str.VS.Group.Hint">Find objects that hold ALL of these values at once (e.g. Str + Def + Dex + Int in the same stats object). Order doesn't matter; far more selective than searching one value. Enter 2–4 values.</sys:String>
@@ -454,9 +455,8 @@
     <sys:String x:Key="str.Pointers.VersionLowConfidenceBadge">&#x26A0; Low Confidence</sys:String>
     <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via a fragile fallback — a bare pattern match or a publisher bias — so this version may be wrong. If values, exports or function calls look wrong, set the right version with Override above; its tooltip says what that changes.</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
-    <!-- [UE-OVERRIDE-HINT-AUTO] The maintainer asked (2026-10-09) whether the override is only a label. It is not:
-         say what it changes, what it risks, and when each part takes effect. Keep it in step with what the DLL's
-         set_ue_version_override handler does. -->
+    <!-- [UE-OVERRIDE-HINT-AUTO] The override is not only a label: say what it changes, what it risks, and when each
+         part takes effect. Keep it in step with what the DLL's set_ue_version_override handler does. -->
     <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Not just a label: it changes how the DLL reads this game. GObjects, GNames and the property offsets are measured from the game and stay as they are; what cannot be measured follows this version, including UE4 property fields, soft and lazy pointers, sets and maps, the CE export layout, and UFunction parameters until a scan has measured them. A wrong version misreads those, and a write or function call built on a misread can crash the game. Use it only when detection is wrong. Saved per game and applied at every launch, where it also skips the too-old check; that check and the sparse-delegate scan follow a change only at the next launch. Auto returns to the detected version at once, or at the next launch if none is on record.</sys:String>
     <sys:String x:Key="str.Pointers.VersionAutoPendingText">Auto applies at the next launch: there is no detection of this game on record that this session can return to, so the overridden version above stays in force until the game restarts.</sys:String>
     <!-- [OVERRIDE-REVIEW2-LOWS] The DLL refuses an override the game's UFunctions contradict, but only once a scan has
@@ -518,7 +518,7 @@
 
     <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
          Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
-         chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+         chose a log LEVEL would make the two states identical on screen. -->
     <sys:String x:Key="str.Pointers.Symbol.RegisteredFromExport">Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
@@ -629,7 +629,7 @@
     <sys:String x:Key="str.System.SelfTest.Running">Probing KismetMathLibrary helpers...</sys:String>
     <sys:String x:Key="str.System.SelfTest.NoCandidate">No testable BlueprintFunctionLibrary helper found in this game.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Error">Self-Test failed: {0}</sys:String>
-    <!-- Self-Test FAILED. {0} label, {1} expected, {2} actual, {3} advice (one of the four below), {4} raw buffer. -->
+    <!-- Self-Test FAILED. {0} label, {1} expected, {2} actual, {3} advice (one of the Fail.* keys below), {4} raw buffer. -->
     <sys:String x:Key="str.System.SelfTest.Fail">✗ {0} expected {1}, got {2}&#10;{3}&#10;Raw buffer: {4}</sys:String>
     <sys:String x:Key="str.System.SelfTest.Fail.HookFiring">The ProcessEvent hook is installed AND firing, so the invoke path itself is working. A wrong answer here most likely means this game's build resolves that helper through BlueprintFastCall, which makes it a no-op when called via ProcessEvent — so this result is not evidence of a broken hook. Verify with a game-specific UFunction instead. Re-deploying the DLL will not change it.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Fail.HookNeverFired">The ProcessEvent hook is installed but has never fired. That is the signature of a MIS-DETECTED vtable slot — check init-*.log for 'VALIDATION FAILED'. Re-deploying the DLL will NOT help: the binary is current, the detected slot is wrong. The same reading also appears when the game thread is simply idle (paused, loading, minimised), so retry once while the game is actually running before concluding.</sys:String>
@@ -705,7 +705,7 @@
     <sys:String x:Key="str.Experimental.EnableHint">Enable advanced experimental features</sys:String>
     <sys:String x:Key="str.Experimental.LockedForSession">Advanced experimental features stay on until the UI restarts, because Snapshot, SPC Query, Class Pivot or Call Trace was opened this session.</sys:String>
 
-    <!-- Snapshot tab (experimental — Phase A) -->
+    <!-- Snapshot tab (experimental) -->
     <sys:String x:Key="str.Snapshot.Intro">Capture every numeric UPROPERTY of every (scoped) object into a persisted snapshot. Snapshots feed SPC Query and Class Pivot. Enable "Native-C" to also capture unmanaged (non-UPROPERTY) raw values.</sys:String>
     <sys:String x:Key="str.Snapshot.NativeC">Native-C (raw)</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.NativeC">Opt-in (default off). In addition to reflected UPROPERTY fields, captures each object's UNMANAGED holes (non-UPROPERTY raw bytes) as synthetic "&lt;raw@0xNN&gt;" fields — the bytes are interpreted via the Guess-What heuristic and normalized to a numeric type (pointer/padding guesses are dropped). Lets SPC Query diff and Class Pivot track native values (HP/MP) that reflection can't see. Slower and larger per capture. Raw fields join across snapshots by offset; a guess that flips type between captures (rare for stable values) simply won't join.</sys:String>
@@ -1098,9 +1098,9 @@
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
 
     <!-- Value prompt (FreezeValueDialog). ONE dialog serves two actions, so every string
-         that names the action has a Freeze and a Force variant (audit #5 AF22: the Force
-         flow reused the Freeze dialog verbatim, so the button the user clicked to write
-         and HOLD a live field said "Create freeze script"). -->
+         that names the action has a Freeze and a Force variant: reusing the Freeze text
+         verbatim would label the button that writes and HOLDS a live field
+         "Create freeze script". -->
     <sys:String x:Key="str.ValuePrompt.Freeze.Title">Freeze property value</sys:String>
     <sys:String x:Key="str.ValuePrompt.Freeze.ValueLabel">Freeze value ({0}):</sys:String>
     <sys:String x:Key="str.ValuePrompt.Freeze.Ok">Create freeze script</sys:String>
@@ -1577,7 +1577,8 @@
     <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
     <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
     <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object. Only a DLL
-         from builds 3676-3681 says so: a newer one refuses that ON (str.DbgCam.NoLiveCheatManager). -->
+         with this tag but without [DEBUGCAM-FORCEON-CDO] says so: one with [DEBUGCAM-FORCEON-CDO] refuses that ON
+         (str.DbgCam.NoLiveCheatManager). -->
     <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), and a toggle there does nothing.</sys:String>
     <!-- [DEBUGCAM-FORCEON-CDO] the DLL's -17: a Force ON not sent, because no CheatManager is live; -1 is a failure,
          never that case, and a state that reads -1 is a read that failed. -->
@@ -2051,10 +2052,11 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.StringLength">CE String field display length in characters (2^N; 16-4096). Applies to Copy CE XML / Copy CE Field, to the string size in Export CSX and Push to CE Structure Dissect, and to the string records +CE and +CE Field (flat) add. A generous value never truncates a shorter live string (CE stops at the null terminator) — it reserves room for strings that grow between saves.</sys:String>
+    <sys:String x:Key="str.Tip.EditableStrings">Off (the default): every String record Copy CE XML and Copy CE Field write carries a locked drop-down list with nothing to pick, so editing its value in Cheat Engine writes nothing; the value column still shows the live string. On: those records stay editable, and Cheat Engine writes a typed string whole, plus its terminator, at the game's string buffer whatever that buffer's size; String Len does not limit the write. A longer string overwrites whatever the game keeps after the buffer, which can crash the game, and the game's own length for the string is not updated. The string records +CE and +CE Field (flat) add are editable either way.</sys:String>
     <sys:String x:Key="str.Tip.Fabricate">Copy CE Field only: 0 = Off. When set (2^N = 2..4096), the SELECTED top-level TArray is padded to this many element rows — null pointers and indices beyond the live Num are fabricated using a resolved element's field layout, so the CE table already has slots for items a later save/ship will hold. Only the selected array is padded, never nested arrays inside its elements. TArray only (Map/Set are sparse and never fabricated). Rows past the current Num read past-the-end memory (harmless) until the game grows the array. Values above 256 (use at your own risk) can produce very large tables that slow Cheat Engine's paste down.</sys:String>
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
     <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy. 0-4 normal; 5-6 deep — output size grows exponentially per level (depth 6 on UWorld can produce multi-MB CE XML).</sys:String>
-    <sys:String x:Key="str.Tip.Toolbar.Options">Export, display and lookup settings, each saved and kept across restarts: Collapse Pointer Nodes, Array Limit, DropDown Limit, String Len, Fabricate, Preview, Drill Depth, Locate in GWorld depth with its Deep (nested containers) switch, and the Deep container scan cap.</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.Options">Export, display and lookup settings, each saved and kept across restarts: Collapse Pointer Nodes, Array Limit, DropDown Limit, String Len with its Editable string records switch, Fabricate, Preview, Drill Depth, Locate in GWorld depth with its Deep (nested containers) switch, and the Deep container scan cap.</sys:String>
     <sys:String x:Key="str.Tip.Toolbar.DeployedDLLBuildMatches">Deployed DLL build matches the UI build</sys:String>
     <sys:String x:Key="str.Tip.Export">Export object data in various formats. ⓘ SDK Header, USMAP and Dump All cover only the classes loaded right now — Blueprint types appear once their asset loads, so load a level first for full coverage.</sys:String>
     <sys:String x:Key="str.Tip.Tools">Tools that don't depend on a live DLL connection (helper file export/inject, etc.)</sys:String>

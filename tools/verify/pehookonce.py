@@ -2,14 +2,14 @@
 
     py pehookonce.py            # run against an already-launched proxy-mode title
 
-WAS: a detection that failed because there was nothing to detect *yet* stored the same
-`-1` as a hard failure, and every retry path was gated against `-1` — so a single
-`pe_profile_start` before the first scan **poisoned the PE hook for the whole
-process**, and the advice told the user to retry the one thing that could not work.
+THE DEFECT: a detection that fails because there is nothing to detect *yet* stores
+the same `-1` as a hard failure, and every retry path is gated against `-1` — so a single
+`pe_profile_start` before the first scan **poisons the PE hook for the whole
+process**, and the advice tells the user to retry the one thing that cannot work.
 
 !! WHY A PROXY-MODE TITLE IS REQUIRED. In proxy mode the DLL starts the pipe server
 only and does NOT scan, so GObjects is genuinely unset when the profiler is first
-asked — which is the state that used to be recorded as terminal. On a self-scanning
+asked — which is the state the defect records as terminal. On a self-scanning
 host the window does not exist and the test is vacuous.
 
 THE ORDER IS THE TEST, and it is deliberately the WRONG order:
@@ -19,7 +19,7 @@ THE ORDER IS THE TEST, and it is deliberately the WRONG order:
           ->  one invoke (teleport_get_pov)
           ->  pe_profile_start   (again)             step 2: MUST now be true
 
-Step 2 is the exact order-swap that used to be permanently broken, so it is the whole
+Step 2 is the exact order-swap the defect breaks permanently, so it is the whole
 point. Step 3 then checks the retry budget did not spin: nothing to detect must mean
 no `detection run N/8` lines at all.
 """

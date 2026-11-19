@@ -1,8 +1,7 @@
 r"""Is each AppendIdleWait*/AppendContractCheck call INSIDE a C# conditional, or unconditional?
 
-⛔ Checks the WORLD, not the list -- the house rule audit #4's B34/B14 earned. Brace-depth
-tracking from the enclosing method, so an outdented comment (the exact thing that hid the
-SeeThrough case) cannot fool it.
+⛔ Checks the WORLD, not the list -- the house rule. Brace-depth tracking from the enclosing
+method, so an outdented comment, which can hide a call's real nesting, cannot fool it.
 """
 import io
 import os

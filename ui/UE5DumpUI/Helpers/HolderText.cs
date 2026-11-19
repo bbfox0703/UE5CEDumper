@@ -4,7 +4,7 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// [MCP-WRITE-GRANTS-2026-11-14] §4.10. The words on a gameplay card that say who other than this window holds its
-/// feature, from get_holds -- or, for See-through, from its claims. Once grants took the per-call prompt away, this is
+/// feature, from get_holds -- or, for See-through, from its claims. Under grants there is no per-call prompt, so this is
 /// how the user sees what an AI session holds; the card's OFF or Reset still takes it over, since the window's
 /// requests carry no if_free.
 ///
@@ -53,8 +53,9 @@ internal static class HolderText
     }
 
     /// <summary>See-through's label: its claims carry no pid, so it counts the ones that are neither this window's nor
-    /// Cheat Engine's. When the DLL does not say whether the window holds one (before 3714), only Cheat Engine's is
-    /// named: counting the window's own claim as another's would send the user after a holder that is not there.
+    /// Cheat Engine's. When the DLL does not say whether the window holds one (an older DLL sends no <c>you</c>), only
+    /// Cheat Engine's is named: counting the window's own claim as another's would send the user after a holder that is
+    /// not there.
     /// </summary>
     internal static string ForSeeThrough(SeeThroughStatus status)
     {

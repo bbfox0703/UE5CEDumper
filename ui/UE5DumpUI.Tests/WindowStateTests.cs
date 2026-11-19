@@ -168,8 +168,8 @@ public class WindowStateTests
     //
     // MainWindow.OnOpenedValidatePlacement computes
     //     int rw = (int)Math.Round(_normalWidth * scale);
-    // and the `* scale` IS the AF21 fix. IsVisibleEnough itself was never wrong; it was being
-    // handed a rect two-and-a-bit times too narrow on a HiDPI monitor.
+    // and the `* scale` is what [AF21-HIDPI-2026-08-21] needs: IsVisibleEnough is right as it
+    // stands, but without the scale it is handed a rect two-and-a-bit times too narrow on a HiDPI monitor.
     //
     // These pin the CONSEQUENCE, using this machine's real numbers (3840 px wide, 225%, a
     // 1,124-DIP window = 2,529 physical), because the live rig
@@ -181,7 +181,7 @@ public class WindowStateTests
 
     // ⚠ NOT SinglePrimary, which is 1920 wide. On a 1920 screen every right-edge probe below
     // lands entirely past the screen, both widths return false, and the "they agree" assertion
-    // passes for the trivial reason instead of the real one. The live rig ran on 3840x2400 at
+    // passes for the trivial reason instead of the real one. The live rig runs on 3840x2400 at
     // 225%; these must be the same screen or they are testing a different question.
     private static readonly List<(int, int, int, int)> Af21Screen = new() { (0, 0, 3840, 2400) };
 
@@ -202,11 +202,11 @@ public class WindowStateTests
     [Fact]
     public void Af21_OffTheRight_TheyDoNotDisagree_SoTheRowsOwnStepCannotExposeIt()
     {
-        // ⚠ The register row says to "move the window so roughly a third of it hangs off the RIGHT
-        // edge". That step cannot reveal this defect and the arithmetic is why: off the right the
+        // ⚠ A step that says to "move the window so roughly a third of it hangs off the RIGHT
+        // edge" cannot reveal this defect and the arithmetic is why: off the right the
         // overlap is (screenW - x) for the physical rect but min(x + w, screenW) - x for the
-        // narrower DIP rect — the DIP value is the LARGER one, so the buggy build is MORE
-        // permissive there. Both accept, the tester sees a pass, and nothing was learned.
+        // narrower DIP rect — the DIP value is the LARGER one, so a DIP-width build is MORE
+        // permissive there. Both accept, the tester sees a pass, and nothing is learned.
         int accepted = 0;
         foreach (int x in new[] { 2000, 2400, 2800, 3200 })
         {

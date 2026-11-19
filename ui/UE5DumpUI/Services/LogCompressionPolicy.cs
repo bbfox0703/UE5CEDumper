@@ -10,17 +10,17 @@ namespace UE5DumpUI.Services;
 /// process spawning — the same split as <see cref="AppDataRetentionPolicy"/> /
 /// <c>ProxyOrphanScanner</c>, so the rules can be tested without a disk.
 ///
-/// <para>All four skip reasons and the batching rule come from measurements on the real
-/// 111.9 MB log folder; the numbers and the traps behind them are in
-/// <c>docs/log-compression-eval.md</c>. The three that are NOT obvious:</para>
+/// <para>The measurements behind the skip reasons and the batching rule, and the traps they
+/// exposed, are in <c>docs/log-compression-eval.md</c>. The three that are NOT obvious:</para>
 /// <list type="bullet">
 ///   <item><b>"Already compressed" cannot use <c>FileAttributes.Compressed</c>.</b> LZX
-///   (WOF) does not set it — only <c>compact /c</c> (LZNT1) does. Measured: an LZX file at
-///   335,872 bytes on disk out of 8,441,784 still reported attributes <c>Archive</c> alone.
+///   (WOF) does not set it — only <c>compact /c</c> (LZNT1) does, so an LZX-compressed file
+///   reads as uncompressed by its attributes.
 ///   The signal is <c>GetCompressedFileSizeW &lt; Length</c>. (NTFS sparse files would also
 ///   satisfy that; log files are never sparse.)</item>
-///   <item><b>The size floor is worth more than it looks.</b> 347 of 698 files were ≤ 4 KB
-///   and held 0.4 MB between them — half the work for 0.4 % of the bytes.</item>
+///   <item><b>The size floor is worth more than it looks.</b> Files of 4 KB or less are a
+///   large share of a log folder's file count and a negligible share of its bytes, so
+///   compressing them is mostly work for nothing.</item>
 ///   <item><b>Batches are capped by CHARACTERS, not just count.</b> Per-game log folders
 ///   are named after the game EXE, so paths are long and contain spaces; a batch that
 ///   overflows the command line would fail as a unit.</item>
@@ -36,19 +36,19 @@ public static class LogCompressionPolicy
     /// <para><b>It is a slot name, not a liveness fact.</b> A game you last played 13 days
     /// ago still owns a <c>walk-0.log</c>, and nothing will ever append to it again until
     /// that game is injected once more — at which point <c>Sein</c> RENAMES it to a dated
-    /// archive (and a rename preserves LZX, verified: 335,872 bytes on disk before and
-    /// after). So compressing an idle one is neither futile nor undone later.</para>
+    /// archive (and a rename preserves LZX). So compressing an idle one is neither futile
+    /// nor undone later.</para>
     ///
-    /// <para>Treating the name as a hard exclusion was stricter than the sibling sweep that
+    /// <para>The name is therefore not a hard exclusion, which matches the sibling sweep that
     /// DELETES: <c>LoggingService.PurgeOrphanedLogs</c> passes a live-name set only for the
     /// UI's own folder and sweeps every GAME folder on age alone, taking the file lock as
     /// the real guard. Refusing to compress a file the same subsystem is willing to delete
-    /// made no sense.</para>
+    /// would make no sense.</para>
     /// </summary>
     public static bool IsLiveLog(string? name) =>
         name != null && name.EndsWith("-0.log", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage D: an MCP server's log (<c>mcp-&lt;date&gt;-&lt;time&gt;-&lt;pid&gt;.log</c>,
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] An MCP server's log (<c>mcp-&lt;date&gt;-&lt;time&gt;-&lt;pid&gt;.log</c>,
     /// rolled ones too). It sits in the UI's own folder but another process writes it, for as long as an AI session
     /// keeps that server: so it is held to the live-file floor like a game's newest log, not to the idle window.</summary>
     public static bool IsMcpLog(string? name) =>

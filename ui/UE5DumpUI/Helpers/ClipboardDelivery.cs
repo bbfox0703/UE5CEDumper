@@ -7,19 +7,17 @@ namespace UE5DumpUI.Helpers;
 /// The clipboard write for a DELIVERY copy — one where the clipboard IS the
 /// deliverable, not a convenience.
 ///
-/// <para><b>Why this type exists.</b> The 2026-09-08 blind-spot sweep classified all
-/// 57 <see cref="IPlatformService.CopyToClipboardAsync"/> call sites. 55 dropped the
-/// result and 29 of those then claimed success anyway. The population splits cleanly,
-/// and the split is what makes it fixable:</para>
+/// <para><b>Why this type exists.</b> The <see cref="IPlatformService.CopyToClipboardAsync"/>
+/// call sites split into two kinds, and only one of them must act on the result:</para>
 /// <list type="bullet">
-///   <item><b>Convenience copy</b> (26 sites) — an address, a name, a class name. If it
+///   <item><b>Convenience copy</b> — an address, a name, a class name. If it
 ///   silently does nothing the user re-clicks. Dropping the result there is a nuisance,
-///   not a defect, and wiring 26 of them would be noise.</item>
-///   <item><b>Delivery copy</b> (14 sites) — a generated CE script / memory-record XML
+///   not a defect, and wiring every one of them would be noise.</item>
+///   <item><b>Delivery copy</b> — a generated CE script / memory-record XML
 ///   that the status line then tells the user to <i>paste into Cheat Engine</i>. If the
 ///   write did nothing, the user pastes <b>whatever was on the clipboard before</b> —
 ///   an older AA script from an earlier button press — into CE and runs it against a
-///   live game. Every one of those 14 was a defect; none of the 26 was.</item>
+///   live game.</item>
 /// </list>
 ///
 /// <para><b>The result is the only signal.</b>

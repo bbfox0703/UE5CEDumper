@@ -10,35 +10,34 @@ ran out, the user cancelled, a worker faulted, the result cap was hit. Each caus
 something different (raise the timeout, narrow the predicate, re-run, nothing at all). A consumer
 that names ONE cause for a flag that carries several gives the wrong advice for the rest.
 
-KNOWN POSITIVES: `deadline_hit` forced by the result CAP (`Aura.cpp` ~8257, drifted from the 8244-8247
-the June sweep cited); `scan.incomplete()` folding clock, cancel and worker fault into one bit;
+KNOWN POSITIVES: `deadline_hit` forced by the result CAP (`Aura.cpp` `ScanForValue`'s maxResults cap);
+`scan.incomplete()` folding clock, cancel and worker fault into one bit;
 `FindReferences`' `(deadlineHit && matches.empty()) || workerFaulted`; the D2 residual -- a worker fault
 shown to the user as a deadline (grep docs/todo.md for "D2's deliberate residual").
-⚠ NOT "all recorded", as this paragraph first said: the CAP half is filed NOWHERE -- its only trace is a
-rig note in docs/verification-register.md ("non-fault causes"). The `docs/todo.md:1314` / `:1738` this
-paragraph cited were line numbers that never held / no longer held those rows.
+⚠ Not all of them are recorded: the CAP half is filed NOWHERE -- its only trace is a rig note in
+docs/verification-register.md ("non-fault causes").
 
-⛔ THE UI AXIS FIRST SAW A RENDERING ONLY WHEN ITS OWN LINE HELD `if (`, `?`, `&&` or `||`, and dropped
-36 flag reads. About half were real renderings: every ternary broken across lines (`var capSuffix =
-r.Aborted` / `? "..."`), and every flag passed to a renderer as an argument -- including
-`PartialResultNotice.ScanSuffix(..., cs.DeadlineHit, ...)`, the ONLY caller of `DeadlineClause`. The
-control now asserts both shapes. Still not followed: a flag stored in a field and rendered elsewhere
-(`_scanTruncated = result.DeadlineHit`) -- one hop away, and a reader's job.
+⛔ THE UI AXIS DOES NOT NEED `if (`, `?`, `&&` or `||` ON THE FLAG'S OWN LINE. A one-line predicate
+misses every ternary broken across lines (`var capSuffix = r.Aborted` / `? "..."`), and every flag
+passed to a renderer as an argument -- including `PartialResultNotice.ScanSuffix(..., cs.DeadlineHit,
+...)`, which reaches `DeadlineClause`. The control asserts both shapes. Not followed: a flag stored in
+a field and rendered elsewhere (`_scanTruncated = result.DeadlineHit`) -- one hop away, and a reader's
+job.
 
-⚠ MEASURED LIMITS (the P5 adjudication, 2026-09-10, `[PATTERN-P5-2026-09-10]`):
+⚠ KNOWN LIMITS (`[PATTERN-P5-2026-09-10]`):
   * the flags axis misses a flag assigned to a LOCAL and copied into stats later -- FindReferencesToUObject
-    (`bool deadlineHit = scan.incomplete();`, Aura.cpp ~3884) is reached only through its wire row;
+    (`bool deadlineHit = scan.incomplete();`) is reached only through its wire row;
   * a cancel that arrives through `scan.deadlineHit` (Tot sets it) is not expanded, so FindInContainersDeep
     is listed as clock + fault and is really clock + fault + cancel-when-empty;
   * `per_slot_cap` (a number, not a stop flag) is pulled in by key name;
-  * the "text names" heuristic was wrong on ~12 of 51 UI rows -- it reads catch blocks, comments and the
+  * the "text names" heuristic can be wrong on a UI row -- it reads catch blocks, comments and the
     OTHER branch of a ternary. It says where to look, never what the text says.
 
-⚠ THE "TEMPLATE" IS ONLY HALF A TEMPLATE. The June sweep named `begin_group_scan` the model to copy:
+⚠ THE "TEMPLATE" IS ONLY HALF A TEMPLATE. `begin_group_scan` looks like the model to copy:
 `deadline_hit`, `per_slot_cap_hit` and `per_slot_cap` as distinct fields. The per-slot cap IS
-separate -- but the survey for this tool found that the group scan's own `deadline_hit` is still set
-for a cancel (`Tot::Requested`), a timeout AND the candidate cap (`// truncated (cap hit)`). The shape
-worth copying is its per-slot half; its deadline half is itself an instance.
+separate -- but the group scan's own `deadline_hit` is set for a cancel (`Tot::Requested`), a
+timeout AND the candidate cap (`// truncated (cap hit)`). The shape worth copying is its per-slot
+half; its deadline half is itself an instance.
 
 ⛔ HOW CAUSES ARE READ. Only the GUARD and the right-hand side are classified -- never the flag's own
 name, which would make every `deadlineHit = true` look like a clock cause. The guard is the assignment
@@ -48,11 +47,11 @@ the conflation is two sites writing the same flag for different reasons.
 
 ⛔ THE WIRE AXIS MATCHES ANY JSON OBJECT, NOT `data[`. Four of the six `deadline_hit` publish sites
 write through `scanInfo[...]`; a `data[`-only matcher sees two and reports a clean, wrong, smaller
-population -- the same class of mistake as the P6 detector's second bug. The control asserts six.
+population. The control asserts six.
 
 ⛔ A POPULATION PRODUCER, NOT A FINDING LIST. P5 is a SWEEP: some merges are CORRECT
-(`LI_OUT_TRUNCATED` means "the returned set is a prefix", which is true for both of its causes,
-`Mimic.h:243-246`), and deciding that is a reader's job.
+(`LI_OUT_TRUNCATED` means "the returned set is a prefix", its declaration in Mimic.h says, which is
+true for both of its causes), and deciding that is a reader's job.
 """
 from __future__ import annotations
 
@@ -188,8 +187,8 @@ def collect_ui():
                 continue
             # A rendering is a flag that DECIDES something: a conditional on its own line OR THE NEXT
             # (C# breaks `var x = r.Aborted` / `? "..." : ...` across lines), or the flag handed to a
-            # call as an argument -- `ScanSuffix(..., cs.DeadlineHit, ...)`, the only DeadlineClause
-            # emitter, was invisible to the one-line predicate this replaced.
+            # call as an argument -- `ScanSuffix(..., cs.DeadlineHit, ...)`, a DeadlineClause emitter, is
+            # invisible to a one-line predicate.
             nxt = lines[i + 1] if i + 1 < len(lines) else ''
             cond = re.search(r'\bif\s*\(|\?|&&|\|\|', l) or re.match(r'\s*[?:]', nxt)
             arg = re.search(re.escape(m.group(0)) + r'\s*[,)]', l)

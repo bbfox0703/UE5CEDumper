@@ -16,8 +16,8 @@ namespace UE5DumpUI.Tests;
 public class ObjectIndexServiceTests
 {
     /// <summary>Pages through a fixed list of GObjects SLOTS as get_object_list does: a null slot is skipped,
-    /// so Scanned counts the slots taken and Objects only the rows (review of 41cf418d: the first fake had no
-    /// null slot, so the advance by Scanned and the estimate's per-slot rate were never tested).</summary>
+    /// so Scanned counts the slots taken and Objects only the rows. A fake with no null slot would leave the advance by
+    /// Scanned and the estimate's per-slot rate untested.</summary>
     private sealed class FakeIndexDump : StubDumpService, IDumpService
     {
         public List<UObjectNode?> Objects { get; } = new();
@@ -66,7 +66,7 @@ public class ObjectIndexServiceTests
 
     private static FakeIndexDump EveryKind()
     {
-        // R2 (maintainer, 2026-10-02): every object, packages and type objects included, as Dumper-7 and RE-UE4SS.
+        // Every object, packages and type objects included, as Dumper-7 and RE-UE4SS index them.
         var dump = new FakeIndexDump();
         dump.Objects.Add(Obj(0, "/Script/Game", "Package", "/Script/Game"));
         dump.Objects.Add(Obj(1, "AHero", "Class", "/Script/Game.AHero"));

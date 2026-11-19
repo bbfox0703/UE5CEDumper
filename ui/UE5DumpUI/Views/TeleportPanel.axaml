@@ -596,8 +596,8 @@
                  SortMemberPath either walks a NESTED path no column binding roots
                  (Entry.X) or names a property whose binding is a different one
                  (Distance vs DistanceText), so the reflection Avalonia uses to read the
-                 sort key is trimmed away. Label / Group / Map sorted fine, which made it
-                 read as an intermittent app bug. See Helpers/DataGridSortComparers. (B16) -->
+                 sort key is trimmed away. Label / Group / Map sort fine, which makes it
+                 read as an intermittent app bug. See Helpers/DataGridSortComparers. -->
             <DataGrid x:Name="CoordGrid"
                       ItemsSource="{Binding CoordResults}"
                       SelectedItem="{Binding SelectedCoord, Mode=TwoWay}"
@@ -1567,7 +1567,7 @@
       </Border>
 
       <!-- ── Standalone trainer export (no-DLL CE Lua .CT via AOBMaker) ──
-           Moved to the bottom of the tab (was at the top): it's a separate
+           At the bottom of the tab: it's a separate
            no-DLL export path, so it sits with the other export cards.
            Experimental-gated: hidden unless the experimental-features opt-in is on. -->
       <Border Background="#252526" BorderBrush="#3E3E42" BorderThickness="1"

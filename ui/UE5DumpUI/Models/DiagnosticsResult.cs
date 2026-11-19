@@ -85,10 +85,9 @@ public sealed class DiagnosticsGameThread
 ///
 /// <para><b>Why this exists.</b> <c>docs/multipipe-eval.md</c> names DLL-side
 /// serial-dispatch head-of-line blocking as the root cause of UI lag, and
-/// game-thread CPU starvation as the CE-mailbox risk — but nothing measured
-/// either, so "should Phase 1 (non-blocking dispatch) be built?" was a blind
-/// decision. <see cref="BusyPercent"/> plus the per-command ranking is the
-/// evidence that settles it.</para>
+/// game-thread CPU starvation as the CE-mailbox risk. <see cref="BusyPercent"/>
+/// plus the per-command ranking is the evidence for or against non-blocking
+/// dispatch.</para>
 /// </summary>
 public sealed class DiagnosticsResult
 {
@@ -98,7 +97,7 @@ public sealed class DiagnosticsResult
     public double TotalBusyMs     { get; init; }
     /// <summary>Fraction of wall-clock a dispatcher was occupied. High here plus a
     /// lagging UI is the case FOR non-blocking dispatch; low here says the lag is
-    /// somewhere else and Phase 1 would not help.</summary>
+    /// somewhere else and non-blocking dispatch would not help.</summary>
     public double BusyPercent     { get; init; }
     public int    GObjectsCount   { get; init; }
 

@@ -23,14 +23,14 @@ internal sealed class McpRpcException(int code, string message) : Exception(mess
 }
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. Building and writing JSON-RPC messages without reflection: the DOM
+/// [PIPE-PER-PROCESS-2026-11-06] Building and writing JSON-RPC messages without reflection: the DOM
 /// (<see cref="JsonNode"/>) and a <see cref="Utf8JsonWriter"/>, as the pipe client does, so the trimmed AOT exe needs
 /// no serializer metadata.
 /// </summary>
 internal static class McpJson
 {
     // Relaxed escaping keeps the text an AI reads legible: the default encoder writes "TArray<int32>" as
-    // "TArray<int32>" and every non-ASCII name as \u escapes. It still escapes control characters and quotes,
+    // "TArray\u003Cint32\u003E" and every non-ASCII name as \u escapes. It still escapes control characters and quotes,
     // and nothing here is ever embedded in HTML, which is all the stricter default guards against.
     private static readonly JsonWriterOptions WriterOptions = new()
     {

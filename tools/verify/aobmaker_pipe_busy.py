@@ -3,10 +3,10 @@ r"""Hold \\.\pipe\AOBMakerCEBridge BUSY -- a server with ONE instance, occupied 
 
     py tools/verify/aobmaker_pipe_busy.py --seconds 60
 
-WHY THIS EXISTS. `[W1-PIPEBUSY-LOG]` (backlog L64): a BUSY pipe times out in .NET's
+WHY THIS EXISTS. `[W1-PIPEBUSY-LOG]`: a BUSY pipe times out in .NET's
 `NamedPipeClientStream.ConnectAsync` exactly like an ABSENT one -- it waits for a free instance until
-the deadline -- so the UI used to log "no server ... (Cheat Engine not running ...)" while another
-client held the AOBMaker bridge. The fix asks whether the pipe exists after the timeout.
+the deadline -- so without the fix the UI logs "no server ... (Cheat Engine not running ...)" while
+another client holds the AOBMaker bridge. The fix asks whether the pipe exists after the timeout.
 
 ⚠ THE ROW'S OWN STAGING DOES NOT PRODUCE A BUSY PIPE. "A second Cheat Engine holding the pipe" makes
 the second plugin fail CreateNamedPipe with 231 and retry; it never connects as a CLIENT, so the first

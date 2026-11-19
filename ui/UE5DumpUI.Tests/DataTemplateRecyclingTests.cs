@@ -7,7 +7,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the pairing that broke the code-built DataGrid dialogs: a
+/// Pins the pairing that breaks the code-built DataGrid dialogs: a
 /// <c>FuncDataTemplate</c> factory that BAKES its values must NOT advertise
 /// <c>supportsRecycling: true</c>.
 ///
@@ -19,10 +19,10 @@ namespace UE5DumpUI.Tests;
 ///   column reshuffles which item lands in which row container and the grid then renders one row's
 ///   data twice.
 ///
-///   Reported 2026-08-21 with screenshots: the Props dialog (Interesting Functions → Props) showed
-///   "2 properties (1 written)" in its header while BOTH grid rows rendered
-///   `read / DropItemLaunchParams_OnDeath / MapProperty`. The header was right and the grid was
-///   wrong, which is the tell that the DATA is intact and the RENDERING is stale.
+///   The tell: a header that is right over a grid that is wrong — the Props dialog (Interesting
+///   Functions → Props) reading "2 properties (1 written)" while BOTH grid rows render
+///   `read / DropItemLaunchParams_OnDeath / MapProperty` — means the DATA is intact and the
+///   RENDERING is stale.
 ///
 /// WHY A SOURCE SCAN RATHER THAN A UI TEST
 ///   The defect only shows once Avalonia actually recycles a container, which needs a realized

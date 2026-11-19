@@ -1,8 +1,7 @@
-r"""Phase 4 — measure each candidate gate's LEGITIMATE population before proposing it.
+r"""Measure each candidate gate's LEGITIMATE population before proposing it.
 
-The rule this repo earned twice (gate #17 refuted in round 1, gate 17b refuted as first scoped):
-pick a predicate whose legitimate population is EMPTY, never one whose legitimate population must
-be enumerated -- the latter becomes an allowlist and stops being a gate.
+The rule: pick a predicate whose legitimate population is EMPTY, never one whose legitimate
+population must be enumerated -- the latter becomes an allowlist and stops being a gate.
 
 A candidate qualifies only if:  violations_today == 0  (ship now, it holds the line), or
                                 violations_today == the defects we are about to fix, and NOTHING else.

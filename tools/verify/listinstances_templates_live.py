@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-r"""Live check for [LISTINSTANCES-KEEPS-TEMPLATES] (build 3682 on, mailbox contract 8): no write pool lists a TEMPLATE.
+r"""Live check for [LISTINSTANCES-KEEPS-TEMPLATES] (mailbox contract 8): no write pool lists a TEMPLATE.
 
     py tools/verify/listinstances_templates_live.py [--process DumperTest] [--value 777] [--baseline <summary.json>]
 
-Written for the verification-register row [LISTINSTANCES-KEEPS-TEMPLATES]. From build 3682 the mailbox's
+Written for the verification-register row [LISTINSTANCES-KEEPS-TEMPLATES]. With it, the mailbox's
 CMD_LIST_INSTANCES (exact and derived scope) and the pipe's force_field pool (Solide) never hold a TEMPLATE: a class
 default object (named Default__*, or RF_ClassDefaultObject 0x10 at UObject+0x08), one of its default subobjects (a
-Default__ object up the outer chain; measured flags 0x40021 on DumperTest 5.4) or a Blueprint component template
-(RF_ArchetypeObject 0x20). The pipe's find_instances (the Instance Finder) still lists them on purpose.
+Default__ object up the outer chain) or a Blueprint component template (RF_ArchetypeObject 0x20). The pipe's
+find_instances (the Instance Finder) still lists them on purpose.
 
 The template test is the rig's OWN, not the DLL's word: ObjectFlags are read out of the process with
 ReadProcessMemory and the outer chain is followed through get_object, the same test template_pick_probe.py applies.
@@ -38,7 +38,7 @@ Checks (one line each, "<ID> OK|BAD  <detail>"; INFO lines are records, never co
 Prerequisites:
   * DumperTest (Shipping, UE 5.4 -- launch_dumpertest.py shipping) on its third-person map with the pawn possessed,
     the DLL injected or a proxy deployed, and the pipe answering a build from dist\ (pc.assert_build() refuses a
-    stale DLL). Build 3682 or later; an older DLL fails T7 and lists templates in T1/T2.
+    stale DLL). A DLL with [LISTINSTANCES-KEEPS-TEMPLATES]; one without it fails T7 and lists templates in T1/T2.
   * The UI NOT connected: the rig owns the pipe and the mailbox for the run.
   * No MaxWalkSpeed hold and no Movement-tuning walk-speed knob active; T3 refuses rather than read a held value as
     the pawn's own.

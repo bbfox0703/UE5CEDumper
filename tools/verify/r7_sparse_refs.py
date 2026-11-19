@@ -1,15 +1,16 @@
 """Find References and the walker over sparse delegates, optionally with the global storage POKED into a bad shape.
 
-    py tools/verify/r7_sparse_refs.py --build 3550 --refs-class CharacterMovementComponent \
+    py tools/verify/r7_sparse_refs.py --build <N> --refs-class CharacterMovementComponent \
         --walk-class CapsuleComponent --out out/r7live/a01
     py tools/verify/r7_sparse_refs.py --process DumperTest-Win64-Shipping --refs-name DumperTestSparseListener \
         --poke-header -1 --out out/r7live/s4/poke_m1
     py tools/verify/r7_sparse_refs.py --process DumperTest-Win64-Shipping --refs-name DumperTestSparseListener \
         --walk-class DumperTestActor --poke-keys --out out/r7live/s2/keys
 
-For Review 7 rows R7-A-01, R7-S2, R7-S4, R7-X2 (promoted from out/review7/live_check.py). Prints, per Find
-References target, every MulticastSparseDelegateProperty hit and the reply's `scan` block (sparse_skipped,
-sparse_unlocated, deadline_hit, duration_ms); per walked instance, every sparse field's display value.
+For the [R7-A-01], [R7-S2], [R7-S4] and [R7-X2] rows. `--build N` refuses a DLL that is not build N (default:
+dist's). Prints, per Find References target, every MulticastSparseDelegateProperty hit and the reply's `scan`
+block (sparse_skipped, sparse_unlocated, deadline_hit, duration_ms); per walked instance, every sparse field's
+display value.
 
 --poke-header N  writes N over the storage's ArrayNum (+0x08) for the duration of the calls.
 --poke-keys      writes the FObjectKey-shaped {3, 5} = 0x0000000500000003 over every live outer key (the first 8

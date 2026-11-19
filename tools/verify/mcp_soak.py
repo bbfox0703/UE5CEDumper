@@ -73,10 +73,9 @@ def memory_verdict(samples: list[tuple[int, int]], window_mb: float) -> tuple[st
     """('levelled' | 'growing' | 'none', text) from (interval, private bytes) samples, the first at interval 0.
 
     Judged by whether growth LEVELS OFF, never by its size. The server allocates ~120 KB per call, and the workstation
-    GC sizes its first gen0 budget from the largest single cache the OS reports (on the PC this was measured on, 96 MB
-    of a 128 MB L3 split per CCD, so about 48 MiB), so private bytes rise in a straight line for ~50 MB before the
-    first collection. An hour at one call pair per 30 s never got there (+34 MB, linear); runs at 1 s levelled off at
-    60-62 MB (measured 2026-11-12). A fixed size bar passes a leak slower than the bar, so the bar here is RELATIVE:
+    GC sizes its first gen0 budget from the largest single cache the OS reports (tens of MiB on a CPU with a large L3),
+    so private bytes rise in a straight line through that budget before the first collection, and a slow run may never get
+    there. A fixed size bar passes a leak slower than the bar, so the bar here is RELATIVE:
     the tail's growth per interval against the first report interval's, the rate of a server that has not collected.
     The tail is chosen by span (a third of the run, and at least three report intervals), so --interval,
     --report-every and --hours do not move it. Past --gc-window-mb, still growing is a leak; inside it, no verdict.
@@ -209,7 +208,7 @@ def main() -> int:
         fails.append(f"the connection changed: seqs {sorted(seqs)}")
     if last != first and pct(lat[last], .95) > 2 * pct(lat[first], .95):
         fails.append("the last hour's p95 is more than twice the first's")
-    # The end sample belongs to the series: without it a run shorter than --report-every had one point to judge.
+    # The end sample belongs to the series: without it a run shorter than --report-every would have one point to judge.
     if sizes[-1][0] == n:
         sizes[-1] = (n, s1[0])
     else:

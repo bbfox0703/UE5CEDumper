@@ -1,11 +1,12 @@
-r"""ST1 steps 3 + 4 -- the queued request must NOT be drained by our own next call.
+r"""ST1 (docs/audit-2026-08-13-early-code-findings.md) steps 3 + 4 -- the queued request must NOT be
+drained by our own next call.
 
     py tools/verify/st1_queue_drain.py
 
-THE DEFECT (pre-3205). An invoke that times out stays QUEUED on purpose, with its own owned
-parameter copy, expecting a later drain. The drain's only gate was "is the queue non-empty",
-and it ran inside `HookedProcessEvent` -- on whatever thread got there first. So the next call
-we issued ourselves executed that abandoned, caller-judged-UNSAFE UFunction on the wrong thread.
+THE DEFECT IT GUARDS AGAINST. An invoke that times out stays QUEUED on purpose, with its own owned
+parameter copy, expecting a later drain. A drain gated only on "is the queue non-empty", inside
+`HookedProcessEvent`, runs on whatever thread gets there first -- so the next call we issue
+ourselves would execute that abandoned, caller-judged-UNSAFE UFunction on the wrong thread.
 Step 3 is the row's "THE ONE THAT MATTERS".
 
 HOW THIS IS STAGED WITHOUT A HUMAN
@@ -77,8 +78,8 @@ def loglen():
 
     Counting lines across several *-0.log files and slicing the concatenation is
     wrong the moment more than one of them grows: new lines land in the middle of
-    the list, not at the end, so the slice misses them. That is why a first run
-    reported 0 'enqueued invoke' lines while the log plainly contained one.
+    the list, not at the end, so the slice misses them and reports 0 'enqueued
+    invoke' lines while the log plainly contains one.
     """
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -160,12 +161,12 @@ def main():
             mark2 = loglen()
             say("")
             say("STEP 3b: fire a DIRECT (trampoline) invoke -- it must NOT drain the queue")
-            # direct_call=TRUE is the call that could drain. Measured 2026-08-20: with the
+            # direct_call=TRUE is the call that could drain. With the
             # game thread frozen an ORDINARY static-native invoke also returns -5
             # ("game-thread dispatch timeout", game_thread_stalled=true) -- so it never
-            # reaches ProcessEvent and never had the opportunity to drain anything, which
+            # reaches ProcessEvent and never has the opportunity to drain anything, which
             # would make a 0-delta vacuous. A direct_call DOES reach PE on the calling
-            # thread, which is exactly the route the pre-3205 drain took.
+            # thread, which is exactly the route a broken drain takes.
             r2 = c.request("invoke_function", class_name=fast_fn["class_name"],
                            func_name="Add_IntInt", parms_size=12,
                            params_hex="03000000" + "04000000" + "00000000",

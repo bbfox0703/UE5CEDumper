@@ -40,7 +40,7 @@ internal enum MainTabIndex
     // Proxy Deploy (always 2nd-to-last), then System/Pointers (always last) —
     // regardless of any future tab additions. When experimental is off these
     // tabs collapse, so the visible last two are Proxy Deploy + System.
-    DetectStats = 14,   // "Detect Player Stats" (P4, experimental)
+    DetectStats = 14,   // "Detect Player Stats" (experimental)
     Snapshot = 15,
     SpcQuery = 16,
     ClassPivot = 17,
@@ -129,8 +129,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _selectedTabIndex;
     [ObservableProperty] private int _selectedAddressFormatIndex;
     [ObservableProperty] private bool _collapsePointerNodes;
-    /// <summary>[EXTPR-539-540-2026-10-02] D4.1: Export ▸ Dump All also writes the object index, after its
-    /// estimate and a confirmation (D4.2).</summary>
+    /// <summary>[EXTPR-539-540-2026-10-02] Export ▸ Dump All also writes the object index, after its
+    /// estimate and a confirmation (D4.1 / D4.2 in docs/ext-pr-539-540-plan.md).</summary>
     [ObservableProperty] private bool _dumpAllObjectIndex;
     [ObservableProperty] private int _arrayLimitExponent = 7; // 2^7 = 128
     [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
@@ -138,6 +138,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _previewLimit = Constants.DefaultPreviewLimit; // Struct preview sub-field count (0-6)
     [ObservableProperty] private int _deepScanElemCapExponent = 8; // 2^8 = 256 (find_by_address deep scan per-container cap)
     [ObservableProperty] private int _ceStringLengthExponent = 8; // 2^8 = 256 (CE String leaf <Length>; floored at 2^4 = 16)
+    [ObservableProperty] private bool _ceEditableStrings; // [CEXML-STRING-CAPACITY] off = exported String records are read-only in CE
     [ObservableProperty] private int _fabricateArrayCountExponent = 2; // 2^2 = 4 rows (default); 0 = off, 2^N = Copy CE Field array fabricate count
 
     // Always-visible top-toolbar AOBMaker status (mirrors the per-tab indicators).
@@ -264,7 +265,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>[EXPOFF-ROUND3-PAUSED] Whether opening the tab tagged <paramref name="tag"/> locks the opt-in.</summary>
     public static bool LocksExperimental(string? tag) => tag != null && s_experimentalLockingTabs.Contains(tag);
 
-    /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
+    /// <summary>Switch to the Class Pivot tab and hand off the chosen
     /// class/property, with the property's offset (-1 when the source has none) so a shadowed name reaches the copy
     /// that was chosen. Guarded so it's inert when the pivot tab isn't available.</summary>
     private async void HandlePivotHandoff(string className, string? propName, int propOffset)
@@ -300,20 +301,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <paramref name="classAddr"/> into the Class/Struct panel. Every cross-tab class
     /// handoff goes through here.
     ///
-    /// <para>The detach is the fix for <c>[TREERECLICK-2026-08-22]</c>. After a handoff the
-    /// panel shows a class that no tree node selected, yet the tree kept highlighting the
-    /// node the user picked earlier — the UI asserting a selection that is not what is on
-    /// screen. Worse, that lie was unrecoverable by the obvious gesture: an Avalonia
+    /// <para>Why the detach (<c>[TREERECLICK-2026-08-22]</c>): after a handoff the panel shows
+    /// a class that no tree node selected, and a tree still highlighting the node the user
+    /// picked earlier would assert a selection that is not what is on screen. Worse, that
+    /// lie would be unrecoverable by the obvious gesture: an Avalonia
     /// <c>ListBox</c> writes <c>SelectedItem</c> only when it CHANGES, so clicking the
-    /// still-highlighted node raised nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
-    /// never fired (<c>ObjectTreeViewModel.cs</c> <c>OnSelectedNodeChanged</c>) and no walk reached the pipe. Clearing
+    /// still-highlighted node raises nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
+    /// never fires (<c>ObjectTreeViewModel.cs</c> <c>OnSelectedNodeChanged</c>) and no walk reaches the pipe. Clearing
     /// the selection fixes both at once: the tree stops lying, and the next click on that
     /// node is a real change, so it loads.</para>
     ///
     /// <para>⛔ The fix does NOT belong in <c>ClassStructViewModel</c>, which is already
     /// correct — <c>LoadClassAsync</c> clears its dedupe key via <c>BeginLoad(nodeAddr:
     /// null)</c> (<c>ClassStructViewModel.cs</c>), which is exactly why clicking a
-    /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
+    /// DIFFERENT row always recovers. Nor does it belong in a pointer handler on the tree:
     /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
     /// swallows it, so that buys nothing this does not — and bypassing that
     /// dedupe is pinned against by <c>RepeatedSelectionOfSameNode_WalksOnlyOnce</c>.</para>
@@ -347,7 +348,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>[PATH-UI-LEGACY-QMARK] A Save-dialog file name from the module name: the stem, with every character
     /// a file name cannot hold made '_'. An older DLL reports non-ASCII characters as '?', which the Windows dialog
-    /// reads as a wildcard, so Save did nothing until the user retyped the name. Spaces are legal and kept.</summary>
+    /// reads as a wildcard, so Save would do nothing until the user retyped the name. Spaces are legal and
+    /// kept.</summary>
     internal static string SuggestedExportStem(string? moduleName, string fallback)
     {
         string stem = string.IsNullOrEmpty(moduleName) ? "" : Path.GetFileNameWithoutExtension(moduleName);
@@ -387,7 +389,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// classes + properties + functions, split by what's live in the current
     /// game (matched by object path), with jump-to-Live-Walker for matches.</summary>
     public DumpExplorerViewModel DumpExplorer { get; }
-    /// <summary>Experimental "Detect Player Stats" tab (P4) — shortlists likely
+    /// <summary>Experimental "Detect Player Stats" tab — shortlists likely
     /// HP/MP/Gold fields + confirms them live. Gated behind
     /// <see cref="ExperimentalEnabled"/>. Non-null (no store dependency; the
     /// snapshot signal is opt-in and degrades gracefully when the store is null).</summary>
@@ -439,6 +441,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(CeStringLength));
         LiveWalker.CeStringLength = CeStringLength;
         InstanceFinder.CeStringLength = CeStringLength;
+    }
+
+    partial void OnCeEditableStringsChanged(bool value)
+    {
+        LiveWalker.CeEditableStrings = value;
+        InstanceFinder.CeEditableStrings = value;
     }
 
     partial void OnFabricateArrayCountExponentChanged(int value)
@@ -527,7 +535,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // Keep tab visibility in sync when the toggle is flipped elsewhere
         // (the checkbox lives on the System tab / PointerPanelViewModel). Also
-        // re-gate the "Pivot this property" context-menu handoff (C5).
+        // re-gate the "Pivot this property" context-menu handoff.
         if (experimentalGate != null)
             experimentalGate.Changed += (_, _) =>
             {
@@ -553,7 +561,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ValueSearch = new ValueSearchViewModel(dump, log, AobMakerShared);
         RelatedObjects = new RelatedObjectsViewModel(dump, log, platform, AobMakerShared);
         DumpExplorer = new DumpExplorerViewModel(dump, log, platform);
-        // Detect Player Stats (P4). snapshotStore is optional — the behavioral
+        // Detect Player Stats. snapshotStore is optional — the behavioral
         // signal is opt-in and no-ops (with a note) when it's null.
         DetectStats = new DetectStatsViewModel(dump, log, snapshotStore, experimentalGate);
         Console = new ConsoleViewModel(dump, log);
@@ -682,7 +690,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
             };
 
-            // C5: right-click "Pivot this property" from the three source panels ->
+            // Right-click "Pivot this property" from the three source panels ->
             // switch to the Class Pivot tab and pre-select the class/property.
             // [PIVOT-HANDOFF-SHADOWED] The offset travels too: Class Pivot lists each copy of a shadowed name apart.
             PropertySearch.NavigateToPivot        += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
@@ -757,7 +765,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // [PROPSEARCH-FREEZE-STALE-AOBMAKER] AobMakerProbed carries every answer a panel applies, its probes' and its
         // pushes', changed or not: a flag raises only on a change, so an answer that confirmed it reached no one. The
         // change mirrors below still take a flag a panel sets some other way. A panel left out leaves the chip and the
-        // shared status stale: two were, until that row's review 1.
+        // shared status stale.
         IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
         LiveWalker.AobMakerProbed += ok => IsAobMakerAvailable = ok;
         Pointers.AobMakerProbed += ok => IsAobMakerAvailable = ok;
@@ -1440,8 +1448,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Wire InterestingProperties -> Live Walker. Same pattern as
         // InterestingFunctions: ask for a live object of the class,
         // fall back to ClassStruct when none. We don't scroll to the
-        // specific property row in round 1 (LiveWalker has no public
-        // ScrollToField yet) — the property name is left in the status
+        // specific property row (LiveWalker has no public
+        // ScrollToField) — the property name is left in the status
         // text so the user knows what to look for.
         InterestingProperties.NavigateToProperty += async (className, propName) =>
         {
@@ -1550,7 +1558,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // --- Detect Player Stats (P4) — same class->live-instance->GWorld /
+        // --- Detect Player Stats — same class->live-instance->GWorld /
         //     Instance Finder / clipboard handoffs as Interesting Properties. ---
         DetectStats.LocateInGWorld += async (className) =>
         {
@@ -1733,8 +1741,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
-                // found the class default object first.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here would
+                // normally find the class default object first.
                 const string instanceAddr = "";
 
                 // Fast path: TRULY trivial functions only (no inputs AND no return).
@@ -1751,7 +1759,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var description = $"Invoke (baked, no args): {className}::{funcName}";
                     // Probe live before send: IsAvailable is only a cache of the
                     // last connect, so without this refresh a CE started/closed
-                    // since then makes us assert the wrong "connected" state (X8).
+                    // since then makes us assert the wrong "connected" state.
                     if (_aobMaker != null)
                         await _aobMaker.CheckAvailabilityAsync();
                     bool wasAvailable = _aobMaker?.IsAvailable ?? false;
@@ -1815,9 +1823,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Console panel wiring (Console = UFUNCTION(exec) discovery+invoke)
         //
         // Mirrors the InterestingFunctions handler bodies above. Duplicated
-        // intentionally for v1 — a future shared-helper extraction would
-        // touch GameClassFilter / InterestingFunctions / InterestingProperties
-        // / Console (4 callers), worth its own refactor pass.
+        // intentionally — a shared helper would touch every panel that has
+        // these handlers, worth its own refactor pass.
         // ─────────────────────────────────────────────────────────────
 
         Console.NavigateToFunction += async (className, funcName) =>
@@ -1888,7 +1895,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the dialog sends the class name, and the DLL
                 // picks the object at each FIRE with Aura::ResolveUserInstance (its contract is in Aura.h). An exact-name
-                // lookup here normally found the class default object first and left FIRE with nothing to send.
+                // lookup here would normally find the class default object first and leave FIRE with nothing to send.
 
                 if (Avalonia.Application.Current?.ApplicationLifetime is not
                     Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -1936,8 +1943,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
-                // found the class default object first.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here would
+                // normally find the class default object first.
                 const string instanceAddr = "";
 
                 var inputParams = funcMatch.InputParams.ToList();
@@ -1948,7 +1955,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                         className, funcName, Services.BakedScriptGenerator.BakedParmsSize(funcMatch),
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"exec (baked, no args): {className}::{funcName}";
-                    // Probe live before send — IsAvailable is a stale connect cache (X8).
+                    // Probe live before send — IsAvailable is a stale connect cache.
                     if (_aobMaker != null)
                         await _aobMaker.CheckAvailabilityAsync();
                     bool wasAvailable = _aobMaker?.IsAvailable ?? false;
@@ -2014,7 +2021,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 var script = Services.DebugCameraScriptGenerator.Generate();
                 const string description = "Debug Camera (force on/off): setDebugCamera";
-                // Probe live before send — IsAvailable is a stale connect cache (X8).
+                // Probe live before send — IsAvailable is a stale connect cache.
                 if (_aobMaker != null)
                     await _aobMaker.CheckAvailabilityAsync();
                 bool wasAvailable = _aobMaker?.IsAvailable ?? false;
@@ -2061,7 +2068,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (connected)
                 {
                     // Fresh connection-scoped cancellation for this session's
-                    // long-running exports (X6). All field access is on the UI thread.
+                    // long-running exports. All field access is on the UI thread.
                     _connectionCts.Dispose();
                     _connectionCts = new CancellationTokenSource();
                 }
@@ -2070,17 +2077,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     WindowTitle = "UE5 Dump UI";
                     GameThreadStalled = false;   // clear the paused banner on disconnect
                     // Abort any in-flight export bound to the pipe that just dropped
-                    // so it stops round-tripping to a dead game (X6).
+                    // so it stops round-tripping to a dead game.
                     _connectionCts.Cancel();
                     // End the session epoch and cancel any pending proxy-confirm dwell, so
                     // a proxy that just crashed the game isn't recorded as working when the
-                    // user reconnects within the 20 s dwell. (M8)
+                    // user reconnects within the 20 s dwell.
                     _sessionEpoch++;
                     _proxyConfirmTimer?.Dispose();
                     _proxyConfirmTimer = null;
-                    LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state (L16)
+                    LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state
                     CallTrace.ClearOnDisconnect();   // [LIVEFUNCS-TIMELINE-2026-10-04] the next process numbers traces from 1
-                    ResetPanelsOnDisconnect();   // clear stale process-scoped rows (X5)
+                    ResetPanelsOnDisconnect();   // clear stale process-scoped rows
                 }
             });
         };
@@ -2116,7 +2123,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // CTS (the Timer/CTS lambdas root the VM); dispose so they can't fire after teardown.
         InstanceFinder.Dispose();
         // PropertySearch is IDisposable (owns a debounce System.Threading.Timer);
-        // its Dispose had no caller before, leaking the timer until process exit.
+        // without this call the timer would leak until process exit.
         PropertySearch.Dispose();
         // Teleport owns a DispatcherTimer (auto-refresh) — dispose so it can't
         // tick after the window closes.
@@ -2128,10 +2135,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _aobMakerUiTimer = null;
         }
         // Cancel a pending LKG proxy-confirm dwell so its callback can't fire after
-        // the window is gone. (M8)
+        // the window is gone.
         _proxyConfirmTimer?.Dispose();
         _proxyConfirmTimer = null;
-        // Cancel + dispose the connection-scoped export cancellation (X6).
+        // Cancel + dispose the connection-scoped export cancellation.
         try { _connectionCts.Cancel(); } catch { }
         _connectionCts.Dispose();
 
@@ -2330,7 +2337,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         return (c, false, true);
     }
 
-    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: who held a full pipe, from the game DLL's at-capacity log line --
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Who held a full pipe, from the game DLL's at-capacity log line --
     /// a client that cannot connect cannot ask. Empty when the game's log, or a current line in it, cannot be read.</summary>
     private Task<string> HoldersNoteAsync(int pid) => Task.Run(() =>
     {
@@ -2504,7 +2511,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(SelectedAddressFormatIndex), nameof(CollapsePointerNodes),
         nameof(ArrayLimitExponent), nameof(DropDownLimitExponent),
         nameof(CsxDrilldownDepth), nameof(PreviewLimit), nameof(DeepScanElemCapExponent),
-        nameof(CeStringLengthExponent), nameof(FabricateArrayCountExponent),
+        nameof(CeStringLengthExponent), nameof(CeEditableStrings), nameof(FabricateArrayCountExponent),
         nameof(DumpAllObjectIndex),
     };
     private static readonly HashSet<string> LiveWalkerPersist = new()
@@ -2564,8 +2571,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(TeleportViewModel.RelativeDistance), nameof(TeleportViewModel.RelativeHorizontal),
         nameof(TeleportViewModel.CoordSetRotation), nameof(TeleportViewModel.AutoRefresh),
         // ApplyOptions/BuildOptions already round-trip these two; without them here a
-        // slider change never schedules a save, so the value only landed if some other
-        // Teleport option happened to change too (X10).
+        // slider change never schedules a save, so the value would only land if some other
+        // Teleport option happened to change too.
         nameof(TeleportViewModel.WorldTimeDilation), nameof(TeleportViewModel.PawnTimeDilation),
     };
     private static readonly HashSet<string> SpcPersist = new()
@@ -2606,7 +2613,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(GameClassFilterViewModel.GameClassesOnly),
         nameof(GameClassFilterViewModel.ClassListCap),   // [W3-CAP-NOSAVE] as PropertySearchPersist's Max cap
     };
-    // [LIVEFUNCS-STEP2] U10: a drag changes a width on every pointer move; the save is debounced like any other option.
+    // [LIVEFUNCS-STEP2] A drag changes a width on every pointer move; the save is debounced like any other option.
     private static readonly HashSet<string> CallTracePersist = new()
     {
         nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
@@ -2641,6 +2648,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         PreviewLimit = o.Main.PreviewLimit;
         DeepScanElemCapExponent = o.Main.DeepScanElemCapExponent;
         CeStringLengthExponent = o.Main.CeStringLengthExponent;
+        CeEditableStrings = o.Main.CeEditableStrings;
         FabricateArrayCountExponent = o.Main.FabricateArrayCountExponent;
 
         var lw = o.LiveWalker;
@@ -2809,6 +2817,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.Main.PreviewLimit = PreviewLimit;
         o.Main.DeepScanElemCapExponent = DeepScanElemCapExponent;
         o.Main.CeStringLengthExponent = CeStringLengthExponent;
+        o.Main.CeEditableStrings = CeEditableStrings;
         o.Main.FabricateArrayCountExponent = FabricateArrayCountExponent;
 
         o.LiveWalker.CollapseChain = LiveWalker.CollapseChain;
@@ -3020,7 +3029,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_aobUsage != null)
             _ = _aobUsage.RecordScanAsync(state);
 
-        // Phase 2 LKG: if the DLL reports a PROXY loaded this game, remember it as
+        // LKG: if the DLL reports a PROXY loaded this game, remember it as
         // confirmed-working — but only after the session proves stable (guards a
         // proxy that loads + connects then crashes the game seconds into play).
         ScheduleProxyConfirmation(state);
@@ -3048,14 +3057,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     // Cancels connection-scoped long-running work (the streaming exports) when the
     // pipe drops mid-operation. Each export links its own CTS to this token, so a
     // disconnect aborts the export's dead-pipe round-trips instead of hammering a
-    // gone game — and its services' ct checks stop being dead code (X6). Recreated
+    // gone game, and its services' ct checks have a token that can fire. Recreated
     // on connect, cancelled on disconnect. ONLY the exports use it, so cancelling
     // it can't cancel anything unrelated.
     private CancellationTokenSource _connectionCts = new();
     // Bumped on every disconnect. A proxy-confirm dwell captures the epoch when it is
     // scheduled and only records if the epoch is unchanged when it fires — so a proxy
     // that crashed its game (disconnect) can't be recorded against a later reconnect,
-    // even to a different game. (M8)
+    // even to a different game.
     private int _sessionEpoch;
 
     /// <summary>The LKG proxy-confirm gate: record the dwelled proxy ONLY if the same
@@ -3065,7 +3074,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         => isConnected && scheduledEpoch == currentEpoch;
 
     /// <summary>
-    /// Phase 2 LKG stability gate. When the DLL self-reports that a PROXY loaded
+    /// LKG stability gate. When the DLL self-reports that a PROXY loaded
     /// this game (<see cref="EngineState.LoadMode"/> = "proxy:&lt;dll&gt;"), wait a
     /// short dwell and — if the session is still connected — record it as the game's
     /// confirmed-working proxy (keyed by the game .exe name so it survives reinstall).
@@ -3077,7 +3086,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         // Cancel any dwell still pending from a prior connection BEFORE the early returns,
         // so a non-proxy reconnect can't leave a stale timer alive to record the previous
-        // session's proxy. (M8)
+        // session's proxy.
         _proxyConfirmTimer?.Dispose();
         _proxyConfirmTimer = null;
 
@@ -3098,7 +3107,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // Record ONLY if the SAME connection is still up after the dwell. A crash
                 // (or any disconnect) bumps _sessionEpoch, so a proxy that loaded +
                 // connected then crashed the game — even if the user reconnects to a
-                // DIFFERENT game within the dwell — is never recorded as working. (M8)
+                // DIFFERENT game within the dwell — is never recorded as working.
                 if (ShouldConfirmProxy(IsConnected, epoch, _sessionEpoch))
                     ProxyDeploy?.RecordConfirmedProxy(exeName, proxyDll);
             }),
@@ -3294,8 +3303,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A live object of <paramref name="className"/> or of a class derived
     /// from it -- never a template -- or none (<see cref="LiveInstanceResult.Found"/> false): the object a navigate
     /// opens in Live Walker and a Locate searches a path from. One DLL answer for every such handler: an exact-name
-    /// lookup that skipped names starting <c>Default__</c> answered none for a class whose live objects are all of a
-    /// subclass, and handed over a class default object's default subobject, which is not named so.</summary>
+    /// lookup that skips names starting <c>Default__</c> would answer none for a class whose live objects are all of a
+    /// subclass, and would hand over a class default object's default subobject, which is not named so.</summary>
     private async Task<LiveInstanceResult> LiveInstanceAsync(string className)
     {
         var found = await _dump.FindLiveInstanceAsync(className);
@@ -3354,8 +3363,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private const string LocateRootGWorld = "GWorld", LocateRootGameEngine = "GameEngine";
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A Locate's top-bar line, written on every Locate: the object it searches
-    /// from, and the pick's note. Written only when there was a note, the previous Locate's warning stayed under the
-    /// next one's object. <paramref name="root"/> is where the path search starts.</summary>
+    /// from, and the pick's note. Were it written only when there is a note, the previous Locate's warning would stay
+    /// under the next one's object. <paramref name="root"/> is where the path search starts.</summary>
     internal static string LocateStatusText(LiveInstanceResult live, string className, string root) =>
         Helpers.AobMakerStatus.Say(KeyLocating, "Locating {0} ({1}) in {2}.", live.Name, live.ClassName, root)
         + PickNote(live, className);
@@ -3497,7 +3506,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// ALREADY has open, as an [ENABLE]/[DISABLE] memory record
     /// (<see cref="Services.CeInjectScriptGenerator"/>), so they never have to
     /// open the standalone <c>UE5CEDumper.CT</c> first. Cheat Engine holds one
-    /// table at a time, which is what made the <c>.CT</c> route a two-stage load;
+    /// table at a time, which is what makes the <c>.CT</c> route a two-stage load;
     /// the <c>.CT</c> stays shipped as the developer / no-AOBMaker path.
     ///
     /// Falls back to CE record XML on the clipboard when the AOBMaker plugin
@@ -3894,7 +3903,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = "Generating SDK...";
 
             // Cancellation linked to the connection so a mid-export disconnect aborts
-            // the service's per-class walk (its ct checks were dead code before) (X6).
+            // the service's per-class walk.
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
             var content = await SdkExportService.GenerateFullSdkAsync(_dump, progress, cts.Token);
             await File.WriteAllTextAsync(filePath, content, cts.Token);
@@ -3930,7 +3939,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Temp-then-rename: the dump streams to <file>.partial and is published to
         // the chosen name only after GenerateAsync returns (which happens only after
         // the trailing summary line is written), so an abort/disconnect/crash never
-        // leaves a truncated .jsonl at the final name (X11).
+        // leaves a truncated .jsonl at the final name.
         var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         string? tempPath = null;
         try
@@ -3946,11 +3955,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrEmpty(filePath)) return;
 
             // Cancellation linked to the connection so a mid-dump disconnect aborts
-            // the (now dead) per-class round-trips instead of hanging (X6).
+            // the (now dead) per-class round-trips instead of hanging.
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
             var ct = cts.Token;
 
-            // [EXTPR-539-540-2026-10-02] D4.2: the object index only after the user saw what it costs and agreed;
+            // [EXTPR-539-540-2026-10-02] The object index only after the user saw what it costs and agreed;
             // a remembered tick never writes a file of hundreds of megabytes silently. Declining keeps the class dump.
             ObjectIndexEstimate? indexEstimate = null;
             if (DumpAllObjectIndex)
@@ -3969,8 +3978,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
 
             StatusText = "Dumping classes...";
-            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post queued every report
-            // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
+            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post would queue every
+            // report twice, and the service's last one ("Done — N classes") would replace the final status below.
             var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
                 ? $"{p.Phase} ({p.Done}/{p.Total})"
                 : p.Done > 0 ? $"{p.Phase} ({p.Done})" : p.Phase);   // a phase with nothing counted yet
@@ -4007,7 +4016,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 indexNote += Res.Format("str.DumpAll.Index.StaleSibling",
                                         Path.GetFileName(ObjectIndexService.FileNameFor(filePath)));
             // Report from what the dump ACTUALLY produced (class/error counts), not
-            // from the file's byte length, and format the size in floating point (X4).
+            // from the file's byte length, and format the size in floating point.
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
                 result, byteLength, Path.GetFileName(filePath)) + indexNote);
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes in {dumpElapsed.TotalSeconds:F1} s, " +
@@ -4035,7 +4044,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// [EXTPR-539-540-2026-10-02] D4: the object index beside a published class dump, temp-then-rename like it.
+    /// [EXTPR-539-540-2026-10-02] The object index beside a published class dump, temp-then-rename like it.
     /// The class dump is already published, so a cancelled or failed index is reported here, never as a failed
     /// dump. Logs the estimate against what was written, so the one-page sample can be tuned.
     /// </summary>
@@ -4077,7 +4086,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Best-effort cleanup of an unpublished temp dump file (X11).</summary>
+    /// <summary>Best-effort cleanup of an unpublished temp dump file.</summary>
     private static void TryDeletePartial(string? path)
     {
         if (string.IsNullOrEmpty(path)) return;
@@ -4101,7 +4110,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_engineState == null) return;
 
         // [EXPORT-STATUS-LATE-PROGRESS] Every status after the service goes through it; see ExportSymbolsAsync.
-        // This is the export the race was observed on: the service's last report replaced the final status below.
+        // Without it, the service's last report would replace the final status below.
         var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         try
         {
@@ -4117,15 +4126,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = "Generating USMAP...";
 
             // Cancellation linked to the connection so a mid-export disconnect aborts
-            // the service's walk (its ct checks were dead code before) (X6).
+            // the service's walk.
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
             var warnings = new List<string>();
             var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token, warnings);
             await File.WriteAllBytesAsync(filePath, bytes, cts.Token);
 
-            // [P1-ENUMNAMES] review 5: the enum warning was a progress line, overwritten one round-trip later, so the
-            // export ended on a bare "USMAP exported" over a file whose enums were all empty. Keep it on the final
-            // status, and in the log.
+            // [P1-ENUMNAMES] The enum warning stays on the final status, and in the log: a progress line is overwritten
+            // one round-trip later, so the export would end on a bare "USMAP exported" over a file whose enums were all
+            // empty.
             progress.Complete(warnings.Count == 0 ? "USMAP exported" : "USMAP exported — " + string.Join(" — ", warnings));
             _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
             foreach (var w in warnings) _log.Warn($"USMAP export: {w}");

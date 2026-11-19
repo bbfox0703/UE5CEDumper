@@ -89,7 +89,7 @@ public class AddressHelperTests
     [Fact]
     public void ModuleNameWithSpaces_ResolvesAbsolute()
     {
-        // Windows module names can contain spaces; the module token is only used to
+        // Windows module names can contain spaces; the module token serves to
         // DETECT the module+offset shape (it must contain a '.' or a letter), so an
         // internal space must not break parsing. Quoted, CE-copied form.
         var result = AddressHelper.NormalizeAddress(

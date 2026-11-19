@@ -1,13 +1,13 @@
-r"""B19 — one locked archive must not stop the log-retention sweep for the rest of the folder.
+r"""One locked archive must not stop the log-retention sweep for the rest of the folder.
 
     py tools/verify/b19_locked_log.py
 
-THE DEFECT (Sein.cpp:268-295, in the fix's own comment). `PruneAgedLogs` shared **one**
-`std::error_code` between the directory iteration and the per-file `fs::remove`. A failed remove set
-`ec`, the loop's `if (ec) break` then ended the sweep — and because NTFS enumeration order is
-stable, it ended it at the SAME entry on every launch. One undeletable file therefore switched the
-advertised 21-day retention off for everything after it, permanently and silently. The fix declares
-a fresh `error_code` inside the per-file lambda.
+THE DEFECT IT GUARDS AGAINST (`PruneAgedLogs` in Sein.cpp). With **one** `std::error_code` shared between
+the directory iteration and the per-file `fs::remove`, a failed remove sets `ec`, the loop's
+`if (ec) break` then ends the sweep — and because NTFS enumeration order is stable, it ends it at
+the SAME entry on every launch. One undeletable file then switches the advertised 21-day retention
+off for everything after it, permanently and silently. The fix declares a fresh `error_code` inside
+the per-file lambda.
 
 ⭐ **SO THE TEST HAS TO BE ABOUT ORDER, NOT ABOUT THE LOCKED FILE.** "The locked file survived" is
 true under the fix AND under the defect, and it is also true if the sweep never ran at all. Three
@@ -17,7 +17,7 @@ staged files whose enumeration order is known and asserted:
     b19b-…  aged, LOCKED                      -> must SURVIVE      (proves the lock bites)
     b19c-…  aged, unlocked, AFTER the lock    -> must be DELETED   ⭐ THE WITNESS
 
-Under the old code `c` survives, because the sweep broke at `b`. Under the fix it goes. `a` is what
+Under the defect `c` survives, because the sweep breaks at `b`. Under the fix it goes. `a` is what
 stops a sweep that never ran from reading as a pass, and `b` is what stops a lock that never held
 from reading as one — the rig verifies the lock by trying the delete itself first.
 

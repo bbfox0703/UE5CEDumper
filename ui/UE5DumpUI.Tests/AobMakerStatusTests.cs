@@ -143,9 +143,8 @@ public class AobMakerStatusTests
     [Fact]
     public async Task The_attach_warning_goes_when_the_plugin_does()
     {
-        // Measured 2026-09-29: with the warning showing, Cheat Engine closed, and the chip went Offline with
-        // "CE is not on this game" still beside it. Unreachable means nothing can tell, and a check that cannot tell
-        // must not accuse.
+        // With the warning showing, Cheat Engine closes and the chip goes Offline: "CE is not on this game" must not
+        // stay beside it. Unreachable means nothing can tell, and a check that cannot tell must not accuse.
         var bridge = new ScriptedAobMakerBridge { Available = true, Attached = new CeAttachedProcess(999, "Other.exe") };
         var status = new AobMakerStatus(bridge);
         status.Apply(true);
@@ -273,7 +272,7 @@ public class AobMakerStatusTests
     [Fact]
     public async Task A_direct_probe_during_one_in_flight_joins_it()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 3: one probe in flight, whoever asks.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] One probe in flight, whoever asks.
         var gate = new TaskCompletionSource<bool>();
         var bridge = new BridgeWithoutAttachQuery { CheckGate = gate.Task };
         var status = new AobMakerStatus(bridge);
@@ -294,7 +293,7 @@ public class AobMakerStatusTests
     [Fact]
     public void The_cooldown_runs_on_a_clock_that_never_steps_back()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 4. On the wall clock, a step back (NTP, or by hand) makes
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] On the wall clock, a step back (NTP, or by hand) makes
         // "time since the last probe" negative, and no refresh probes again until the clock catches up.
         var code = string.Join("\n", CodeLines("ui/UE5DumpUI/Helpers/AobMakerStatus.cs"));
         Assert.DoesNotContain("DateTime", code, StringComparison.Ordinal);
@@ -306,7 +305,7 @@ public class AobMakerStatusTests
     [InlineData("ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs")]
     public void The_flag_keeping_panels_probe_cooldowns_never_step_back_either(string file)
     {
-        // Review 3, F-B: the same wall-clock cooldown, on two panels whose probes now feed the toolbar chip.
+        // The same never-steps-back rule, for the cooldown on two panels whose probes feed the toolbar chip.
         var lines = CodeLines(file).Where(l => l.Contains("_lastAobMakerCheck", StringComparison.Ordinal)).ToArray();
         Assert.NotEmpty(lines);
         Assert.All(lines, l => Assert.DoesNotContain("DateTime", l, StringComparison.Ordinal));

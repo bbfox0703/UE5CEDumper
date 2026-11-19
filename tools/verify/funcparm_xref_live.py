@@ -1,11 +1,11 @@
 r"""[FUNCPARM-CONSUMERS] step 1 -- Find Func (find_functions_by_class) on DumperTest, no UI.
 
     py tools/verify/funcparm_xref_live.py [--label NAME]
-    (DumperTest Shipping running and injected with a DLL from build 3624 or later; never while the UI holds the pipe)
+    (DumperTest Shipping running and injected with a DLL with [FUNCPARM-CONSUMERS]; never while the UI holds the pipe)
 
 The verification-register row's step 1, as a rig:
   (a) Character's class, game_only: ExecuteUbergraph_ABP_Manny is ABSENT. It holds a local typed Character (its
-      cast node's output, K2Node_DynamicCast_AsCharacter), which a DLL before 3624 counted as a parameter.
+      cast node's output, K2Node_DynamicCast_AsCharacter), which a DLL without the tag counts as a parameter.
   (b) the positive control, Actor's class, game_only: D4_OnActorHitProbe (DumperTestActor) and OnPeerBeginOverlap
       (DumperTestSparseListener), which take AActor* parameters, are listed with kind "param". A total miss there
       would mean the CPF_Parm read failed, which (a) alone would pass.

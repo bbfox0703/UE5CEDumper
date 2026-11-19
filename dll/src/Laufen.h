@@ -15,7 +15,7 @@
 // sub-object (reflected "CharacterMovement" ObjectProperty), FindField the
 // named float, capture its untouched base once, then write base*multiplier.
 // Pure reflected memory read/write via Macht (SEH) — NO UFunction invoke, NO
-// game thread. Self-contained (Path B): only the public APIs of non-gameplay
+// game thread. Self-contained: only the public APIs of non-gameplay
 // modules + DynOff — no coupling to Wirbel or any other gameplay feature. All
 // offsets resolved by FName (DynOff rule) → UE4/UE5-agnostic. No cached
 // instance pointers — the pawn/CMC is re-resolved every operation and every
@@ -130,8 +130,10 @@ int32_t GetKnob(int32_t knobId, KnobInfo& out);
 // Read the live gravity direction (+ owner/offset for Locate-in-GWorld).
 int32_t GetGravityDirection(GravDirInfo& out);
 
-// Stop and join the re-assert worker. Idempotent. Called by ResetKnob (when
-// nothing else is active) and from UE5_Shutdown() before the DLL unloads.
+// Stop and join the re-assert worker. Idempotent. The reset paths stop the
+// worker themselves once no override remains active; this is the join the
+// DLL's shutdown (UE5_Shutdown) runs before it unloads, so no worker outlives
+// the DLL.
 void StopWorker();
 
 } // namespace Laufen

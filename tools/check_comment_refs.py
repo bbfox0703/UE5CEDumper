@@ -6,11 +6,11 @@
     py tools/check_comment_refs.py --selftest # the negative controls only (every run does them first)
 
 WHY ([COMMENT-INTEGRITY-2026-09-26], docs/comment-integrity-eval.md). Comments are not compiled, so nothing tells
-the author when what they describe moves. Measured on build 3560: 97 of 141 in-repo `File.cpp:NNN` references
-in comments pointed at a line that had moved since the comment was written, "no test target compiles X.cpp"
-was false in at least 9 places, and 18 references named a .md file that does not exist. Four checks, over
-the comment text of every tracked code file under dll/ ui/ scripts/ tools/ (// /* */ /// -- #; NOT Python
-docstrings, which are prose the scripts print):
+the author when what they describe moves: an in-repo `File.cpp:NNN` reference goes stale with the next edit above
+it, "no test target compiles X.cpp" goes false when a test target starts including the file, and a .md name
+outlives the file (the eval has the counts). Four checks, over
+the comment text of every tracked code file under dll/ ui/ scripts/ tools/ (// /* */ /// in C++ / C#; the XAML,
+Lua / .CT, PowerShell and Python comments -- a Python docstring included -- through tools/comment_lang.py):
 
   LINE        an in-repo `File.ext:NNN` (or a bare `:NNN` that continues one, or stands alone = same file).
               Cite a function, a constant, a table row or a [TAG] instead: they move with the code. A line in
@@ -35,8 +35,11 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import comment_lang  # noqa: E402  (XAML / Lua / PowerShell / Python comments, docstrings included)
+
 CODE_DIRS = ("dll/", "ui/", "scripts/", "tools/")
-CODE_EXT = (".cpp", ".h", ".hpp", ".cs", ".lua", ".py", ".CT")
+CODE_EXT = (".cpp", ".h", ".hpp", ".cs", ".lua", ".py", ".CT", ".axaml", ".ps1")
 OTHER_REPOS = re.compile(r"(?i)\b(AOBMaker|cheat-engine|RE-UE4SS|Dumper-?7|UEPseudo|patternsleuth|CrimsonAtomtic|"
                          r"discrete|UnrealEngine|Epic)\b")
 HISTORY = re.compile(r"(?i)\b(until|before|used to|believ\w*)\b")
@@ -84,14 +87,10 @@ def comment_text(path, lines):
                 e = l.find("*/", j + 2)
                 yield n, (l[j + 2:] if e < 0 else l[j + 2:e])
                 inblock = e < 0
-        elif ext in (".lua", ".ct"):
-            i = l.find("--")
-            if i >= 0 and l[:i].count("'") % 2 == 0 and l[:i].count('"') % 2 == 0:
-                yield n, l[i + 2:]
-        elif ext == ".py":
-            i = l.find("#")
-            if i >= 0 and l[:i].count("'") % 2 == 0 and l[:i].count('"') % 2 == 0 and not l[:i].rstrip().endswith(("[", "(")):
-                yield n, l[i + 1:]
+        else:
+            break
+    if ext not in (".cpp", ".h", ".hpp", ".cs") and comment_lang.handles(path):
+        yield from comment_lang.comments(path, "\n".join(lines))
 
 
 def test_compiled_cpps(root):
@@ -141,7 +140,7 @@ def scan_line(path, n, c, ctx, prior=""):
             inrepo = above[-1].group(1).lower() in by_base if above else True   # none anywhere = this file
         if inrepo and not line_history:
             out.append(("LINE", path, n, m.group(1)))
-    # --- TESTTARGET (history -- "until now", "used to", a claim quoted as someone's belief -- is not a claim)
+    # --- TESTTARGET (a past-tense line -- what HISTORY matches -- or a claim quoted as someone's belief is not a claim)
     for m in TESTCLAIM.finditer(c):
         stem = m.group(1) or m.group(2)
         quoted = c[:m.start()].count('"') % 2 == 1

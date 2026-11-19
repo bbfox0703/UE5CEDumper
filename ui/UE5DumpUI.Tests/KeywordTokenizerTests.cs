@@ -64,7 +64,7 @@ public class KeywordTokenizerTests
         => Assert.Equal(expected, KeywordTokenizer.Tokenize(input));
 
     // ==================================================================
-    // The substring-noise regression cases that motivated tokenisation.
+    // The substring-noise cases tokenisation exists for.
     // These names CONTAIN the letter pair "mp"/"sp"/"tp" but must NOT
     // produce a token equal to those acronyms.
     // ==================================================================

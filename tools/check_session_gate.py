@@ -2,9 +2,7 @@
 
     py tools/check_session_gate.py [--list] [--selftest]
 
-✅ STATUS: REGISTERED in check_all.py (fix pass B14, 2026-09-11), in the same commit that gated Class
-Pivot's four row handoffs (`[W1-PIVOT-SESSION]`). Until then it was a finding-phase detector, red by
-design and deliberately left out of the gate run.
+✅ STATUS: REGISTERED in check_all.py (`[W1-PIVOT-SESSION]`).
 
 WHAT IT REFUSES. In a ViewModel class that reads STORED snapshots (it references `SnapshotMeta` /
 `ISnapshotStore`, directly or through a helper type), a command that hands an ADDRESS to the live game -- `NavigateToInstance` /
@@ -24,27 +22,23 @@ Legitimate population EMPTY: a CLASS-NAME payload (Detect Player Stats' `LocateI
 means the same thing in every launch and is not an address, so it is not counted; an address handoff
 with no session gate has no legitimate reason to exist. No baseline, no allowlist.
 
-⛔ ATTRIBUTION IS BY CLASS BODY, NOT BY FILE -- and the first run proved why. Its first draft mapped
-every class name declared in a file to the WHOLE file, so the helper and row classes declared beside
-each ViewModel (`PivotFieldPick`, `DiscoverSnapshotPick`, `NoiseRowVm`, `SpcGroupCellVm`,
-`SpcSnapshotPick`) each re-reported their neighbour's commands, judged against the wrong panel's
-`IsEnabled`: the run said FIFTEEN ungated handoffs when the true number is four. Its selftest keyed on
-(method, status) and so could not see the duplication either; it now keys on (class, method, status)
-and carries a helper-class-beside-the-VM case. The same draft missed any command whose attribute was
-`[RelayCommand(CanExecute = nameof(X))]` -- the nested `)` defeated a `[^)]*` -- which the selftest
-caught.
+⛔ ATTRIBUTION IS BY CLASS BODY, NOT BY FILE. Mapping every class name declared in a file to the WHOLE
+file makes the helper and row classes declared beside each ViewModel (`PivotFieldPick`,
+`SpcSnapshotPick`, ...) each re-report their neighbour's commands, judged against the wrong panel's
+`IsEnabled` -- several times the true number of ungated handoffs. The selftest keys on
+(class, method, status), not (method, status), so it can see that duplication, and carries a
+helper-class-beside-the-VM case. RELAY accepts one nested `(...)`: a `[^)]*` would miss every command
+whose attribute is `[RelayCommand(CanExecute = nameof(X))]`.
 
-⛔ AND AN ADDRESS COUNTS ONLY WHEN IT COMES FROM A ROW. Once readers were found transitively, the
-Pointer panel came into scope -- it reads snapshots for unrelated reasons -- and its nine copy commands
-were reported as ungated handoffs. They copy the LIVE global pointers (GObjects, GNames, GWorld ...),
-which belong to the current launch by definition. A payload now counts only when it is rooted at the
-command's own parameter (a CommandParameter row) or at a Selected* row. That is the third bug in this
-detector, and all three were found the same way: by checking the run against the hand-made map row
-by row, never by its total -- two of the three left the headline number looking right.
+⛔ AND AN ADDRESS COUNTS ONLY WHEN IT COMES FROM A ROW. Readers are found transitively, which brings the
+Pointer panel into scope -- it reads snapshots for unrelated reasons -- and its copy commands copy the
+LIVE global pointers (GObjects, GNames, GWorld ...), which belong to the current launch by definition.
+So a payload counts only when it is rooted at the command's own parameter (a CommandParameter row) or
+at a Selected* row. Check a run against a hand-made map row by row, never by its total: a wrong
+attribution can leave the headline number looking right.
 
-MEASURED POPULATION (2026-09-10): Snapshot Diff, Snapshot Group, SPC single and SPC Group -- gated;
-Class Pivot -- 4 ungated handoffs (recorded; gated 2026-09-11 through `CanUseResultRowActions`);
-Detect Player Stats -- class-name payload, not counted.
+POPULATION: Snapshot Diff, Snapshot Group, SPC single and SPC Group -- gated; Class Pivot -- gated
+through `CanUseResultRowActions`; Detect Player Stats -- class-name payload, not counted.
 Live Walker bookmarks are the other persisted-address family and are OUT of this predicate's scope:
 they re-resolve through the GWorld spine and check the saved class name before calling a restore
 "loaded", which is an identity check rather than a session gate.
@@ -135,10 +129,10 @@ def snapshot_classes(vm_files: dict) -> dict:
     """{class: its own body text, partials merged} for classes that read stored snapshots --
     directly (SnapshotMeta / ISnapshotStore) or THROUGH a class that does.
 
-    ⚠ The transitive step is not optional. The first class-body version required `SnapshotMeta` in a
-    class's OWN body, and SPC dropped out of scope entirely: `SpcQueryViewModel` reaches snapshots
-    only through its helper `SpcSnapshotPick.Meta`. SPC happens to be gated, so the headline number
-    still looked right -- but an ungated SPC would have vanished from the report without a trace.
+    ⚠ The transitive step is not optional. Requiring `SnapshotMeta` in a class's OWN body drops SPC
+    out of scope entirely: `SpcQueryViewModel` reaches snapshots only through its helper
+    `SpcSnapshotPick.Meta`. SPC is gated, so the headline number would still look right -- but an
+    ungated SPC would vanish from the report without a trace.
     """
     merged = {}
     for raw in vm_files.values():
@@ -198,7 +192,7 @@ def handoff_commands(text: str) -> list:
             if pm:
                 params.append(pm.group(1))
         # An address counts only when it comes from a ROW: the command's own parameter (a
-        # CommandParameter) or a Selected* row. See the header for the nine live-pointer copies
+        # CommandParameter) or a Selected* row. See the header for the live-pointer copies
         # this rule exists to exclude.
         roots = [re.escape(x) for x in params] + [r'Selected\w*']
         rooted = re.compile(r'\b(?:%s)\s*\??\.\s*\w*addr' % '|'.join(roots), re.I)
@@ -262,8 +256,8 @@ def load_tree():
     return vms, views
 
 
-# Class Pivot's pre-fix shape, VERBATIM in the parts that decide the verdict, WITH a helper class
-# declared beside it the way the real file does -- the case the first draft got wrong.
+# Class Pivot's shape without the fix, VERBATIM in the parts that decide the verdict, WITH a helper
+# class declared beside it the way the real file does -- the case a file-level attribution gets wrong.
 PIVOT_VM = '''
 public partial class ClassPivotViewModel : ObservableObject
 {

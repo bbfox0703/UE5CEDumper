@@ -29,9 +29,9 @@
 -- whole session and never rebuilds it (docs/CE-Bugs-Minesweeper.md 5), and this
 -- file is loaded via Table -> Add File, so a second load would otherwise start
 -- with fresh empty caches -- re-creating every structure already in CE's global
--- list (audit #5 AA21) and re-registering the dissect override while the previous
+-- list and re-registering the dissect override while the previous
 -- registration still stands, leaving disableAutoCallback able to unregister only
--- the newest (audit #5 AA22). One shared global table makes a re-load idempotent:
+-- the newest. One shared global table makes a re-load idempotent:
 -- the caches and the single pair of callback ids survive it. So does the rest of
 -- the auto-mode state: a re-loaded module has to be able to undo what the
 -- previous load did, and to follow what it was following.
@@ -63,28 +63,28 @@ local function warn(fmt, ...) print(string.format("[UE5Dissect WARN] " .. fmt, .
 -- thread here is CE's GUI thread -- so this timeout is the ceiling on how long CE
 -- can sit frozen, and a Lua-side processMessagesPaintOnly() cannot reach it.
 --
--- This used to be nil. A nil timeout is INFINITE, not "use a default"
--- (LuaHandler.pas:11504-11505), so a suspended target or a faulting stub froze CE
--- permanently with no UI-level recovery -- and a class walk calls this once per
--- FIELD, so the exposure multiplied. See docs/ce-plugin-sdk-notes.md 13.2-13.3.
+-- It must never be nil. A nil timeout is INFINITE, not "use a default"
+-- (LuaHandler.pas:11504-11505), so a suspended target or a faulting stub would
+-- freeze CE permanently with no UI-level recovery -- and a class walk calls this
+-- once per FIELD, so the exposure multiplies. See docs/ce-plugin-sdk-notes.md 13.2-13.3.
 local DLL_CALL_TIMEOUT_MS = 5000   -- keep in step with CeLuaHygiene.DllCallTimeoutMs
 
 -- CONTRACT: callDLL either returns the DLL's value or RAISES. It never returns
 -- nil, and no caller needs a nil check.
 --
--- It used to return CE's nil straight through after a warn(), and not one of the
--- 19 call sites handled that. The two ways Lua treats nil are both wrong here and
+-- Why not pass CE's nil through after a warn(): the call sites do not handle
+-- nil, and the two ways Lua treats nil are both wrong here and
 -- in opposite directions: `count <= 0` RAISES ("attempt to compare nil with
 -- number", naming a line rather than the DLL call that failed), while
--- `success ~= 0` is TRUE for nil, so a failed field read counted as a SUCCESS.
+-- `success ~= 0` is TRUE for nil, so a failed field read would count as a SUCCESS.
 -- Since UE5_WalkClassGetField leaves its out-params untouched when it fails
--- (Frieren.cpp), that success then re-read the PREVIOUS field's buffers
--- and recorded it twice -- and with the DLL failing outright, the walk built a
--- full-size structure of empty-named, offset-0 rows, registered it with CE,
--- cached it and logged "Struct created". A total failure was reported to the
--- user as a successfully built structure. (audit #5 AA5 / AA6)
+-- (Frieren.cpp), that success would re-read the PREVIOUS field's buffers
+-- and record it twice -- and with the DLL failing outright, the walk would build
+-- a full-size structure of empty-named, offset-0 rows, register it with CE,
+-- cache it and log "Struct created": a total failure reported to the
+-- user as a successfully built structure.
 --
--- Raising is only safe because the two CE-REGISTERED callbacks now barrier it --
+-- Raising is only safe because the two CE-REGISTERED callbacks barrier it --
 -- see dissectOverrideCallback. Do not remove one without the other.
 local function callDLL(name, ...)
     -- Under CE's DEFAULT configuration getAddress RETURNS 0 for an unresolved
@@ -338,8 +338,8 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
 
     if depth > maxDepth then
         -- Do NOT drop a too-deep nested struct silently: leave a visible marker so the
-        -- dissect shows something was omitted rather than just ending short. (audit #5
-        -- AA23) offsetBase is this struct's base; namePrefix is the accumulated path
+        -- dissect shows something was omitted rather than just ending short.
+        -- offsetBase is this struct's base; namePrefix is the accumulated path
         -- (it already ends in ".", so the note reads e.g. "Foo.Bar.<omitted>").
         local e = ceStruct.addElement()
         e.Offset  = offsetBase
@@ -360,11 +360,9 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
             local innerClass = callDLL("UE5_GetFieldStructClass", f.faddr)
             if innerClass ~= 0 then
                 -- Recurse into the inner struct. The prefix is displayName, not the
-                -- struct's TYPE name -- the old code allocated a target buffer and did
-                -- a CreateRemoteThread round-trip (UE5_GetObjectName) per StructProperty
-                -- field to read that type name into `sName`, then never used it (the
-                -- recursion uses displayName). Dead work that also LEAKED sBuf if the
-                -- call raised. (audit #5 AA24)
+                -- struct's TYPE name, so no target buffer and no CreateRemoteThread
+                -- round-trip (UE5_GetObjectName) per StructProperty field is spent
+                -- reading a type name the recursion would not use.
                 addFieldsToStruct(ceStruct, innerClass, absOffset,
                     displayName .. "." , depth + 1, maxDepth)
             else
@@ -384,12 +382,12 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
             e.Vartype = vtByte
             local mask = callDLL("UE5_GetFieldBoolMask", f.faddr)
             -- CE renders a single bit via vtBinary + BitStart + BitSize (celua.txt,
-            -- StructureElement). The old code stored the mask in ChildStructStart --
-            -- which means "byte offset inside a child struct", NOT a bitmask -- so CE
-            -- ignored it and the row still displayed the whole byte, mis-labelled
-            -- "(bit 7, mask 0xFF)" for native bools too (the bit-index loop treated
-            -- 0xFF as a mask). Only a genuine single-bit packed mask (0x01..0x80) gets
-            -- the bit treatment; 0 / 0xFF keep the whole-byte vtByte. (audit #5 AA26)
+            -- StructureElement). Not ChildStructStart: that means "byte offset inside
+            -- a child struct", NOT a bitmask, so CE ignores a mask stored there and
+            -- the row shows the whole byte. Only a genuine single-bit packed mask
+            -- (0x01..0x80) gets the bit treatment; 0 / 0xFF (a native bool, which a
+            -- bit-index loop would mis-label "(bit 7, mask 0xFF)") keep the
+            -- whole-byte vtByte.
             if isPackedBoolMask(mask) then
                 local bitIdx = maskToBitIndex(mask)
                 e.Vartype  = vtBinary
@@ -448,21 +446,17 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
 end
 
 -- ----------------------------------------------------------------
--- REMOVED 2026-08-17: fillGaps ("unused bytes shown as vtPointer").
+-- No fillGaps ("unused bytes shown as vtPointer"), deliberately.
 --
--- It was defined, advertised in this header and in scripts/README.md +
--- DEPLOY_README.html, and never called from anywhere in the repo. It was also
--- wrong: it built its coverage set from element START offsets only
--- (`existing[Element[i].Offset] = true`) and then tested four consecutive
--- offsets, so an 8-byte field at 0x10 marked only 0x10 — 0x14 read as
--- uncovered and the loop would have emitted a vtPointer OVERLAPPING it. On a
--- real class it would add hundreds of unnamed rows, some of them overlaps.
+-- CE's own autoGuessStruct already covers the no-override case, and a correct
+-- gap filler would have to track each field's real byte span while elements
+-- are added. One that builds its coverage set from element START offsets only
+-- (`existing[Element[i].Offset] = true`) and then tests four consecutive
+-- offsets marks an 8-byte field at 0x10 as covering only 0x10 — 0x14 reads as
+-- uncovered and the loop emits a vtPointer OVERLAPPING it. On a real class
+-- that adds hundreds of unnamed rows, some of them overlaps.
 --
--- Deleted rather than repaired (maintainer's call, audit #5 AA7): CE's own
--- autoGuessStruct already covers the no-override case, and a correct version
--- would have to track each field's real byte span while elements are added —
--- new, untested, visible behaviour in a shipped script that nobody asked for.
--- If it ever comes back, that is the shape to build: the DLL already hands us
+-- If one is ever added, that is the shape to build: the DLL already hands us
 -- f.size per field, so the coverage set must never be re-derived from CE's
 -- element list.
 -- ----------------------------------------------------------------
@@ -473,9 +467,8 @@ end
 -- Every other header offset below is fixed across the UE versions we support,
 -- but this one is NOT: on a WITH_CASE_PRESERVING_NAME build FName is 12 bytes
 -- instead of 8, so OuterPrivate pads out to +0x28. The DLL already detects that
--- (DynOff::UOBJECT_OUTER, Genau) while this script asserted a flat 0x20 --
--- labelling the FName's DisplayIndex/Number pair as an 8-byte "Outer" pointer
--- and omitting the real one (audit #5 AA8).
+-- (DynOff::UOBJECT_OUTER, Genau); a flat 0x20 here would label the FName's
+-- DisplayIndex/Number pair as an 8-byte "Outer" pointer and omit the real one.
 --
 -- Rather than mirror the DLL's detection (a second copy that can drift), ASK it
 -- for the answer on this object and find which slot agrees:
@@ -489,10 +482,10 @@ end
 -- follow the user onto the next, non-case-preserving game and corrupt every
 -- structure built there. The probe is two reads and one export call.
 --
--- No pcall: callDLL raises loudly by design (the AA5/AA6 fix), UE5_GetObjectOuter
+-- No pcall: callDLL raises loudly by design (its CONTRACT), UE5_GetObjectOuter
 -- predates the module-naming scheme so no DLL a user could plausibly pair with
--- this script lacks it, and swallowing here would re-introduce exactly the silent
--- failure that fix removed.
+-- this script lacks it, and swallowing here would bring back exactly the silent
+-- failure that contract exists to prevent.
 -- ----------------------------------------------------------------
 local function detectOuterOffset(probeAddr)
     if not probeAddr or probeAddr == 0 then return 0x20 end
@@ -511,7 +504,7 @@ end
 -- value: dissect.createFromPath -> UE5_FindObject resolves ANY UObject by path, a
 -- UScriptStruct included (e.g. /Script/CoreUObject.Vector, X/Y/Z doubles at
 -- 0x00/0x08/0x10), and a Vector value has no UObject header -- stapling one lands
--- ObjectIndex/FNameIndex/Outer rows over real members. (audit #5 AA37)
+-- ObjectIndex/FNameIndex/Outer rows over real members.
 --
 -- A UScriptStruct is ITSELF a UObject, so UE5_GetObjectClass(addr) ~= 0 does NOT
 -- tell a class from a struct. Its META-class name does: every UClass-family meta
@@ -620,16 +613,15 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     ceStruct.beginUpdate()
 
     -- The walk raises on any DLL failure (see callDLL), so the build has to be
-    -- unwound rather than left where it stopped. Without this, beginUpdate() had
-    -- no matching endUpdate() and a half-walked structure was orphaned: never in
-    -- structList, so clearAll() could never free it either. That was survivable
-    -- while a failed call merely returned nil; it is the NORMAL failure path now.
-    -- (audit #5 AA25, promoted from latent by the AA5/AA6 fix above.)
+    -- unwound rather than left where it stopped. Without this, beginUpdate() has
+    -- no matching endUpdate() and a half-walked structure is orphaned: never in
+    -- structList, so clearAll() could never free it either. Since callDLL raises,
+    -- this is the NORMAL failure path, not a rare one.
     local built, buildErr = pcall(function()
         addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)   -- walk class fields recursively
         -- The UObject header belongs only when instances of classAddr are UObjects,
         -- i.e. classAddr is a UClass. createFromPath can land a UScriptStruct here
-        -- (Vector/Rotator/...), whose values have no header. (audit #5 AA37)
+        -- (Vector/Rotator/...), whose values have no header.
         if probeIsUClass(classAddr) then
             addUObjectHeader(ceStruct, classAddr)                    -- add UObject base fields
         end
@@ -638,9 +630,9 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     ceStruct.endUpdate()
 
     if not built then
-        -- Never register or cache a partial structure. The whole point of AA6 is
-        -- that a garbage structure presented as a success is worse than no
-        -- structure: the user cannot tell it apart from a real one.
+        -- Never register or cache a partial structure. A garbage structure
+        -- presented as a success is worse than no structure: the user cannot
+        -- tell it apart from a real one.
         pcall(function() ceStruct:Destroy() end)
         error(buildErr, 0)
     end
@@ -737,9 +729,10 @@ local function dissectOverrideBody(ceStruct, instanceAddr)
     ceStruct.beginUpdate()
     addFieldsToStruct(ceStruct, classAddr, 0, "", 0)
     -- Probe the INSTANCE, not the class: both are UObjects, but the instance is
-    -- the object this structure actually describes. This site is ALREADY gated for
-    -- AA37 -- instanceAddr reached here only past the GetObjectClass ~= 0 check
-    -- above, so it is a UObject and the header is valid. probeIsUClass is NOT used
+    -- the object this structure actually describes. This site is ALREADY gated
+    -- against a struct value -- instanceAddr reaches here only past the
+    -- GetObjectClass ~= 0 check above, so it is a UObject and the header is
+    -- valid. probeIsUClass is NOT used
     -- here: its meta-name test is for a CLASS probe, and an instance's class name
     -- (e.g. "PlayerCharacter") does not end in "Class", so it would wrongly suppress
     -- the header for ordinary instances.
@@ -770,14 +763,14 @@ end
 -- Declining (false / nil) is the contract for "not mine" -- it is what lets CE
 -- fall through -- so that is what a failure reports. Warned ONCE per session:
 -- these fire per expanded node, and the hygiene rule exists so the Lua Engine
--- window never covers Cheat Engine. (audit #5 AA4)
+-- window never covers Cheat Engine.
 local warnedCallbackFailure = false
 local callbackFailStreak = 0
 -- After this many CONSECUTIVE failures the DLL is treated as gone and the callbacks
 -- unregister THEMSELVES, so CE returns to its own dissect for the rest of the session --
 -- autoGuessStruct, or UETools again where auto mode had suspended it -- instead of
--- routing every dissect through a dead barrier (audit #5 AA27). The
--- AA4 barrier already makes each failure DECLINE cleanly rather than break CE's dissect;
+-- routing every dissect through a dead barrier. callbackBarrier already makes each
+-- failure DECLINE cleanly rather than break CE's dissect;
 -- this additionally sheds the per-node pcall overhead and the stale override once the DLL
 -- is clearly gone (unloaded / game exited). One later success resets the streak.
 local CALLBACK_MAX_FAIL_STREAK = 3
@@ -861,8 +854,8 @@ end
 -- Once its background scan recognizes the game, UETools registers a structure
 -- name lookup and a registerStructureDissectOverride2 and adds "Unreal Engine ->
 -- Use when dissecting structures", checked. CE asks those before our override,
--- so with them on, ticking auto dissect changed nothing (measured on DumperTest,
--- CE 7.7). While auto mode is on they are suspended, and disable puts back
+-- so with them on, ticking auto dissect would change nothing (CE 7.7). While
+-- auto mode is on they are suspended, and disable puts back
 -- exactly what was taken.
 --
 -- A suspension is spent per UETools REGISTRATION, not per enable. UETools starts
@@ -1024,7 +1017,7 @@ end
 -- CE can take a record's tick away without running its [DISABLE]: on opening
 -- another process, when the user agrees to disable the table's entries
 -- (addresslist.disableAllWithoutExecute only clears Active), and when a ticked
--- record is deleted (it is freed, not deactivated). Ours then stayed registered
+-- record is deleted (it is freed, not deactivated). Ours would then stay registered
 -- -- and UETools suspended -- under a record showing auto mode off. So the record
 -- hands enableAutoCallback its memrec, and the watch turns auto mode off once
 -- that record is gone, or unticked after the watch has seen it ticked: CE sets
@@ -1042,7 +1035,7 @@ end
 -- The latest enable names the record followed. A re-tick after CE's untick lands
 -- on the already-registered path and is followed from then on; an enable with
 -- no record (an older record, CE's Lua console) is followed by nobody, and auto
--- mode then stays on until something disables it, as before.
+-- mode then stays on until something disables it.
 -- ----------------------------------------------------------------
 local AUTO_WATCH_MS = 2000   -- UETools can finish a scan or start over, and CE can untick the record, at any time
 

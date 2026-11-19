@@ -98,8 +98,8 @@ int32_t GetDilation(int32_t target, DilationInfo& out);
 // negative TimeResult.
 [[nodiscard]] int32_t ResetDilation(int32_t target);
 
-// Stop and join the re-assert worker. Idempotent. Called by ResetDilation (when
-// nothing else is active) and from UE5_Shutdown() before the DLL unloads.
+// Stop and join the re-assert worker. Idempotent. The DLL's shutdown calls it
+// before unload; ResetDilation stops the worker on its own once no lever is active.
 void StopWorker();
 
 } // namespace Hemmung

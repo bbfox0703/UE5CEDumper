@@ -1,6 +1,6 @@
 // ============================================================
 // Kanne — カンネ (水を操る魔法使い — "watering can", the mage who moves water)
-// Watch samples ([PIPE-PER-PROCESS-2026-11-06] Stage C): what a pipe `watch` keeps, and how its
+// Watch samples ([PIPE-PER-PROCESS-2026-11-06]): what a pipe `watch` keeps, and how its
 // sampling thread hands each sample to the connection that asked without either touching the
 // other -- the flow from game memory to the pipe, carried in a can.
 //

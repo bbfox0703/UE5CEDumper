@@ -5,7 +5,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Pure, AOT-safe DataTable-native pivot (Phase C4). A DataTable is already a
+/// Pure, AOT-safe DataTable-native pivot. A DataTable is already a
 /// RowName → struct map, so the pivot is <b>zero-config</b>: each row is its own
 /// group keyed by RowName (always unique → Count 1, never a collision) and the
 /// row struct's fields are the projected columns. No key discovery needed —

@@ -1,18 +1,18 @@
-"""D5 — an UNREADABLE TLazyObjectPtr element must render "???", not a fabricated GUID.
+"""An UNREADABLE TLazyObjectPtr element must render "???", not a fabricated GUID.
 
     py tools/verify/d5_lazyguid_unread.py            # DumperTest must be running + injected
 
-THE DEFECT (blind-spot sweep, fixed 2026-09-08, c45c7ce8). `ReadLazyObjectArrayElements`
-made four unchecked `Macht::ReadSafe` calls for the FGuid and formatted whatever was left
-in the locals. On a faulted read those stay zero, so the element was published as
+THE DEFECT IT GUARDS AGAINST. If `ReadLazyObjectArrayElements` leaves its four `Macht::ReadSafe`
+calls for the FGuid unchecked and formats whatever is left in the locals, a faulted read
+leaves them zero, so the element is published as
 `{00000000-00000000-00000000-00000000}` and counted in `readCount` — indistinguishable
 from a genuinely unset TLazyObjectPtr, which is a REAL and legitimate all-zero FGuid.
-That is why "print zeros differently" was never available: only the read's own answer
+That is why "print zeros differently" is not available: only the read's own answer
 separates UNREAD from READ-AS-ZERO.
 
 ⛔ WHY THIS RIG WRITES TO THE GAME. On a healthy process every element reads fine, so the
 fault arm cannot be observed by looking. `Macht::ReadTArray` validates only Count and Max
-and NEVER probes Data (Macht.h:287-297), so a TArray whose Data has been pointed at
+and NEVER probes Data (`Macht.h`), so a TArray whose Data has been pointed at
 unmapped memory passes the gate intact and every element read then faults — exactly the
 freed-buffer shape the defect describes. Manufacturing the case is the technique
 working-lessons §1.aa prescribes, and the WRITE is its own negative control: the same
@@ -24,7 +24,7 @@ but a rig that can strand it is not one to run twice.
 
 WHAT A PASS LOOKS LIKE
   1. baseline   3 elements, each a real GUID + a resolved DumperTestHolder name
-  2. corrupted  3 elements, every one "???"   <- the fix. Pre-fix this said
+  2. corrupted  3 elements, every one "???"   <- the fix. Without it this says
                 {00000000-00000000-00000000-00000000}
   3. restored   byte-identical to (1)
 Any of the three failing is a FAIL: (2) proves the fix fires, (1)/(3) prove the rig did

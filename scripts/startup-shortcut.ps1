@@ -13,9 +13,9 @@
 
     A stdlib-Python twin lives beside this file as startup_shortcut.py — same
     verbs, same exit codes, same refusals. It exists because Bitdefender's
-    Advanced Threat Defense quarantined THIS script the first time it ran: the
-    detection was behavioural, not a signature — an unsigned parent process
-    spawning pwsh spawning powershell, which then wrote a .lnk into the Startup
+    Advanced Threat Defense can quarantine THIS script when it runs: the
+    detection is behavioural, not a signature — an unsigned parent process
+    spawning pwsh spawning powershell, which then writes a .lnk into the Startup
     folder. That is a textbook persistence shape and an AV is right to look at
     it. Neither script tries to look like anything else; if yours trips too, the
     honest fix is a folder exclusion, not a workaround.

@@ -48,10 +48,9 @@ public class UsmapExportServiceTests
         Assert.Equal(0x30, bytes[1]);
         Assert.Equal(4, bytes[2]);                       // ExplicitEnumValues
 
-        // Bytes 3..6 are the int32 bHasVersionInfo, mandatory for version >= 1. This is the
-        // field whose absence made every previously exported file unopenable: a reader consumes
-        // four bytes here, and without them it ate the low bytes of the payload size and threw
-        // before reading a single name (audit #5 W1).
+        // Bytes 3..6 are the int32 bHasVersionInfo, mandatory for version >= 1. Without this
+        // field a file is unopenable: a reader consumes four bytes here, so without them it
+        // eats the low bytes of the payload size and throws before reading a single name.
         Assert.Equal(0, BitConverter.ToInt32(bytes, 3));
         Assert.Equal(0, bytes[7]);                       // compression = None
 
@@ -63,7 +62,7 @@ public class UsmapExportServiceTests
     {
         var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], []));
 
-        // "None" is pre-registered so the write pass never has to extend the table (W7).
+        // "None" is pre-registered so the write pass never has to extend the table.
         Assert.Equal(new[] { "None" }, f.Names);
         Assert.Empty(f.Enums);
         Assert.Empty(f.Structs);
@@ -114,8 +113,8 @@ public class UsmapExportServiceTests
         Assert.Equal(2, st.Props.Count);
         Assert.Equal(new[] { "X", "Y" }, st.Props.Select(p => p.Name));
 
-        // ArrayDim is 1 for a scalar and occupies ONE byte. It used to be a hardcoded 2-byte 0,
-        // which both slid the stream and told a reader to register no schema slots at all.
+        // ArrayDim is 1 for a scalar and occupies ONE byte. A 2-byte 0 would both slide the
+        // stream and tell a reader to register no schema slots at all.
         Assert.All(st.Props, p => Assert.Equal(1, p.ArrayDim));
         Assert.Equal(new ushort[] { 0, 1 }, st.Props.Select(p => p.SchemaIndex));
         Assert.Equal(2, st.SlotCount);
@@ -201,7 +200,7 @@ public class UsmapExportServiceTests
         Assert.Equal(new[] { "None", "Walking", "Flying" }, e.Members.Select(m => m.Name));
 
         // The member count is a uint16 (LargeEnums) and each member carries its explicit int64
-        // value (ExplicitEnumValues) — an enum with gaps is no longer flattened to 0..N-1.
+        // value (ExplicitEnumValues) — an enum with gaps is not flattened to 0..N-1.
         Assert.Equal(new long[] { 0, 1, 2 }, e.Members.Select(m => m.Value));
     }
 
@@ -245,7 +244,7 @@ public class UsmapExportServiceTests
 
     // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers -- AssetObjectProperty / AssetClassProperty, renamed Soft* in
     // 4.18 -- take the canonical slot the enum already reserves for them, AssetObjectProperty = 16 (the class flavour too,
-    // as SoftClass shares SoftObject's). Mapped by name, they were Unknown: a 0xFF no reader can skip.
+    // as SoftClass shares SoftObject's). Left unmapped, they would be Unknown: a 0xFF no reader can skip.
 
     [Theory]
     [InlineData("AssetObjectProperty")]
@@ -332,7 +331,7 @@ public class UsmapExportServiceTests
     [Fact]
     public void WritePropertyType_ArrayOfTEnumAsByte_WritesTheCanonicalEnumShape()
     {
-        // TArray<TEnumAsByte<E>> -> [ArrayProperty=8][EnumProperty=26][ByteProperty=0][E]. A bare [8][0] had a consumer
+        // TArray<TEnumAsByte<E>> -> [ArrayProperty=8][EnumProperty=26][ByteProperty=0][E]. A bare [8][0] would have a consumer
         // read one byte per element against the FName UE 5.8 serializes for each (PropertyByte.cpp).
         var nameTable = new UsmapExportService.NameTable();
         nameTable.GetOrAdd("EObjectTypeQuery");
@@ -373,7 +372,7 @@ public class UsmapExportServiceTests
         Assert.Equal(new byte[] { 26, 0, 0, 0, 0, 0, 26, 0, 1, 0, 0, 0 }, bytes[1..]);
     }
 
-    // ---- review 5 of 53baca47: the Set and Optional arms of the fix were unpinned ----
+    // ---- [A4-USMAP-CONTAINER-ENUM], the Set and Optional arms ----
 
     [Fact]
     public void WritePropertyType_SetOfTEnumAsByte_WritesTheCanonicalEnumShape()
@@ -414,7 +413,7 @@ public class UsmapExportServiceTests
     [Fact]
     public void WritePropertyType_ArrayOfPlainBytes_StaysAByteArray()
     {
-        // The control, green before and after: no enum, no fake enum shape.
+        // The control: no enum, no fake enum shape.
         var nameTable = new UsmapExportService.NameTable();
         var field = new FieldInfoModel { TypeName = "ArrayProperty", InnerType = "ByteProperty" };
 
@@ -426,7 +425,7 @@ public class UsmapExportServiceTests
         Assert.Equal(new byte[] { 8, 0 }, ms.ToArray());
     }
 
-    // ---- [P1-ENUMNAMES] the .usmap shipped with every enum empty, and never said why ----
+    // ---- [P1-ENUMNAMES] a .usmap with every enum empty says why ----
 
     [Fact]
     public void EnumCollectionNote_NamesAFailedLatchAndATruncation()
@@ -445,12 +444,12 @@ public class UsmapExportServiceTests
     [Fact]
     public void EnumCollectionNote_AHealthyList_IsJustTheCount()
     {
-        // The control, green before and after.
+        // The control: a healthy list says only its count.
         Assert.Equal("Collected 2 enums", UsmapExportService.EnumCollectionNote(
             new EnumListResult { Enums = new() { new EnumDefinition(), new EnumDefinition() } }));
     }
 
-    // ---- review 5 of 7e5a71fc: the note was a progress line only, overwritten one pipe round-trip later ----
+    // ---- the enum note reaches the final status, not only a progress line the next pipe round-trip overwrites ----
 
     private class EmptyObjectsStub : StubDumpService
     {
@@ -492,10 +491,10 @@ public class UsmapExportServiceTests
         Assert.Empty(warnings);
     }
 
-    // ---- [EXPORT-STATUS-LATE-PROGRESS]: a report still queued when the export finished replaced its final status ----
-    // Observed live 2026-09-23 (L41 step 1, red run): the USMAP export ended on "Generated USMAP (1412624 bytes, 7692
-    // structs, 1569 enums)", the service's LAST report, and its own final status never showed. The race needs no real
-    // UI thread to reproduce: hold the queue still, finish, then let the queued reports run.
+    // ---- [EXPORT-STATUS-LATE-PROGRESS]: a report still queued when the export finishes must not replace its final status ----
+    // The race: the service's LAST report ("Generated USMAP (N bytes, N structs, N enums)") runs after the export's own
+    // final status and hides it. It needs no real UI thread to reproduce: hold the queue still, finish, then let the
+    // queued reports run.
 
     /// <summary>A status line whose UI-thread queue is held still: a report runs only when the test drains it.</summary>
     private static (StatusProgress Progress, List<Action> Queue, Func<string?> Status) HeldStatusLine()
@@ -523,7 +522,7 @@ public class UsmapExportServiceTests
     [Fact]
     public async Task ExportStatus_ReportsThatRunBeforeCompletion_StillReachTheStatusLine_InOrder()
     {
-        // The control, green before and after: the gate must not swallow live progress.
+        // The control: the gate must not swallow live progress.
         var (progress, queue, status) = HeldStatusLine();
         await UsmapExportService.GenerateUsmapAsync(new EmptyObjectsStub(), progress, TestContext.Current.CancellationToken);
 
@@ -550,7 +549,7 @@ public class UsmapExportServiceTests
 
     /// <summary>[R7-D-02] A service that reports a record (Dump All's <c>DumpProgress</c>) goes through the same line:
     /// queued once, and dropped once the final status is set. Dump All's last report is "Done — N classes, M structs, E enums", made just
-    /// before the service returns, and it used to replace the final status that carries the error count.</summary>
+    /// before the service returns, and it must not replace the final status that carries the error count.</summary>
     [Fact]
     public void ExportStatus_AMappedRecordReport_IsQueuedOnceAndDroppedAfterCompletion()
     {
@@ -658,7 +657,7 @@ public class UsmapExportServiceTests
         Assert.Equal(2, table.Count);
     }
 
-    // --- Round-trip: the checks that would have caught W1 -----------------------
+    // --- Round-trip: a version stamp and a body that disagree fail here -----------
 
     [Fact]
     public void BuildUsmap_FullFile_RoundTripsWithNothingLeftOver()
@@ -694,7 +693,7 @@ public class UsmapExportServiceTests
     public void BuildUsmap_StaticArrayProperty_CountsEverySchemaSlot()
     {
         // A static C array (Foo[4]) occupies four schema slots but is ONE record. The two counts
-        // in a struct header are therefore different numbers; emitting Fields.Count for both made
+        // in a struct header are therefore different numbers; emitting Fields.Count for both makes
         // a reader that walks slots disagree with the records it was handed.
         var structs = new List<ClassInfoModel>
         {
@@ -722,7 +721,7 @@ public class UsmapExportServiceTests
     [Fact]
     public void BuildUsmap_LargeEnum_IsNotTruncatedAt255()
     {
-        // The old uint8 member count silently dropped everything past 255 — a data loss on top
+        // A uint8 member count would silently drop everything past 255 — a data loss on top
         // of the desync, and exactly what LargeEnums exists to prevent.
         var entries = new List<EnumEntryValue>();
         for (int i = 0; i < 300; i++)
@@ -739,9 +738,9 @@ public class UsmapExportServiceTests
     public void BuildUsmap_UnregisteredStructName_DoesNotWriteAnIndexPastTheTable()
     {
         // The name table's length is written once, up front. A struct/enum reference resolved
-        // during the write pass used to be APPENDED, producing an index past the end of the
-        // table the file had already declared (audit #5 W7). UsmapFile.Parse range-checks every
-        // name index, so this test fails loudly if that ever comes back.
+        // during the write pass and APPENDED would produce an index past the end of the table
+        // the file had already declared. UsmapFile.Parse range-checks every name index, so this
+        // test fails loudly on one.
         var structs = new List<ClassInfoModel>
         {
             new()
@@ -763,8 +762,8 @@ public class UsmapExportServiceTests
     // ---- [A4-USMAP-ENUM-UNDERLYING] an enum's underlying type is its REAL width ----
     //
     // In unversioned cooked data an enum UPROPERTY is serialized as an integer of its own size, and CUE4Parse
-    // takes that size from the mapping. Every EnumProperty was written with a Byte underlying type, so a
-    // `: uint32` enum read 1 byte of 4 and misaligned every later property of its object.
+    // takes that size from the mapping. Writing every EnumProperty with a Byte underlying type makes a
+    // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
 
     [Theory]
     [InlineData(1, (byte)0)]    // ByteProperty
@@ -795,7 +794,7 @@ public class UsmapExportServiceTests
     //
     // The walker leaves EnumName and enum_underlying empty when the property's UEnum slot does not validate.
     // Dumper-7 writes [26][size-derived int]["None"] there and RE-UE4SS (23e089e4) the bare integer; this writer
-    // follows Dumper-7 (the UsmapExportService header, point 3). Nothing pinned that shape before. Writing the bare
+    // follows Dumper-7 (the UsmapExportService header, point 3). Writing the bare
     // integer at the top level turns all three cases red (mutation-checked); the name half is also covered by
     // NameTable.IndexOf, which answers "None" for any unregistered name.
 
@@ -824,7 +823,7 @@ public class UsmapExportServiceTests
 
     // ---- [USMAP-ENUM-SIGNEDNESS] the DLL's UnderlyingProp type carries the signedness the size cannot ----
     //
-    // Both canonical writers write the UnderlyingProp's own type. From the size alone a `: int8` enum came out
+    // Both canonical writers write the UnderlyingProp's own type. From the size alone a `: int8` enum would come out
     // ByteProperty and a `: uint32` one IntProperty.
 
     [Theory]
@@ -874,8 +873,8 @@ public class UsmapExportServiceTests
     [Fact]
     public void BuildUsmap_ByteEnum_IsWrittenAsTheCanonicalEnumShape()
     {
-        // Arm 3: a TEnumAsByte (a ByteProperty carrying an enum) was written as a bare ByteProperty, so every
-        // consumer showed its number, not its name. Both canonical writers emit [26][0][enumName].
+        // Arm 3: a TEnumAsByte (a ByteProperty carrying an enum) written as a bare ByteProperty makes every
+        // consumer show its number, not its name. Both canonical writers emit [26][0][enumName].
         var structs = new List<ClassInfoModel>
         {
             new()
@@ -896,7 +895,7 @@ public class UsmapExportServiceTests
     [Fact]
     public void BuildUsmap_PlainByte_StaysAByteProperty()
     {
-        // The control, green before and after: a ByteProperty with no enum is a plain byte.
+        // The control: a ByteProperty with no enum is a plain byte.
         var structs = new List<ClassInfoModel>
         {
             new() { Name = "FHolder", Fields = [ new FieldInfoModel { Name = "Count", TypeName = "ByteProperty", Offset = 0, Size = 1 } ] },
@@ -909,12 +908,12 @@ public class UsmapExportServiceTests
 
     // ---- [USMAP-INHERITED-DUPES] ------------------------------------------------
     //
-    // The DLL prepends the ENTIRE SuperStruct chain to ClassInfoModel.Fields. The writer used to
-    // emit all of it AND the super pointer, so every child repeated its whole ancestry and every
-    // own-property schema index was shifted by the size of that ancestry. A consumer decodes an
-    // unversioned cooked object BY SCHEMA INDEX over the chain, so it then lands on a different
-    // property: measured on the DumperTest 5.4 fixture, 1,919 of 2,407 cooked exports (79.7%)
-    // parsed differently under our mapping than under Dumper-7's.
+    // The DLL prepends the ENTIRE SuperStruct chain to ClassInfoModel.Fields. A writer that
+    // emitted all of it AND the super pointer would make every child repeat its whole ancestry
+    // and shift every own-property schema index by the size of that ancestry. A consumer decodes
+    // an unversioned cooked object BY SCHEMA INDEX over the chain, so it would then land on a
+    // different property -- most cooked exports would parse differently under our mapping than
+    // under Dumper-7's.
 
     /// <summary>Two classes, one deriving from the other: the child must list ONLY its own
     /// properties, and its schema indices must restart at 0 — which is what the canonical writer
@@ -933,8 +932,8 @@ public class UsmapExportServiceTests
         // The parent is untouched: it declares two properties and keeps them.
         Assert.Equal(new[] { "BaseA", "BaseB" }, parent.Props.Select(p => p.Name));
 
-        // The child declares one. Before the fix it emitted three -- BaseA, BaseB and Own -- and
-        // Own sat at schema index 2 instead of 0.
+        // The child declares one -- not three (BaseA, BaseB and Own), with Own at schema index
+        // 2 instead of 0.
         Assert.Equal(new[] { "Own" }, child.Props.Select(p => p.Name));
         Assert.Equal(new ushort[] { 0 }, child.Props.Select(p => p.SchemaIndex));
 
@@ -942,9 +941,9 @@ public class UsmapExportServiceTests
         Assert.Equal(1, child.SlotCount);
     }
 
-    /// <summary>⛔ The CONTROL, and it is the one that stops the fix from losing data: when the
+    /// <summary>⛔ The CONTROL, and it is the one that stops the split from losing data: when the
     /// super is NOT in the export, a reader has nowhere to walk to, so the flattened list must be
-    /// kept. Dropping it there would turn an over-reporting bug into a silent data loss.</summary>
+    /// kept. Dropping it there would turn over-reporting into a silent data loss.</summary>
     [Fact]
     public void BuildUsmap_SuperMissingFromTheExport_KeepsTheFlattenedList()
     {
@@ -1035,7 +1034,7 @@ public class UsmapExportServiceTests
     }
 
     /// <summary>⚠ A negative OwnPropertiesStart means NO INFORMATION, and must not enter the
-    /// comparison: folding -1 in re-emits the whole inherited chain (audit #5 W2).</summary>
+    /// comparison: folding -1 in re-emits the whole inherited chain.</summary>
     [Fact]
     public void BuildUsmap_NoOwnPropertiesStart_StillSplitsOnTheSuperSize()
     {
@@ -1083,9 +1082,8 @@ public class UsmapExportServiceTests
 
     // ---- [USMAP-ENUM-NAME-QUALIFIED] --------------------------------------------
     //
-    // UE stores an `enum class`'s entries FULLY QUALIFIED. Passing them through made a consumer
-    // that qualifies them again print the name twice. Measured on the fixture 2026-09-17: 7,399 of
-    // 9,294 members carried the prefix, against 0 of 9,294 in the canonical writer's export.
+    // UE stores an `enum class`'s entries FULLY QUALIFIED. Passed through, they make a consumer
+    // that qualifies them again print the name twice; the canonical writer writes them bare.
 
     [Fact]
     public void BuildUsmap_ScopedEnumMembers_AreWrittenBare()
@@ -1115,8 +1113,8 @@ public class UsmapExportServiceTests
 
     /// <summary>⭐ The CONTROL. An unscoped `enum` already arrives bare and must be untouched --
     /// EBlendMode's entries read BLEND_Opaque in both writers. A blanket "strip everything before
-    /// the last ::" would have passed the test above and broken nothing visible here, so this is
-    /// what stops the fix from being written that way.</summary>
+    /// the last ::" would pass the test above and break nothing visible there, so this is what
+    /// stops the stripping from being written that way.</summary>
     [Fact]
     public void BuildUsmap_UnscopedEnumMembers_AreLeftAlone()
     {
@@ -1187,16 +1185,15 @@ public class UsmapExportServiceTests
 
 // ---- USMAP round-trip reader -------------------------------------------------
 //
-// Audit #5 W1: the writer stamped version 3 and emitted the version-0 body, so no consumer could
-// open the file. Every test in this suite passed anyway, because each one skipped a hardcoded
-// 12-byte header and read the fields at the widths the WRITER happened to use — they encoded the
-// bug rather than checking it.
+// A version stamp and a body that disagree make the file unopenable to every consumer, and a test
+// that skips a hardcoded header and reads the fields at the widths the WRITER happens to use
+// encodes such a bug rather than checking it.
 //
 // This reader parses the file the way a consumer does, at the widths the canonical writers define
 // (vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp and vendor/Dumper-7/.../
 // MappingGenerator.cpp). Its most valuable assertion is not any single field: it is that the
 // stream is FULLY CONSUMED. A leftover or missing byte anywhere — a width, a count, a forgotten
-// field — surfaces as a desync here, which is precisely what nothing could see before.
+// field — surfaces as a desync here, which a writer-shaped test cannot see.
 internal sealed class UsmapFile
 {
     internal sealed record UsmapEnum(string Name, List<(long Value, string Name)> Members);
@@ -1244,7 +1241,7 @@ internal sealed class UsmapFile
 
         string NameAt(int idx)
         {
-            Assert.InRange(idx, 0, f.Names.Count - 1);   // catches an index past the table (W7)
+            Assert.InRange(idx, 0, f.Names.Count - 1);   // catches an index past the table
             return f.Names[idx];
         }
 
@@ -1263,7 +1260,7 @@ internal sealed class UsmapFile
         }
 
         // Mirrors WritePropertyType / WriteInnerPropertyTypeFromField. An enum's underlying type is itself a
-        // property type, read through the inner reader -- it was skipped as ONE byte, so nothing could see
+        // property type, read through the inner reader -- skipping it as ONE byte would hide
         // what was written there. [A4-USMAP-ENUM-UNDERLYING]
         (byte Type, byte Underlying, string? EnumName) ReadInner()
         {

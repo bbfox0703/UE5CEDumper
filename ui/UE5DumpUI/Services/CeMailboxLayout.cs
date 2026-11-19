@@ -8,11 +8,10 @@ namespace UE5DumpUI.Services;
 /// <c>dll/src/Mimic.h</c> (MailboxData struct + Cmd enum).
 ///
 /// <para>Offsets are kept as pre-formatted hex STRINGS so the emitted text is
-/// byte-identical everywhere. The canonical form is the compact 2-digit hex
-/// (e.g. <c>"0x10"</c>) historically emitted by DebugCamera / Movement / Protection /
-/// Teleport (the majority). Lua parses <c>0x10</c> and <c>0x010</c> to the same
-/// number, so <see cref="InvokeScriptGenerator"/> — which previously wrote the
-/// zero-padded <c>0x010</c> — now emits this compact form (same address, cosmetic).</para>
+/// byte-identical everywhere. The canonical form is compact hex with no zero padding
+/// (e.g. <c>"0x10"</c>, not <c>"0x010"</c>). Lua parses both to the same number, so
+/// the choice is cosmetic; one form keeps the emitted text identical across
+/// generators, <see cref="InvokeScriptGenerator"/> included.</para>
 /// </summary>
 internal static class CeMailboxLayout
 {
@@ -86,13 +85,12 @@ internal static class CeMailboxLayout
     // as long as nothing it depends on moved, so what is versioned is the CONTRACT
     // — the mailbox offsets, the Cmd values, the per-command op values, and the
     // status/result meanings. Mimic.h holds the full rule for what does and does
-    // not bump it; do not restate it here, because two copies of a rule is how the
-    // timeout defect got into seven files.
+    // not bump it; do not restate it here, because two copies of a rule drift apart.
     //
     // Emitted into every generated script, which then checks itself against what
     // the DLL publishes. The DLL answers with a RANGE, so the two failure
     // directions can be told apart: too-old script => regenerate the .CT, too-old
-    // DLL => update the DLL. Today the second case is silent corruption.
+    // DLL => update the DLL. Without the check, the second case is silent corruption.
     public const int ContractVersion = 9;
 
     /// <summary>Exported symbol carrying the contract. Deliberately NOT a field of

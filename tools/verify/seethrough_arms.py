@@ -14,12 +14,11 @@ hider's own tally is letting the accused be the witness.
   detector (1)  seethrough_get_state -> hidden_count == 0
   detector (2)  re-read each actor's OWN bHidden bit via walk_instance
 
-* Detector (2) needs to know WHICH actors, and until 2026-08-22 the DLL reported only
-a count. That gap was not academic: on DumperTest the count read 1 while not one of 33
-independently reachable candidate actors had bHidden set -- and there was no way to
-tell "my candidate set is wrong" from "the hide silently failed", which is precisely
-the defect this row exists to catch. `hidden_actors` was added to the reply for that
-reason ([SEETHRUSET-2026-08-22]); this rig is its consumer.
+* Detector (2) needs to know WHICH actors, so the reply carries `hidden_actors`, not
+only a count ([SEETHRUSET-2026-08-22]); this rig is its consumer. A count alone can
+read 1 while no independently reachable candidate actor has bHidden set -- and then
+there is no way to tell "my candidate set is wrong" from "the hide silently failed",
+which is precisely the defect this row exists to catch.
 
 ANTI-VACUITY, enforced rather than documented:
   * `run` FAILS if hidden_count never rises -- nothing to hide from this pose means
@@ -28,7 +27,7 @@ ANTI-VACUITY, enforced rather than documented:
     hiding. That is the positive control for detector (2): a detector never shown to
     fire cannot certify anything when it stays quiet.
 
-The UI must be DISCONNECTED from a DLL that predates [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds 2 of its 3 pipe slots (6 since).
+The UI must be DISCONNECTED from a DLL without [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds 2 of its 3 pipe slots (Stage B has 6).
 The DLL disables See-through when the client process that turned it on
 disconnects (unless CE's record also holds it), so `run` does everything in one
 connection. Splitting it across invocations measures the
@@ -63,8 +62,8 @@ def _hidden_bit(c: PipeClient, addr: str):
 
 def _truthy(v) -> bool:
     # walk_instance renders a bit-field bool as `true (bit 7, mask 0x80)`, so an
-    # equality test against "true" reads a HIDDEN actor as not hidden. Caught by the
-    # positive control refusing to pass -- a detector has to be right about the
+    # equality test against "true" reads a HIDDEN actor as not hidden, and the
+    # positive control refuses to pass -- a detector has to be right about the
     # format of the thing it reads, not just about where to read it.
     return str(v).strip().lower().split(" ", 1)[0] in ("true", "1")
 

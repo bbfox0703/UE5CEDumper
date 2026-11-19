@@ -12,29 +12,26 @@ family directly."
 
 ⚠ THE FAILURE IS SILENT AND HALF-CORRECT, WHICH IS WHY IT SURVIVES REVIEW. A split family
 does not crash and does not look broken: struct reads stay right while TArray element
-descriptors and every enum name read 8 bytes off. Audit #5 G12 found exactly that -- Genau's
-Step 2.5 default block set only two of the five, so any run taking a "keeping defaults" exit
-shipped a split family for the whole session, deterministically, first run, no concurrency
-needed.
+descriptors and every enum name read 8 bytes off. A default block that sets only two of the
+five ships a split family for the whole session on any run taking a "keeping defaults" exit --
+deterministically, first run, no concurrency needed.
 
-⛔ AND G12'S OWN FIX WAS INCOMPLETE, WHICH IS THE REAL REASON THIS IS A SCRIPT AND NOT A
-COMMENT. It introduced `ApplyPropertyFamily`, routed the writers it knew about, and recorded
-"Both writers now go through here so the two cannot drift again." There were THREE. The
-third -- `Ubel.cpp` WalkInstance's StructProperty probe -- kept assigning
-`DynOff::FSTRUCTPROP_STRUCT` directly until 2026-09-07, so the exact failure G12 existed to
-prevent stayed reachable by the one path G12 had not counted. A prose invariant plus a
-hand-counted writer list is what failed; counting them mechanically is the fix.
+⛔ WHY THIS IS A SCRIPT AND NOT A COMMENT. Routing the writers somebody knows about through
+`ApplyPropertyFamily` does not reach the writer nobody counted: one direct assignment left in a
+probe elsewhere keeps the split reachable while every counted writer is routed. A prose
+invariant plus a hand-counted writer list cannot hold this; counting the writers mechanically
+can.
 
 WHAT IT ALLOWS, and nothing else:
-  * the DECLARATIONS in Grimoire.h (the defaults; `DynOff::RuntimeOffset` since
-    [CPP-HARDENING-2026-11-14], `inline int` before),
+  * the DECLARATIONS in Grimoire.h (the defaults, as `inline RuntimeOffset` or
+    `inline int`),
   * the body of `ApplyPropertyFamily` itself, which is the one legitimate publisher,
   * ONE named exception: `DynOff::SetArrayInner` in Grimoire.h assigns FARRAYPROP_INNER on
     its own, for `Ubel.cpp`'s ArrayProperty probe, because UE5.3+ places `EArrayPropertyFlags`
     before `Inner`, so that member legitimately diverges from the shared base AFTER
     calibration. The probe re-probes per field per walk rather than latching, so a family
-    write that resets it to the base is corrected on the next array the walker meets. Until
-    2026-11-15 the probe assigned the member itself, outside any lock. The helper's CALLER is
+    write that resets it to the base is corrected on the next array the walker meets. The
+    probe writes through the helper, under the family write lock, and the helper's CALLER is
     pinned the same way: only that probe, beside its "Correcting FARRAYPROP_INNER" marker.
 
 Adding a new writer is fine -- route it through `ApplyPropertyFamily` and this gate is happy.
@@ -45,10 +42,10 @@ THE FAMILY EPOCH'S WRITERS ([DYNOFF-LATCH-STALE]). `DynOff::g_propertyFamilyEpoc
 family-keyed cache, and it moves in two places only: `ApplyPropertyFamily` on a move, and
 `RetireFamilyEpoch` when an offset validation ends. The retire is seqlock-shaped -- it bumps
 `g_offsetValidations` to odd, then the epoch, then the count to even -- and `WalkClassEx` relies on
-that order: a count bumped once, before the epoch, let a walk read the new count with its plain walk
-still keyed under the old epoch and file a mid-validation walk for the session (review
-wf_09b53b67-caf). Reordering the three, or a third writer of the epoch that skips the count, is
-exactly as silent as a split family, so both are checked here.
+that order: a count bumped once, before the epoch, lets a walk read the new count with its plain walk
+still keyed under the old epoch and file a mid-validation walk for the session. Reordering the
+three, or a third writer of the epoch that skips the count, is exactly as silent as a split family,
+so both are checked here.
 """
 import os
 import re
@@ -68,7 +65,7 @@ ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
 SET_ARRAY_INNER_CALL = re.compile(r"\bSetArrayInner\s*\(")
 # A write of the family epoch or of the retire count, in every form an atomic takes one: a member call (any fetch_*,
 # store, exchange or compare_exchange_*), a free std::atomic_* call on its address, a prefix or postfix ++/--, or an
-# assignment. Review wf_090d2608-d9f (R5-GATE-PREFIX-INC): the first pattern missed the prefix ++, the idiomatic one.
+# assignment. The prefix ++ is the idiomatic form, so a pattern without it misses the common writer.
 def atomic_write(name):
     member = r"\b" + name + r"\s*\.\s*(?:fetch_\w+|store|exchange|compare_exchange_\w+)\s*\("
     free = r"\batomic_(?:fetch_\w+|store\w*|exchange\w*|compare_exchange_\w+)\s*\(\s*&\s*(?:\w+::)*" + name + r"\b"
@@ -107,15 +104,14 @@ def strip_code(line):
     ⚠ Both are required, and the string half is not obvious: this codebase logs its own
     offsets, so `Sein::Info(..., "FSTRUCTPROP_STRUCT=0x%02X", ...)` and
     "FARRAYPROP_INNER=0x%X" contain a family name followed by `=` inside a FORMAT STRING.
-    The first version of this gate matched those and reported two writers that do not
-    exist (Fern.cpp:2624, Ubel.cpp:4420). A gate whose failures are diagnostics rather
-    than defects gets switched off, so the literals go first.
+    Matched raw, those report writers that do not exist. A gate whose failures are
+    diagnostics rather than defects gets switched off, so the literals go first.
     """
     return STRING_LIT.sub('""', line.split("//", 1)[0])
 
 
 def is_declaration(line):
-    """`inline RuntimeOffset FBYTEPROP_ENUM{0x78};` (or the older `inline int ... = 0x78;`) in Grimoire.h -- the
+    """`inline RuntimeOffset FBYTEPROP_ENUM{0x78};` (or `inline int ... = 0x78;`) in Grimoire.h -- the
     default, not a writer."""
     return re.match(r"\s*inline\s+(constexpr\s+)?(int|RuntimeOffset)\s+", line) is not None
 
@@ -167,9 +163,9 @@ def main():
                             (name, i + 1, "g_offsetValidations",
                              "the retire count moves only in RetireFamilyEpoch, around the epoch"))
 
-            # The helper is a writer too, so its caller is pinned as the old direct assignment was: only Ubel.cpp's
+            # The helper is a writer too, so its caller is pinned like a direct assignment: only Ubel.cpp's
             # ArrayProperty probe, beside its marker (which sits in a log string, hence the raw lines). Without this
-            # a second solo writer of Inner could call the helper and pass (review 2026-11-15).
+            # a second solo writer of Inner could call the helper and pass.
             if SET_ARRAY_INNER_CALL.search(code) and "inline void SetArrayInner" not in code:
                 lo, hi = max(0, i - 6), min(len(lines), i + 7)
                 if name == "Ubel.cpp" and any("Correcting FARRAYPROP_INNER" in l for l in lines[lo:hi]):

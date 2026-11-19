@@ -9,9 +9,9 @@ be injected into a running game, and CI has neither a game nor a reason to build
 path is an argument with no default, for `usmap_reader.py`'s stated reason.
 
 WHY THIS EXISTS. `[A4-USMAP-ENUM-UNDERLYING]` (L30) is a cross-check against the CANONICAL
-writer: our mapping is only interesting if an independent one agrees with it. The 2026-09-16
-run built Dumper-7 by hand and left nothing behind, so the next re-take started from zero --
-and a re-take is not optional:
+writer: our mapping is only interesting if an independent one agrees with it. A Dumper-7
+built by hand leaves nothing behind, so the next re-take would start from zero -- and a
+re-take is not optional:
 
 ⛔⛔ **BOTH MAPPINGS MUST COME FROM THE SAME PACKAGED BUILD.** A `.usmap` is reflection data,
 so two exports taken from two different packages differ by the PACKAGE, and a diff over them
@@ -26,7 +26,7 @@ into a commercial title.
 ⚠ IT WRITES OUTSIDE THE REPO BY DESIGN: `Settings::SDKGenerationPath` is `C:/Dumper-7`
 (Dumper/Settings.h:45) and `GlobalConfigPath` is `C:/Dumper-7/Dumper-7.ini`. Nothing here
 changes that -- patching a vendored third party's defaults is how a comparison stops being a
-comparison against the real tool. Clean that folder up afterwards; the 2026-09-16 run did.
+comparison against the real tool. Clean that folder up afterwards.
 
 ⚠ ITS OUTPUT IS ZSTANDARD-COMPRESSED (compression byte 3) where ours is 0. `usmap_reader.py`
 handles both (`pip install zstandard`); a reader that assumes 0 reports an empty file rather
@@ -38,9 +38,9 @@ import shutil
 import subprocess
 import sys
 
-# ⚠ MSVC speaks the console codepage, and this box is cp950: one undecodable byte in a
-# compiler diagnostic crashed the whole script with UnicodeEncodeError AFTER a successful
-# build, which reads exactly like a build failure. Measured 2026-09-17.
+# ⚠ MSVC speaks the console codepage, which may be cp950: one undecodable byte in a
+# compiler diagnostic would crash the whole script with UnicodeEncodeError AFTER a successful
+# build, which reads exactly like a build failure.
 try:
     sys.stdout.reconfigure(errors="replace")
     sys.stderr.reconfigure(errors="replace")

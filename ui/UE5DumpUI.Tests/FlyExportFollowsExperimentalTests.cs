@@ -6,10 +6,10 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [FLY-EXPORT-EXPERIMENTAL] The maintainer's call (2026-09-26): the Fly CE records follow the
-/// Experimental features switch. With it OFF the Fly card is hidden, so Add action records and
-/// Save .CT must not hand the user four Fly records they cannot see in the UI; with it ON, both
-/// export them as before. Every other record group is unaffected either way.
+/// [FLY-EXPORT-EXPERIMENTAL] The Fly CE records follow the Experimental features switch. With it
+/// OFF the Fly card is hidden, so Add action records and Save .CT must not hand the user four Fly
+/// records they cannot see in the UI; with it ON, both export them. Every other record group is
+/// unaffected either way.
 /// </summary>
 public class FlyExportFollowsExperimentalTests : IDisposable
 {

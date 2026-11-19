@@ -9,8 +9,8 @@ namespace UE5DumpUI.Views;
 
 public partial class ClassStructPanel : UserControl
 {
-    // [W4-HEXSORT] The field Address column sorts NUMERICALLY. It is binding-rooted, so it wired nothing and the default
-    // sort ordered the hex TEXT. Not one of W4's nine: the address-column pin in DataGridSortWiringTests found it.
+    // [W4-HEXSORT] The field Address column sorts NUMERICALLY. It is binding-rooted, so without this comparer the default
+    // sort orders the hex TEXT. The address-column pin in DataGridSortWiringTests guards it.
     private static readonly IReadOnlyDictionary<string, IComparer> FieldsSortComparers =
         new Dictionary<string, IComparer>
         {

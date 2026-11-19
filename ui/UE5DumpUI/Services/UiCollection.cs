@@ -9,8 +9,8 @@ namespace UE5DumpUI.Services;
 /// <c>ArgumentOutOfRangeException</c> (the selected index is stale during the
 /// <c>Reset</c>) or <c>InvalidOperationException("Cannot change ObservableCollection
 /// during a CollectionChanged event")</c> — if the collection is <c>Clear()</c>'d
-/// while it still holds a live selection. The fix is to detach the selection
-/// <i>before</i> mutating, which is exactly what <see cref="Reset{T}"/> does.
+/// while it still holds a live selection. Detaching the selection
+/// <i>before</i> mutating avoids it, which is exactly what <see cref="Reset{T}"/> does.
 /// </summary>
 public static class UiCollection
 {

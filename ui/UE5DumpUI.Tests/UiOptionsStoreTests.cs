@@ -9,7 +9,7 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Locks the UiOptionsStore persistence contract: defaults when no file, round-trips
 /// every sub-object through a fresh instance, falls back to defaults on a corrupt
-/// file, and — the key regression — a default-TRUE option turned OFF must SURVIVE a
+/// file, and — the key trap — a default-TRUE option turned OFF must SURVIVE a
 /// reload (the store must NOT use JsonIgnoreCondition.WhenWritingDefault, which would
 /// silently drop the off-value and revert it to on). Reuses
 /// <see cref="MockPlatformService"/> from AobUsageServiceTests.
@@ -132,7 +132,7 @@ public class UiOptionsStoreTests : IDisposable
     [Fact]
     public void DefaultTrueOption_TurnedOff_SurvivesReload()
     {
-        // REGRESSION (the WhenWritingDefault trap): turning OFF a default-true option
+        // THE WhenWritingDefault TRAP: turning OFF a default-true option
         // means storing the bool type-default (false). With WhenWritingDefault that
         // would be omitted and revert to true on reload. The store must persist it.
         var store = new UiOptionsStore(_platform);

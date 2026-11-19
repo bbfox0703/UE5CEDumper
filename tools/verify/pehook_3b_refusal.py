@@ -2,10 +2,10 @@ r"""PEHOOK step 3b — after a condemn, the off-thread direct call must be REFUS
 
     py tools/verify/pehook_3b_refusal.py
 
-WHY THE STEP EXISTS (self-review found it, and it is the one that guards an over-correction):
-re-arming detection without refusing the direct path made the mis-detected case **worse** than
-before the fix. The old code merely timed out; a re-armed build with no refusal would take the
-direct fallback and `call` a *known-wrong virtual* — i.e. execute whatever function happens to sit
+WHY THE STEP EXISTS (it is the one that guards an over-correction): re-arming detection without
+refusing the direct path makes the mis-detected case **worse** than not re-arming at all. Without
+re-arming the call merely times out; a re-armed build with no refusal would take the direct
+fallback and `call` a *known-wrong virtual* — i.e. execute whatever function happens to sit
 at the guessed vtable slot. `Frieren.cpp` therefore sets `s_peOffsetDistrusted` inside the same lock
 as the verdict, and both direct entry points open with
 `if (s_peOffsetDistrusted.load(...)) return -3;`.

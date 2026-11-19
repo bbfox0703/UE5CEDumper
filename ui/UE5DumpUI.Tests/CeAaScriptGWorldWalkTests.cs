@@ -600,8 +600,8 @@ public class CeAaScriptGWorldWalkTests
 
         Assert.NotNull(platform.LastClipboard);
         // The root is the UWorld OBJECT, as with the address root (the GWorld crumb's Address is the object): the
-        // export names the SLOT, so the root dereferences it -- [GWorld] -- or every child reads one level short.
-        // Found live on Satisfactory, build 3610: the first cut rooted at GWorld itself.
+        // export names the SLOT, so the root dereferences it -- [GWorld] -- or every child reads one level short;
+        // a root at GWorld itself is the wrong one.
         Assert.Contains("<Address>[GWorld]</Address>", platform.LastClipboard);
         Assert.DoesNotContain("<Address>GWorld</Address>", platform.LastClipboard);
     }

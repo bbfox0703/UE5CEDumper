@@ -9,9 +9,9 @@
     py tools/verify/comment_impact.py --max-hits 25   # a symbol named by more blocks than this is "broad"
     py tools/verify/comment_impact.py --selftest
 
-WHY ([COMMENT-INTEGRITY-2026-09-26], docs/comment-integrity-eval.md). The sampled stale-comment rate on build 3560
-was 26%, and the commonest cause was ADDITIVE DRIFT: a commit adds a caller / field / pipe key / enum value, and the
-comment that LISTS them -- in another file, written months earlier -- is never opened. No gate can know what a
+WHY ([COMMENT-INTEGRITY-2026-09-26], docs/comment-integrity-eval.md). The commonest cause of a stale comment is
+ADDITIVE DRIFT: a commit adds a caller / field / pipe key / enum value, and the comment that LISTS them -- in another
+file, written months earlier -- is never opened. No gate can know what a
 comment should say; what a tool can do is put that comment in front of the author at the moment it goes stale.
 
 Not a gate (exit 0 whatever it finds). It collects the distinctive identifiers on the diff's changed CODE lines (a new

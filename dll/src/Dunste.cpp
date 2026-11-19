@@ -17,8 +17,8 @@
 //     passing through walls. Pure raw Macht writes, no game thread (Path B).
 //   • Noclip: additionally invoke AActor::SetActorEnableCollision(false) once (game
 //     thread, Stark) so the sweep passes through walls; restored on off/disable.
-//     (An earlier per-tick teleport noclip jittered / desynced the mesh / broke
-//     input across games — velocity + collision-off is clean.) FF7Rebirth zeroes
+//     (A per-tick teleport noclip jitters / desyncs the mesh / breaks input
+//     across games — velocity + collision-off is clean.) FF7Rebirth zeroes
 //     Velocity every frame → neither mode moves it (authoritative movement system).
 //
 // Offsets resolved by FName (DynOff), UE4/UE5-agnostic; pawn re-resolved every tick.
@@ -30,8 +30,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — fly worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::RunTickGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — fly worker ignores per-command cancel
+#include "Routine.h"   // Routine::RunTickGuarded — a throw out of a thread proc is std::terminate
 #include "Ubel.h"
 #include "Stark.h"      // IsGameThreadResponsive — gate the Noclip teleport invoke
 #include "Solitar.h"    // GetActorBool: the pawn's collision as it reads, for the status [FLY-REPORTS-WISH]
@@ -231,7 +231,7 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
     if (outcome == CollisionApply::Queued) {
         // [W3-DUNSTE-QUEUED] -5 is NOT a refusal: the game thread did not drain within the
         // timeout, but the request stays QUEUED and WILL run when it does. Reporting it as
-        // "unchanged" let a queued disable land after the record said collision was ON.
+        // "unchanged" would let a queued disable land after the record says collision is ON.
         LOG_WARN("Fly: SetActorEnableCollision(%d) QUEUED (rc=-5, the game thread is busy) -- "
                  "it will run when the thread drains; the record is committed so the next "
                  "toggle undoes it", enable ? 1 : 0);
@@ -483,10 +483,10 @@ void FlyTickLocked(const Ctx& c, double dtSec, uintptr_t& outCollPawn, int& outC
         outCollPawn   = c.pawn;
         outCollEnable = wantOff ? 0 : 1;      // 0 = disable collision, 1 = restore
         // The state is committed by the WORKER, from the invoke's actual result — not
-        // here. Committing optimistically made the record say "collision is off" even
-        // when the invoke never ran, and the re-emit condition above reads that same
-        // record, so nothing ever retried. Leaving it unchanged means a skipped or
-        // failed invoke simply re-emits on the next tick. (B8)
+        // here. Committing optimistically would make the record say "collision is off"
+        // even when the invoke never ran, and the re-emit condition above reads that same
+        // record, so nothing would retry. Leaving it unchanged means a skipped or
+        // failed invoke simply re-emits on the next tick.
     }
 
     // Sampled diagnostics: first tick after enable, then ~every 2s.
@@ -501,13 +501,13 @@ void FlyTickLocked(const Ctx& c, double dtSec, uintptr_t& outCollPawn, int& outC
 
 // ---- fly worker ----
 void WorkerLoop() {
-    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown (M4)
+    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown
     LOG_INFO("Fly: worker started (%d ms tick)", Grimoire::FLY_TICK_MS);
     const double dtSec = Grimoire::FLY_TICK_MS / 1000.0;
     bool warnedThrow = false;
-    bool warnedCollDefer = false;   // rate-limit the "game thread not responding" line (B8)
-    bool warnedCollRefused = false; // rate-limit the "dispatcher refused" line (D1)
-    int  collRetrySkip = 0;         // ticks left to skip after a REFUSED invoke (D1)
+    bool warnedCollDefer = false;   // rate-limit the "game thread not responding" line
+    bool warnedCollRefused = false; // rate-limit the "dispatcher refused" line
+    int  collRetrySkip = 0;         // ticks left to skip after a REFUSED invoke
     while (!s_workerStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(Grimoire::FLY_TICK_MS));
         if (s_workerStop.load()) break;
@@ -532,10 +532,10 @@ void WorkerLoop() {
             //
             // Commit the record from what ACTUALLY happened. A skipped invoke (paused /
             // backgrounded game thread) or a game with no SetActorEnableCollision leaves
-            // the record alone, so the next tick re-emits — the retry the optimistic
-            // commit silently removed. The "not found" case can never succeed, so it is
+            // the record alone, so the next tick re-emits — the retry an optimistic
+            // commit would silently remove. The "not found" case can never succeed, so it is
             // logged once by InvokeSetCollision and then rate-limited here rather than
-            // re-invoked ~60x/s. (B8)
+            // re-invoked ~60x/s.
             if (collPawn) {
                 const bool wantOff = (collEnable == 0);
                 if (!Stark::IsGameThreadResponsive()) {
@@ -593,7 +593,7 @@ void WorkerLoop() {
 // StopWorkerLocked runs with s_mutex RELEASED (WorkerLoop takes s_mutex every
 // tick → joining under it deadlocks); s_workerMutex serializes start vs stop.
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -605,7 +605,7 @@ void StopWorkerLocked() {
     s_worker.join();
 }
 
-// ---- deferred collision restore (B8) ----
+// ---- deferred collision restore ----
 //
 // Disabling Fly while the game thread is paused cannot re-enable the pawn's collision,
 // and on an idle-when-unfocused title that is the COMMON case, not an edge one: the
@@ -619,7 +619,7 @@ std::atomic<bool> s_pendingStop{false};
 std::atomic<bool> s_pendingRunning{false};
 
 void PendingRestoreLoop() {
-    Tot::MarkBackgroundWorker();   // shutdown-only cancel, like every re-assert worker (M4)
+    Tot::MarkBackgroundWorker();   // shutdown-only cancel, like every re-assert worker
     LOG_INFO("Fly: waiting for the game thread to resume so the pawn's collision can be "
              "restored");
     int waited = 0;
@@ -633,7 +633,7 @@ void PendingRestoreLoop() {
 
         // Guarded for the same reason as Schlacht's twin: this can poll for 5 minutes
         // against a game the user simply closed (Tot::ShutdownRequested() is not set on
-        // a plain exit), and a throw out of a thread entry is std::terminate. (B14)
+        // a plain exit), and a throw out of a thread entry is std::terminate.
         Routine::RunTickGuarded("Fly", warnedThrow, [&] {
             // Re-enabled, or someone else already restored: nothing left to do.
             uintptr_t pawn = 0;
@@ -657,7 +657,7 @@ void PendingRestoreLoop() {
 
             if (!ShouldCommitCollision(InvokeSetCollision(pawn, true), /*restoring*/ true, Tot::ShutdownRequested())) {
                 // The thread ANSWERS but the invoke was refused, so nothing was restored.
-                // Clearing the record here is the exact ghosted-pawn shape B8 fixed — keep
+                // Clearing the record here would leave a ghosted pawn nothing tracks — keep
                 // it and keep polling. Bounded by the same deadline the unresponsive branch
                 // uses, or a thread that stays responsive while every invoke is refused
                 // would poll forever.
@@ -684,7 +684,7 @@ void PendingRestoreLoop() {
 void StartPendingLocked() {   // s_workerMutex held
     if (s_pendingRunning.load()) return;                     // already waiting
     if (s_pendingWorker.joinable()) s_pendingWorker.join();  // reap a finished one
-    if (Tot::ShutdownRequested()) return;                    // M5 spawn chokepoint
+    if (Tot::ShutdownRequested()) return;                    // no spawn in the shutdown window
     s_pendingStop.store(false);
     s_pendingRunning.store(true);
     s_pendingWorker = std::thread(PendingRestoreLoop);
@@ -715,7 +715,7 @@ int32_t SetEnabled(bool enable) {
     std::lock_guard<std::mutex> wlk(s_workerMutex);
     // Either direction supersedes a deferred collision restore: enable takes the pawn
     // over itself, and a fresh disable re-decides. Joined here so exactly one path ever
-    // owns collisionOff/collisionPawn. (B8, Schlacht shape)
+    // owns collisionOff/collisionPawn (Schlacht's shape).
     StopPendingLocked();
     if (enable) {
         int32_t rc;
@@ -908,7 +908,7 @@ void StopWorker() {
     StopWorkerLocked();
     // UE5_Shutdown joins every worker before unload; a still-waiting deferred restore
     // would outlive the DLL. Tot::RequestShutdown() is already latched by then, so the
-    // loop is on its way out anyway — this just makes the join deterministic. (B8)
+    // loop is on its way out anyway — this just makes the join deterministic.
     StopPendingLocked();
 }
 

@@ -9,9 +9,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [FABRICATE-DEFAULT-UNSEEDED] Options shows the Fabricate count, and Live Walker's Copy CE Field must use that same
-/// count from the start. Only the exponent's change handler copied it across, and loading the default exponent is not a
-/// change, so Live Walker sat at 0 -- no fabricated array rows -- until the slider was moved. Measured live (L43): the
-/// selected Arr_Delegates row copied its two live rows only, and fabricated [2] / [3] after a 4 -> 8 -> 4 nudge.
+/// count from the start. Loading the default exponent is not a change, so if only the exponent's change handler copied
+/// the count across, Live Walker would sit at 0 -- no fabricated array rows -- until the slider was moved. These pin the
+/// fresh window and the loaded defaults, with a moved slider as the control.
 /// </summary>
 public class FabricateDefaultSeedTests : IDisposable
 {

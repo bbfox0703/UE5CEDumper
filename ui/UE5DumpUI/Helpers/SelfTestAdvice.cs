@@ -20,11 +20,11 @@ public enum SelfTestFailureCause
 /// <summary>
 /// Which remedy a FAILED Self-Test should advise. ([PEHOOK-2026-08-17])
 ///
-/// <para><b>Why this is not a constant string.</b> The old message asserted one
-/// cause — "Hook may be on the wrong vtable slot … re-deploy the DLL" — and was
-/// wrong on both halves. Re-deploying cannot fix a mis-detected slot (the binary
-/// is fine; the detected offset is wrong), and the test's own evidence cannot
-/// even establish that a slot IS wrong: <c>docs/working-lessons.md</c> §4.4
+/// <para><b>Why this is not a constant string.</b> A fixed message asserts one
+/// cause whatever the evidence. "Hook may be on the wrong vtable slot … re-deploy the DLL" is wrong on
+/// both halves: re-deploying cannot fix a mis-detected slot (the binary is fine;
+/// the detected offset is wrong), and the test's own evidence cannot even
+/// establish that a slot IS wrong: <c>docs/working-lessons.md</c> §4.4
 /// records KismetMathLibrary helpers silently no-opping through ProcessEvent with
 /// a perfectly correct hook, producing byte-for-byte the same signature — inputs
 /// written, return slot untouched.</para>
@@ -55,13 +55,13 @@ public static class SelfTestAdvice
     /// <param name="invokeResult">The DLL's <c>result</c> for the invoke. <b>Checked
     /// first, and it outranks everything.</b> A non-zero result means the DLL
     /// REFUSED the call — the return slot is untouched because nothing ran, not
-    /// because a helper no-opped. Reading the slot without this produced the worst
-    /// possible message: a refused invoke on a healthy, firing hook was reported as
-    /// "the invoke path itself is working", every clause of which was false.</param>
+    /// because a helper no-opped. Read the slot without this, and a refused invoke
+    /// on a healthy, firing hook is reported as "the invoke path itself is
+    /// working", every clause of which is false.</param>
     /// <param name="haveDiagnostics">False when the <c>get_diagnostics</c> probe
     /// failed or was never issued. It maps to <see cref="SelfTestFailureCause.Unknown"/>
     /// rather than to a default guess: an absent measurement is not evidence for
-    /// either cause, and guessing here is exactly the old defect.</param>
+    /// either cause, and a guess here claims a cause the evidence does not show.</param>
     /// <param name="hookActive">Game-thread ProcessEvent hook installed and enabled.</param>
     /// <param name="hookHasFired">The hook has fired at least once this process.</param>
     public static SelfTestFailureCause Classify(int invokeResult, bool haveDiagnostics,

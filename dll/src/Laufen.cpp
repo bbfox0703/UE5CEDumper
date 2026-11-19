@@ -18,8 +18,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick (R5/B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel
+#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick
 #include "Ubel.h"
 
 #include <algorithm>
@@ -283,7 +283,7 @@ void ApplyKnobLocked(const Ctx& c, int knobId, bool* drifted) {
     // Re-capture base on pawn change (respawn): the new CMC's value is untouched
     // by us, so it is the genuine base to scale. But KEEP the previous base if the
     // fresh pawn reads 0 / non-finite — otherwise a respawn that lands mid-cutscene
-    // silently converts the hold into "pin at zero" (B22). The pawn is still adopted,
+    // silently converts the hold into "pin at zero". The pawn is still adopted,
     // so a later tick with a sane value is not re-captured over our own write.
     if (c.pawn != k.capturedPawn) {
         if (current > 0.0 && std::isfinite(current)) k.base = current;
@@ -352,7 +352,7 @@ void FillKnobLocked(const Ctx& c, int knobId, KnobInfo& info) {
 
 void WorkerLoop() {
     // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop (R5 / B14). Only the tick is ours.
+    // all live in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("Movement", Grimoire::MOVE_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -382,7 +382,7 @@ void WorkerLoop() {
 // (outer) → s_mutex (inner); the join in StopWorkerLocked runs with s_mutex
 // RELEASED because WorkerLoop takes s_mutex every tick (joining under it deadlocks).
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;   // already running
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -458,7 +458,7 @@ int32_t SetMultiplier(int32_t knobId, double multiplier) {
         // that over the game's own value every 250 ms while the panel reads "300%,
         // active" — the knob is pinning the value AT ZERO. Games really do park these
         // at 0 (cutscene, swim, mount, ragdoll), so refuse the capture rather than the
-        // command: the pawn/field are fine, just not sampleable right now. (B22)
+        // command: the pawn/field are fine, just not sampleable right now.
         if (!(current > 0.0) || !std::isfinite(current)) {
             LOG_WARN("Movement: knob %d ('%s') base reads %.3f — not a usable base "
                      "(cutscene / swim / mount?). Not engaging; try again in normal play.",
@@ -510,8 +510,8 @@ int32_t ResetKnob(int32_t knobId) {
         k.active = false;
         k.multiplier = 1.0;
         k.capturedPawn = 0;
-        // Decide under the SAME s_mutex hold as the clear — a stale re-read in a
-        // second scope was the race window.
+        // Decide under the SAME s_mutex hold as the clear — a re-read in a second
+        // scope leaves a race window in which it goes stale.
         anyActive = AnyActiveLocked();
     }
     // Join with s_mutex RELEASED (WorkerLoop takes s_mutex per tick) but

@@ -126,9 +126,8 @@ int main() {
     // UNBUFFERED. A crash mid-run must still show what was already established: this
     // test can genuinely crash -- removing the double-subclass guard makes SubclassProc
     // save ITSELF as the original, and the next dispatched message recurses until the
-    // stack blows, exit 127 with no output. build.ps1's `DLL_TEST_TRACE` note records the same shape biting
-    // dll_helpers_test under CI ("produced ZERO output"), which is why DLL_TEST_TRACE
-    // exists there.
+    // stack blows, exit 127 with no output. build.ps1 sets `DLL_TEST_TRACE` under CI for the
+    // same shape in dll_helpers_test: a crash that leaves ZERO output.
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("grausam_window_test — DLL LOW L10, the window re-subclass half\n");
 #ifdef __SANITIZE_ADDRESS__

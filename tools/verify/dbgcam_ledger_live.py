@@ -1,8 +1,8 @@
-"""Live check (build 3716+): who the DLL records for the debug camera when it is toggled by an invoke of its own
+"""Live check: who the DLL records for the debug camera when it is toggled by an invoke of its own
 functions -- the UI's Console panel Run (pipe invoke_function) and a CE record (mailbox INVOKE_BY_NAME).
 
-[MCP-WRITE-GRANTS-2026-11-14], the holder labels' review rounds 1-3. get_holds reports the camera's REAL state beside
-the ledger's owner, so a toggle the ledger missed left the camera named for whoever held it before. Three clients,
+[MCP-WRITE-GRANTS-2026-11-14], the holder labels. get_holds reports the camera's REAL state beside the ledger's
+owner, so a toggle the ledger misses leaves the camera named for whoever held it before. Three clients,
 none of them a real UI or CE:
   - this rig's own pipe client, a FOREGROUND client (the UE5DumpUI window's stand-in);
   - a BACKGROUND child process (an AI session's MCP server: "background": true on every request);
@@ -16,12 +16,12 @@ does not do (Frieren.cpp [DBGCAM-58-REENABLE]); DumperTest Shipping has no live 
 
 Checks (each printed ok / FAIL; exit 0 only when all pass):
   1. the background client's invoke of ToggleDebugCamera is refused by name, pointing at write_debug_camera, and
-     changes nothing (review 2, H: it names no hold, so the if_free check does not answer first);
+     changes nothing (it names no hold, so the if_free check does not answer first);
   2. the foreground client's invoke turns the camera on, and it is that client's;
-  3. its invoke again turns it off, and still names it (review 2, F: an invoke's toggle may be queued);
+  3. its invoke again turns it off, and still names it (an invoke's toggle may be queued);
   4. the AI turns the camera on (set_debug_camera, if_free); the foreground client's invoke turns it off and on
-     again: it is the foreground client's, and the AI's leaving does NOT turn it off (the failure fix (6) closed);
-  5. the mailbox's INVOKE_BY_NAME of ToggleDebugCamera names CE, off and on (review 2, E);
+     again: it is the foreground client's, and the AI's leaving does NOT turn it off;
+  5. the mailbox's INVOKE_BY_NAME of ToggleDebugCamera names CE, off and on;
   6. clean-up: the foreground client's set_debug_camera OFF leaves the camera off and nobody's.
 
     py tools/verify/dbgcam_ledger_live.py --busy-lock --suspend-name DumperTest58 [--pid N]

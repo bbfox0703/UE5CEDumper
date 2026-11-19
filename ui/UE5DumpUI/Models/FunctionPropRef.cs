@@ -116,7 +116,7 @@ public sealed class FunctionPropRefsResult
 
     /// <summary>[W3-BATCH-METHOD] Nothing was analysed: "none" (the Func offset is unresolved on this build),
     /// "blueprint_no_script" (refused, see <see cref="Method"/>), or "bytecode_unreadable" (the Script buffer
-    /// did not read; review of 0de62ec1). Zero <see cref="Props"/> then means "not looked at", never
+    /// did not read). Zero <see cref="Props"/> then means "not looked at", never
     /// "touches nothing". An unrecognised future tag is NOT treated as this.</summary>
     public bool NotAnalysed => Method is "none" or "blueprint_no_script" or "bytecode_unreadable";
 

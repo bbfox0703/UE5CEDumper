@@ -37,7 +37,7 @@ public enum OrphanVerdict
     UnreadableDirectory,
 
     /// <summary>A junction, symlink or other reparse point sits somewhere in the chain. Refused
-    /// outright with an EMPTY plan — measured to destroy the junction target otherwise.</summary>
+    /// outright with an EMPTY plan — otherwise the removal destroys the junction target.</summary>
     ReparsePointInChain,
 
     /// <summary>The candidate is the Steam library root itself.</summary>
@@ -68,10 +68,8 @@ public enum OrphanVerdict
 /// <summary>
 /// The two questions asked about a verdict, in ONE place so they cannot drift apart.
 ///
-/// <para>They are deliberately DIFFERENT questions and were previously two hand-written copies of
-/// the same expression — the scan's surface filter, the row's <c>IsActionable</c>, and the removal
-/// path's re-check. "Can this be acted on?" and "should the user be told about it?" are not the same
-/// predicate, and the measured B13/B41 defect was exactly that gap: a
+/// <para>They are deliberately DIFFERENT questions. "Can this be acted on?" and "should the user be
+/// told about it?" are not the same predicate: a
 /// <see cref="OrphanVerdict.NotOnFixedDrive"/> refusal is not actionable, but it is the one refusal
 /// the user most needs to see, because our DLL really is sitting there and the volume would destroy
 /// it rather than recycle it.</para>

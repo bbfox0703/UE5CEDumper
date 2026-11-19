@@ -2,11 +2,10 @@ r"""SW7 — a delegate whose TARGET is gone must still name its function: "(stal
 
     py tools/verify/sw7_stale_arm.py        # DumperTest must be running + injected
 
-THE ROW. `[STALE-NONE-2026-09-09]` narrowed `"(stale)"`, which is an AFFIRMATIVE claim -- a target
-WAS bound and has since been collected -- so that an UNTOUCHED slot says `(unbound)` instead. Only
-the unbound half was verified live (`Arr_Delegates[0]` went `(stale)::None` -> `(unbound)` on both
-build configurations). ⭐ **A narrowing is only correct if it did not also delete the state it was
-narrowing**, and that half was never observed: a delegate that really IS stale must still say so.
+THE ROW. `[STALE-NONE-2026-09-09]` narrows `"(stale)"`, which is an AFFIRMATIVE claim -- a target
+WAS bound and has since been collected -- so that an UNTOUCHED slot says `(unbound)` instead.
+⭐ **A narrowing is only correct if it did not also delete the state it was narrowing**: a
+delegate that really IS stale must still say so, and that is the half this rig observes.
 
 WHY THE SERIAL, AND WHY IT IS NOT A FAKE. `Ubel::ResolveWeakObjectPtr` returns 0 on exactly two
 conditions -- `objectIndex <= 0`, or `Aura::GetSerialNumber(objectIndex) != serialNumber`, whose
@@ -19,24 +18,22 @@ poking `serial + 1` manufactures the engine's own staleness rather than an appro
 `objectIndex`, so a zero serial against a genuinely-zero serial is a silent no-op and the run would
 pass while measuring nothing. `+1` is unconditional.
 
-⛔⛔ AND DO NOT LOCATE THE ARRAY ELEMENT VIA `delegate_pad`. That key is set at exactly two sites
-(`Ubel.cpp:5507`, `:6004`), both scalar, and Fern emits it only when non-zero, so it is **absent
-for a TArray of delegates**. A rig that derives the element address from it pokes the access
+⛔⛔ AND DO NOT LOCATE THE ARRAY ELEMENT VIA `delegate_pad`. That key belongs to a SCALAR field
+(`WalkInstance`'s scalar delegate branches set it), and Fern emits it only when non-zero, so it is
+**absent for a TArray of delegates**. A rig that derives the element address from it pokes the access
 detector instead, the walk returns the healthy string, and the run looks like a clean pass. The
 array arm below derives the pad from `array_elem_size` the way `d4b_delegate_pad.py` does.
 
-⭐ AND THAT IS HOW THIS RIG FOUND A SHIPPED BUG ON ITS FIRST RUN, 2026-09-09. The scalar arm
-printed `pad=0 (from the wire)` on a Development build whose array-derived pad was 8 — impossible,
-since both are the same standalone `FScriptDelegate`. Fern's emission sat inside the ARRAY branch
-(`if (arrayCount >= 0)` -> `if (!arrayInnerType...)`), which a scalar `DelegateProperty` never
-enters: `arrayCount` stays -1. `Ubel.cpp:5507` had been setting the pad on every checked build and
-the value never left the process. `Ubel.cpp:6004` (MulticastInline) reports an invocation list, so
-it cleared that gate and was never affected — the loss was exactly one field KIND. Live effect:
-`CeXmlExportService.CeOffset` added 0 for a scalar DelegateProperty, putting the CE record on the
-access detector — the very failure Fern's own comment warns about. `CeXmlDelegatePadTests` stayed
-green the whole time because it builds `LiveFieldValue` in C# with `DelegatePad` already set and
-never crosses DLL -> wire -> C#. The `scalar_pad != arr_pad` assertion below is that discovery,
-kept as a permanent check.
+⭐ AND THE SCALAR PAD MUST EQUAL THE ARRAY-DERIVED ONE, since both are the same standalone
+`FScriptDelegate`: `pad=0 (from the wire)` on a Development build whose array-derived pad is 8 is
+impossible. It is what a Fern that emits the key only inside its ARRAY branch
+(`if (arrayCount >= 0)` -> `if (!arrayInnerType...)`) produces: a scalar `DelegateProperty` never
+enters it (`arrayCount` stays -1), so the pad the DelegateProperty branch sets never leaves the
+process. The MulticastInline branch reports an invocation list, so it clears that gate — the loss
+is exactly one field KIND. Live effect: `CeXmlExportService.CeOffset` would add 0 for a scalar
+DelegateProperty, putting the CE record on the access detector. `CeXmlDelegatePadTests` cannot see
+it: it builds `LiveFieldValue` in C# with `DelegatePad` already set and never crosses
+DLL -> wire -> C#. The `scalar_pad != arr_pad` assertion below is the check.
 
 TWO ARMS, because five render sites share `Ubel::DescribeScriptDelegate` and they reach it by
 different routes:
@@ -62,10 +59,10 @@ CLIENT = HERE / "pipe_client.py"
 
 PROBE = "D4b_OnPingProbe"
 STALE = "(stale)::" + PROBE
-# ⚠ The BOUND string is DERIVED from the baseline, never hardcoded. `d4b_delegate_pad.py` only
-# ever asserted `PROBE in value`, so the target half ("DumperTestActor_0") has never actually
-# been measured -- writing it in as a literal would make this rig fail on a renamed actor for a
-# reason that has nothing to do with staleness.
+# ⚠ The BOUND string is DERIVED from the baseline, never hardcoded. `d4b_delegate_pad.py` asserts
+# only `PROBE in value`, so nothing pins the target half ("DumperTestActor_0") -- writing it in as
+# a literal would make this rig fail on a renamed actor for a reason that has nothing to do with
+# staleness.
 
 
 def call(cmd: str, args: dict | None = None) -> dict:
@@ -135,14 +132,14 @@ def main() -> int:
     if arr_pad not in (0, 8):
         raise SystemExit("derived array pad %d is neither 0 nor 8 -- refusing to poke" % arr_pad)
 
-    # ⭐ THE CROSS-CHECK THAT FOUND THE WIRE BUG, and the reason it is asserted rather than
-    # printed. `Del_Unicast` and an `Arr_Delegates` element are the SAME C++ type -- a standalone
+    # ⭐ THE CROSS-CHECK, and the reason it is asserted rather than printed. `Del_Unicast` and an
+    # `Arr_Delegates` element are the SAME C++ type -- a standalone
     # `TScriptDelegate<FNotThreadSafeDelegateMode>` -- so on one build their pads cannot differ.
     # A wire-side `0` against a derived `8` is not a disagreement about layout; it means the key
-    # never arrived. Measured 2026-09-09 on Development: wire 0 vs derived 8, because
-    # `Fern.cpp`'s emission sat in the ARRAY branch while only SCALAR sites set the value.
+    # never arrived -- e.g. an emission in `Fern.cpp`'s ARRAY branch while only SCALAR sites set
+    # the value.
     # ⚠ Without this, the Shipping arm cannot tell "pad legitimately 0" from "key missing" --
-    # which is exactly the ambiguity that let the bug ship. Here the array side supplies the
+    # exactly the ambiguity that hides such a bug. Here the array side supplies the
     # independent answer, so the check has teeth on BOTH configurations.
     if scalar_pad != arr_pad:
         raise SystemExit(

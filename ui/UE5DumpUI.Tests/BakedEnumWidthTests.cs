@@ -7,22 +7,19 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 Y16 — the enum-width family's fourth finding, and its three sites.
+/// The enum-width rule, at its three sites.
 ///
 /// <para>UE sizes an enum by its UNDERLYING type. The common
 /// <c>TEnumAsByte</c> / <c>enum class : uint8</c> is 1 byte, so mapping every
-/// <c>EnumProperty</c> to <c>int32</c> writes 4 bytes and clobbers the next
-/// parameter in <c>params_data</c>. Sites 1–2 corrupt memory; site 3 only
-/// misreports a return value.</para>
+/// <c>EnumProperty</c> to <c>int32</c> would write 4 bytes and clobber the next
+/// parameter in <c>params_data</c>. At sites 1–2 that corrupts memory; at site 3
+/// it only misreports a return value.</para>
 ///
-/// <para>The size was in scope at all three sites the whole time — this is the
-/// family's recurring shape: <b>the finding is the dropped field, not the
-/// guess</b>. W6 had <c>CeWidthForSize</c> sitting unused; Y15's
-/// <c>MapToHelperType</c> carried an "out of v1 scope" comment; here
-/// <c>BakedParamValue.Size</c>'s own doc comment stated the defective
-/// assumption outright.</para>
+/// <para>The size is in scope at all three sites, so each takes the width from
+/// the reported size: <b>the hazard is a dropped field, not a missing
+/// guess</b>.</para>
 ///
-/// <para>No Lua change was needed: <c>writeBakedParams</c> already accepts the
+/// <para>The Lua side needs nothing new: <c>writeBakedParams</c> accepts the
 /// <c>byte</c> / <c>int16</c> / <c>int64</c> tokens, so no user has to re-embed
 /// the helper.</para>
 /// </summary>
@@ -42,7 +39,7 @@ public class BakedEnumWidthTests
         Assert.Equal(expected, BakedScriptGenerator.MapToHelperType("EnumProperty", size));
     }
 
-    /// <summary>An unknown size keeps the historical answer rather than guessing
+    /// <summary>An unknown size keeps the int32 answer rather than guessing
     /// small — writing too FEW bytes would leave the high bytes of a real int32
     /// enum stale, which is a different corruption, not a safer one.</summary>
     [Theory]
@@ -54,7 +51,7 @@ public class BakedEnumWidthTests
         Assert.Equal("int32", BakedScriptGenerator.MapToHelperType("EnumProperty", size));
     }
 
-    /// <summary>The size-less overload is the legacy answer, so callers that only
+    /// <summary>The size-less overload keeps the int32 answer, so callers that only
     /// ask "is this type supported" are unaffected.</summary>
     [Fact]
     public void SizelessOverload_KeepsTheLegacyEnumAnswer()
@@ -67,8 +64,8 @@ public class BakedEnumWidthTests
     /// <summary>
     /// THE GUARD THAT MATTERS. Every type whose width is fixed by its NAME must
     /// ignore <paramref name="size"/> entirely. Without this, a mis-reported size
-    /// would turn types that are currently correct into wrong writes — i.e. the
-    /// fix would become a bigger version of the bug.
+    /// would turn types that are correct by name into wrong writes — the width
+    /// rule would then corrupt more than it protects.
     /// </summary>
     [Theory]
     [InlineData("BoolProperty")]
@@ -119,8 +116,8 @@ public class BakedEnumWidthTests
     }
 
     // ------------------------------------------------------------------
-    // The cosmetic straggler — the emitted comment must not keep asserting
-    // int32 after the write was corrected.
+    // The emitted comment — it must name the width the write uses, not a
+    // fixed int32.
     // ------------------------------------------------------------------
 
     [Theory]
@@ -145,8 +142,8 @@ public class BakedEnumWidthTests
     }
 
     // ------------------------------------------------------------------
-    // Cross-path agreement — the row's own complaint was that the three ways
-    // of invoking a UFunction from ONE dialog input disagreed.
+    // Cross-path agreement — the three ways of invoking a UFunction from ONE
+    // dialog input must agree.
     // ------------------------------------------------------------------
 
     /// <summary>The FIRE path (ParamBufferBuilder) and the baked-script path must
@@ -202,7 +199,7 @@ public class BakedEnumWidthTests
         Assert.Contains(expectedWriteFn, line!, StringComparison.Ordinal);
     }
 
-    /// <summary>The neighbouring int param must keep its own width — the fix must
+    /// <summary>The neighbouring int param must keep its own width — the enum rule must
     /// not widen or narrow anything except the enum.</summary>
     [Fact]
     public void InvokeForm_NeighbouringIntParamIsUnaffected()

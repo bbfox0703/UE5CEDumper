@@ -18,9 +18,9 @@ The reliable version source stays the DLL's own runtime detection (`Genau::Detec
 see the `UE5_Init: Complete (UEnnn, ...)` line in the game's `init-0.log`), which reconciles
 the PE data against what it finds in memory.
 
-It still earns its place: it recovered Octopath Traveler as 4.18, which the sweep corpus had
-carried as "4.x, version stripped" — corroborated structurally afterwards, since Octopath's
-pattern fingerprint is identical to DQ XI S, a known 4.18 (GNames 7/28 hit, sparse 0/10).
+It still earns its place: it can recover a version the corpus would otherwise carry as "4.x,
+version stripped" — Octopath Traveler reads as 4.18, which its pattern fingerprint corroborates
+structurally (identical to DQ XI S, a known 4.18: GNames 7/28 hit, sparse 0/10).
 
 A modular build (Satisfactory) reports a ~0 MB stub here: the engine lives in sibling
 `*-Win64-Shipping.dll` modules, so point this at those instead.

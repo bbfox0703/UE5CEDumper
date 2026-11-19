@@ -11,8 +11,8 @@ answer is no, the CE plugin logs
 
     CEPlugin: '<name>' is loaded but is not ours (path=<path>) — not a UE5CEDumper proxy
 
-and keeps going, instead of the pre-fix behaviour of reporting "already loaded, no
-injection needed" and never producing a pipe.
+and keeps going, instead of reporting "already loaded, no injection needed" and never
+producing a pipe.
 
 This rig applies THAT EXACT RULE offline, via the same Win32 API the DLL calls, so the
 discriminator can be checked without installing a CE plugin. It cannot prove the CE

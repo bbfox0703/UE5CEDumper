@@ -11,12 +11,6 @@ namespace UE5DumpUI.Services;
 /// helper), and built the same way: the single source of truth lives
 /// under <c>scripts/</c> in the repo, and .csproj links it in as an
 /// embedded resource with a stable LogicalName.
-///
-/// Consumers:
-///   * <see cref="ViewModels.MainWindowViewModel"/> -- Tools menu inject /
-///     export commands.
-///   * Tests -- assert the helper resource is reachable from the
-///     assembly manifest.
 /// </summary>
 public static class FreezeHelperLuaResource
 {

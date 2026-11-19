@@ -9,7 +9,7 @@ namespace UE5DumpUI.Helpers;
 /// <para>The two directions are not symmetric. A queued ON still turns the camera on when it drains. A queued OFF
 /// does not turn it off on stock UE 4.18-5.7: it drains as a toggle on the ORIGINAL controller's CheatManager, whose
 /// outer is not the debug camera controller, so the stock toggle calls EnableDebugCamera, which does nothing once that
-/// controller has lost its Player -- only the swap back a COMPLETED OFF escalates to turns the camera off (L83).
+/// controller has lost its Player -- only the swap back a COMPLETED OFF escalates to turns the camera off.
 /// Escalating on the queued result instead is wrong: the toggle that drains after the swap turns the camera back
 /// on.</para>
 ///

@@ -10,13 +10,13 @@ namespace UE5DumpUI.Mcp;
 public enum McpWriteMode { Default, AnyHost, Off }
 
 /// <summary>How this session's host may write, decided once at initialize. <see cref="ReadOnly"/> lists no write;
-/// <see cref="MarkedPerCall"/> asks before every write (the behaviour before grants); <see cref="Grants"/> asks once
-/// per grant and per call only for the writes no grant covers.</summary>
+/// <see cref="MarkedPerCall"/> asks before every write; <see cref="Grants"/> asks once per grant and per call only for
+/// the writes no grant covers.</summary>
 public enum McpHostDecision { ReadOnly, MarkedPerCall, Grants }
 
 /// <summary>A kind of grant. Two gameplay kinds and not one, so that "annoying" (god mode stays on, the game runs fast)
-/// never quietly implies "may kill or lose the pawn". <see cref="Invoke"/> (Phase 1b) names one UFunction and
-/// <see cref="Field"/> (Phase 2) one field of one class, each its grant's <see cref="McpGrantRecord.Target"/>.</summary>
+/// never quietly implies "may kill or lose the pawn". <see cref="Invoke"/> names one UFunction and
+/// <see cref="Field"/> one field of one class, each its grant's <see cref="McpGrantRecord.Target"/>.</summary>
 public enum McpGrantKind { None, Toggles, Movement, Invoke, Field }
 
 /// <summary>What a tool is to the grant gate: which hosts list it, whether the host is asked before each call, and
@@ -28,7 +28,7 @@ public enum McpToolRole
 }
 
 /// <summary>A grant as the session sees it: the game run it is for, how many calls it has let through, and for an
-/// invoke grant the one function it names, by full name ("" for a kind grant).</summary>
+/// invoke or field grant the one function or class field it names ("" for a kind grant).</summary>
 public sealed record McpGrantRecord(long Id, McpGrantKind Kind, long Pid, string CreationTime, DateTime GrantedAtUtc,
     long Uses, string Target = "");
 
@@ -53,7 +53,7 @@ public sealed class McpGrantCapability
     public McpGrantKind Kind { get; }
     public long Pid { get; }
     public string CreationTime { get; }
-    /// <summary>The function an invoke grant admitted the call for, by full name; "" otherwise.</summary>
+    /// <summary>The function or class field an invoke or field grant admitted the call for; "" otherwise.</summary>
     public string Target { get; }
     /// <summary>A field write's address and size, "0x...:N", which the gate holds the write_mem to; "" otherwise.
     /// </summary>
@@ -61,11 +61,11 @@ public sealed class McpGrantCapability
 }
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1. The write grants of one MCP session: which host may write, how each DLL
+/// [MCP-WRITE-GRANTS-2026-11-14] The write grants of one MCP session: which host may write, how each DLL
 /// command is classed, and the grants the user gave.
 ///
-/// Claude Code's prompt for a marked tool offers only "Deny" and "Allow once", so before grants every repeat of a write
-/// asked again. A grant tool now carries the prompt instead, and the writes it covers are admitted against the grant.
+/// Claude Code's prompt for a marked tool offers only "Deny" and "Allow once", so a marked write asks again on every
+/// repeat. A grant tool carries the prompt instead, and the writes it covers are admitted against the grant.
 /// Nothing here trusts the model: the decision comes from the host's own initialize, a grant only from a call the host
 /// asked the user about, and the gate in <see cref="McpGameLink"/> re-checks every state-changing command at the send.
 /// The plan, its measurements and the rejected alternatives: docs/mcp-write-approval-eval.md.
@@ -106,8 +106,8 @@ public sealed partial class McpGrants
         "set_movement_multiplier", "set_gravity_direction", "fly_set", "teleport_recall_marker",
     };
 
-    // Asked every call whatever the host: a raw write, an invoke and a class-wide forced field each reach further than
-    // one switch, and a kind grant would hide that.
+    // Asked every call whatever the host, unless an invoke or field grant names the one function or field: a raw write,
+    // an invoke and a class-wide forced field each reach further than one switch, and a kind grant would hide that.
     private static readonly HashSet<string> PerCall = new(StringComparer.Ordinal)
     {
         "force_field", "write_mem", "invoke_function",
@@ -252,7 +252,7 @@ public sealed partial class McpGrants
 
     /// <summary>Whether the host is asked before every call of a tool of this role (Claude Code's
     /// requiresUserInteraction marker). Under grants a grant and the per-call writes ask, and the writes a grant covers
-    /// and the releases do not: the gate admits those. Asked per call, every write asks, as before grants.</summary>
+    /// and the releases do not: the gate admits those. Asked per call, every write asks.</summary>
     public static bool IsMarked(McpToolRole role, McpHostDecision decision) => decision switch
     {
         McpHostDecision.Grants => role is McpToolRole.Grant or McpToolRole.PerCallWrite,
@@ -686,7 +686,8 @@ public sealed partial class McpGrants
                 .Select(e => e.Target).ToHashSet(StringComparer.Ordinal);
     }
 
-    /// <summary>Ends every grant: the seam for the user's switch that blocks AI writes.</summary>
+    /// <summary>Ends every grant, as <see cref="Revoke"/> with no filter does. The user's switch that blocks AI writes
+    /// ends them through <see cref="LookAtBlock"/> instead.</summary>
     public int Clear() => Revoke();
 
     private Entry? Find(McpGrantKind kind, long pid, string creationTime, string target = "")

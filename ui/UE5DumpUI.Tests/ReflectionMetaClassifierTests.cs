@@ -98,7 +98,7 @@ public class ReflectionMetaClassifierTests
     {
         // A CDO / archetype reports its GAME class as ClassName (e.g. Default__BP_Player_C
         // has ClassName "BP_Player_C"), so the meta gate — which only sees ClassName —
-        // keeps it. Phase 1 deliberately does not filter CDOs.
+        // keeps it. The gate deliberately does not filter CDOs.
         Assert.True(ReflectionMetaClassifier.IsLiveInstanceRow("BP_Player_C"));
     }
 }

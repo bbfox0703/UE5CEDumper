@@ -5,14 +5,14 @@ r"""`[SLICEB-FLY-2026-09-09]` — the Fly enable/disable write gates, live.
 
 THE FIX. `Dunste::SetEnabled` writes ONE byte — `UCharacterMovementComponent::MovementMode` —
 and that write IS the effect; `active` / `baseCaptured` / `capturedPawn` are bookkeeping. Both
-call sites dropped `Macht::WriteBytes`' result, so ENABLE returned 1 and logged "Fly: ENABLED"
-over a pawn that never left its old mode, and DISABLE cleared `active` and logged
-"Fly: DISABLED" over a pawn still in MOVE_Flying with nothing tracking it. Both now capture the
-result and return `FR_ERR_WRITE` (-10).
+call sites check `Macht::WriteBytes`' result and return `FR_ERR_WRITE` (-10) when it fails. A
+site that drops it returns 1 and logs "Fly: ENABLED" over a pawn that never left its old mode,
+or clears `active` and logs "Fly: DISABLED" over a pawn still in MOVE_Flying with nothing
+tracking it.
 
-⛔ WHAT THIS ARM IS, AND IT IS THE REGRESSION HALF ONLY — say so, because the fix added an EARLY
+⛔ WHAT THIS ARM IS, AND IT IS THE REGRESSION HALF ONLY — say so, because the fix is an EARLY
 RETURN on a path that runs every time the user toggles Fly. The risk it carries is not the
-failure case (which is rare); it is that the new gate fires SPURIOUSLY and Fly stops working at
+failure case (which is rare); it is that the gate fires SPURIOUSLY and Fly stops working at
 all. This arm proves it does not: enable takes the pawn to MOVE_Flying and reports state 1,
 disable restores the captured mode and reports state 0, and the mode observed on the wire agrees
 with the state at every step.
@@ -22,7 +22,7 @@ with the state at every step.
   * `active`       — `s_state.active`, the bookkeeping the fix rolls back on failure;
   * `current_mode` — `MovementMode` READ BACK from the CMC, which is the effect itself
                      (5 == MOVE_Flying). This is the one that is not our bookkeeping.
-A run where `state == 1` and `current_mode != 5` is exactly the defect, still present.
+A run where `state == 1` and `current_mode != 5` is exactly the defect.
 
 ⚠ WHAT IT CANNOT DO. The failure arm needs `Macht::WriteBytes` to fail, i.e. `VirtualProtect` to
 be refused on the CMC's page or the memcpy to fault — which needs the region freed between

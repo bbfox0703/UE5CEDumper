@@ -1,37 +1,37 @@
 --[[
   return_read_test.lua
-  UE5CEDumper -- executable test for the b637 pointer-return read width.
+  UE5CEDumper -- executable test for the pointer-return read width [B637-RETWIDTH-2026-08-24].
 
   WHY THIS EXISTS
-    The register row for b637/b644 asks a human to open Cheat Engine, invoke a
+    The verification-register row b637/b644 asks a human to open Cheat Engine, invoke a
     UFunction with "Verify return value" ticked, and check that "the line shows a
     0x prefix". That check CANNOT FAIL: both observables are compile-time string
-    literals baked into the generated script (BakedScriptGenerator.cs:463 for
-    '0x%X', :345 for 'see After: dump above'), and both are already pinned by C#
+    literals baked into the generated script (BakedScriptGenerator.cs: '0x%X' and
+    'see After: dump above'), and both are already pinned by C#
     unit tests that would go red long before a human saw the CE window. So it is
     a test of a constant, not of behaviour.
 
-    Worse, it is blind to the defect build 637 actually FIXED. That defect is a
-    READ WIDTH: the helper's readUFunctionReturn has no 'pointer' type, so the
-    pre-fix spelling fell through to the int32 default and read FOUR bytes of an
-    EIGHT-byte pointer slot -- signed, at that. The fix is one line,
-    BakedScriptGenerator.cs:331:
+    Worse, it is blind to the defect itself, which is a READ WIDTH: the helper's
+    readUFunctionReturn has no 'pointer' type, so that spelling falls through to
+    the int32 default and reads FOUR bytes of an EIGHT-byte pointer slot -- signed,
+    at that. The generator therefore sends 'qword' for a pointer, in one line of
+    BakedScriptGenerator.cs:
 
         var readType = displayType == "pointer" ? "qword" : displayType;
 
-    A 0x prefix appears either way. The truncation is the whole bug and the
+    A 0x prefix appears either way. The truncation is the whole defect and the
     prescribed check cannot see it.
 
   WHAT THIS FILE DOES INSTEAD
     Runs the REAL readUFunctionReturn out of scripts/ue5_invoke_helper.lua
-    against BYTE-ACCURATE stub memory, and compares 'qword' (post-fix) with the
-    fall-through (pre-fix) on the same bytes.
+    against BYTE-ACCURATE stub memory, and compares 'qword' (what the generator
+    sends) with the 'pointer' fall-through on the same bytes.
 
-  WHY THE MEMORY MODEL HAD TO BE REWRITTEN, and it is the point of the file
+  WHY THE MEMORY MODEL IS BYTE-ACCURATE, and it is the point of the file
     invoke_helper_test.lua keeps I32 and U64 in SEPARATE stores keyed by address,
     which is right for what it tests but would make this test a tautology: a
     4-byte read would return nil (or an unrelated planted value) rather than the
-    LOW HALF of the 8-byte value actually in memory, so "the pre-fix path
+    LOW HALF of the 8-byte value actually in memory, so "the fall-through path
     truncates" would be modelled rather than measured. Here MEM holds bytes and
     every reader assembles from them, so the truncation is arithmetic on the same
     bytes -- exactly what CE does.
@@ -43,7 +43,7 @@
   DELIBERATELY NOT WIRED INTO build.ps1 OR CI
     Same reasoning as its three siblings: a standalone `lua` is not a declared
     dependency, and a test step that silently skips when its tool is missing is
-    the defect audit #5's AD1/AD2 fixed on the C++ side.
+    a test that passes without running.
 ]]
 
 local HELPER = 'scripts/ue5_invoke_helper.lua'
@@ -157,7 +157,7 @@ local FMT = '0x%X'
 
 local function readBoth(ptr)
   poke(ADDR, ptr, 8)
-  -- 'qword' is what the fix sends on the wire; 'pointer' is the spelling the
+  -- 'qword' is what the generator sends on the wire; 'pointer' is the spelling the
   -- helper does NOT recognise, so it falls through to the signed int32 default.
   return readUFunctionReturn(RET_OFF, 'qword'),
          readUFunctionReturn(RET_OFF, 'pointer')
@@ -193,9 +193,9 @@ check('both read 0', q == 0 and p == 0, true)
 io.write('\n-- 5. int64 -- the sibling type the b637 fix missed [RETINT64]\n')
 -- MapToHelperType maps Int64Property -> "int64" (BakedScriptGenerator.cs) and the
 -- size-8 EnumProperty case -> "int64". readType only rewrites "pointer", so
--- 'int64' reaches the helper VERBATIM. Before the fix there was no 'int64' branch and it
--- fell through to the signed int32 default -- the same defect build 637 fixed for
--- pointers, still live for the sibling type. [RETINT64-2026-08-24]
+-- 'int64' reaches the helper VERBATIM and needs its own branch there: without one it
+-- falls through to the signed int32 default -- the same truncation as the 'pointer'
+-- spelling above. [RETINT64-2026-08-24]
 local BIG = 0x0000000123456789      -- needs 33 bits
 poke(ADDR, BIG, 8)
 check("int64 reads all 8 bytes", readUFunctionReturn(RET_OFF, 'int64'), BIG)
@@ -209,8 +209,8 @@ poke(ADDR, -1, 8)
 check('int64 of all-FF is -1, not 2^64-1', readUFunctionReturn(RET_OFF, 'int64'), -1)
 check("  and formats as -1", ('%d'):format(readUFunctionReturn(RET_OFF, 'int64')), '-1')
 
--- The pre-fix behaviour kept as a standing regression witness: the 4-byte default still
--- truncates, so if 'int64' ever falls through again these two diverge.
+-- A standing regression witness: the 4-byte default truncates this value, so an 'int64'
+-- that falls through to it reads the same as int32 and the second check below fails.
 poke(ADDR, BIG, 8)
 check('the 4-byte default still truncates (unchanged)',
       readUFunctionReturn(RET_OFF, 'int32'), 0x23456789)

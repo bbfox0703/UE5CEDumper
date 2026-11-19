@@ -39,10 +39,10 @@ struct FUObjectItem {
 
 namespace Aura {
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage D: work a client runs in the background. A pipe request carrying
+// [PIPE-PER-PROCESS-2026-11-06] Work a client runs in the background. A pipe request carrying
 // "background": true (the MCP server marks every request it sends) makes each GObjects walk it starts take at most half
 // of the worker budget that is free, so a walk the user starts in the UI meanwhile still gets the other half. Without
-// it, an AI's long value scan held every worker and the UI's own scan or snapshot ran on one thread into its deadline.
+// it, an AI's long value scan holds every worker and the UI's own scan or snapshot runs on one thread into its deadline.
 // Scoped to the thread dispatching the request; restores the previous state when the dispatch returns.
 class BackgroundWalkScope {
 public:
@@ -58,7 +58,7 @@ private:
 // Whether the walk about to start on this thread is background work (see BackgroundWalkScope).
 bool IsBackgroundWalk() noexcept;
 
-// === Encrypted GObjects Support (GAP #1) ===
+// === Encrypted GObjects Support ===
 // Some anti-cheat games encrypt the Objects pointer in FUObjectArray.
 // Set a custom decryption function BEFORE calling Init().
 // Default: nullptr (identity, zero overhead for non-encrypted games).
@@ -341,11 +341,11 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 //
 // buildHistogram: when true (the pipe `find_instances` path), the scan does NOT
 // stop at the cap — it walks ALL of GObjects so rset.classHistogram counts every
-// matched class even when its instances all sit past the cap (the histogram-vanish
-// fix), and applies excludeClasses before the cap. When false (the default, for
+// matched class even when its instances all sit past the cap, and applies
+// excludeClasses before the cap. When false (the default, for
 // callers that want a bounded first-N scan and ignore the histogram), the loop keeps
-// the early exit at maxResults and skips the tally — so those hot paths are not
-// regressed into a full-array walk.
+// the early exit at maxResults and skips the tally — so those hot paths do not
+// become a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false, bool skipTemplates = false);
 // skipTemplates: [LISTINSTANCES-KEEPS-TEMPLATES] a caller that WRITES to the pool passes true, and a template
 // (TemplateOf) is then no match at all -- no cap slot, no histogram row. Off by default: the Instance Finder lists
@@ -605,7 +605,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 // Discovery is STRUCTURAL — EnumerateOutgoingObjectPtrs (direct ObjectProperty
 // fields AND object-pointer containers: OwnedComponents TSet, SpawnedAttributes
 // TArray) gated by IsOwnedBy (Outer chains back to the target within 2 hops) —
-// the SAME mechanism the cross-object group scan (P4) uses. So a game's custom
+// the SAME mechanism the cross-object group scan uses. So a game's custom
 // component is found the same way as the engine ASC; the "AbilitySystem (ASC)" /
 // "AttributeSet" / "Owned Component" *labels* are a class-name convenience on top
 // of the structural walk, not the discovery filter.
@@ -630,7 +630,7 @@ struct RelatedObject {
 };
 
 // [W4-RELATED-STOPS] Why a related-object walk stopped short -- one flag PER CAUSE, never one "stopped early"
-// bool (P5: four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
+// bool (four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
 // A cap flag means a qualifying object was actually REFUSED: a list that exactly fills its cap is complete.
 struct RelatedObjectsStats {
     bool    resultCapHit = false;   // a related object was found with the list already at maxResults
@@ -863,9 +863,8 @@ PropertySearchResult SearchProperties(
 // dedup index, per-query maxResults limit, and (optionally) per-query
 // preview values.
 //
-// The big win: a 36-query sweep on a 4400-class game drops from
-// ~42 sequential seconds (each call re-walks GObjects) to ~1.5 seconds
-// (one shared walk; per-property keyword check is cheap).
+// The big win: a many-query sweep costs one shared walk instead of one
+// GObjects walk per query (the per-property keyword check is cheap).
 //
 // withPreviews=false skips the Phase-2 instance scan that resolves
 // preview values for the wire output. The Interesting Properties tab
@@ -933,7 +932,7 @@ struct ClassListResult {
 // List all UClass objects, optionally filtering out engine packages.
 ClassListResult ListClasses(bool gameOnly, int maxResults = 5000);
 
-// === Class-noise auto-detect (class-filter Phase 3) ===
+// === Class-noise auto-detect ===
 //
 // SAFE-by-construction classifier for the opt-in "auto-detect system classes"
 // suggestion in the class-noise picker. Given a set of class names (from a
@@ -1232,11 +1231,9 @@ inline bool IsListedEnumObject(const std::string& className, const std::string& 
 //   * AnimBlueprintGeneratedClass     — Anim BP-derived classes
 //   * WidgetBlueprintGeneratedClass   — UMG widget BP-derived classes
 //   * DynamicClass                    — Shipping cooked dynamic classes
-// Before this whitelist, the class enumerators matched only "Class" and silently
-// dropped every game-specific BPGC — which is where 90%+ of game-specific Health /
-// Damage / Gold properties live. The user's TowerOfMask repro: `SearchProperties
-// 'Health': 0 matches` despite `Health @ AnimMan_Player_C` clearly existing in the
-// Class Struct view.
+// A class enumerator that matches only "Class" silently drops every game-specific
+// BPGC — which is where most game-specific Health / Damage / Gold properties live,
+// so a property search would answer 0 matches for a field the Class Struct view shows.
 inline bool IsClassLikeMeta(const std::string& metaClassName) {
     return metaClassName == "Class"
         || metaClassName == "BlueprintGeneratedClass"
@@ -1388,7 +1385,7 @@ struct AllFunctionEntry {
     uint32_t    functionFlags = 0;
     uint8_t     numParms    = 0;
     uint16_t    parmsSize   = 0;
-    // [UE-OVERRIDE-411] review 2: where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
+    // [UE-OVERRIDE-411] Where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
     // built from this list carries it as the CE helper's parmsSize, which gates the 1 KB mailbox slab; parmsSize is
     // the tail read, another field under a wrong UE version.
     uint32_t    bufferBytes = 0;
@@ -1475,7 +1472,7 @@ struct PropertyXref {
                                        // Arr[i] = x) is not detected and counts as a read.
     std::string kind;                  // "instance" (0x01) / "local" (0x00) / "ref"
 
-    // v2a: for hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
+    // For hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
     // event(s) whose entry offset precedes the reference (comma-joined, distinct).
     // Empty for non-ubergraph functions. Best-effort: shared sub-graphs reached
     // from multiple events can mis-attribute (nearest-preceding heuristic).
@@ -1492,7 +1489,7 @@ struct PropertyXrefStats {
     int64_t durationMs          = 0;
     bool    deadlineHit         = false;
     // [W3-XREF-CAP] A worker stopped at maxResults, or the merged total passed it: `xrefs` is a PREFIX and more
-    // may exist. Its own flag -- never folded into deadlineHit (P5: a different cause, different advice).
+    // may exist. Its own flag -- never folded into deadlineHit (a different cause, different advice).
     bool    capHit              = false;
     int32_t cap                 = 0;       // the effective maxResults
 };
@@ -1516,7 +1513,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
 // over each function's param chain, so it ALSO catches native (FUNC_Native)
 // functions whose Script is empty. Reuses the PropertyXref result shape: `kind`
 // = "param"/"return", `occurrences` = matching param count, `writeCount` = 0.
-// v1: direct params only (array/map element types are a future enhancement).
+// Direct params only: array/map element types are not inspected.
 PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
                                              int32_t maxResults = 200);
 
@@ -1701,8 +1698,8 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 //
 // Native C++ fields (non-UPROPERTY) are NOT visible to this scan — the
 // UI is contractually required to surface this limitation. See
-// `project_value_search_caveats` memory for the rationale and the
-// TArray<T> crash-risk plan that gates the v2 expansion past primitives.
+// `project_value_search_caveats` memory for the rationale; the leaf types
+// and the container walk are listed in Radar.h's header.
 
 struct ValueScanStats {
     int32_t scannedClasses = 0;   // Unique classes with matching-type fields
@@ -1713,7 +1710,7 @@ struct ValueScanStats {
 
 struct ValueScanResult {
     std::vector<Radar::Candidate>       candidates;
-    // Shared metadata pools the candidates index into (V3-A). Moved into
+    // Shared metadata pools the candidates index into. Moved into
     // the Radar::Session alongside the candidates by SessionManager::Begin.
     std::vector<Radar::FieldDescriptor> descriptors;
     std::vector<Radar::InstanceRecord>  instances;
@@ -1787,7 +1784,7 @@ ValueScanResult ScanForValue(
     // `needsDeepWalk` heuristic). Reaches values buried in deeply-nested containers
     // the heuristic misses. Heavier per object — exposed via the "Deep" toggle.
     bool                deep          = false,
-    // Native-C (P1, opt-in, default off): ALSO scan each object's UNMANAGED holes
+    // Native-C (opt-in, default off): ALSO scan each object's UNMANAGED holes
     // — the byte ranges within [UObject header, class PropertiesSize) that no
     // reflected property covers — for the requested numeric value, interpreting
     // the raw bytes at the user's width. Finds native (non-UPROPERTY) C++ members
@@ -1895,7 +1892,7 @@ struct GroupScanResult {
 // MsTunes[0].WeaponTuneList[0].Tunes[N]) is found. Matches WITHIN one array/element
 // (the user's "array as a block" rule). Bounded by the same depth/element caps as
 // snapshot capture; only runs for objects that actually own containers.
-// `crossObject` (P4, opt-in, default off): merge the numeric leaves of the
+// `crossObject` (opt-in, default off): merge the numeric leaves of the
 // sub-objects each actor OWNS (its components + a GAS ASC's SpawnedAttributes,
 // reached via EnumerateOutgoingObjectPtrs and gated by an Outer-chains-back test)
 // INTO the actor's own block, so a group whose values are distributed across
@@ -1907,7 +1904,7 @@ GroupScanResult ScanForValueGroup(
     int32_t                             maxResults  = kValueScanDefaultMaxResults,
     bool                                deep        = false,
     bool                                crossObject = false,
-    // Native-C (P2, opt-in, default off): also fold each object's unmanaged-hole
+    // Native-C (opt-in, default off): also fold each object's unmanaged-hole
     // leaves (non-UPROPERTY bytes within [header, PropertiesSize)) into its block,
     // so a group including a native value matches. Object block only (never deep);
     // EMIT-ON-MATCH (a raw leaf is kept only when its bytes satisfy a slot), bounded
@@ -1934,8 +1931,8 @@ GroupScanResult ScanForValueGroup(
     // performance knob -- it decides what a later Changed/Decreased refine can re-read,
     // because the kept list IS the refine's input. Leaves arrive in field-declaration
     // order (base class first), so too small a value silently excludes a derived class's
-    // OWN fields behind its base class's: at the old default of 8 every AActor stored
-    // just PrimaryActorTick/CustomTimeDilation, and a Changed refine pruned every
+    // OWN fields behind its base class's: at a cap of 8 every AActor keeps
+    // just PrimaryActorTick/CustomTimeDilation, and a Changed refine prunes every
     // candidate to zero. Raise it for objects with unusually many numeric fields. The
     // scan WARNs when it truncates rather than dropping the extras silently.
     int                                 perSlotCap = Orden::kDefaultPerSlotCap);
@@ -1984,13 +1981,13 @@ inline NumericFamily ParseNumericFamily(const std::string& s) {
     return NumericFamily::Any;
 }
 
-// Snapshot capture (experimental — Phase A1a). A type-agnostic, streamed
+// Snapshot capture (experimental). A type-agnostic, streamed
 // capture of every numeric UPROPERTY of every (scoped) UObject, used by the
 // UI to persist snapshots for diff / SPC / pivot. Stateless cursor
 // pagination (mirrors GetCount/GetByIndex + get_object_list): each chunk
 // walks [offset, offset+limit) GObjects indices. Reuses Ubel::WalkClassEx
-// (cached) + Radar::SelectSnapshotNumericFields. Array elements are
-// captured in Phase A1b.
+// (cached) + Radar::SelectSnapshotNumericFields. Struct-array elements are
+// captured too, keyed by an inner field (SnapshotArrayElement).
 // ------------------------------------------------------------------
 struct SnapshotField {
     std::string name;
@@ -1999,7 +1996,7 @@ struct SnapshotField {
     std::string hex;        // little-endian raw bytes, hex (no 0x prefix)
 };
 
-// One element of a struct-array (Phase A1b). Carries an inner-key (e.g.
+// One element of a struct-array. Carries an inner-key (e.g.
 // FCargoSlot.ItemID = "Fuel") so the same logical slot joins across snapshots
 // regardless of array reordering, plus the element's numeric inner fields.
 struct SnapshotArrayElement {
@@ -2022,17 +2019,17 @@ struct SnapshotObject {
     std::string outerClassName;    // immediate outer's UClass name (loose join)
     std::string path;              // Ubel::GetFullName (cross-session identity)
     std::vector<SnapshotField> fields;
-    std::vector<SnapshotArray>  arrays;   // struct-array inner-key capture (A1b)
+    std::vector<SnapshotArray>  arrays;   // struct-array inner-key capture
 };
 
 struct SnapshotChunkResult {
     int32_t total   = 0;   // GObjects count
     int32_t scanned = 0;   // indices iterated this chunk (advance offset by this)
-    int64_t walkMs  = 0;   // Phase-0 telemetry: parallel walk+merge wall-time for this chunk
+    int64_t walkMs  = 0;   // telemetry: parallel walk+merge wall-time for this chunk
     // A scan worker THREW while walking this chunk, so part of [offset, offset+scanned) was
     // never captured. `scanned` still reports the full range (the pager must advance past the
     // hole), which is exactly why this has to travel separately: without it a faulted chunk
-    // was stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
+    // would be stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
     // Published as snapshot_chunk's `worker_faulted`; the UI finalises the snapshot UNUSABLE.
     bool    workerFaulted = false;
     std::vector<SnapshotObject> objects;  // only objects with >=1 numeric field
@@ -2044,7 +2041,7 @@ struct SnapshotChunkResult {
 // multi-numeric meta type (NumericNoByte default / NumericAll); a non-meta
 // type captures nothing. arrayCap bounds elements captured per struct array.
 //
-// captureNativeC (P3, opt-in, default off): ALSO append each object's
+// captureNativeC (opt-in, default off): ALSO append each object's
 // unmanaged-hole guesses (non-UPROPERTY raw bytes interpreted via the Guess-What
 // engine, normalized to canonical property types, Pointer/Padding dropped) as
 // synthetic "<raw@0xNN>" fields, so the snapshot carries native values for SPC

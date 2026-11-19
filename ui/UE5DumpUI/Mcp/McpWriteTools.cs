@@ -280,7 +280,7 @@ internal static class McpWriteTools
             }, Idempotent: true, Destructive: true, Role: role, GrantKind: kind);
     }
 
-    /// <summary>See-through has its own owner model (Stage C): each client that turned it on holds a claim, released when
+    /// <summary>See-through has its own owner model: each client that turned it on holds a claim, released when
     /// it leaves, but an explicit OFF drops every claim. So this server turns it off only when its own claim is the only
     /// one; otherwise its claim simply ends with the session.</summary>
     private static McpTool SeeThrough(IMcpGame game, Func<bool> experimentalEnabled, McpGrants grants)
@@ -334,8 +334,8 @@ internal static class McpWriteTools
 
     private static string Join(string first, string? second) => second is null ? first : first + " " + second;
 
-    /// <summary>The guarded debug-camera command answers in <c>state</c>, not <c>code</c> (D2-3 found the generic
-    /// reply reading every refusal as success), and its toggle is a game-thread call, so it waits as long as the DLL
+    /// <summary>The guarded debug-camera command answers in <c>state</c>, not <c>code</c> (the generic
+    /// reply would read every refusal as success), and its toggle is a game-thread call, so it waits as long as the DLL
     /// may.</summary>
     private static McpTool DebugCamera(IMcpGame game, McpGrants grants) => new(
         "write_debug_camera", "Debug camera",

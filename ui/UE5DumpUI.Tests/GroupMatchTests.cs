@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Tests for the C# port of the DLL's Orden SDR matcher (Snapshot Group Match, S1).
+/// Tests for the C# port of the DLL's Orden SDR matcher (Snapshot Group Match).
 /// Mirrors the DLL Orden cases (distinct assignment, duplicate values, no-SDR,
 /// width-fit, scope) and adds the snapshot-specific Mode B temporal cases — most
 /// importantly the motivating "Current HP decreased + Max HP unchanged" group.
@@ -50,15 +50,15 @@ public class GroupMatchTests
 
     // ============================================================
     // [W2-GROUPMATCH-ENUM] an enum leaf is a 1-byte UNSIGNED leaf, exactly as the live matcher
-    // treats it (Radar: EnumProperty -> UInt8, in kNumericAll, NOT in kNumericNoByte). WidthBytes
-    // had no EnumProperty case, so an enum state field (weapon type, quest stage) could never
-    // satisfy any slot. ⛔ Adding it to WidthBytes ALONE is the recorded harmful fix: IsOneByte keys
-    // on the same set, and without it NumericNoByte would admit enums the live scan excludes.
+    // treats it (Radar: EnumProperty -> UInt8, in kNumericAll, NOT in kNumericNoByte). Without an
+    // EnumProperty case in WidthBytes, an enum state field (weapon type, quest stage) could never
+    // satisfy any slot. ⛔ Adding it to WidthBytes ALONE is harmful: IsOneByte keys on the same
+    // set, and without it NumericNoByte would admit enums the live scan excludes.
     // ============================================================
 
     // ⚠ Run() rejects fewer than two slots ("a group needs >= 2 values"), so a single-slot Run is
-    // false whatever the leaf is -- the first version of these tests was vacuous for exactly that
-    // reason. Each fact asks LeafSatisfiesSlot directly, with an anti-vacuity partner, and one runs
+    // false whatever the leaf is, and a test built on one would be vacuous. Each fact asks
+    // LeafSatisfiesSlot directly, with an anti-vacuity partner, and one runs
     // a real two-slot group.
 
     [Fact]
@@ -109,7 +109,7 @@ public class GroupMatchTests
     [Fact]
     public void TwoFloatLeaves_ExactWholeTarget_RoundMatches()
     {
-        // The reported GAS case: AttributeSetCore.Health BaseValue(0x8) + CurrentValue(0xC)
+        // The GAS case: AttributeSetCore.Health BaseValue(0x8) + CurrentValue(0xC)
         // both store 513.3599853516; searching Exact 513/513 must match via rounding.
         var leaves = new[]
         {
@@ -174,9 +174,9 @@ public class GroupMatchTests
 
     // [W2-GROUPMATCH-WIDTH] the C# mirror of [W2-ORDEN-FINDENTRY]. The width gate is right for
     // Exact and wrong for ordering: every Int16 is smaller than 70000 and every unsigned field is
-    // bigger than -5, yet neither target has an encoding at that width, so the leaf was skipped --
-    // and one lost width drops the whole group. The live matcher keeps the width through Radar's
-    // Fit::AlwaysTrue verdict (audit #5 AB4); the snapshot matcher must give the same answer.
+    // bigger than -5, yet neither target has an encoding at that width, so the gate alone would
+    // skip the leaf -- and one lost width drops the whole group. The live matcher keeps the width
+    // through Radar's Fit::AlwaysTrue verdict; the snapshot matcher must give the same answer.
     [Theory]
     [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Bigger,  -5,     true)]   // every unsigned > -5
     [InlineData("UInt32Property", 0,     GroupMatch.Predicate.Bigger,  -5,     true)]
@@ -186,11 +186,11 @@ public class GroupMatchTests
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  70000,  false)]  // no int16 exceeds it
     [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Smaller, -5,     false)]  // no unsigned is below it
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Exact,   70000,  false)]  // Exact keeps the gate
-    // (review of aaf6a022) +/-Infinity lies beyond every integer range, as in Radar's verdict; NaN never.
+    // +/-Infinity lies beyond every integer range, as in Radar's verdict; NaN never.
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.PositiveInfinity, true)]
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  double.NegativeInfinity, true)]
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.NaN,              false)]
-    // ...and "-0" is an unsigned target of 0 on both sides (parity with the DLL fix beside it).
+    // ...and "-0" is an unsigned target of 0 on both sides (parity with the DLL's matcher).
     [InlineData("UInt16Property", 0,     GroupMatch.Predicate.Exact,   -0.0,   true)]
     public void OrderedSlot_UnencodableTarget_KeepsTheWidthWhenEveryValueSatisfies(
         string type, double value, GroupMatch.Predicate p, double target, bool satisfies)
@@ -199,16 +199,16 @@ public class GroupMatchTests
     [Fact]
     public void OrderedSlot_UnencodableTarget_DoesNotDropTheGroup()
     {
-        // What the user saw: slot 2 (Exact 24) can only take the int, and before the fix the
-        // Bigger(-5) slot could only take the int too -> "no objects matched".
+        // Slot 2 (Exact 24) can only take the int; a Bigger(-5) slot that lost the UInt16
+        // leaf could only take the int too -> "no objects matched".
         var leaves = new[] { L(0x10, "UInt16Property", 3), L(0x14, "IntProperty", 24) };
         var slots = new[] { Abs(GroupMatch.Predicate.Bigger, -5), Abs(GroupMatch.Predicate.Exact, 24) };
         Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
         Assert.Equal(new[] { 0, 1 }, per[0]);
     }
 
-    // [A4-AB4-BETWEEN] the snapshot half, fixed with the live one: a Between bound with no encoding at an integer
-    // leaf's width no longer drops the width -- the range is clamped into it (Between is inclusive), and only a range
+    // [A4-AB4-BETWEEN] the snapshot half, matching the live one: a Between bound with no encoding at an integer
+    // leaf's width does not drop the width -- the range is clamped into it (Between is inclusive), and only a range
     // that misses the width entirely excludes it. The same cases as dll_helpers_test's BETWEEN block.
     [Theory]
     [InlineData("UInt16Property", 7,     -5,    10,    true)]    // no unsigned -5: clamped to 0..10
@@ -395,22 +395,22 @@ public class GroupMatchTests
     {
         // The snapshot corpus and the live Group Scan answer the same question, so a
         // different cap here would make the same object match on one page and not the
-        // other. 8 was the DLL's old value and the bug: leaves arrive base-class-first,
-        // so it stored only inherited fields and a temporal pass saw nothing change.
+        // other. A cap of 8 is too small: leaves arrive base-class-first, so it would
+        // store only inherited fields and a temporal pass would see nothing change.
         var leaves = new List<GroupMatch.Leaf>();
         for (int i = 0; i < 40; i++) leaves.Add(L(i * 4, "IntProperty", 100 + i));
         var slots = new List<GroupMatch.Slot> { Between(0, 100000), Between(0, 100000) };
 
         Assert.True(GroupMatch.Run(leaves, slots, out var perSlot, out bool uncappedHit));
         Assert.Equal(40, perSlot[0].Count);      // every satisfying leaf kept
-        // AF13: nothing was dropped, so the truncation flag must stay FALSE. This is
+        // Nothing was dropped, so the truncation flag must stay FALSE. This is
         // the negative control for the assertion below — without it, a flag hardwired
         // to true would pass the "capped" case and tell the user every scan was partial.
         Assert.False(uncappedHit);
 
         Assert.True(GroupMatch.Run(leaves, slots, out var capped, out bool cappedHit, perSlotCap: 8));
         Assert.Equal(8, capped[0].Count);        // an explicit cap still bounds it
-        Assert.True(cappedHit);                  // …and it SAYS so (audit #5 AF13)
+        Assert.True(cappedHit);                  // …and it SAYS so
     }
 
     [Fact]

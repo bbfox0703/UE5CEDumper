@@ -66,7 +66,7 @@ public class InterestingFunctionsViewModelTests
 
     // ClassAddr is populated because list_all_functions supplies it per row — the Copy AA
     // Script handoff carries it so the handler never re-derives an address out of the
-    // CAPPED list_classes page (audit #5 X2).
+    // CAPPED list_classes page.
     private static List<AllFunctionEntry> BuildSampleEntries() => new()
     {
         // High-score, multi-bucket: Inventory category, score ~10
@@ -114,11 +114,11 @@ public class InterestingFunctionsViewModelTests
 
     /// <summary>Await the re-score the VM ITSELF started, with a real deadline.
     ///
-    /// Calling RescoreAsync() from a test instead used to look equivalent, but the
-    /// GameplayActions setter is fire-and-forget: a second call did not replace that
-    /// task, it RACED it. Both end in ApplyFilter(), which Clear()s and refills
+    /// Calling RescoreAsync() from a test instead looks equivalent, but the
+    /// GameplayActions setter is fire-and-forget: a second call does not replace that
+    /// task, it RACES it. Both end in ApplyFilter(), which Clear()s and refills
     /// Results, so the assertion could enumerate a half-rebuilt — or momentarily
-    /// EMPTY — collection. Measured 50/4000 in-process iterations before this fix.
+    /// EMPTY — collection.
     ///
     /// Bounded rather than a bare await because a hang is not a test result: the
     /// 10s ceiling turns "the seam was never assigned" into a named failure instead
@@ -376,7 +376,7 @@ public class InterestingFunctionsViewModelTests
         Assert.Equal("GameMode", capturedClass);
         Assert.Equal("SaveGame", capturedFunc);
         // The address the row already carries — without it the handler falls back to the
-        // capped list_classes page and aborts on "Class GameMode not found" (audit #5 X2).
+        // capped list_classes page and aborts on "Class GameMode not found".
         Assert.Equal("0x5000", capturedAddr);
     }
 
@@ -546,8 +546,8 @@ public class InterestingFunctionsViewModelTests
         /// <summary>When set, CheckAvailabilityAsync blocks on this instead of
         /// completing synchronously — a deterministic stand-in for the real
         /// bridge's 2s pipe-connect timeout when Cheat Engine isn't running.
-        /// Lets a test occupy the window that LoadAsync used to spend with
-        /// IsLoading still true.</summary>
+        /// Lets a test hold the probe open and check that LoadAsync does not
+        /// spend that window with IsLoading still true.</summary>
         public TaskCompletionSource<bool>? Gate { get; set; }
 
         public async Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
@@ -577,15 +577,15 @@ public class InterestingFunctionsViewModelTests
     }
 
     // ==================================================================
-    // Audit #5 Z1 — a Gameplay-Actions toggle raised while Load is still
-    // "in flight" must not be silently discarded.
+    // A Gameplay-Actions toggle raised while Load is still "in flight" must
+    // not be silently discarded.
     //
-    // LoadAsync used to `await CheckAobMakerAsync()` as its last statement,
-    // which pays a 2s pipe-connect timeout whenever CE isn't running, all of
-    // it with IsLoading still true and the grid ALREADY painted. RescoreAsync
-    // bails on `if (IsLoading ...) return;`, so a tick landing in that window
-    // was dropped and nothing ever re-ran: the CheckBox read ON while the rows
-    // stayed scored with the pack OFF, permanently. Recovery was untick+retick.
+    // A LoadAsync that awaits CheckAobMakerAsync() as its last statement pays
+    // a 2s pipe-connect timeout whenever CE isn't running, all of it with
+    // IsLoading still true and the grid ALREADY painted. RescoreAsync bails on
+    // `if (IsLoading ...) return;`, so a tick landing in that window would be
+    // dropped and nothing would re-run: the CheckBox reads ON while the rows
+    // stay scored with the pack OFF, until the user unticks and reticks.
     // ==================================================================
 
     /// <summary>The load must not stay busy for the AOBMaker probe. The probe
@@ -632,9 +632,9 @@ public class InterestingFunctionsViewModelTests
             new() { ClassName="ShopSubsystem", FuncName="OpenShop",
                     FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
         };
-        // Same determinism problem as its sibling, and the same fix: park the load inside the
-        // window rather than assuming ExecuteAsync left it there. This one had the race too — it
-        // just never happened to be the test that went red. [TESTFLAKE-2026-08-21]
+        // Same determinism problem as its sibling, and the same answer: park the load inside the
+        // window rather than assuming ExecuteAsync left it there, since this test races the same
+        // way. [TESTFLAKE-2026-08-21]
         var gated = new GatedEntryList(entries);
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
@@ -645,8 +645,8 @@ public class InterestingFunctionsViewModelTests
         var load = vm.LoadCommand.ExecuteAsync(null);
         await gated.Reached;
 
-        // The user ticks the pack. Before the fix this landed while IsLoading
-        // was still true and RescoreAsync's guard threw it away.
+        // The user ticks the pack. Landing while IsLoading is still true,
+        // RescoreAsync's guard would throw it away.
         vm.GameplayActions = true;
         gated.Release();
 
@@ -656,8 +656,8 @@ public class InterestingFunctionsViewModelTests
 
         // Drain ONLY the reconciliation the VM itself decided to run. Calling
         // RescoreAsync() from the test instead would re-score unconditionally
-        // and pass even with the defect present — that seam is exactly why the
-        // pre-existing coverage never caught this.
+        // and pass even with the defect present — a seam that hides exactly
+        // this.
         Assert.NotNull(vm.PendingRescore);
         await vm.PendingRescore!;
 
@@ -669,33 +669,28 @@ public class InterestingFunctionsViewModelTests
     /// Two re-scores in flight at once must settle on the NEWEST mode, not on whichever finished
     /// last. [TESTFLAKE-2026-08-21]
     ///
-    /// <para>⭐ This started life as the reproduction for an intermittent test failure and turned
-    /// out to expose a PRODUCT defect. The interleaving is: tick the pack while the load is busy,
-    /// let the load's reconciliation start a re-score with the pack ON, then untick. Two
-    /// <c>RescoreAsync</c> calls are now racing, each having captured its own mode, and the write
-    /// to <c>_allRows</c> went to whichever SCORING finished last — completion order, not request
-    /// order.</para>
+    /// <para>⭐ The interleaving: tick the pack while the load is busy, let the load's
+    /// reconciliation start a re-score with the pack ON, then untick. Two <c>RescoreAsync</c> calls
+    /// are then racing, each having captured its own mode, and the write to <c>_allRows</c> must
+    /// follow request order, not whichever SCORING finishes last.</para>
     ///
-    /// <para>The end state was the worst available and self-concealing: rows scored with the pack
-    /// ON, the CheckBox reading OFF, and <c>_scoredWithGameplayActions</c> also reading OFF — so
-    /// the field that exists to detect exactly this disagreement could not see it, and nothing
-    /// would ever reconcile it. Z1's failure by another route.</para>
+    /// <para>Completion order gives the worst available end state, and a self-concealing one: rows
+    /// scored with the pack ON, the CheckBox reading OFF, and <c>_scoredWithGameplayActions</c> also
+    /// reading OFF — so the field that exists to detect exactly this disagreement cannot see it, and
+    /// nothing would ever reconcile it. It is the interleaving a user gets from a double-click on the
+    /// CheckBox as a load lands.</para>
     ///
-    /// <para>Reproduced deterministically before the fix (<c>Assert.DoesNotContain() Failure:
-    /// Filter matched in collection</c>), and it is the interleaving a user gets from a
-    /// double-click on the CheckBox as a load lands.</para>
-    ///
-    /// <para>⚠ <b>It was still racing its own window until [TESTFLAKE-2026-09-12].</b> The original
-    /// version fired both toggles straight after <c>ExecuteAsync</c> — the very shape its siblings were
-    /// parked to avoid — so which of FOUR landing zones it hit was a thread race: the toggle could land
-    /// inside the load's window (the intended one), after <c>IsLoading = false</c> but before the
-    /// reconciliation's comparison, or after the whole load had finished, in which case
-    /// <c>PendingRescore</c> is null, the <c>if (… != null)</c> drains skip silently, and the test
-    /// asserts an end state it never actually set up. It also left the first toggle's re-score
-    /// ORPHANED — <c>PendingToggleRescore</c> is a single slot that the second toggle overwrites — so an
-    /// unawaited re-score could still be rebuilding <c>Results</c> while the assertion enumerated it.
-    /// The parks below force the one interleaving the name claims, and release the OLDER re-score LAST
-    /// so "newest mode wins" is a property under test rather than the scheduler's choice.</para>
+    /// <para>⚠ <b>The test must not race its own window ([TESTFLAKE-2026-09-12]).</b> Toggles fired
+    /// straight after <c>ExecuteAsync</c> — the very shape its siblings are parked to avoid — hit one of
+    /// FOUR landing zones by thread race: inside the load's window (the intended one), after
+    /// <c>IsLoading = false</c> but before the reconciliation's comparison, or after the whole load has
+    /// finished, in which case <c>PendingRescore</c> is null, the <c>if (… != null)</c> drains skip
+    /// silently, and the test asserts an end state it never set up. Unparked, the first toggle's
+    /// re-score is also ORPHANED — <c>PendingToggleRescore</c> is a single slot that the second toggle
+    /// overwrites — so an unawaited re-score could still be rebuilding <c>Results</c> while the
+    /// assertion enumerates it. The parks below force the one interleaving the name claims, and
+    /// release the OLDER re-score LAST so "newest mode wins" is a property under test rather than the
+    /// scheduler's choice.</para>
     /// </summary>
     [Fact]
     public async Task ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish()
@@ -764,10 +759,10 @@ public class InterestingFunctionsViewModelTests
         };
         // ⚠ The toggles must land INSIDE the window — after LoadAsync captured
         // _scoredWithGameplayActions and before it compares that against GameplayActions. Firing
-        // them straight after ExecuteAsync only USUALLY hit that window: the load's tail runs on a
-        // pool thread and could slip between the two toggles, at which point the reconciliation
-        // legitimately fires and PendingRescore is not null. That was [TESTFLAKE-2026-08-21],
-        // ~3 red runs in ~15. The gated list parks the load in the window instead of racing it.
+        // them straight after ExecuteAsync only USUALLY hits that window: the load's tail runs on a
+        // pool thread and can slip between the two toggles, at which point the reconciliation
+        // legitimately fires and PendingRescore is not null ([TESTFLAKE-2026-08-21]). The gated
+        // list parks the load in the window instead of racing it.
         var gated = new GatedEntryList(entries);
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
@@ -815,9 +810,9 @@ public class InterestingFunctionsViewModelTests
     [Fact]
     public async Task AobMakerNote_ABusyPipe_SaysBusy_AndRepaintsWhenOnlyTheReasonChanged()
     {
-        // [R7-S7] "AOBMaker plugin not found" for a pipe another program holds sent the user to reinstall a plugin that
-        // is there -- the W1-PIPEBUSY-STATUS defect, on a surface its fix missed. And the reason can change while the
-        // flag stays false, which raises nothing by itself.
+        // [R7-S7] "AOBMaker plugin not found" for a pipe another program holds sends the user to reinstall a plugin that
+        // is there -- the [W1-PIPEBUSY-STATUS] shape, on this panel's surface. And the reason can change while the flag
+        // stays false, which raises nothing by itself.
         var bridge = new FakeAobMakerBridge { NextCheckResult = false };
         var vm = new InterestingFunctionsViewModel(
             new FakeDumpService { NextResult = BuildResult(BuildSampleEntries()) },
@@ -884,17 +879,17 @@ public class InterestingFunctionsViewModelTests
     }
 
     // ==================================================================
-    // Audit #5 Z15 — a re-score must move the report with the rows.
+    // A re-score must move the report with the rows.
     // ==================================================================
 
     /// <summary>
     /// Toggling Gameplay Actions re-scores every row, which by design moves how many
-    /// clear the threshold — that is the entire purpose of the pack. The status line
-    /// was written only by <c>LoadAsync</c>, so the panel kept reporting the PREVIOUS
-    /// scoring's "above threshold: N" underneath a grid scored the other way.
+    /// clear the threshold — that is the entire purpose of the pack. A status line
+    /// written only by <c>LoadAsync</c> keeps reporting the PREVIOUS scoring's "above
+    /// threshold: N" underneath a grid scored the other way.
     ///
-    /// <para>Distinct from Z1 (the re-score not running); here the re-score runs and
-    /// the report does not follow.</para>
+    /// <para>Distinct from a dropped toggle (the re-score not running); here the
+    /// re-score runs and the report must follow.</para>
     /// </summary>
     [Fact]
     public async Task Rescore_updates_the_above_threshold_count_in_the_status_line()
@@ -934,7 +929,7 @@ public class InterestingFunctionsViewModelTests
     }
 
     // ==================================================================
-    // Audit #5 Z8 — list_all_functions caps silently; say so.
+    // A capped list_all_functions must say so.
     // ==================================================================
 
     [Fact]
@@ -953,15 +948,14 @@ public class InterestingFunctionsViewModelTests
     }
 
     /// <summary>
-    /// A capped walk makes the row count a page, not the pool. Before Z8 the DLL emitted
-    /// no truncation marker at all for this command, so this sentence read as a complete
-    /// census of the game.
+    /// A capped walk makes the row count a page, not the pool. Without the cap named,
+    /// this sentence reads as a complete census of the game.
     /// </summary>
     [Fact]
     public void StatusLine_on_a_capped_scan_names_the_cap_and_no_lever_already_applied()
     {
-        // [A4-GAMEONLY-ADVICE] INVERTED. This panel scans with Game Only ON by default, so advising to tick it offered a
-        // lever the scan had already used -- under a label ("Game classes only") the panel does not even show.
+        // [A4-GAMEONLY-ADVICE] This panel scans with Game Only ON by default, so advising to tick it would offer a lever
+        // the scan has already used -- under a label ("Game classes only") the panel does not even show.
         var s = InterestingFunctionsViewModel.BuildStatusLine(
             new InterestingFunctionsViewModel.LoadScanFacts(
                 100_000, 9_000, 2_100, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000, GameOnly: true),
@@ -998,8 +992,8 @@ public class InterestingFunctionsViewModelTests
 
     /// <summary>
     /// The class-noise picker presents per-class hit counts as a census of the result.
-    /// On a capped walk they are a lower bound, and until Z8 there was no flag to pass —
-    /// so the en.axaml string "⚠ Counts are partial" could never appear on this panel.
+    /// On a capped walk they are a lower bound, so the load must pass the flag that makes
+    /// the en.axaml string "⚠ Counts are partial" appear on this panel.
     /// </summary>
     [Fact]
     public async Task Capped_load_marks_the_class_noise_picker_counts_as_partial()

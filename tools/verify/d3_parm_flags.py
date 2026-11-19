@@ -1,12 +1,12 @@
 r"""D3 -- walk_functions' `parm` flag on a running game: two reads of one fact must agree.
 
     py tools/verify/d3_parm_flags.py [--label NAME] [--max-classes 3000] [--min-locals 10]
-    (a host running and injected with a DLL from build 3622 or later; never while the UI holds the pipe)
+    (a host running and injected with a DLL that has [EXTPR-539-540-2026-10-02] D3; never while the UI holds the pipe)
 
 TWO READS. Since [EXTPR-539-540-2026-10-02] D3 every walk_functions entry carries `parm`, read from that
 property's own CPF_Parm bit. UE records the same fact a second way, on the UFunction: NumParms is the number
 of leading CPF_Parm properties and ParmsSize the end of the parameter block. A Blueprint function's chain
-also holds its locals after the parameters (the 2026-08 Y1 trap), and those must come back `parm: false`.
+also holds its locals after the parameters, and those must come back `parm: false`.
 
 ASSERTIONS
   (a) every entry carries a boolean `parm`. Missing = the DLL answering predates D3: a stale build, and

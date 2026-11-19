@@ -263,17 +263,16 @@ public static class CeInjectScriptGenerator
         // ⛔⛔ DID *WE* START IT? This guard, not the symbol probe below, is what stops
         // the disable tearing down somebody else's pipe.
         //
-        // The probe below answers "is a DLL loaded", and the original B30 fix mistook
-        // that for "did we load it". In the exact case B30 was filed about — a proxy
-        // already loaded and serving — the probe SUCCEEDS, because all four proxy .def
-        // files export UE5_StopPipeServer. So the quiet no-op was skipped and
-        // UE5_Shutdown ran against a pipe this record never started, ~50 ms after the
-        // enable block told the user to go and connect to it.
+        // The probe below answers "is a DLL loaded", not "did we load it". With a proxy
+        // already loaded and serving, the probe SUCCEEDS, because all four proxy .def
+        // files export UE5_StopPipeServer. Gated on the probe alone, the quiet no-op
+        // would be skipped and UE5_Shutdown would run against a pipe this record never
+        // started, ~50 ms after the enable block told the user to go and connect to it.
         //
-        // ⚠ And the untick is what fired it: memrec.Active = false RUNS this block, so
-        // the enable branch that unticks "so the disable can never run UE5_Shutdown"
-        // was invoking the very thing it meant to prevent; deferring the untick made it
-        // automatic rather than needing the user. [B30-REOPEN].
+        // ⚠ And the untick is what fires it: memrec.Active = false RUNS this block, so
+        // an enable branch that unticks "so the disable can never run UE5_Shutdown"
+        // would invoke the very thing it means to prevent, and the deferred untick
+        // makes that automatic rather than needing the user. [B30-REOPEN].
         Line(sb, "-- Only tear down what THIS record started. An enable-path bail-out unticks");
         Line(sb, "-- the record, which RUNS this block -- and a proxy that was already serving");
         Line(sb, "-- exports UE5_StopPipeServer too, so the probe below cannot tell the two");

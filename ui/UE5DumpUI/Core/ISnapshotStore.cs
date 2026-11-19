@@ -34,7 +34,7 @@ public interface ICaptureSession : IAsyncDisposable
     /// stamp object/field totals, end the row's in-progress mark (so it is listed),
     /// and write the per-class pivot counts (class_counts)
     /// INCREMENTALLY from per-class distinct GObjects-index sets accumulated while writing —
-    /// replacing the ~10 s <c>COUNT(DISTINCT) GROUP BY ×2</c> the lazy build runs. Call once,
+    /// in place of the <c>COUNT(DISTINCT) GROUP BY ×2</c> the lazy build runs. Call once,
     /// after the last <see cref="WriteChunk"/> and before disposing. The lazy GROUP-BY build
     /// (<c>EnsurePivotIndexAsync</c>) remains the fallback for snapshots NOT captured via a
     /// session. <paramref name="isUsable"/> false marks the capture temporally
@@ -171,7 +171,7 @@ public interface ISnapshotStore
     /// (2–4) fields, each satisfying its OWN per-snapshot predicate chain across
     /// <see cref="SpcGroupQuery.SnapshotIds"/> (≥ 2), at DISTINCT offsets. The
     /// N-snapshot, object-aware generalisation of Snapshot Group Match Mode B (the
-    /// <c>Orden</c>-reuse seam group-value-scan-spec §3.1 reserved for SPC). Reuses the
+    /// <c>Orden</c>-reuse seam group-value-scan-spec §3.1 names for SPC). Reuses the
     /// SPC intersection load + <see cref="Services.SpcEngine"/> for the per-slot chains
     /// + <see cref="Services.GroupMatch"/> for the SDR. Pure SQL fetch — no DLL/pipe.</summary>
     Task<SpcGroupResult> SpcGroupQueryAsync(SpcGroupQuery query, CancellationToken ct = default);
@@ -211,7 +211,7 @@ public interface ISnapshotStore
     /// docs/experimental-snapshot-spc-pivot.md §"Phase C".</summary>
     Task<PivotResult> PivotAsync(PivotQuery query, CancellationToken ct = default);
 
-    // --- Phase C6: array-element pivot (struct-array inner-key join) ---
+    // --- Array-element pivot (struct-array inner-key join) ---
 
     /// <summary>Classes in a snapshot that captured struct-array elements
     /// (array_field rows), with owner-instance counts — the array-pivot class
@@ -253,16 +253,16 @@ public interface ISnapshotStore
     Task<int> EnforceCountAsync(int keepNewest, CancellationToken ct = default)
         => Task.FromResult(0);
 
-    // --- N1: per-game, per-tab class denylists (noise picker) ---
+    // --- Per-game, per-tab class denylists (noise picker) ---
 
     /// <summary>Read the active game's class denylist for one tab
     /// (<paramref name="scope"/>). Returns an empty set when no game is active or
     /// the denylist file is absent / malformed (defensive — never throws on a
-    /// missing/corrupt file). The three scopes are independent. Ordinal comparison.</summary>
+    /// missing/corrupt file). The scopes are independent. Ordinal comparison.</summary>
     HashSet<string> GetClassDenylist(DenylistScope scope);
 
     /// <summary>Persist the active game's class denylist for one tab
-    /// (<paramref name="scope"/>), preserving the other two tabs' lists (atomic
+    /// (<paramref name="scope"/>), preserving the other tabs' lists (atomic
     /// temp-then-rename write). No-op when no game is active. Pass an empty set to
     /// clear that tab's picks. Ordinal comparison. Set is copied — caller's set is
     /// not retained.</summary>

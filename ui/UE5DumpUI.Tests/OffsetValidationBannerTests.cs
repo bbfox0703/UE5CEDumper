@@ -8,12 +8,12 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Offset-validation banner — audit #5 U3/X3.
+/// Offset-validation banner.
 ///
-/// The DLL has always published a three-flag verdict on <c>get_offsets</c>
-/// (<c>validated</c> / <c>probe_ran</c> / <c>fallback_reason</c>) and the UI issued the
-/// command nowhere, so nothing could tell the user that Live Walker values, exports and
-/// Force/Freeze writes were all derived from unmeasured UE-version defaults.
+/// The DLL publishes a three-flag verdict on <c>get_offsets</c>
+/// (<c>validated</c> / <c>probe_ran</c> / <c>fallback_reason</c>). Unless the UI issues
+/// the command, nothing can tell the user that Live Walker values, exports and
+/// Force/Freeze writes are all derived from unmeasured UE-version defaults.
 ///
 /// Two things are pinned here: that the verdict is actually FETCHED and carried into
 /// <see cref="EngineState"/>, and that a missing verdict stays silent rather than crying
@@ -50,7 +50,7 @@ public class OffsetValidationBannerTests
 
         var state = await svc.GetPointersAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains("get_offsets", seen);   // the command had zero clients before X3
+        Assert.Contains("get_offsets", seen);   // the verdict is FETCHED, not only parsed
         Assert.False(state.OffsetsValidated);
         Assert.True(state.OffsetsProbeRan);
         Assert.Equal("unmeasured:elemsize", state.OffsetsFallbackReason);
@@ -207,7 +207,7 @@ public class OffsetValidationBannerTests
     [InlineData("")]          // an older DLL: absent reads as fine
     public void ADetectedForcedOrUnsaidStride_ShowsNoBadge(string detect)
     {
-        // The control, green before and after.
+        // The control: a stride that is not a guess shows no badge.
         Assert.False(VmWithStride(detect).ShowStrideGuessBadge);
     }
 

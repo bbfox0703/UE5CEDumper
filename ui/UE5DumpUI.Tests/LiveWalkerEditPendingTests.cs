@@ -7,18 +7,18 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [A4-EDIT-STALE-PENDING] Reopening an edited Live Walker cell and closing it without typing wrote
-/// the PREVIOUS edit into the game again.
+/// [A4-EDIT-STALE-PENDING] Reopening an edited Live Walker cell and closing it without typing must
+/// not write the PREVIOUS edit into the game again.
 ///
 /// <para>The pending text (<c>LiveFieldValue._editableValue</c>) is written only by the editing
 /// template's TwoWay bindings — the TextBox as the user types, the bool ComboBox when the user
-/// picks — and nothing ever reset it. Since [LWREFRESH-2026-08-21] the
-/// row object survives the post-commit refresh, so the last typed text survived with it: type 250
-/// into Health and commit, the game drops Health to 57, double-click the cell and press Enter
-/// without typing, and 250 is written again with "Written: Health = 250". Escape, reopen and Enter
-/// did the same with no refresh at all.</para>
+/// picks. Since [LWREFRESH-2026-08-21] the row object survives the post-commit refresh, so without
+/// a reset the last typed text survives with it: type 250 into Health and commit, the game drops
+/// Health to 57, double-click the cell and press Enter without typing, and 250 would be written
+/// again with "Written: Health = 250". Escape, reopen and Enter would do the same with no refresh
+/// at all.</para>
 ///
-/// <para>The recorded safe fix resets the pending text when an edit BEGINS. That hook lives in the
+/// <para>The pending text is reset when an edit BEGINS. That hook lives in the
 /// view's code-behind (<c>FieldGrid_BeginningEdit</c>), which no VM test can drive, so the
 /// semantics are pinned on <see cref="LiveFieldValue"/> and the hook is pinned by reading the
 /// code-behind back (the <c>ClassListCapTests</c> pattern).</para>
@@ -45,8 +45,8 @@ public class LiveWalkerEditPendingTests
     [Fact]
     public void TheLastTypedValue_SurvivesASameObjectRefresh_ByDesign()
     {
-        // The negative control for the recorded UNSAFE fix: the refresh's copy must NOT reset the
-        // pending text, or a refresh landing mid-edit would drop what the user is typing.
+        // The negative control for resetting in the wrong place: the refresh's copy must NOT reset
+        // the pending text, or a refresh landing mid-edit would drop what the user is typing.
         var row = Health("100");
         row.EditableValue = "250";   // the editor's TwoWay binding, as the user types
         row.CopyLiveValuesFrom(Health("57"));
@@ -69,11 +69,11 @@ public class LiveWalkerEditPendingTests
     [Fact]
     public void WhileTextIsPending_TheGetterReturnsIt_SoTheBindingDoesNotDropARetypedKeystroke()
     {
-        // [LW-EDIT-RETYPE-DROP] Measured on build 3568 (DumperTestActor.I32 showing 1234568):
-        // retyping 1234568 key by key and pressing Enter wrote 123456. The TwoWay binding re-reads
-        // this getter after each value it writes and skips a keystroke whose text equals what it
-        // last read; with the getter returning the LIVE value, the final keystroke of a retype
-        // matched it and never reached the setter. The getter must follow what the user typed.
+        // [LW-EDIT-RETYPE-DROP] The TwoWay binding re-reads this getter after each value it writes
+        // and skips a keystroke whose text equals what it last read. With the getter returning the
+        // LIVE value, the final keystroke of a retype would match it and never reach the setter:
+        // retyping 1234568 key by key over a field showing 1234568 and pressing Enter would write
+        // 123456. The getter must follow what the user typed.
         var row = Health("1234568");
         row.ResetPendingEdit();
         Assert.Equal("1234568", row.EditableValue);   // the editor still opens on the live value
@@ -86,11 +86,10 @@ public class LiveWalkerEditPendingTests
     [Fact]
     public void ClearingTheBox_ReadsBackEmpty_NotTheLiveValue()
     {
-        // [LW-EDIT-RETYPE-DROP] The first fix returned the pending text only when NON-EMPTY, so
-        // deleting the last character made the getter fall back to the live value and the binding
-        // put it straight back into the box: measured on build 3569, "567" -> Delete x3 -> the box
-        // read "1234567" again, and the user could not empty it. Once the editor has written, even
-        // an empty string is what the box holds.
+        // [LW-EDIT-RETYPE-DROP] Once the editor has written, even an empty string is what the box
+        // holds. A getter that returned the pending text only when NON-EMPTY would fall back to the
+        // live value when the last character is deleted, and the binding would put it straight back
+        // into the box ("567" -> Delete x3 -> "1234567"): the user could not empty it.
         var row = Health("1234567");
         row.ResetPendingEdit();
         row.EditableValue = "567";
@@ -104,7 +103,7 @@ public class LiveWalkerEditPendingTests
     [Fact]
     public void ADeliberateReType_OfTheCurrentValue_IsStillPending()
     {
-        // Why the fix is a reset and not a "same as current? skip" comparison: typing the value the
+        // Why the guard is a reset and not a "same as current? skip" comparison: typing the value the
         // game already holds is a real request (e.g. to write it back after the game changed it
         // between the read and the keystroke), and a comparison would drop it silently. This pins
         // the MODEL half; TheCommitHook_… pins the commit half in the code-behind.
@@ -141,9 +140,9 @@ public class LiveWalkerEditPendingTests
         Assert.True(reset > vetoEnd, "ResetPendingEdit must run after the non-editable veto block, not inside it");
     }
 
-    /// <summary>The commit half of the "no same-as-current comparison" control. The recorded-UNSAFE
-    /// alternative fix compared the pending text against the current value, and the natural place
-    /// to add it is where the commit is decided — FieldGrid_CellEditEnded — not the model. So pin
+    /// <summary>The commit half of the "no same-as-current comparison" control. A comparison of the
+    /// pending text against the current value would drop a deliberate re-type, and the natural place
+    /// to add one is where the commit is decided — FieldGrid_CellEditEnded — not the model. So pin
     /// that the commit decision is exactly "a non-empty pending value", and reads nothing current.</summary>
     [Fact]
     public void TheCommitHook_CommitsAnyNonEmptyPendingValue_WithNoSameAsCurrentComparison()
@@ -159,7 +158,7 @@ public class LiveWalkerEditPendingTests
         // "" is the write-nothing signal a reset leaves behind; drop this guard and every
         // open-and-close would try to write an empty value.
         Assert.Contains("!string.IsNullOrEmpty(newValue)", code);
-        // The recorded-unsafe shape would read the current value here. ("GetPendingEditValue" does
+        // A same-as-current comparison would read the current value here. ("GetPendingEditValue" does
         // not contain either substring.)
         Assert.DoesNotContain("EditableValue", code);
         Assert.DoesNotContain("TypedValue", code);

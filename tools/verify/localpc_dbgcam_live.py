@@ -4,10 +4,10 @@ r"""[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local-PlayerController fallb
     py tools/verify/localpc_dbgcam_live.py [--process DumperTest58] [--timeout-ms 200]
 
 Written for the row [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] (docs/todo.md): the one case where the derivation scan
-answers differently from the substring scan it replaced. With the Debug Camera on, LocalPlayers[0].PlayerController
-IS the debug camera controller (DCC) -- pawnless -- and UPlayer::SwitchController has taken the local player away from
-the original PlayerController. The old scan found no PC with a Player and fell back to the original one "WITHOUT
-Player check"; the new one takes the ACTIVE DCC (it holds the LocalPlayer, as the intact chain gives it), and every
+answers differently from a substring scan. With the Debug Camera on, LocalPlayers[0].PlayerController IS the debug
+camera controller (DCC) -- pawnless -- and UPlayer::SwitchController has taken the local player away from the original
+PlayerController. A substring scan would find no PC with a Player and fall back to the original one "WITHOUT Player
+check"; the derivation scan takes the ACTIVE DCC (it holds the LocalPlayer, as the intact chain gives it), and every
 caller but Wirbel's POV hops it back to the original PC. localpc_fallback_live.py cannot run here: its baseline needs a
 pawn on PC0, which a DCC has not.
 

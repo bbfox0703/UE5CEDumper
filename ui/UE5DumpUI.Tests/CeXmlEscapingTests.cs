@@ -9,11 +9,11 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// The exported CE table must be well-formed XML no matter what the game's strings
-/// contain (audit #4 B3).
+/// contain.
 ///
 /// <para>Description text is arbitrary game memory — TMap keys, TSet elements,
-/// soft-object paths, DataTable row names. A single <c>&amp;</c> anywhere in it used
-/// to produce an invalid entity reference, and Cheat Engine rejects the <b>whole
+/// soft-object paths, DataTable row names. A single unescaped <c>&amp;</c> anywhere in
+/// it is an invalid entity reference, and Cheat Engine rejects the <b>whole
 /// document</b>: a multi-thousand-entry export imports as nothing, with no indication
 /// which record was at fault. A <c>TMap</c> key like <c>Bow &amp; Arrow</c> is the kind
 /// of thing that hits this on an ordinary game.</para>
@@ -21,9 +21,8 @@ namespace UE5DumpUI.Tests;
 /// <para>These tests parse the output with <see cref="XDocument"/> rather than
 /// string-matching for entities. Asserting on <c>"&amp;amp;"</c> would pass for output
 /// that is still malformed somewhere else; asking a real parser is the property that
-/// actually matters — and it is exactly the check nothing in this suite performed
-/// before. <c>CheatTableBuilder</c> escaped its output, <c>CeXmlExportService</c> did
-/// not, and no test noticed the difference.</para>
+/// actually matters. <c>CeXmlExportService</c> escapes on its own, apart from
+/// <c>CheatTableBuilder</c>, so it needs its own parse check.</para>
 /// </summary>
 public class CeXmlEscapingTests
 {
@@ -106,14 +105,12 @@ public class CeXmlEscapingTests
         Assert.NotNull(XDocument.Parse(xml).Root);
     }
 
-    // ----- <DropDownList> bodies (audit #5 W4) --------------------------------
+    // ----- <DropDownList> bodies ------------------------------------------------
     //
     // Every test above puts the game string in a map KEY, which lands in <Description>.
-    // That is the whole reason this defect survived audit #4 B3: the escaping was added
-    // to Descriptions, and the OTHER place a game string reaches the XML — the
-    // <DropDownList> body, built from FName / enum-name / element-value text — kept
-    // interpolating raw. The suite passed throughout because nothing in it reached that
-    // path. These tests reach it.
+    // The OTHER place a game string reaches the XML is the <DropDownList> body, built from
+    // FName / enum-name / element-value text, and escaping Descriptions says nothing about
+    // it. These tests reach that path.
 
     /// <summary>A TMap whose VALUE is an FName: map values of NameProperty are routed
     /// into a DropDownList rather than a Description.</summary>
@@ -158,7 +155,7 @@ public class CeXmlEscapingTests
     [Fact]
     public void An_ampersand_in_a_dropdown_entry_still_yields_well_formed_xml()
     {
-        // The reproducer for W4. Before the fix this threw
+        // The minimal reproducer: a raw '&' in a dropdown body makes the parse throw
         // XmlException: "An error occurred while parsing EntityName".
         var doc = XDocument.Parse(Xml(NameValuedMap("Bow & Arrow", "Plain")));
         Assert.NotNull(doc.Root);

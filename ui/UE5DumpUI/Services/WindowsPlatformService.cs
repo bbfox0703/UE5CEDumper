@@ -48,7 +48,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     /// <summary>Raise the first instance's main window. Matched by PROCESS, not by
     /// window title — the title carries the connected game's module name, so a
     /// title-based search would miss whenever the first instance is connected, which is
-    /// exactly when the user is most likely to double-click the exe again. (B42)</summary>
+    /// exactly when the user is most likely to double-click the exe again.</summary>
     public bool ActivateExistingInstance()
     {
         try
@@ -492,8 +492,8 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     ///
     /// <para>⚠ <c>lpFreeBytesAvailableToCaller</c> is quota-aware and can be smaller than
     /// <c>lpTotalNumberOfFreeBytes</c>. The guard wants the former — space this process may
-    /// actually use — which is also what <c>DriveInfo.AvailableFreeSpace</c> returned, so
-    /// keeping it preserves the previous behaviour on non-mounted paths.</para>
+    /// actually use — which is also what <c>DriveInfo.AvailableFreeSpace</c> returns, so on
+    /// a non-mounted path the two agree.</para>
     /// </summary>
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDiskFreeSpaceExW",
                SetLastError = true, ExactSpelling = true)]
@@ -987,9 +987,9 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
             // POLICY FIRST. SHQueryRecycleBin below reports on the bin's CONTENTS and is
             // structurally incapable of reporting on whether the bin is switched on: a
             // volume with NukeOnDelete=1 still answers S_OK, because the stale
-            // $RECYCLE.BIN folder and its leftover items are still there. Measured
-            // 2026-08-12 -- see RecycleBinPolicy for the end-to-end capture, including the
-            // FOF_ALLOWUNDO delete that returned success while destroying the file.
+            // $RECYCLE.BIN folder and its leftover items are still there. See
+            // RecycleBinPolicy for the end-to-end capture, including a FOF_ALLOWUNDO
+            // delete that returns success while destroying the file.
             var guid = RecycleBinPolicy.VolumeGuidFromVolumeName(VolumeNameFor(root));
             if (RecycleBinPolicy.IsDisabled(
                     ReadDword(Registry.LocalMachine, RecycleBinPolicy.PoliciesExplorerKey, "NoRecycleFiles"),
@@ -1094,7 +1094,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
             // Refuse instead. The caller logs the refusal; this layer stays free of a logging
             // dependency.
             //
-            // A DriveType test is NOT a recycler test — that was the whole defect (B13/B41). A
+            // A DriveType test is NOT a recycler test. A
             // fixed drive can have the recycler disabled per-volume (`NukeOnDelete=1`, or Group
             // Policy), and then FOF_ALLOWUNDO is best-effort with no way to tell after the fact.
             // Ask the shell directly instead, via the volume the path actually lives on.

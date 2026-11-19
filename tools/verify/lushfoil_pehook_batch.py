@@ -2,23 +2,23 @@ r"""PEHOOKONCE step 3 (literal pre-scan form) + PEHOOK step 4 — one Lushfoil l
 
     py tools/verify/lushfoil_pehook_batch.py
 
-BOTH are genuinely open, and each is a *different* leftover from an earlier run:
+Each checks something the other evidence does not:
 
-  PEHOOKONCE 3  recorded as "partially covered, and stated honestly": the no-storm grep was taken
-                AFTER the scan, where exactly one `detection run N/8` is correct and expected. The
-                row asks for it after step 1 and **before any scan**, where the answer must be
-                **zero** — nothing to detect must not spend a retry. That literal form is run here.
+  PEHOOKONCE 3  the no-storm grep taken after step 1 and **before any scan**, where the answer must
+                be **zero** — nothing to detect must not spend a retry. AFTER the scan exactly one
+                `detection run N/8` is correct and expected, so a grep there does not answer the
+                row. That literal pre-scan form is run here.
   PEHOOK 4      the non-regression check that the pattern path is untouched on a known-good title:
                 `Add_IntInt(3,4) = 7`, the hook stays installed, and **no** `VALIDATION FAILED`.
-                PEHOOKONCE 4's evidence recorded `hook_active: true` and `vtable+0x260` but neither
-                the invoke result nor the absence of the failure line, so it does not cover this.
+                `hook_active: true` and `vtable+0x260` alone show neither the invoke result nor the
+                absence of the failure line, so they do not cover this.
 
 ORDER MATTERS AND IS THE TEST. The pre-scan window exists only before the first `trigger_scan`, so
 PEHOOKONCE 3 must run first; PEHOOK 4 then needs the scan. One launch, in that order, no restart.
 
-⚠ This deliberately performs the profiler-before-scan sequence that USED to poison the PE hook for
-the whole process. That is the point of PEHOOKONCE — and PEHOOK 4, run afterwards in the same
-process, is what proves the poisoning no longer happens.
+⚠ This deliberately performs the profiler-before-scan sequence that poisons the PE hook for the
+whole process in a DLL without the PEHOOKONCE fix. That is the point of PEHOOKONCE — and PEHOOK 4,
+run afterwards in the same process, is what proves the poisoning does not happen.
 
 ⚠ Proxy mode is required and is asserted, not assumed: GObjects must read unresolved before the
 scan, or the "nothing to detect yet" window never existed and step 3 is vacuous.

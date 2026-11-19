@@ -207,8 +207,8 @@
               Foreground="#C586C0"
               Padding="8,4"/>
       <!-- Consolidated export options: memory-record Description format (+Offset /
-           +Type) plus the AOB / Collapse chain / Guess? toggles that used to be inline
-           checkboxes. The AOB item keeps its IsEnabled=CanUseAobSymbol gray-out and the
+           +Type) plus the AOB / Collapse chain / Guess? toggles, in one drop-down rather
+           than inline checkboxes. The AOB item keeps its IsEnabled=CanUseAobSymbol gray-out and the
            Guess? item keeps reflecting the VM's auto-check (SetFillGapsSilently). -->
       <DropDownButton Content="{StaticResource str.LiveWalker.ExportOptions}"
                       IsVisible="{Binding HasData}"
@@ -217,7 +217,7 @@
         <DropDownButton.Flyout>
           <!-- MenuFlyout + checkable MenuItems: same proven pattern as Export CSX,
                with reliable DataContext inheritance and TwoWay IsChecked write-back
-               (a plain Flyout's content did NOT reliably write the toggles back). -->
+               (a plain Flyout's content does NOT reliably write the toggles back). -->
           <MenuFlyout Placement="Bottom">
             <MenuItem Header="{StaticResource str.LiveWalker.DescShowOffset}"
                       ToggleType="CheckBox" IsChecked="{Binding DescShowOffset, Mode=TwoWay}"
@@ -323,8 +323,8 @@
       <StackPanel Spacing="2">
         <StackPanel Orientation="Horizontal" Spacing="8">
           <!-- AOT: bind TextBlock.Text directly, NOT via a child <Run Text=...>.
-               A single-binding <Run> inside <TextBlock> StackOverflows under
-               Native AOT (aot-pitfalls.md §0.25 / §4.10). -->
+               A single-binding <Run> inside <TextBlock> overflows the stack
+               under Native AOT. -->
           <TextBlock Foreground="#569CD6" FontWeight="Bold" Text="{Binding CurrentClassName}"/>
           <TextBlock Foreground="#D4D4D4" Text="{Binding CurrentObjectName}"/>
           <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12" Text="{Binding CurrentAddress}"/>
@@ -520,11 +520,11 @@
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#AAB8D0" FontSize="11" Margin="4,0,0,2"
                IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-    <!-- Failure surface. This panel's VM calls SetError 28 times — including the
-         refresh path's 10 s hard timeout — and NOTHING rendered ErrorMessage, so a
-         dead refresh was pixel-identical to a live one while stale values kept
-         showing. ClearStatus() had already blanked StatusText above, so there was
-         not even a leftover line to contradict. (audit #5 U1/V7) -->
+    <!-- Failure surface. This panel's VM calls SetError on many paths — the
+         refresh path's 10 s hard timeout among them — and without this TextBlock a
+         dead refresh would be pixel-identical to a live one while stale values kept
+         showing. ClearStatus() blanks StatusText above, so there would not even be
+         a leftover line to contradict. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
                Foreground="#F48771" FontSize="11.5" TextWrapping="Wrap"
                Margin="4,0,4,2"
@@ -550,17 +550,15 @@
               SelectionChanged="FieldGrid_SelectionChanged">
       <!-- Row tint and dimming, bound to the ROW ITEM. [LWREFRESH-2026-08-21]
 
-           This replaces FieldGrid_LoadingRow, which set Row.Background/Foreground imperatively.
-           That handler runs only when a row is REALIZED, which was fine while every refresh
-           replaced the row objects — and stopped being fine the moment the refresh started reusing
-           them so the grid would stop scrolling up a row per Refresh.
+           Not a LoadingRow handler setting Row.Background/Foreground imperatively: that runs only
+           when a row is REALIZED, and the refresh reuses the row objects (so the grid does not
+           scroll up a row per Refresh), so a reused row's tint would not follow its item.
 
-           ⚠ The handler could NOT be kept as a fallback: `e.Row.Background = …` writes at
+           ⚠ Nor such a handler as a fallback: `e.Row.Background = …` writes at
            LocalValue priority, which outranks a Style setter, so even its Transparent branch would
-           have pinned every non-matching row and this binding would never have shown. It is
-           deleted, not disabled.
+           pin every non-matching row and this binding would never show.
 
-           Colours are the same three the handler used: #3CFFC800 tint, #666666 guessed, #D4D4D4
+           Colours: #3CFFC800 tint, #666666 guessed, #D4D4D4
            normal. Selection still paints over the tint, because the DataGridRow theme drives
            :selected from its own BackgroundRectangle rather than from Background. -->
       <DataGrid.Styles>
@@ -595,8 +593,8 @@
                             Binding="{Binding Name}" SortMemberPath="Name"
                             Width="220" MinWidth="140" IsReadOnly="True"/>
         <!-- A TemplateColumn only so the cell has an element to hang ToolTip.Tip on;
-             a DataGridTextColumn's Binding= has none. 115px clips readily — the case
-             that prompted it was "DataTableRows" rendering as "DataTableRo", and UE
+             a DataGridTextColumn's Binding= has none. 115px clips readily —
+             "DataTableRows" renders as "DataTableRo", and UE
              type names are long by nature (SoftObjectProperty,
              MulticastInlineDelegateProperty). Same [V8PREVIEWCLIP-2026-08-23] shape as
              the Value column beside it, which is why this template is deliberately
@@ -626,7 +624,7 @@
                    with nothing on screen saying so. [V8PREVIEWCLIP-2026-08-23] — a
                    DataTable's "showing 64 of 100" badge is appended after
                    "{DataTable: 100 rows, <struct>}", which alone overflows, so the
-                   badge could not be read at the default width on any table.
+                   badge cannot be read at the default width on any table.
                    Bound to ValueTooltip (null when empty), NOT to DisplayValue, so a
                    blank cell does not pop an empty tooltip. -->
               <TextBlock Text="{Binding DisplayValue}"
@@ -902,10 +900,9 @@
                   ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncFilterClear}"/>
           <TextBlock VerticalAlignment="Center" Foreground="#888" FontSize="11"
                      Text="{Binding Functions.Count, StringFormat='{}{0} shown'}"/>
-          <!-- AOBMaker availability indicator — single place (build 688).
-               Previously this lived in a Notes column repeated per-row,
-               which was pure noise. Visible only when the plugin isn't
-               reachable. -->
+          <!-- AOBMaker availability indicator — in one place, not in a Notes
+               column repeated per row, which is pure noise. Visible only when
+               the plugin isn't reachable. -->
           <TextBlock Text="{Binding AobMakerNote}"
                      IsVisible="{Binding AobMakerNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                      Foreground="#E0A050"
@@ -998,10 +995,10 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <!-- (Build 688) Notes column removed — the value was identical
+          <!-- No Notes column — its value would be identical
                on every row (VM-level AOBMaker status). The function-list
                toolbar above the grid carries the same indicator when the
-               plugin isn't reachable, so per-row repetition was pure noise. -->
+               plugin isn't reachable, so per-row repetition would be pure noise. -->
         </DataGrid.Columns>
       </DataGrid>
       </DockPanel>

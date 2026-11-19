@@ -2,12 +2,12 @@
 
     py tools/verify/l12_strparams_leak.py
 
-THE FIX UNDER TEST (7f3898ff, "DLL LOW batch - L1/L5/L8/L10/L12"): Fern's
-invoke_function parses `str_params` in a loop, `malloc`ing one buffer per element and
-pushing it to `strAllocs`. A malformed element throws a nlohmann `type_error` mid-loop,
-which used to unwind PAST the free loop at the bottom - so every buffer an EARLIER
-iteration allocated leaked. The fix wraps the loop in try/catch, frees `strAllocs` and
-rethrows (Fern.cpp:5356 / :5403-5409).
+THE GUARD UNDER TEST: Fern's invoke_function parses `str_params` in a loop, `malloc`ing one
+buffer per element and pushing it to `strAllocs`. A malformed element throws a nlohmann
+`type_error` mid-loop, which, unguarded, unwinds PAST the free loop at the bottom - so every
+buffer an EARLIER iteration allocated leaks. The handler wraps the loop in try/catch, frees
+`strAllocs` and rethrows (the `catch (...)` after the `str_params` loop in Fern.cpp's
+`CMD_INVOKE_FUNCTION` handler).
 
 THE DISCRIMINATING INPUT, and it is the whole design. The throw must land AFTER at least
 one successful allocation, or there is nothing to leak and the test is vacuous either way:
@@ -16,14 +16,15 @@ one successful allocation, or there is nothing to leak and the test is vacuous e
                    {off:0, wide:true, text: 12345          } ] <- `sp.value("text","")`
                                                                   throws type_error.302
 
-`parms_size` is caller-supplied (`Fern.cpp:5283`), so we declare 64 bytes to satisfy the
-loop's `off + 16 > paramBuf.size()` bounds check. The throw happens during PARSING, before
-`paramPtr` is formed (:5411) and long before `UE5_CallProcessEventEx` (:5429) - so no
-UFunction is ever invoked and the target function is irrelevant.
+`parms_size` is caller-supplied (the handler's `request.value("parms_size", 0)`), so we
+declare 64 bytes to satisfy the loop's `off + 16 > paramBuf.size()` bounds check. The throw
+happens during PARSING, before `paramPtr` is formed and long before the call to
+`UE5_CallProcessEventEx` - so no UFunction is ever invoked and the target function is
+irrelevant.
 
 ⭐ WHY THERE IS A POSITIVE CONTROL. The expected result is "memory did not grow", and an
 absence proves nothing unless the detector is shown able to fire. So the rig FIRST spawns
-300 holder actors and requires PrivateUsage to rise. Only after that number moves does a
+3000 holder actors and requires PrivateUsage to rise. Only after that number moves does a
 flat reading during the leak phase mean anything.
 
 Private bytes come from psapi GetProcessMemoryInfo (PROCESS_MEMORY_COUNTERS_EX.PrivateUsage)
@@ -96,9 +97,9 @@ def main(argv=None):
         after = private_mb(pid)
         print("[1] CONTROL spawn 3000 holders: %.1f -> %.1f MB  (delta %+.1f)"
               % (before, after, after - before))
-        # ⚠ CALIBRATION, not an arbitrary number. 300 actors was the first attempt and moved
-        # the probe +0.0 MB -- NOT because the probe is blind but because ~600 KB is under the
-        # noise floor of a 3 GB process (idle drift measured at ~0.2 MB between reads). The
+        # ⚠ CALIBRATION, not an arbitrary number. 300 actors move the probe +0.0 MB -- NOT
+        # because the probe is blind but because ~600 KB is under the noise floor of a 3 GB
+        # process (idle drift is ~0.2 MB between reads). The
         # control's job is to establish the probe's RESOLUTION relative to the effect under
         # test: 3000 holders moves it ~2.4 MB, and the leak this rig looks for is ~63 MB --
         # a 26x margin. A control the same size as the effect is not required; a control that
@@ -120,11 +121,10 @@ def main(argv=None):
 
         # ⛔ `instance_addr`, NOT `addr`. Fern reads `instance_addr` / `class_name`
         # (Fern.cpp's invoke_function handler) and refuses when neither is present -- well
-        # BEFORE the str_params marshalling loop that this rig exists to test.
-        # This call said `addr=` until 2026-09-09, so every one of its requests was
-        # rejected at the instance guard and the leak path was NEVER ENTERED. The shared
-        # helper two phases above (`ad4_contested.invoke`) had it right all along, which
-        # is why the CONTROL worked and only the measurement was hollow.
+        # BEFORE the str_params marshalling loop that this rig exists to test. With
+        # `addr=` every request is rejected at the instance guard and the leak path is
+        # NEVER ENTERED, while the CONTROL (through the shared `ad4_contested.invoke`
+        # helper two phases above) still works -- so only the measurement goes hollow.
         errs = 0
         wrong_err = 0
         for i in range(a.n):
@@ -155,13 +155,12 @@ def main(argv=None):
         print("[4] after %d malformed invokes: %.1f MB  (delta %+.1f MB); %d error replies"
               % (a.n, end, grew, errs))
 
-        # ANTI-VACUITY. ⛔ THIS USED TO COUNT **ANY** ERROR REPLY, and that is precisely
-        # how it stayed green over a rig that measured nothing: with the wrong parameter
-        # name every request was refused at the instance guard, so `errs == a.n` and the
-        # check was satisfied BY THE VERY ERROR THAT PROVED THE RUN WAS VACUOUS. A guard
-        # firing on the wrong condition is worse than no guard. It now counts only the
-        # "Internal error" replies -- a throw from inside the marshalling loop -- and
-        # refuses outright if any request failed for a different reason.
+        # ANTI-VACUITY. ⛔ COUNTING **ANY** ERROR REPLY WOULD STAY GREEN over a rig that
+        # measures nothing: with a wrong parameter name every request is refused at the
+        # instance guard, so `errs == a.n` and the check is satisfied BY THE VERY ERROR
+        # THAT PROVES THE RUN VACUOUS. A guard firing on the wrong condition is worse than
+        # no guard. It counts only the "Internal error" replies -- a throw from inside the
+        # marshalling loop -- and refuses outright if any request failed for a different reason.
         if wrong_err:
             fails.append("4: %d of %d requests failed BEFORE the str_params loop (first one "
                          "printed above). The marshalling code this rig tests was never "

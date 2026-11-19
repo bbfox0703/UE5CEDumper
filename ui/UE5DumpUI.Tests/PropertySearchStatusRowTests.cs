@@ -9,11 +9,11 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [PROPSEARCH-STATUS-CLIPPED] Property Search's status line gets a row of its own and wraps there.
 ///
-/// <para>[FORCESTATUSCLIP-2026-08-22] made it the fill child of the search row, trimmed with an ellipsis and carrying
-/// the full text as a tooltip. That made the tail recoverable, not readable: the search controls take most of the row,
-/// and measured on build 3682 in a 1389-px window, a Force armed on nothing showed "... no live instance of CheatManager
-/// or..." -- everything that says the hold is working as intended, and the templates-only note after it, sat behind a
-/// hover nobody knows to make. Those tails are this panel's honesty clauses ("cap reached, more exist unheld" too).</para>
+/// <para>Left as the fill child of the search row ([FORCESTATUSCLIP-2026-08-22]), trimmed with an ellipsis and carrying
+/// the full text as a tooltip, the tail would be recoverable, not readable: the search controls take most of the row, and in a
+/// 1389-px window a Force armed on nothing would show "... no live instance of CheatManager or..." -- everything that
+/// says the hold is working as intended, and the templates-only note after it, behind a hover nobody knows to make.
+/// Those tails are this panel's honesty clauses ("cap reached, more exist unheld" too).</para>
 ///
 /// <para>These pin the layout; the acceptance is the screen, recorded in docs/todo.md.</para>
 /// </summary>

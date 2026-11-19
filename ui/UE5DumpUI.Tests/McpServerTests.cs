@@ -7,7 +7,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The MCP server's protocol layer, against the 2025-11-25 revision: the
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP server's protocol layer, against the 2025-11-25 revision: the
 /// handshake, the methods a tools-only server answers, the framing of every line it writes, and cancellation. The tools
 /// themselves are McpToolsTests; the game connection McpGameLinkTests.
 /// </summary>
@@ -160,9 +160,9 @@ public sealed class McpServerTests
     [InlineData(RecentClaudeCode)]
     public async Task Instructions_SayTheUserCanTakeBackAnyHold(string clientVersion)
     {
-        // Measured 2026-11-11 in a Claude Code session: told only that the write tools never replace another's hold,
-        // the AI told the user that the UI and CE "cannot turn off" the god mode it held. The rule binds the server
-        // only; the UI's and CE's changes carry no if_free.
+        // Told only that the write tools never replace another's hold, an AI can tell the user that the UI and CE
+        // "cannot turn off" the god mode it holds. The rule binds the server only; the UI's and CE's changes carry no
+        // if_free.
         string instructions = await InstructionsFor(ClaudeCode, clientVersion);
         Assert.Contains("The rule binds this server only", instructions);
         Assert.Contains("can change or end anything this server holds at any time", instructions);
@@ -177,8 +177,8 @@ public sealed class McpServerTests
     public async Task Instructions_DoNotOverstateTheApprovalOrTheRelease(string clientVersion)
     {
         // [MCP-INSTR-CLAIMS] A model repeats these to the user as reassurance. Only Claude Code reads the
-        // requiresUserInteraction marker, so "the user is asked before each one" was false on every other host; and
-        // "Everything this server turns on is released" left out what stays: Fly's speed / preset / noclip (global
+        // requiresUserInteraction marker, so "the user is asked before each one" is false on every other host; and
+        // "Everything this server turns on is released" leaves out what stays: Fly's speed / preset / noclip (global
         // settings fly_set applies before enable) and whatever write_invoke, write_memory or write_field did.
         string instructions = await InstructionsFor(ClaudeCode, clientVersion);
         Assert.DoesNotContain("the user is asked before each one", instructions);
@@ -204,10 +204,10 @@ public sealed class McpServerTests
         string instructions = await InstructionsFor(ClaudeCode, RecentClaudeCode);
         Assert.Contains(Constants.McpGrantToolToggles, instructions);
         Assert.Contains(Constants.McpGrantToolMovement, instructions);
-        // Phase 1b: the invoke grant and the tool that calls under it, so the model asks for it by name.
+        // The invoke grant and the tool that calls under it, so the model asks for it by name.
         Assert.Contains(Constants.McpGrantToolInvoke, instructions);
         Assert.Contains(Constants.McpInvokeGrantedTool, instructions);
-        // Phase 2: the field grant and its tool, by name too.
+        // The field grant and its tool, by name too.
         Assert.Contains(Constants.McpGrantToolField, instructions);
         Assert.Contains(Constants.McpFieldGrantedTool, instructions);
         // Each per-call exception goes with its own refused grant, and none follows the user's block.
@@ -372,7 +372,7 @@ public sealed class McpServerTests
     public async Task ToolsList_AToolThatAsksEveryTime_CarriesClaudeCodesMarker_AndIsDestructive()
     {
         // Claude Code reads _meta["anthropic/requiresUserInteraction"] and asks before every call, an allow rule and
-        // auto mode included (Stage D2-2); destructiveHint tells any other client the same.
+        // auto mode included; destructiveHint tells any other client the same.
         var rig = new Rig(Echo(), WithRole("write_x", McpToolRole.PerCallWrite));
         await rig.Request("initialize", Init("2025-11-25", ClaudeCode, RecentClaudeCode));
         var tools = (await rig.Request("tools/list", id: 2))["result"]!["tools"]!.AsArray();

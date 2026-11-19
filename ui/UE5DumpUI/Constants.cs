@@ -7,13 +7,13 @@ public static class Constants
 {
     // Named Pipe
     // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid> (Core/PipeTargets builds and
-    // parses the name), so the UI names the game it connects to: with one shared name a client landed on whichever game
-    // listened first, and the two lanes could reach different games.
+    // parses the name), so the UI names the game it connects to: with one shared name a client would land on whichever
+    // game listened first, and the two lanes could reach different games.
     public const string PipeNamePrefix = "UE5DumpBfx_";
     /// <summary>The one name every DLL served before the per-process name. A game whose DLL predates it (typically a
     /// proxy left in its folder) still serves this; the UI never connects to it and says why.</summary>
     public const string LegacyPipeName = "UE5DumpBfx";
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C. The DLL's at-capacity pipe-log line and the holders it carries, read when
+    // [PIPE-PER-PROCESS-2026-11-06] The DLL's at-capacity pipe-log line and the holders it carries, read when
     // every connection is taken: Grimoire.h's PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN / PIPE_HOLDERS_MORE_TOKEN /
     // PIPE_SLOT_FREED_TEXT, pinned equal by PipePerProcessSourceTests.
     public const string PipeAtCapacityText = "pipe instances in use";
@@ -44,7 +44,7 @@ public static class Constants
     public const int HoldsMinDllBuild = 3704;
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
-    // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5
+    // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04]
     // A branch below tells another program's reply apart by its text, because that reply carries no code. The words
     // are the other side's: translated, the match stops and the branch silently takes its other arm. ProtocolTextTests
     // pins the DLL's three to the source that sends them. A proxy DLL left in a game folder outlives a UI upgrade, so
@@ -64,7 +64,7 @@ public static class Constants
     public const string WindowsIoBeingUsed = "being used";
 
     // ── MCP server mode (`UE5DumpUI.exe --mcp`) ─────────────────────────────────────────────────────────
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D. A stdio Model Context Protocol server for an AI client, branched in
+    // [PIPE-PER-PROCESS-2026-11-06] A stdio Model Context Protocol server for an AI client, branched in
     // Program.Main before the single-instance mutex. ⛔ DO NOT LOCALIZE: these are protocol words the client matches.
     /// <summary>The command-line switch that starts the MCP server instead of the window.</summary>
     public const string McpSwitch = "--mcp";
@@ -88,7 +88,7 @@ public static class Constants
     /// each hold (if_free, get_holds) and keeps the user's undo point on an AI's teleport (keep_undo). An older DLL
     /// ignores those keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
     public const int McpMinDllBuildForWrites = 3705;
-    /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through (Stage D2-3): write_mem refuses
+    /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through: write_mem refuses
     /// code and read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
@@ -97,11 +97,11 @@ public static class Constants
     /// ([MCP-WRITE-GRANTS-2026-11-14]). An older DLL ignores the key and runs an explicit OFF, which drops every claim,
     /// the user's and CE's too, so the AI's See-through OFF is refused there.</summary>
     public const int McpMinDllBuildForOwnClaim = 3714;
-    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b): its
+    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14]): its
     /// invoke_function checks a call under a grant (grant, expect_func_full) against the function the grant names, its
     /// parameters and a template. An older DLL ignores both keys and would run whatever function it resolves.</summary>
     public const int McpMinDllBuildForInvokeGrants = 3717;
-    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14] Phase 2): its
+    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14]): its
     /// get_object names the template verdict (template), so write_field can refuse a class default and an archetype. An
     /// older DLL sends no verdict, and an archetype is named like any component.</summary>
     public const int McpMinDllBuildForFieldWrites = 3718;
@@ -122,16 +122,16 @@ public static class Constants
     /// such click on a grant tool would make every later grant silent, so an older or unparseable version gets every
     /// write marked per call instead of grants.</summary>
     public static readonly Version McpClaudeCodeMinVersion = new(2, 1, 246);
-    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name (Phase 0, M10), so each name states what
+    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name, so each name states what
     /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
     public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
     public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
-    /// <summary>Phase 1b's grant: one UFunction, named by its function and class arguments, which the prompt shows.
+    /// <summary>The invoke grant: one UFunction, named by its function and class arguments, which the prompt shows.
     /// </summary>
     public const string McpGrantToolInvoke = "grant_invoke_one_function_any_object_and_args";
     /// <summary>The tool that calls a function an invoke grant names, without a prompt per call.</summary>
     public const string McpInvokeGrantedTool = "write_invoke_granted_function";
-    /// <summary>Phase 2's grant: one field of one class, on every instance of it and its subclasses.</summary>
+    /// <summary>The field grant: one field of one class, on every instance of it and its subclasses.</summary>
     public const string McpGrantToolField = "grant_write_field_one_property_every_instance";
     /// <summary>The tool that writes a field a field grant names, without a prompt per call.</summary>
     public const string McpFieldGrantedTool = "write_field";
@@ -155,7 +155,7 @@ public static class Constants
     /// <summary>See-through's pierce count: the DLL's SCHLACHT_PIERCE_MAX and the UI's box.</summary>
     public const int McpSeeThroughCountMax = 10;
     /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
-    /// prompt shows a call's arguments in full (Phase 0, M1), so the user approves these words, not the model's own.
+    /// prompt shows a call's arguments in full, so the user approves these words, not the model's own.
     /// </summary>
     public const string McpGrantAckToggles =
         "The user asked for this. Until this game run or this session ends, the AI may turn on and off: god mode, "
@@ -192,7 +192,7 @@ public static class Constants
     public const string MirrorLogPrefix = "ui";               // Prefix for mirror files in game folders
     // Retention is by AGE (LogMaxAgeDays), not by generation count. The previous
     // session's -0.log is archived to -YYYYMMDD-HHMMSS.log and aged out from there;
-    // a file count could not express "keep 15 days" because rotation runs on every
+    // a file count cannot express "keep N days" because rotation runs on every
     // startup. Matches Grimoire::LOG_RETENTION_DAYS on the DLL side.
     public const long LogMaxSizeBytes = 8 * 1024 * 1024;     // 8MB per file
 
@@ -207,13 +207,12 @@ public static class Constants
 
     // ---- Log compression (compact /C /EXE:LZX, in place) -------------------------
     //
-    // Retention bounds the AGE of the log corpus, not its SIZE: 21 days of multi-game
-    // sessions measured 111.9 MB. LZX took the eligible 102.05 MB of that to 7.98 MB
-    // (12.8:1) in 2.8 s, and left LastWriteTime untouched on all 289 files — which is why
+    // Retention bounds the AGE of the log corpus, not its SIZE, and archived logs compress
+    // well under LZX. Compression leaves LastWriteTime untouched — which is why
     // PruneAgedLogs needs no change. Numbers + traps: docs/log-compression-eval.md.
     //
-    // Size floor: 347 of 698 files were <= 4 KB and held 0.4 MB between them — half the
-    // work for 0.4% of the bytes.
+    // Size floor: the many small files hold a negligible share of the bytes, so
+    // compressing them is work for almost nothing.
     public const long LogCompressMinSizeBytes = 4096;
 
     // Idle window for the MANUAL button: don't touch a file something may still be
@@ -226,16 +225,14 @@ public static class Constants
     //
     // `-0.log` is a SLOT NAME, not a liveness fact: a game last played 13 days ago still
     // owns a walk-0.log that nothing will ever append to again. Excluding those outright
-    // was stricter than LoggingService.PurgeOrphanedLogs, which passes a live-name set only
-    // for the UI's own folder and sweeps every GAME folder on age alone — i.e. we were
-    // refusing to COMPRESS files the same subsystem is willing to DELETE. Measured cost of
-    // the old rule on a real folder: 36 files / 5 MB permanently uncompressed, and the set
-    // only grows, one final log per game ever tested.
+    // would be stricter than LoggingService.PurgeOrphanedLogs, which passes a live-name set
+    // only for the UI's own folder and sweeps every GAME folder on age alone — it would
+    // refuse to COMPRESS files the same subsystem is willing to DELETE, and that set only
+    // grows, one final log per game ever tested.
     //
     // Compressing them is durable: Sein archives a `-0.log` by RENAME on the next
-    // injection, and a rename preserves LZX (verified 335,872 bytes on disk before and
-    // after). A game that really is running keeps its log's mtime fresh, and the file lock
-    // is the backstop if it somehow does not.
+    // injection, and a rename preserves LZX. A game that really is running keeps its
+    // log's mtime fresh, and the file lock is the backstop if it somehow does not.
     public const int LogCompressLiveFileMinAgeDays = 7;
 
     // Age floor for the AUTOMATIC startup sweep (opt-in, default OFF). Deliberately longer
@@ -341,8 +338,8 @@ public static class Constants
     // Above this uptime, a crash report still claiming the "Startup" phase is
     // reporting a STALE marker rather than a real startup failure — no startup of
     // this app takes a minute. CrashReportFormatter.Headline says so explicitly
-    // instead of repeating the phase; see [PASTECRASH-2026-08-18], where the
-    // hard-coded phrase "startup crash" mislabelled a 31-minute-in crash.
+    // instead of repeating the phase, so a crash deep into a session is not filed
+    // as a startup crash [PASTECRASH-2026-08-18].
     public const int CrashStartupPhaseMaxSeconds = 60;
 
     // Pipe Communication
@@ -462,14 +459,14 @@ public static class Constants
     // per file: the newest timestamp in a game's set governs the whole set, so a
     // 30-day-old denylist sibling never outlives (or drags down) the .db it belongs to.
     public const int DataMaxAgeDays = 21;
-    // Objects streamed per snapshot_chunk pipe round-trip. 8192 (raised 200 -> 1000
-    // -> 8192) for two reasons on huge games (FF7 Rebirth ~433K objects: ~53 chunks):
+    // Objects streamed per snapshot_chunk pipe round-trip. 8192, for two reasons on huge
+    // games (hundreds of thousands of objects):
     //   (a) fewer pipe round-trips + SQLite write transactions;
     //   (b) the DLL parallelizes each chunk's object walk, and ScanThreadCount only
     //       engages worker threads at >= 8192 work items — so a full chunk runs
-    //       multi-threaded (the single-threaded walk was the 10+ min bottleneck).
+    //       multi-threaded (a single-threaded walk is the bottleneck).
     // Safe: byte-mode pipe (no message cap) + StreamReader.ReadLineAsync accumulates
-    // any size. See docs/todo.md snapshot-perf item (in-game re-test pending).
+    // any size. See the "Snapshot capture too slow on huge games" item in docs/todo.md.
     public const int SnapshotChunkSize = 8192;
 
     // Snapshot Diff / SPC / Group / Value snapshot-query row cap. Shared by the
@@ -499,8 +496,8 @@ public static class Constants
     /// <summary>Leaves kept PER SLOT per object in a group scan (DLL `per_slot_cap`).
     /// NOT a performance knob: this list is what a later Changed/Decreased refine
     /// re-reads, and leaves arrive base-class-first, so too small a value silently hides
-    /// a derived class's own fields — at the old fixed 8 every AActor stored only
-    /// PrimaryActorTick/CustomTimeDilation and a Changed refine pruned everything.
+    /// a derived class's own fields — at a cap of 8, every AActor would keep only
+    /// PrimaryActorTick/CustomTimeDilation and a Changed refine would prune everything.
     /// The DLL owns the clamp band; these mirror it so the UI can validate locally.</summary>
     public const int GroupPerSlotCap    = 256;
     public const int GroupPerSlotCapMin = 8;
@@ -568,13 +565,12 @@ public static class Constants
     //
     // ⚠ Deliberately NOT DefaultInstanceSearchCap. A property-search row is a match per
     // property per class WITH a resolved preview value, so it is far heavier than an
-    // instance address; 200 was the long-standing wire default and stays the default here.
-    // What changed is that the panel now has a control to raise it.
+    // instance address; 200 is the wire default, and the panel has a control to raise it.
     public const int DefaultPropertySearchCap = 200;
 
     // Default Classes-tab row cap (GameClassFilterUiOptions.ClassListCap and the panel's own
-    // default). [CLASSCAP] — the panel's own status line has always advised "raise
-    // the cap" and there was no control to raise, the third instance of the Z10 shape.
+    // default). [CLASSCAP] — the panel's own status line advises "raise the cap", so
+    // there must be a control to raise it.
     //
     // ⚠ 5,000 is the long-standing wire default and stays the default: a class row carries a
     // walked property/function summary, so a big pool is not free. Avowed has 7,409 game classes
@@ -603,11 +599,10 @@ public static class Constants
     // dxgi.dll — statically imported by every D3D11/D3D12 UE game; the
     // reliable hijack target for EXEs that import neither version nor dinput8.
     public const string ProxyDllNameDxgi = "dxgi.dll";
-    // winmm.dll — measured at 24/24 importable across every installed UE game,
-    // exactly matching dxgi. It exists NOT for coverage (it reaches nothing dxgi
-    // misses) but as a second free SLOT: dxgi.dll is the name ReShade and many
-    // mod loaders take, and version.dll is likewise often occupied. See the
-    // 4th-proxy section in docs/todo.md.
+    // winmm.dll — a static-import hijack like dxgi. It exists NOT for coverage (it
+    // reaches nothing dxgi misses) but as a second free SLOT: dxgi.dll is the name
+    // ReShade and many mod loaders take, and version.dll is likewise often occupied.
+    // See the 4th-proxy section in docs/todo.md.
     public const string ProxyDllNameWinmm = "winmm.dll";
     public const string ProxyProductName = "UE5CEDumper";
     public const string SteamRegistryPath = @"SOFTWARE\WOW6432Node\Valve\Steam";

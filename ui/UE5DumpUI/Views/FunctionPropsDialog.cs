@@ -472,8 +472,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         // one. The DLL reaches it when a script/Blueprint function has no usable Script buffer:
         // its `Func` points at the shared interpreter, so disassembling it would analyse
         // UObject::ProcessInternal and attribute the interpreter's field accesses to this
-        // function. Before the gate went in (Aura.cpp, AnalyzeNativeFunctionProps) this case
-        // arrived here as "disasm" and printed "[native disasm — heuristic, N unmapped]" —
+        // function. Without the gate (Aura.cpp, AnalyzeNativeFunctionProps) this case would
+        // arrive here as "disasm" and print "[native disasm — heuristic, N unmapped]" —
         // claiming to have disassembled the function it never looked at.
         var methodNote = _lastMethod == "disasm"
             ? "  [native disasm — heuristic"
@@ -485,7 +485,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             ? "  [its bytecode buffer could not be read — NOTHING was analysed, "
               + "so this is not \"no properties\"]"
             : "";
-        // AF7: and say so when the decoder stopped early, because "no writer found"
+        // And say so when the decoder stopped early, because "no writer found"
         // is what this dialog is read for. Amber, not green — a truncated list must
         // not look like a settled answer.
         var budgetNote = _lastBudgetHit ? PartialResultNotice.DisassemblyBudget() : "";

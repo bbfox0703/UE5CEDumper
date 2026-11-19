@@ -9,11 +9,11 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.ViewModels;
 
 /// <summary>
-/// Snapshot Group Match (S3 UI) — the "Group" mode of the Snapshot tab. Finds
+/// Snapshot Group Match — the "Group" mode of the Snapshot tab. Finds
 /// objects in a captured snapshot that hold ALL of N values (2-4) at distinct
 /// numeric offsets, via the C# Orden port (Services.GroupMatch) behind
-/// ISnapshotStore.GroupMatchAsync. S3 wires Mode A (single-snapshot absolute);
-/// Mode B (cross-snapshot, relative predicates) follows in S4.
+/// ISnapshotStore.GroupMatchAsync: Mode A (single-snapshot absolute) and
+/// Mode B (cross-snapshot, relative predicates).
 /// See docs/snapshot-group-match-spec.md.
 /// </summary>
 public partial class SnapshotViewModel
@@ -247,15 +247,15 @@ public partial class SnapshotViewModel
             }
             foreach (var c in res.Candidates) GroupCandidates.Add(c);
             var trunc = res.Truncated ? $" (showing first {GroupCandidates.Count:N0})" : "";
-            // AF13: the DLL sibling has said this since AE13; the snapshot corpus
-            // truncated a slot's witness list at the same cap and said nothing, so a
-            // field that DID match read as a field that did not. Applies to the
-            // no-match line too — a truncated slot is exactly when a miss may be the
-            // cap rather than the answer.
+            // Say when a slot's witness list hit the cap, as the DLL sibling does: the
+            // snapshot corpus truncates it at the same cap, and without this note a field
+            // that DID match reads as a field that did not. Applies to the no-match line
+            // too — a truncated slot is exactly when a miss may be the cap rather than
+            // the answer.
             var capNote = res.PerSlotCapHit
                 ? PartialResultNotice.PerSlotWitnessCap(res.PerSlotCap) : "";
             // [W1-GROUP-DENYLIST] Group mode APPLIES the Diff-scope class denylist (documented design,
-            // snapshot-group-match-spec.md:255) but showed no trace of it -- its picker is diff-only. Say how many
+            // snapshot-group-match-spec.md), but its picker is diff-only. Say how many
             // classes it hid and where to see or clear them, on the no-match line too: a hidden class is exactly when
             // "no objects hold all N values" may be the denylist rather than the answer.
             var denyNote = _excludedClasses.Count > 0

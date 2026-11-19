@@ -10,13 +10,13 @@ namespace UE5DumpUI.Services;
 /// <param name="Name">The bare file NAME, never a path. The policy is deliberately
 /// unable to name a file outside the folder its caller enumerated — everything it
 /// returns is a name the caller already handed it.</param>
-/// <param name="LastUsedUtc">The newest "this was in use" timestamp the caller could
-/// observe: <c>max(LastWriteTimeUtc, LastAccessTimeUtc)</c>. See
-/// <see cref="AppDataFolderMaintenance.LastUsedUtc"/> for why both.</param>
+/// <param name="LastUsedUtc">When the file was last in use: the <c>LastWriteTimeUtc</c>
+/// the store stamps on use, never the last-access time. See
+/// <see cref="AppDataFolderMaintenance.LastUsedUtc"/> for why.</param>
 public readonly record struct AppDataFileEntry(string Name, DateTime LastUsedUtc);
 
 /// <summary>
-/// Pure policy for the per-game data folders (<c>Snapshots\</c>, <c>Bookmarks\</c>):
+/// Pure policy for the per-game data folders <see cref="AppDataFolderMaintenance"/> prepares:
 /// which file belongs to which game, and which games have aged out. Zero
 /// <c>System.IO</c> — the same split <c>ProxyOrphanScanner</c> uses, so the rules that
 /// decide what gets DELETED are unit-testable without touching a disk.
@@ -24,8 +24,8 @@ public readonly record struct AppDataFileEntry(string Name, DateTime LastUsedUtc
 /// <para><b>File naming.</b> Every file in these folders is
 /// <c>{prefix}.{gameKey}.{rest}</c>: <c>snapshots.1A2B.db</c>, <c>snapshots.1A2B.db-wal</c>,
 /// <c>snapshots.1A2B.db-shm</c>, <c>snapshots.1A2B.denylist.json</c>,
-/// <c>bookmarks.1A2B.json</c>. The game key is a PE hash sanitised to ASCII
-/// alphanumerics by the stores, so it can never itself contain a <c>'.'</c> — which is
+/// <c>bookmarks.1A2B.json</c>. The stores build the game key from a hex PE hash or a
+/// sanitised module name, so it can never itself contain a <c>'.'</c> — which is
 /// what makes "up to the first dot after the prefix" an exact parse rather than a
 /// guess.</para>
 ///

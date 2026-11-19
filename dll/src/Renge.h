@@ -29,10 +29,10 @@ constexpr const char* CMD_WALK_CLASS_BATCH = "walk_class_batch";
 constexpr const char* CMD_READ_MEM         = "read_mem";
 constexpr const char* CMD_WRITE_MEM        = "write_mem";
 constexpr const char* CMD_WALK_INSTANCE    = "walk_instance";
-// N instance walks in ONE round-trip. MEASURED justification in
-// multipipe-eval.md §10.4: a Copy CE XML issued 20,357 single walk_instance
-// calls at 0.08 ms of real work carrying 0.16-0.21 ms of pure round-trip
-// overhead. Same trivial-loop-over-the-single-path shape as walk_class_batch.
+// N instance walks in ONE round-trip: a Copy CE XML walks thousands of instances,
+// and a single walk_instance carries more round-trip overhead than real work
+// (multipipe-eval.md §10.4). Same trivial-loop-over-the-single-path shape as
+// walk_class_batch.
 constexpr const char* CMD_WALK_INSTANCE_BATCH = "walk_instance_batch";
 constexpr const char* CMD_WALK_WORLD       = "walk_world";
 constexpr const char* CMD_FIND_INSTANCES   = "find_instances";
@@ -116,7 +116,7 @@ constexpr const char* CMD_SET_FOREGROUND_LOCK      = "set_foreground_lock";
 constexpr const char* CMD_GET_FOREGROUND_LOCK      = "get_foreground_lock";
 
 // Movement tuning (Laufen) — per-pawn CMC float knobs held against per-tick
-// overwrites: walk_speed (P1) / gravity / jump (P2/P3). "knob" string selects
+// overwrites: walk_speed / gravity / jump. "knob" string selects
 // which: "walk_speed" | "gravity" | "jump".
 constexpr const char* CMD_GET_MOVEMENT_PARAMS      = "get_movement_params";
 constexpr const char* CMD_SET_MOVEMENT_MULTIPLIER  = "set_movement_multiplier";
@@ -163,7 +163,7 @@ constexpr const char* CMD_SEE_THROUGH_GET_STATE    = "seethrough_get_state";
 // GWorld-anchored standalone .CT needs to re-walk and write without the DLL.
 constexpr const char* CMD_GET_TRAINER_OFFSETS      = "get_trainer_offsets";
 
-// Snapshot capture (experimental — Phase A). Stateless cursor pagination
+// Snapshot capture (experimental). Stateless cursor pagination
 // like get_object_list: begin_snapshot returns the total object count for
 // progress; snapshot_chunk streams [offset, offset+limit) objects with their
 // numeric UPROPERTY values. No end command — there is no server-side session.
@@ -189,12 +189,12 @@ constexpr const char* CMD_PE_SNAP_GET              = "pe_snap_get";
 
 // Diagnostics (Sense) — self-health telemetry: how long each pipe command
 // actually occupies the dispatcher (the head-of-line blocking multipipe-eval.md
-// blames for UI lag but nothing measured), plus Win32 process facts. Pipe-only.
+// blames for UI lag), plus Win32 process facts. Pipe-only.
 constexpr const char* CMD_GET_DIAGNOSTICS          = "get_diagnostics";
 constexpr const char* CMD_RESET_DIAGNOSTICS        = "reset_diagnostics";
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds this pipe's connections (client pid, exe, last command, in flight).
+// [PIPE-PER-PROCESS-2026-11-06] Who holds this pipe's connections (client pid, exe, last command, in flight).
 constexpr const char* CMD_PIPE_CLIENTS             = "pipe_clients";
-// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: every hold the DLL records an owner for, whether it is active, and who
+// [PIPE-PER-PROCESS-2026-11-06] Every hold the DLL records an owner for, whether it is active, and who
 // holds it (Voll::HoldLedger).
 constexpr const char* CMD_GET_HOLDS                = "get_holds";
 
@@ -209,7 +209,7 @@ inline std::string AddrToStr(uintptr_t addr) {
 }
 
 // [PATH-MODULE-NAME-UTF8] A CE module-relative address, "\"<module file>\"+<RVA hex>". Built as a std::string:
-// the char[128] snprintf it replaces cut a long name's closing quote and RVA silently, and once the name is UTF-8
+// a char[128] snprintf would cut a long name's closing quote and RVA silently, and once the name is UTF-8
 // a cut could split a sequence that json::dump then throws on. Pass CE's OWN name for the module (the ANSI round
 // trip), not the Unicode one -- CE never sees the latter.
 inline std::string CeModuleRelative(const std::string& moduleFile, uint64_t rva) {

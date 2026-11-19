@@ -28,7 +28,7 @@ namespace Lugner {
 // of msvcrt — and `AcGenral!NS_DXGICompat` does
 // `GetModuleHandleW(L"dxgi.dll")` → `GetProcAddress("SetAppCompatStringPointer")` → call,
 // driven by `apphelp!SE_DllLoaded`, which the loader raises when a module is **MAPPED** —
-// before its init routine runs. Our export for that name was a lazy thunk whose resolver
+// before its init routine runs. Our export for that name is a lazy thunk whose resolver
 // LOGS, and logging allocates.
 //
 // ⭐ The lesson is NOT "do less in DllMain". ReShade does MORE under the loader lock (file

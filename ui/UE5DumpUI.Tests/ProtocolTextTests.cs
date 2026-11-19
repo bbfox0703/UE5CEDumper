@@ -3,7 +3,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [I18N-READINESS-2026-11-04] P5. A few UI branches tell another program's replies apart by their TEXT: the DLL's
+/// [I18N-READINESS-2026-11-04] A few UI branches tell another program's replies apart by their TEXT: the DLL's
 /// error texts carry no code, the AOBMaker plugin's "Unknown type", and Windows' sharing-violation message. That text
 /// is the other side's, not the UI's: moved into en.axaml and translated, the match stops and the branch silently takes
 /// its other arm (a stale proxy goes undetected, a Self-Test skip turns into a failure). So the openings live in one

@@ -48,9 +48,9 @@ internal enum InputFaultVerdict
 /// <para><b>Why this exists.</b> A failed clipboard READ inside
 /// <c>TextBox.Paste()</c> surfaces through <c>Task.ThrowAsync</c> as an
 /// *unobserved* exception on the Avalonia dispatcher and terminates the process
-/// (field report <c>[PASTECRASH-2026-08-18]</c>: <c>COMException 0x8007000E —
-/// EnumFormatEtc failed</c>, 31 minutes into a connected session, losing a loaded
-/// object tree). Nothing of ours is on that stack; the consequence is entirely
+/// (<c>[PASTECRASH-2026-08-18]</c>: <c>COMException 0x8007000E —
+/// EnumFormatEtc failed</c>), taking a connected session and its loaded object tree
+/// with it. Nothing of ours is on that stack; the consequence is entirely
 /// ours. <c>Ctrl+V</c> into any text box is therefore a potential crash whenever
 /// the clipboard is momentarily unreadable — another app holding it, an OLE
 /// source that has gone away, a COM-level <c>E_OUTOFMEMORY</c>.</para>
@@ -102,8 +102,8 @@ internal static class InputLayerFaultClassifier
     /// compiled XAML binding would look like nobody's code and could be swallowed
     /// under a clipboard-topped stack.
     ///
-    /// <para>Measured, not guessed: the shipped assembly holds <b>47</b> types
-    /// outside <c>UE5DumpUI.*</c>, 35 of them under <c>CompiledAvaloniaXaml</c> —
+    /// <para>The types generated into the shipped assembly outside <c>UE5DumpUI.*</c>
+    /// include, under <c>CompiledAvaloniaXaml</c>,
     /// <c>XamlIlTrampolines</c> and <c>XamlDynamicSetters</c> (the compiled-binding
     /// property setters, where a binding type mismatch raises
     /// <see cref="InvalidCastException"/>), plus <c>XamlIlContext</c>,
@@ -136,10 +136,10 @@ internal static class InputLayerFaultClassifier
     /// </summary>
     internal static readonly string[] TypeMarkers =
     {
-        // Win32 clipboard backend — the exact surface in the captured crash.
+        // Win32 clipboard backend — where a failed clipboard read surfaces.
         "Avalonia.Win32.ClipboardImpl",
         // The MicroCom-generated COM proxy the clipboard reads the data object
-        // through; the captured COMException was thrown in its EnumFormatEtc.
+        // through; a failed read throws its COMException in EnumFormatEtc.
         "Avalonia.Win32.Win32Com.Impl.__MicroComIDataObjectProxy",
         // Cross-platform clipboard facade + its extension helpers. Listing the
         // shorter name would also match ClipboardExtensions by substring; both are
@@ -419,9 +419,8 @@ internal static class InputLayerFaultClassifier
     /// longer identifier: <c>TextBox.Paste</c> must match <c>TextBox.Paste()</c> but
     /// NOT a hypothetical <c>TextBox.PasteHistoryItem()</c>.
     ///
-    /// <para>Found by a negative control, not by review — the plain
-    /// <c>string.Contains</c> this replaces accepted the longer name, which would
-    /// have quietly widened the swallow to a method nobody had reasoned about. The
+    /// <para>A plain <c>string.Contains</c> accepts the longer name, which would
+    /// quietly widen the swallow to a method nobody has reasoned about. The
     /// boundary is the only tightening that cannot backfire: requiring a literal
     /// <c>"("</c> instead would DISABLE the marker for any renderer that formats
     /// frames without a parameter list, and a silently disabled guard is the exact
@@ -457,8 +456,8 @@ internal static class InputLayerFaultClassifier
     /// after one of these produces a second, unrelated failure later that nobody
     /// can trace back.</item>
     /// <item><b>Trimming / Native-AOT damage</b> — a type that failed to load, a
-    /// missing member, a bad image, a failed static constructor. Every AOT bug in
-    /// this repo's history was found by it failing loudly; swallowing one inside
+    /// missing member, a bad image, a failed static constructor. An AOT defect
+    /// surfaces by failing loudly; swallowing one inside
     /// Avalonia's clipboard code would hide exactly the class of defect the AOT
     /// build exists to surface.</item>
     /// </list>

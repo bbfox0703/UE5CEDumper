@@ -363,20 +363,21 @@ public class AobUsageServiceTests : IDisposable
     }
 
     // ────────────────────────────────────────────────────────────────
-    // Corrupt-file durability (audit #5 AC4 + AC5) and staging hygiene (AC6).
+    // Corrupt-file durability and staging hygiene.
     //
     // This file is not one game's cache: it holds EVERY game's scan record plus the
     // user's per-game UE-version override and invoke timeout. Answering a parse
-    // failure with a blank document meant the next save published a one-game file
+    // failure with a blank document would let the next save publish a one-game file
     // over all of it.
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// THE FINDING. A corrupt file must be moved aside, never overwritten — the bytes
+    /// The invariant: a corrupt file must be moved aside, never overwritten — the bytes
     /// are the only copy of every other game's record.
     ///
-    /// NEGATIVE CONTROL: restore `catch (JsonException) { return new AobUsageFile(); }`
-    /// and this fails: no quarantine exists and the original bytes are gone for good.
+    /// NEGATIVE CONTROL: answer the parse failure with
+    /// `catch (JsonException) { return new AobUsageFile(); }` and this fails: no
+    /// quarantine exists and the original bytes are gone for good.
     /// </summary>
     [Fact]
     public async Task RecordScan_CorruptJson_QuarantinesTheOriginalBytes()
@@ -404,8 +405,8 @@ public class AobUsageServiceTests : IDisposable
     [Fact]
     public async Task LoadFile_NullDocument_IsTreatedAsCorruptNotAsEmpty()
     {
-        // "null" is valid JSON that deserializes to null. The old `?? new AobUsageFile()`
-        // wiped on it exactly like a parse failure did, and without even a log line.
+        // "null" is valid JSON that deserializes to null. A `?? new AobUsageFile()` would
+        // wipe on it exactly like a parse failure, and without even a log line.
         var svc = CreateService();
         Directory.CreateDirectory(Path.GetDirectoryName(svc.FilePath)!);
         await File.WriteAllTextAsync(svc.FilePath, "null", TestContext.Current.CancellationToken);
@@ -491,10 +492,10 @@ public class AobUsageServiceTests : IDisposable
     }
 
     /// <summary>
-    /// AC6. The staging name carries the writer's PID, so every abandoned copy is
-    /// distinctly named and nothing ever deleted it — unbounded residue in the app-data
-    /// root, one full copy of the cache per affected launch (the DLL writes the same
-    /// name from the game process).
+    /// The staging name carries the writer's PID, so every abandoned copy is distinctly
+    /// named, and without a sweep nothing would ever delete it — unbounded residue in the
+    /// app-data root, one full copy of the cache per affected launch (the DLL writes the
+    /// same name from the game process).
     ///
     /// NEGATIVE CONTROL: remove the SweepOrphanTemps() call and the stale file survives.
     /// </summary>

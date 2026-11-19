@@ -31,10 +31,10 @@ rare flicker real combat produces.
       UE 5.4's Misc/Exec.h defines UE_ALLOW_EXEC_COMMANDS as
       UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING when (UE_BUILD_SHIPPING && !WITH_EDITOR),
       and UnrealBuildTool sets that to 0 unless the Target.cs opts in
-      (UEBuildTarget.cs:5147/5151). Measured on Shipping 2026-08-23: 59.8 Hz, which
-      predicts a ~94% contested duty and 97.8% was observed. This rig therefore
-      REPORTS the rate it measured rather than quoting a configured one -- a number
-      without its conditions is not a measurement.
+      (UEBuildTarget.cs:5147/5151), so Shipping runs uncapped and the contested
+      duty is correspondingly higher. This rig therefore REPORTS the rate it measured
+      rather than quoting a configured one -- a number without its conditions is not a
+      measurement.
 
   ==> That asymmetry is the honest caveat on this evidence and it is printed with the
       result: this shows the state is REAL and the detector SEES it. It does not
@@ -71,9 +71,9 @@ POLL_HZ = 40.0
 
 def find_live_actor(c):
     # `limit` + `exact_match`, NOT `max_results` -- find_instances ignores the
-    # latter entirely (Fern.cpp reads request.value("limit", 500)), so every
-    # rig that passed max_results was silently running at the default 500 and
-    # matching class names by SUBSTRING. Harmless while the pool is two objects;
+    # latter entirely (Fern.cpp reads request.value("limit", 500)), so a rig
+    # that passes max_results silently runs at the default 500 and matches
+    # class names by SUBSTRING. Harmless while the pool is two objects;
     # not harmless once the spawner fixture puts 300 of them in it.
     r = c.request("find_instances", class_name=ACTOR_CLASS, limit=100, exact_match=True)
     c.check_complete(r)

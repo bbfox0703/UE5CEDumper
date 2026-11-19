@@ -67,7 +67,7 @@ public partial class SnapshotViewModel : ViewModelBase
     /// Actor/Pawn/Character/component-derived classes, so a player Pawn's X/Y/Z is
     /// never dropped. Irreversible (re-capture to bring a skipped class back).</summary>
     [ObservableProperty] private bool   _autoSkipNoise = true;
-    /// <summary>Native-C (P3, opt-in, default OFF). When on, each captured object also
+    /// <summary>Native-C (opt-in, default OFF). When on, each captured object also
     /// gets its unmanaged holes (non-UPROPERTY raw bytes) guessed + normalized into
     /// synthetic "&lt;raw@0xNN&gt;" fields, so SPC diff / Class Pivot can track native
     /// (HP/MP) values. Slower + larger capture; Pointer/Padding guesses are dropped.</summary>
@@ -170,9 +170,8 @@ public partial class SnapshotViewModel : ViewModelBase
             AutoSnapshotIntervalSec = NumericInput.Coerce( value, AutoSnapshotIntervalSec, AutoSnapshotMinIntervalSec, AutoSnapshotMaxIntervalSec);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force.
+            // [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -185,9 +184,8 @@ public partial class SnapshotViewModel : ViewModelBase
             AutoSnapshotCount = NumericInput.Coerce( value, AutoSnapshotCount, AutoSnapshotMinCount, AutoSnapshotMaxCount);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force.
+            // [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -200,9 +198,8 @@ public partial class SnapshotViewModel : ViewModelBase
             SnapshotMinFreePercent = NumericInput.Coerce( value, SnapshotMinFreePercent, SnapshotMinFreePercentFloor, SnapshotMinFreePercentCeil);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force.
+            // [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -215,9 +212,8 @@ public partial class SnapshotViewModel : ViewModelBase
             SnapshotMinFreeGb = NumericInput.Coerce( value, SnapshotMinFreeGb, SnapshotMinFreeGbFloor, SnapshotMinFreeGbCeil);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value was in force.
+            // [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -334,7 +330,7 @@ public partial class SnapshotViewModel : ViewModelBase
     /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.</summary>
     public FilterViewKeeper DiffView { get; } = new();
 
-    // --- N1: per-game class denylist (noise picker) ---
+    // --- Per-game class denylist (noise picker) ---
     public ObservableCollection<NoiseRowVm> NoiseRows { get; } = new();
     public ObservableCollection<string> ActiveDenylist { get; } = new();
     [ObservableProperty] private bool _noisePanelOpen;
@@ -350,7 +346,7 @@ public partial class SnapshotViewModel : ViewModelBase
     public bool CanUseDiffRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && DiffB?.GameSessionId == _currentSessionId;
     /// <summary>As above, additionally requiring GWorld for the 🌍 button.</summary>
-    // NOT gated on the client IsGWorldAvailable flag — see AE10 in ClassPivotViewModel.
+    // NOT gated on the client IsGWorldAvailable flag — see ClassPivotViewModel.CanLocateResultInGWorld.
     public bool CanLocateDiffRowInGWorld => CanUseDiffRowActions;
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX / +CE buttons read. Never null:
@@ -625,11 +621,11 @@ public partial class SnapshotViewModel : ViewModelBase
     ///
     /// Both this and <see cref="RefreshCommand"/> end in
     /// <c>UiCollection.Reset(Snapshots, …)</c>, which Clear()s the collection and
-    /// re-Add()s every row. A test that called SetEngineState and then awaited
-    /// RefreshCommand ran the two CONCURRENTLY over the same ObservableCollection:
-    /// measured 25/4000 in-process iterations observed a corrupt list — duplicated
+    /// re-Add()s every row. A test that calls SetEngineState and then awaits
+    /// RefreshCommand instead of this runs the two CONCURRENTLY over the same
+    /// ObservableCollection, and an occasional run sees a corrupt list — duplicated
     /// rows (both refreshes appending after a single Clear) and torn null slots from
-    /// the unsynchronised List&lt;T&gt; growth, which surfaced as an NRE deep inside
+    /// the unsynchronised List&lt;T&gt; growth, which surface as an NRE deep inside
     /// OnIsGroupModeChanged rather than as anything naming a race.</summary>
     internal Task? PendingRefresh { get; private set; }
 
@@ -932,7 +928,7 @@ public partial class SnapshotViewModel : ViewModelBase
                                 dataType, gameOnly, offset, Constants.SnapshotChunkSize,
                                 includeNative, autoSkipNoise, numericFamily, lct);
                             fetchSw.Stop();
-                            // Phase-0 telemetry: full fetch round-trip + DLL-reported splits
+                            // Telemetry: full fetch round-trip + DLL-reported splits
                             // + the C#-side parse+pipe breakdown (read / RX-log / parse / build).
                             _capFetchMs += fetchSw.ElapsedMilliseconds;
                             _capWalkMs  += chunk.WalkMs;
@@ -1095,9 +1091,9 @@ public partial class SnapshotViewModel : ViewModelBase
             // A large capture parses MILLIONS of transient field objects (JSON DOM +
             // model build); under the default Workstation GC the grown heap stays
             // committed, so after a multi-snapshot session the working set can sit at
-            // several GB even though almost nothing is live — which is what made the UI
-            // look like it "ate too much" before the user could even use Class Pivot.
-            // Reclaim + COMPACT now (a natural pause, negligible vs the ~45s capture) and
+            // several GB even though almost nothing is live — the UI then looks like it
+            // "ate too much" before the user can even use Class Pivot.
+            // Reclaim + COMPACT now (a natural pause, negligible next to the capture) and
             // log managed-heap vs working-set so retention is measurable: if heap drops,
             // the memory was reclaimable garbage; if it stays high, it's a live retainer.
             var proc = System.Diagnostics.Process.GetCurrentProcess();
@@ -1115,7 +1111,7 @@ public partial class SnapshotViewModel : ViewModelBase
                 ? $" — ⚠ GObjects changed mid-capture ({total:N0}→{maxTotal:N0}); marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture)"
                 : "";
             // Name the cause that happened -- a worker FAULT -- never a deadline or a cancel
-            // (P5: one wording must not carry several causes). [W1-SNAP-FAULT]
+            // (one wording must not carry several causes). [W1-SNAP-FAULT]
             var faultNote = faultDetected
                 ? " — ⚠ a DLL scan worker FAULTED on part of the object list; the snapshot is partial and marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture) — the DLL's logs name the fault"
                 : "";
@@ -1134,8 +1130,8 @@ public partial class SnapshotViewModel : ViewModelBase
             // TrySetCanceled() with no token) while the token is NOT cancelled. Report the
             // disconnect as a FAILURE, not a cancel: outcome=Cancelled would make the
             // auto-loop's `case Cancelled` skip StopAutoSnapshot() and wedge
-            // (AutoSnapshotEnabled stuck true, _autoCts leaked, manual capture disabled). (M7)
-            // BOTH paths still delete the partial (H1): see RemovePartialAsync.
+            // (AutoSnapshotEnabled stuck true, _autoCts leaked, manual capture disabled).
+            // BOTH paths still delete the partial: see RemovePartialAsync.
             bool userCancelled = ct.IsCancellationRequested;
             outcome = userCancelled ? CaptureOutcome.Cancelled : CaptureOutcome.Failed;
             StopCaptureHeartbeat();
@@ -1159,7 +1155,7 @@ public partial class SnapshotViewModel : ViewModelBase
             SetError(ex);
             // A non-OCE mid-capture failure (e.g. an unexpected pipe death → IOException,
             // or a between-chunks disconnect → InvalidOperationException) leaves the same
-            // partial, still in progress — delete it (H1): see RemovePartialAsync.
+            // partial, still in progress — delete it: see RemovePartialAsync.
             if (snapshotId > 0)
             {
                 await RemovePartialAsync();
@@ -1377,10 +1373,10 @@ public partial class SnapshotViewModel : ViewModelBase
                         return;
                     case CaptureOutcome.Cancelled:
                         // A genuine user cancel already cancelled the loop token, so we break
-                        // at the top of the loop before reaching here; a disconnect now
+                        // at the top of the loop before reaching here; a disconnect
                         // returns Failed (above), not Cancelled. StopAutoSnapshot is
                         // idempotent — call it defensively so NO Cancelled path can leave the
-                        // loop wedged with AutoSnapshotEnabled stuck on. (M7)
+                        // loop wedged with AutoSnapshotEnabled stuck on.
                         StopAutoSnapshot();
                         return;
                 }
@@ -1516,7 +1512,7 @@ public partial class SnapshotViewModel : ViewModelBase
                 $"scope={dataType} family={family} gameOnly={gameOnly} noise={autoSkipNoise} native={includeNative})");
         }
         // Only a genuine user cancel (our token) reads as "cancelled"; a bare
-        // disconnect-OCE (token NOT cancelled) falls through to "failed". (L15)
+        // disconnect-OCE (token NOT cancelled) falls through to "failed".
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { EstimateText = "Estimate cancelled."; }
         catch (Exception ex)
         {
@@ -1569,7 +1565,7 @@ public partial class SnapshotViewModel : ViewModelBase
         try
         {
             // Load the full changed set (capped); the filter boxes narrow it
-            // client-side afterward so typing is instant. N1: hand the per-game
+            // client-side afterward so typing is instant. Hand the per-game
             // denylist to the store so denied classes are filtered before the cap.
             var filter = new SnapshotDiffFilter
             {
@@ -1780,7 +1776,7 @@ public partial class SnapshotViewModel : ViewModelBase
         : t.TotalMinutes >= 1 ? $"{t.Minutes}m{t.Seconds:D2}s"
         : $"{t.Seconds}s";
 
-    // --- N1: noise picker helpers (shared shape with SpcQueryViewModel) ---
+    // --- Noise picker helpers (shared shape with SpcQueryViewModel) ---
 
     private void RebuildNoiseRows(IReadOnlyList<ClassNoiseRow> top)
     {

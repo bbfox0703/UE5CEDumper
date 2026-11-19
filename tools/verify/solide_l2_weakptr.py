@@ -2,16 +2,14 @@ r"""Solide L2 — `Force → null` on a SOFT pointer must REFUSE, loudly and wit
 
     py tools/verify/solide_l2_weakptr.py     (DumperTest dev running + injected, no UI)
 
-⚠ RETARGETED 2026-09-24 (`[VND583-DOC D7-04]`). This rig used to force `Actor::ParentComponent`, a
-WeakObjectProperty, on the premise that zeroing a weak pointer "makes the field point at GObjects[0]".
-That premise was wrong in every UE version: SerialNumber 0 is UE's explicit null. So an 8-byte weak
-pointer is now HELD, at UE's own reset value. A soft / lazy pointer is still refused, because its asset
+⚠ WHY A SOFT POINTER, NOT A WEAK ONE (`[VND583-DOC D7-04]`, 2026-09-24). Zeroing a weak pointer does
+not make the field point at GObjects[0]: SerialNumber 0 is UE's explicit null in every UE version. So an
+8-byte weak pointer is HELD, at UE's own reset value. A soft / lazy pointer is refused, because its asset
 path / GUID lies past the weak half and re-resolves the pointer, so a held null would not hold. The step
-therefore forces `DumperTestActor::Soft_Mesh` (a SoftObjectProperty). Everything the rig proves about
-the refusal, (a) (b) (c) below, is unchanged. The name of the file is kept so the register row still
-resolves.
+therefore forces `DumperTestActor::Soft_Mesh` (a SoftObjectProperty). The file keeps its weakptr name so
+the register row still resolves.
 
-THE DEFECT it pins. Before the refusal existed, the request was accepted, held nothing, and left a
+THE DEFECT it pins. Without the refusal, the request is accepted, holds nothing, and leaves a
 re-assert job scanning forever. The gate is `Solide::ObjectNullShapeFor` (Solide.h), called from
 Solide.cpp with the field's ElementSize.
 
@@ -21,19 +19,18 @@ THREE THINGS MUST HOLD, and only the first is visible in the reply:
   (c) the re-assert worker is NOT scanning. `get_forced_fields` structurally cannot show this: a
       job can be absent from the list and still have started a worker.
 
-⚠ (c) IS ABOUT A SUSTAINED RATE, NOT ABOUT ZERO SCANS, and the first version of this rig got that
-wrong and reported a FAIL against correct code. Measured: the refusal itself performs exactly ONE
-`FindInstancesDerivedFrom` — 6 ms after the request — because it has to resolve an instance to
-learn the field's TYPE before it can decide to refuse. Then silence. The control, by contrast,
-streams at 312 ms intervals indefinitely. So the discriminator is the rate AFTER a settle window,
-not the raw count.
+⚠ (c) IS ABOUT A SUSTAINED RATE, NOT ABOUT ZERO SCANS: a zero-scan assertion reports a FAIL against
+correct code. The refusal itself performs exactly ONE `FindInstancesDerivedFrom` right after the
+request, because it has to resolve an instance to learn the field's TYPE before it can decide to
+refuse. Then silence. The control, by contrast, streams at the re-assert interval indefinitely. So the
+discriminator is the rate AFTER a settle window, not the raw count.
 
 ⚠ (c) IS THE ONE WITH A CONTROL. A "no new log lines" assertion passes trivially if the worker was
-never going to log anyway, so the rig first reproduces the PRE-FIX shape on purpose — a field that
-does not exist at all is accepted, persists, and drives the futile scan — and measures the rate.
-Only after seeing the log grow does "the log did not grow" mean anything.
+never going to log anyway, so the rig first reproduces the shape without the refusal on purpose — a
+field that does not exist at all is accepted, persists, and drives the futile scan — and measures the
+rate. Only after seeing the log grow does "the log did not grow" mean anything.
 
-PREMISES, all verified offline before writing this (see the commit message):
+PREMISES, each checked offline against the source:
   FR_ERR_WEAK_PTR = -12, FR_ERR_NOT_INIT = -1        (Solide.h)
   `kind` is a STRING, default "bool"; an unknown VALUE is a hard error (Fern.cpp)
   `FindInstancesDerivedFrom base=` is `Sein::Info("PIPE:find", ...)` -> LF_Pipe -> pipe-0.log
@@ -112,7 +109,7 @@ def main():
             fails.append("reset_all_fields left jobs behind — the run starts dirty")
         say("clean slate: get_forced_fields = []")
 
-        # ================= NEGATIVE CONTROL: the PRE-FIX shape ===============
+        # ================= NEGATIVE CONTROL: the shape without the refusal ===
         say("")
         say("== NEGATIVE CONTROL: a field that does not exist at all ==")
         say("   (this is what 'accepted, held nothing, scanning forever' looks like — without")

@@ -86,8 +86,8 @@ public class LiveFuncsViewModelTests
     /// only <paramref name="entries"/> came back. Deliberately a separate helper —
     /// <see cref="ResultOf"/> sets <c>DistinctFuncs = entries.Length</c>, so every test using
     /// it is structurally incapable of expressing truncation and always asserts the
-    /// degenerate not-truncated case. That aliasing is exactly why ~15 existing tests never
-    /// caught AF3; reusing it here would have made these tests pass while testing nothing.</summary>
+    /// degenerate not-truncated case. That aliasing hides truncation from every test that uses
+    /// it; reusing it here would make these tests pass while testing nothing.</summary>
     private static PeProfileResult TruncatedResultOf(int distinct, params PeProfileEntry[] entries)
         => new()
         {
@@ -114,8 +114,8 @@ public class LiveFuncsViewModelTests
         Assert.Contains("Recording", vm.StatusText);
     }
 
-    // Regression for audit #3 L16: nothing reset IsRecording on pipe disconnect, so a
-    // reconnect showed a stuck "recording" that swallowed the next Start.
+    // A pipe disconnect resets IsRecording; otherwise a reconnect shows a stuck
+    // "recording" that swallows the next Start.
     [Fact]
     public async Task ResetOnDisconnect_clears_recording_state()
     {
@@ -375,7 +375,7 @@ public class LiveFuncsViewModelTests
         Assert.Equal(expected, e.Kind);
     }
 
-    // Cadence classification (Phase E): (meanMs, cv, gapSamples) → isPeriodic.
+    // Cadence classification: (meanMs, cv, gapSamples) → isPeriodic.
     [Theory]
     [InlineData(500.0, 0.05, 19, true)]    // steady 0.5 s timer — regular, out of frame band
     [InlineData(16.0,  0.05, 900, false)]  // per-frame Tick — regular but in the frame band
@@ -501,10 +501,10 @@ public class LiveFuncsViewModelTests
 
     /// <summary>
     /// The reason RequestCopyText is Func&lt;string,Task&lt;bool&gt;&gt; and not
-    /// Action&lt;string&gt;. As an Action the handler was an async lambda, so Invoke
-    /// returned at its first await and the VM set "Copied ..." BEFORE the clipboard was
-    /// even touched -- unreachable by any assertion, because the answer arrived after the
-    /// claim. Blind-spot sweep round 3, sub-shape (b).
+    /// Action&lt;string&gt;. As an Action the handler would be an async lambda, so Invoke
+    /// would return at its first await and the VM would set "Copied ..." BEFORE the clipboard
+    /// was even touched -- unreachable by any assertion, because the answer would arrive
+    /// after the claim.
     /// </summary>
     [Fact]
     public async Task CopyFuncName_WhenTheClipboardRefuses_DoesNotClaimSuccess()
@@ -569,10 +569,10 @@ public class LiveFuncsViewModelTests
     }
 
     // ==================================================================
-    // Truncated fetch (AF3) — the DLL sorts count-DESC and emits only the top
+    // Truncated fetch — the DLL sorts count-DESC and emits only the top
     // FetchLimit rows while distinct_funcs stays pre-cap, so the page can be a
     // strict subset. The panel's target is a LOW-count function, i.e. exactly
-    // what the cap removes, so silence about it is the defect.
+    // what the cap removes, so silence about it would mislead.
     // ==================================================================
 
     [Fact]
@@ -588,7 +588,7 @@ public class LiveFuncsViewModelTests
         Assert.Contains("showing top 2 of 900", vm.StatusText);
     }
 
-    // [TRACE-UNLOADED-NAMES] D1: functions with no name at all are never sent, so they are not "cut by the limit";
+    // [TRACE-UNLOADED-NAMES] Functions with no name at all are never sent, so they are not "cut by the limit";
     // the unloaded ones are sent, named, and counted.
     [Fact]
     public async Task Unnamed_functions_are_not_reported_as_cut_by_the_fetch_limit()
@@ -681,8 +681,8 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task WholeBaseline_DiffStatus_KeepsTheCertaintyClaim()
     {
-        // Negative control: when nothing was capped, the original guidance is correct
-        // and must survive — otherwise the fix has just removed a working hint.
+        // Negative control: when nothing was capped, the certainty guidance is correct
+        // and must survive — otherwise the truncation notice removes a working hint.
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
         await vm.StartCommand.ExecuteAsync(null);
@@ -702,7 +702,7 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task DiffStatus_CountsAreReportedAgainstThePageNotTheTable()
     {
-        // "1 NEW of 900" invited reading 900 as the population those rows were
+        // "1 NEW of 900" would invite reading 900 as the population those rows were
         // selected from, when only the 2 shown were ever examined.
         var (vm, dump) = MakeVm();
         dump.NextGet = TruncatedResultOf(900,
@@ -745,10 +745,9 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task SetBaseline_ValueDoesNotDependOnTheEarliestFirstToggle()
     {
-        // Not filed in AF3. _allEntries is re-sorted IN PLACE by ApplyDiffAndFilter, and
-        // Earliest-first orders it by FirstSeq — so GroupBy(...).First() captured whichever
-        // duplicate-key row happened to be on top of the CURRENT VIEW. Max() is what First()
-        // was reaching for and is sort-independent.
+        // _allEntries is re-sorted IN PLACE by ApplyDiffAndFilter, and Earliest-first orders
+        // it by FirstSeq — so a GroupBy(...).First() would capture whichever duplicate-key row
+        // happened to be on top of the CURRENT VIEW. Max() is sort-independent.
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(
             new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 50 },
@@ -770,9 +769,9 @@ public class LiveFuncsViewModelTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] L1: the fetch limit is a slider over powers of two,
+    // [EXTPR-539-540-2026-10-02] The fetch limit is a slider over powers of two,
     // 2^6 = 64 .. 2^15 = 32768, default 2^9 = 512. A recording keeps the value it
-    // started with (L4).
+    // started with.
     // ==================================================================
 
     [Fact]
@@ -840,8 +839,8 @@ public class LiveFuncsViewModelTests
     // [EXTPR-539-540-2026-10-02] When does a higher Fetch limit help? Only when the DLL sent
     // as many rows as it was asked for (the cap is what cut the page) and the slider can still
     // go higher. A page short of BOTH the limit and distinct_funcs lost rows the DLL could not
-    // read (stale UFunctions) or an abort cut it; no limit brings those back. Measured on
-    // Avowed 2026-10-06: 648 distinct, 543 rows at every limit from 8192 up.
+    // read (stale UFunctions) or an abort cut it; no limit brings those back (say 648
+    // distinct, 543 rows at every limit from 8192 up).
     // ==================================================================
 
     private static PeProfileEntry[] Rows(int n)
@@ -934,8 +933,8 @@ public class LiveFuncsViewModelTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] L2: Save .jsonl writes the rows on screen, in the order the
-    // game first called them, under one summary line. Disabled while recording (L4).
+    // [EXTPR-539-540-2026-10-02] Save .jsonl writes the rows on screen, in the order the
+    // game first called them, under one summary line. Disabled while recording.
     // ==================================================================
 
     /// <summary>A platform whose save dialog answers with a temp path (or with nothing, to cancel).</summary>
@@ -1084,9 +1083,9 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task HidePerFrame_AFunctionLeftOutOfTheBaseline_IsNotNew_WhenTheActionFiredItLess()
     {
-        // Review: the idle baseline left the HUD's Tick out as per-frame; the action paused the game for a menu, so
-        // the Tick fired too little to be per-frame there and came back -- with no baseline row, it read NEW and
-        // topped the New/changed-only list the baseline exists to clean.
+        // The idle baseline leaves the HUD's Tick out as per-frame; the action pauses the game for a menu, so the Tick
+        // fires too little to be per-frame there and comes back -- with no baseline row it must not read NEW and top
+        // the New/changed-only list the baseline exists to clean.
         var dump = new FakeDumpService
         {
             NextGet = new PeProfileResult
@@ -1419,7 +1418,7 @@ public class LiveFuncsViewModelTests
         Assert.False(File.Exists(path));
     }
 
-    // Review of a20af931: the summary must say why rows are missing and whether NEW can be trusted.
+    // The summary must say why rows are missing and whether NEW can be trusted.
 
     [Fact]
     public async Task SaveJsonl_RecordsTheCheckBoxesThatHideRows()
@@ -1522,8 +1521,9 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task SetBaseline_AgainWhileDiffIsOn_RecomputesTheRowsAgainstTheNewBaseline()
     {
-        // DiffMode = true re-applied the diff only when it CHANGED, so a second Set Baseline kept every row's
-        // Delta / IsNew against the old baseline while the status (and a saved file) named the new one.
+        // DiffMode = true re-applies the diff only when it CHANGES, so a second Set Baseline must recompute on its own,
+        // or every row's Delta / IsNew stays against the old baseline while the status (and a saved file) names the
+        // new one.
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
         await vm.StartCommand.ExecuteAsync(null);
@@ -1544,9 +1544,9 @@ public class LiveFuncsViewModelTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] L3: Min calls, a slider over 1, 2, 4 .. 32 (exponent 0..5,
+    // [EXTPR-539-540-2026-10-02] Min calls, a slider over 1, 2, 4 .. 32 (exponent 0..5,
     // default 1). It hides rows with FEWER calls (Count < MinCalls, so the default hides
-    // nothing; R1: NEW rows get no exemption). It is a VIEW filter on the capture it was set
+    // nothing; NEW rows get no exemption). It is a VIEW filter on the capture it was set
     // for: read at Start, kept for that capture, and moving it later changes nothing until the
     // next Start. The baseline is built from every fetched row, never from the filtered view.
     // ==================================================================
@@ -1619,7 +1619,7 @@ public class LiveFuncsViewModelTests
     [Fact]
     public async Task MinCalls_HidesANewRowToo()
     {
-        // R1 (maintainer, 2026-10-06): no exemption for NEW rows.
+        // No exemption for NEW rows.
         var (vm, dump) = MakeVm();
         dump.NextGet = CallsResult(("Tick", 900));
         await vm.StartCommand.ExecuteAsync(null);
@@ -1675,7 +1675,7 @@ public class LiveFuncsViewModelTests
         finally { File.Delete(platform.Answer!); }
     }
 
-    // Review of f45dca96: the minimum belongs to the rows it filtered, not to the latest Start.
+    // The minimum belongs to the rows it filtered, not to the latest Start.
 
     [Fact]
     public async Task MinCalls_ANewStart_DoesNotRefilterTheRowsStillOnScreen()

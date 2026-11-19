@@ -3,8 +3,8 @@ using System.Collections.Generic;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// Offsets baked into a no-DLL standalone CE-Lua trainer (see
-/// project-standalone-ce-lua-trainer). Populated from the DLL's
+/// Offsets baked into a no-DLL standalone CE-Lua trainer
+/// (StandaloneTrainerScriptGenerator). Populated from the DLL's
 /// <c>get_trainer_offsets</c> pipe reply (the decomposed *GWorld->Pawn chain +
 /// per-field offsets) plus the GWorld AOB metadata from <see cref="EngineState"/>.
 /// Parsed via JsonNode in DumpService — no source-gen context needed (this is a

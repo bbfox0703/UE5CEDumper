@@ -1,11 +1,11 @@
-"""R7-B-02 (delegate half): a UE4 CDO's never-bound delegate reads "(unbound)", with its raw bytes as the witness.
+"""A UE4 CDO's never-bound delegate reads "(unbound)", with its raw bytes as the witness.
 
     py tools/verify/r7_cdo_delegate.py --process UE427_3rdPerson-Win64-Shipping --out out/r7live/b02/427_green
 
 UE4's FWeakObjectPtr::Reset writes {INDEX_NONE, 0}, so every default-constructed DelegateProperty on a UE4 native
-CDO holds ObjectIndex -1 / Serial 0 -- a state the pre-fix labeller called "(stale)" (it treated only {0, 0} as
-unbound). The fixture's Default__DelegatePadFixture.Del_Unicast is exactly that (it is bound only in BeginPlay, on a
-spawned instance), and a spawned instance is the bound control.
+CDO holds ObjectIndex -1 / Serial 0 -- a state a labeller that treats only {0, 0} as unbound calls "(stale)". The
+fixture's Default__DelegatePadFixture.Del_Unicast is exactly that (it is bound only in BeginPlay, on a spawned
+instance), and a spawned instance is the bound control.
 
 Walks the CDO and every live DelegatePadFixture, prints each DelegateProperty's display value, and reads the CDO
 field's first 16 bytes with ReadProcessMemory -- the value the label is about, read without the DLL.

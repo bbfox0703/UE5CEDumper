@@ -7,10 +7,8 @@ namespace UE5DumpUI.Models;
 /// matches DLL-side <c>ValueScan::DataType</c> exactly so the pipe
 /// round-trip is just <c>nameof(ValueScanDataType.X)</c>.
 ///
-/// Numeric primitives shipped in build 738 (MVP). Phase 2 (build 750)
-/// added FString / FName / FText (Phase 2A) and FVector / FRotator
-/// (Phase 2B); FTransform is wire-stable but the DLL returns zero
-/// candidates pending per-version Translation offset detection. See
+/// Numeric, string and vector types; FTransform is wire-stable but the DLL
+/// returns zero candidates pending per-version Translation offset detection. See
 /// memory project_value_search_caveats for the TArray&lt;T&gt; gap.
 ///
 /// Native C++ fields (non-UPROPERTY) carry no reflection metadata, so no
@@ -22,7 +20,7 @@ namespace UE5DumpUI.Models;
 /// </summary>
 public enum ValueScanDataType
 {
-    // Numeric primitives (MVP, build 738)
+    // Numeric primitives
     Int8,
     Int16,
     Int32,
@@ -34,16 +32,16 @@ public enum ValueScanDataType
     Float,
     Double,
     Bool,
-    // String types (Phase 2A, build 750)
+    // String types
     FString,
     FName,
     FText,
-    // Vector types (Phase 2B, build 750). FTransform reserved but
-    // currently returns zero hits — see VectorStructNames in DLL.
+    // Vector types. FTransform is wire-stable but
+    // returns zero hits — see VectorStructNames in DLL.
     FVector,
     FRotator,
     FTransform,
-    // Multi-numeric meta type (build 794). Scans every word/dword/qword/
+    // Multi-numeric meta type. Scans every word/dword/qword/
     // float/double UPROPERTY in one pass, comparing the value against
     // each field using that field's own declared width — no need to
     // know whether the value is stored as int or float up front. The
@@ -51,7 +49,7 @@ public enum ValueScanDataType
     // the candidate set from exploding on small values. Wire string
     // "NumericNoByte" matches DLL ValueScan::DataType::NumericNoByte.
     NumericNoByte,
-    // Multi-numeric meta type WITH 1-byte fields (build 796). Same as
+    // Multi-numeric meta type WITH 1-byte fields. Same as
     // NumericNoByte but additionally includes Int8/UInt8 (still excludes
     // Bool). WARNING: small values (0/1/255) match a very large number of
     // 1-byte fields — the VM surfaces a result-volume warning when this is
@@ -83,7 +81,7 @@ public enum ValueScanType
     Unchanged,
     Increased,
     Decreased,
-    // String-only substring predicates (Phase 2A, build 750)
+    // String-only substring predicates
     Contains,
     StartsWith,
     EndsWith,
@@ -108,7 +106,7 @@ public class ValueCandidate
     public byte   BoolFieldMask     { get; set; } = 0xFF;
     public string Value             { get; set; } = "";   // formatted current value
 
-    /// <summary>Native-C (P1): true when this hit came from an UNMANAGED hole
+    /// <summary>Native-C: true when this hit came from an UNMANAGED hole
     /// (a non-UPROPERTY raw offset) rather than a reflected field. Drives the
     /// "Origin" badge so users can tell native guesses from reflected matches.</summary>
     public bool   IsNativeField     { get; set; }
@@ -178,7 +176,7 @@ public class ValueScanBeginResult
 
 /// <summary>Response from <c>refine_value_scan</c>. <see cref="Total"/> is the
 /// surviving count (the full pruned set lives in the DLL session);
-/// <see cref="Candidates"/> is only the FIRST PAGE in scan order (V3-C). The
+/// <see cref="Candidates"/> is only the FIRST PAGE in scan order. The
 /// UI re-pages / filters / sorts via <c>query_candidates</c>.</summary>
 public class ValueScanRefineResult
 {
@@ -192,7 +190,7 @@ public class ValueScanRefineResult
     public int ClassDistinct { get; set; }
 }
 
-/// <summary>Response from <c>query_candidates</c> (V3-C server-side window).
+/// <summary>Response from <c>query_candidates</c> (a server-side window).
 /// The DLL filters + sorts the WHOLE session set and returns only the
 /// requested window. <see cref="Total"/> is the full session size,
 /// <see cref="FilteredTotal"/> the count after the keyword filter, and
@@ -212,7 +210,7 @@ public class ValueScanWindowResult
 
 /// <summary>
 /// One input value row of a "Group" scan (2..4 rows). The user supplies a value,
-/// a per-slot width scope, and (P2) a per-slot scan type. The width scope fans
+/// a per-slot width scope, and a per-slot scan type. The width scope fans
 /// out over numeric widths (NumericNoByte default / NumericAll). The scan type is
 /// a first-scan targeted predicate (Exact / Bigger / Smaller / Between) on the first scan,
 /// and additionally a prev-value predicate (Changed / Unchanged / Increased /
@@ -275,8 +273,8 @@ public class GroupSlotMatch
 {
     public int       SlotIndex      { get; set; }
     public string    Value          { get; set; } = "";   // the slot's target value
-    public string    ScanType       { get; set; } = "Exact";  // per-slot predicate (P2)
-    public string    Value2         { get; set; } = "";   // Between upper bound (P2)
+    public string    ScanType       { get; set; } = "Exact";  // per-slot predicate
+    public string    Value2         { get; set; } = "";   // Between upper bound
     public string    FieldName      { get; set; } = "";   // representative match
     public int       FieldOffset    { get; set; }
     public string    FieldType      { get; set; } = "";
@@ -284,9 +282,9 @@ public class GroupSlotMatch
     public string    LeafValue      { get; set; } = "";   // current value at the leaf
     public string    Addr           { get; set; } = "";   // leaf address (owner + offset)
     public string    InstanceAddr   { get; set; } = "";   // candidate actor (denormalized for self-contained handoffs)
-    public string    OwnerAddr      { get; set; } = "";   // object directly holding the leaf — actor, or owned sub-object (P4)
+    public string    OwnerAddr      { get; set; } = "";   // object directly holding the leaf — actor, or owned sub-object
     public string    ClassName      { get; set; } = "";   // candidate actor's class (denormalized)
-    public string    OwnerClass     { get; set; } = "";   // class of the leaf's direct owner — owned sub-object for a cross-object leaf (P4 inc 2)
+    public string    OwnerClass     { get; set; } = "";   // class of the leaf's direct owner — owned sub-object for a cross-object leaf
 
     /// <summary>The object a per-slot handoff should target: the leaf's direct owner
     /// (an owned sub-object for a cross-object leaf), falling back to the candidate
@@ -320,12 +318,11 @@ public class GroupSlotMatch
     /// <summary>Every leaf this slot kept, BY NAME — empty until fetched on demand
     /// via <c>query_group_slot_leaves</c> (live pipe sessions only).
     ///
-    /// Exists because a row can only display one assignment. On the DumperTest
-    /// sample, slot 0 kept {Health.CurrentValue, TickCount} and slot 1 kept 36
-    /// leaves including FrozenInt; the row showed the Health pair, and the only
-    /// trace of the rest was <see cref="MatchedOffsets"/> — raw integers that
-    /// cannot tell anyone that 1308 is <c>FrozenInt</c>. Reported as a missed
-    /// match four separate times.
+    /// Exists because a row can only display one assignment. A slot can keep dozens
+    /// of leaves while the row shows one pair, and without this the only trace of
+    /// the rest is <see cref="MatchedOffsets"/> — raw integers that cannot tell
+    /// anyone that 1308 is <c>FrozenInt</c>, so the field the user wanted reads as
+    /// a missed match.
     ///
     /// Each entry is itself a <see cref="GroupSlotMatch"/> carrying this slot's
     /// predicate and owner, so every per-slot handoff (Live Walker / Copy / Pivot
@@ -350,7 +347,7 @@ public class GroupSlotMatch
     public string HiddenLeavesSuffix =>
         MatchingFieldCount > 1 ? $" (+{MatchingFieldCount - 1})" : "";
 
-    /// <summary>Native-C (P2): true when this slot matched an UNMANAGED hole (a raw,
+    /// <summary>Native-C: true when this slot matched an UNMANAGED hole (a raw,
     /// non-UPROPERTY offset) rather than a reflected field. Drives the Origin badge.</summary>
     public bool      IsNativeField  { get; set; }
     /// <summary>Native-C: the interpreted width (e.g. "Int32"); empty for reflected.</summary>
@@ -385,7 +382,7 @@ public class GroupSlotMatch
     // element's heap address at all and set Addr = AddrPlusOffset(objAddr, 0) — the
     // OWNING OBJECT's base. Inferring "deep leaf" from `FieldOffset == 0` there would
     // print the UObject header as the place the value lives: a plausible, copyable,
-    // WRONG address, which is worse than the obviously-unknown 0x0 it replaced. So the
+    // WRONG address, which is worse than an obviously-unknown 0x0. So the
     // producer states it explicitly instead of the consumer guessing.
     private string Locator =>
         FieldOffset != 0                                     ? OffsetHex
@@ -405,7 +402,7 @@ public class GroupSlotMatch
     // Detail-row caption: "Str  24 → 0x20  (IntProperty)" once locked (or
     // "Str  ↑ increased → 0x20 ..." for a prev-value slot); unlocked it names the
     // DISPLAYED field and says how many others matched the same value, because a bare
-    // "36 candidate offset(s)" told a user nothing about which fields those were.
+    // "36 candidate offset(s)" tells a user nothing about which fields those are.
     public string DisplayLabel =>
         Locked
             ? $"{(string.IsNullOrEmpty(FieldName) ? "?" : FieldName)}  {Criterion}{LocatorSuffix}  ({FieldType})"
@@ -450,7 +447,7 @@ public class GroupCandidate
             $"{(string.IsNullOrEmpty(s.FieldName) ? "?" : s.FieldName)}={(string.IsNullOrEmpty(s.LeafValue) ? s.Value : s.LeafValue)}{s.HiddenLeavesSuffix}"));
     public bool AllLocked => Slots.Count > 0 && Slots.All(s => s.Locked);
 
-    // ---- Locked-offset table (P2) ----
+    // ---- Locked-offset table ----
     // The actionable output once every slot has converged to a single offset:
     // the class plus each value's byte offset, ready to rebuild a struct / pointer
     // chain. (Export it from Live Walker — the panel only displays it here.)
@@ -498,7 +495,7 @@ public class GroupScanRefineResult
     public int   Total      { get; set; }
     public long  DurationMs { get; set; }
     /// <summary>Inherited from the Begin scan via the DLL session — a refine prunes the
-    /// stored pool and never re-runs the matcher, so it cannot recompute this. (AE13)</summary>
+    /// stored pool and never re-runs the matcher, so it cannot recompute this.</summary>
     public bool  PerSlotCapHit { get; set; }
     public int   PerSlotCap    { get; set; }
     public List<GroupCandidate> Candidates { get; set; } = new();
@@ -514,7 +511,7 @@ public class GroupScanWindowResult
     public int   FilteredTotal { get; set; }
     public int   Offset        { get; set; }
     /// <summary>Repeated on every window so a panel that only ever queries — after a
-    /// sort change, a filter, a Load More — still learns the set was capped. (AE13)</summary>
+    /// sort change, a filter, a Load More — still learns the set was capped.</summary>
     public bool  PerSlotCapHit { get; set; }
     public int   PerSlotCap    { get; set; }
     public List<GroupCandidate> Candidates { get; set; } = new();

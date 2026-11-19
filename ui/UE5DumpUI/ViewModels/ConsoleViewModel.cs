@@ -374,7 +374,7 @@ public partial class ConsoleViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilter()
     {
-        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
         FilterText = "";
     }
 
@@ -397,9 +397,9 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button runs that row. A click on a button inside a DataGrid
-    /// cell does not select the row, so running the selection ran whatever row was selected before, or nothing. The
-    /// selection follows a row that runs (or opens its parameter dialog), so the grid shows which one it was; a refused
-    /// row leaves it on the row that is still running.</summary>
+    /// cell does not select the row, so running the selection would run whatever row was selected before, or
+    /// nothing. The selection follows a row that runs (or opens its parameter dialog), so the grid shows which one it
+    /// was; a refused row leaves it on the row that is still running.</summary>
     [RelayCommand]
     private async Task RunRowAsync(AllFunctionEntry? entry)
     {
@@ -429,10 +429,10 @@ public partial class ConsoleViewModel : ViewModelBase
         // Strip optional leading slash so users typing "/fly" still work.
         if (raw.StartsWith('/')) raw = raw.Substring(1);
 
-        // For v1 we only support no-arg matching. If the user types
-        // "setspeed 5" we still resolve "setspeed" but warn that args
-        // can't be parsed yet — they need to use the Run-selected flow
-        // which opens InvokeParamDialog for typed params.
+        // Matching is by command name alone: inline args are not parsed. If the
+        // user types "setspeed 5" we still resolve "setspeed"; when it takes
+        // params, the status line says so and InvokeParamDialog opens for typed
+        // params.
         var firstSpace = raw.IndexOf(' ');
         var commandName = firstSpace > 0 ? raw.Substring(0, firstSpace) : raw;
         var hasInlineArgs = firstSpace > 0;
@@ -561,7 +561,7 @@ public partial class ConsoleViewModel : ViewModelBase
             //
             // [CONSOLE-PIN-THROWS] A stale pin produces a THROWN "Function not found", not a result
             // code at all, so this branch never sees it; that case is handled where the call is
-            // made, above. This branch remains for a failure the DLL does report as a result.
+            // made, above. This branch handles a failure the DLL does report as a result.
             bool dispatchTimedOut = result.Result == Constants.InvokeDispatchTimeoutResult;
             if (!reResolved && !result.Success && usedPin && !dispatchTimedOut)
             {

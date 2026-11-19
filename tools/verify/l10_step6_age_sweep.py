@@ -95,10 +95,10 @@ def main():
 
     # ⚠ NOT a byte offset into the existing init-0.log. Every process start ROTATES that
     # file, so the launch below creates a fresh one and a pre-recorded offset (tens of KB)
-    # slices past the whole run -- the first version of this rig printed an empty
-    # maintenance section while the log plainly held the delete line. Record a wall-clock
-    # instant instead and filter the UI's own folder by timestamp; seconds resolution is
-    # ample here because the events are ~18 s apart.
+    # slices past the whole run: it prints an empty maintenance section while the log
+    # plainly holds the delete line. Record a wall-clock instant instead and filter the
+    # UI's own folder by timestamp; seconds resolution is ample here because the events
+    # are seconds apart.
     logdir = ROOT / "Logs"
     launch_mark = time.strftime("%Y-%m-%d %H:%M:%S")
 

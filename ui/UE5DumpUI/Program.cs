@@ -28,7 +28,7 @@ internal static class Program
         if (args.Length == 1 && args[0] == Constants.McpAgentGuardSwitch)
             return Mcp.McpHost.RunAgentGuard();
 
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D: `--mcp` serves the Model Context Protocol on stdio for an AI client
+        // [PIPE-PER-PROCESS-2026-11-06] `--mcp` serves the Model Context Protocol on stdio for an AI client
         // instead of opening the window. Before the single-instance mutex, so a server runs beside the UI and beside
         // other servers, and before Avalonia, which it never starts. Anywhere on the line: a registration may put
         // --writes= first, and the window must never open under an MCP client.
@@ -49,10 +49,10 @@ internal static class Program
         try
         {
             // [LEAD-SECOND-UI-CRASHLOG] Single instance, decided before Avalonia starts. Decided inside
-            // OnFrameworkInitializationCompleted, a second launch called Shutdown(1) there, the lifetime's StartCore
-            // then threw "the Dispatcher shut down", and the catch below wrote that to crash.log over the first
-            // instance's real one. Inside this try, so a failure taking the mutex is written down too. The service, and
-            // the mutex it holds, go on to the app. (B42: the first instance's window is raised.)
+            // OnFrameworkInitializationCompleted, a second launch would call Shutdown(1) there, the lifetime's StartCore
+            // would then throw "the Dispatcher shut down", and the catch below would write that to crash.log over the
+            // first instance's real one. Inside this try, so a failure taking the mutex is written down too. The service,
+            // and the mutex it holds, go on to the app; a second launch raises the first instance's window.
             var platform = new Services.WindowsPlatformService();
             if (!platform.TryAcquireSingleInstance())
             {
@@ -110,7 +110,7 @@ internal static class Program
         AppBuilder.Configure<App>()
             // Windows-only tool (injects into Windows games), so wire the Win32 +
             // Skia backends EXPLICITLY instead of UsePlatformDetect(). This drops
-            // the Avalonia.Desktop meta-package (which dragged in the X11 / macOS
+            // the Avalonia.Desktop meta-package (which drags in the X11 / macOS
             // Native / FreeDesktop backends + Tmds.DBus), eliminating their
             // "will always throw" ILC AOT warnings — those code paths can never
             // run on Windows. UsePlatformDetect() itself lives in Avalonia.Desktop,

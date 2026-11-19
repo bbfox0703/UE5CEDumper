@@ -130,9 +130,8 @@ internal sealed class DispatcherFaultGuard
     /// custom exception type — and none of it may change the outcome.
     ///
     /// <para>Both outcomes go to the SAME category (<see cref="Constants.LogCatView"/>).
-    /// They were split across <c>view</c> and <c>init</c>, which meant reading the
-    /// guard's story required two files and made the documented verification step
-    /// ("grep view-0.log") silently unable to see half of it.</para>
+    /// Split across categories, reading the guard's story would take two files and the
+    /// documented verification step ("grep view-0.log") would silently miss half of it.</para>
     /// </summary>
     private void TryLog(bool swallow, InputFaultVerdict verdict, string detail, Exception? ex, int n)
     {

@@ -6,9 +6,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [FUNCPARM-CONSUMERS] walk_functions lists a UFunction's whole property chain, and on a Blueprint function its
-/// locals follow the parameters there. In 2026-08 (Y1, TRAP 1) the Invoke form offered two of them,
+/// locals follow the parameters there. Read whole, the chain would have the Invoke form offer two of them,
 /// <c>CallFunc_Conv_SoftObjectReferenceToObject_ReturnValue</c> at offset 8 and <c>K2Node_DynamicCast_AsActor</c>
-/// at 16, as arguments of a function whose parmsSize was 8. Whatever means "the arguments" must take the entries
+/// at 16, as arguments of a function whose parmsSize is 8. Whatever means "the arguments" must take the entries
 /// the DLL flags as CPF_Parm, or, from a DLL that predates the flag, UE's own definition: the leading NumParms.
 /// </summary>
 public class FunctionParametersTests
@@ -159,8 +159,8 @@ public class FunctionParametersTests
     [Fact]
     public void The_zero_fill_covers_every_walked_entry_even_when_NumParms_was_misread()
     {
-        // [A3-CEFORM-4X-STALESLAB], review of 2bc914dc: with a DLL older than 3622 the parameters come from NumParms,
-        // a tail read older DLLs have misread (0 here, and ParmsSize with it). The zero-fill must not depend on it:
+        // [A3-CEFORM-4X-STALESLAB] From a DLL that predates the CPF_Parm flag the parameters come from NumParms,
+        // a tail read older DLLs can misread (0 here, and ParmsSize with it). The zero-fill must not depend on it:
         // the callee frees whatever Data pointer it finds in an out-FString slot left dirty.
         var fn = new FunctionInfoModel
         {

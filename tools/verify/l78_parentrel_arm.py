@@ -12,8 +12,8 @@ r"""L78 `[A2-CABI-TELEPORT-PARENTREL]`: arm and disarm a PARENT-RELATIVE pose on
 
 DumperTest has no vehicle, mount or moving platform, so both halves of Wirbel.cpp's condition are MANUFACTURED,
 as L27 and L37 did (todo.md). GetPoseImpl reports a pose as parent-relative only when the pawn's root is attached
-(`attached`, Wirbel.cpp:425) AND the world read `K2_GetActorLocation` failed (:459), after which it falls back to
-RelativeLocation.
+(GetPoseImpl's `attached`) AND the world read `K2_GetActorLocation` failed (its `if (!got)` branch), after which it
+falls back to RelativeLocation.
   * attach  -- `K2_AttachToActor` on the live BP_ThirdPersonCharacter_C onto a live StaticMeshActor, all three
                EAttachmentRule bytes KeepWorld (1), weld 0. The parameter layout is READ from `walk_functions` on
                /Script/Engine.Actor, never assumed. The ReturnValue byte must be 01. DumperTestActor has no root

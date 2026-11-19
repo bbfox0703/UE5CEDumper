@@ -1,25 +1,26 @@
-"""B16 step 2 -- stage a Coordinate Library dataset that can actually EXERCISE the
-Group and Map sort columns, and predict every order so the screen can be read.
+"""B16, its Group/Map half -- stage a Coordinate Library dataset that can actually
+EXERCISE the Group and Map sort columns, and predict every order so the screen can
+be read.
 
     py b16_coord_sort.py stage      # back up + write the designed dataset
     py b16_coord_sort.py predict    # print the predicted orders only
     py b16_coord_sort.py restore    # put the original file back
 
 WHY STAGING IS THE WHOLE JOB. The shipped file has `group` EMPTY on all five
-entries and `map` IDENTICAL on all five, so neither column can order anything --
-which is exactly why the 2026-08-12 B16 pass closed X/Y/Z/Yaw/Dist and left these
-two "not exercised". No path in the UI produces distinct values by itself, and
-`Map` has no row-editor field at all, so the JSON is the only way in.
+entries and `map` IDENTICAL on all five, so neither column can order anything on
+it. No path in the UI produces distinct values by itself, and `Map` has no
+row-editor field at all, so the JSON is the only way in.
 
 TWO TRAPS THIS RIG EXISTS TO DISARM.
 
 1. GROUP-ASCENDING IS STRUCTURALLY VACUOUS FROM THE BASELINE, so the register's
    own procedure ("set distinct groups, click Group") CANNOT FAIL on that click.
    The VM's display order is ALREADY group-ascending -- `CompareForDisplay`
-   (TeleportViewModel.cs:3468) does `string.Compare(a.Group, b.Group,
+   (TeleportViewModel.cs) does `string.Compare(a.Group, b.Group,
    OrdinalIgnoreCase)` then natural Label, and the wired header comparer
-   (TeleportPanel.axaml.cs:29) is `DataGridSortComparers.Ordinal(r => r.Group)`,
-   which despite the name IS OrdinalIgnoreCase (DataGridSortComparers.cs:53) --
+   (TeleportPanel.axaml.cs `CoordSortComparers["Group"]`) is
+   `DataGridSortComparers.Ordinal(r => r.Group)`, which despite the name IS
+   OrdinalIgnoreCase (DataGridSortComparers.cs `Ordinal<T>`) --
    the same comparison on the same field. A stable sort reproduces the baseline
    exactly, and so does a header that does nothing.
    ▶ THE FIX: never click Group-ascending from the baseline. Sort by X first, THEN
@@ -30,14 +31,14 @@ TWO TRAPS THIS RIG EXISTS TO DISARM.
    ▶ THE FIX: this dataset is constructed so all five predicted orders differ AT
    THE FIRST ROW. One glance at row 1 identifies which sort is active.
 
-⚠ SCOPE CORRECTION, from the fix's own comment (TeleportPanel.axaml.cs:22):
-"Label/Group/Map worked" -- Group and Map were NEVER part of the B16 trimming
-defect, which killed the five columns sorting on a NESTED path (`Entry.X`) or a
-mismatched one (`Distance` vs `DistanceText`). Group/Map bind and sort on the same
-direct path, so they were always live. This row is a COMPLETENESS check on two
-columns the fix says already worked, not a test of the defect. Still worth the five
-minutes -- wiring a custom comparer REPLACED Avalonia's default on these two, which
-is a real behavioural change that could regress -- but it is not the defect class.
+⚠ SCOPE, as `CoordSortComparers` in TeleportPanel.axaml.cs states it: Group and Map
+are NOT part of the B16 trimming defect, which kills the five columns sorting on a
+NESTED path (`Entry.X`) or a mismatched one (`Distance` vs `DistanceText`).
+Group/Map bind and sort on the same direct path, so trimming leaves them live. This
+row is a COMPLETENESS check on two columns outside the defect, not a test of it.
+Still worth the five minutes -- the wired custom comparer REPLACES Avalonia's
+default on these two, which is real behaviour of its own -- but it is not the
+defect class.
 """
 import json
 import os

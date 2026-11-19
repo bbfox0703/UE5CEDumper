@@ -10,8 +10,8 @@ first. The read/query path is deliberately NOT swept, because it is hit on every
 
 [PIPE-PER-PROCESS-2026-11-06] Stage C: a session is the connection's that began it, and
 the sweep reaps only the sweeping connection's sessions. So both phases keep every
-session on ONE connection, as they always did; another connection's Begin no longer
-sweeps them. The owner rule itself is unit-tested with the clock passed in
+session on ONE connection; another connection's Begin does not sweep them. The owner
+rule itself is unit-tested with the clock passed in
 (`Test_Radar_IdleSweepIsPerOwner`); the sweep TRIGGER and the protect-mine-first
 ORDERING in the managers remain wall-clock behaviours, which is what this checks live.
 

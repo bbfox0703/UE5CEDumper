@@ -4,7 +4,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pure policy behind the staging / quarantine story of audit #5 AC4-AC6. No disk.
+/// Pure policy behind atomic writes and the quarantine of corrupt files. No disk.
 /// </summary>
 public class AtomicFileHygieneTests
 {

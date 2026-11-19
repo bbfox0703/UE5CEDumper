@@ -138,7 +138,7 @@ public static class InvokeScriptGenerator
         Line(sb, "end");
         // ONE emitted helper for the idle wait, called from every round-trip, rather
         // than an inline copy of the loop per call site: hand-placed copies of a rule
-        // drift apart (R3). The BODY comes
+        // drift apart. The BODY comes
         // from CeLuaHygiene so it stays byte-identical with the other generators; only
         // the bail differs per call site, which is why the helper returns a boolean
         // instead of deciding for its callers.
@@ -193,7 +193,7 @@ public static class InvokeScriptGenerator
         //
         // Both spellings are mandatory and the order is not a preference: depending on how CE
         // picked the module up, an export is reachable bare or only as "<module>.<name>", and
-        // which one works is not predictable from here (lessons-learned B33). The sibling
+        // which one works is not predictable from here. The sibling
         // generators already do this -- BakedScriptGenerator via getAddressSafe, CeReadinessLua
         // via pcall(getAddress, ...).
         Line(sb, "-- Find mailbox symbol (exported by UE5Dumper DLL)");
@@ -410,6 +410,13 @@ public static class InvokeScriptGenerator
             AppendInlineFStringBuilder(sb);
         }
 
+        // [CE-LUA-FLOAT-LOCALE] The reader every number box goes through, defined before the FIRE handler that
+        // captures it.
+        if (inputParams.Any(IsTypedNumber))
+        {
+            AppendNumberReader(sb);
+        }
+
         // Generate labels + edit fields
         for (int i = 0; i < inputParams.Count; i++)
         {
@@ -478,6 +485,7 @@ public static class InvokeScriptGenerator
         // Fire button logic — write params to mailbox, then CMD_INVOKE
         Line(sb, "btnFire.OnClick = function()");
         AppendUnwritableParamGate(sb, inputParams);
+        AppendNumberGate(sb, inputParams);
         // The fourth guard, and the one whose bail shape genuinely differs: this is a
         // CLOSURE, so `return` leaves only the click handler — which is the right
         // behaviour here (the form stays open and the user can press FIRE again) but
@@ -514,7 +522,7 @@ public static class InvokeScriptGenerator
             // A struct param has no scalar spelling, and this form has one edit box per
             // param. Through GetMailboxWriteStatement's size switch it would reach
             // writeInteger, so an FVector (12 B on UE4, 24 on UE5) would get FOUR bytes written
-            // from math.floor(tonumber(text)) and the rest left zero -- a garbage vector, and
+            // from the box's integer and the rest left zero -- a garbage vector, and
             // nothing said so. The params buffer is already zero-filled above, so skipping the
             // write sends a well-defined zeroed struct instead, which is at least a value the
             // callee can survive. Use the app's Invoke dialog (which expands sub-fields) to pass
@@ -683,6 +691,83 @@ public static class InvokeScriptGenerator
         }
     }
 
+    /// <summary>
+    /// [CE-LUA-FLOAT-LOCALE] Emit <c>_readNumber(text, whole)</c>, the form's reader for a box FIRE writes as a number.
+    ///
+    /// <para>CE's <c>tonumber</c> follows the C runtime's numeric locale and does not retry with a dot
+    /// (docs/CE-Bugs-Minesweeper.md, the CE Lua group), so while any script in the session holds a comma-decimal
+    /// locale, a bare <c>tonumber('3.14')</c> is nil. The reader reads the text as typed and, when that fails, reads it
+    /// again with every dot swapped for the locale's decimal point, which it takes from <c>tostring(0.5)</c>: that is
+    /// formatted through the same locale. Under a locale whose decimal point is not a dot, text that already holds that
+    /// decimal point is not read at all, so <c>1,000</c> never reads as 1. Decimal and <c>0x</c> integers parse without
+    /// the locale and read on the first try.</para>
+    ///
+    /// <para>It answers nil for text that is not a finite number, and for a fraction when <c>whole</c> is set
+    /// (<c>math.tointeger</c> takes an integral value and nothing else): FIRE refuses a nil instead of sending 0.</para>
+    /// </summary>
+    private static void AppendNumberReader(StringBuilder sb)
+    {
+        Line(sb, "-- A number typed into a box, read the same under any C numeric locale: tonumber follows the");
+        Line(sb, "-- locale and does not retry with a dot, so text it cannot read is read again with each dot");
+        Line(sb, "-- swapped for the decimal point of the locale. Under a locale whose decimal point is not a dot,");
+        Line(sb, "-- text holding that decimal point is not read, so '1,000' is never 1. nil = not a finite");
+        Line(sb, "-- number, or not a whole one when whole is set.");
+        Line(sb, "local function _readNumber(text, whole)");
+        Line(sb, "    local s = tostring(text or ''):match('^%s*(.-)%s*$')");
+        Line(sb, "    local dp = tostring(0.5):match('^0(.-)5$') or '.'");
+        Line(sb, "    local v");
+        Line(sb, "    if dp == '.' or not s:find(dp, 1, true) then");
+        Line(sb, "        v = tonumber(s)");
+        Line(sb, "        if v == nil and dp ~= '.' then");
+        Line(sb, "            v = tonumber((s:gsub('%.', function() return dp end)))");
+        Line(sb, "        end");
+        Line(sb, "    end");
+        Line(sb, "    if v == nil or v ~= v or v == math.huge or v == -math.huge then return nil end");
+        Line(sb, "    if whole then return math.tointeger(v) end");
+        Line(sb, "    return v");
+        Line(sb, "end");
+        Line(sb);
+    }
+
+    /// <summary>
+    /// [CE-LUA-FLOAT-LOCALE] FIRE's number gate: every box FIRE writes as a number (<see cref="IsTypedNumber"/>) is read
+    /// through <c>_readNumber</c> into <c>_num</c> before the idle wait and the zero-fill, and a box it cannot read is
+    /// refused, naming the parameter and what the box holds, with nothing sent.
+    ///
+    /// <para>It bails the way the unwritable-param gate beside it does: a dialog, the form left open for another try,
+    /// no untick. The click handler runs after <c>[ENABLE]</c> has returned, so this record's deferred untick belongs to
+    /// <c>frm.OnClose</c>, and returning from the click cannot skip it.</para>
+    ///
+    /// <para><c>_num</c> is a table rather than a local per box, so a long parameter list cannot reach Lua's limit on
+    /// the locals of one function.</para>
+    /// </summary>
+    private static void AppendNumberGate(StringBuilder sb, List<FunctionParamModel> inputParams)
+    {
+        bool declared = false;
+        for (int i = 0; i < inputParams.Count; i++)
+        {
+            var p = inputParams[i];
+            if (!IsTypedNumber(p)) continue;
+            if (!declared)
+            {
+                Line(sb, "    local _num = {}");
+                declared = true;
+            }
+            int idx = i + 1;
+            bool whole = !IsFloatType(p.TypeName);
+            string what = $"{EscapeLua(p.Name)}: {EscapeLua(ShortTypeName(p.TypeName))}";
+            string expect = whole
+                ? "is not a whole number: type it in decimal, or in hex after 0x, with no thousands separator"
+                : "is not a number: type it with a dot as the decimal point, like 3.14, and no thousands separator";
+            Line(sb, $"    _num[{idx}] = _readNumber(edits[{idx}].Text, {(whole ? "true" : "false")})");
+            Line(sb, $"    if _num[{idx}] == nil then");
+            Line(sb, $"        showMessage('[Invoke] {what} -- \\'' .. tostring(edits[{idx}].Text) .. '\\' {expect}." +
+                     "\\n\\nnothing was sent -- the form stays open.')");
+            Line(sb, "        return");
+            Line(sb, "    end");
+        }
+    }
+
     /// <summary>True for UE string property types (built as an FString by value).</summary>
     private static bool IsStringType(string typeName) =>
         typeName is "StrProperty" or "Utf8StrProperty" or "AnsiStrProperty";
@@ -816,7 +901,8 @@ public static class InvokeScriptGenerator
         };
     }
 
-    /// <summary>Lua expression to parse edit field text into a value.</summary>
+    /// <summary>Lua expression for a param's value in the FIRE handler: the box's text for a string, the hex-aware
+    /// parse for an address or an FName, and otherwise the number FIRE's number gate read and checked.</summary>
     private static string GetParseExpression(string typeName, int editIndex)
     {
         // String types: pass the raw edit text straight to writeFStr (no numeric parse).
@@ -839,10 +925,7 @@ public static class InvokeScriptGenerator
         // Decimal is tried BEFORE bare hex on purpose: this branch also serves
         // NameProperty, whose value is an FName index a user may well type in decimal.
         // Reading "1234" as hex would silently change its meaning.
-        if (typeName is "NameProperty" or "ObjectProperty" or "ClassProperty"
-            or "SoftObjectProperty" or "SoftClassProperty"
-            or "WeakObjectProperty" or "LazyObjectProperty"
-            or "InterfaceProperty")
+        if (IsHexAwareParse(typeName))
         {
             return $"(function() local s = edits[{editIndex}].Text or ''; " +
                    "s = s:gsub('%s+',''); " +
@@ -851,16 +934,29 @@ public static class InvokeScriptGenerator
                    "return tonumber(s) or tonumber(s,16) or 0 end)()";
         }
 
-        // Float types: direct tonumber
-        if (typeName is "FloatProperty" or "DoubleProperty")
-            return $"tonumber(edits[{editIndex}].Text) or 0.0";
-
-        // Integer types: floor to avoid fractional
-        return $"math.floor(tonumber(edits[{editIndex}].Text) or 0)";
+        // [CE-LUA-FLOAT-LOCALE] A float or an integer: the value FIRE's number gate read through _readNumber, which
+        // it refuses to send when the box did not parse.
+        return $"_num[{editIndex}]";
     }
 
+    /// <summary>Types whose box holds an address or an FName index, read by the hex-aware parse.</summary>
+    private static bool IsHexAwareParse(string typeName) =>
+        typeName is "NameProperty" or "ObjectProperty" or "ClassProperty"
+            or "SoftObjectProperty" or "SoftClassProperty"
+            or "WeakObjectProperty" or "LazyObjectProperty"
+            or "InterfaceProperty";
+
+    /// <summary>True for the types FIRE writes as a fraction; every other number box takes a whole number.</summary>
+    private static bool IsFloatType(string typeName) => typeName is "FloatProperty" or "DoubleProperty";
+
+    /// <summary>[CE-LUA-FLOAT-LOCALE] A param whose box FIRE writes as a number: not text, not an address or an FName,
+    /// and not a type the write loop leaves zeroed. Each such box is read and checked by FIRE's number gate, and its
+    /// write takes the checked value.</summary>
+    private static bool IsTypedNumber(FunctionParamModel p) =>
+        !IsStringType(p.TypeName) && !IsHexAwareParse(p.TypeName) && !ParamBufferBuilder.IsUnwritableParam(p.TypeName);
+
     /// <summary>Escape for a Lua single-quoted literal. Forwards to the one
-    /// implementation (R2), which escapes CR, TAB and a closing long bracket too -- the
+    /// implementation, which escapes CR, TAB and a closing long bracket too -- the
     /// last would otherwise terminate AOBMaker's <c>[==[ … ]==]</c> wrapper around the
     /// whole script.</summary>
     private static string EscapeLua(string s) => CeLuaHygiene.EscapeLuaString(s);

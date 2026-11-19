@@ -12,8 +12,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 AE2 / AE3 — the Class/Struct panel could show a class that is not the
-/// selected node, and a failed walk could pin it there.
+/// The Class/Struct panel must show the selected node's class, and a failed walk must not
+/// pin another class there.
 ///
 /// Two facts make these races real, and neither is visible at the call site:
 ///
@@ -24,8 +24,7 @@ namespace UE5DumpUI.Tests;
 ///     rail that keeps that documented.
 ///   * <c>AsyncRelayCommand</c> does NOT block re-entrancy: <c>CanExecute</c> goes
 ///     false while running, so a bound Button self-disables, but <c>ExecuteAsync</c>
-///     runs anyway. Measured on 8.4.2 in build 3038 — see the same note in
-///     <c>ProxyDeployConcurrencyTests</c>.
+///     runs anyway — see the same note in <c>ProxyDeployConcurrencyTests</c>.
 ///
 /// The losing pair is specifically instance-then-class-like, and it loses by
 /// ORDERING rather than timing: an instance needs a <c>get_object</c> hop before its
@@ -37,8 +36,8 @@ public class ClassStructViewModelConcurrencyTests
     //
     // Modelled on ClassPivotViewModelTests.GatedStore. Gating is OPT-IN: an
     // address nobody gated resolves immediately through the base stub's
-    // RegisterClass table. That matters for the negative controls — against
-    // UNFIXED code the stale branch resolves instantly and the test fails on a
+    // RegisterClass table. That matters for the negative controls — without the
+    // guard under test the stale branch resolves instantly and the test fails on a
     // clean assertion instead of hanging on a gate nobody releases.
     private class GatedDumpService : StubDumpService
     {
@@ -133,23 +132,20 @@ public class ClassStructViewModelConcurrencyTests
             await Task.Delay(5, TestContext.Current.CancellationToken);
     }
 
-    // ── AE2/AE3 step 3, the half a screenshot could not reach ────────────────
+    // ── the spinner for the whole load, which a screenshot cannot sample ────────
     //
-    // The row's step 3 has two halves. "The spinner does not get STUCK after the panel
-    // settles" passed live on 2026-08-22. The other half — "it does not vanish EARLY while
-    // a load is still running" — was recorded as NOT verified, with the reason written
-    // down: on this machine a class load finishes faster than a screenshot can sample it.
-    // Even DOLLPlayerController (Properties Size 2224, a long inherited field list) was
-    // fully drawn in a zero-wait capture, so the spinner was never SEEN at all — and a
-    // check that never observed the thing appear cannot report on when it disappears.
+    // "The spinner does not vanish EARLY while a load is still running" cannot be checked
+    // live: a class load can finish faster than a screenshot can sample it, even for a
+    // class with a long inherited field list, so the spinner may never be SEEN at all — and
+    // a check that never observed the thing appear cannot report on when it disappears.
     //
     // ⭐ That is a timing problem with the OBSERVER, not a property of the code. What the
-    // half actually claims is `IsLoading` staying true for the whole duration of a load,
-    // and a gated stub makes the load take exactly as long as the test wants.
+    // claim actually is: `IsLoading` stays true for the whole duration of a load, and a
+    // gated stub makes the load take exactly as long as the test wants.
     //
     // ⚠ And the interesting failure is NOT "is the flag true at some instant" — it is the
-    // one this row's whole subject (fast selection changes) produces: a SUPERSEDED load
-    // finishing and clearing the flag out from under a newer load that is still running.
+    // one fast selection changes produce: a SUPERSEDED load finishing and clearing the
+    // flag out from under a newer load that is still running.
     // That is what the `if (gen == _loadId)` guard in LoadClassCoreAsync's finally exists
     // for, and it is the second test below.
 
@@ -186,14 +182,11 @@ public class ClassStructViewModelConcurrencyTests
     {
         // ⚠ SAY WHAT THIS ADDS, because it is nearly a duplicate and pretending otherwise
         // would be the more expensive mistake. StaleWalk_DoesNotClearIsLoadingOfNewerLoad
-        // above already asserts the same property — an older load must not retire a spinner
-        // it no longer owns — but it drives LoadClassCommand, the CROSS-TAB entry. AE2/AE3 is
-        // about FAST SELECTION IN THE TREE, which enters through OnObjectSelected. Both funnel
-        // into LoadClassCoreAsync, so the guard under test is the same one; what differs is
-        // that the row's own path is now the one exercised.
-        //
-        // (I found the overlap by running the negative control, not by reading: NC-1 reddened
-        // three tests where I expected two.)
+        // already asserts the same property — an older load must not retire a spinner it no
+        // longer owns — but it drives LoadClassCommand, the CROSS-TAB entry. Fast selection
+        // IN THE TREE enters through OnObjectSelected. Both funnel into LoadClassCoreAsync,
+        // so the guard under test is the same one; what differs is that the tree's own path
+        // is the one exercised.
         var dump = new GatedDumpService();
         dump.RegisterClass("0xOLD", Class("ClassOld"));
         dump.RegisterClass("0xNEW", Class("ClassNew"));
@@ -207,7 +200,7 @@ public class ClassStructViewModelConcurrencyTests
         await WaitForGate(dump.WalkGates, "0xNEW");
         Assert.True(vm.IsLoading);
 
-        // Release the SUPERSEDED one first — the ordering that produces the defect.
+        // Release the SUPERSEDED one first — the ordering that produces the race.
         oldGate.SetResult(Class("ClassOld"));
         await first;
 
@@ -222,7 +215,7 @@ public class ClassStructViewModelConcurrencyTests
         Assert.Equal("ClassNew", vm.ClassName);
     }
 
-    // ── AE2 ─────────────────────────────────────────────────────────────────
+    // ── a stale selection must not overwrite a newer one ────────────────────
 
     [Fact]
     public async Task StaleInstanceSelection_DoesNotOverwriteNewerClassSelection()
@@ -341,8 +334,9 @@ public class ClassStructViewModelConcurrencyTests
     }
 
     // [CLASSSTRUCT-DISCONNECT-LOADING] ClearOnDisconnect supersedes the in-flight walk by bumping the ticket, and the
-    // walk's finally clears the spinner only for the newest ticket -- so after a disconnect mid-walk no load owned the
-    // flag and nobody retired it: the spinner stayed up over the emptied panel until the next game's first class load.
+    // walk's finally clears the spinner only for the newest ticket -- so after a disconnect mid-walk no load owns the
+    // flag, and unless the disconnect retires it the spinner stays up over the emptied panel until the next game's
+    // first class load.
     [Fact]
     public async Task ADisconnectMidWalk_TakesTheSpinnerDown()
     {
@@ -384,7 +378,7 @@ public class ClassStructViewModelConcurrencyTests
         Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"a superseded walk painted: '{vm.ErrorMessage}'");
     }
 
-    // ── AE3 ─────────────────────────────────────────────────────────────────
+    // ── a failed walk must not pin the panel ────────────────────────────────
 
     private sealed class ThrowingWalkDumpService : GatedDumpService
     {
@@ -402,9 +396,9 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task FailedWalkAfterPriorSuccess_RetriesOnReselectingSameNode()
     {
-        // AE3 proper. The pin needs a PRIOR SUCCESS, because the old guard was
-        // `key == addr && HasClass` — see ColdFailure_WasAlreadyRetryable below for
-        // why that priming step is load-bearing and must not be trimmed.
+        // The pin needs a PRIOR SUCCESS: a dedupe guard of `key == addr && HasClass`
+        // lets a cold retry through anyway — see ColdFailure_WasAlreadyRetryable below
+        // for why that priming step is load-bearing and must not be trimmed.
         var dump = new ThrowingWalkDumpService();
         dump.RegisterClass("0xP", Class("ClassP"));
         dump.RegisterClass("0xB", Class("ClassB"));
@@ -426,13 +420,12 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task FailedWalk_DoesNotLeaveThePreviousClassUnderTheError()
     {
-        // [CLASSSTRUCT-FAILED-KEEPS-OLD] AE23 step 4, measured 2026-11-18 on build 3735 (DumperTest Development): after a
-        // level reload, re-selecting the freed ThirdPersonMap_C showed "DLL error: Not a live class at ..." ABOVE the
-        // same class's pre-reload header and field grid -- fields whose addresses were freed, under a selection that
-        // has no class. The step's acceptance: an error line, and not the old class's fields.
+        // [CLASSSTRUCT-FAILED-KEEPS-OLD] After a level reload, re-selecting a freed class (ThirdPersonMap_C) fails with
+        // "DLL error: Not a live class at ...", and that error must not sit ABOVE the same class's pre-reload header and
+        // field grid -- fields whose addresses were freed, under a selection that has no class. Expected: an error
+        // line, and not the old class's fields.
         var dump = new ThrowingWalkDumpService();
-        // The prior class carries a field: with none, "no fields after the failure" holds before it too (review
-        // wf_72c53295-04c F3).
+        // The prior class carries a field: with none, "no fields after the failure" holds before it too.
         var withField = Class("ClassP");
         withField.Fields.Add(new FieldInfoModel { Name = "Hp", TypeName = "IntProperty", Address = "0x1234" });
         dump.RegisterClass("0xP", withField);
@@ -459,19 +452,16 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task ColdFailure_WasAlreadyRetryable()
     {
-        // Green BEFORE and AFTER the AE3 fix — and it is not filler. Without it, a
-        // reviewer trims the priming step from the test above as "setup noise" and
-        // gets a test that is silently green against unfixed code, because on a cold
-        // panel HasClass is false and the old `&& HasClass` conjunct let the retry
-        // through. Naming this case is what makes that trap un-trimmable, and it is
-        // the assertion that the finding's "with no way to retry" was too broad.
+        // A cold failure is retryable under either guard shape — the key released on
+        // failure, or a dedupe that also requires `HasClass` — and this case is not
+        // filler. Without it, a reviewer trims the priming step from the test above as
+        // "setup noise" and gets a test that stays green against the `&& HasClass`
+        // shape, because on a cold panel HasClass is false and that conjunct lets the
+        // retry through. Naming this case is what makes that trap un-trimmable.
         //
-        // ⚠ It DOES go red under a PARTIAL revert that removes the key release while
-        // keeping the `&& HasClass` drop — measured. Those two changes are coupled:
-        // dropping the conjunct is only safe because the release covers every
-        // failure, not just cold ones. That combination never shipped; the honest
-        // baseline is reverting the AE3 change as a whole, which reds exactly three
-        // tests and leaves this one green.
+        // ⚠ It DOES go red with neither: no `&& HasClass` and no key release. The two
+        // are coupled: dropping the conjunct is only safe because the release covers
+        // every failure, not just cold ones.
         var dump = new ThrowingWalkDumpService();
         dump.RegisterClass("0xB", Class("ClassB"));
         dump.ThrowFor.Add("0xB");
@@ -489,7 +479,7 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task CrossTabLoad_ReleasesTheTreeDedupeKey()
     {
-        // AE3's third path: no failure, no concurrency, two ordinary clicks. A
+        // The third path: no failure, no concurrency, two ordinary clicks. A
         // cross-tab handoff shows a class no tree node selected, so it must CLEAR
         // the key rather than leave it naming the previously selected node.
         var dump = new GatedDumpService();
@@ -510,10 +500,10 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task DuplicateSelectionDuringFirstWalk_DoesNotIssueASecondWalk()
     {
-        // Red today. On a COLD panel HasClass is still false while the first walk
-        // is in flight, so the old guard fell through and a node -> null -> node
-        // re-fire (ApplyFilter nulls SelectedNode on every filter keystroke) issued
-        // a SECOND walk for the same class. Also discriminates this design from
+        // On a COLD panel HasClass is still false while the first walk is in
+        // flight, so a guard that requires HasClass falls through and a node ->
+        // null -> node re-fire (ApplyFilter nulls SelectedNode on every filter
+        // keystroke) issues a SECOND walk for the same class. Also discriminates this design from
         // "latch only on success", which would leave that window unguarded.
         var dump = new GatedDumpService();
         var gate = dump.GateWalk("0xP");
@@ -533,8 +523,8 @@ public class ClassStructViewModelConcurrencyTests
     [Fact]
     public async Task RepeatedSelectionOfSameNode_WalksOnlyOnce()
     {
-        // Warm-path rail: the deliberate dedupe must survive the AE3 fix. Without
-        // this, "release the key on failure" can quietly regress into "no dedupe".
+        // Warm-path rail: the deliberate dedupe must survive the key release. Without
+        // this, "release the key on failure" can quietly become "no dedupe".
         var dump = new GatedDumpService();
         dump.RegisterClass("0xP", Class("ClassP"));
 
@@ -551,7 +541,7 @@ public class ClassStructViewModelConcurrencyTests
         // Reachability rail. Every test above drives OnObjectSelected directly,
         // which bypasses MainWindowViewModel's async-void lambda — so on their own
         // they prove the GUARD works, not that two selections can overlap in
-        // production. This proves the overlap. Green before and after the fix.
+        // production. This proves the overlap.
         var tree = new ObjectTreeViewModel(new GatedDumpService(),
                                            new MockLoggingService(),
                                            new MockPlatformService(Path.GetTempPath()));
@@ -575,13 +565,12 @@ public class ClassStructViewModelConcurrencyTests
     }
 
     /// <summary>
-    /// [WALKCLASS-STALE-OK] AE23 step 4, measured 2026-11-18 on build 3733 (DumperTest Development): a level reload
-    /// freed ThirdPersonMap_C, and walk_class on its old address answered ok with an EMPTY class -- no name, no fields
-    /// -- so this panel painted a blank class with no error line, and its re-select dedupe (released only on an error)
-    /// then refused the retry. The panel already shows an error and releases the dedupe when the call throws; the DLL
-    /// has to refuse. Fern.cpp is in no C++ test target, so the handler is pinned from the source.
-    /// Measured again on 3734: when the panel had walked the class BEFORE the reload, walk_class kept answering its old
-    /// fields -- WalkClassEx's memo is immortal -- so the refusal must come before the walk, not after an empty one.
+    /// [WALKCLASS-STALE-OK] A level reload frees a class (ThirdPersonMap_C), and walk_class on its old address must not
+    /// answer ok with an EMPTY class -- no name, no fields -- or this panel paints a blank class with no error line, and
+    /// its re-select dedupe (released only on an error) refuses the retry. The panel shows an error and releases the
+    /// dedupe when the call throws; the DLL has to refuse. Fern.cpp is in no C++ test target, so the handler is pinned
+    /// from the source. A class walked BEFORE the reload would keep answering its old fields -- WalkClassEx's memo is
+    /// immortal -- so the refusal must come before the walk, not after an empty one.
     /// </summary>
     [Fact]
     public void WalkClassRefusesAnAddressThatIsNoLongerALiveObject()
@@ -596,12 +585,12 @@ public class ClassStructViewModelConcurrencyTests
         int walk = handler.IndexOf("Ubel::WalkClassEx(addr)", StringComparison.Ordinal);
         Assert.True(live > 0 && walk > live, $"the liveness refusal must precede the walk (refusal at {live}, walk at {walk})");
         Assert.Contains("return Renge::MakeError(id, \"Not a live class at \" + addrStr", handler);
-        // [WALKCLASS-NOT-STRUCT] Review wf_1b9e937b-a0d DLL-3: live is not enough -- an actor at a freed class's address
+        // [WALKCLASS-NOT-STRUCT] Live is not enough -- an actor at a freed class's address
         // is live. The kind check sits between the liveness refusal and the walk.
         int kind = handler.IndexOf("if (!Ubel::IsStructKindObject(addr))", StringComparison.Ordinal);
         Assert.True(kind > live && walk > kind, $"the kind refusal must sit between liveness ({live}) and the walk ({walk}), at {kind}");
         Assert.Contains("\"Not a class or struct at \" + addrStr", handler);
-        // Review wf_bbd1bbfe-20d D7-4: the panel sends Enum rows and assets typed "...Class" here on purpose, and an AI can
+        // The panel sends Enum rows and assets typed "...Class" here on purpose, and an AI can
         // pass an instance; none of them was freed by a level travel. The refusal says what walk_class reads instead.
         string kindRefusal = handler[kind..walk];
         Assert.DoesNotContain("level travel", kindRefusal);

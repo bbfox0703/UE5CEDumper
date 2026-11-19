@@ -19,7 +19,7 @@ namespace UE5DumpUI.Tests;
 public class VolumeRootTests
 {
     // ---- ClampToInt64 -------------------------------------------------------------
-    // The trap the rewrite introduced and this removes: Win32 reports ULONGLONG, the callers
+    // The trap: Win32 reports ULONGLONG, the callers
     // are long, and a plain cast wraps NEGATIVE. A negative free-space reading does not read
     // as "unknown" to the snapshot guard — it reads as catastrophically full, so the guard
     // would refuse to write on the LARGEST volumes. Saturating fails in the harmless direction.
@@ -119,26 +119,25 @@ public class VolumeRootTests
     [Fact]
     public void Resolve_AgreesWithGetPathRootOnAnOrdinaryDriveLetterPath()
     {
-        // The regression control. On a NON-mounted path the new resolution must produce the
-        // same volume the old Path.GetPathRoot code did, or this fix would have changed the
-        // numbers everywhere instead of only on mount points. (On a mounted path they differ
-        // — that is the fix — but this machine has no mount point to demonstrate it.)
+        // The control. On a NON-mounted path Resolve must produce the same volume as
+        // Path.GetPathRoot, or it would move the numbers everywhere instead of only on mount
+        // points. (On a mounted path they differ — that is what Resolve is for — but the test
+        // machine may have no mount point to demonstrate it.)
         string p = Path.GetFullPath(Path.GetTempPath());
         Assert.Equal(Path.GetPathRoot(p), VolumeRoot.Resolve(p));
     }
 
     // ---- the defect itself, demonstrated ------------------------------------------
     //
-    // ⭐ [VOLUMEROOT] was filed as "only a real mount point can verify it", which is why it sat
-    // deferred. That turned out to be false, and the correction is the useful part: a plain
-    // CROSS-VOLUME DIRECTORY JUNCTION separates the two answers just as well, needs no spare
-    // volume and no elevation, and `mklink /J` is unprivileged. Measured 2026-08-21 —
-    // GetVolumePathNameW resolves THROUGH a junction to the target's volume, while
-    // Path.GetPathRoot only ever reads the leading drive letter of the string it was handed.
+    // ⭐ [VOLUMEROOT] does not need a real mount point to be verified: a plain CROSS-VOLUME
+    // DIRECTORY JUNCTION separates the two answers just as well, needs no spare volume and no
+    // elevation, and `mklink /J` is unprivileged. GetVolumePathNameW resolves THROUGH a
+    // junction to the target's volume, while Path.GetPathRoot only ever reads the leading
+    // drive letter of the string it was handed.
     //
     // What this does NOT claim: a junction is not literally a mounted volume. But the code
     // under test contains no branch that could tell them apart — it asks Win32 one question
-    // and uses the answer — so the distinction is not one the fix can be wrong about.
+    // and uses the answer — so the distinction is not one Resolve can be wrong about.
 
     /// <summary>Fixed NTFS volume other than the one holding <paramref name="notThis"/>, or null.</summary>
     private static DriveInfo? OtherFixedVolume(string notThis)
@@ -173,9 +172,9 @@ public class VolumeRootTests
         {
             string inside = Path.Combine(junction, "probe.dat");
 
-            // The old code's answer: the junction's OWN volume, because it is string surgery.
+            // Path.GetPathRoot's answer: the junction's OWN volume, because it is string surgery.
             Assert.Equal(tempRoot, Path.GetPathRoot(inside));
-            // The new code's answer: the volume the path actually reaches.
+            // Resolve's answer: the volume the path actually reaches.
             Assert.Equal(other.Name, VolumeRoot.Resolve(inside));
             // ⭐ And they differ. Without this the test would pass on a machine where the two
             // volumes happen to coincide, proving nothing.
@@ -186,9 +185,9 @@ public class VolumeRootTests
             long delta = Math.Abs(other.AvailableFreeSpace - svc.GetFreeDiskSpaceBytes(inside));
             Assert.True(delta < 512L * 1024 * 1024, $"free-space delta {delta} bytes");
 
-            // The negative control, and the whole point: the code this replaced reported the
+            // The negative control, and the whole point: a string-surgery root would report the
             // host volume's size here. Only assert it when the two volumes are genuinely
-            // different sizes — otherwise the old code would have been accidentally right.
+            // different sizes — otherwise string surgery would be accidentally right.
             var host = new DriveInfo(tempRoot);
             if (host.TotalSize != other.TotalSize)
                 Assert.NotEqual(host.TotalSize, svc.GetTotalDiskSpaceBytes(inside));
@@ -235,22 +234,22 @@ public class VolumeRootTests
         catch { /* leaked into %TEMP%; harmless and self-evident */ }
     }
 
-    // ---- the numbers the rewrite must not have moved --------------------------------
+    // ---- the numbers GetDiskFreeSpaceExW must not move ------------------------------
 
     [Fact]
     public void DiskSpace_MatchesTheDriveInfoNumbersItReplacedOnANonMountedPath()
     {
-        // The regression control for the GetDiskFreeSpaceExW rewrite, and the reason it is
-        // safe: lpFreeBytesAvailableToCaller / lpTotalNumberOfBytes are exactly what
+        // The control for GetDiskFreeSpaceExW, and the reason it is safe:
+        // lpFreeBytesAvailableToCaller / lpTotalNumberOfBytes are exactly what
         // DriveInfo.AvailableFreeSpace / .TotalSize wrap, so on a path with no mount point in
-        // it the two must agree. Measured rather than asserted from the docs.
+        // it the two must agree. Compared on the machine rather than asserted from the docs.
         string probe = Path.GetFullPath(Path.GetTempPath());
         string? resolved = VolumeRoot.Resolve(probe);
         Assert.NotNull(resolved);
 
         // ⚠ Skip the comparison if this machine's temp DOES sit on a mount point: there the
         // two are SUPPOSED to differ, and asserting equality would pin the defect instead of
-        // the fix. (Not the case on the maintainer's machines, hence the assert below runs.)
+        // the resolution. (An ordinary temp folder sits on no mount point, so the assert below runs.)
         if (!string.Equals(resolved, Path.GetPathRoot(probe), StringComparison.OrdinalIgnoreCase))
             return;
 
@@ -279,8 +278,8 @@ public class VolumeRootTests
     [Fact]
     public void LogCompression_IsSupported_StillAnswersNtfsForTheRealLogVolume()
     {
-        // GetVolumeInformationW replaced DriveInfo.DriveFormat; the answer for an ordinary
-        // local NTFS path must be unchanged. Cross-checked against DriveInfo so this cannot
+        // The answer comes from GetVolumeInformationW, not DriveInfo.DriveFormat; for an ordinary
+        // local NTFS path the two must agree. Cross-checked against DriveInfo so this cannot
         // pass by returning false for the wrong reason.
         string probe = Path.GetFullPath(Path.GetTempPath());
         string? resolved = VolumeRoot.Resolve(probe);

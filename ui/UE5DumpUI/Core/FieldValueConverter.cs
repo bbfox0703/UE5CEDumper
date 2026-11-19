@@ -82,8 +82,8 @@ public static class FieldValueConverter
         /// <summary>A packed bool with a single-bit mask: read-modify-write that bit.</summary>
         MaskedBit,
         /// <summary>Neither: the mask is unresolved (the probe missed — mask 0 does NOT mean
-        /// native), and the byte may hold up to 8 packed bools. A whole-byte write is the AA1
-        /// corruption of its siblings; ApplyBoolMask with mask 0 is a silent no-op. Refuse.</summary>
+        /// native), and the byte may hold up to 8 packed bools. A whole-byte write would
+        /// corrupt its siblings; ApplyBoolMask with mask 0 is a silent no-op. Refuse.</summary>
         Refuse,
     }
 

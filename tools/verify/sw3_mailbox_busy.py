@@ -4,10 +4,10 @@ r"""SW3's other arm — the DLL is ALIVE and the mailbox is BUSY. The script mus
     <tick the pushed "Invoke: ..." record in Cheat Engine>
     py tools/verify/sw3_mailbox_busy.py disarm   # ALWAYS -- the game stays frozen until you do
 
-THE ROW. `a55ef2b5` split two failures the generated invoke script used to conflate: a mailbox
-that is genuinely BUSY, and a mailbox that cannot be READ at all. `[SW3-UNTICK-2026-09-09]` proved
-the second live — the game was killed and the script said *"the contract symbol resolved to ...
-but that memory could not be READ"* rather than blaming a busy mailbox. This rig is the other
+THE ROW. The generated invoke script tells two failures apart: a mailbox that is genuinely BUSY,
+and a mailbox that cannot be READ at all. `[SW3-UNTICK-2026-09-09]` covers the second live — with
+the game killed the script says *"the contract symbol resolved to ... but that memory could not be
+READ"* rather than blaming a busy mailbox. This rig is the other
 side, and it is what makes the pair mean anything: **with the DLL ALIVE and the mailbox actually
 busy, the script must say BUSY.** Two manufactured conditions, two different correct messages —
 that is what "the script must not be guessing" comes down to.
@@ -17,8 +17,8 @@ that is what "the script must not be guessing" comes down to.
 word IS a busy mailbox to every reader — it is the same field the DLL sets when a command is in
 flight.
 
-⛔ WHY THE PROCESS IS SUSPENDED, which is not incidental. The first attempt just wrote the word
-and read back **0**: the DLL's own poller sees a command id it does not recognise and CLEARS it,
+⛔ WHY THE PROCESS IS SUSPENDED, which is not incidental. Just writing the word reads back
+**0**: the DLL's own poller sees a command id it does not recognise and CLEARS it,
 inside the same second. Spin-writing does not fix it either — the Lua loop exits on the FIRST
 zero it happens to sample. Suspending every thread stops the poller while leaving memory
 perfectly readable, which is all Cheat Engine needs (`ReadProcessMemory` works on a suspended
@@ -55,9 +55,9 @@ CANDIDATES = ["UE5Dumper.dll", "version.dll", "dxgi.dll", "winmm.dll", "dinput8.
 def mailbox_addr(pid: int) -> int:
     """base + RVA, with the RVA read from the file ACTUALLY MAPPED in the target.
 
-    Both halves matter and both were learned the hard way in `sw1_worker_fault.py`: a proxy is a
-    different binary from `dist/UE5Dumper.dll` (taking the RVA from the wrong one crashed a
-    game), and the system owns `dxgi`/`version`/`winmm`/`dinput8` too — so the module is chosen
+    Both halves matter (as in `sw1_worker_fault.py`): a proxy is a different binary from
+    `dist/UE5Dumper.dll` (an RVA taken from the wrong one can crash the game), and the system
+    owns `dxgi`/`version`/`winmm`/`dinput8` too — so the module is chosen
     by which one actually EXPORTS the symbol, never by name."""
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.LoadLibraryExW.restype = wt.HMODULE

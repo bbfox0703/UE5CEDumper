@@ -8,13 +8,12 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [LF-EXPOFF-TRACE] [EXPOFF-TEARDOWN] What turning the experimental features off does to what they run in the game,
-/// as the maintainer chose after the review (2026-10-09, 「連線中也可取消，立即清理」): unticked while connected,
-/// Teleport's teardown turns Keep Foreground, Fly, See-through and a Stealth hold off at once, and only then releases
-/// their hotkeys; unticked while disconnected, the next connect with the features still off turns off whatever the
-/// connect prime reads on -- never a connect with them on. The DLL ends See-through when the last connection of the
-/// client process that turned it on goes (and CE holds none), not the other three, so without this they ran on behind
-/// hidden cards.
+/// [LF-EXPOFF-TRACE] [EXPOFF-TEARDOWN] What turning the experimental features off does to what they run in the game:
+/// unticked while connected, Teleport's teardown turns Keep Foreground, Fly, See-through and a Stealth hold off at once,
+/// and only then releases their hotkeys; unticked while disconnected, the next connect with the features still off
+/// turns off whatever the connect prime reads on -- never a connect with them on. The DLL ends See-through when the
+/// last connection of the client process that turned it on goes (and CE holds none), not the other three, so without
+/// this they would run on behind hidden cards.
 /// </summary>
 public class ExperimentalTeardownTests : IDisposable
 {
@@ -276,7 +275,7 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal("Holding @0", vm.StealthState);
     }
 
-    /// <summary>What a teardown sends, in order. Keep Foreground goes last (the round-3 review's LOW): an untick is a
+    /// <summary>What a teardown sends, in order. Keep Foreground goes last: an untick is a
     /// click in the UI, so the game is unfocused, and a game that idles when unfocused could no longer run the
     /// See-through un-hide or the noclip collision restore, which need its game thread.</summary>
     private static readonly string[] AllOff = { "fly", "seethrough", "reset_field " + FakeDll.Meter, "foreground" };
@@ -370,9 +369,9 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal("Off", vm.StealthState);
     }
 
-    /// <summary>The round-3 review's LOW: an untick that came after a connect, but before its prime had read the DLL,
-    /// saw the flags the disconnect had reset; no connect teardown was started (the features were on), so what the
-    /// prime found running afterwards stayed on behind the hidden cards.</summary>
+    /// <summary>An untick that comes after a connect, but before its prime has read the DLL, sees the flags the
+    /// disconnect reset, and no connect teardown starts (the features were on at connect) -- so what the prime finds
+    /// running afterwards must still go off, or it stays on behind the hidden cards.</summary>
     [Fact]
     public async Task Unticked_before_the_connect_prime_lands_what_it_finds_running_goes_off()
     {
@@ -392,11 +391,10 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Empty(hotkeys.Live);
     }
 
-    // ---- The round-3 review's LOW: the rules for a foreground read that failed (badge Unknown) were stated in comments
-    // and checked by nothing. An untick turns Keep Foreground off whatever its badge reads, as the hook may hold behind
-    // an Unknown, and its answer pays the debt; a connect that owes a teardown turns it off only when it was read ON, so
-    // a failed read neither costs a round trip nor stamps over "Connected" -- and, not knowing whether the lock holds,
-    // it leaves the untick owed to the next connect (the round-3 re-review's INFO).
+    // ---- The rules for a foreground read that failed (badge Unknown). An untick turns Keep Foreground off whatever its
+    // badge reads, as the hook may hold behind an Unknown, and its answer pays the debt; a connect that owes a teardown
+    // turns it off only when it was read ON, so a failed read neither costs a round trip nor stamps over "Connected" --
+    // and, not knowing whether the lock holds, it leaves the untick owed to the next connect.
 
     [Theory]
     [InlineData("throw")]
@@ -440,12 +438,12 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.False(gate.TeardownOwed);
     }
 
-    // ---- The round-3 re-review's INFO: the debt was paid on the connection and the gate generation alone. Every OFF
-    // catches its own failure, so a teardown whose OFFs all failed still "ran to its end"; and the pipe faults its
-    // pending requests before it raises the disconnect, so IsConnected can still read true when the OFF's failure lands
+    // ---- The connection and the gate generation alone cannot decide that the debt is paid. Every OFF catches its own
+    // failure, so a teardown whose OFFs all failed still "runs to its end"; and the pipe faults its pending requests
+    // before it raises the disconnect, so IsConnected can still read true when the OFF's failure lands
     // (An_untick_whose_teardown_lost_the_connection_stays_owed models only the other order). A teardown that decided
-    // from a read that failed did not know what ran. Either way the next connect would owe nothing, and whatever was
-    // still on stayed on behind the hidden cards.
+    // from a read that failed does not know what ran. Paid in either case, the next connect would owe nothing, and
+    // whatever was still on would stay on behind the hidden cards.
 
     [Theory]
     [InlineData("fly")]
@@ -574,9 +572,9 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.True(gate.TeardownOwed);
     }
 
-    // ---- The round-3 review's LOW: the Stealth release keys on the card's "Holding @0", and Detect -- enabled while
-    // holding -- overwrote it with "Ready" (or "Not found") and replaced the held candidate, while the DLL's hold ran
-    // on. An untick then released nothing, and Reset released the newly detected field or none.
+    // ---- Detect is enabled while holding, and the DLL's hold runs on through it. A Detect that overwrote "Holding @0"
+    // with "Ready" (or "Not found") and replaced the held candidate would leave an untick releasing nothing, and Reset
+    // releasing the newly detected field or none.
 
     [Fact]
     public async Task Detect_again_while_holding_leaves_the_hold_for_the_untick_to_release()
@@ -613,10 +611,10 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Empty(dll.Forced);
     }
 
-    // ---- The round-3 re-review's LOW: the release still keyed on the "Holding @0" badge, and Hold writes "Not found"
-    // and "Hold failed" whenever nothing is held at once -- while Solide keeps the job: a new one that matched no
-    // instance stays armed and forces the meter as soon as one spawns, and a refused re-arm keeps the hold it had. An
-    // untick then released nothing and paid the debt, so the meter was forced behind the hidden card for the session.
+    // ---- Hold writes "Not found" and "Hold failed" whenever nothing is held at once -- while Solide keeps the job: a
+    // new one that matched no instance stays armed and forces the meter as soon as one spawns, and a refused re-arm
+    // keeps the hold it had. A release keyed on the "Holding @0" badge would have an untick release nothing and pay the
+    // debt, so the meter would be forced behind the hidden card for the session.
 
     private static async Task DetectAndHold(TeleportViewModel vm)
     {
@@ -759,7 +757,7 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal(new[] { "foreground" }, dll.Off);
     }
 
-    // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
+    // ---- With no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
     // the worker waits for a pawn and flies it again -- so a flight the card cannot show is still one to turn off.
 
     [Fact]
@@ -839,9 +837,9 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.False(gate.TeardownOwed);
     }
 
-    // ---- The round-3 review's LOW: the connect teardown ran at EVERY connect with the features off, not only after an
-    // untick made while disconnected (the maintainer's words). Fly, Keep Foreground and See-through can be driven from
-    // CE through the mailbox, so a UI connect reset a flight a CE record had started, and its record stayed ticked.
+    // ---- The connect teardown runs only after an untick made while disconnected, not at EVERY connect with the
+    // features off. Fly, Keep Foreground and See-through can be driven from CE through the mailbox, so a teardown at
+    // every connect would reset a flight a CE record had started, and leave its record ticked.
 
     [Fact]
     public async Task A_connect_with_the_features_off_and_no_untick_owed_leaves_what_runs_alone()

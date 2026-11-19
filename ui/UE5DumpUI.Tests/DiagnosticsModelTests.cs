@@ -73,7 +73,7 @@ public class DiagnosticsModelTests
         // The PE hook installs lazily on the first invoke, so "never fired" is the
         // NORMAL state on a fresh connection. -1 is the DLL's UINT64_MAX sentinel
         // mapped into signed range at the wire boundary; a huge positive value is
-        // the same thing arriving from a pre-fix DLL.
+        // the same sentinel arriving from an older DLL that does not map it.
         Assert.False(new DiagnosticsGameThread().HasFired);
         Assert.False(new DiagnosticsGameThread { MsSinceLastFire = -1 }.HasFired);
         Assert.False(new DiagnosticsGameThread

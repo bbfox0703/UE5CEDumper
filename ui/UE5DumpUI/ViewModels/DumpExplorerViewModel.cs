@@ -56,7 +56,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     [ObservableProperty] private string _filePath = "";
     [ObservableProperty] private string _searchText = "";
     /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function, 4 = Struct, 5 = Enum, 6 = Enumerator: the
-    /// panel's ComboBox order. The kinds added later are appended, so the older indices keep their meaning.</summary>
+    /// panel's ComboBox order. A new kind is appended, so the existing indices keep their meaning.</summary>
     [ObservableProperty] private int _selectedCategoryIndex;
     [ObservableProperty] private string _statusText =
         "Load a “Dump All” (.jsonl) file to browse its classes, structs, enums, properties and functions.";
@@ -213,8 +213,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
             if (model.IsObjectIndex)
             {
-                // [EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl sits beside the class dump under the same
-                // extension; name the file the user wanted rather than asking whether this is a Dump All file.
+                // [EXTPR-539-540-2026-10-02] The object index, <name>.objects.jsonl, sits beside the class dump under
+                // the same extension; name the file the user wanted rather than asking whether this is a Dump All file.
                 var classDump = model.ClassDumpFile.Length > 0 ? model.ClassDumpFile : Res.Get("str.Dump.ObjectIndexFile.Unknown");
                 // Nothing of the previous file may stay above the emptied grids.
                 HeaderText = "";
@@ -310,7 +310,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     // [DUMPDIFF-UI] Compare: the loaded class dump against one the user picks, written as an HTML report and opened.
     // HTML only, started from this panel, because release users do not have scripts/analysis/diff_dumps.py;
-    // DumpDiffService is its port. Both options persist (D8).
+    // DumpDiffService is its port. Both options persist.
 
     /// <summary>Also compare the engine's own modules; off, the game's own types only (the script's default).</summary>
     [ObservableProperty] private bool _diffIncludeEngine;
@@ -580,9 +580,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
         // Object / Actor / Pawn / PlayerController, so a cross-game match is not a rare
         // edge — it is the guaranteed outcome of loading the wrong file, and it looks like
         // a successful match. Read the live identity HERE rather than fanning EngineState
-        // into the VM: SetConnected(true) can fire before an EngineState exists, and that
-        // ordering window is the known wrong-game bleed (todo.md C2) — a gate that races
-        // its own input would be the bug it is meant to prevent.
+        // into the VM: SetConnected(true) can fire before an EngineState exists, and in that
+        // ordering window the previous game's state bleeds in — a gate that races its own
+        // input would be the bug it is meant to prevent.
         string liveModule = "", livePeHash = "";
         try
         {

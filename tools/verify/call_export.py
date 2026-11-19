@@ -9,10 +9,9 @@ neither is runnable without it:
   * L10's teardown half - `UE5_Shutdown` must call `Grausam::SetForegroundLock(false)`
   * M5 - worker-join ordering inside `UE5_Shutdown`
 
-⚠ AND CLOSING THE GAME DOES NOT CALL IT. That is recorded in the register (B8's block) and
-is why both rows kept not getting run. The claim that it has NEVER run is stale, though:
-6 log files in the corpus contain `UE5_Shutdown: Cleaning up...`, so the path is real and
-reachable - just not from a window close.
+⚠ AND CLOSING THE GAME DOES NOT CALL IT (the register, B8's block), so a window close
+exercises neither row. The path itself is real and reachable - corpus logs contain
+`UE5_Shutdown: Cleaning up...` - just not from a window close.
 
 HOW. The RVA is resolved by loading our own DLL into THIS process with
 `DONT_RESOLVE_DLL_REFERENCES` (so no DllMain, no side effects) and subtracting the local

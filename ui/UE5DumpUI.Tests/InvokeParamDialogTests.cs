@@ -139,8 +139,8 @@ public class InvokeParamDialogTests
         }
         var consoleDialog = Handler(src, "Console.RequestParameterInvoke +=");
         Assert.DoesNotContain("expectClassAddr:", consoleDialog, System.StringComparison.Ordinal);
-        // Review 1: the dialog that can FIRE is given no address, so FIRE goes by class name (a ban on text alone let
-        // a swapped variable or a helper lookup through).
+        // The dialog that can FIRE is given no address, so FIRE goes by class name (a ban on text alone would let a
+        // swapped variable or a helper lookup through).
         Assert.Contains("\"\", _dump, _engineState?.UEVersion ?? 0", consoleDialog, System.StringComparison.Ordinal);
         Assert.Contains("mode: Views.InvokeDialogMode.PipeInvoke", consoleDialog, System.StringComparison.Ordinal);
         Assert.DoesNotContain("exactMatch: true, limit: 1)", src, System.StringComparison.Ordinal);
@@ -166,7 +166,7 @@ public class InvokeParamDialogTests
     public void The_target_by_class_line_shows_only_where_FIRE_goes_by_class_name(InvokeDialogMode mode, string addr,
                                                                                  bool shown)
     {
-        // Review 1 of [MAINWINDOW-INVOKE-LIMIT1-CDO]: nothing pinned the pre-FIRE line.
+        // [MAINWINDOW-INVOKE-LIMIT1-CDO] The pre-FIRE line shows exactly where FIRE goes by class name.
         Assert.Equal(shown, InvokeParamDialog.ShowsTargetByClassLine(mode, addr));
     }
 
@@ -410,10 +410,10 @@ public class InvokeParamDialogTests
     [Fact]
     public void DecodeDynamicStructParamValue_PackedBools_ReadTheirOwnBit()
     {
-        // [A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): the mask reaches the UI, but the
-        // post-call readout decoded every packed bool as its whole byte, so FHitResult's
-        // bBlockingHit (bit 0) set made bStartPenetrating (bit 1) read true as well. Mask 0 is
-        // unresolved and keeps the whole-byte read, as PreviewScalarValue does DLL-side.
+        // [A3-FIRE-STRUCT-BOOLMASK], the READ side: the mask reaches the UI, and the post-call
+        // readout must decode each packed bool by its own bit -- read as the whole byte,
+        // FHitResult's bBlockingHit (bit 0) set makes bStartPenetrating (bit 1) read true as well.
+        // Mask 0 is unresolved and keeps the whole-byte read, as PreviewScalarValue does DLL-side.
         var buf = new byte[] { 0x01 };
         var p = new FunctionParamModel
         {
@@ -433,8 +433,8 @@ public class InvokeParamDialogTests
     [Fact]
     public void DecodeDynamicStructParamValue_PackedBools_AtANonZeroOffset()
     {
-        // Review of d5e9148d: every packed-bool case sat at buffer offset 0, so reading buf[sf.Offset]
-        // instead of buf[p.Offset + sf.Offset] survived. Here the two bytes differ.
+        // A packed-bool case at buffer offset 0 cannot tell buf[sf.Offset] from
+        // buf[p.Offset + sf.Offset]. Here the two bytes differ.
         var buf = new byte[] { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02 };
         var p = new FunctionParamModel
         {
@@ -599,7 +599,7 @@ public class InvokeParamDialogTests
         Assert.Equal("X=10, Y=20", result);
     }
 
-    // --- Struct layout must agree with the engine (audit #5 Y7) ---------------
+    // --- Struct layout must agree with the engine ---------------------------------
 
     [Fact]
     public void ResolveTrustedLayout_SizeAgrees_UsesTheKnownLayout()
@@ -646,14 +646,15 @@ public class InvokeParamDialogTests
         Assert.Null(InvokeParamDialog.ResolveTrustedLayout("StructProperty", "FSomeGameStruct", 40, 505));
     }
 
-    // ── audit #5: the width family's READ side ──────────────────────────────
+    // ── the width family's READ side ────────────────────────────────────────
     //
-    // DecodeParamValue grouped "EnumProperty" with "IntProperty" behind an
-    // `available >= 4` guard, so UE's dominant shape — `enum class E : uint8` —
-    // was decoded as FOUR bytes whenever four bytes of buffer remained: the value
-    // shown was the enum byte plus three bytes belonging to whatever followed it.
-    // This is the read half of the mistake Y2 fixed on the write side of the same
-    // file, and the read half is the one that corrupts nothing and just lies.
+    // DecodeParamValue must not group "EnumProperty" with "IntProperty" behind an
+    // `available >= 4` guard: UE's dominant shape — `enum class E : uint8` —
+    // would be decoded as FOUR bytes whenever four bytes of buffer remained, the
+    // value shown being the enum byte plus three bytes belonging to whatever
+    // followed it. This is the read half of the width rule the write side of the
+    // same file keeps, and the read half is the one that corrupts nothing and
+    // just lies.
 
     [Fact]
     public void DecodeParamValue_OneByteEnum_MidBuffer_ReadsOnlyItsOwnByte()
@@ -665,17 +666,16 @@ public class InvokeParamDialogTests
             Name = "E", TypeName = "EnumProperty", Offset = 0, Size = 1,
         };
 
-        // Before the fix this returned the int32 at offset 0: -860116473.
+        // A four-byte read here returns the int32 at offset 0: -860116473.
         Assert.Equal("7", InvokeParamDialog.DecodeParamValue(buf, p));
     }
 
     [Fact]
     public void DecodeParamValue_OneByteEnum_AtBufferEnd_WasAlreadyCorrect()
     {
-        // The tell that identified the defect: with fewer than 4 bytes left the old
-        // guard failed and it fell through to the size switch, so the LAST param
-        // decoded correctly while the same enum mid-buffer did not. Pinned so the
-        // two paths cannot diverge again.
+        // With fewer than 4 bytes left an `available >= 4` guard fails and falls
+        // through to the size switch, so the LAST param decodes correctly even where
+        // the same enum mid-buffer would not. Pinned so the two paths cannot diverge.
         var buf = new byte[] { 0x07 };
         var p = new FunctionParamModel
         {
@@ -703,8 +703,8 @@ public class InvokeParamDialogTests
     [Fact]
     public void DecodeParamValue_IntProperty_StillReadsFourBytes()
     {
-        // Negative control for the fix itself: splitting EnumProperty out of the
-        // IntProperty group must not change IntProperty.
+        // Negative control: keeping EnumProperty out of the IntProperty group must
+        // not change IntProperty.
         var buf = new byte[] { 0x07, 0xAA, 0xBB, 0xCC, 0, 0, 0, 0 };
         var p = new FunctionParamModel
         {

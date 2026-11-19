@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Did an edit touch only comments? Compares each file's code -- comments removed -- with a git revision.
 
-    py tools/verify/comment_only_diff.py                   # every modified .h / .cpp / .cs under dll/src and ui/UE5DumpUI
+    py tools/verify/comment_only_diff.py                   # every modified source file in SCOPES (C++, C#, and
+                                                           # tools/comment_lang.py's XAML / Lua / PowerShell / Python)
     py tools/verify/comment_only_diff.py FILE [FILE ...]   # just these
     py tools/verify/comment_only_diff.py --base REF ...    # against REF instead of HEAD
 
@@ -19,8 +20,12 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SCOPES = ("dll/src/", "ui/UE5DumpUI/")
-EXTS = (".h", ".cpp", ".cs")
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import comment_lang  # noqa: E402  (XAML / Lua / PowerShell / Python)
+
+SCOPES = ("dll/src/", "dll/tests/", "ui/UE5DumpUI/", "ui/UE5DumpUI.Tests/", "ui/UE5DumpUI.HeadlessTests/",
+          "scripts/", "tools/")
+EXTS = (".h", ".cpp", ".cs") + comment_lang.EXTS
 
 
 def code_lines(text: str) -> list[str]:
@@ -74,7 +79,11 @@ def git(*args: str) -> str:
 
 def changed_files(base: str) -> list[str]:
     names = git("diff", "--name-only", base, "--").splitlines()
-    return [n for n in names if n.startswith(SCOPES) and n.endswith(EXTS)]
+    return [n for n in names if n.startswith(SCOPES) and n.lower().endswith(EXTS)]
+
+
+def file_code(rel: str, text: str) -> list[str]:
+    return comment_lang.code(rel, text) if comment_lang.handles(rel) else code_lines(text)
 
 
 def main() -> int:
@@ -98,8 +107,8 @@ def main() -> int:
             continue
         with open(path, "rb") as fh:
             new = fh.read()
-        before = code_lines(old.decode("utf-8-sig", errors="replace"))
-        after = code_lines(new.decode("utf-8-sig", errors="replace"))
+        before = file_code(rel, old.decode("utf-8-sig", errors="replace"))
+        after = file_code(rel, new.decode("utf-8-sig", errors="replace"))
         if before == after:
             print(f"ok   {rel}: comments only")
             continue

@@ -25,8 +25,8 @@ namespace UE5DumpUI.Helpers;
 ///
 /// <para><b>Not filtered (by design):</b> Class Default Objects (<c>Default__Foo_C</c>)
 /// and archetypes report their game class as <c>ClassName</c>, so they survive — they
-/// ARE live UObjects a user may want to inspect. Filtering them needs a name/flag check
-/// that Phase 1 deliberately leaves out.</para>
+/// ARE live UObjects a user may want to inspect. Filtering them would need a name/flag check,
+/// which this filter deliberately leaves out.</para>
 /// </summary>
 public static class ReflectionMetaClassifier
 {

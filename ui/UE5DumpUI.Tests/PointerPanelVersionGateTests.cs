@@ -16,8 +16,8 @@ namespace UE5DumpUI.Tests;
 /// meaningless for UE3 — the override list has no value below 4.11 and no value at any version
 /// would make UE3's absent structures appear.
 ///
-/// Also pins the notification fix: <c>ShowVersionTooOldWarning</c> was missing from
-/// <c>NotifyComputedProperties</c>, so the red banner never re-raised on an
+/// Also pins the notification: <c>ShowVersionTooOldWarning</c> belongs in
+/// <c>NotifyComputedProperties</c>, or the red banner never re-raises on an
 /// <see cref="PointerPanelViewModel.Update"/> of an already-attached panel.
 /// </summary>
 public class PointerPanelVersionGateTests
@@ -150,9 +150,9 @@ public class PointerPanelVersionGateTests
     [InlineData(410)]
     public void RefusedEngine_SilencesEveryPerPointerFailureLine(int ueVersion)
     {
-        // LIVE-OBSERVED on a UE3 title before this guard: the panel showed
-        // "🔴 All AOB patterns failed" + "⚠ AOB failed — found via not found" on GObjects,
-        // GNames and GWorld — after a scan that never ran. Those lines are FALSE on a refused
+        // Without this guard a UE3 title shows "🔴 All AOB patterns failed" + "⚠ AOB failed —
+        // found via not found" on GObjects, GNames and GWorld — after a scan that never ran.
+        // Those lines are FALSE on a refused
         // engine (0 hits means 0 patterns TRIED) and they contradict the banner directly above,
         // which says every pointer is empty by design.
         var vm = NewVm();
@@ -175,7 +175,7 @@ public class PointerPanelVersionGateTests
     [InlineData(410)]
     public void RefusedEngine_ShowsNoStrideGuess(int ueVersion)
     {
-        // [REFUSED-STRIDE-NOTICE] LIVE-OBSERVED on IS Defense (UE 4.10.2), build 3646: the top bar said the
+        // [REFUSED-STRIDE-NOTICE] On a refused engine (IS Defense, UE 4.10.2) the top bar must not say the
         // object-array stride was not detected and "the default is in use" under the refusal banner. No scan ran,
         // so no stride was guessed and nothing was read with one; the "undetected" on the wire is only the value
         // Aura starts with. The dump stamp shares the rule, so it must not call the stride untrusted either.
@@ -219,7 +219,7 @@ public class PointerPanelVersionGateTests
     [Fact]
     public void Update_RaisesChangeNotificationForBothBanners()
     {
-        // Regression guard for the missing OnPropertyChanged: without it an already-attached
+        // Guard for the OnPropertyChanged: without it an already-attached
         // panel keeps showing the pre-Update value and the banner never appears.
         var vm = NewVm();
         var raised = new List<string>();
@@ -264,7 +264,7 @@ public class PointerPanelVersionGateTests
         => PointerPanelViewModel.UeVersionOverrideOptions.Where(o => o != "Auto")
             .Select(PointerPanelViewModel.LabelToVersion).ToList();
 
-    // [UI-TEXT-AUDIT-2026-11-18] UT-10: a version the DLL refuses changes nothing in the game, so the ComboBox goes back
+    // [UI-TEXT-AUDIT-2026-11-18] A version the DLL refuses changes nothing in the game, so the ComboBox goes back
     // to the choice still in force instead of showing the refused one under the error.
     private sealed class RefusingOverride : StubDumpService
     {
@@ -346,8 +346,8 @@ public class PointerPanelVersionGateTests
 
     // ══ [UE-OVERRIDE-HINT-AUTO] Auto, chosen over an override ════════════════════════════════════
     //
-    // Auto used to clear only the DLL's override flag and keep the overridden version, which the panel then showed
-    // unbadged, as if detected. The DLL now hands back the detection on record at once; with none to hand back, the
+    // Auto must not clear only the DLL's override flag and keep the overridden version, which the panel would then show
+    // unbadged, as if detected. The DLL hands back the detection on record at once; with none to hand back, the
     // override's version stays in force until the next launch, the DLL keeps calling it an override, and get_pointers
     // says Auto is pending. The ComboBox shows the user's choice; the badge shows what is in force.
 
@@ -401,7 +401,7 @@ public class PointerPanelVersionGateTests
 
         vm.SelectedUeVersionOverride = "Auto";
 
-        Assert.Equal("Auto", vm.SelectedUeVersionOverride);   // it used to snap back to "UE 4.27"
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);   // not snapped back to "UE 4.27"
         Assert.True(vm.ShowAutoPendingNote);
         Assert.True(vm.ShowUserOverrideBadge);                // the version in force is still the override's...
         Assert.False(vm.ShowVersionDetectedBadge);            // ...and is never shown as detected
@@ -446,9 +446,9 @@ public class PointerPanelVersionGateTests
 
     // ══ [OVERRIDE-REVIEW2-LOWS] An override this game's UFunctions contradict ═════════════════════
     //
-    // The DLL refuses such a pick while a scan has measured the UFunction tail. One saved before that check existed, or
-    // chosen before any scan, is applied at every launch anyway; the vote that measures the contradiction said so in
-    // the log alone. get_pointers now says it (override_contradicted), and the panel shows it beside the override badge.
+    // The DLL refuses such a pick while a scan has measured the UFunction tail. One saved without that check, or chosen
+    // before any scan, is applied at every launch anyway, and the vote that measures the contradiction would say so in
+    // the log alone. get_pointers says it (override_contradicted), and the panel shows it beside the override badge.
 
     private static EngineState Contradicted(int ueVersion) => new()
     {

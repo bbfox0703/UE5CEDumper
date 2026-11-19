@@ -38,7 +38,8 @@ def displacement_of(code: bytes):
     """The memory operand's displacement of the ONE instruction at code[0], read from its encoding: legacy prefixes,
     REX or VEX, the opcode (0F / 0F38 / 0F3A maps), ModRM, SIB, then disp8 (mod 01) or disp32 (mod 10). None when it
     has no [base+disp] memory form; "evex" for an EVEX instruction, whose disp8 is scaled (disp8*N) and is not read
-    here. Review WS-RIG-1: searching the next 14 bytes for the offset also matched the FOLLOWING instructions."""
+    here. Decoded rather than searched: searching the next 14 bytes for the offset would also match the FOLLOWING
+    instructions."""
     try:
         i = 0
         while code[i] in LEGACY_PREFIXES:

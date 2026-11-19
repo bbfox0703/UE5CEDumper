@@ -7,7 +7,7 @@ game is paused/stalled, (c) yank the UI connection and (d) close the game -- in 
 every hidden actor must become visible again. A single actor left invisible is the
 failure, and it is only visible on screen."
 
-⭐ "ONLY VISIBLE ON SCREEN" IS OUT OF DATE, WHICH IS WHY THIS CAN RUN HEADLESS.
+⭐ IT IS NOT "ONLY VISIBLE ON SCREEN", WHICH IS WHY THIS CAN RUN HEADLESS.
 `seethrough_get_state` returns `hidden_actors` -- the ADDRESSES, not just the tally
 (dll/src/Fern.cpp) -- so each actor's own `bHidden` bit can be read straight out of the
 process with ReadProcessMemory. That is an independent witness: it is not the hider's
@@ -90,10 +90,10 @@ def hidden_bits(h, addrs, off, mask):
 def relaunch():
     """Every arm gets a FRESH GAME, and that is not belt-and-braces.
 
-    ⚠ Measured while building this rig: a fresh DumperTest hides an occluder within a
-    second, but after arm (a)'s 6x600-unit move NOTHING is hideable any more -- the camera
-    faces open space. So arms (b) and (c) reported "nothing was ever hidden" and failed for
-    want of a SUBJECT, which reads exactly like a defect and is really a spent fixture.
+    ⚠ A fresh DumperTest hides an occluder within a second, but after arm (a)'s
+    6x600-unit move NOTHING is hideable any more -- the camera faces open space. Arms (b)
+    and (c) would then report "nothing was ever hidden" and fail for want of a SUBJECT,
+    which reads exactly like a defect and is really a spent fixture.
 
     ⚠ And recalling a saved marker does NOT fix it: `teleport_save_marker` then
     `teleport_recall_marker` returns `code 0, tier 1` -- a clean success -- and the view is

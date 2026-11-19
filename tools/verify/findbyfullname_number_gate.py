@@ -2,7 +2,7 @@ r"""Measure the blast radius of the open `Serie::GetString` dropped-`Number` lea
 
     py tools/verify/findbyfullname_number_gate.py
 
-THE LEAD (audit #5, raised 2026-08-16 while fixing U8, still open and explicitly UNVETTED):
+THE LEAD (still open and explicitly UNVETTED):
 `Serie::GetString(idx)` defaults `number = 0`, and most call sites take that default, so any
 object whose `FName::Number` is non-zero renders under its bare name. Status line on the lead:
 *"mechanism verified against the source; blast radius NOT measured"*. This measures one part of it.
@@ -16,9 +16,9 @@ So for an object really called `StaticMeshActor_33`:
   * ask for `..._33` -> the gate computes `StaticMeshActor`, which != the leaf, so the object is
     SKIPPED and the real check never runs;
   * ask for the bare name -> the gate passes, and the real check computes `..._33` and rejects it.
-Neither spelling can succeed. This is audit #4's named root cause again -- *the report and the
-reality computed by different code paths* -- and it means the path lookup cannot resolve any object
-with a non-zero Number, which on a live UE map is nearly all of them.
+Neither spelling can succeed. This is the root cause section 4a of docs/audit-2026-08-04-findings.md
+names -- *the report and the reality computed by different code paths* -- and it means the path
+lookup cannot resolve any object with a non-zero Number, which on a live UE map is nearly all of them.
 
 THE CONTROL IS THE WHOLE RIG. "Returns 0" is also what an unreachable export, a bad string buffer
 or a wrong calling convention produce. So a path that MUST work is tried first: a UClass, whose

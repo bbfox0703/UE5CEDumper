@@ -93,9 +93,9 @@ public class ArrayPivotStoreTests : IDisposable
     [Fact]
     public async Task ListArrayFields_CountsElements_NotInnerPropRows()
     {
-        // [W1-ARRAYCOUNT] One row is stored per inner prop per element, and the count was COUNT(*)
-        // over those rows, so the picker's "elements" grew with every inner numeric prop. The test
-        // above pinned it with a ONE-prop fixture, where rows and elements happen to agree.
+        // [W1-ARRAYCOUNT] One row is stored per inner prop per element, so a COUNT(*) over those rows
+        // would grow the picker's "elements" with every inner numeric prop. A ONE-prop fixture, as in
+        // the test above, cannot tell the two apart: there rows and elements happen to agree.
         var ct = TestContext.Current.CancellationToken;
         long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "cargo2" }, ct);
         await _store.WriteChunkAsync(id, new[] { TwoPropCargo(1, 2), TwoPropCargo(2, 1) }, ct);
@@ -163,7 +163,7 @@ public class ArrayPivotStoreTests : IDisposable
     }
 
     // One owner with a Cargo array whose elements carry NO inner key (SelectArrayInnerKey found none, or a
-    // leaf container): the population the review of 4920cb89 found collapsing into one "(no key)" group.
+    // leaf container): a population that must not collapse into one "(no key)" group.
     private static SnapshotCapturedObject Keyless(int idx, params int[] qtys)
     {
         var o = new SnapshotCapturedObject
@@ -185,8 +185,9 @@ public class ArrayPivotStoreTests : IDisposable
     [Fact]
     public async Task PivotArray_KeylessElements_GroupByTheirIndex()
     {
-        // Every keyless element of every owner got the constant key "(no key)" -- ONE group -- while the
-        // status line said "elem index group(s)". Element 3, the one that changed, could not be singled out.
+        // A constant key "(no key)" for every keyless element of every owner would make them ONE group
+        // under a status line that says "elem index group(s)", and the element that changed could not be
+        // singled out. Each groups by its index instead.
         var ct = TestContext.Current.CancellationToken;
         long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "keyless" }, ct);
         await _store.WriteChunkAsync(id, new[] { Keyless(1, 10, 20, 30), Keyless(2, 11, 21) }, ct);

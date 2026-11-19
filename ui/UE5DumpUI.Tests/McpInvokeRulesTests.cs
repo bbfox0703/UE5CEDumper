@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. The server's copy of the DLL's invoke rules refuses a grant the DLL would
+/// [MCP-WRITE-GRANTS-2026-11-14] The server's copy of the DLL's invoke rules refuses a grant the DLL would
 /// refuse every call of. A copy drifts, so its lists are read back from Voll.h here: a name added to one side only fails
 /// the build.
 /// </summary>

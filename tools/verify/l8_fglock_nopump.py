@@ -1,15 +1,14 @@
-"""L8 - enabling the foreground lock must not hang the pipe thread on a non-pumping window.
+"""Enabling the foreground lock must not hang the pipe thread on a non-pumping window.
 
     py tools/verify/l8_fglock_nopump.py --tid <game thread id>
 
-THE FIX UNDER TEST (7f3898ff, "DLL LOW batch"): Grausam's `SubclassEnumProc` called
-`GetWindowTextW` **under `g_mutex`** into a buffer it never used. `GetWindowTextW` on a
-same-process window is a SYNCHRONOUS `WM_GETTEXT`, so if that window's owning thread is not
-pumping messages it blocks - and it blocks while holding `g_mutex`, i.e. it hangs the pipe /
-mailbox thread. A paused or backgrounded game is exactly the state this feature targets.
-The dead call was deleted (Grausam.cpp:175 now carries only the explanatory comment).
+THE HAZARD UNDER TEST: Grausam's `SubclassEnumProc` must not call `GetWindowTextW`
+**under `g_mutex`**. `GetWindowTextW` on a same-process window is a SYNCHRONOUS `WM_GETTEXT`,
+so if that window's owning thread is not pumping messages it blocks - and while holding
+`g_mutex` that hangs the pipe / mailbox thread. A paused or backgrounded game is exactly the
+state this feature targets.
 
-OFFLINE HALF, already settled and stronger than reading source: `GetWindowTextW` does not
+OFFLINE HALF, stronger than reading source: `GetWindowTextW` does not
 appear in `dist/UE5Dumper.dll`'s IMPORT TABLE at all, while `SetWindowLongPtrW` - the
 subclassing call two lines away in the same function - does. So the detector fires and the
 absence is real.
@@ -85,17 +84,16 @@ def main(argv=None):
         before_lines = subclass_lines()
 
         # ⭐ FORCE THE ProcessEvent HOOK FIRST, or the stall detector is inert. With no hook
-        # the DLL cannot measure liveness at all and now WITHHOLDS `game_thread_stalled`
-        # (STALLDEFAULT-2026-08-26) -- it used to default it to False, which is why the first
-        # run of this rig froze the correct thread (highest-CPU, 4906 ms vs 15 ms) and still
-        # saw False. pe_profile_start calls UE5_EnsureGameThreadHook.
+        # the DLL cannot measure liveness at all and WITHHOLDS `game_thread_stalled`
+        # (STALLDEFAULT-2026-08-26) -- a False there would read as healthy even with the
+        # correct thread frozen. pe_profile_start calls UE5_EnsureGameThreadHook.
         c.request("pe_profile_start")
         time.sleep(1.5)
         live = c.request("get_pointers").get("game_thread_stalled")
         print("    hook forced; game_thread_stalled = %r (must be False -- detector armed AND "
               "thread healthy; None means not armed)" % live)
         # `is not False` covers both failure modes in one test: True (already stalled) and
-        # None (never armed). The second used to be indistinguishable from success.
+        # None (never armed), which must not pass for success.
         if live is not False:
             fails.append("0: the stall detector is not armed (live=%r) or the host is already "
                          "stalled -- the freeze below would prove nothing" % live)

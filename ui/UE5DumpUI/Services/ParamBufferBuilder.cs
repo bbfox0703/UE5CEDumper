@@ -154,7 +154,7 @@ public static class ParamBufferBuilder
     /// nested struct such as <c>FSlateBrush::ImageSize</c> — has its typed value dropped
     /// while FIRE still reports <c>ProcessEvent OK</c>
     /// (<c>[Y11-OPAQUEDROP-2026-08-22]</c>), and an out-of-range integer sub-field is masked
-    /// to width (the W6/Y2/Y9/Y15/AE1 family).</para>
+    /// to width.</para>
     ///
     /// <para>Living here rather than in the dialog is the point: the check sits beside
     /// the write it guards, so the two cannot drift apart and it can be tested without an
@@ -236,10 +236,9 @@ public static class ParamBufferBuilder
     ///
     /// <para>Exists so the FIRE path can range-check a value before writing it. Every write
     /// below silently masks — <c>(short)</c>, <c>(int)</c>, <c>unchecked((byte)u)</c> — so
-    /// unchecked, typing 9999 for a 1-byte param sends 15 to the game with nothing said
-    /// (the width family, W6/Y2/Y9/Y15/AE1).</para>
+    /// unchecked, typing 9999 for a 1-byte param sends 15 to the game with nothing said.</para>
     ///
-    /// <para><b>The masking casts are deliberate</b> (Y5): a signed <c>-1</c> must reach
+    /// <para><b>The masking casts are deliberate</b>: a signed <c>-1</c> must reach
     /// the game as <c>0xFF</c>. Range is enforced by a signedness-aware RANGE CHECK in
     /// front of them (<see cref="FieldValueConverter.FitsInWidth"/>), never by removing
     /// the cast.</para>
@@ -596,7 +595,7 @@ public static class ParamBufferBuilder
     /// because <see cref="BakedScriptGenerator.TryParseHexOrDecimal"/> reinterprets the sign
     /// bits. One dialog, two opposite calls.</para>
     ///
-    /// <para>The same rule as <see cref="ParseByteOrSByte"/> (Y5), applied to every
+    /// <para>The same rule as <see cref="ParseByteOrSByte"/>, applied to every
     /// unsigned width.</para>
     /// </summary>
     private static ulong ParseULong(string text)

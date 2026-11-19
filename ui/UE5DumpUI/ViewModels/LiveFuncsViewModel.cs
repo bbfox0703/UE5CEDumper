@@ -43,7 +43,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>The fetch limit itself, 2^<see cref="FetchLimitExponent"/>.</summary>
     public int FetchLimit => 1 << FetchLimitExponent;
 
-    /// <summary>[EXTPR-539-540-2026-10-02] L3: hide rows with fewer calls than 2^<see cref="MinCallsExponent"/>.
+    /// <summary>[EXTPR-539-540-2026-10-02] Hide rows with fewer calls than 2^<see cref="MinCallsExponent"/>.
     /// Read at Start and kept for that capture, so the rows on screen never change under a moved slider (the
     /// maintainer's choice over filtering at once). Only the view is filtered: SetBaseline reads every fetched row,
     /// or an idle function with few calls would be missing from the baseline and come back as a false NEW.</summary>
@@ -167,7 +167,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// FUNC_Delegate). Those are reactions the engine fires AT the game, not imperative
     /// functions you'd invoke; hiding them leaves the callable entry points.</summary>
     [ObservableProperty] private bool   _hideEvents;
-    /// <summary>Show ONLY functions firing at a regular timer-like cadence (Phase E):
+    /// <summary>Show ONLY functions firing at a regular timer-like cadence:
     /// enough fires, a low coefficient-of-variation, and a period outside the per-frame
     /// (Tick) band. The behaviour-based way to find the callback that drives a cooldown /
     /// spawn / DoT — record while IDLE (the inverse of the action-diff flow). Native
@@ -239,14 +239,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> would return at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy was even attempted, and the bool the handler eventually got would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
@@ -269,20 +266,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public Helpers.AobMakerStatus AobMaker { get; }
 
     // ---- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace: armed by this panel's Start, read in the Call Trace tab.
-    // Experimental (T6): the controls show, a Start asks for a trace, and a kept trace is offered ([LF-EXPOFF-TRACE]),
+    // Experimental: the controls show, a Start asks for a trace, and a kept trace is offered ([LF-EXPOFF-TRACE]),
     // only while the experimental tabs are on.
     // The plan and its decisions: docs/live-funcs-timeline-plan.md.
 
     private readonly IExperimentalGate? _experimentalGate;
     public bool TraceAvailable => _experimentalGate?.IsEnabled ?? false;
 
-    /// <summary>The trace buffer as a power of two in MB (T1): 32 to 512. How much the game can spare is the user's
+    /// <summary>The trace buffer as a power of two in MB: 32 to 512. How much the game can spare is the user's
     /// call; the estimate beside the slider says how long it would last.</summary>
     internal const int TraceBufferMinExponent = 5;
     internal const int TraceBufferMaxExponent = 9;
     [ObservableProperty] private bool _traceEnabled;
     [ObservableProperty] private int _traceBufferExponent = 6;
-    /// <summary>T5 (b): leave out the functions the previous recording found firing every frame.</summary>
+    /// <summary>Leave out the functions the previous recording found firing every frame.</summary>
     [ObservableProperty] private bool _traceExcludePerFrame;
     public int TraceBufferMb => 1 << TraceBufferExponent;
     public string TraceBufferText => Say("str.LF.Trace.BufferMb", TraceBufferMb);
@@ -310,7 +307,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
     }
 
-    // [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone, so it shows before any
+    // [TRACE-UI-LOAD-MEMORY] What a buffer that fills costs, from the buffer alone, so it shows before any
     // recording. The game commits the whole ring at Start and holds it until this UI has read it. While this UI loads
     // it holds the window (the ring's own size), the trace's columns (73 of every 80 bytes a call takes in the ring)
     // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. 2 x N is
@@ -323,7 +320,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public int TraceUiHeldMb => TraceBufferMb;
     /// <summary>Physical memory free when last asked (MB); long.MaxValue when unknown.</summary>
     private long _availableMb = long.MaxValue;
-    /// <summary>D3: above the memory free now, the estimate is a warning; Start still runs.</summary>
+    /// <summary>Above the memory free now, the estimate is a warning; Start still runs.</summary>
     public bool TraceMemoryOverAvailable => _availableMb != long.MaxValue && TraceGameMb + TraceUiPeakMb > _availableMb;
     public string TraceMemoryEstimate => Say(
         TraceMemoryOverAvailable ? "str.LF.Trace.MemoryOver" : "str.LF.Trace.Memory",
@@ -349,7 +346,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanSnapshot));
     }
 
-    // ---- [LIVEFUNCS-STEP2] Parameter snapshots: chosen by name (T10), taken by the trace (T11-T14). The design is
+    // ---- [LIVEFUNCS-STEP2] Parameter snapshots: chosen by name, taken by the trace. The design is
     // docs/live-funcs-timeline-plan.md, "Step 2 design".
 
     /// <summary>The functions whose parameters the next traced Start copies, by name (FunctionTickSet's rules).</summary>
@@ -361,19 +358,19 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>Parameters can be chosen: the rows can be ticked, and the trace is on (snapshots ride on it).</summary>
     public bool CanSnapshot => CanTick && TraceEnabled;
 
-    /// <summary>The snapshot buffer as a power of two in MB (T12): 8 to 128, default 32.</summary>
+    /// <summary>The snapshot buffer as a power of two in MB: 8 to 128, default 32.</summary>
     internal const int SnapshotBufferMinExponent = 3;
     internal const int SnapshotBufferMaxExponent = 7;
     [ObservableProperty] private int _snapshotBufferExponent = 5;
     public int SnapshotBufferMb => 1 << SnapshotBufferExponent;
     public string SnapshotBufferText => Say("str.LF.Trace.BufferMb", SnapshotBufferMb);
 
-    /// <summary>The budget a Start sends (the DLL's defaults, provisional until measured live).</summary>
+    /// <summary>The budget a Start sends (the DLL's defaults).</summary>
     internal const int SnapshotPerFuncPerSec = 1000;
     internal const int SnapshotTotalPerSec = 10000;
 
-    // ---- [LIVEFUNCS-STEP3] Native stacks: chosen by name like the parameters, in a column of their own (D1), held in
-    // the same snapshot buffer (D4). The design is docs/live-funcs-step3-design.md.
+    // ---- [LIVEFUNCS-STEP3] Native stacks: chosen by name like the parameters, in a column of their own, held in
+    // the same snapshot buffer. The design is docs/live-funcs-step3-design.md.
 
     /// <summary>The functions whose native stack the next traced Start takes, by name (FunctionTickSet's rules).</summary>
     private readonly FunctionTickSet _stackChosen = new();
@@ -382,12 +379,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public bool HasStackChoices => StackFunctions.Count > 0;
     public string StackCountText => Say("str.LF.Stack.Count", StackFunctions.Count);
 
-    /// <summary>What a Start sends for every stack, the budget under Standard: the DLL's defaults, the maintainer's (A)
-    /// after the live measurement (T17). The depth has no control; a test reads Linie.h and pins these to it.</summary>
+    /// <summary>What a Start sends for every stack, the budget under Standard: the DLL's defaults. The depth has no
+    /// control; a test reads Linie.h and pins these to it.</summary>
     internal const int StackDepth = 16;
     internal const int StackPerFuncPerSec = 25;
     internal const int StackTotalPerSec = 50;
-    /// <summary>T20's Low budget: half of Standard, rounded down, for a slower machine or a game where a capture costs
+    /// <summary>The Low budget: half of Standard, rounded down, for a slower machine or a game where a capture costs
     /// more. A test reads Linie.h and pins these to it.</summary>
     internal const int StackLowPerFuncPerSec = 12;
     internal const int StackLowTotalPerSec = 25;
@@ -425,19 +422,19 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public string StackStandardTip => Say("str.Tip.LF.Stack.Standard", StackPerFuncPerSec, StackTotalPerSec);
     public string StackLowTip => Say("str.Tip.LF.Stack.Low", StackLowPerFuncPerSec, StackLowTotalPerSec);
 
-    /// <summary>A Start allocates the snapshot buffer for any choice that fills it (D4).</summary>
+    /// <summary>A Start allocates the snapshot buffer for any choice that fills it.</summary>
     private bool AnySnapshotChoice => _snapChosen.Count > 0 || _stackChosen.Count > 0;
 
-    /// <summary>T9.2: asked before a per-frame function is chosen for a native stack, with the question to show. The view
+    /// <summary>Asked before a per-frame function is chosen for a native stack, with the question to show. The view
     /// sets it; without one, a per-frame function is not chosen.</summary>
     public Func<string, Task<bool>>? ConfirmStackPerFrame { get; set; }
-    /// <summary>T9.2: answered yes on this connection, so a later per-frame choice is made at once. A no does not count
+    /// <summary>Answered yes on this connection, so a later per-frame choice is made at once. A no does not count
     /// as asked. A disconnect clears it: a capture's cost is the game's, and the next connection may be another game.</summary>
     private bool _stackPerFrameConfirmed;
 
     /// <summary>Choose or drop a row's native stack. Refused whenever a parameter choice is (<see cref="CanSnapshot"/>),
     /// and on a keyless row, as a stack is chosen by name; a function with no parameters still has a stack. Choosing a
-    /// per-frame function asks first (T9.2): chosen alone, it takes a stack every frame, up to the budget. Per-frame is
+    /// per-frame function asks first: chosen alone, it takes a stack every frame, up to the budget. Per-frame is
     /// decided by name, as the choice takes every row of the name: a function reloaded at a new address can run every
     /// frame there while the row clicked, at its old one, is plain.</summary>
     [RelayCommand]
@@ -494,14 +491,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void ClearSnapshots()
     {
         if (IsRecording) return;
-        // A stack choice fills the snapshot buffer too (D4), so its Clear drops the stacks as well.
+        // A stack choice fills the snapshot buffer too, so its Clear drops the stacks as well.
         _snapChosen.Clear();
         _stackChosen.Clear();
         foreach (var e in _allEntries) { e.IsSnapChosen = false; e.IsStackChosen = false; }
         RefreshSnapshotList();
     }
 
-    /// <summary>T9 item 2 (S14): choose every shown row that can be chosen -- what the filter and check boxes leave,
+    /// <summary>Choose every shown row that can be chosen -- what the filter and check boxes leave,
     /// per-frame rows included; the status says what was left out.</summary>
     [RelayCommand]
     private void SnapshotShownRows()
@@ -541,7 +538,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RaiseStackEstimate();
     }
 
-    // ---- T9 item 1: the estimate, from the last fetch's rates. Pure, like EstimateSeconds, so a test pins it.
+    // ---- The snapshot estimate, from the last fetch's rates. Pure, like EstimateSeconds, so a test pins it.
 
     /// <summary>The window the last fetch's counts cover (ms); 0 before any.</summary>
     private long _lastWindowMs;
@@ -578,7 +575,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal const int StackSlotBytes = SnapHeaderBytes + 8 * StackDepth;
 
     /// <summary>The chosen functions' rates against the budgets, and the slots every ring keeps (K). Stack rings take
-    /// no rates, but they share the buffer and its K (D4): the DLL divides the same bytes among parameter and stack
+    /// no rates, but they share the buffer and its K: the DLL divides the same bytes among parameter and stack
     /// rings alike, so leaving them out would promise slots the DLL does not give and miss its refusal.</summary>
     internal static SnapEstimate EstimateSnapshots(IReadOnlyList<SnapRate> chosen, long snapBytes, int perFunc, int total,
                                                    int stackRings = 0)
@@ -631,9 +628,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         return list;
     }
 
-    /// <summary>The trace's own estimate for T13's comparison: of every call when nothing is ticked or chosen, else of
-    /// the ticked and chosen rows, for parameters or a stack (a lone record is 80 bytes a call too) -- what a scoped
-    /// trace mostly holds.</summary>
+    /// <summary>The trace's own estimate for the snapshot warning's comparison: of every call when nothing is ticked or
+    /// chosen, else of the ticked and chosen rows, for parameters or a stack (a lone record is 80 bytes a call too) --
+    /// what a scoped trace mostly holds.</summary>
     private double TraceSecondsForComparison()
     {
         double rate = _lastCallsPerSecond;
@@ -672,7 +669,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>T13: orange when the busiest choice keeps less time than the trace does, or the buffer is too small.</summary>
+    /// <summary>Orange when the busiest choice keeps less time than the trace does, or the buffer is too small.</summary>
     public bool SnapshotEstimateWarn => AnySnapshotChoice && SnapshotWarns(CurrentEstimate());
 
     /// <summary><see cref="SnapshotEstimateWarn"/> for an estimate already made, so a reader that shows the estimate too
@@ -705,21 +702,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(SnapshotBudgetNote));
     }
 
-    // ---- [LIVEFUNCS-STEP3] T9.1: what the stacks chosen would cost the game, from the last fetch's rates. The DLL's
-    // budget is the guarantee; this is the advice, so a warning never refuses a Start (T9).
+    // ---- [LIVEFUNCS-STEP3] What the stacks chosen would cost the game, from the last fetch's rates. The DLL's
+    // budget is the guarantee; this is the advice, so a warning never refuses a Start.
 
-    /// <summary>T9's threshold: above this much of the game's time a second the stack estimate turns orange. An eighth of
+    /// <summary>The threshold: above this much of the game's time a second the stack estimate turns orange. An eighth of
     /// a 60 fps frame, if every capture of the second landed in one, which the budget's first-calls window allows.</summary>
     internal const double StackWarnMsPerSec = 2.0;
-    /// <summary>A capture's cost when no Stop has measured one: the plan's upper estimate, which T17's first defaults
-    /// were set against. Games measured live ([LIVEFUNCS-STEP3]) came out on both sides of it, so the line says it was
-    /// assumed.</summary>
+    /// <summary>A capture's cost when no Stop has measured one: the plan's upper estimate. A real game's cost can fall
+    /// on either side of it ([LIVEFUNCS-STEP3]), so the line says it is assumed.</summary>
     internal const double StackAssumedUsPerCapture = 10.0;
 
     /// <summary>The captures a second the budget lets through, and the milliseconds of the game's time they take.</summary>
     internal readonly record struct StackCost(double CapturesPerSec, double MsPerSec);
 
-    /// <summary>T9.1: each chosen function's calls a second held to its own budget, their sum held to the total -- the
+    /// <summary>Each chosen function's calls a second held to its own budget, their sum held to the total -- the
     /// DLL's per-ring and total budgets over one second -- and what that many captures cost at
     /// <paramref name="usPerCapture"/>. A function not called counts nothing.</summary>
     internal static StackCost EstimateStacks(IReadOnlyList<double> rates, int perFunc, int total, double usPerCapture)
@@ -730,7 +726,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         return new StackCost(captures, captures * usPerCapture / 1000.0);
     }
 
-    /// <summary>The mean µs a capture took in a stopped trace (D9's measurement); null when it took none.</summary>
+    /// <summary>The mean µs a capture took in a stopped trace (the DLL's own measurement); null when it took none.</summary>
     internal static double? MeanUsPerCapture(StackInfo? stack, ulong qpcFreq)
         => stack is { Captures: > 0 } s && qpcFreq > 0 ? (double)s.SpentTicks / s.Captures * 1e6 / qpcFreq : null;
 
@@ -755,9 +751,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private bool StackChoiceCutFromPage
         => LastTruncated && _stackChosen.Names.Any(n => !_allEntries.Any(e => Key(e) == n));
 
-    /// <summary>T9.1's line, under the budget chosen. With no chosen function called last time there is no rate to weigh,
-    /// so the line says so and gives the most the budget takes instead of an estimate of nothing; when the page left a
-    /// choice out, it says that instead of "not called".</summary>
+    /// <summary>The stack estimate line, under the budget chosen. With no chosen function called last time there is no
+    /// rate to weigh, so the line says so and gives the most the budget takes instead of an estimate of nothing; when the
+    /// page left a choice out, it says that instead of "not called".</summary>
     public string StackEstimate
     {
         get
@@ -772,7 +768,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Orange above <see cref="StackWarnMsPerSec"/>: the estimate line, and T20's warning with it.</summary>
+    /// <summary>Orange above <see cref="StackWarnMsPerSec"/>: the estimate line, and the stack-cost warning with it.</summary>
     public bool StackEstimateWarn => _stackChosen.Count > 0 && StackWarns(CurrentStackCost());
 
     /// <summary><see cref="StackEstimateWarn"/> for a cost already weighed, so a reader that shows the cost too weighs it
@@ -788,14 +784,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>The ticked functions, followed by name (Class::Func) with their name keys and the live addresses the
-    /// last fetch saw ([LIVEFUNCS-STEP2] T10; the rules are FunctionTickSet's). A key is good only within the connection
+    /// last fetch saw ([LIVEFUNCS-STEP2]; the rules are FunctionTickSet's). A key is good only within the connection
     /// that fetched it: a disconnect clears the ticks, and the rows left on screen cannot be ticked until a fetch
     /// replaces them.</summary>
     private readonly FunctionTickSet _ticked = new();
     /// <summary>The rows on screen came from a connection that has since dropped: their addresses belong to a process
-    /// that may be gone, so they cannot be ticked and are nothing to tick for T7.</summary>
+    /// that may be gone, so they cannot be ticked and do not make a Start with nothing ticked ask first.</summary>
     private bool _rowsFromEarlierConnection;
-    /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy (T8).</summary>
+    /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy.</summary>
     public ObservableCollection<string> TickedFunctions { get; } = new();
     /// <summary>Whether the rows on screen can be ticked: not while recording (a recording traces the ticks it started
     /// with), and not when they came from an earlier connection.</summary>
@@ -808,10 +804,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public bool HasTickedFunctions => TickedFunctions.Count > 0;
     public string TickedCountText => Say("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
-    /// <summary>T7: asked before a traced Start with nothing ticked while there are rows to tick from. The view sets
+    /// <summary>Asked before a traced Start with nothing ticked while there are rows to tick from. The view sets
     /// it; without one a Start that needs the question does not start.</summary>
     public Func<Task<bool>>? ConfirmTraceAllCalls { get; set; }
-    /// <summary>T7: answered yes once in this session, so a later Start with nothing ticked runs at once. Cancel
+    /// <summary>Answered yes once in this session, so a later Start with nothing ticked runs at once. Cancel
     /// does not count as asked.</summary>
     private bool _traceAllConfirmed;
 
@@ -876,7 +872,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceUiPeakMb));
         OnPropertyChanged(nameof(TraceUiHeldMb));
         RefreshAvailableMemory();
-        // T13's orange weighs the busiest choice against what the trace keeps, which the buffer sets.
+        // The snapshot warning weighs the busiest choice against what the trace keeps, which the buffer sets.
         RaiseSnapshotEstimate();
     }
 
@@ -886,8 +882,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void ToggleTick(PeProfileEntry? row)
     {
         // [LIVEFUNCS-STEP2] A row with a name key ticks by name, unloaded or not: the DLL follows the name to wherever
-        // the function loads next (T10). A row without one (a DLL that predates keys) keeps D1's rule: its address is
-        // all the DLL can match, and an unloaded row's is dead.
+        // the function loads next. A row without one (a DLL that predates keys) ticks by address: its address is all
+        // the DLL can match, and an unloaded row's is dead.
         if (row == null || !CanTick || !Tickable(row)) return;
         bool tick = _ticked.Toggle(row, _allEntries);
         string key = Key(row);
@@ -924,7 +920,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         foreach (var k in _ticked.Names) TickedFunctions.Add(k);
         OnPropertyChanged(nameof(HasTickedFunctions));
         OnPropertyChanged(nameof(TickedCountText));
-        // A ticked call is one the trace keeps, so the ticks move what T13's orange compares the choices with.
+        // A ticked call is one the trace keeps, so the ticks move what the snapshot warning compares the choices with.
         RaiseSnapshotEstimate();
     }
 
@@ -1049,15 +1045,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // [LIVEFUNCS-STEP2] By name, for a DLL that reads names; the live addresses ride along for one that does not.
         var named = _ticked.Named();
         // [TRACE-UNLOADED-NAMES] Ticked, but nothing to scope on: no name key, and every ticked function unloaded since
-        // it fired. Not T7's case -- the user did tick -- and never a trace of every call, the opposite of what was asked.
+        // it fired. Not the nothing-ticked question -- the user did tick -- and never a trace of every call, the opposite
+        // of what was asked.
         if (ticked.Count == 0 && named.Count == 0 && _ticked.Count > 0)
         {
             refusal.Value = "str.LF.Trace.TickedAllUnloaded";
             return null;
         }
-        // T7: only when there is something to tick. The first recording, or any Start with no row that can be ticked
-        // (none, or only unloaded ones without a key), records every call without asking. A choice for parameters or a
-        // stack scopes the trace to the chosen calls (T11), so it is no trace of every call either.
+        // Ask before tracing every call only when there is something to tick. The first recording, or any Start with no
+        // row that can be ticked (none, or only unloaded ones without a key), records every call without asking. A
+        // choice for parameters or a stack scopes the trace to the chosen calls, so it is no trace of every call either.
         if (_ticked.Count == 0 && !AnySnapshotChoice && _allEntries.Any(Tickable) && !_rowsFromEarlierConnection
             && !_traceAllConfirmed)
         {
@@ -1095,7 +1092,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>[LIVEFUNCS-STEP2] What a traced Start's status says it records: inside ticked functions (by name or by
     /// address), and outside them the chosen calls when <paramref name="armed"/>, the Start reply's trace, holds a
-    /// ring for parameters or a stack; only the chosen calls (T11); or every call. Each takes the MB and
+    /// ring for parameters or a stack; only the chosen calls; or every call. Each takes the MB and
     /// <see cref="TraceStartCount"/>.</summary>
     internal static string TraceStartKey(TraceStartOptions trace, TraceInfo? armed = null)
         => trace.Ticked.Count > 0 || trace.TickedNames.Count > 0
@@ -1115,7 +1112,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
          : 0;
 
     /// <summary>[LIVEFUNCS-STEP2] The followed names the last Stop found never called: "not called", never "not loaded"
-    /// -- the DLL sees calls, not loads. Shown here and in the Call Trace tab's copy (T8).</summary>
+    /// -- the DLL sees calls, not loads. Shown here and in the Call Trace tab's copy.</summary>
     public ObservableCollection<string> NotCalledNames { get; } = new();
     public bool HasNotCalledNames => NotCalledNames.Count > 0;
     public string NotCalledText => Say("str.LF.Trace.NotCalled", string.Join(", ", NotCalledNames));
@@ -1185,9 +1182,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
             return;
         }
         // Max, not First: _allEntries is re-sorted in place by ApplyDiffAndFilter, and the
-        // Earliest-first toggle orders it by FirstSeq rather than by count — so First() made
-        // the captured baseline value depend on a VIEW setting. Max is what First() was
-        // reaching for and is independent of however the grid happens to be sorted.
+        // Earliest-first toggle orders it by FirstSeq rather than by count — so First() would make
+        // the captured baseline value depend on a VIEW setting. Max is the highest count First()
+        // would pick from a count-sorted list, independent of however the grid happens to be sorted.
         _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
         _baselineTruncated = LastTruncated;
         _baselineDistinct  = _lastDistinct - _lastPerFrameHidden;   // what it could have fetched; see LastTruncated
@@ -1308,7 +1305,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 LastTickedDropped = start.Trace?.TickedDropped ?? 0;
                 if (LastTickedDropped > 0)
                     StatusText += " " + Say("str.LF.Trace.TickedDropped", LastTickedDropped);
-                // D3: a warning, never a refusal -- the memory is the user's call (T1).
+                // A warning, never a refusal -- the memory is the user's call.
                 if (start.Trace != null && TraceMemoryOverAvailable)
                     StatusText += " " + Say("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));
             }
@@ -1347,7 +1344,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             _log.Error("LivePEProfiler stop failed", ex);
         }
         // Clear the recording UI state even if the stop round-trip threw, so a failed
-        // Stop doesn't leave the tab stuck "recording" (which would swallow Start). (L16)
+        // Stop doesn't leave the tab stuck "recording" (which would swallow Start).
         finally { IsBusy = false; IsRecording = false; _recordingTrace = false; }
     }
 
@@ -1357,7 +1354,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// landed.</returns>
     private bool NoteStoppedTrace(bool traced, TraceInfo? info)
     {
-        // T9.1 weighs the stacks with this Stop's cost alone: a recording that took none measured none.
+        // The stack estimate weighs the stacks with this Stop's cost alone: a recording that took none measured none.
         _stackUsMeasured = traced ? MeanUsPerCapture(info?.Stack, info?.QpcFreq ?? 0) : null;
         RaiseStackEstimate();
         if (!traced) return false;
@@ -1431,8 +1428,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         return kept;
     }
 
-    /// <summary>[LIVEFUNCS-STEP3] What the stacks took, what the budget left out, and what a capture cost: D9's
-    /// measurement, so the defaults can be weighed against T9's 2 ms a second.</summary>
+    /// <summary>[LIVEFUNCS-STEP3] What the stacks took, what the budget left out, and what a capture cost: the
+    /// DLL's own measurement, so the defaults can be weighed against the 2 ms a second the stack estimate warns
+    /// above.</summary>
     private string StackStopNote(StackInfo s, ulong qpcFreq)
     {
         string note = Say("str.LF.Stack.StopNote", s.Captures, s.SkippedBudget + s.DroppedBudget, s.DroppedBudget);
@@ -1441,7 +1439,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         return note;
     }
 
-    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter, the check boxes and Min calls
+    /// <summary>[EXTPR-539-540-2026-10-02] Save the rows on screen (what the filter, the check boxes and Min calls
     /// leave) to a JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
     /// recording, when the table is still changing; the button is disabled then too. A peek's rows can outlive the
     /// recording (it can end without a final fetch), so the summary says when the rows came from one.</summary>
@@ -1574,7 +1572,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // is among the NEW rows shown would point at a table that does not hold it.
             bool newRowHidden = _allEntries.Any(e => e.IsNew && e.Count < _shownMinCalls);
             // newCount/increased are counted over the PAGE, so they cannot be reported
-            // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
+            // against the pre-cap table size — "3 NEW of 900" invites reading 900 as the
             // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}{UnloadedNote()}). "
@@ -1682,7 +1680,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (HideEvents && e.IsEventLike) continue;
             // Periodic-only: keep just the regular timer-like cadence functions.
             if (PeriodicOnly && !e.IsPeriodic) continue;
-            // Min calls the rows were fetched under. No exemption for NEW rows (R1): the default 1 hides nothing.
+            // Min calls the rows were fetched under. No exemption for NEW rows: the default 1 hides nothing.
             if (e.Count < _shownMinCalls) continue;
             if (terms.Length > 0 &&
                 !ObjectTreeFilter.MatchesAllTerms(terms, e.FuncName, e.ClassName))
@@ -1744,7 +1742,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task AutoStopOnLeaveAsync()
     {
         // Clear the UI state up-front (before the round-trip) so returning to the tab and
-        // clicking Start inside the stop window isn't swallowed by StartAsync's guard. (L16)
+        // clicking Start inside the stop window isn't swallowed by StartAsync's guard.
         IsRecording = false;
         bool traced = _recordingTrace;
         _recordingTrace = false;
@@ -1761,7 +1759,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>Reset the recording UI state on pipe disconnect. The DLL (Linie) already
     /// drops its recording when the client that started it leaves; this keeps the UI in sync so a reconnect
-    /// doesn't show a stuck "recording" that swallows the next Start. (L16)</summary>
+    /// doesn't show a stuck "recording" that swallows the next Start.</summary>
     public void ResetOnDisconnect()
     {
         if (IsRecording) IsRecording = false;
@@ -1789,8 +1787,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         DropTraceClause();
     }
 
-    /// <summary>[LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they sent the user to a trace the
-    /// DLL no longer holds, and the switch turned off and on again composed them back. The Stop's own line stays.
+    /// <summary>[LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they would send the user to a trace
+    /// the DLL no longer holds, and turning the switch off and on again would compose them back. The Stop's own line stays.
     /// Cleared here rather than left to the status write, which raises nothing when the switch already took them
     /// off.</summary>
     private void DropTraceClause()

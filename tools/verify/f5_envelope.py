@@ -4,15 +4,16 @@
     py f5_envelope.py step2        # interleave control: watch events vs ordinary commands
     py f5_envelope.py all
 
-WHAT F5 CHANGED (audit L11, build 3263). `Fern::WriteLine` no longer materialises a
-`line + "\\n"` copy: the payload and the terminator now go out as TWO `WriteFile`
-calls under the same `writeMutex` on a BYTE-MODE pipe. And `MakeResponse`/`MakeEvent`
-assign envelope keys individually instead of splicing with nlohmann's `merge_patch`,
-so a payload can no longer delete an envelope key or replace the whole object.
+WHAT IT CHECKS (F5 in docs/audit-2026-08-13-early-code-findings.md). `Fern::WriteLine`
+does not materialise a `line + "\\n"` copy: the payload and the terminator go out as TWO
+`WriteFile` calls under the same `writeMutex` on a BYTE-MODE pipe. And
+`MakeResponse`/`MakeEvent` assign envelope keys individually instead of splicing with
+nlohmann's `merge_patch`, so a payload cannot delete an envelope key or replace the whole
+object.
 
-WHY IT NEEDS A LIVE CHECK AT ALL. `Renge::ApplyPayload` is pinned by 16 assertions in
+WHY IT NEEDS A LIVE CHECK AT ALL. `Renge::ApplyPayload` is unit-pinned in
 `dll_helpers_test` because that header IS compiled there -- but **no test target
-compiles `Fern.cpp`**, so the two-write split has never executed anywhere. If a
+compiles `Fern.cpp`**, so the two-write split executes only in a live DLL. If a
 reader can observe the gap between the two writes, or another thread's write can land
 between them, the failure is a TRUNCATED or INTERLEAVED line.
 
@@ -106,9 +107,9 @@ class RawClient(PipeClient):
                 if obj is not None and obj.get("id") == rid:
                     return obj
                 if obj is not None:
-                    # Keep it, exactly as the base class does. Dropping this line was a
-                    # rig bug that made the interleave control report "0 events" while
-                    # 186,463 event lines had in fact arrived.
+                    # Keep it, exactly as the base class does. Dropping it makes the
+                    # interleave control report "0 events" while event lines have in
+                    # fact arrived.
                     self.events.append(obj)
         raise RuntimeError(f"timed out waiting for id={rid} ({cmd})")
 
@@ -202,11 +203,11 @@ def step2(seconds=60):
     Two writers, one writeMutex. If the mutex does not actually cover BOTH WriteFile
     calls, an event lands inside a response and the line is garbage.
 
-    ⚠ Since [PIPE-PER-PROCESS-2026-11-06] Stage C the watch thread does no pipe I/O: the
+    ⚠ Under [PIPE-PER-PROCESS-2026-11-06] Stage C the watch thread does no pipe I/O: the
     watching connection's own handler writes its events, after each command and ahead of
     the reply, so events and replies on one connection come from ONE thread and the
-    writeMutex is no longer what keeps them apart. Every line must still parse, so this
-    still catches a malformed event or a reply split by one; it no longer exercises the
+    writeMutex is not what keeps them apart. Every line must still parse, so this
+    still catches a malformed event or a reply split by one; it does not exercise the
     mutex between two writers.
     """
     print(f"=== F5 step 2: interleave control, {seconds}s, two connections ===")

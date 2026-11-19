@@ -7,7 +7,7 @@ namespace UE5DumpUI.Tests;
 /// Locks the "Get GWorld" / "Get GameEngine" CE records: a stateful toggle that
 /// resolves an address via the mailbox (CMD_QUERY_PTR=13), then publishes a CE
 /// symbol. GWorld registers the symbol DIRECTLY to the &amp;GWorld slot (no buffer,
-/// auto-follows level changes). GameEngine now prefers the same shape — the
+/// auto-follows level changes). GameEngine prefers the same shape — the
 /// &amp;GEngine SLOT via op 2 — and only falls back to an allocateMemory snapshot of
 /// the live UEngine* (op 1) when no GEngine AOB validated. Mirrors the mailbox
 /// contract in dll/src/Mimic.h (QueryPtrOp) + the CE Lua registerSymbol pattern.
@@ -93,8 +93,8 @@ public class PointerQueryScriptGeneratorTests
         // query can observe the previous command for an instant. A single sample would
         // report "busy" and silently abandon the GEngine-slot -> snapshot fallback.
         //
-        // The loop is CeLuaHygiene.AppendIdleWait's output now, not hand-rolled — hence
-        // `idleWaited`, the shared emitter's counter, where this used to say `waited`.
+        // The loop is CeLuaHygiene.AppendIdleWait's output, not hand-rolled — hence
+        // `idleWaited`, the shared emitter's counter.
         // CeMailboxBailoutTests.BothWaitsAreTheSharedEmittersVerbatim pins that it really
         // is the emitter's bytes; this one stays a behavioural check.
         var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
@@ -111,7 +111,7 @@ public class PointerQueryScriptGeneratorTests
     [Fact]
     public void GameEngine_enable_clears_a_stale_buffer_before_republishing()
     {
-        // An enable that now takes the slot path must not orphan the allocation a
+        // An enable that takes the slot path must not orphan the allocation a
         // previous snapshot-path enable made.
         var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
         var enable = s.Substring(0, s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
@@ -131,11 +131,11 @@ public class PointerQueryScriptGeneratorTests
 
     // ── SLOTSYM: the slot [DISABLE] must ACTUALLY unregister, and say so honestly ──
     //
-    // The bug: on the &GEngine SLOT path the record took the mayFallBack DISABLE branch,
-    // where unregisterSymbol was nested inside the buffer-only `cur == mem` guard. With no
-    // buffer, `mem` was nil, both arms were skipped, the symbol survived — and a trailing
-    // UNCONDITIONAL dbg claimed it had been "unregistered" anyway. That leaves a stale
-    // UE_GameEngine across a game restart (it resolves into the dead process's module).
+    // The hazard: on the &GEngine SLOT path the record takes the mayFallBack DISABLE branch,
+    // where `mem` is nil (no buffer). With unregisterSymbol nested only inside the buffer-only
+    // `cur == mem` guard, both arms are skipped and the symbol survives — and an UNCONDITIONAL
+    // dbg would claim it was "unregistered" anyway. That leaves a stale UE_GameEngine across a
+    // game restart (it resolves into the dead process's module).
 
     [Fact]
     public void GameEngine_slot_disable_actually_releases_the_symbol()
@@ -146,7 +146,7 @@ public class PointerQueryScriptGeneratorTests
         // The buffer guard is still there (the two other arms) …
         Assert.Contains("if mem and mem ~= 0 and cur == mem then", disable);
         Assert.Contains("elseif mem and mem ~= 0 then", disable);
-        // … but now there is an ELSE (mem == nil = slot path) that reference-counts and
+        // … and an ELSE (mem == nil = slot path) that reference-counts and
         // actually unregisters, instead of falling through doing nothing.
         Assert.Contains("UE5_slotSymRefcount['UE_GameEngine']", disable);
         Assert.Contains("while getAddressSafe('UE_GameEngine') and _tries < 8 do", disable);
@@ -177,9 +177,9 @@ public class PointerQueryScriptGeneratorTests
         Assert.Contains($"could NOT be unregistered", disable);
         Assert.Contains($"dbg('[{tag}] {sym} unregistered')", disable);
 
-        // Negative control: the pre-fix UNCONDITIONAL success line (emitted at column 0,
-        // so preceded by a bare newline) must be gone. If it came back, the message would
-        // once again claim success on a path that unregistered nothing.
+        // Negative control: no UNCONDITIONAL success line (emitted at column 0, so
+        // preceded by a bare newline). With one, the message would claim success on a
+        // path that unregistered nothing.
         Assert.DoesNotContain($"\ndbg('[{tag}] {sym} unregistered')", disable);
     }
 
@@ -219,8 +219,8 @@ public class PointerQueryScriptGeneratorTests
     [Fact]
     public void Contract_check_is_emitted_exactly_once()
     {
-        // Regression guard: the ENABLE used to call AppendContractCheck twice (a
-        // copy/paste), emitting the whole ~40-line block redundantly.
+        // The ENABLE calls AppendContractCheck once: a copy/pasted second call would
+        // emit the whole ~40-line block redundantly.
         var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
         int n = 0;
         for (int i = s.IndexOf("local _want = ", System.StringComparison.Ordinal); i >= 0;
@@ -280,14 +280,12 @@ public class PointerQueryScriptGeneratorTests
         var script = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
         var xml = CheatTableBuilder.WrapAaScriptXml("Get GameEngine → symbol UE_GameEngine", script);
 
-        // Anchored on the shared emitter's actual text, not on a shape this generator no
-        // longer emits: the old assertion named the hand-rolled `elapsed >= N` counter,
-        // so once that was replaced BOTH halves passed for the wrong reason — nothing
-        // was left to escape and nothing was left to find.
+        // Anchored on the shared emitter's actual text, not on a shape this generator does
+        // not emit: an anchor the script no longer contains makes BOTH halves pass for the
+        // wrong reason — nothing left to escape and nothing left to find.
         // Assert the construct is REALLY in the body first, or the escape check below is
-        // a test of nothing: the old assertion named `elapsed >= N` from the hand-rolled
-        // poll, and folding that onto CeLuaHygiene.AppendMailboxWait deleted the string,
-        // so the DoesNotContain went vacuously green with its comment still describing it.
+        // a test of nothing: a DoesNotContain on a string the emitter dropped goes
+        // vacuously green.
         Assert.Contains("_t0 >= ", script);
         Assert.Contains($"_t0 &gt;= {CeMailboxLayout.MailboxPollTimeoutMs}", xml);
         Assert.DoesNotContain($"_t0 >= {CeMailboxLayout.MailboxPollTimeoutMs}", xml);

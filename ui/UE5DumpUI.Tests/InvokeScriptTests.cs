@@ -140,7 +140,7 @@ public class InvokeScriptTests
     [Fact]
     public void Generate_ObjectParamWithKnownClass_LabelShowsExpectedType()
     {
-        // Stage 1 (Invoke param picker): when the DLL surfaces the param's
+        // Invoke param picker: when the DLL surfaces the param's
         // expected UClass via FObjectPropertyBase::PropertyClass, the
         // generated CE-side script label should self-document it so the
         // user knows what kind of pointer to provide.
@@ -168,9 +168,9 @@ public class InvokeScriptTests
     [Fact]
     public void Generate_ObjectParamWithoutKnownClass_LabelOmitsColonSuffix()
     {
-        // Stage 1 backward-compat: when the DLL pre-dates the obj_class field
-        // (or the param genuinely lacks a constraint), the label should fall
-        // back to the original "[UObject*, ...]" form — no spurious colon.
+        // Backward-compat: when the DLL sends no obj_class field (or the param
+        // genuinely lacks a constraint), the label falls back to the plain
+        // "[UObject*, ...]" form — no spurious colon.
         var func = new FunctionInfoModel
         {
             Name = "setTarget",
@@ -1070,7 +1070,7 @@ public class InvokeScriptTests
 
         // And the marker's OWN comment must still close in the right place: the
         // first "]]" after the marker has to be MarkUnparsed's, with only " 0"
-        // after it. A trailing ']' in the escaped text used to fuse into "]]]"
+        // after it. A trailing ']' in the escaped text must not fuse into "]]]"
         // and close one char early, orphaning "] 0".
         int marker = script.IndexOf("--[[unparsed:", StringComparison.Ordinal);
         Assert.True(marker >= 0, "unparsed marker missing");
@@ -1123,7 +1123,7 @@ public class InvokeScriptTests
     [Fact]
     public void BakedGenerate_StringParamWithoutBrackets_EscapingUnchanged()
     {
-        // Regression guard: the ']' handling must not disturb ordinary values.
+        // Guard: the ']' handling must not disturb ordinary values.
         var script = BakedScriptGenerator.Generate(
             "C", "F", 16,
             new[] { new BakedParamValue("Name", "StrProperty", 16, 0, @"a'b\c]d") });
@@ -1228,7 +1228,7 @@ public class InvokeScriptTests
         Assert.Contains("function invokeUFunction(", content);
         Assert.Contains("function readUFunctionReturn(", content);
         // Re-declaration guard, version-gated [R7-X5]: a same/older re-load keeps the resident copy, a newer one
-        // replaces it (the freeze helper's AA30 shape; invoke_helper_test.lua runs all three directions).
+        // replaces it (the freeze helper's shape; invoke_helper_test.lua runs all three directions).
         Assert.Contains("if not invokeUFunction or _invokeOutdated then", content);
         Assert.Contains("registerLuaFunctionHighlight('invokeUFunction')", content);
     }
@@ -1276,9 +1276,9 @@ public class InvokeScriptTests
         Assert.Contains("_dumpHex('[Invoke] Before')", script);
         Assert.Contains("_dumpHex('[Invoke] After ')", script);
         // Robust mailbox resolution: mirror helper's getAddressSafe + module-
-        // prefixed fallback. Bare getAddress() returned garbage on the user's
-        // CE setup which then crashed the dump with format(nil). Don't
-        // regress this -- both code paths must remain.
+        // prefixed fallback. A bare getAddress() can return garbage on a
+        // CE setup, and the dump then crashes with format(nil), so
+        // both code paths must remain.
         Assert.Contains("getAddressSafe('g_invokeMailbox')", script);
         Assert.Contains("getAddressSafe('UE5Dumper.g_invokeMailbox')", script);
         // Nil-guard on individual byte reads so a single unreadable byte
@@ -1364,18 +1364,16 @@ public class InvokeScriptTests
         Assert.Contains("local _DUMP_LEN = 8", script);
     }
 
-    // --- Pointer / FName parameter parsing (audit #5 Y1) ------------------------
+    // --- Pointer / FName parameter parsing ----------------------------------------
     //
-    // The emitted Lua used to detect a leading "0x" and then hand the STILL PREFIXED
-    // string to tonumber(s, 16). Lua's base form rejects any character that is not a
-    // digit of that base, so the 'x' made it nil and `or 0` wrote a NULL POINTER for
-    // every address the user pasted. Only the '0x0' default parsed "correctly", so a
-    // smoke test with defaults always passed and the capability never worked.
+    // Handing a STILL PREFIXED "0x..." string to tonumber(s, 16) fails: Lua's base form
+    // rejects any character that is not a digit of that base, so the 'x' makes it nil
+    // and `or 0` writes a NULL POINTER for every address the user pastes. Only the '0x0'
+    // default parses "correctly", so a smoke test with defaults passes either way.
     //
-    // Measured in Cheat Engine's own lua53-64.dll (Lua 5.3), before and after:
-    //   before: 0x1F2A3B4C5D0 -> 0,             bare 1F2A3B4C5D0 -> 0
-    //   after : 0x1F2A3B4C5D0 -> 2141640246736, bare 1F2A3B4C5D0 -> 2141640246736
-    //           decimal 1234 -> 1234 (FName indices keep decimal meaning), junk -> 0
+    // In Cheat Engine's own lua53-64.dll (Lua 5.3), the emitted parse gives:
+    //   0x1F2A3B4C5D0 -> 2141640246736, bare 1F2A3B4C5D0 -> 2141640246736
+    //   decimal 1234 -> 1234 (FName indices keep decimal meaning), junk -> 0
     // These tests pin the emitted SHAPE; the semantics above are what that shape buys.
 
     private static string PointerParamScript()
@@ -1407,13 +1405,13 @@ public class InvokeScriptTests
     [Fact]
     public void Generate_PointerParam_NeverBase16ParsesTheUnstrippedText()
     {
-        // The precise signature of the defect is the OLD PREFIX-DETECTION IDIOM: the code
-        // tested s:sub(1,2) for "0x" and then base-16 parsed s WITH the prefix still on it.
+        // The precise signature of the defect is the PREFIX-DETECTION IDIOM: testing
+        // s:sub(1,2) for "0x" and then base-16 parsing s WITH the prefix still on it.
         //
-        // Note the fix legitimately contains tonumber(s,16) as a bare-hex FALLBACK -- by
-        // the time it runs, the 0x form has already been matched and handled, so s is known
-        // to carry no prefix. Asserting on that substring alone would fail the correct code,
-        // which is exactly what it did when this test was first written.
+        // Note the correct code legitimately contains tonumber(s,16) as a bare-hex FALLBACK
+        // -- by the time it runs, the 0x form has already been matched and handled, so s is
+        // known to carry no prefix. Asserting on that substring alone would fail the
+        // correct code.
         var script = PointerParamScript();
 
         Assert.DoesNotContain("s:sub(1,2)", script);
@@ -1454,14 +1452,14 @@ public class InvokeScriptTests
         Assert.DoesNotContain("tonumber(s, 16)", script);
     }
 
-    // --- Mailbox symbol resolution (audit #5 Y8) -------------------------------
+    // --- Mailbox symbol resolution -----------------------------------------------
 
     [Fact]
     public void Generate_ResolvesTheMailbox_WithoutARaisingLookup()
     {
         // celua.txt: getAddress RAISES when the symbol is missing; getAddressSafe returns nil.
-        // The missing-symbol case is exactly what this block handles, so the bare form aborted
-        // the chunk and took the fallback spelling, the diagnostic message and the cleanup timer
+        // The missing-symbol case is exactly what this block handles, so the bare form would abort
+        // the chunk and take the fallback spelling, the diagnostic message and the cleanup timer
         // (the untick) with it.
         var func = new FunctionInfoModel { Name = "openShop", Params = new() };
 
@@ -1475,7 +1473,7 @@ public class InvokeScriptTests
     [Fact]
     public void Generate_MailboxMiss_StillUnticksAndExplains()
     {
-        // The three things the raising lookup used to skip must all still be emitted after it.
+        // The three things a raising lookup would skip must all still be emitted after it.
         var func = new FunctionInfoModel { Name = "openShop", Params = new() };
 
         var script = InvokeScriptGenerator.Generate("ShopKeeper_C", "openShop", func);
@@ -1491,7 +1489,7 @@ public class InvokeScriptTests
         Assert.Contains("memrec", afterLookup);                      // the untick / cleanup timer
     }
 
-    // --- Struct params in the CE form (audit #5 Y6) ---------------------------
+    // --- Struct params in the CE form ---------------------------------------------
 
     private static FunctionInfoModel VectorParamFunc(int structSize) => new()
     {
@@ -1510,8 +1508,8 @@ public class InvokeScriptTests
     [InlineData(24)]   // UE5 LWC FVector (3 doubles)
     public void Generate_StructParam_IsNeverWrittenAsAScalar(int structSize)
     {
-        // It used to fall through the size switch to writeInteger: FOUR bytes of an N-byte
-        // struct, from math.floor(tonumber(text)), rest left zero -- a garbage vector passed to
+        // Falling through the size switch to writeInteger would write FOUR bytes of an N-byte
+        // struct, from the box's integer, rest left zero -- a garbage vector passed to
         // a live call with nothing saying so.
         var script = InvokeScriptGenerator.Generate("BP_Player_C", "SetLocation",
                                                     VectorParamFunc(structSize));
@@ -1554,11 +1552,51 @@ public class InvokeScriptTests
     //
     // Every invoke path builds its ProcessEvent params from the same FunctionInfoModel.
     // FIRE refuses an FText outright and a TYPED value for a multi-word structure
-    // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam, audit #5 Y11); the interactive CE
-    // form had no gate. An FText went out zeroed -- not an empty FText, and a crash in any
-    // callee that reads it -- and a typed TArray
-    // or delegate value was written as a raw int32 over the structure's first pointer. The
-    // type classification must come from the SHARED predicates, never a hand-copied list.
+    // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam), and the interactive CE form takes
+    // the same gate. Without it an FText would go out zeroed -- not an empty FText, and a crash
+    // in any callee that reads it -- and a typed TArray or delegate value would be written as a
+    // raw int32 over the structure's first pointer. The type classification must come from the
+    // SHARED predicates, never a hand-copied list.
+
+    /// <summary>[CE-LUA-FLOAT-LOCALE] The CE form reads a typed float or integer through one reader that gives the
+    /// same answer under any C numeric locale (CE's tonumber follows the locale and does not retry with a dot), and FIRE
+    /// refuses a box that reader cannot read before the mailbox is touched, naming the parameter, instead of sending
+    /// 0.</summary>
+    [Theory]
+    [InlineData("FloatProperty", 4, false)]
+    [InlineData("DoubleProperty", 8, false)]
+    [InlineData("IntProperty", 4, true)]
+    [InlineData("BoolProperty", 1, true)]
+    public void CeForm_ANumberBoxItCannotRead_IsRefusedNotSentAsZero(string typeName, int size, bool whole)
+    {
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size));
+        var fire = FireHandler(script);
+
+        // No zero stands in for a box that did not parse, as a float or as an integer.
+        Assert.DoesNotContain("tonumber(edits[1].Text) or 0", script, StringComparison.Ordinal);
+        // The reader finds the locale's decimal point by formatting a known float, and it is defined before the FIRE
+        // handler that captures it.
+        int reader = script.IndexOf("local function _readNumber(text, whole)", StringComparison.Ordinal);
+        Assert.True(reader >= 0, "the number reader is gone");
+        Assert.True(reader < script.IndexOf("btnFire.OnClick = function()", StringComparison.Ordinal),
+            "the FIRE handler is defined before the reader it calls");
+        Assert.Contains("tostring(0.5)", script[reader..], StringComparison.Ordinal);
+
+        // Read and checked before the idle wait, so a refusal touches nothing; the form stays open.
+        var lines = BeforeTheMailbox(fire).Split('\n').Select(l => l.Trim()).ToList();
+        int read = lines.IndexOf($"_num[1] = _readNumber(edits[1].Text, {(whole ? "true" : "false")})");
+        Assert.True(read >= 0, $"the {typeName} box is not read before the mailbox is touched");
+        Assert.Equal("if _num[1] == nil then", lines[read + 1]);
+        Assert.StartsWith("showMessage('[Invoke] Arg: ", lines[read + 2], StringComparison.Ordinal);
+        Assert.Contains("nothing was sent", lines[read + 2], StringComparison.Ordinal);
+        Assert.EndsWith("')", lines[read + 2], StringComparison.Ordinal);
+        Assert.Equal("return", lines[read + 3]);
+        Assert.Equal("end", lines[read + 4]);
+
+        // The call sends the value that was checked.
+        Assert.Contains(fire.Split('\n'), l => l.Contains("(PD + 0, ", StringComparison.Ordinal)
+                                            && l.Contains("_num[1]", StringComparison.Ordinal));
+    }
 
     private static FunctionInfoModel OneParamFunc(string typeName, int size, bool isOut = false) => new()
     {
@@ -1649,9 +1687,9 @@ public class InvokeScriptTests
     public void CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling()
     {
         // Mirrors ParamBufferBuilder.IsZeroDefaultText (empty, `0`, `0x0` any case, trimmed).
-        // This exact spelling was run through a Lua interpreter (5.4 on the dev PC; it uses only
-        // string.match / string.lower, unchanged from CE's 5.3) against that predicate's cases,
-        // 16/16 incl. a nil edit and a nil Text; changing it means re-running that check.
+        // This exact spelling is pinned because no gate runs it: a change must be run under a Lua
+        // interpreter (it uses only string.match / string.lower, unchanged from CE's 5.3) against
+        // that predicate's cases, a nil edit and a nil Text included, before this pin moves.
         var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("ArrayProperty", 16));
 
         Assert.Contains(
@@ -1667,21 +1705,86 @@ public class InvokeScriptTests
     [InlineData("StrProperty", 16, true)]    // an out FString is left empty, never gated
     public void CeForm_WritableParams_AreNotGated(string typeName, int size, bool isOut)
     {
-        // The control: the gate must not catch params FIRE writes.
+        // The control: the unwritable-param gate must not catch params FIRE writes. A number box still has its
+        // reader's refusal ([CE-LUA-FLOAT-LOCALE]), so each "nothing was sent" before the mailbox must be one of those.
         var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size, isOut));
+        var pre = BeforeTheMailbox(FireHandler(script));
 
         Assert.DoesNotContain("_isZeroDefault", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("nothing was sent", BeforeTheMailbox(FireHandler(script)), StringComparison.Ordinal);
+        Assert.Equal(System.Text.RegularExpressions.Regex.Matches(pre, @"if _num\[\d+\] == nil then").Count,
+                     System.Text.RegularExpressions.Regex.Matches(pre, "nothing was sent").Count);
+    }
+
+    /// <summary>[CE-LUA-FLOAT-LOCALE] The form's number reader on CE's own Lua VM, under the C locale and under a
+    /// comma-decimal one: a dot-decimal and a hex float read as themselves, and a comma, a thousands separator, a
+    /// fraction for a whole number, an overflow to infinity and an empty box read as nil, which FIRE refuses. The
+    /// [ENABLE] chunk the reader sits in compiles on that VM too.</summary>
+    [Fact]
+    public void CeForm_TheNumberReader_ReadsTheSameUnderACommaLocale()
+    {
+        CeLua53Host.RequireHost();
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("FloatProperty", 4));
+        int from = script.IndexOf("local function _readNumber(", StringComparison.Ordinal);
+        Assert.True(from >= 0, "the number reader is gone");
+        int to = script.IndexOf("\nend\n", from, StringComparison.Ordinal);
+        Assert.True(to > from, "the number reader has no closing end");
+        string reader = script[from..(to + "\nend\n".Length)];
+        int body = script.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        string enable = script[body..script.IndexOf("{$asm}", body, StringComparison.Ordinal)];
+        string lua = $$"""
+            local compiled, cerr = load('local syntaxcheck,memrec=...\n' .. [==[
+            {{enable}}
+            ]==])
+            if not compiled then io.write('FAIL the [ENABLE] chunk does not compile: ' .. tostring(cerr) .. '\n') end
+            {{reader}}
+            local function check(tag, text, whole, want)
+              local got = _readNumber(text, whole)
+              if got ~= want or (want ~= nil and math.type(got) ~= math.type(want)) then
+                io.write('FAIL ' .. tag .. ' [' .. tostring(text) .. '] whole=' .. tostring(whole) .. ' got ' .. tostring(got) .. '\n')
+              end
+            end
+            local function suite(tag)
+              check(tag, '3.14', false, 3.14)
+              check(tag, ' -2.5 ', false, -2.5)
+              check(tag, '1500', false, 1500)
+              check(tag, '0x1.8', false, 1.5)
+              check(tag, '3,14', false, nil)
+              check(tag, '1,000', false, nil)
+              check(tag, '1,000', true, nil)
+              check(tag, '', false, nil)
+              check(tag, 'abc', false, nil)
+              check(tag, '1e999', false, nil)
+              check(tag, '0x10', true, 16)
+              check(tag, '-5', true, -5)
+              check(tag, '4.0', true, 4)
+              check(tag, '3.7', true, nil)
+            end
+            suite('C')
+            local comma = 'none'
+            for _, name in ipairs({ 'de-DE', 'German_Germany.1252', 'German', 'fr-FR', 'French_France.1252' }) do
+              if os.setlocale(name, 'numeric') and tostring(0.5) == '0,5' then comma = name break end
+            end
+            if comma ~= 'none' then suite('comma') end
+            io.write('COMMA=' .. comma .. '\n')
+            io.write('DONE\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        Assert.Contains("DONE", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("FAIL", output, StringComparison.Ordinal);
+        if (output.Contains("COMMA=none", StringComparison.Ordinal))
+            Assert.Skip("no comma-decimal C locale could be set on CE's Lua VM here; the compile and C-locale half passed");
     }
 
     // --- [A3-CEFORM-4X-STALESLAB] the zero-fill covers every param, and never passes the slab ---
     //
     // Mimic runs ProcessEvent on the PERSISTENT 1024-byte paramsData slab, which other commands
-    // dirty: LIST_INSTANCES on every Freeze rescan, the pose handlers, the pointer query. The CE
-    // form zero-filled only `ParmsSize` bytes. On UE 4.11-4.17 the DLL read NumParms INTO ParmsSize
-    // ([A2-UFUNC-TAIL-4X]), so struct and out-FString slots past it carried the previous command's
-    // bytes, and an out-FString assignment then freed a stale pointer inside the game. The recorded
-    // hardening: max(ParmsSize, max(Offset+Size)) clamped to the slab, never the walked size alone.
+    // dirty: LIST_INSTANCES on every Freeze rescan, the pose handlers, the pointer query. A CE
+    // form zero-filling only `ParmsSize` bytes is not enough: when ParmsSize reads short (on
+    // UE 4.11-4.17 a misread tail can put NumParms INTO it, [A2-UFUNC-TAIL-4X]), struct and
+    // out-FString slots past it carry the previous command's bytes, and an out-FString
+    // assignment then frees a stale pointer inside the game. The fill is
+    // max(ParmsSize, max(Offset+Size)) clamped to the slab, never the walked size alone.
 
     private static FunctionInfoModel SpanFunc(ushort parmsSize,
         params (string Name, string Type, int Off, int Size, bool Out, bool Ret)[] ps) => new()
@@ -1720,7 +1823,7 @@ public class InvokeScriptTests
     public void ZeroFill_IsClampedToTheMailboxSlab()
     {
         // Mimic.h: `uint8_t paramsData[1024]`. A span past it would write over what follows.
-        // Generate itself now REFUSES such a function (ParamsPastTheSlab_*), so the clamp -- the
+        // Generate itself REFUSES such a function (ParamsPastTheSlab_*), so the clamp -- the
         // defence behind that refusal -- is pinned on the span helper directly.
         Assert.Equal(1024, InvokeScriptGenerator.ZeroFillSpan(SpanFunc(2000,
             ("Big", "StructProperty", 0, 2000, false, false))));
@@ -1730,8 +1833,8 @@ public class InvokeScriptTests
     {
         { 2000, 0, 2000 },     // one param running past the slab
         { 1028, 1024, 4 },     // a param that STARTS at the slab's end
-        // Review of cd73ec38: a SMALL ParmsSize with a param past the slab -- the 4.11-4.17 shape.
-        // Without it, a refusal keyed on ParmsSize alone passed both rows above.
+        // A SMALL ParmsSize with a param past the slab -- the 4.11-4.17 shape. Without it, a
+        // refusal keyed on ParmsSize alone would pass both rows above.
         { 2, 1024, 4 },
     };
 
@@ -1739,8 +1842,8 @@ public class InvokeScriptTests
     [MemberData(nameof(PastTheSlab))]
     public void ParamsPastTheSlab_AreRefused_NothingIsSent(ushort parmsSize, int tailOffset, int tailSize)
     {
-        // Review of 9abc03c8: the 1024 clamp covered only the zero-fill. A param at or past +1024
-        // was still WRITTEN past Mimic's paramsData and the call fired. Refuse the whole script,
+        // The 1024 clamp covers only the zero-fill: a param at or past +1024 would still be
+        // WRITTEN past Mimic's paramsData and the call would fire. Refuse the whole script,
         // before any mailbox round-trip, and untick (nothing was applied).
         var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(parmsSize,
             ("Head", "IntProperty", 0, 4, false, false),
@@ -1752,7 +1855,7 @@ public class InvokeScriptTests
         Assert.Contains($"{CeMailboxLayout.ParamsDataBytes}", script, StringComparison.Ordinal);
         Assert.Contains("nothing was sent", script, StringComparison.Ordinal);
         // The untick belongs to THIS refusal. Every Invoke script already contains
-        // `memrec.Active = false` somewhere (review of cd73ec38), so look between the refusal's
+        // `memrec.Active = false` somewhere, so look between the refusal's
         // message and the `return` that ends it.
         int refusal = script.IndexOf("nothing was sent.')", StringComparison.Ordinal);
         Assert.True(refusal > 0, "the refusal's message is gone");
@@ -1774,8 +1877,8 @@ public class InvokeScriptTests
         Assert.Contains("(PD + 1020,", script, StringComparison.Ordinal);
     }
 
-    // Review of d8a7f44f: the gate was pinned only by substrings, so a Lua syntax break inside it
-    // (a missing `end`, a statement after `return`) passed every CeForm_* test. Pin its SHAPE.
+    // Substring pins alone would let a Lua syntax break inside the gate (a missing `end`, a
+    // statement after `return`) pass every CeForm_* test. Pin its SHAPE.
     [Theory]
     [InlineData("ArrayProperty", 16)]
     [InlineData("StructProperty", 24)]
@@ -1818,7 +1921,7 @@ public class InvokeScriptTests
     [Fact]
     public void ZeroFill_ARightParmsSize_IsUnchanged()
     {
-        // The control, green before and after: params inside ParmsSize change nothing, and the
+        // The control: params inside ParmsSize change nothing, and the
         // DLL's own number is still the one reported.
         var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(42,
             ("Amount", "IntProperty", 0, 4, false, false),
@@ -1852,8 +1955,8 @@ public class InvokeScriptTests
     [Fact]
     public void OffsetsVerdict_ReachesTheCAbi_AndCeDissectSaysWhenUnmeasured()
     {
-        // Only the pipe carried the verdict; the C ABI and ue5_dissect.lua -- which builds CE structures from those very
-        // offsets -- did not. int32_t, not bool: executeCodeEx reads the whole of RAX, and a bool return defines only AL.
+        // The verdict reaches past the pipe: the C ABI and ue5_dissect.lua -- which builds CE structures from those very
+        // offsets -- carry it too. int32_t, not bool: executeCodeEx reads the whole of RAX, and a bool return defines only AL.
         string h = DllSource("Frieren.h");
         Assert.Matches(@"int32_t\s+UE5_GetOffsetsVerdict\(char\*\s*\w+,\s*int32_t\s*\w+\);", h);
 
@@ -1910,9 +2013,9 @@ public class InvokeScriptTests
     [Fact]
     public void TeleportPoseGetters_HaveExVariantsThatCarryTheParentRelativeFlag()
     {
-        // The three getters could not report a PARENT-RELATIVE pose (an attached pawn whose world read failed): rc 0 and
-        // RelativeLocation numbers read exactly like world coordinates. New exports, the originals untouched -- CE
-        // scripts call those by position.
+        // The three original getters cannot report a PARENT-RELATIVE pose (an attached pawn whose world read failed): rc 0
+        // and RelativeLocation numbers read exactly like world coordinates. So the flag comes through new exports, and the
+        // originals stay untouched -- CE scripts call those by position.
         string h = DllSource("Frieren.h");
         foreach (var name in new[] { "UE5_TeleportGetPoseEx", "UE5_TeleportGetMarkerEx", "UE5_TeleportGetLastEx" })
             Assert.Matches(name + @"\([^;]*int32_t\*\s*outParentRelative\);", h);
@@ -1946,15 +2049,15 @@ public class InvokeScriptTests
     [Fact]
     public void ValueScanV1c_GatesOptionalsByTheirResolvedLayout()
     {
-        // [A2-TOPTIONAL-VALUESCAN] No test drives ScanForValue, so its V1c wiring is pinned from source; the gate decision
+        // [A2-TOPTIONAL-VALUESCAN] No test drives ScanForValue, so its TOptional wiring is pinned from source; the gate decision
         // and the sentinel test themselves are dll_helpers_test's V1C block.
         string aura = DllSource("Aura.cpp");
         Assert.Contains("Ubel::V1cOptionalGate(ol.layout, f.innerType, ol.innerSize", aura);
         Assert.Contains("Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel", aura);
         // [A2-SENTINEL-OVERREAD] The gate reads what the sentinel needs, capped by the field itself -- a fixed 16
-        // bytes ran past an 8-byte intrusive TOptional<FName> and a page-edge failure dropped a SET optional.
+        // bytes would run past an 8-byte intrusive TOptional<FName>, and a page-edge failure would drop a SET optional.
         Assert.Contains("Ubel::SentinelBytesNeeded(sf.optionalSentinel)", aura);
-        // [A2-TOPTIONAL-REFINE] The gate is only half a fix if it stops at the FIRST scan: the descriptor must carry
+        // [A2-TOPTIONAL-REFINE] The gate is only half there if it stops at the FIRST scan: the descriptor must carry
         // it, because refine is handed nothing else about the field. dll_core_test's REFINEOPT block drives the gate.
         Assert.Contains("d.optionalFlagOffset = sf.optionalFlagOffset;", aura);
         Assert.Contains("d.optionalSentinel   = static_cast<int8_t>(sf.optionalSentinel);", aura);
@@ -1985,7 +2088,7 @@ public class InvokeScriptTests
             string gated = $"!OptionalGateOpen(obj + {v}.offset, {v}.setFlagOffset) || !Macht::{read}(obj + {v}.offset";
             Assert.True(aura.Split(gated).Length - 1 == 2, $"{v}: expected 2 gated reads (Find Refs + enumerator)");
         }
-        Assert.DoesNotContain("an unset slot is zero", aura);   // the belief both comments held
+        Assert.DoesNotContain("an unset slot is zero", aura);   // a wrong belief no comment may state
         Assert.DoesNotContain("just sees zeros", aura);
     }
 
@@ -2014,33 +2117,32 @@ public class InvokeScriptTests
     {
         // [A1-VERDICT-STALEMB] The CE helper is Lua, so its shape is pinned from source. A wrapper that clears the
         // busy flag after a timeout without latching lets the NEXT invokeUFunction write over a command the DLL is
-        // still running -- audit #5 AA19, which invokeUFunction itself guards against.
+        // still running -- which invokeUFunction itself guards against.
         string lua = HelperLuaResource.Read();
 
         Assert.Contains("local function simpleMailboxCall(cmd, prepare)", lua);
         // Both small wrappers go through it rather than hand-rolling a round trip.
         Assert.Contains("simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)", lua);
         Assert.Contains("simpleMailboxCall(CMD_OFFSETS_VERDICT)", lua);
-        // The latch, and a release that respects it. COUNTED, not merely present: invokeUFunction has
-        // carried this exact line since AA19, so a bare Contains stays green with the new helper's latch
-        // deleted -- the mutant that deletes it SURVIVED until this became a count.
+        // The latch, and a release that respects it. COUNTED, not merely present: invokeUFunction
+        // carries this exact line too, so a bare Contains stays green with simpleMailboxCall's latch
+        // deleted.
         Assert.Equal(2, lua.Split("_ue5_invoke_stale_mb = mb").Length - 1);
         Assert.Contains("if not latched then", lua);
         Assert.DoesNotContain("[ue5_invoke] busy -- another mailbox call is mid-flight')\n    end\n    _ue5_invoke_busy = true",
                               lua.Replace("\r\n", "\n"));
         // -10 (not initialised) is not -1 (unknown command): only one of them is about the DLL's age.
         // The EXECUTABLE line, not the word: the wrapper's own doc comment says 'dll-not-initialised'
-        // too, so a bare Contains stayed green with the branch deleted -- that mutant SURVIVED.
+        // too, so a bare Contains would stay green with the branch deleted.
         Assert.Contains("if code == -10 then return false, 'dll-not-initialised' end", lua);
     }
 
     [Fact]
     public void InitGateComments_NameBothExemptions()
     {
-        // [A1-REVIEW6-PINS] The gate's own comment is where a maintainer reads how many exemptions there are, and it
-        // said "today only CMD_FOREGROUND" after there were two -- with the second one's handler not Win32 at all.
-        // The test file said "Exactly ONE exemption" directly above an EXPECT for two. Mimic.h was correct, which is
-        // what made these stale rather than old.
+        // [A1-REVIEW6-PINS] The gate's own comment is where a maintainer reads how many exemptions there are, so it
+        // names both -- the second one's handler is not Win32 at all -- and so does dll_helpers_test's line above its
+        // EXPECT for two, agreeing with Mimic.h.
         string mimicCpp = DllSource("Mimic.cpp");
         Assert.Contains("CMD_FOREGROUND and CMD_OFFSETS_VERDICT", mimicCpp);
         Assert.DoesNotContain("today only CMD_FOREGROUND", mimicCpp);
@@ -2064,8 +2166,8 @@ public class InvokeScriptTests
     [Fact]
     public void LoadModeClassifier_NamesEveryProxyWeShip()
     {
-        // [W1-WINMM-LOADMODE] Fern's load_mode classifier omitted winmm.dll, so a winmm proxy load reported
-        // "loaded:winmm.dll" and never earned the per-game confirmed-proxy record the other three do. Methode's
+        // [W1-WINMM-LOADMODE] Fern's load_mode classifier names winmm.dll too: without it a winmm proxy load would report
+        // "loaded:winmm.dll" and never earn the per-game confirmed-proxy record the other three do. Methode's
         // kProxyDllNames is the list of proxy file names we ship (itself kept in sync with the .CT and ProxyType.cs), so
         // the classifier must name every one. Fern.cpp and Methode.cpp reach no test target.
         var methode = DllSource("Methode.cpp");
@@ -2108,7 +2210,7 @@ public class InvokeScriptTests
     public void CePluginInject_TrueButAbsent_IsAmbiguous_AndNamesTheForceLoadSetting()
     {
         // [A2-METHODE-MANUALMAP] ce_InjectDLL TRUE after EInjectError means CE's forceLoadModule SUCCEEDED: a manual map
-        // the module walk cannot see. The old text called that "Injection failed" and blamed CE's BOOL. The APC path and
+        // the module walk cannot see, so the text neither calls it "Injection failed" nor blames CE's BOOL. The APC path and
         // a GetExitCodeThread failure also return TRUE with nothing mapped, so the honest text is AMBIGUOUS, and it names
         // the setting that forces a manual map. Methode.cpp reaches no test target.
         var src = DllSource("Methode.cpp");
@@ -2120,9 +2222,9 @@ public class InvokeScriptTests
     [Fact]
     public void CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify()
     {
-        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] L53 (2026-09-23): both manually mapped runs logged an exception (C++ or SEH:
-        // /EHa) contained by a catch(...) inside the image, and neither game crashed -- so "cannot handle exceptions, so the game is likely
-        // to crash" is falsified by a run. The advice stands (a manual map is unsupported and MAY not register the tables
+        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] A manually mapped image can log an exception (C++ or SEH: /EHa) contained
+        // by a catch(...) inside it without the game crashing -- so "cannot handle exceptions, so the game is likely to
+        // crash" overstates it. The advice stands (a manual map is unsupported and MAY not register the tables
         // exception handling needs); its reason must say "may". Methode.cpp reaches no test target.
         var src = DllSource("Methode.cpp");
         Assert.DoesNotContain("cannot handle exceptions", src, StringComparison.Ordinal);
@@ -2134,16 +2236,16 @@ public class InvokeScriptTests
     [Fact]
     public void CePluginInject_Dialogs_PointAtTheLogsThatExist()
     {
-        // [METHODE-STALE-LOGPATH] L53: both failure dialogs ended "Details: Logs\UE5Dumper-*.log", a flat layout gone since
-        // logs became per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the scan in
-        // the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
+        // [METHODE-STALE-LOGPATH] The failure dialogs must not point at "Logs\UE5Dumper-*.log", a flat layout that does
+        // not exist: logs are per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the
+        // scan in the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
         var src = DllSource("Methode.cpp");
         Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
         Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
         Assert.Contains("init-0.log", src, StringComparison.Ordinal);
         // Sein names the folder after the host exe, and CE's launcher starts cheatengine-x86_64-SSE4-AVX2.exe on any
         // AVX2 CPU (cheatengine.lpr reads cpuid leaf 7), so naming only "cheatengine-x86_64" sends the reader to a folder
-        // that is absent, or stale (this machine kept a build-3315 log there).
+        // that is absent, or stale.
         Assert.Contains("cheatengine-x86_64-SSE4-AVX2", src, StringComparison.Ordinal);
     }
 
@@ -2163,14 +2265,14 @@ public class InvokeScriptTests
     {
         // [A2-CRC-PATH-LS] Sein formats NARROW, so a %ls argument goes through the CRT's wide-to-ANSI conversion, which
         // fails on any character above 0xFF and leaves the WHOLE record empty (utf8_helpers_test pins the CRT
-        // behaviour). Five dll/src files carry the "CONVERT FIRST; NEVER %ls" note, and one of them broke it 2,700 lines
-        // below its own -- so it is a gate now, not a note. Comment lines are skipped, and so is a WIDE printf, where
+        // behaviour). A "CONVERT FIRST; NEVER %ls" note in a file does not stop a call thousands of lines below it from
+        // breaking the rule, so this is a gate, not a note. Comment lines are skipped, and so is a WIDE printf, where
         // %ls is right. A format string belongs to the nearest call opened at or above it in the same statement.
         var offenders = new System.Collections.Generic.List<string>();
         // [A1-REVIEW6-PINS] Guard the guard: a scan that silently matches nothing passes everything. Renaming the
         // logging entry points below, or adding a DLL source in a subdirectory (this enumeration is NOT recursive),
-        // would leave `offenders` empty and this gate green forever. Both sibling source scans added alongside it
-        // count what they matched; this one did not.
+        // would leave `offenders` empty and this gate green forever. So it counts what it matched, as its sibling
+        // source scans do.
         int scannedFiles = 0, logCallLines = 0;
         foreach (var path in Directory.EnumerateFiles(DllSrcDir()))
         {
@@ -2198,10 +2300,9 @@ public class InvokeScriptTests
                 }
             }
         }
-        // 60, not 25: dll/src holds roughly 31 .cpp + 39 .h, so any threshold at or below 31 is met by
-        // the .cpp files ALONE -- and the mutant that drops ".h" from the filter then survives, which
-        // is exactly what it did at 25. A guard against a vacuous scan must itself require both
-        // extensions to be reaching the scan.
+        // 60, not lower: dll/src holds roughly 31 .cpp + 39 .h, so any threshold at or below 31 is met by
+        // the .cpp files ALONE -- and a mutant that drops ".h" from the filter would then survive. A
+        // guard against a vacuous scan must itself require both extensions to be reaching the scan.
         Assert.True(scannedFiles >= 60,
                     $"only {scannedFiles} dll/src file(s) scanned -- the enumeration has stopped finding the sources");
         Assert.True(logCallLines >= 100,
@@ -2221,8 +2322,8 @@ public class InvokeScriptTests
     [Fact]
     public void DelegateBindingLabels_AllGoThroughOneHelper()
     {
-        // [R7-B-04] Five readers render a delegate binding; the [garbage] tag was appended by hand at four. The one
-        // label function adds it, so DescribeScriptDelegate must be called from that function alone.
+        // [R7-B-04] Five readers render a delegate binding, and a [garbage] tag appended by hand at each can miss one.
+        // The one label function adds it, so DescribeScriptDelegate must be called from that function alone.
         var src = DllSource("Ubel.cpp");
         int n = 0;
         for (int i = src.IndexOf("DescribeScriptDelegate(", StringComparison.Ordinal); i >= 0;
@@ -2237,8 +2338,8 @@ public class InvokeScriptTests
     public void ApplyRescan_ReinitialisesUnderTheInitFence_AndTheMailboxWaitsItOut()
     {
         // [R7-C-05] apply_rescan publishes g_cachedGObjects, then runs Aura::Init and (first time) ValidateAndFixOffsets.
-        // With no fence the mailbox fast path (GObjects && GNames && !g_initInProgress) ran a CE command on the
-        // half-applied pool -- the window [A3-MIMIC-INIT-FASTPATH] closed for UE5_Init. Fern.cpp / Frieren.cpp reach no
+        // With no fence the mailbox fast path (GObjects && GNames && !g_initInProgress) would run a CE command on the
+        // half-applied pool -- the window [A3-MIMIC-INIT-FASTPATH] closes for UE5_Init. Fern.cpp / Frieren.cpp reach no
         // test target, so the fence is pinned in source.
         var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
         int apply = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN)", StringComparison.Ordinal);
@@ -2258,9 +2359,9 @@ public class InvokeScriptTests
     public void InitVersionMarker_IsTheCmcFunction_NotTheProperty()
     {
         // [R7-X4] Stock UE 5.3 already reflects CharacterMovementComponent::GravityDirection, so the property marker
-        // raised every stock 5.3 title with a CMC to 504 (ThirdPerson53, DragonSword, Avowed) -- and switched off the
-        // 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion, which the init version ladder's CMC
-        // rung applies (DynOff::ApplyVersionLadder; both pinned in dll_helpers_test since [UE-OVERRIDE-HINT-AUTO]).
+        // alone would raise every stock 5.3 title with a CMC to 504 (ThirdPerson53, DragonSword, Avowed) -- and switch
+        // off the 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion, which the init version
+        // ladder's CMC rung applies (DynOff::ApplyVersionLadder; both pinned in dll_helpers_test, [UE-OVERRIDE-HINT-AUTO]).
         // Frieren.cpp reaches no test target, so the wiring -- the ladder fed the SetGravityDirection function -- is
         // pinned in source.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
@@ -2319,7 +2420,7 @@ public class InvokeScriptTests
     [Fact]
     public void AutoOverAnOverride_HandsBackTheDetection_OrSaysItWaitsForTheNextLaunch()
     {
-        // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) used to clear only the override flag, so the session kept
+        // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) must not clear only the override flag, or the session keeps
         // the overridden version unbadged, as if detected. The decision is Flamme::PlanAutoRestore and the ladder
         // DynOff::ApplyVersionLadder (both pinned in dll_helpers_test); Fern.cpp and Frieren.cpp reach no test target,
         // so the wiring is pinned in source.
@@ -2340,7 +2441,7 @@ public class InvokeScriptTests
         Assert.Contains("FrierenInit::CorrectVersionStructurally(", auto);
         Assert.Contains("dropVersionDerivedEnvelopes();", auto);
         Assert.Contains("g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(", auto);
-        Assert.DoesNotContain("just clear the override flag", body);   // the old arm, whole
+        Assert.DoesNotContain("just clear the override flag", body);   // no flag-only arm at all
         // The set arm drops the envelopes too, and ends a pending Auto.
         var set = body[setArm..];
         Assert.Contains("dropVersionDerivedEnvelopes();", set);
@@ -2366,7 +2467,7 @@ public class InvokeScriptTests
         // [OVERRIDE-REVIEW2-LOWS] The record holds the version from BEFORE init's structural ladder, so the version Auto
         // hands back is the one the ladder climbs it to -- Elliot's cached 4.27 fallback is a UE5 title. The pin above
         // checks only that the ladder is CALLED; a Restored arm that climbed and then put the record's own version in
-        // force (the review's mutant M2) kept it green. Fern.cpp reaches no test target, so the value is pinned here:
+        // force would keep it green. Fern.cpp reaches no test target, so the value is pinned here:
         // the record's version goes into the ladder, the ladder's result is the one refined and put in force, nothing
         // else in the arm assigns the version, and a ladder that lowered the label to UE4 leaves it low-confidence.
         var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
@@ -2411,9 +2512,9 @@ public class InvokeScriptTests
     public void ApplyRescan_ClimbsTheVersionLadder_WhenItRunsTheFirstOffsetsProbe()
     {
         // [VER-MARKERS-PAST-504] Init climbs its version ladder right after the offsets probe, and skips both when
-        // GObjects is missing. apply_rescan then runs that first probe -- and never climbed, so a stripped UE5 title
-        // revived by a rescan kept its raw label (a 4.27 publisher fallback, say) for the whole session, with every
-        // version gate reading it. The ladder is DynOff::ApplyVersionLadder (pinned in dll_helpers_test); Fern.cpp
+        // GObjects is missing. apply_rescan then runs that first probe -- and without the climb, a stripped UE5 title
+        // revived by a rescan would keep its raw label (a 4.27 publisher fallback, say) for the whole session, with
+        // every version gate reading it. The ladder is DynOff::ApplyVersionLadder (pinned in dll_helpers_test); Fern.cpp
         // reaches no test target, so the wiring is pinned here: the first-probe block climbs it, as the user's
         // override if it is one, and applies the result as UE5_Init does.
         var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
@@ -2436,11 +2537,11 @@ public class InvokeScriptTests
     [Fact]
     public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
     {
-        // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as
-        // ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised it and
-        // GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0 it
-        // called UE5_Init, which returned at once (initialised, no fence up YET), then re-read the globals as the apply
-        // published them. Mimic.cpp reaches no test target, so the order is pinned in source.
+        // [R7-S9] Two windows besides the one [R7-C-05] closes. (1) EnsureInitialized must not pass `g_cachedGObjects != 0` and the flag
+        // load as ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised
+        // it and GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0
+        // a call to UE5_Init returns at once (initialised, no fence up YET), and a re-read of the globals then catches them
+        // as the apply publishes them. Mimic.cpp reaches no test target, so the order is pinned in source.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
         Assert.True(settled >= 0, "InitSettled not found");
@@ -2464,8 +2565,7 @@ public class InvokeScriptTests
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
         string beginApply = frieren[begin..frieren.IndexOf("\n}", begin, StringComparison.Ordinal)];
-        // Code only, so a fence inside a line or block comment, or under a preprocessor branch, is not taken for one
-        // (reviews wf_b0aa9098-dd5 and wf_2d9f83d5-21b).
+        // Code only, so a fence inside a line or block comment, or under a preprocessor branch, is not taken for one.
         beginApply = System.Text.RegularExpressions.Regex.Replace(beginApply, @"/\*.*?\*/", " ",
             System.Text.RegularExpressions.RegexOptions.Singleline);
         beginApply = string.Join("\n", beginApply.Split('\n').Select(l =>
@@ -2488,8 +2588,8 @@ public class InvokeScriptTests
         // [OVERRIDE-REVIEW2-LOWS] CMD_INVOKE hands ProcessEvent the fixed paramsData slab (or the queued path's owned
         // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
         // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
-        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- had no pin,
-        // and the review's mutant M1 survived. Mimic.cpp reaches no test target, so the glue is pinned here.
+        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- needs its own
+        // pin. Mimic.cpp reaches no test target, so the glue is pinned here.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
         Assert.True(fn >= 0, "HandleInvoke was not found");
@@ -2535,7 +2635,7 @@ public class InvokeScriptTests
         Assert.True(fn >= 0, "ReadBoolLayout(fpropAddr, BoolBits&) was not found");
         int end = src.IndexOf("\n}\n", fn, StringComparison.Ordinal);
         Assert.Contains("return PickBoolBits(quads, readOk, kTries, bits);", src[fn..end]);
-        Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // the old (byteOff, mask) form
+        Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // no (byteOff, mask) form
         Assert.DoesNotContain("ApplyBoolBit(", src);
         Assert.DoesNotMatch(@"[&|~]\s*(?:\w+\.)*(?:mask|fieldMask|byteMask)\b", src);
         Assert.DoesNotMatch(@"\b(?:mask|fieldMask|byteMask)\s*\)?\s*[&|]", src);
@@ -2546,9 +2646,9 @@ public class InvokeScriptTests
     [Fact]
     public void SolitarBools_EachPathReadsAndWritesItsByteThroughTheHelpers()
     {
-        // [SOLIDE-NATIVE-BOOL] review: the file-wide pin above sees a bare mask only where it meets & | ~, so
-        // `on ? bits.byteMask : 0` passed it -- a whole-byte stamp that, on a packed bool, clears the 7 bools sharing its
-        // byte on every re-assert tick (the AA1 corruption), and none of the tests that compile helpers can see it.
+        // [SOLIDE-NATIVE-BOOL] The file-wide pin above sees a bare mask only where it meets & | ~, so
+        // `on ? bits.byteMask : 0` passes it -- a whole-byte stamp that, on a packed bool, clears the 7 bools sharing its
+        // byte on every re-assert tick, and none of the tests that compile helpers can see it.
         // So each function that reads or writes a bool's byte is held on its own: the byte it writes is the one
         // WriteBoolValue made, and every read of a byte it fetched goes through ReadBoolValue. The masks a path may still
         // touch are an allow-list, so a new use has to be argued for here.
@@ -2641,8 +2741,9 @@ public class InvokeScriptTests
     [Fact]
     public void SaveMarkerReply_AlwaysCarriesTheParentRelativeFlag()
     {
-        // Review 5 of 7490c24e: sent only when true, its absence meant both "healthy" and "an older DLL", and the pose
-        // card -- which trusts a reply's read metadata by its keys -- could not use it. Fern.cpp reaches no test target.
+        // Sent whether true or false: sent only when true, its absence would mean both "healthy" and "an older DLL",
+        // and the pose card -- which trusts a reply's read metadata by its keys -- could not use it. Fern.cpp reaches
+        // no test target.
         var fern = DllSource("Fern.cpp");
         int save = fern.IndexOf("if (cmd == Renge::CMD_TELEPORT_SAVE_MARKER)", StringComparison.Ordinal);
         Assert.True(save >= 0, "teleport_save_marker's handler not found");
@@ -2674,11 +2775,11 @@ public class InvokeScriptTests
     [Fact]
     public void SeeThrough_ProbeAsksTheClassByPath_AndNoInternalLookupMatchesASubstring()
     {
-        // [SEETHRU-PROBE-SUBSTRING] The probe asked Ubel::GetClass(UE5_FindInstanceOfClass("Actor")): a class-name SUBSTRING
-        // match falling back to the first matching CDO, which on DumperTest Shipping 5.4 was Default__ActorChannel -- so
-        // See-through refused (-3) a build that has SetActorHiddenInGame. Aura::FindClassByPath / FindLiveOrDefaultOf are
+        // [SEETHRU-PROBE-SUBSTRING] Ubel::GetClass(UE5_FindInstanceOfClass("Actor")) is a class-name SUBSTRING match
+        // falling back to the first matching CDO, which on DumperTest Shipping 5.4 is Default__ActorChannel -- so a probe
+        // asking it would refuse See-through (-3) on a build that has SetActorHiddenInGame. Aura::FindClassByPath / FindLiveOrDefaultOf are
         // pinned by dll_core_test's PROBECLASS block; this pins that the callers no test target compiles USE them.
-        // Comments are stripped: the fix's own comments name the old call.
+        // Comments are stripped: the source's own comments name the call it must not make.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -2723,7 +2824,8 @@ public class InvokeScriptTests
         // [FINDINSTANCE-SUBSTRING-USERFACING] The C ABI export, the pipe's invoke_function class_name and the mailbox's
         // FIND_INSTANCE / LIST_FUNCTIONS each matched a class-name SUBSTRING and took the first non-CDO match, else the
         // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance; no test target compiles Frieren,
-        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the fix's comments name the old call.
+        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the source's comments name the call
+        // it must not make.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -2926,7 +3028,7 @@ public class InvokeScriptTests
         Assert.Equal(expected, RunHelper(cur, result, outFlags));
     }
 
-    /// <summary>Review of ef20e198: the helper's public setDebugCamera dropped the bit CMD_SET_DEBUG_CAMERA now publishes.
+    /// <summary>The helper's public setDebugCamera returns the bit CMD_SET_DEBUG_CAMERA publishes.
     /// Runs the embedded helper and calls setDebugCamera(1) against a fake DLL answering <paramref name="state"/>.</summary>
     private static string RunHelperDebugCamera(int cur, int state, long outFlags, bool query = false)
     {
@@ -2975,7 +3077,7 @@ public class InvokeScriptTests
     }
 
     [Theory]
-    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object (builds 3676-3681)
+    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object (an older DLL)
     [InlineData(7, -17, 0L, false, "-17|nil")]       // control [DEBUGCAM-FORCEON-CDO]: a refused ON passes through, no warning
     [InlineData(7, 1, 0L, false, "1|nil")]           // control: a clean ON
     [InlineData(6, 0, 0xFFFFFFFFL, false, "0|nil")]  // control: below contract 7 the word is never read
@@ -2989,9 +3091,9 @@ public class InvokeScriptTests
     [Fact]
     public void DebugCameraRecord_a_queued_ON_names_the_class_default_object_too()
     {
-        // Review of ef20e198: only the failed-ON branch read the bit; a queued ON on the class default object will run
-        // there and do nothing, and the record said only "queued -- do not tick again". Kept for a DLL from builds
-        // 3676-3681: a newer one never queues that toggle ([DEBUGCAM-FORCEON-CDO]).
+        // The queued-ON branch reads the bit too, not only the failed-ON one: a queued ON on the class default object
+        // will run there and do nothing, and "queued -- do not tick again" alone would not say so. Kept for an older
+        // DLL that can still queue that toggle; a current one never does ([DEBUGCAM-FORCEON-CDO]).
         var s = DebugCameraScriptGenerator.Generate();
         int queued = s.IndexOf("queued -- the game thread is busy; the toggle will run", StringComparison.Ordinal);
         Assert.True(queued > 0, "the queued-ON message moved -- re-point this pin");
@@ -3103,8 +3205,8 @@ public class InvokeScriptTests
         Assert.DoesNotContain("CallProcessEventRouted", swapBranch, StringComparison.Ordinal);
         int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
         Assert.True(fire > mark, "the toggle is sent only past the marking, which a template never reaches");
-        // Review 1: each step value is tied to its own branch -- an OFF refused, swapped guards or a conditional return
-        // passed the index checks above.
+        // Each step value is tied to its own branch -- an OFF refused, swapped guards or a conditional return would pass
+        // the index checks above.
         Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager\) \{[^{}]*"
             + @"return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;\s*\}", set);
         Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::SwapBackOnly\) \{[^{}]*DbgCam_SwapControllerBack\(dcc\)"
@@ -3115,9 +3217,9 @@ public class InvokeScriptTests
     [Fact]
     public void SetDebugCamera_publishes_no_template_warning()
     {
-        // [DEBUGCAM-FORCEON-CDO] No toggle can reach a template any more, so the DLL's "the toggle ran on the class
-        // default object" verdict ([INVOKE-NONSTATIC-ON-CDO]) is gone on every lane. The UI and CE readers stay, for a
-        // DLL from builds 3676-3681.
+        // [DEBUGCAM-FORCEON-CDO] No toggle can reach a template, so the DLL sends no "the toggle ran on the class
+        // default object" verdict ([INVOKE-NONSTATIC-ON-CDO]) on any lane. The UI and CE readers stay, for an older DLL
+        // that still sends it.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3159,10 +3261,10 @@ public class InvokeScriptTests
     [Fact]
     public void InternalClassLookups_NeverMatchAClassNameSubstring()
     {
-        // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The DLL's own fallbacks looked a class up by a NAME SUBSTRING: a
-        // widget named after "PlayerController" won the local-controller scan with its OwningPlayer, a game PC or
-        // AWorldSettings subclass named without the word was missed, and a Debug Camera subclass named without the word
-        // was never hopped through. None of these modules reach a C++ test target, so their source is pinned here;
+        // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] A fallback that looks a class up by a NAME SUBSTRING lets a widget
+        // named after "PlayerController" win the local-controller scan with its OwningPlayer, misses a game PC or
+        // AWorldSettings subclass named without the word, and never hops through a Debug Camera subclass named without
+        // the word. None of these modules reach a C++ test target, so their source is pinned here;
         // dll_core_test's LOCALPC block pins Aura::ScanForLocalPlayerController itself.
         static string Lf(string s) => s.Replace("\r\n", "\n");
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
@@ -3205,7 +3307,7 @@ public class InvokeScriptTests
             Assert.True(hop.Contains("Aura::ClassDerivesFromAny(", StringComparison.Ordinal)
                         && !hop.Contains(".find(\"DebugCameraController\")", StringComparison.Ordinal), file + ": " + hop);
         }
-        // Review 1: every caller still hops the controller ResolveLocalPC returns -- the scan can now return an active
+        // Every caller hops the controller ResolveLocalPC returns -- the scan can return an active
         // debug camera, which is pawnless. Wirbel's POV alone keeps it: it wants the on-screen view.
         foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp", "Wirbel.cpp" })
         {
@@ -3283,19 +3385,19 @@ public class InvokeScriptTests
         Assert.True(from > 0 && to > from, "the preview sweep moved -- re-point this pin");
         var sweep = aura[from..to];
         Assert.Contains("TemplateOfImpl(obj, &previewOuterMemo)", sweep, StringComparison.Ordinal);
-        // Review 1: only the row's OWN class default stands in -- not a subclass's, not another template.
+        // Only the row's OWN class default stands in -- not a subclass's, not another template.
         Assert.Contains("exact && tk == TemplateKind::ClassDefault", sweep, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", sweep, StringComparison.Ordinal);
 
-        // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.
+        // A meaning change of CMD_LIST_INSTANCES: a generated script refuses a DLL that still lists templates.
         Assert.True(CeMailboxLayout.ContractVersion >= 8,
             "a script that relies on a template-free LIST_INSTANCES must claim contract 8: an older DLL still lists templates");
-        // [INVOKE-PICK-GARBAGE] And of CMD_FIND_INSTANCE / CMD_INVOKE_BY_NAME: a script generated now refuses a DLL
+        // [INVOKE-PICK-GARBAGE] And of CMD_FIND_INSTANCE / CMD_INVOKE_BY_NAME: a generated script refuses a DLL
         // that would still hand it a destroyed object.
         Assert.True(CeMailboxLayout.ContractVersion >= 9,
             "a script that relies on FIND_INSTANCE passing over destroyed objects must claim contract 9");
 
-        // Review 1: the Force reply and the forced-fields list say how many templates the pool passed over, so a hold
+        // The Force reply and the forced-fields list say how many templates the pool passed over, so a hold
         // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
         var fern = CodeOnly(Lf(DllSource("Fern.cpp")));
         Assert.Contains("data[\"templates_skipped\"]", fern, StringComparison.Ordinal);
@@ -3341,8 +3443,8 @@ public class InvokeScriptTests
     {
         // [A3-ST1-SUPER-DRAIN] Mimic auto-routes every Native|Static UFunction to UE5_CallProcessEventDirect. For a
         // class that overrides ProcessEvent -- every AActor -- it fails open to the override, and
-        // AActor::ProcessEvent calls Super::ProcessEvent: the address MinHook patched. An UNMARKED call re-entered
-        // our detour on the mailbox thread with InOwnPeCall() false, and its drain ran every queued request there,
+        // AActor::ProcessEvent calls Super::ProcessEvent: the address MinHook patched. An UNMARKED call would re-enter
+        // our detour on the mailbox thread with InOwnPeCall() false, and its drain would run every queued request there,
         // off the game thread. No test target compiles Frieren.cpp or Stark.cpp, so this pins their source.
         var frieren = DllSource("Frieren.cpp");
         int fn = frieren.IndexOf("int32_t UE5_CallProcessEventDirect(uintptr_t", StringComparison.Ordinal);
@@ -3360,8 +3462,8 @@ public class InvokeScriptTests
         Assert.Contains("OwnPeCallGuard guard;", helper, StringComparison.Ordinal);   // the mark, in the OUTER frame
         Assert.Contains("CallAddressSEH(", helper, StringComparison.Ordinal);         // the SEH frame, separate (C2712)
 
-        // Review 5 of 0edd5214: raw substrings let a COMMENTED-OUT guard pass, and CallAddressSEH's body was never read,
-        // so the recorded HARMFUL trampoline swap inside it passed too. Read both bodies with their comments removed.
+        // Raw substrings would let a COMMENTED-OUT guard pass, and an unread CallAddressSEH body would let a HARMFUL
+        // trampoline swap inside it pass too. Read both bodies with their comments removed.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3432,8 +3534,8 @@ public class InvokeScriptTests
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
         Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
         Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
-        // The walk is bounded two ways, neither depending on the other: a time budget AND a region count. A review
-        // found that removing the deadline alone held s_mhMutex for ~157 s on a heap-filled window.
+        // The walk is bounded two ways, neither depending on the other: a time budget AND a region count. Without the
+        // deadline, a heap-filled window can hold s_mhMutex for minutes.
         Assert.Contains("const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;", walk, StringComparison.Ordinal);
         Assert.Contains("GetTickCount64() > deadline", walk, StringComparison.Ordinal);
         Assert.Contains("map.size() >= kWindowWalkMaxRegions", walk, StringComparison.Ordinal);
@@ -3501,9 +3603,9 @@ public class InvokeScriptTests
     [Fact]
     public void HookInstallLines_SayWhenAnAttemptWasForced()
     {
-        // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
-        // "attempt N/8" from the automatic counter, so each failing Live Funcs Start on FFRS logged the same N twice.
-        // Both of TryInstallGameThreadHook's lines now name the attempt through Stark::DescribeHookAttempt.
+        // A forced attempt does not count against the automatic budget, so a failure line printing "attempt N/8" from
+        // the automatic counter would log the same N for each failing Live Funcs Start. Both of
+        // TryInstallGameThreadHook's lines name the attempt through Stark::DescribeHookAttempt.
         var frieren = MinHookGlue("Frieren.cpp");
         var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
         Assert.Contains("Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts)", body, StringComparison.Ordinal);
@@ -3516,11 +3618,11 @@ public class InvokeScriptTests
     [Fact]
     public void HookRecoveredLine_DoesNotDependOnTheAutomaticCounter()
     {
-        // The "hook RECOVERED" line used to be gated on `attempts > 1`, the AUTOMATIC counter. A forced attempt does
-        // not spend that counter (B24), and a recovery after the 5 s cooldown skipped the automatic attempt, so the
-        // FFRS pattern (two Starts fail, the third succeeds) could succeed with attempts <= 1 and log no RECOVERED
-        // line. Gate it on a "last install attempt failed" flag instead, set on any failed attempt and cleared on
-        // success, so a recovery is logged however it was reached. Frieren.cpp reaches no test target: pin the source.
+        // The "hook RECOVERED" line is not gated on `attempts > 1`, the AUTOMATIC counter. A forced attempt does not
+        // spend that counter, and a recovery after the 5 s cooldown skips the automatic attempt, so a pattern of two
+        // Starts failing and the third succeeding can succeed with attempts <= 1 and log no RECOVERED line. It is gated
+        // on a "last install attempt failed" flag, set on any failed attempt and cleared on success, so a recovery is
+        // logged however it was reached. Frieren.cpp reaches no test target: pin the source.
         var frieren = MinHookGlue("Frieren.cpp");
         Assert.Contains("s_lastInstallFailed", frieren, StringComparison.Ordinal);
         var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
@@ -3625,8 +3727,8 @@ public class InvokeScriptTests
         Assert.Contains("peBlock == s_heldBlock", install, StringComparison.Ordinal);
 
         // Both slot->block computations (the held block and the installed hook's block) go through Lager::BlockOfSlot,
-        // which mirrors FreeBuffer, not a hand-rolled mask: a review found a raw `trampoline & ~(BLOCK-1)` mutant
-        // reported "NOT in the held block" on a run where the fix worked, and no test noticed.
+        // which mirrors FreeBuffer, not a hand-rolled mask: a raw `trampoline & ~(BLOCK-1)` can report "NOT in the
+        // held block" on a run where the hold worked, with no other test noticing.
         Assert.Equal(2, MinHookCount(stark, "Lager::BlockOfSlot("));
         Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
 
@@ -3640,7 +3742,7 @@ public class InvokeScriptTests
     {
         // MinHook's HeapCreate lives once per process, shared by every module in this DLL that hooks (Stark's holder
         // and ProcessEvent hook, Grausam's foreground lock). Whoever calls MH_Initialize() first gets MH_OK; everyone
-        // after gets MH_ERROR_ALREADY_INITIALIZED, which is SUCCESS. Since the holder now initialises MinHook at proxy
+        // after gets MH_ERROR_ALREADY_INITIALIZED, which is SUCCESS. Since the holder initialises MinHook at proxy
         // process start (or ~1 s after injection), Grausam is practically always the second caller, so treating
         // ALREADY_INITIALIZED as a failure would break Foreground Lock on every enable. No C++ test target compiles a
         // file that calls MH_Initialize, so pin the acceptance in source: every call site must OR it in beside MH_OK.
@@ -3812,10 +3914,10 @@ public class InvokeScriptTests
     [Fact]
     public void BugItGo_RefusesAParentRelativeBugItBeforeTheUndoPoint()
     {
-        // [TELEPORT-BUGITGO-PARENTREL] BugItSave recorded the parent-relative flag and BugItGo never read it, so a BugIt
-        // taken on a vehicle or mount was driven into the pawn as world coordinates. Wirbel.cpp reaches no test target,
-        // so this pins its source (dll_helpers_test pins BugItGoRefusal itself). Comments are stripped: the fix's own
-        // comments name the calls.
+        // [TELEPORT-BUGITGO-PARENTREL] BugItSave records the parent-relative flag and BugItGo reads it: unread, a BugIt
+        // taken on a vehicle or mount would be driven into the pawn as world coordinates. Wirbel.cpp reaches no test
+        // target, so this pins its source (dll_helpers_test pins BugItGoRefusal itself). Comments are stripped: the
+        // source's own comments name the calls.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3876,24 +3978,24 @@ public class InvokeScriptTests
         int jump = recall.IndexOf("RecallTo(", StringComparison.Ordinal);
         Assert.True(refusal >= 0, "RecallMarker must ask RecallMarkerRefusal with the marker's own flag, the force bit "
                                   + "and the map it compared");
-        // Review of 83615671: asking is not refusing -- the answer must be returned, before the undo point and the jump.
+        // Asking is not refusing -- the answer must be returned, before the undo point and the jump.
         Assert.True(returned > refusal && undo > returned && jump > undo,
             "the refusal must be RETURNED before the undo point and the jump");
         // ...and the map argument must be the real comparison, which Force alone may skip.
         Assert.Contains("const bool sameMap = force || IEquals(std::string(cur), m.MapName);", recall, StringComparison.Ordinal);
         Assert.Contains("if (!force) CopyMapName(DerefWorld(), cur, sizeof(cur));", recall, StringComparison.Ordinal);
-        Assert.DoesNotContain("TP_ERR_MAP_MISMATCH;", recall);   // the map check's answer is RecallMarkerRefusal's now
+        Assert.DoesNotContain("TP_ERR_MAP_MISMATCH;", recall);   // the map check's answer is RecallMarkerRefusal's
         Assert.Contains("LOG_WARN(\"Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read", recall,
             StringComparison.Ordinal);
 
         // The undo point keeps its previous pose rather than take a parent-relative one.
-        // Review of 83615671: the guard's arguments and its place are pinned, not just the call's name.
+        // The guard's arguments and its place are pinned, not just the call's name.
         var last = Body(wirbel, "void SaveLastImpl() {");
         int guard = last.IndexOf("if (!StoresUndoPoint(readOk, m.ParentRelative)) {", StringComparison.Ordinal);
         int exit = guard >= 0 ? last.IndexOf("return;", guard, StringComparison.Ordinal) : -1;
         int store = last.IndexOf("s_lastMarker = m;", StringComparison.Ordinal);
         Assert.True(guard >= 0, "SaveLastImpl must ask StoresUndoPoint with the read's own result and flag");
-        // Review 2: asking is not refusing here either -- the guard must leave before the slot is written.
+        // Asking is not refusing here either -- the guard must leave before the slot is written.
         Assert.True(exit > guard && store > exit, "the guard must return before the slot is written");
 
         // TP facing direction: the start pose is read WITH its flag and refused before the undo point; a parent-relative
@@ -3929,8 +4031,8 @@ public class InvokeScriptTests
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown)", frieren,
             StringComparison.Ordinal);
 
-        // Review 5 of 76f93b94: the pins above let one-line mutants of the core fix through -- a shared substring that
-        // matched any of three writes, and nothing on the GET_POSE / BUGIT_SAVE flags, the NaN landing or bit1.
+        // The pins above alone would let one-line mutants through -- a shared substring that matches any of three
+        // writes, and nothing on the GET_POSE / BUGIT_SAVE flags, the NaN landing or bit1.
         static int CountOf(string s, string sub)
         {
             int n = 0;
@@ -3965,7 +4067,7 @@ public class InvokeScriptTests
         // [P1-GENAU-ABORT] UE5_Init's post-FindAll GObjects recovery runs two more cancellable sweeps. Their aborts must
         // reach ptrs.bScanCancelled, which the latch guard reads -- or a cancelled recovery latches a partial init.
         var frieren = DllSource("Frieren.cpp");
-        // [VND583-10] the call grew two out-params (item object offset, UE 5.8 array); the cancel is still the 2nd.
+        // [VND583-10] the call carries two further out-params (item object offset, UE 5.8 array); the cancel is the 2nd.
         Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,", frieren, StringComparison.Ordinal);
         Assert.Contains("if (staticCancelled) ptrs.bScanCancelled = true;", frieren, StringComparison.Ordinal);
         Assert.Contains("Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled)", frieren,
@@ -3976,9 +4078,9 @@ public class InvokeScriptTests
     [Fact]
     public void BakedScript_DebugReturnPrint_NeverReadsPastTheSlab()
     {
-        // Review of 9abc03c8: Copy AA Script's DEBUG return decode was bounded by ParmsSize only,
-        // and ParmsSize 0 (unknown) bounds nothing -- a return slot past Mimic.h's 1024-byte
-        // paramsData decoded whatever follows MailboxData as "the return value".
+        // Copy AA Script's DEBUG return decode is bounded by the slab, not by ParmsSize only:
+        // ParmsSize 0 (unknown) bounds nothing, and a return slot past Mimic.h's 1024-byte
+        // paramsData would decode whatever follows MailboxData as "the return value".
         var script = BakedScriptGenerator.Generate("C", "F", 0, new List<BakedParamValue>(),
             returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 2000, ""),
             verifyReturn: false);
@@ -3989,7 +4091,7 @@ public class InvokeScriptTests
     [Fact]
     public void BakedScript_DebugReturnPrint_InsideTheSlab_StillPrints()
     {
-        // The control, green before and after.
+        // The control: a return slot inside the slab still decodes.
         var script = BakedScriptGenerator.Generate("C", "F", 8, new List<BakedParamValue>(),
             returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 4, ""),
             verifyReturn: false);

@@ -7,14 +7,14 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [UI-SPACE-2026-09-25] Vertical space on a 4K screen at 225 %. The maintainer's laptop is 3840x2400, so the window
-/// has 1707x1067 DIP -- ~110 DIP less height and ~210 less width than FullHD at 100 %. Measured there on build 3557:
+/// [UI-SPACE-2026-09-25] Vertical space on a 4K screen at 225 %: a 3840x2400 screen gives the window 1707x1067 DIP --
+/// ~110 DIP less height and ~210 less width than FullHD at 100 %. The hazards at that size:
 /// <list type="bullet">
-/// <item>the main tab strip wrapped to THREE rows of Fluent's 48 DIP minimum (24 px headers), ~144 DIP on every tab;</item>
-/// <item>Snapshot's diff grid was squeezed to its header row, and the saved list to about two rows;</item>
-/// <item>Class Pivot's field picker and results grid were entirely below the window, under ~20 lines of explanation.</item>
+/// <item>the main tab strip wrapping to THREE rows of Fluent's 48 DIP minimum (24 px headers), ~144 DIP on every tab;</item>
+/// <item>Snapshot's diff grid squeezed to its header row, and the saved list to about two rows;</item>
+/// <item>Class Pivot's field picker and results grid entirely below the window, under a block of explanation.</item>
 /// </list>
-/// These pin the layout decisions that gave the space back. They cannot prove the result looks right -- the screen is
+/// These pin the layout decisions that keep the space. They cannot prove the result looks right -- the screen is
 /// the acceptance, recorded in docs/todo.md -- but they stop a later edit from quietly undoing one.
 /// </summary>
 public class PanelSpaceBudgetTests
@@ -68,7 +68,7 @@ public class PanelSpaceBudgetTests
             return double.Parse(d!.Value, System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        // 18 tabs, measured at 24 px: ~2770 DIP of headers against ~1340 DIP of strip at 1707 DIP wide -> 3 rows.
+        // At 24 px the tab headers need ~2770 DIP against ~1340 DIP of strip at 1707 DIP wide -> 3 rows.
         // At 18 px the text shrinks by a quarter (the 12 DIP side padding does not) -> ~2180 DIP -> 2 rows.
         Assert.InRange(Value("TabItemHeaderFontSize"), 14, 18);
         Assert.InRange(Value("TabItemMinHeight"), 28, 36);
@@ -102,11 +102,11 @@ public class PanelSpaceBudgetTests
     }
 
     /// <summary>
-    /// (ninth review, R9-01, MED) The floors must never take space the Auto rows need. Measured by the reviewer on the
-    /// committed layout at 225 % (grid 846.7 DIP): by default the rows sat 3 DIP above their floors, and opening the
-    /// Noise picker (the last Auto row) overflowed by 299 DIP -- its grid and buttons below the window, and no
-    /// collapse could free them. So each layout pass caps the floors at the room the Auto rows leave, both in
-    /// proportion: full floors when there is room, less when the picker, a status line or a short window needs it.
+    /// The floors must never take space the Auto rows need. At 225 % the rows sit just above their floors by default,
+    /// so with fixed floors, opening the Noise picker (the last Auto row) overflows -- its grid and buttons below the
+    /// window, where no collapse can free them. So each layout pass caps the floors at the room the Auto rows leave,
+    /// both in proportion: full floors when there is room, less when the picker, a status line or a short window needs
+    /// it.
     /// </summary>
     [Fact]
     public void Snapshot_RowFloors_NeverTakeTheAutoRowsSpace()
@@ -142,18 +142,18 @@ public class PanelSpaceBudgetTests
         Assert.Contains("DesiredSize.Height", code);
         Assert.Matches(@"const\s+int\s+SavedRow\s*=\s*" + savedRow + @"\s*;", code);
         Assert.Matches(@"const\s+int\s+LowerRow\s*=\s*" + lowerRow + @"\s*;", code);
-        // (eleventh review, R11-03) The DATA FLOW: RowFloors' result is what both writes store -- a write of a fixed floor
-        // (the R9-01 regression) would satisfy a bare "MinHeight =".
+        // The DATA FLOW: RowFloors' result is what both writes store -- a write of a fixed floor would satisfy a bare
+        // "MinHeight =".
         Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=\s*saved\s*;", code);
         Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=\s*lower\s*;", code);
-        // (twelfth review, R12-02) ...and the rest of the handler's decisions, each a one-token regression back to R9-01:
+        // ...and the rest of the handler's decisions, each one token away from fixed floors:
         // the change guard (> 0.5; with < the writes never run and the XAML's fixed floors stay), the Auto-row SUM
         // (+=), and the filter (the two star rows out, invisible children out).
         Assert.Matches(@"Math\.Abs\(\s*root\.RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*-\s*saved\s*\)\s*>\s*0\.5\s*\)", code);
         Assert.Matches(@"Math\.Abs\(\s*root\.RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*-\s*lower\s*\)\s*>\s*0\.5\s*\)", code);
         Assert.Matches(@"autos\s*\+=\s*child\.DesiredSize\.Height\s*;", code);
         Assert.Matches(@"row\s*!=\s*SavedRow\s*&&\s*row\s*!=\s*LowerRow\s*&&\s*child\.IsVisible\s*\)", code);
-        // (tenth review, R10-04) The CALL, with its argument -- the method's own declaration also contains "RowFloors(".
+        // The CALL, with its argument -- the method's own declaration also contains "RowFloors(".
         Assert.Matches(@"var\s*\(\s*saved\s*,\s*lower\s*\)\s*=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
 
@@ -175,7 +175,7 @@ public class PanelSpaceBudgetTests
             return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
         }
 
-        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ is no longer in the chip at all
+        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ is not in the chip at all
         // ([TOOLBAR-OTHER-MOVERS]), and it shows only with an attach warning.
         var shown = chip.Descendants().Where(e => e.Name.LocalName == "TextBlock" && Attr(e, "IsVisible") is null)
                         .Select(e => Text(Attr(e, "Text"))).ToList();
@@ -190,7 +190,7 @@ public class PanelSpaceBudgetTests
         Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#4EC9B0"));
         Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#888888"));
 
-        // The state is in the tooltips now, so each dot's group must carry one.
+        // The state is in the tooltips, so each dot's group must carry one.
         var groups = dots.Select(d => d.Parent!).Distinct().ToList();
         Assert.Equal(2, groups.Count);
         Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));
@@ -239,12 +239,11 @@ public class PanelSpaceBudgetTests
     [Fact]
     public void Toolbar_StatusLine_IsAFixedWidthSlot()
     {
-        // The L64 run of [W1-PIPEBUSY-LOG], observation (b), 2026-09-22: the toolbar status line was only CAPPED, so it took
-        // the width of its text. The ⟳ probe writes its "not connected" sentence there, the line widened, and every
-        // control after it in the WrapPanel moved: ⟳ went from about x 444 to x 658, out from under the cursor, and the
-        // next click opened the Address dropdown. A fixed Width keeps the controls after it still whatever the status says.
-        // [L64-TOOLBAR-FIXED-SLOT] review: the fixed width is the slot's, a Grid the status fills; Start Scan and the
-        // error line share it (Toolbar_ErrorLine_AndStartScan_ShareTheStatusSlot).
+        // [L64-TOOLBAR-FIXED-SLOT] ([W1-PIPEBUSY-LOG]) A toolbar status line that is only CAPPED takes the width of its
+        // text. The ⟳ probe writes its "not connected" sentence there, the line widens, and every control after it in
+        // the WrapPanel moves -- ⟳ out from under the cursor, so the next click opens the Address dropdown. A fixed Width
+        // keeps the controls after it still whatever the status says. The fixed width is the slot's, a Grid the status
+        // fills; Start Scan and the error line share it (Toolbar_ErrorLine_AndStartScan_ShareTheStatusSlot).
         var doc = Axaml("MainWindow.axaml");
         var status = ToolbarStatusLine(doc);
         var slot = StatusSlot(doc);
@@ -263,10 +262,10 @@ public class PanelSpaceBudgetTests
     [Fact]
     public void Toolbar_ErrorLine_AndStartScan_ShareTheStatusSlot()
     {
-        // [L64-TOOLBAR-FIXED-SLOT] review + [TOOLBAR-OTHER-MOVERS]: the error line (capped at 360) and Start Scan sat beside
-        // the fixed status line in a horizontal StackPanel. Either one appearing moved every control after it, ⟳ included,
-        // and the StackPanel does not wrap: at the 800-DIP minimum window width a visible error ran past the window edge
-        // and lost its ellipsis. In the slot's Auto columns they take their width from the status line instead.
+        // [L64-TOOLBAR-FIXED-SLOT] + [TOOLBAR-OTHER-MOVERS]: beside the fixed status line in a horizontal StackPanel, the
+        // error line and Start Scan would move every control after them, ⟳ included, whenever either appeared -- and the
+        // StackPanel does not wrap, so at the 800-DIP minimum window width a visible error runs past the window edge and
+        // loses its ellipsis. In the slot's Auto columns they take their width from the status line instead.
         var doc = Axaml("MainWindow.axaml");
         var slot = StatusSlot(doc);
         var error = Assert.Single(doc.Descendants(),
@@ -287,9 +286,9 @@ public class PanelSpaceBudgetTests
     [Fact]
     public void Toolbar_ConnectionGroup_FitsTheMinimumWindowWidth()
     {
-        // [L64-TOOLBAR-FIXED-SLOT] review: the connection group is a horizontal StackPanel, which never wraps, so its widest
+        // [L64-TOOLBAR-FIXED-SLOT] The connection group is a horizontal StackPanel, which never wraps, so its widest
         // state must fit the window at its minimum width or the group runs past the edge -- where a visible error line
-        // lost its ellipsis. Every child must have a bounded width for this to be checkable at all.
+        // loses its ellipsis. Every child must have a bounded width for this to be checkable at all.
         var doc = Axaml("MainWindow.axaml");
         var group = ToolbarStatusLine(doc).Ancestors()
             .First(a => a.Name.LocalName == "StackPanel" && a.Parent?.Name.LocalName == "WrapPanel");
@@ -319,9 +318,9 @@ public class PanelSpaceBudgetTests
     [Fact]
     public void Toolbar_ConnectAndDisconnect_OccupyOneWidth()
     {
-        // [TOOLBAR-CONNECT-WIDTH] Connect and Disconnect show one at a time in the slot before the status line, and each
-        // took its own label's width: about 20 DIP apart, so every control after them -- the AOBMaker ⟳ included --
-        // moved once at connect and back at disconnect. One shared fixed Width keeps them still.
+        // [TOOLBAR-CONNECT-WIDTH] Connect and Disconnect show one at a time in the slot before the status line. Each at
+        // its own label's width, every control after them -- the AOBMaker ⟳ included -- would move at connect and back
+        // at disconnect. One shared fixed Width keeps them still.
         var doc = Axaml("MainWindow.axaml");
         XElement ButtonFor(string command) => Assert.Single(doc.Descendants(),
             e => e.Name.LocalName == "Button" && Attr(e, "Command") == $"{{Binding {command}}}");
@@ -335,8 +334,8 @@ public class PanelSpaceBudgetTests
         {
             var name = EnText(Attr(b, "Content"));
             Assert.Equal(width, Attr(b, "Width"));
-            // Fluent's Button stretches its content (HorizontalContentAlignment defaults to Stretch, measured headless on
-            // Avalonia 12.1.3), so in a Width wider than the label the text sits at the left edge unless it is centred.
+            // Fluent's Button stretches its content (HorizontalContentAlignment defaults to Stretch on Avalonia 12.1.3),
+            // so in a Width wider than the label the text sits at the left edge unless it is centred.
             Assert.Equal("Center", Attr(b, "HorizontalContentAlignment"));
             // Either one would override the shared Width in Avalonia's layout.
             Assert.Null(Attr(b, "MinWidth"));
@@ -382,11 +381,11 @@ public class PanelSpaceBudgetTests
     public void ClassPivot_AnExplanationIsOneLine_WithTheWholeTextOnHover(string key)
     {
         var tb = TextBlockOf(Axaml("ClassPivotPanel.axaml"), key);
-        // One line: no wrapping of any kind (WrapWithOverflow wraps too -- ninth review, R9-04).
+        // One line: no wrapping of any kind (WrapWithOverflow wraps too).
         Assert.True(Attr(tb, "TextWrapping") is null or "NoWrap", $"TextWrapping={Attr(tb, "TextWrapping")}");
         Assert.Equal("CharacterEllipsis", Attr(tb, "TextTrimming"));
         Assert.Equal(Res(key), Attr(tb, "ToolTip.Tip"));
-        // Trimming needs a bounded width. (R9-04) Every ancestor, not only the parent: a WrapPanel or a horizontal
+        // Trimming needs a bounded width. Every ancestor, not only the parent: a WrapPanel or a horizontal
         // StackPanel hands its child the DESIRED width, and a ScrollViewer that may scroll horizontally hands it
         // infinity -- in each case the line never trims.
         foreach (var up in tb.Ancestors())
@@ -415,7 +414,7 @@ public class PanelSpaceBudgetTests
         Assert.Contains(scroller.Descendants(), e => Attr(e, X + "Name") == "DiscoverGrid");
         Assert.DoesNotContain(scroller.Descendants(), e => Attr(e, X + "Name") == "FieldPickGrid");
 
-        // (R9-04) The actual assignment, comments stripped: two words near each other in the raw text also matched a
+        // The actual assignment, comments stripped: two words near each other in the raw text would also match a
         // commented-out line or an unrelated MaxHeight.
         Assert.Equal("Disabled", Attr(scroller, "HorizontalScrollBarVisibility"));
         var code = StripComments(File.ReadAllText(RepoFile("ui/UE5DumpUI/Views/ClassPivotPanel.axaml.cs")));

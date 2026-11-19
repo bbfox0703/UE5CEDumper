@@ -14,9 +14,8 @@ in three places that cannot share code:
     (analyze_dumps.py) count apart.
 
 A module added to one and not the others makes the DLL, Dump All and the diff disagree about the same
-class, silently: each side still runs and reports. Before 2026-10-06 the diff used no list at all and
-called every "/Script/" path engine, which dropped the game's own native classes from every default
-diff (R4 of the PR 539 / 540 re-check).
+class, silently: each side still runs and reports. A diff with no list at all would call every
+"/Script/" path engine and drop the game's own native classes from every default diff.
 
 WHAT IT CHECKS. The string literals inside each list, compared with Aura.h's as sets, plus duplicates
 within a copy. Order is not checked: every copy tests each prefix in turn. The matching RULE (collapse

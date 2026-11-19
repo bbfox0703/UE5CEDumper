@@ -86,7 +86,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     /// <summary>[W1-PIPEBUSY-LOG] Does a server instance of this pipe exist at all -- busy or not? The pipe namespace
     /// lists every pipe that has at least one instance. A refused enumeration answers "cannot tell" (false), which
-    /// keeps the old "not running" reading rather than inventing a busy one. It only lists names, never opens a pipe,
+    /// keeps the "not running" reading rather than inventing a busy one. It only lists names, never opens a pipe,
     /// which is why AOBMaker.UI's status dot can afford to call it on a timer.</summary>
     internal static bool PipeExists(string name)
     {
@@ -771,9 +771,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     /// tab switch probes on every activation, so it stays at Debug; anything else is a
     /// real fault and gets a Warn that names the exception type.
     ///
-    /// [W1-PIPEBUSY-STATUS] The log alone was not enough: the user-facing status still said
-    /// "open Cheat Engine" for a busy pipe (live, L64, 2026-09-22). Every branch therefore
-    /// also records <see cref="LastFailure"/>, which the status text reads to pick the remedy.
+    /// [W1-PIPEBUSY-STATUS] The log alone does not reach the user, and the user-facing status must not
+    /// say "open Cheat Engine" for a busy pipe. Every branch therefore also records
+    /// <see cref="LastFailure"/>, which the status text reads to pick the remedy.
     /// </summary>
     private async Task<bool> ReconnectAsync(CancellationToken ct)
     {
@@ -859,7 +859,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         var payload = Encoding.UTF8.GetBytes(json);
         // The pre-flight size check (teleport-coord-library-spec.md §10, item 6). AOBMaker rejects a length prefix over
         // this cap, and a plugin from before AOBMaker's oversize reply hangs up WITHOUT replying -- so an
-        // oversized request came back as a broken pipe or a timeout, read as "AOBMaker not connected". Refused here,
+        // oversized request would come back as a broken pipe or a timeout, read as "AOBMaker not connected". Refused here,
         // BEFORE the length prefix, so not one byte reaches the wire and the caller gets the real reason.
         if (payload.Length > MaxMessageSize)
             throw new RequestTooLargeException(payload.Length);

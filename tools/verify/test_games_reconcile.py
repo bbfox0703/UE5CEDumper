@@ -3,9 +3,8 @@ r"""Reconcile docs/test-games.md's UE versions against every signal this machine
     py tools/verify/test_games_reconcile.py            # everything installed
     py tools/verify/test_games_reconcile.py --quiet    # disagreements only
 
-⭐ WHY THIS IS A RIG AND NOT A CI GATE — the question was asked directly, and the answer is
-measured rather than assumed. A gate must pass on every machine, and NO version signal is available
-on every machine, because the games are not in the repo:
+⭐ WHY THIS IS A RIG AND NOT A CI GATE. A gate must pass on every machine, and NO version signal is
+available on every machine, because the games are not in the repo:
 
     signal                          coverage here            trustworthiness
     ------------------------------  -----------------------  --------------------------------
@@ -28,9 +27,9 @@ exactly that ("PE: 503 -> runtime-raised to 504 by the CMC::GravityDirection pro
 disagreement is a question, never a verdict.
 
 ⚠ A licensee fork's LAYOUT is not a version signal. DQ XI S has a +0x10 shifted UObject layout and
-`UField::Next=+0x38`, and reading that as "must be newer than stock 4.18" is exactly how its row
-came to say UE4.22 for six weeks while `.rdata` carried `++UE4+Release-4.18`. Trust the tag, then
-CrashReportClient, then the detector — never the shape of the layout.
+`UField::Next=+0x38`, and reading that as "must be newer than stock 4.18" would put its row at
+UE4.22 although `.rdata` carries `++UE4+Release-4.18`. Trust the tag, then CrashReportClient, then the
+detector — never the shape of the layout.
 """
 import argparse
 import json
@@ -78,11 +77,10 @@ def prereq_major(folder):
     """UE4 vs UE5, from the redistributable the packager shipped.
 
     ⭐ Only a MAJOR-version answer, and on that question it is the sharpest thing here: UE4 ships
-    `UE4PrereqSetup_x64.exe`, UE5 dropped the digit and ships `UEPrereqSetup_x64.exe`. Measured
-    across 16 installed titles 2026-09-06: present in 7, and 6 of 6 comparable ones correct, 0
-    wrong. It is what settled DQ I&II HD-2D, whose row had claimed UE5.05 against three signals
-    saying UE4 -- an error that CROSSES the major boundary, which is exactly what this catches
-    and what a minor-version check never would.
+    `UE4PrereqSetup_x64.exe`, UE5 dropped the digit and ships `UEPrereqSetup_x64.exe`. Not every
+    title ships it, so its absence says nothing. When present it catches a row whose version
+    CROSSES the major boundary (UE5 claimed against signals saying UE4), which is exactly what a
+    minor-version check never would.
     """
     for f in folder.rglob("UE*PrereqSetup*.exe"):
         return "UE4" if f.name.startswith("UE4Prereq") else "UE5"

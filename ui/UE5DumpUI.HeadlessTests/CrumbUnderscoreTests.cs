@@ -13,8 +13,8 @@ namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
 /// [LW-CRUMB-UNDERSCORE] A Button whose Content is a bound string draws it through an access-key presenter, which takes
-/// the first <c>_</c> as the mnemonic marker and drops it: Live Walker's crumb read "DumperTestActor0" for
-/// <c>DumperTestActor_0</c> and "ArrChurn" for <c>Arr_Churn</c> (seen live on build 3659). Game names are full of
+/// the first <c>_</c> as the mnemonic marker and drops it: a crumb bound that way reads "DumperTestActor0" for
+/// <c>DumperTestActor_0</c> and "ArrChurn" for <c>Arr_Churn</c>. Game names are full of
 /// underscores, so a crumb must show its label as plain text. Negative control: bind the crumb Button's Content to the
 /// label again and this fails.
 /// </summary>

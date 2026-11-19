@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Phase 3: the Object Tree per-instance drill-down context actions. Each command must
+/// The Object Tree per-instance drill-down context actions. Each command must
 /// raise its navigation event with the selected row's ADDRESS (the per-hit handoff a
 /// global instance search needs), and must no-op on a null node or an empty address so
 /// a bad row never fires a navigation to a dead target.
@@ -102,18 +102,18 @@ public class ObjectTreeViewModelNavigationTests
     // ── [TREERECLICK-2026-08-22] ────────────────────────────────────────────────
     //
     // A cross-tab handoff pushes class X into Class/Struct while the tree still
-    // highlights node P. Clicking P then did nothing at all -- no pipe traffic --
+    // highlights node P. Clicking P would then do nothing at all -- no pipe traffic --
     // because an Avalonia ListBox writes SelectedItem only when it CHANGES, so
-    // SelectionChanged never fired. The fix is MainWindowViewModel's
-    // ShowClassInClassStructAsync, which clears the highlight before loading, making
+    // SelectionChanged would not fire. MainWindowViewModel's
+    // ShowClassInClassStructAsync therefore clears the highlight before loading, making
     // the next click on P a genuine change.
     //
     // MainWindowViewModel cannot be constructed in a unit test, so what is pinned here
-    // is the MECHANISM the fix depends on, at the VM that owns it.
+    // is the MECHANISM that clear depends on, at the VM that owns it.
     //
     // Negative control: delete the `SelectedNode = null` line from the helper and
     // ReSelectingAfterAClear_FiresAgain stops being reachable in the app -- the raise
-    // count in the "no clear" test below is what the defect looked like.
+    // count in the "no clear" test below is what the defect looks like.
 
     [Fact]
     public void ReSelectingTheSameNode_DoesNotFireAgain_ThisIsTheDefect()
@@ -181,10 +181,10 @@ public class ObjectTreeViewModelNavigationTests
     [Fact]
     public void EveryCrossTabClassHandoff_GoesThroughTheHelperThatClearsTheTree()
     {
-        // THIS is the test that pins the FIX; the three above pin the MECHANISM and would
-        // pass with or without it. The real regression is not the helper losing its clear
-        // -- it is a SIXTH handoff site being added later that calls the command directly
-        // and quietly reintroduces [TREERECLICK-2026-08-22] on that one path.
+        // THIS is the test that pins the clear at every site; the three above pin the MECHANISM
+        // and would pass with or without it. The real risk is not the helper losing its clear
+        // -- it is a new handoff site that calls the command directly and quietly
+        // reintroduces [TREERECLICK-2026-08-22] on that one path.
         //
         // MainWindowViewModel cannot be constructed here (it builds the whole app graph),
         // so this asserts on the source, the way SdkHeaderDeclaratorTests already does.

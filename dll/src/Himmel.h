@@ -439,7 +439,7 @@ constexpr const char* AOB_GOBJECTS_AV2 = "48 8B 15 ?? ?? ?? ?? C1 E8 10 48 8D 0C
 //   instrOffset is the LEA's first byte (21), not its MODRM byte (48 8D **0D**, at 23): from
 //   23 the disp32 would be read from 26 (the last two wildcards of the real displacement plus
 //   two bytes past the match) with the next-instruction base at 30, and every match would
-//   resolve to garbage. AD12.
+//   resolve to garbage.
 constexpr const char* AOB_GOBJECTS_PS1 = "8B 05 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 75 ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??";
 // PS2: jz; lea rcx,[rip+X]; mov byte; call  — instrOffset=2, opcodeLen=3, totalLen=7
 constexpr const char* AOB_GOBJECTS_PS2 = "74 ?? 48 8D 0D ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8";
@@ -454,7 +454,6 @@ constexpr const char* AOB_GOBJECTS_PS5 = "81 CE 00 00 00 02 83 E0 FB 89 47 08 48
 //   instrOffset is where the INSTRUCTION starts (12), not the DISPLACEMENT (14): from 14 the
 //   resolver would read the disp32 from 16 and base the RIP on 20. Same convention as its
 //   sibling PS7 (instrOffset=17 = the `03 0D` opcode, disp at 19, end at 23 = pattern length).
-//   AD13.
 constexpr const char* AOB_GOBJECTS_PS6 = "8B 05 ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 2B 05 ?? ?? ?? ??";
 // PS7: call; mov eax,[rip]; mov ecx,[rip]; add ecx,[rip+X]  — arithmetic, instrOffset=17, opcodeLen=2, totalLen=6
 constexpr const char* AOB_GOBJECTS_PS7 = "E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 03 0D ?? ?? ?? ??";
@@ -849,12 +848,12 @@ constexpr const char* AOB_GWORLD_TQ_2 = "48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? 
 //   at byte 0 and its displacement starts at 3.
 //   ⚠ instrOffset=3 would name the DISPLACEMENT: the resolver would read the disp32 from byte 6
 //   — where byte 8 is the literal `8B` of the following `mov rsi,rcx` — and base the RIP on
-//   byte 10. AD15.
+//   byte 10.
 constexpr const char* AOB_GWORLD_TQ_3 = "?? 8B 05 ?? ?? ?? ?? ?? 8B ?? ?? 0F 29 43 ?? 44 0F 28 C1 ?? 85 ?? 0F";
 // TQ_4: ?? prefix; mov [GWorld],rcx; test rsi,rsi; jz; mov rax,[rsi]; mov rcx,rsi; call [rax+E0]
 //   Wildcard-prefixed write pattern. Same shape as TQ_3: `?? 89 0D d32` is
 //   `48 89 0D d32` (mov [rip+d32],rcx) starting at byte 0, so instrOffset=0 / opcodeLen=3 /
-//   totalLen=7 and the displacement is at 3. AD15/AD16.
+//   totalLen=7 and the displacement is at 3.
 constexpr const char* AOB_GWORLD_TQ_4 = "?? 89 0D ?? ?? ?? ?? ?? 85 ?? 74 ?? 48 8B 06 ?? 8B ?? FF 90 ?? 00 00";
 
 // --- UE 4.2 game analysis patterns (G42 series) ---
@@ -961,9 +960,9 @@ constexpr const char* AOB_GWORLD_GH_4 = "0F 57 C9 0F 2E C1 74 ?? 48 8B 1D ?? ?? 
 // ============================================================
 // UE 5.7's MSVC codegen inserts an extra load / picks different registers around
 // the GWorld access, so ALL of the Tier-1 (100–290) UE5 GWorld patterns (ES2_1-6,
-// SF_1, GH_1/2, TQ_1/2, V1) get ZERO hits on this build. The scan then reaches the
-// generic GWLD_SF_2 (Tier 2, pri 300), which matched a single DECOY .data global and
-// passed the (intentionally loose) ValidateGWorldBasic → wrong GWorld. These four
+// SF_1, GH_1/2, TQ_1/2, V1) get ZERO hits on this build. Without the patterns below the scan
+// reaches the generic GWLD_SF_2 (Tier 2, pri 300), which matches a single DECOY .data global
+// and passes the (intentionally loose) ValidateGWorldBasic → wrong GWorld. These four
 // patterns re-anchor GWorld at the TOP of Tier 1 (pri 100–160, before every pattern
 // that misses/mis-fires). Each was verified to hit ONLY the real GWorld slot (0
 // decoys) across the whole .text image.
@@ -1093,8 +1092,8 @@ constexpr const char* AOB_SPARSE_DI427_2 =
     "48 63 44 24 ?? 4? 33 ?? 83 F8 FF 74 ?? 48 8D ?? 40 48 C1 E? 05 48 03 ?? ?? ?? ?? ?? EB ?? 4? 8B ?? 48 85 ?? 4? 8D ?? 08 4? 0F 44 ??";
 
 // --- PAL51: UE 5.1 sparse-delegate element address (Palworld) -----------------
-// WHY it exists: Palworld was the corpus's first UE 5.1 sample, and SparseDelegates resolved
-// there through exactly ONE pattern (SPARSE_ES2_1). That is the thinnest coverage of any target
+// WHY it exists: without it, SparseDelegates on Palworld (UE 5.1) resolves through exactly ONE
+// pattern (SPARSE_ES2_1). That is the thinnest coverage of any target
 // on any binary, and it matters more here than elsewhere because ValidateSparseDelegates is the
 // weakest validator we have — on an empty map it can only range-check two ints (its UObject-key
 // content check needs a live element), so it cannot rescue a miss.
@@ -1308,8 +1307,9 @@ constexpr const char* AOB_GOBJECTS_DI427_3 =
 //   (operator== / GetComparisonNameEntry / GetDisplayNameEntry / GetEntry / ToString / ...).
 //   lea rcx,[NamePoolData]; call FNamePool::FNamePool; mov <r>,rax; mov byte[bInit],1;
 //   then reload the spilled FName as a qword and shift the Number half out.
-//   Intended replacement for the GNAM_V5/V2/D7_1 family, which on this binary fire
-//   16 686 / 16 692 / 104 897 times with ZERO correct hits. 10 sites, all correct.
+//   Ordered far ahead of GNAM_V5 / GNAM_V2 (Dumper-7's D7_1 is left out of the table); on
+//   this binary V5 / V2 / D7_1 fire 16 686 / 16 692 / 104 897 times with ZERO correct hits.
+//   10 sites, all correct.
 constexpr const char* AOB_GNAMES_DI427_1 =
     "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4? 8B ?? C6 05 ?? ?? ?? ?? 01 48 8B 44 24 ?? 48 C1 E8 20";
 // GNAM_DI427_2: same lazy-init head, but continued into the FNameEntry address math —
@@ -1608,7 +1608,7 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_SAT52_1", AOB_GOBJECTS_SAT52_1, AobTarget::GObjects, 0, 3, 7, 0, 230, "SAT52", "Satisfactory UE5.2 TObjectIteratorBase ctor"),
     SIG_RIP("GOBJ_V12", AOB_GOBJECTS_V12, AobTarget::GObjects, 0, 3, 7, -0x10, 240, "V", "FF7 Remake"),
     SIG_RIP("GOBJ_SF_1", AOB_GOBJECTS_SF_1, AobTarget::GObjects, 0, 3, 7, 0, 250, "SF", "SatisfFactory via _imp_ (in EXE)"),
-    // _1 BEFORE _2 (AD11). DI427_2 is a strict PREFIX of DI427_1 — its 23 tokens are _1's first
+    // _1 BEFORE _2. DI427_2 is a strict PREFIX of DI427_1 — its 23 tokens are _1's first
     // 23, and both carry the identical (0,3,7,0) triple — so every _1 match is also a _2 match AT
     // THE SAME ADDRESS, resolving to the same target. Pass 1 takes the first pattern with a
     // validating match and scans matches in address order, so with _2 ahead of it _1 could never
@@ -1846,7 +1846,7 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_SF_2",  AOB_GWORLD_SF_2,   0, 3, 7, 0, 300, false, "SF", "Engine DLL FAudioDeviceManager"),
     SIG_GWORLD_RIP("GWLD_SF_3",  AOB_GWORLD_SF_3,   0, 3, 7, 0, 305, false, "SF", "Engine DLL UWorld::FinishDestroy"),
     // GWLD_G427_2 sits at 308 — one slot AHEAD of GWLD_SF_4 — and is deliberately out of its
-    // numeric "UE 4.27" band (AD11/AD14). SF_4's wildcarded frame displacement makes it a strict
+    // numeric "UE 4.27" band. SF_4's wildcarded frame displacement makes it a strict
     // PREFIX of G427_2 (SF_4's 14 tokens are G427_2's first 14) with the identical (0,3,7,0)
     // triple, so behind SF_4, G427_2 could never be reached — SF_4 matches everywhere it does,
     // at the same addresses, resolving the same way. The bands are ordered by SPECIFICITY, not by
@@ -1878,7 +1878,7 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   0, 3, 7, 0, 395, false, "TQ", "TQ2 ??-prefix mov rax"),
     // gworldAllowNull is TRUE: TQ_4 is a `mov [GWorld],rcx` WRITE site, so at the moment it
     // matches the slot legitimately still reads 0 — the same reason every entry in the 405–435
-    // write band carries it. It is safe only with the geometry right (instrOffset 0, AD16):
+    // write band carries it. It is safe only with the geometry right (instrOffset 0):
     // allowNull then admits the real &GWorld slot rather than whatever a misread displacement
     // points at.
     { "GWLD_TQ_4", AOB_GWORLD_TQ_4, AobTarget::GWorld, AobResolve::RipBoth,

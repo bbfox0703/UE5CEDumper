@@ -11,13 +11,12 @@ namespace UE5DumpUI.Tests;
 /// [TEST-TEMP-HYGIENE-2026-11-11] Removes what a finished `dotnet build` of THIS repository left in %TEMP% a day ago,
 /// and nothing anyone else left there.
 ///
-/// What the SDK leaves, read in dotnet/sdk v10.0.403 and measured on 2026-11-11: every build, test, publish, pack and
-/// run starts a workload advertising-manifest check (RestoringCommand's constructor; `dotnet restore` leaves nothing). On
-/// an SDK installed by MSI or Visual Studio it makes one empty folder named like Path.GetRandomFileName()
-/// (Directory.CreateTempSubdirectory), then Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log, then
-/// a second such folder -- up to about 0.8 s before the log and 0.11 s after it, and every group measured held exactly
-/// two folders per log. Nothing in the SDK removes them and no setting skips them. `dotnet --info`, `dotnet new` and
-/// `dotnet tool` make such folders with no log.
+/// What the SDK leaves (dotnet/sdk v10.0.403): every build, test, publish, pack and run starts a workload
+/// advertising-manifest check (RestoringCommand's constructor; `dotnet restore` leaves nothing). On an SDK installed by
+/// MSI or Visual Studio it makes one empty folder named like Path.GetRandomFileName() (Directory.CreateTempSubdirectory),
+/// then Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log, then a second such folder -- each
+/// within about a second of the log, two folders per log. Nothing in the SDK removes them and no setting skips them.
+/// `dotnet --info`, `dotnet new` and `dotnet tool` make such folders with no log.
 ///
 /// A folder carries no owner, so nothing goes on the absence of someone else's evidence; it goes on a positive match:
 /// <list type="bullet">
@@ -53,14 +52,14 @@ namespace UE5DumpUI.Tests;
 /// Left behind on purpose: a build named by a relative path other than the tracked one (run from a subfolder, or a copy
 /// of this repository under out/), a build with no path or with an option this code does not know before its project,
 /// a group not seen young (a build no test run follows within <see cref="Young"/>), and a group changed since. Once the
-/// SDK stops writing the log (dotnet/sdk main no longer does, 2026-11-10), nothing is ours and nothing goes.
+/// SDK stops writing the log (dotnet/sdk main does not write it), nothing is ours and nothing goes.
 /// </summary>
 internal static class SdkTempLeftovers
 {
     internal static readonly TimeSpan MinAge = TimeSpan.FromDays(1);
 
-    // The window that joins a folder to a log: wider than the measured -0.8 / +0.11 s, so a slow disk does not split a
-    // build; a wider window only makes groups bigger, and a group that is not exactly ours stays.
+    // The window that joins a folder to a log: wider than the folders' spread around their log, so a slow disk does not
+    // split a build; a wider window only makes groups bigger, and a group that is not exactly ours stays.
     internal static readonly TimeSpan FolderBeforeLog = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan FolderAfterLog = TimeSpan.FromSeconds(1);
 
@@ -86,7 +85,7 @@ internal static class SdkTempLeftovers
 
     private const string EndedLine = "=== Logging ended ===";
 
-    // Every line an idle build's log holds (all 723 finished logs of 2026-11-11 hold exactly these, and nothing else).
+    // Every line an idle build's log holds, and nothing else.
     private static readonly string[] IdleLinePrefixes =
     {
         "=== Logging started ===", "Executing: ", "IsElevated: ", "Is64BitProcess: ", "RebootPending: ",
@@ -347,9 +346,8 @@ internal static class SdkTempLeftovers
     {
         var listing = new DirectoryInfo(temp);
 
-        // Times and attributes come with the listing. Asking for them entry by entry cost 288 ms of a 900-ms sweep
-        // over 739 logs and 1,513 folders (measured 2026-11-11); the listing itself took 12 ms. An entry whose time
-        // cannot be read is skipped, never the sweep.
+        // Times and attributes come with the listing: asking for them entry by entry costs far more than the listing
+        // itself. An entry whose time cannot be read is skipped, never the sweep.
         var logs = new List<LogInfo>();
         var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var newlyKept = new List<string>();

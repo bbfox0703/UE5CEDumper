@@ -191,7 +191,7 @@ public class SdkExportServiceTests
         Assert.Equal("FScriptDelegate", SdkExportService.MapCppDecl(field).Type);
     }
 
-    // --- [P3-SDK-INNERS] a container inner gets the SAME spelling as the scalar path (it was uint8_t) ---
+    // --- [P3-SDK-INNERS] a container inner gets the SAME spelling as the scalar path (never uint8_t) ---
 
     [Theory]
     [InlineData("SoftClassProperty", "TArray<TSoftClassPtr<UObject>>")]
@@ -259,10 +259,9 @@ public class SdkExportServiceTests
     [Fact]
     public void MapCppDecl_MapKeyValueAndSetElement_NameTheirObjectClass()
     {
-        // [SDK-CONTAINER-OBJCLASS] The key / value / element class reached the wire only for an Array inner, so these were
-        // `class UObject*` (20 TMap<FName, class UObject*> and 28 TSet<class UObject*> in EVERSPACE 2's header), and a
-        // class-valued key whose PropertyClass is a UClass subclass -- ALevelVariantSetsActor::DirectorInstances,
-        // TMap<TObjectPtr<UBlueprintGeneratedClass>, ...> -- was UClass*.
+        // [SDK-CONTAINER-OBJCLASS] A map's key / value and a set's element name their object class, not `class UObject*`,
+        // and a class-valued key whose PropertyClass is a UClass subclass -- ALevelVariantSetsActor::DirectorInstances,
+        // TMap<TObjectPtr<UBlueprintGeneratedClass>, ...> -- names that subclass, not UClass*.
         Assert.Equal("TMap<FName, class Actor*>", SdkExportService.MapCppDecl(new FieldInfoModel
         {
             TypeName = "MapProperty", KeyType = "NameProperty", ValueType = "ObjectProperty", ValueObjClass = "Actor", Size = 80,
@@ -302,7 +301,8 @@ public class SdkExportServiceTests
     // --- [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers: TAssetPtr / TAssetSubclassOf ---
     //
     // UE_4.10's AssetPtr.h declares them; 4.18 renamed them TSoftObjectPtr / TSoftClassPtr and kept the old names as
-    // deprecated aliases. MapCppDeclCore had no arm, so a field was declared as 0x20 raw bytes and an inner as uint8_t.
+    // deprecated aliases. Without an arm in MapCppDeclCore, a field would be declared as 0x20 raw bytes and an inner as
+    // uint8_t.
 
     [Theory]
     [InlineData("AssetObjectProperty", "World", "", "TAssetPtr<class World>")]
@@ -358,7 +358,7 @@ public class SdkExportServiceTests
     public void MapCppDeclLive_ObjectProperty_TheRuntimeClassIsNotTheType()
     {
         // [SDK-LIVE-VALUE-TYPES] A live row's PtrClassName is the class of what the pointer holds
-        // NOW, not what it is declared to hold -- this test used to pin it as the type.
+        // NOW, not what it is declared to hold -- so it must not be emitted as the type.
         var field = new LiveFieldValue
         {
             TypeName = "ObjectProperty", PtrClassName = "USceneComponent", Size = 8,
@@ -429,8 +429,8 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeader_SkipsLiveWalkersGuessedRows()
     {
-        // [P3-SDK-GUESSED] CE XML and CSX skip Live Walker's "Guess?" rows (commit 860245b0: "excluded from all
-        // exports"). The SDK header declared them, and a "?0x..." name does not compile.
+        // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from all exports, the SDK header included: a
+        // "?0x..." name does not compile.
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x28, Size = 4 },
@@ -447,10 +447,9 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeader_BoolBitfield_EmitsBitfieldAtItsTrueBit()
     {
-        // Mask 0x04 is a PACKED bitfield (one bit, bit 2), not a native bool. It used to be
-        // emitted as a whole `bool`, which put it at bit 0 and — once a class had more than one
-        // such flag — made the struct longer than the game's (audit #5 W3). The mask comment,
-        // which is what this test was originally written for, is unchanged.
+        // Mask 0x04 is a PACKED bitfield (one bit, bit 2), not a native bool. Emitted as a whole
+        // `bool`, it would sit at bit 0 and — once a class has more than one such flag — make the
+        // struct longer than the game's. The mask comment is pinned too.
         var fields = new List<LiveFieldValue>
         {
             new()
@@ -471,10 +470,10 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeader_EightPackedBools_DoNotGrowTheStruct()
     {
-        // The case the old emitter could not survive: eight flags share ONE byte at 0x10, and a
-        // float follows at 0x14. Emitting eight `bool` members advanced the cursor to 0x18, past
-        // the float — and padding is only emitted when the next offset is AHEAD of the cursor, so
-        // nothing could compensate and every later member was displaced.
+        // Eight flags share ONE byte at 0x10, and a float follows at 0x14. Emitting eight `bool`
+        // members would advance the cursor to 0x18, past the float — and padding is only emitted
+        // when the next offset is AHEAD of the cursor, so nothing could compensate and every
+        // later member would be displaced.
         var fields = new List<LiveFieldValue>();
         for (int bit = 0; bit < 8; bit++)
             fields.Add(new LiveFieldValue
@@ -516,7 +515,7 @@ public class SdkExportServiceTests
         Assert.DoesNotContain(" : 1;", header);
     }
 
-    // --- Empty-base structs (audit A7) ---
+    // --- Empty-base structs ---
 
     [Fact]
     public void GenerateClassHeaderFromSchema_EmptyBase_OwnFieldAtOffsetZeroSurvives()
@@ -524,14 +523,13 @@ public class SdkExportServiceTests
         // THE REAL SHAPE, not an invented deep intrusion. UE sets a native USTRUCT's
         // PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so an EMPTY base
         // reports 1 -- while C++ empty-base optimisation puts the derived struct's first
-        // member at offset 0. `Offset >= superPropsSize` then dropped it, and the trailing
-        // pad pass replaced it with uint8_t Pad_0001[0x0003].
+        // member at offset 0. A bare `Offset >= superPropsSize` filter drops it, and the
+        // trailing pad pass replaces it with uint8_t Pad_0001[0x0003]; against such a filter
+        // this test fails on its first assert: "float Weight;" absent and "Pad_0001" present
+        // in its place.
         //
-        // BEFORE the fix this test fails on the first assert: "float Weight;" is absent and
-        // "Pad_0001" is present in its place.
-        //
-        // UE 5.8.2 ships 62 such bases with 302 property-bearing children -- FEmptyPayload
-        // (Engine module, no editor guard), the FMassFragment family, FEditorDataStorageColumn.
+        // UE 5.8 ships such bases with property-bearing children -- FEmptyPayload (Engine
+        // module, no editor guard), the FMassFragment family, FEditorDataStorageColumn.
         var classInfo = new ClassInfoModel
         {
             Name = "FAttributePayload",
@@ -552,17 +550,17 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeaderFromSchema_EmptyBase_NegativeOwnStartKeepsW2Behaviour()
     {
-        // ⚠ THE REGRESSION GUARD. -1 means "the DLL said nothing", and folding it into the
-        // min() would drive ownStart to -1/0 and re-emit the ENTIRE inherited chain -- audit
-        // #5 W2, a far worse bug than the one A7 fixes. A pre-fix DLL must behave exactly as
-        // it did before.
+        // ⚠ THE GUARD. -1 means "the DLL said nothing", and folding it into the min() would
+        // drive ownStart to -1/0 and re-emit the ENTIRE inherited chain -- a far worse defect
+        // than the empty-base one. A DLL that sends no own-start keeps the SuperPropertiesSize
+        // boundary.
         var classInfo = new ClassInfoModel
         {
             Name = "BP_Player_C",
             SuperName = "AActor",
             PropertiesSize = 0x2A0,
             SuperPropertiesSize = 0x290,
-            OwnPropertiesStart = -1,   // pre-fix DLL
+            OwnPropertiesStart = -1,   // a DLL that sends no own-start
             Fields =
             {
                 new FieldInfoModel { Name = "RootComponent", TypeName = "ObjectProperty", Offset = 0x120, Size = 8 },
@@ -604,8 +602,8 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeaderFromSchema_EmptyStructIsEmittedEmptySoEboApplies()
     {
-        // ⚠ The SECOND half of A7, and fixing ownStart alone does not cover it. The empty
-        // BASE itself has PropertiesSize 1, so the trailing-pad pass emitted
+        // ⚠ The SECOND half of the empty-base case, which ownStart alone does not cover. The
+        // empty BASE itself has PropertiesSize 1, so a trailing-pad pass would emit
         // `uint8_t Pad_0000[0x0001];` -- which makes the emitted base NON-empty, defeats
         // empty-base optimisation in the generated C++, and puts every derived struct's first
         // member at 1 where the game has it at 0. `struct X {};` is already sizeof 1, so the
@@ -646,7 +644,7 @@ public class SdkExportServiceTests
         Assert.Contains("Size: 0x0010", header);
     }
 
-    // --- Inherited properties (audit #5 W2) ---
+    // --- Inherited properties ---
 
     [Fact]
     public void GenerateClassHeaderFromSchema_InheritedFieldsAreNotRedeclared()
@@ -679,8 +677,8 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeaderFromSchema_WithoutBoundary_KeepsTheLegacyHeuristic()
     {
-        // An older DLL sends no super_props_size. The emitter must still produce what it always
-        // did rather than dropping everything or nothing.
+        // An older DLL sends no super_props_size. The emitter must still produce the heuristic
+        // header rather than dropping everything or nothing.
         var classInfo = new ClassInfoModel
         {
             Name = "BP_Player_C",
@@ -781,11 +779,11 @@ public class SdkExportServiceTests
     }
 
     // ------------------------------------------------------------------
-    // GenerateFullSdkAsync — class-like meta filter (build 689 fix).
-    // The original `obj.ClassName is "Class" or "ScriptStruct"` silently
-    // dropped every BlueprintGeneratedClass — same bug class that the
-    // DLL build 673 fix addressed across SearchProperties / ListClasses
-    // / EnumerateAllFunctions. Mirrors the DumpAllService filter.
+    // GenerateFullSdkAsync — class-like meta filter.
+    // A bare `obj.ClassName is "Class" or "ScriptStruct"` silently drops
+    // every BlueprintGeneratedClass — the same hazard the DLL's
+    // SearchProperties / ListClasses / EnumerateAllFunctions guard
+    // against. Mirrors the DumpAllService filter.
     // ------------------------------------------------------------------
 
     private sealed class FakeSdkDump : StubDumpService
@@ -868,7 +866,7 @@ public class SdkExportServiceTests
     [Fact]
     public void InferEnumUnderlyingType_ValueOver255_WidensToUint16()
     {
-        // 256 cannot fit in uint8_t — the exact case Dumper-7 fixed.
+        // 256 cannot fit in uint8_t — the exact case Dumper-7 handles.
         Assert.Equal("uint16_t", SdkExportService.InferEnumUnderlyingType(MakeEnum("E", 0, 256).Entries));
     }
 

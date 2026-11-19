@@ -36,8 +36,8 @@ public partial class ClassPivotPanel : UserControl
         };
 
     // [UI-SPACE-2026-09-25] Discover and the pivot target are SETUP; the field picker and the results below them are
-    // the work. On a 4K screen at 225 % (1067 DIP high) the setup alone was taller than the window, so the results
-    // were never on screen. It may now take at most SetupShare of the panel's height and scrolls beyond that.
+    // the work. Uncapped, the setup alone can be taller than the window at a high display scale and keep the results
+    // off screen, so it takes at most SetupShare of the panel's height and scrolls beyond that.
     private const double SetupShare = 0.5;
     private const double SetupMinHeight = 160;
 

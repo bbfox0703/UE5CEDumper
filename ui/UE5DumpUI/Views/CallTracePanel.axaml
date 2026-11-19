@@ -4,9 +4,9 @@
              x:Class="UE5DumpUI.Views.CallTracePanel"
              x:DataType="vm:CallTraceViewModel">
 
-  <!-- [LIVEFUNCS-STEP2] U10: the drag handles. Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
+  <!-- [LIVEFUNCS-STEP2] The drag handles. Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
        Slider, so a bare Thumb has no template and draws nothing: no edge to find it by. A Border that carries the
-       Thumb's own background and edge is all a handle needs (dragged live on build 3640). -->
+       Thumb's own background and edge is all a handle needs. -->
   <UserControl.Styles>
     <Style Selector="Thumb">
       <Setter Property="Template">
@@ -330,10 +330,10 @@
          out as each row's are and take the same widths from the view model, so header and rows move together; a
          thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
     <!-- [CT-DETAIL-COVERS-LIST] Header and rows bind the widths SHOWN: the remembered ones fitted so Function keeps its
-         slice. Unfitted, a column wider than the list hid Function and the handles of the columns after it. -->
+         slice. Unfitted, a column wider than the list hides Function and the handles of the columns after it. -->
     <!-- [CT-COLUMNS-OVERLAP] When the list is narrower than its fixed columns, DockPanel gives a cell that no longer fits
-         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot: it drew over the column
-         on its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
+         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot, over the column on
+         its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
          The header cuts that overflow itself: it is drawn after the detail pane and would cover it. -->
     <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2" ClipToBounds="True">
       <Panel DockPanel.Dock="Left" Width="{Binding ShownTimeColWidth}" HorizontalAlignment="Left">
@@ -422,7 +422,7 @@
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Param.Marker}"
                          IsVisible="{Binding HasParams}" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Marker}"
                          Foreground="#C586C0" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
-              <!-- Review DLL-3: the address held another function during the recording. -->
+              <!-- The address held another function during the recording. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
                          IsVisible="{Binding FuncReused}" ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"
                          Foreground="#C08040" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>

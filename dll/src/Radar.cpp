@@ -331,14 +331,14 @@ const std::vector<std::string>& VectorStructNames(DataType dt) {
     // by the index builder instead of being read at a guessed width.
     static const std::vector<std::string> kVec  = { "Vector", "Vector3f", "Vector_NetQuantize", "Vector_NetQuantizeNormal" };
     static const std::vector<std::string> kRot  = { "Rotator", "Rotator3f" };
-    // FTransform deferred: layout starts with FQuat Rotation (16B UE4 /
+    // FTransform unsupported: layout starts with FQuat Rotation (16B UE4 /
     // 32B UE5 LWC), so reading 12 bytes from struct start would grab
     // the Rotation quat's first three floats, not Translation. Proper
     // support needs per-version offset detection (Translation lives at
     // +16 non-LWC, +32 LWC). Leaving FTransform DataType in the enum
     // so the C# wire enum can stay stable, but no struct names map to
-    // it -- scan returns 0 candidates until the per-version offset
-    // table lands.
+    // it -- a scan returns 0 candidates; supporting it needs that
+    // per-version offset table.
     static const std::vector<std::string> kEmpty;
     switch (dt) {
         case DataType::FVector:    return kVec;
@@ -1267,9 +1267,8 @@ namespace {
 // Case-insensitive substring test WITHOUT allocating a lowercased copy of the
 // haystack (`needleLower` must already be lowercased). The filter runs this
 // over every displayed column of every candidate on each filter change, so at
-// the raised cap ceiling (1M, V2) avoiding ~6 string allocations per candidate
-// matters — it roughly halved the filter pass in the scale bench. Naive O(n·m)
-// is fine: needles are short and columns are short.
+// the cap ceiling (1M) avoiding ~6 string allocations per candidate matters.
+// Naive O(n·m) is fine: needles are short and columns are short.
 bool ContainsCI(const char* hay, size_t hayLen, const std::string& needleLower) {
     const size_t n = needleLower.size();
     if (n == 0) return true;
@@ -1520,8 +1519,8 @@ std::string GroupSlotValueString(const GroupSlotMatch& sm, const SlotSpec& spec,
     Candidate tmp;
     // Bound by the SOURCE buffer, not the destination: a group leaf is numeric
     // (<= 8 bytes) while a Candidate's buffer must hold a canonical vector
-    // triple, so the two arrays are no longer the same size. Copying
-    // sizeof(tmp.prevValue) read 8 bytes past the end of `sm`.
+    // triple, so the two arrays are not the same size. Copying
+    // sizeof(tmp.prevValue) would read past the end of `sm`.
     static_assert(sizeof(GroupSlotMatch::prevValue) <= sizeof(Candidate::prevValue),
                   "a group leaf must fit in a candidate's value buffer");
     std::memcpy(tmp.prevValue, sm.prevValue, sizeof(sm.prevValue));
@@ -1625,7 +1624,7 @@ std::vector<size_t> PickGroupWitnessAssignment(
     // A term consumed by an earlier slot. Without this, `tickcount frozenint`
     // would let both slots claim whichever leaf matches the first term they see,
     // and the second named field would never reach the row — which is the entire
-    // reason the filter had to learn AND.
+    // reason the filter ANDs its terms.
     std::vector<bool> termUsed(terms.size(), false);
     // Leaf addresses already claimed by an earlier slot, and the defining
     // class/struct of each — so a later slot can prefer a SIBLING.

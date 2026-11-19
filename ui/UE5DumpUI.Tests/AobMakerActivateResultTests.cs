@@ -8,8 +8,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [AOBM-ACTIVATE-RESULT] SYM used to say "Registered" whenever the plugin replied <c>success</c>, which only ever
-/// meant the record exists. AOBMaker v20260930 (build 155) adds <c>activated</c> and <c>symbolRegistered</c>; an older
+/// [AOBM-ACTIVATE-RESULT] The plugin's <c>success</c> means only that the record exists, so SYM must not read it as
+/// "Registered". AOBMaker v20260930 (build 155) adds <c>activated</c> and <c>symbolRegistered</c>; an older
 /// plugin sends neither, so their absence is "not known", never success, and a reply that never came may still have
 /// left a record behind (AOBMaker reply §3 rule 8).
 /// </summary>
@@ -61,8 +61,8 @@ public class AobMakerActivateResultTests
         var vm = Vm();
         vm.ReportSymbolRegistration(new SymbolScriptResult(true, true, true, null), "gworld_addr", "d");
 
-        // The sentence en.axaml holds, which the app shows. This pinned the C# fallback ("Registered CE symbol
-        // 'gworld_addr'.") while a test's Res answered "": a text the app never shows. [I18N-READINESS-2026-11-04]
+        // The sentence en.axaml holds, which the app shows -- not the C# fallback, a text the app never shows.
+        // [I18N-READINESS-2026-11-04]
         Assert.Equal("Registered CE symbol 'gworld_addr' — it re-scans on enable, so it survives a game restart.",
                      vm.SymbolStatusText);
         Assert.Null(vm.ErrorMessage);

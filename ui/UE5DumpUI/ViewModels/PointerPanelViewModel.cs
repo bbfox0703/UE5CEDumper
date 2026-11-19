@@ -69,11 +69,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <inheritdoc cref="InvokeTimeoutMs"/>
     /// <remarks>
     /// [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? and an emptied box drives it to
-    /// null, which a compiled binding cannot put into an int. ⚠ This one was MISSED by the first
-    /// sweep: it is the only NumericUpDown in the app whose binding carries a modifier
-    /// (<c>{Binding InvokeTimeoutMs, Mode=TwoWay}</c>), and the scan's regex stopped at the
-    /// property name — so the guard test skipped it silently rather than reporting it. Both the
-    /// scan and the guard now allow modifiers.
+    /// null, which a compiled binding cannot put into an int. ⚠ Its binding carries a modifier
+    /// (<c>{Binding InvokeTimeoutMs, Mode=TwoWay}</c>), so a guard whose scan stops at the property
+    /// name skips it silently rather than reporting it.
     /// </remarks>
     public decimal? InvokeTimeoutMsValue
     {
@@ -152,8 +150,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _isAobMakerAvailable;
     /// <summary>[R7-D-04] The System tab's "not reachable" line, by WHY the last probe failed: the
     /// <see cref="Helpers.AobMakerUnavailable"/> sentence the toolbar, the injects, Live Walker and Teleport already show.
-    /// It was a fixed "check CE plugin installation", which told a user whose pipe was merely BUSY (a second Cheat
-    /// Engine holds the single-instance server) to reinstall the plugin.</summary>
+    /// A fixed "check CE plugin installation" would tell a user whose pipe is merely BUSY (a second Cheat Engine
+    /// holds the single-instance server) to reinstall the plugin.</summary>
     public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
 
     /// <summary>[R7-S7] Any setter of the flag repaints the line and the buttons that read it. A change hook alone misses
@@ -224,14 +222,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// 1. Native AOT single-file publish trims <c>GetExecutingAssembly()</c> →
     ///    returns no version. Use <c>GetEntryAssembly()</c> instead (the same
     ///    fix <c>MainWindowViewModel.GetAppVersion</c> uses for the title bar).
-    ///    See build 657 lesson.
     /// 2. Our AssemblyVersion is laid out as <c>Major.Minor.Patch.Build</c>
     ///    (e.g. 1.0.0.661) but .NET's <see cref="System.Version"/> names the
     ///    four parts <c>Major.Minor.Build.Revision</c> — so what we call "build"
     ///    sits in <see cref="System.Version.Revision"/>, not
-    ///    <see cref="System.Version.Build"/>. Reading <c>.Build</c> returned the
-    ///    patch digit (0), which is why the System tab Diagnostics showed
-    ///    "UI build: 0" through builds 657–660 even after the AOT-trim fix.
+    ///    <see cref="System.Version.Build"/>. Reading <c>.Build</c> returns the
+    ///    patch digit (0), and the System tab Diagnostics would show "UI build: 0".
     /// </summary>
     public int UiBuildNumber { get; } = ReadUiBuildNumber();
 
@@ -311,8 +307,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _selfTestHasResult;
 
     /// <summary>
-    /// Legacy warning binding (kept for compatibility with existing axaml). True when
-    /// version detection failed AND no user override is active. The new 3-state badge
+    /// Plain version warning, bound by PointerPanel.axaml. True when
+    /// version detection failed AND no user override is active. The 3-state badge
     /// uses ShowLowConfidenceWarning / ShowUserOverrideBadge instead.
     /// </summary>
     public bool ShowVersionWarning => HasData && !VersionDetected && !IsUserOverride;
@@ -618,9 +614,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>
     /// False once the experimental opt-in has been locked for the session (the user opened a tab that locks it while
     /// enabled). The System-tab checkbox binds its <c>IsEnabled</c> to this so a locked opt-in can no longer be
-    /// unticked. [LF-EXPOFF-TRACE] The connection does not enter into it (the maintainer's choice after the review,
-    /// 2026-10-09: an untick while connected turns off at once what the features run in the game, and one while
-    /// disconnected at the next connect -- Teleport's teardown).
+    /// unticked. [LF-EXPOFF-TRACE] The connection does not enter into it: an untick while connected turns off at once
+    /// what the features run in the game, and one while disconnected at the next connect -- Teleport's teardown.
     /// </summary>
     public bool CanToggleExperimental => !ExperimentalLocked;
 
@@ -800,11 +795,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowOverrideContradictedNote));
         OnPropertyChanged(nameof(ShowLowConfidenceWarning));
         OnPropertyChanged(nameof(ShowVersionDetectedBadge));
-        // Both refusal banners. ShowVersionTooOldWarning was MISSING here before the pre-UE4
-        // work: IsVersionTooOld is an [ObservableProperty] with no NotifyPropertyChangedFor, so
-        // the computed property never re-raised and the red banner only rendered if the binding
-        // happened to be evaluated for the first time after Update() had already run. On any
-        // refresh of an already-attached panel it stayed hidden.
+        // Both refusal banners. IsVersionTooOld is an [ObservableProperty] with no
+        // NotifyPropertyChangedFor, so without this raise the computed property never re-raises
+        // and the red banner renders only if the binding happens to be evaluated for the first
+        // time after Update() has run: on any refresh of an already-attached panel it would stay
+        // hidden.
         OnPropertyChanged(nameof(ShowVersionTooOldWarning));
         OnPropertyChanged(nameof(ShowPreUE4Warning));
         // Same trap the two lines above document: these are [ObservableProperty] with no
@@ -1531,11 +1526,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>
     /// <c>Res.Get</c>/<c>Res.Format</c> return an EMPTY STRING for a key they cannot
     /// resolve — they do not throw and do not log (the trap
-    /// <c>SelfTestAdviceTests.EveryAdviceKeyExistsInEnAxaml</c> exists to catch). Both
-    /// bindings added for V11 are gated on <c>IsNotNullOrEmpty</c>, so an empty message
-    /// renders as NO message — which is the exact defect V11 was filed for, arriving by a
-    /// second route. A short literal core keeps the report visible whatever the resource
-    /// dictionary does; the en.axaml entry still supplies the full wording when present,
+    /// <c>SelfTestAdviceTests.EveryAdviceKeyExistsInEnAxaml</c> exists to catch). The
+    /// bindings that show these messages are gated on <c>IsNotNullOrEmpty</c>, so an empty
+    /// message renders as NO message: a report the user never sees. A short literal core
+    /// keeps the report visible whatever the resource dictionary does; the en.axaml entry
+    /// still supplies the full wording when present,
     /// and <c>PointerSymbolStringsExistTests</c> pins that it is present.
     /// </summary>
     private static string OrFallback(string resolved, string fallback)
@@ -1686,11 +1681,9 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     // --- Diagnostics (Sense) ---
     //
-    // docs/multipipe-eval.md names DLL-side serial-dispatch head-of-line blocking
-    // as the root cause of UI lag, but nothing measured it — so "should Phase 1
-    // (non-blocking dispatch) be built?" was a blind decision. These numbers are
-    // the evidence. Sits next to Pipe Activity on purpose: that card shows WHAT
-    // crossed the pipe, this one shows what it COST.
+    // These numbers measure the DLL-side serial-dispatch head-of-line blocking that
+    // docs/multipipe-eval.md names as a cause of UI lag. Sits next to Pipe Activity on
+    // purpose: that card shows WHAT crossed the pipe, this one shows what it COST.
 
     [ObservableProperty] private string _diagSummary = "";
     [ObservableProperty] private string _diagProcess = "";
@@ -1732,8 +1725,8 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     private void OnDiagTimerTick(object? sender, EventArgs e)
     {
-        // Never stack requests: a slow snapshot (the first one measured 125 ms) must
-        // not queue up behind itself and turn the poll into a burst.
+        // Never stack requests: a slow snapshot must not queue up behind itself and
+        // turn the poll into a burst.
         if (DiagBusy) return;
         _ = RefreshDiagnosticsAsync();
     }
@@ -1790,7 +1783,7 @@ public partial class PointerPanelViewModel : ViewModelBase
                 d.GameThread.HookActive ? "on" : "off",
                 // Three states, because "responsive" and "no hook yet, so nothing was
                 // measured" are different facts. `Responsive` is the GATE predicate and
-                // maps unknown to true, so rendering it directly announced a healthy
+                // maps unknown to true, so rendering it directly would announce a healthy
                 // game thread nobody had measured. Falls back to it only for a DLL that
                 // predates `liveness`. (STALLDEFAULT-2026-08-26)
                 d.GameThread.Liveness switch
@@ -1968,12 +1961,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     // ===================================================================
     // Self-Test: PE-hook smoke test via auto-picked KismetMathLibrary helper
     //
-    // Rationale: the build-647 wrong-vtable-slot bug slept for 600+ builds
-    // because "result=0 from ProcessEvent" passed for success. Build 648's
-    // pattern scanner + post-install fire-counter caught the misdetection
-    // automatically — this button surfaces the SAME guarantee to end users:
-    // one-click verification that the hook is on the right slot AND that
-    // ProcessEvent actually executes the requested function body.
+    // Rationale: a hook on the wrong vtable slot can go unnoticed for a long time,
+    // because "result=0 from ProcessEvent" passes for success. The DLL's pattern
+    // scanner + post-install fire-counter catch that misdetection automatically —
+    // this button surfaces the SAME guarantee to end users: one-click verification
+    // that the hook is on the right slot AND that ProcessEvent actually executes
+    // the requested function body.
     //
     // Auto-pick: try a small ordered list of universal BlueprintFunctionLibrary
     // helpers (Add_IntInt → Multiply_IntInt → Add_FloatFloat → ...) until one
@@ -2054,8 +2047,8 @@ public partial class PointerPanelViewModel : ViewModelBase
                     {
                         // A wrong answer has TWO possible causes and the invoke alone
                         // cannot separate them (working-lessons §4.4). Ask the DLL which
-                        // one this is instead of asserting the wrong one, as the old
-                        // "re-deploy the DLL" text did. ([PEHOOK-2026-08-17])
+                        // one this is rather than assert one, as a fixed "re-deploy the
+                        // DLL" text would. ([PEHOOK-2026-08-17])
                         var cause = await ClassifySelfTestFailureAsync(invokeResult);
                         SelfTestFailed = true;
                         SelfTestResultText = Res.Format(

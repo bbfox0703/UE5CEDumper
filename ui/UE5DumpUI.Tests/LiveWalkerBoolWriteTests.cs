@@ -10,18 +10,18 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [A3-BOOL-NATIVE-NOWRITE] Editing a native bool in Live Walker wrote nothing and reported
-/// "Written".
+/// [A3-BOOL-NATIVE-NOWRITE] Editing a native bool in Live Walker writes it, and never reports
+/// "Written" for a write that did not land.
 ///
 /// <para>The DLL publishes a bool mask only for a single-bit FieldMask. A NATIVE bool — every
 /// Blueprint bool, a plain <c>UPROPERTY() bool bFoo;</c>, every container element — has FieldMask
-/// 0xFF, so no mask was sent and the UI parsed 0; <c>ApplyBoolMask(cur, 0, v)</c> returns
-/// <c>cur</c> for both values, so the editor wrote back the byte it had just read and printed
-/// "Written: bFoo = true" while the row still read false. The recorded safe shape: the DLL
+/// 0xFF, so no mask is sent and the UI parses 0; <c>ApplyBoolMask(cur, 0, v)</c> returns
+/// <c>cur</c> for both values, so a mask-0 edit would write back the byte it had just read and print
+/// "Written: bFoo = true" while the row still read false. The safe shape pinned here: the DLL
 /// recognises the native layout and says so (<c>bool_native</c>); the UI writes 0x01 / 0x00 only
 /// for a confirmed native bool, read-modify-writes a single-bit mask, REFUSES when the mask is
-/// unresolved (mask 0 also means "the probe missed", and a whole-byte write there is the AA1
-/// corruption of up to 7 sibling bools), and reads the byte back instead of trusting the write.</para>
+/// unresolved (mask 0 also means "the probe missed", and a whole-byte write there can corrupt up
+/// to 7 sibling bools), and reads the byte back instead of trusting the write.</para>
 /// </summary>
 public class LiveWalkerBoolWriteTests
 {
@@ -97,7 +97,7 @@ public class LiveWalkerBoolWriteTests
     public async Task UnresolvedMask_IsRefused_NothingIsWritten()
     {
         // Mask 0 and not native: the probe missed. The byte may hold up to 8 packed bools, so a
-        // whole-byte write would flip siblings — the AA1 corruption. Refuse, and say why.
+        // whole-byte write would flip siblings. Refuse, and say why.
         var dump = new MemStub();
         dump.Mem[Addr] = 0x05;
         var vm = Vm(dump);
@@ -112,7 +112,7 @@ public class LiveWalkerBoolWriteTests
     [Fact]
     public async Task PackedMask_ReadModifyWrite_KeepsTheSiblingBits()
     {
-        // The control: a single-bit mask was already right, and must stay right.
+        // The control: a single-bit mask read-modify-writes its own bit and keeps the siblings.
         var dump = new MemStub();
         dump.Mem[Addr] = 0x03;
         var vm = Vm(dump);
@@ -166,7 +166,7 @@ public class LiveWalkerBoolWriteTests
         Assert.All(vm.Fields, f => Assert.True(f.BoolNative, $"{f.Name} must be a native bool"));
     }
 
-    // --- B05 review follow-up: the masked read-back, and the map / set row builders -------------
+    // --- The masked read-back, and the map / set row builders -------------------------------------
 
     [Fact]
     public async Task PackedMask_ReadBackMismatch_IsReported()

@@ -20,9 +20,9 @@ public class LegacyQmarkNameTests : IDisposable
     // ── the teleport coordinate library ──
 
     [Theory]
-    [InlineData("???.exe")]                     // gave "" -- and rows were "Added" but never saved
-    [InlineData("???-Win64-Shipping.exe")]      // gave "-win64-shipping" -- shared by every such game
-    [InlineData("Game?-Win64-Shipping.exe")]    // gave "game_-win64-shipping" -- shared with Game®, Game™ ...
+    [InlineData("???.exe")]                     // would key "" -- rows "Added" but never saved
+    [InlineData("???-Win64-Shipping.exe")]      // would key "-win64-shipping" -- shared by every such game
+    [InlineData("Game?-Win64-Shipping.exe")]    // would key "game_-win64-shipping" -- shared with Game®, Game™ ...
     public void CoordLibraryKey_RefusesALossyName(string module)
         => Assert.Equal("", CoordinateLibraryStore.KeyFor(module));
 
@@ -65,7 +65,7 @@ public class LegacyQmarkNameTests : IDisposable
         Assert.DoesNotContain("unavailable", vm.CoordStatus, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ── the skeptic review (wf_6ba4bc83-14d) ──
+    // ── legacy '?' names, end to end ──
 
     private TeleportViewModel Vm(out CoordinateLibraryStore store)
     {
@@ -86,7 +86,8 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Key_ANameWithNoFileNameCharacters_StillGetsAStableKey()
     {
-        // (QM-7) '★.exe' keyed to '' under the NEW DLL too, and the text blamed an old DLL: an update that loops.
+        // '★.exe' is a real name from a current DLL with no file-name characters to key on: an empty key would blame an
+        // old DLL, and the update it asks for would loop.
         string star = CoordinateLibraryStore.KeyFor("★.exe");
         Assert.NotEqual("", star);
         Assert.Equal(star, CoordinateLibraryStore.KeyFor("★.EXE"));
@@ -104,8 +105,8 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_ALibrarySavedUnderTheOlderDllsKey_IsCarriedOver_AndTheOldFileKept()
     {
-        // (QM-1 / T6) Before: 'Pok?mon.exe' -> 'pok_mon' saved real rows. After the fix the old DLL is refused and the
-        // new DLL keys 'pokémon' -- the rows were stranded, with no notice.
+        // An older DLL's 'Pok?mon.exe' keys to 'pok_mon', where real rows may be saved. Such a DLL is refused, and the
+        // current DLL keys 'pokémon' -- without the carry-over the rows would be stranded, with no notice.
         var vm = Vm(out var store);
         store.Save("pok_mon", TwoRows());
         string legacyPath = store.FilePathFor("pok_mon");
@@ -122,9 +123,9 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_ACarriedOverLibrary_ClearedByTheUser_StaysCleared()
     {
-        // (second review, COORD-CARRY-RESURRECT / T-QMARK-RESURRECT, MED) The carry-over's own status says 'use Clear
-        // all' if the rows belong to another game. Clear all deletes the main file -- so the next connect saw 'no
-        // library under the real name' and carried the legacy rows over AGAIN: the [A1-COORD-RESURRECT] shape.
+        // The carry-over's own status says 'use Clear all' if the rows belong to another game. Clear all deletes the
+        // main file -- so the next connect sees 'no library under the real name', and must not carry the legacy rows
+        // over AGAIN: the [A1-COORD-RESURRECT] shape.
         var vm = Vm(out var store);
         store.Save("pok_mon", TwoRows());
         vm.LoadCoordLibraryForGame("Pokémon.exe");
@@ -139,8 +140,8 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Key_TheHashKeyIsStableAcrossProcesses()
     {
-        // (second review, T-QMARK-HASH-STABILITY) Within one process, string.GetHashCode would pass the other test and
-        // strand the library on every restart. FNV-1a over U+2605, computed independently.
+        // Within one process, string.GetHashCode would pass the other test and strand the library on every restart.
+        // FNV-1a over U+2605, computed independently.
         Assert.Equal("name-003b8f40", CoordinateLibraryStore.KeyFor("★.exe"));
     }
 
@@ -157,7 +158,7 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_TheRefusalTellsTheWholeRemedy()
     {
-        // (QM-5) Re-injecting into the running game reattaches to the OLD DLL; Update All cannot replace a proxy the
+        // Re-injecting into the running game reattaches to the OLD DLL; Update All cannot replace a proxy the
         // running game holds. The game must be closed first.
         var vm = Vm(out _);
         vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
@@ -167,7 +168,7 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_TheRefusalDoesNotOutliveItsCause()
     {
-        // (QM-2) After the remedy (update, reconnect), the old refusal naming '???-…' stayed on screen.
+        // After the remedy (update, reconnect), the old refusal naming '???-…' must not stay on screen.
         var vm = Vm(out _);
         vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
         vm.LoadCoordLibraryForGame("ゲーム-Win64-Shipping.exe");
@@ -177,7 +178,7 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_BeforeAnyGameIsConnected_AddingIsRefused()
     {
-        // (QM-4) No key yet: 'Added …' was shown, nothing was saved, and the first connect cleared the row.
+        // No key yet: an 'Added …' would be false -- nothing is saved, and the first connect clears the row.
         var vm = Vm(out _);
         vm.CoordX = 1;
         vm.AddCoordFromFieldsCommand.Execute(null);
@@ -189,7 +190,7 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_ApplyImport_IsRefusedWhileUnavailable_AndThePreviewSaysSo()
     {
-        // (T5 / QM-6) The preview said 'Press Apply to commit' while Apply could only be refused.
+        // The preview must not say 'Press Apply to commit' while Apply can only be refused.
         var vm = Vm(out _);
         vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
         vm.BuildImportPreview(UE5DumpUI.Services.CoordCsvCodec.Parse("label,map,x,y,z\nChest 1,Map01,1,2,3\n"), "t.csv");
@@ -204,7 +205,7 @@ public class LegacyQmarkNameTests : IDisposable
     [Fact]
     public void Teleport_ARealName_WritesTheFile()
     {
-        // (T5) 'StillSaves' checked only the in-memory list.
+        // 'StillSaves' checks only the in-memory list; this checks the file.
         var vm = Vm(out var store);
         vm.LoadCoordLibraryForGame("ゲーム-Win64-Shipping.exe");
         vm.CoordX = 1;
@@ -218,8 +219,8 @@ public class LegacyQmarkNameTests : IDisposable
     [InlineData("???.exe", "ゲーム-Win64-Shipping.exe")]                     // a different length
     public void DumpIdentity_ALegacyNameThatCannotBeTheLiveOne_IsRefused(string file, string live)
     {
-        // (QM-3) Any '?' name used to mean 'unknown', so a legacy dump was never refused -- not even against an
-        // ASCII name the old DLL would have reported verbatim.
+        // A '?' name is not 'unknown, anything goes': a legacy dump is still refused against a live name it cannot
+        // be -- such as an ASCII name the old DLL would have reported verbatim.
         var (refused, _) = DumpExplorerViewModel.JudgeIdentity(file, "A", live, "B");
         Assert.True(refused);
     }
@@ -255,13 +256,13 @@ public class LegacyQmarkNameTests : IDisposable
         var (refused, caveat) = DumpExplorerViewModel.JudgeIdentity("???.exe", "AAAA", "???.exe", "BBBB");
         Assert.False(refused);
         Assert.Contains("could not confirm", caveat);
-        Assert.DoesNotContain("same game", caveat);                    // was "Different build of the same game"
+        Assert.DoesNotContain("same game", caveat);                    // not "Different build of the same game"
     }
 
     [Fact]
     public void DumpIdentity_ALegacyDumpOfThisVeryExe_IsNotRefused()
     {
-        // Dump taken through an old DLL ('???'), live game on a fixed DLL (real name), same exe bytes.
+        // Dump taken through an old DLL ('???'), live game on a current DLL (real name), same exe bytes.
         var (refused, caveat) = DumpExplorerViewModel.JudgeIdentity("???.exe", "AAAA", "ゲーム.exe", "aaaa");
         Assert.False(refused);
         Assert.Equal("", caveat);

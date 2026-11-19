@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-r"""Live check for [FINDINSTANCE-SUBSTRING-USERFACING] (build 3675 on): DumperTest, headless, no CE.
+r"""Live check for [FINDINSTANCE-SUBSTRING-USERFACING] (a DLL with that tag): DumperTest, headless, no CE.
 
     py tools/verify/findinstance_pick_live.py
 
-The UI must NOT be connected. For each class name it prints the OLD pick beside the new one: the old rule is
-recomputed from `find_instances exact_match=false limit=100` (the first non-CDO match, else the first match), which
-is what the C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE all did.
+The UI must NOT be connected. For each class name it prints the plain substring pick (`old pick`) beside the current one: the
+substring rule is recomputed from `find_instances exact_match=false limit=100` (the first non-CDO match, else the
+first match), the rule the C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE apply
+without the tag.
 
 Pipe (invoke_function class_name):
   P1 "Actor" / K2_GetActorLocation      -> result 0, instance_pick "live", the class's super chain reaches Actor
   P2 "DumperTestActor" / K2_GetActorLocation -> "live", the chain reaches DumperTestActor
-  P3 "DumperTestAct" (no class has it)  -> "partial_name", the same object the old rule took
+  P3 "DumperTestAct" (no class has it)  -> "partial_name", the same object the substring rule takes
   P4 "KismetSystemLibrary" / IsPackagedForDistribution, direct_call -> "class_default", Default__KismetSystemLibrary
   P5 "KismetSystemLib"                  -> "partial_name_default", the same function's call
   P6 "NoSuchClass_Xyz"                  -> ok:false, "No instance found for class: NoSuchClass_Xyz"

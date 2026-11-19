@@ -87,15 +87,15 @@ public class AobMakerInjectTableFileTests
     // ---- [W1-PIPEBUSY-LOG] a BUSY pipe is not "Cheat Engine not running" ----
     //
     // The internal seam supplies a pipe name nobody serves, a short timeout, and the existence probe -- so these never
-    // reach a real Cheat Engine and never pay the 2 s connect the note below was avoiding.
+    // reach a real Cheat Engine and never pay the default 2 s connect.
 
     private static string NobodysPipe() => "UE5DumpUITest_" + Guid.NewGuid().ToString("N");
 
     [Fact]
     public async Task Connect_to_a_BUSY_pipe_is_logged_as_busy_not_as_CE_not_running()
     {
-        // A pipe whose only instance another client holds times out exactly like an absent one (measured 2026-09-10
-        // with two Cheat Engines: the loser's plugin retry-spams err=231 while every window looks fine).
+        // A pipe whose only instance another client holds times out exactly like an absent one (with two Cheat
+        // Engines, the loser's plugin retry-spams err=231 while every window looks fine).
         var log = new MockLoggingService();
         var bridge = new AobMakerBridgeService(log, NobodysPipe(), 150, _ => true);
 
@@ -148,7 +148,7 @@ public class AobMakerInjectTableFileTests
     [Fact]
     public async Task SystemTab_offline_line_says_busy_for_a_busy_pipe_not_reinstall_the_plugin()
     {
-        // [R7-D-04] The System tab's AOBMaker line was a fixed StaticResource, the one surface W1-PIPEBUSY-STATUS missed.
+        // [R7-D-04] The System tab's AOBMaker line follows the failure reason too, not a fixed StaticResource.
         var bridge = new AobMakerBridgeService(new MockLoggingService(), NobodysPipe(), 150, _ => true);
         var vm = new UE5DumpUI.ViewModels.PointerPanelViewModel(new MockPlatformService(Path.GetTempPath()), aobMaker: bridge);
 
@@ -187,7 +187,7 @@ public class AobMakerInjectTableFileTests
     [Fact]
     public void The_busy_and_denied_wording_never_sends_the_user_to_open_Cheat_Engine()
     {
-        // The defect this pins: a pipe that EXISTS already has its Cheat Engine. The toolbar shows ~50 characters,
+        // What this pins: a pipe that EXISTS already has its Cheat Engine. The toolbar shows ~50 characters,
         // so the discriminating word must also sit near the front.
         var text = ReadEnAxaml();
         var busy = ValueOf(text, Helpers.AobMakerUnavailable.KeyBusy);
@@ -231,10 +231,10 @@ public class AobMakerInjectTableFileTests
     // ---- a request over AOBMaker's message cap is refused HERE, before a byte is sent ----
     // (the client-side pre-flight size check, teleport-coord-library-spec.md §10, item 6)
     //
-    // The read path has always rejected a reply over the cap; the write path sent anything. AOBMaker rejects a length
-    // prefix over 10 MiB, and a plugin from before AOBMaker's oversize reply (its EXT-5) hangs up WITHOUT replying --
-    // so the user got a broken pipe or a timeout, read as "AOBMaker not connected", for a request that was simply too
-    // big. The fake below answers the way such a plugin did.
+    // The read path rejects a reply over the cap, and the write path must refuse a request over it too. AOBMaker
+    // rejects a length prefix over 10 MiB, and a plugin without AOBMaker's oversize reply (its EXT-5) hangs up WITHOUT
+    // replying -- so an unchecked request would give the user a broken pipe or a timeout, read as "AOBMaker not
+    // connected", for a request that is simply too big. The fake below answers the way such a plugin does.
 
     /// <summary>AOBMaker's cap on one framed message (its CE plugin's <c>kMaxMessageBytes</c>, AOBMaker.UI's
     /// <c>PipeProtocol.MaxMessageSize</c>): a length prefix over it is rejected.</summary>
@@ -243,7 +243,7 @@ public class AobMakerInjectTableFileTests
     /// <summary>ASCII, one byte per char, so any request carrying it is over the cap.</summary>
     private static string OverTheCap() => new('x', AobMakerCap + 1);
 
-    /// <summary>Serve one connection per entry of <paramref name="replies"/> as a pre-EXT-5 AOBMaker plugin did: read
+    /// <summary>Serve one connection per entry of <paramref name="replies"/> as a pre-EXT-5 AOBMaker plugin does: read
     /// the length prefix and, over the cap, hang up with no reply. Returns each connection's declared length, null
     /// when the client sent nothing at all.</summary>
     private static async Task<List<uint?>> ServeLikeAnOldPluginAsync(string pipe, string[] replies, CancellationToken ct)

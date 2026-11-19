@@ -3,7 +3,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Categories surfaced by the Interesting Properties Finder (B').
+/// Categories surfaced by the Interesting Properties Finder.
 /// One property gets exactly one category — the one with the highest
 /// keyword hit score, broken by enum order (Stats &gt; Combat &gt;
 /// Resources &gt; Movement &gt; Utility &gt; Timing &gt; Other).
@@ -102,15 +102,15 @@ public static class PropertyScoringTable
         "Attack", "Atk", "Multiplier",
         // Weapon-related fields (loadout pointers, weapon stats)
         "Weapon", "Hit", "HitDamage",
-        // === Added build 678 — confirmed cross-game via 15-game dump
-        // analysis (scripts/analysis/analyze_dumps.py). Each appears
-        // in ≥ 7/15 games with substantial per-game hit counts. ===
-        "Effect",       // GameplayEffect framework — 14/15 games, 5740 hits
-        "Target",       // combat target / aim target — 14/15 games
-        "Radius",       // AoE / detection radius — 12/15 games
-        "Ability",      // GameplayAbility framework — 7/15 games
-        "Modifier",     // DamageModifier / SpeedModifier — 7/15 games
-        "Duration",     // buff/effect duration — 9/15 games
+        // === Cross-game keywords, from a multi-game dump analysis
+        // (scripts/analysis/analyze_dumps.py): each appears in many of
+        // the analysed games with substantial per-game hit counts. ===
+        "Effect",       // GameplayEffect framework
+        "Target",       // combat target / aim target
+        "Radius",       // AoE / detection radius
+        "Ability",      // GameplayAbility framework
+        "Modifier",     // DamageModifier / SpeedModifier
+        "Duration",     // buff/effect duration
     };
 
     public const int ResourcesKeywordScore = 4;
@@ -128,8 +128,8 @@ public static class PropertyScoringTable
         "Ammo", "Material", "Materials", "Resource", "Resources", "Supply", "Supplies",
         // Inventory metadata
         "Stack", "Count", "Quantity", "Amount",
-        // === Added build 678 — confirmed cross-game (13/15 games via
-        // scripts/analysis/analyze_dumps.py, 1351 cross-game hits). ===
+        // === Cross-game keywords, from the same dump analysis
+        // (scripts/analysis/analyze_dumps.py). ===
         "Item", "Items",
     };
 
@@ -155,7 +155,7 @@ public static class PropertyScoringTable
         "IsImmortal", "CanBeDamaged", "Invincible", "Invulnerable",
     };
 
-    // Timing (L1) — time/timer properties: BP-authored cooldown/countdown/
+    // Timing — time/timer properties: BP-authored cooldown/countdown/
     // duration floats, respawn/reload/cast timers, and the engine's
     // reflected time-dilation knobs (AWorldSettings::TimeDilation, per-actor
     // CustomTimeDilation). All whole-token: "Time" only fires when 'time' is
@@ -182,7 +182,7 @@ public static class PropertyScoringTable
         "LifeSpan", "Lifespan", "Lifetime", "InitialLifeSpan",
         // Recharge / tick cadence.
         "Recharge", "TickRate", "Cadence",
-        // Global slow-mo / freeze-time knobs (the L1 Hemmung levers).
+        // Global slow-mo / freeze-time knobs (the Hemmung levers).
         "TimeDilation", "GlobalTimeDilation",
         // Bare "Time" — whole-token, so safe (CastTime/RespawnTime/
         // TimeSeconds → Timing; Lifetime/Runtime → not).
@@ -190,11 +190,10 @@ public static class PropertyScoringTable
     };
 
     // ------------------------------------------------------------------
-    // Structural-signal tuning (P2a). Applied on top of keyword +
-    // class-location scoring using ONLY data search_properties already
-    // carries (PropType + StructType) — no new wire fields. PropertyFlags
-    // gating (SaveGame/BlueprintVisible/Transient) is a separate follow-up
-    // (P2b) that needs prop_flags added to the search_properties response.
+    // Structural-signal tuning. Applied on top of keyword +
+    // class-location scoring using PropType + StructType, which
+    // search_properties carries. PropertyFlags gating is a separate
+    // signal (its own block below) that reads the response's prop_flags.
     // ------------------------------------------------------------------
 
     /// <summary>UScriptStruct name of a GAS gameplay attribute. An
@@ -299,10 +298,10 @@ public static class PropertyScoringTable
         // pushes interesting properties above the threshold even when
         // their keyword hits are lukewarm — surfacing the "wait, why is
         // there a Health field in GameViewportClient?" findings that
-        // are the whole point of B'.
+        // are the whole point of the Interesting Properties Finder.
         var (classBonus, isUnusual) = ClassLocationScorer.PropertyBonus(match.ClassName);
 
-        // --- Structural signals (P2a): type-aware + GAS refinement. Uses
+        // --- Structural signals: type-aware + GAS refinement. Uses
         // only PropType + StructType, both already on PropertySearchMatch. ---
         bool isGas = string.Equals(match.StructType, GasAttributeStructType,
                                    StringComparison.Ordinal);
@@ -330,7 +329,7 @@ public static class PropertyScoringTable
             structuralBonus += NonValueTypePenalty;
         }
 
-        // PropertyFlags gating (P2b): persistent / designer-facing fields are
+        // PropertyFlags gating: persistent / designer-facing fields are
         // more likely a live cheat target; editor-only fields never are.
         // Additive on top of GAS/type signals; a no-op (flags 0) on older DLLs
         // that don't emit prop_flags, so this can't regress existing scores.
@@ -377,7 +376,7 @@ public static class PropertyScoringTable
     }
 
     // ------------------------------------------------------------------
-    // Structural helpers (P2a) — type prior + Current/Max stat pairing
+    // Structural helpers — type prior + Current/Max stat pairing
     // ------------------------------------------------------------------
 
     /// <summary>Categories whose real cheat target is a numeric scalar (or a
@@ -490,7 +489,7 @@ public static class PropertyScoringTable
     /// <see cref="CtGroupName"/> does not.</summary>
     public static string DisplayName(PropertyCategory cat) => CtGroupName(cat);
 
-    /// <summary>[I18N-READINESS-2026-11-04] P4. The group a generated CT files a property category's records under.
+    /// <summary>[I18N-READINESS-2026-11-04] The group a generated CT files a property category's records under.
     /// ⛔ DO NOT LOCALIZE: an artifact, so a table saved under one UI language keeps its groups under another.</summary>
     public static string CtGroupName(PropertyCategory cat) => cat switch
     {
@@ -518,7 +517,7 @@ public static class PropertyScoringTable
     /// <summary>
     /// One canned query per category, used by the Interesting Properties
     /// VM to batch-call <c>search_properties</c> across a wide keyword
-    /// surface in round 1 (no new DLL command needed). Each entry is
+    /// surface (no new DLL command needed). Each entry is
     /// a representative keyword that the DLL substring-matches against
     /// every property name. The scorer then re-evaluates client-side
     /// using the full keyword tables above — so this list is "what to
@@ -538,8 +537,8 @@ public static class PropertyScoringTable
     /// scarce resource is the per-query cap, not CPU. A seed whose matches are
     /// mostly unrelated words spends its whole envelope before reaching the
     /// field the user wants — that is why <see cref="DeliberatelyUnseededKeywords"/>
-    /// exists and must stay excluded. Volume alone is fine: <c>Item</c> (3,050
-    /// matches) and <c>Velocity</c> (665) exceed the cap but are 98%/99%
+    /// exists and must stay excluded. Volume alone is fine: <c>Item</c> and
+    /// <c>Velocity</c> can exceed the cap, but nearly all their matches are
     /// genuine, so the 200 rows they do return are the right rows.</para>
     ///
     /// <para>Added seeds cost little beyond the first hit: the inner loop tests
@@ -569,8 +568,8 @@ public static class PropertyScoringTable
         "Quest", "Cheat", "Immortal", "Damaged", "Invincible",
         "Save", "Checkpoint", "Mission", "Objective", "Debug", "GodMode",
         "NoClip", "Score", "Invulnerable",
-        // Timing (L1) — the DLL substring-matches these against property
-        // names so round-1 actually fetches timer fields for the scorer.
+        // Timing — the DLL substring-matches these against property
+        // names so the fetch actually returns timer fields for the scorer.
         "Cooldown", "Duration", "Timer", "Delay", "Interval", "Elapsed",
         "Remaining", "Lifespan", "Recharge", "TimeDilation", "Time",
         "TickRate", "Cadence",
@@ -578,23 +577,20 @@ public static class PropertyScoringTable
 
     /// <summary>
     /// Scored keywords that are deliberately NOT seeded, and must not be
-    /// "helpfully" added later. See the measurement in the
-    /// <see cref="SeedQueries"/> remarks: each of these is a short acronym or
-    /// fragment whose substring matches are overwhelmingly unrelated words, so
-    /// seeding it would burn a whole 200-row envelope on junk in GObjects walk
-    /// order and surface nothing.
+    /// "helpfully" added later. See the <see cref="SeedQueries"/> remarks: each
+    /// of these is a short acronym or fragment whose substring matches are
+    /// overwhelmingly unrelated words, so seeding it would burn a whole 200-row
+    /// envelope on junk in GObjects walk order and surface nothing.
     ///
-    /// Measured over 578,809 distinct identifiers from three shipped UE games
-    /// (DWORIGINS, ES2, CrimsonDesert), as substring-matches / of which the
-    /// seed is actually the leading token:
-    ///   MP    10,180 /   634 (6%)   — Component, Compression, Template, Sample
-    ///   SP     8,847 / 5,514 (62%)  — but Spawn/Space/Speed/Spline, not "SP"
-    ///   XP     3,373 /   702 (21%)
-    ///   Exp    1,422 / 1,272 (89%)  — but Exposure/Explorer/Export, not "Exp"
-    ///   Lv     1,949 /   484 (25%)  — Solve/Valve/Twelve
-    ///   Def    1,962 / 1,616 (82%)  — but Default(880) dominates
-    ///   Load   1,063 /   421 (40%)  — Upload/Download/Preload
-    ///   Run      442 /   284 (64%)  — Runtime(145) outweighs Run(88)
+    /// The words each one sits inside:
+    ///   MP    — Component, Compression, Template, Sample
+    ///   SP    — Spawn, Space, Speed, Spline
+    ///   XP    — mostly inside longer words
+    ///   Exp   — Exposure, Explorer, Export
+    ///   Lv    — Solve, Valve, Twelve
+    ///   Def   — Default
+    ///   Load  — Upload, Download, Preload
+    ///   Run   — Runtime
     /// A name like <c>CurrentMP</c> therefore stays unreachable by design. The
     /// honest repair for those is a whole-token match on the DLL side (the
     /// client scorer already tokenises), not a broader substring.

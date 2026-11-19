@@ -27,6 +27,113 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3770) — The build uses MSVC whatever else is installed; the scan log names the game's linker and Wine `[MSVC-GUARD-2026-11-19]` `[SCAN-LINKER-LOG-2026-11-19]` `[IDGUARD-CANNOT-RUN-2026-11-19]`
+
+- **What changes:**
+  - **Scan log:** the scan log says which linker built the game (MSVC's link.exe, or lld for a clang build, from the
+    exe's Rich header, linker version and debug entries) and, under Wine or Proton, the Wine version. When every AOB of
+    GObjects, GNames or GWorld misses on an lld build, the warning says so: the patterns come from MSVC builds.
+  - **Building from source:** `build.ps1` builds with MSVC even when Git Bash, MSYS2 or a Visual Studio prompt shaped
+    the environment: a coreutils `link.exe` or MSYS2's `c++.exe` ahead on PATH, a `CXX` naming another compiler, a
+    build folder configured with one, a prompt whose toolset a Visual Studio update removed, or the `Platform` a vcvars
+    prompt sets (which moved the C# outputs and failed the tests). CMake refuses a non-MSVC compiler with a message
+    that says what it found. The identity guard no longer reports a leak when it simply could not run.
+- **Wiki:** Quick Start gained "Running on Linux with Proton" (English, zh-TW, ja-JP), from issue #522's report.
+- **Tests:** `tools/verify/msvc_guard_probe.py` runs eight scenarios (stale-cache in three cache types), each red then green (builds 3749-3769 are its
+  runs); dll_core_test pins the linker verdict on built headers and on its own image (1677 checks, 0 failed); the
+  identity checker's selftest covers git missing, no checkout, an empty listing and a crash. Live: DumperTest Shipping
+  logs `main module linker = msvc (Rich header yes, linker 14.38, 4 debug entries, VC_FEATURE / POGO among them)`.
+  The publish ran with Git's and MSYS2's folders in front of PATH; C# 8510 (1 skipped), headless 71, the five C++
+  self-tests, 40 gates.
+- AOT UI 62,764,544 bytes (sha256 9a15ad661658f8dd...); UE5Dumper.dll 3,858,432 bytes (sha256 76864ffde7406fc2...).
+
+## 2026-11-19 (no build change) — The rest of the test, tools, scripts and XAML comments read and cleaned; line references gated there too `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Gates:** `check_comment_refs` now also reads Python docstrings, Lua block comments, the .axaml and the .ps1 (through
+  `tools/comment_lang.py`), so an in-repo line number, a false "no test target compiles X.cpp" or a dead doc name there
+  fails it too; `check_comment_history` counts a dated event with no preposition (`Found 2026-09-06`, `Added
+  2026-09-09`). The 110 reference findings and 8 history lines this exposed are fixed: a line number became the function,
+  constant or test it pointed at, and the stale `aot-pitfalls.md` citations state their fact instead.
+- **Pass Y:** a loose scan's ~4,800 candidate lines in the 633 test / tools / scripts / XAML files no earlier pass had
+  read were judged in context by ten editor/reviewer pairs; 321 files changed. The reviewers checked each new sentence
+  against the code and corrected 111, mostly rig docstrings describing code that has since moved on (a cache that now has
+  invalidation, a function lookup that now climbs to base classes).
+- **Verified:** comments only (321/321 by `comment_only_diff`, no line splice, Python compiles warning-free); the five
+  C++ self-tests 0 failures; C# 8510 (1 skipped); the headless tests build; 40 gates. Both comment gates are at 0.
+
+## 2026-11-19 (no build change) — The XAML, scripts and tools comments cleaned and gated; build.ps1 heals a removed toolset; quiet log tests `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Comment scanners:** `tools/comment_lang.py` gives XAML, Lua (and the .CT), PowerShell and Python (docstrings
+  included) a comment scanner and a comment-free view of the code, each with self-test controls.
+  `check_comment_history` now also counts `ui/UE5DumpUI`'s .axaml, `scripts/` and `tools/`; `comment_only_diff`
+  compares those languages' code with comments removed (Python through its AST with docstrings blanked).
+- **Pass X:** the 537 lines it counted there, and the bare finding codes beside them, are rewritten in 241 files;
+  each verify rig's docstring keeps what the rig runs, compares and needs. The history baseline is 0 for the whole
+  repo. Comments only (241/241); C# 8510 passed (1 skipped), the headless tests build, the Lua suites pass; 40 gates.
+- **build.ps1:** a build dir whose CMakeCache.txt names a compiler, linker, mt or rc that no longer exists (a Visual
+  Studio update removed that toolset) is dropped before configure, so the configure runs fresh instead of every C++
+  step failing (seen on the second PC; proven on a simulated removed toolset; build 3748 is that run's number).
+- **Tests:** the log-rolling tests no longer echo megabytes of log lines to the test console (`LoggingService`
+  takes `writeToConsole`, default on for the app).
+
+## 2026-11-19 (build 3747) — CE Lua hardening: Invoke numbers read in any locale, the scan module named without `process`, String records read-only by default `[CE-LUA-FLOAT-LOCALE]` `[CE76-PROCESS-GLOBAL]` `[CEXML-STRING-CAPACITY]`
+
+- **What changes:**
+  - **Invoke record (CE):** a number box is read whatever the numeric locale (a comma-decimal locale no longer
+    turns "3.14" into 0.0), and text that is not a number is refused by name -- nothing is sent and the form stays
+    open -- instead of going out as 0.
+  - **AOB scripts and the trainer (CE):** the scan module is the opened process's main module from
+    `enumModules()`, not the `process` global, which CE 7.6 overwrites when a table registers a custom type.
+  - **CE XML String records** are read-only by default: CE writes a typed string whole, past the buffer the game
+    allocated, whatever the record's Length. The value still displays; a double-click opens a locked list that
+    writes nothing. The new toolbar Options switch **Editable string records** (kept across restarts) turns that
+    off. +CE records (through AOBMaker) are not affected.
+- The CE facts each fix rests on were read in the CE source and are in docs/CE-Bugs-Minesweeper.md, whose rows now
+  say which are handled.
+- **Tests:** each fix red, then green; the float reader also runs on CE's own Lua 5.3 under the C and a comma
+  locale. C# 8510 total (1 skipped, 0 failed); 40 gates. Read from source and generated text; not
+  run in a game.
+- AOT UI 62,766,592 bytes (sha256 211842305f400e3c...); UE5Dumper.dll 3,853,824 bytes (sha256 69f5bd7a4a869657...).
+
+## 2026-11-19 (no build change) — The tests' comments cleaned and gated; the touched product files re-swept; CE 7.7 AutoAssembler defects documented `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Test code:** `check_comment_history` also counts the comments of `dll/tests`, `ui/UE5DumpUI.Tests` and
+  `ui/UE5DumpUI.HeadlessTests`. Their 872 counted lines and the finding codes beside them are rewritten in 185
+  files: a test's doc says what it pins and why its assertions have their shape; review ids, dated measurements,
+  build numbers and bug stories are gone. A comment that claimed no test target compiles Genau.cpp
+  (dll_core_test does) is corrected.
+- **Re-sweep:** a loose scan flagged 4,886 candidate lines in the 244 product files earlier passes touched; each
+  was judged in context and 141 files changed (history without keywords, plan wording, claims the code
+  contradicts, e.g. Schlacht's header, LiveWalker's CSX depth range, AppLifecycle's writer count). The baseline
+  is 0 across product and test code.
+- **docs/CE-Bugs-Minesweeper.md:** a new appendix section carries what the AOBMaker project measured in CE 7.7:
+  `reassemble()` refusing, silently changing and dropping prefixes of instructions, the x64 RIP-relative
+  rewrite's borrowed register, RIP text in a far cave, what the syntax check cannot see, disassembler text quirks
+  and CE Lua defects. 44 CE source cites checked and corrected. The AutoAssembler groups do not reach this repo
+  (our scripts are Lua-only); three follow-ups went to todo.md: `[CE-LUA-FLOAT-LOCALE]`, `[CE76-PROCESS-GLOBAL]`,
+  `[CEXML-STRING-CAPACITY]`.
+- Comments and docs only: `comment_only_diff` passes for every file (one verbatim-string false positive checked
+  by hand); the DLL and the C++ suites (1663 / 4262 / 22 / 37 / 287) pass, C# 8497 passed (1 skipped), the
+  headless tests build; 40 gates.
+
+## 2026-11-19 (no build change) — Bare finding codes cut from the comments (pass 4), the untouched files swept, Genau.h's version log stripped `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Pass 4:** bare finding ids and plan-phase labels with no `audit` / `review` word (`(A12)`, `(AE13)`, `(B10)`,
+  `V1c:`, `the Z10 lie`, `tracked as A10`) are cut from the comments of 110 files -- about 1,020 codes, each judged
+  where it stands: real names stay (UE versions, AOB pattern and series names, compiler and trimmer warning codes,
+  game and tool names, a doc entry named with its doc). No gate counts this shape, since one prefix is a finding in
+  one place and a pattern name in another.
+- **Sweep:** every comment of the 173 product files no pass had touched was read for history without keywords,
+  plan-phase wording, claims the code contradicts and unasserted every/only claims; 93 files changed. Corrections
+  found on the way include RelatedObject's depth range (1..3), the invoke entry points InvokeFunctionResult names,
+  McpGrantTools' claims about the grant tools, a dangling cref in StructFieldValue and HelperLuaResource's callers.
+- **Genau.h's `kVersionDetectLogicRev` log**, as the maintainer decided: the bump rule stays and each rev keeps one
+  present-tense line saying what its logic does (checked against Genau.cpp); measurements, build provenance and
+  before/after stories are gone.
+- **Log text:** a RefineGroup warning no longer quotes an audit id; it ships with the next build.
+- Editor then reviewer for every batch; `comment_only_diff` passes for every file but the log string's; the DLL
+  builds; C# 8497 passed (1 skipped); 40 gates.
+
 ## 2026-11-19 (no build change) — Audit and review ids cut from the code comments (pass 3); the Snapshot group-match flake `[COMMENT-NO-HISTORY-2026-11-18]` `[SNAPSHOT-GROUPMATCH-FLAKE]`
 
 - **Comments:** `check_comment_history` counts audit and review finding ids (`audit #5 A12`, `Audit fix #10`,

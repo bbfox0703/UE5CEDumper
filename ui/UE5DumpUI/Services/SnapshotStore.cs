@@ -145,9 +145,9 @@ public sealed class SnapshotStore : ISnapshotStore
             await conn.OpenAsync(ct);
             // busy_timeout goes FIRST, before journal_mode. Switching a DB into WAL needs a
             // brief exclusive lock, and with the default 0 ms timeout a concurrent opener
-            // makes it fail on the spot with SQLITE_BUSY — the pragma batch was setting the
-            // timeout AFTER the pragma that needed it. Ordering it first turns that instant
-            // failure into a bounded wait.
+            // makes it fail on the spot with SQLITE_BUSY whenever the timeout is set AFTER the
+            // pragma that needs it. Ordering it first turns that instant failure into a
+            // bounded wait.
             //
             // busy_timeout: WAL allows concurrent readers, but a reader that opens while a
             // writer/checkpoint holds the read-mark lock would otherwise busy-spin the -shm
@@ -844,11 +844,11 @@ public sealed class SnapshotStore : ISnapshotStore
     public async Task<int> EnforceQuotaAsync(long quotaBytes, CancellationToken ct = default)
     {
         // ALWAYS fold the capture-grown WAL back into the .db first, off the UI thread (the
-        // caller wraps this in Task.Run). The previous "estimate db+wal+shm and skip the
-        // checkpoint when under quota" optimisation left a large un-checkpointed WAL behind
-        // after every under-quota capture; the next reader (e.g. the Class Pivot field load)
-        // then opened against that bloated WAL, contended for the WAL read-mark lock, and
-        // stalled — the "Loading fields…" Not-Responding freeze (low CPU, -shm lock churn).
+        // caller wraps this in Task.Run). Skipping the checkpoint whenever db+wal+shm is under
+        // quota would leave a large un-checkpointed WAL behind after every under-quota capture;
+        // the next reader (e.g. the Class Pivot field load) would then open against that
+        // bloated WAL, contend for the WAL read-mark lock, and stall — the "Loading fields…"
+        // Not-Responding freeze (low CPU, -shm lock churn).
         // Folding here is cheap (passive autocheckpoints already moved most frames into the
         // db during capture; this mainly truncates the -wal file) and means subsequent
         // readers always meet a small WAL and never contend.
@@ -984,7 +984,7 @@ public sealed class SnapshotStore : ISnapshotStore
 
         string classContains = filter.ClassContains ?? "";
         string propContains  = filter.PropContains ?? "";
-        // N1: per-game class denylist. Filter both A-load and B-stream so the
+        // Per-game class denylist. Filter both A-load and B-stream so the
         // Added/Removed churn counts also reflect only non-denylisted classes.
         var deny = filter.ExcludedClasses is { Count: > 0 } ? filter.ExcludedClasses : null;
 
@@ -1036,7 +1036,7 @@ public sealed class SnapshotStore : ISnapshotStore
         // Snapshot B: stream rows, hash-look-up A. matched = common keys (changed +
         // unchanged); bTotal = all B rows — together they give the Added/Removed churn.
         int matched = 0, bTotal = 0;
-        // N1: Top-N noise picker — accumulate per-class hit count + sample props
+        // Top-N noise picker — accumulate per-class hit count + sample props
         // over the changed-row set (counts only what the user actually sees).
         var noise = new NoiseAccumulator();
         await using (var cmd = conn.CreateCommand())
@@ -1147,8 +1147,8 @@ public sealed class SnapshotStore : ISnapshotStore
         }
         if (query.SnapshotIds.Count > 2)
         {
-            // v1 compares exactly two snapshots (first-vs-last); 3+-snapshot predicate
-            // chains are a later extension (docs/snapshot-group-match-spec.md §8).
+            // Compares exactly two snapshots (first-vs-last); 3+-snapshot predicate
+            // chains are not implemented (docs/snapshot-group-match-spec.md §8).
             result.Error = "Group comparison supports 1 snapshot (absolute) or 2 (compare).";
             return result;
         }
@@ -1257,8 +1257,8 @@ public sealed class SnapshotStore : ISnapshotStore
                         curCls, curIdx, curAddr, curName, leaves, slots, perSlot,
                         fName, fOff, fType, fVal, query.Slots));
             }
-            // Sticky across objects, and recorded even when the object did NOT match
-            // (AF13): a slot truncated at the cap is exactly when a miss may be an
+            // Sticky across objects, and recorded even when the object did NOT match:
+            // a slot truncated at the cap is exactly when a miss may be an
             // artifact rather than an answer.
             if (capHit) result.PerSlotCapHit = true;
             Reset();
@@ -1308,7 +1308,7 @@ public sealed class SnapshotStore : ISnapshotStore
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
-        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // name the cap in force
         return result;
     }
 
@@ -1503,12 +1503,12 @@ public sealed class SnapshotStore : ISnapshotStore
                         acc.ClassName, acc.Index, acc.ObjAddr, acc.NormPath,
                         acc.Leaves, slots, perSlot, acc.FName, acc.FOff, acc.FType, acc.FVal, inputs));
             }
-            if (capHit) result.PerSlotCapHit = true;     // AF13
+            if (capHit) result.PerSlotCapHit = true;
         }
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
-        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // name the cap in force
     }
 
     // The object-identity portion of an SpcKey (no prop/offset/array) — the grouping
@@ -1549,7 +1549,7 @@ public sealed class SnapshotStore : ISnapshotStore
         string propContains  = query.PropContains?.Trim() ?? "";
         var mode = query.JoinMode;
         var abs  = query.AbsolutePredicates is { Count: > 0 } ? query.AbsolutePredicates : null;
-        // N1: per-game class denylist. Null/empty = no filtering. The set is
+        // Per-game class denylist. Null/empty = no filtering. The set is
         // captured once here so a concurrent UI-side mutation can't change the
         // predicate mid-query.
         var deny = query.ExcludedClasses is { Count: > 0 } ? query.ExcludedClasses : null;
@@ -1564,7 +1564,7 @@ public sealed class SnapshotStore : ISnapshotStore
 
         // Evaluate the directional chain + absolute predicates; build result rows.
         // Accumulate per-class hit count + per-(class, prop) sub-count to drive the
-        // post-query Top-N noise picker (N1).
+        // post-query Top-N noise picker.
         var noise = new NoiseAccumulator();
         int evalCount = 0;
         foreach (var c in cands)
@@ -1938,8 +1938,8 @@ public sealed class SnapshotStore : ISnapshotStore
         // "Suggest Targets" front-door ever uses — reduces the N-snapshot compare
         // SERVER-SIDE and marshals only the CHANGED instances. Process memory is then
         // bounded by the changed-group count (thousands), NOT the snapshot's field
-        // count (millions) — which is what ballooned the old in-memory Dictionary<…,Cand>
-        // to 11 GB and hung the UI on big games. Loose / InSession fall back to the
+        // count (millions) — an in-memory Dictionary<…,Cand> over the latter hangs the
+        // UI on big games. Loose / InSession fall back to the
         // in-memory intersection: the UI never selects them, but keeping the path
         // preserves the public contract for any other caller. See
         // docs/experimental-snapshot-spc-pivot.md §"Phase C — C3".
@@ -2161,8 +2161,8 @@ public sealed class SnapshotStore : ISnapshotStore
 
     // In-memory fallback for non-Strict discovery (Loose / InSession). The UI never
     // selects these; kept so the public contract holds for any other caller. NOTE:
-    // this is the OLD path that loads a snapshot's full field set into RAM — it carries
-    // the same big-game memory exposure the Strict SQL path was built to avoid.
+    // this path loads a snapshot's full field set into RAM — it carries the big-game
+    // memory exposure the Strict SQL path avoids.
     private async Task<DiscoveryResult> DiscoverChangesInMemoryAsync(DiscoveryQuery query, CancellationToken ct)
     {
         int n = query.SnapshotIds.Count;
@@ -2281,8 +2281,8 @@ public sealed class SnapshotStore : ISnapshotStore
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
         // [SNAPDIFF-SHADOWED-PROP] Grouped by offset too: a class can carry two properties of one name (PrerollTime at
-        // +196 and +296 on DumperTest), and grouping by name pooled them into one entry with a doubled instance count
-        // and a distinct count over both copies, which the key scorer then ranked.
+        // +196 and +296 on DumperTest), and grouping by name alone would pool them into one entry with a doubled
+        // instance count and a distinct count over both copies, which the key scorer would then rank.
         cmd.CommandText = """
             SELECT prop_name, declared_type,
                    COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances, prop_offset
@@ -2302,7 +2302,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 Offset        = r.IsDBNull(4) ? -1 : r.GetInt32(4),
             });
         // A name listed twice is shadowed: each copy's label then carries its offset. A name listed once keeps its bare
-        // label, so every class without a shadowed name reads exactly as before.
+        // label.
         foreach (var dup in list.GroupBy(f => f.Name, StringComparer.Ordinal).Where(g => g.Count() > 1))
             foreach (var f in dup) f.Shadowed = true;
         return list;
@@ -2379,7 +2379,7 @@ public sealed class SnapshotStore : ISnapshotStore
         return result;
     }
 
-    // --- Phase C6: array-element pivot ---------------------------------------
+    // --- Array-element pivot -------------------------------------------------
 
     public async Task<IReadOnlyList<PivotClassInfo>> ListPivotArrayClassesAsync(
         long snapshotId, CancellationToken ct = default)
@@ -2727,7 +2727,7 @@ public sealed class SnapshotStore : ISnapshotStore
             return new SnapshotWipeResult(deleted, skipped);
         }, ct);
 
-    // --- N1: Top-N noise contributor accumulator (used by SPC + Diff) ---
+    // --- Top-N noise contributor accumulator (used by SPC + Diff) ---
     //
     // Walks each emitted result row, keeps per-class hit counts + per-(class, prop)
     // sub-counts, then writes a Top-50 ranking with up to 3 sample props per class.
@@ -2790,7 +2790,7 @@ public sealed class SnapshotStore : ISnapshotStore
         }
     }
 
-    // --- N1: per-game, PER-TAB class denylists (noise picker) ---
+    // --- Per-game, PER-TAB class denylists (noise picker) ---
     //
     // Stored next to the per-game DB as snapshots.<pe_hash>.denylist.json so the
     // lists auto-follow the game and survive quota-driven snapshot eviction. The

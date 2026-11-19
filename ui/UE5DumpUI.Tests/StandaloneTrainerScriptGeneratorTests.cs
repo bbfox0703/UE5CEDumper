@@ -154,9 +154,9 @@ public class StandaloneTrainerScriptGeneratorTests
     }
 
     // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] A momentary row unticks itself from a 50 ms timer. Armed above the bail-outs, the
-    // timer fired INSIDE their showMessage -- a modal pumps timers -- while CE had not yet ticked the row, so the untick
-    // was the no-op [FREEZEUNTICK-2026-08-20] describes and a failed TP Save / Recall stayed ticked. The untick is armed
-    // after every message, and no path returns before it. Negative control: arm it first again and this fails.
+    // timer would fire INSIDE their showMessage -- a modal pumps timers -- while CE has not yet ticked the row, so the
+    // untick would be the no-op [FREEZEUNTICK-2026-08-20] describes and a failed TP Save / Recall would stay ticked. The
+    // untick is armed after every message, and no path returns before it. Negative control: arm it first and this fails.
     [Theory]
     [InlineData("TP Save")]
     [InlineData("TP Recall")]
@@ -224,8 +224,8 @@ public class StandaloneTrainerScriptGeneratorTests
     [Fact]
     public void An_apostrophe_in_the_exe_name_is_escaped()
     {
-        // [PATH-TRAINER-APOSTROPHE] LuaModule was the one name-derived Lua literal that skipped EscapeLuaString:
-        // module = 'Tony's-Win64-Shipping.exe' is a syntax error on CE's VM, so Setup could never enable.
+        // [PATH-TRAINER-APOSTROPHE] LuaModule is a name-derived Lua literal and goes through EscapeLuaString:
+        // unescaped, module = 'Tony's-Win64-Shipping.exe' is a syntax error on CE's VM and Setup cannot enable.
         var o = Usable();
         o.Module = "Tony's-Win64-Shipping.exe";
         var setup = StandaloneTrainerScriptGenerator.Generate(o)[0].Script;
@@ -239,7 +239,7 @@ public class StandaloneTrainerScriptGeneratorTests
     [InlineData("功夫-Win64-Shipping.exe")]
     public void Every_entry_compiles_on_CEs_VM_and_the_module_literal_reads_back(string exe)
     {
-        // (second review, T-TRAINER-APOS-NOCOMPILE) The apostrophe fix above is pinned by its TEXT only. This compiles
+        // The apostrophe test above pins the escape by its TEXT only. This compiles
         // every {$lua} block of every entry on CE's own VM, then evaluates the baked literal. Skips where the host is
         // not built (CeLua53Host).
         var o = Usable();

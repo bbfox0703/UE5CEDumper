@@ -59,7 +59,7 @@ public class SearchKeywordHistoryTests
     /// <summary>
     /// Re-using a remembered keyword must NOT reorder the list.
     ///
-    /// This deliberately reverses the old "touch moves to front" behaviour. These
+    /// This is deliberately NOT "touch moves to front". These
     /// histories are bound as AutoCompleteBox ItemsSources, and ANY CollectionChanged
     /// on one makes the control rebuild its popup and revert the user's pick back to
     /// what they had typed ([LWFILTERREVERT-2026-08-21]). A dropdown only ever offers
@@ -85,20 +85,20 @@ public class SearchKeywordHistoryTests
         bool changed = SearchKeywordHistory.Remember(h, "magic");
         Assert.False(changed);
         Assert.Single(h);
-        // FIRST-seen casing is kept. The class doc has always promised "the original
-        // casing is preserved"; the old move-to-front path quietly broke that promise.
+        // FIRST-seen casing is kept, as the class doc promises ("the original casing is
+        // preserved"); a move-to-front that re-inserts the new spelling would break that.
         Assert.Equal("Magic", h[0]);
     }
 
     /// <summary>
-    /// THE ASSERTION THAT ACTUALLY CATCHES THE BUG - count EVENTS, not contents.
+    /// THE ASSERTION THAT CATCHES THE REVERT - count EVENTS, not contents.
     ///
-    /// The reported failure had a history whose contents were byte-identical before and
-    /// after, so every content-comparing assertion in this file passed while the app was
-    /// broken. What reverts the AutoCompleteBox is the CollectionChanged notification
-    /// itself: Avalonia answers it with an unconditional RefreshView(), which clears the
-    /// popup ListBox and drives the box's text back to what the user typed. Contents are
-    /// not the signal; the event is.
+    /// Moving a duplicate that is already at the front to the front leaves the history's
+    /// contents byte-identical before and after, so every content-comparing assertion in this
+    /// file would pass while the app is broken. What reverts the AutoCompleteBox is the
+    /// CollectionChanged notification itself: Avalonia answers it with an unconditional
+    /// RefreshView(), which clears the popup ListBox and drives the box's text back to what
+    /// the user typed. Contents are not the signal; the event is.
     /// </summary>
     [Fact]
     public void Remember_Duplicate_RaisesNoCollectionChanged()
@@ -110,7 +110,7 @@ public class SearchKeywordHistoryTests
         bool changed = SearchKeywordHistory.Remember(h, "RemoteRole");
 
         Assert.False(changed);
-        Assert.Equal(0, events);   // was 2 (RemoveAt + Insert) before the fix
+        Assert.Equal(0, events);   // a reorder would raise 2 (RemoveAt + Insert)
 
         // And the same for a duplicate that is NOT already at the front - the mouse can
         // pick any row in the dropdown, so position must not matter.

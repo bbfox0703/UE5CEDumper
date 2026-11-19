@@ -46,12 +46,13 @@ public sealed class DenkenWriteSitesSourceTests
     {
         string dialog = Src("ui/UE5DumpUI/Views/FunctionPropsDialog.cs");
         Assert.Contains("x?.WriteSitesText", dialog);
-        // Through the shared helper, which names a busy or absent AOBMaker pipe (review WS-UI-1, [W1-PIPEBUSY-STATUS]).
+        // Through the shared helper, which names a busy or absent AOBMaker pipe ([W1-PIPEBUSY-STATUS]).
         Assert.Matches(@"AobMakerActions\.MoveViewAsync\(bridge, x\.WriteSites\[0\], x\.Name, null, disassembler: true\)", dialog);
         Assert.DoesNotContain("NavigateDisassemblerAsync(", dialog);
-        // Copy copies every site (review WS-TEST-1: the tooltip's Join matched the old pin as well).
+        // Copy copies every site: pinned on the assignment, since the tooltip's Join of the same sites would match a
+        // bare Join.
         Assert.Contains("string text = string.Join(Environment.NewLine, x.WriteSites);", dialog);
-        // The two buttons follow the selection, after every scan too (WS-TEST-1).
+        // The two buttons follow the selection, after every scan too.
         Assert.Contains("_btnCopySites.IsEnabled = hasSites;", dialog);
         Assert.Contains("bool up = SharedAobMaker?.IsAvailable == true;", dialog);
         Assert.Contains("_btnSiteInCe.IsEnabled = hasSites && up && !_sitePushing;", dialog);

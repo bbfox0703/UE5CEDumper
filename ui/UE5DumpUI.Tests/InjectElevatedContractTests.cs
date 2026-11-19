@@ -7,10 +7,10 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [AV-INJECT-2026-11-11] tools/verify/inject.py hands every injection to <c>UE5DumpUI.exe --inject-elevated</c>: the
-/// AV flagged python.exe starting the remote thread itself, and an AV exception follows the image of the process that
-/// acts. Nothing pinned that mode before, so a change to its switch, argument order, result line or exit codes would
-/// have broken every rig's injection with every test green. It is pinned here from both ends, and in behaviour where
-/// that needs no process: a bad pid and a missing DLL are refused before any process is opened.
+/// AV flags python.exe starting the remote thread itself, and an AV exception follows the image of the process that
+/// acts. A change to that mode's switch, argument order, result line or exit codes would break every rig's injection
+/// while every other test stays green, so it is pinned here from both ends, and in behaviour where that needs no
+/// process: a bad pid and a missing DLL are refused before any process is opened.
 /// </summary>
 public sealed class InjectElevatedContractTests
 {

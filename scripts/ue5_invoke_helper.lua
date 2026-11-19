@@ -21,7 +21,7 @@
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
     state, warn = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued,-6=not sent,
-                                           -- -17=ON refused: no live CheatManager); warn: builds 3676-3681 only
+                                           -- -17=ON refused: no live CheatManager); warn: see its @return
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
     ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
@@ -41,7 +41,7 @@
     if syntaxcheck then return end
     -- setDebugCamera RAISES on a mailbox failure and returns -1 on a DLL-side error;
     -- either way nothing was applied, so untick the record (a stateful toggle must not
-    -- leave a ticked box claiming a cheat that is not on) and report. (audit #5 AA31)
+    -- leave a ticked box claiming a cheat that is not on) and report.
     local ok, state = pcall(setDebugCamera, 1)
     if ok and state == -5 then
       -- QUEUED: the game thread did not answer in time, and the toggle WILL still run. Leave the record ticked and
@@ -100,13 +100,13 @@
 -- Version (callers can sanity-check after load)
 -- ============================================================
 
--- Re-load semantics [R7-X5] -- the freeze helper's AA30 shape, which this file never got. CE keeps ONE Lua
--- state per session and the generated scripts re-load this file on every [ENABLE]. The bare `if not X then`
--- guards preserved state across a concurrent load, but also kept the FIRST copy a session loaded for the rest
--- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
+-- Re-load semantics [R7-X5] -- the same shape as the freeze helper's. CE keeps ONE Lua
+-- state per session and the generated scripts re-load this file on every [ENABLE]. A bare `if not X then`
+-- guard preserves state across a concurrent load, but also keeps the FIRST copy a session loaded for the rest
+-- of it, so an update never reaches a table opened before it. The public functions below are
 -- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
 -- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
-local THIS_HELPER_VERSION = '1.6'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'; 1.6: invokeUFunction's third return, the template warning [INVOKE-NONSTATIC-ON-CDO]
+local THIS_HELPER_VERSION = '1.6'   -- 1.4: this gate [R7-X5], and the latch release on a reset mailbox [R7-S3]; 1.5: 'asset'; 1.6: invokeUFunction's third return, the template warning [INVOKE-NONSTATIC-ON-CDO]
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -306,10 +306,10 @@ local function writeFStringInline(pd, off, s, wide)
     buf = allocateMemory(n + 1)
   end
   -- CE returns nil when the target-process allocation fails. Unchecked, the three
-  -- writes below still ran: Data = 0 with ArrayNum = ArrayMax = n+1, i.e. an FString
+  -- writes below would still run: Data = 0 with ArrayNum = ArrayMax = n+1, i.e. an FString
   -- that PROMISES n+1 characters at address 0, handed straight to a live UFunction.
   -- The length must never be published for a buffer that does not exist, so this
-  -- raises before any of them. (audit #5 AA14 / AA15)
+  -- raises before any of them.
   if buf == nil or buf == 0 then
     error(string.format(
       "[ue5_invoke] could not allocate %d bytes in the target process for the " ..
@@ -333,8 +333,7 @@ local function writeParams(base, regionSize, params)
 
   -- Every write MUST stay inside the caller's region. A param whose offset+width runs
   -- past regionSize would scribble past the params buffer and, at the TOP level, past
-  -- g_invokeMailbox itself -- writeParams took regionSize and never enforced it. Refuse
-  -- rather than corrupt. (audit #5 AA33)
+  -- g_invokeMailbox itself. Refuse rather than corrupt.
   local function bound(off, width, name)
     if off < 0 or off + width > regionSize then
       error(string.format(
@@ -391,8 +390,8 @@ local function writeParams(base, regionSize, params)
       writeQword(base + off, v)
     elseif t == 'lazy' then
       -- [VND584-01] Found by a GUID nothing here can make: only 0 (null) can be sent, and writeBakedParams has already
-      -- zeroed the slot. As a pointer the value went out as an address the engine read as a weak pair, while FIRE and
-      -- the CE form refused the same input.
+      -- zeroed the slot. As a pointer the value would go out as an address the engine reads as a weak pair, while FIRE
+      -- and the CE form refuse the same input.
       if v ~= 0 and v ~= nil and v ~= false then
         error(string.format("[ue5_invoke] param '%s' is a lazy pointer -- it is found by a GUID this cannot make, " ..
                             "so only value=0 (null) can be sent", tostring(p.name or '?')))
@@ -409,19 +408,19 @@ local function writeParams(base, regionSize, params)
       -- Wide UE FString INPUT param (value = Lua string). Pass p.value, NOT v:
       -- `v = p.value or 0` turns a MISSING string into 0 -> the literal "0" written
       -- into the game. p.value (nil -> "" inside writeFStringInline) is an empty
-      -- FString -- an honest default, not a fabricated value. (audit #5 AA34)
-      bound(off, 16, p.name)                        -- {Data(8), Num(4), Max(4)} = 16 (AA33)
+      -- FString -- an honest default, not a fabricated value.
+      bound(off, 16, p.name)                        -- {Data(8), Num(4), Max(4)} = 16
       writeFStringInline(base, off, p.value, true)
     elseif t == 'fstringn' then
-      -- Narrow FUtf8String / FAnsiString INPUT param. p.value, not v -- see AA34 above.
-      bound(off, 16, p.name)                        -- (AA33)
+      -- Narrow FUtf8String / FAnsiString INPUT param. p.value, not v -- see 'fstring' above.
+      bound(off, 16, p.name)                        -- {Data(8), Num(4), Max(4)} = 16
       writeFStringInline(base, off, p.value, false)
     elseif t == 'tarray' or t == 'tmap' or t == 'tset' or t == 'delegate' then
-      bound(off, size or 0, p.name)   -- writes nothing, but keep the slot in-region (AA33)
+      bound(off, size or 0, p.name)   -- writes nothing, but keep the slot in-region
       -- BakedScriptGenerator.MapToHelperType CAN emit these (a TArray/TMap/TSet or
-      -- a delegate INPUT param), and writeParams accepted none of them -- so the
-      -- error at the bottom of this chain aborted the WHOLE invoke, and such a
-      -- UFunction could not be called at all from an exported script. (audit #5 AA16)
+      -- a delegate INPUT param). Without this branch the error at the bottom of this
+      -- chain would abort the WHOLE invoke, and such a UFunction could not be called
+      -- at all from an exported script.
       --
       -- Nothing is written, deliberately: writeBakedParams zeroes the entire params
       -- buffer first, and all-zero IS the default-constructed empty value for each of
@@ -466,7 +465,7 @@ local function writeParams(base, regionSize, params)
         end
       end
       if structSize < 0 then structSize = 0 end
-      bound(off, structSize, p.name)   -- the struct region must fit the parent (AA33)
+      bound(off, structSize, p.name)   -- the struct region must fit the parent
       -- Zero the struct region in one write. writeBakedParams already wiped
       -- the top-level buffer, but a nested recursion runs on a sub-region
       -- the caller did not pre-zero, so keep this local wipe.
@@ -495,14 +494,12 @@ end
 -- The whole 1024-byte region, not the caller's parmsSize. The DLL passes
 -- sizeof(MailboxData::paramsData) -- a flat 1024 -- to UE5_CallProcessEventEx
 -- (dll/src/Mimic.cpp), which copies all of it into the request it owns and hands
--- that to ProcessEvent. Zeroing only parmsSize left every byte past it holding the
--- PREVIOUS command's data, and whenever parmsSize understates the UFunction's real
+-- that to ProcessEvent. Zeroing only parmsSize would leave every byte past it holding
+-- the PREVIOUS command's data, and whenever parmsSize understates the UFunction's real
 -- ParmsSize -- stale metadata, or a generator that counted only the params it knew
--- about -- those bytes are read as live parameters. (audit #5 AA17)
+-- about -- those bytes are read as live parameters.
 --
--- One writeBytes rather than a per-byte loop: the old form cost one CE round trip
--- PER BYTE, so covering the full region this way is also faster than covering part
--- of it the old way.
+-- One writeBytes rather than a per-byte loop: a loop costs one CE round trip PER BYTE.
 --
 -- writeParams still gets `parmsSize` as its region size: that is the CALLER's
 -- declared extent and drives the fstruct size-inference fallback, which must not
@@ -521,12 +518,11 @@ end
 -- deliberately: the two helpers load independently, so the shape is duplicated rather
 -- than shared, and they must not drift.
 --
--- The limit is REAL milliseconds. It used to count sleep(1) calls and still print the
--- result as "%dms": sleep(1) measures 15.47 ms in CE -- the ~64 Hz Windows scheduler
--- tick, identical to three decimals on two very different CPUs -- so a 10000 "ms" limit
--- was really ~155 seconds, reported as 10000ms. getTickCount() was probed in CE's Lua
--- Engine on 2026-08-06 (present, returns ms); the iteration count survives only as a
--- fallback for a build without it, at ~15 ms per iteration.
+-- The limit is REAL milliseconds from getTickCount() (present in CE's Lua Engine,
+-- returns ms), never a count of sleep(1) calls: sleep(1) takes ~15 ms in CE -- the
+-- ~64 Hz Windows scheduler tick -- so a limit of 10000 iterations is ~155 seconds, not
+-- 10000ms. The iteration count is only a fallback for a CE build without getTickCount(),
+-- at ~15 ms per iteration.
 --
 -- STATUS_IDLE at the deadline means the DLL never picked the command up at all, which is
 -- a different fault from a wedged one and is usually a stale g_invokeMailbox address.
@@ -555,11 +551,10 @@ local function waitDone(mb, timeoutMs)
     -- `nil ~= STATUS_DONE` is true, so without this the loop burns the whole
     -- deadline and then matches none of the branches below (status=nil).
     --
-    -- Exactly ONE deadline governs -- see ue5_freeze_helper.lua's waitDone (audit #5
-    -- AA29). The old `st==nil or (tick and tickExpired) or itersExpired` kept the
-    -- iteration fallback LIVE when getTickCount() was present, racing the real deadline
-    -- and printing a "%dms" that was not the arm that fired. The two helpers duplicate
-    -- this shape deliberately and must not drift, so the fix is applied to both.
+    -- Exactly ONE deadline governs -- see ue5_freeze_helper.lua's waitDone. An iteration
+    -- fallback kept LIVE beside getTickCount() would race the real deadline and print a
+    -- "%dms" that was not the arm that fired. The two helpers duplicate this shape
+    -- deliberately and must not drift: a change here goes to both.
     local over
     if st == nil then
       over = true
@@ -584,9 +579,9 @@ local function waitDone(mb, timeoutMs)
       -- The DLL never clears errorMsg: its pickup sets status = PROCESSING and
       -- leaves the field alone (dll/src/Mimic.cpp), and only a FAILURE writes it.
       -- So this read returns the PREVIOUS command's message unless the caller wiped
-      -- it -- which invokeUFunction now does before every send. Keep the empty-string
-      -- arm anyway: `x or 'timeout'` does NOT fire for '' (an empty string is truthy
-      -- in Lua), so the old fallback was unreachable. (audit #5 AA18)
+      -- it -- which invokeUFunction does before every send. The empty-string arm is
+      -- explicit because `x or 'timeout'` does NOT fire for '' (an empty string is
+      -- truthy in Lua).
       local err = readString(mb + OFF_ERR, 256)
       if err == nil or err == '' then err = 'no message from the DLL' end
       return false, string.format(
@@ -661,9 +656,9 @@ if not invokeUFunction or _invokeOutdated then
     -- A previous call that TIMED OUT left the flag set on purpose: the DLL had taken
     -- the command and not finished, so the mailbox was still its. Ask the DLL whether
     -- it has finished since, rather than latching this Lua-local boolean for the rest
-    -- of the session -- it publishes status and cmd itself. (audit #5 AA19)
+    -- of the session -- it publishes status and cmd itself.
     -- [R7-S3] Released on cmd IDLE whatever the status: the DLL clears cmd only after finishing, and a re-inject /
-    -- re-enable memsets the mailbox (status 0, cmd 0), which a DONE-only test never released. An unreadable
+    -- re-enable memsets the mailbox (status 0, cmd 0), which a DONE-only test would never release. An unreadable
     -- mailbox (gone) is released too.
     if _ue5_invoke_busy and _ue5_invoke_stale_mb then
       local cmd = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
@@ -696,12 +691,11 @@ if not invokeUFunction or _invokeOutdated then
       -- any well-behaved callee that kept the string deep-copied it (FString assignment
       -- allocates its own storage). Freeing HERE -- not on completion -- gives maximum
       -- settle time and bounds the leak to a single invoke's worth: a one-shot cheat
-      -- still leaks the same few small buffers (there is no next invoke), which was
-      -- always the safe default, while a repeated invoke no longer accumulates
-      -- unbounded. The opt-in freeInvokeStringBuffers() remains for the read-only fast
+      -- still leaks the same few small buffers (there is no next invoke), which is
+      -- the safe default, while a repeated invoke does not accumulate unbounded.
+      -- The opt-in freeInvokeStringBuffers() remains for the read-only fast
       -- path. NOT freed on the timeout/refusal path -- see the busy guard above: while
       -- the DLL still owns the mailbox its in-flight buffers must not be reclaimed.
-      -- (audit #5 AA32)
       if _ue5_invoke_str_bufs then
         for _, a in ipairs(_ue5_invoke_str_bufs) do
           if a and a ~= 0 then deAlloc(a) end
@@ -726,7 +720,7 @@ if not invokeUFunction or _invokeOutdated then
       -- pickup sets status = PROCESSING and leaves errorMsg untouched, so a timeout
       -- would report whatever the LAST failure left there as THIS command's reason --
       -- the guessed diagnosis CLAUDE.md forbids. One NUL is enough; the DLL writes
-      -- from byte 0 whenever it has something real to say. (audit #5 AA18)
+      -- from byte 0 whenever it has something real to say.
       writeByte(mb + OFF_ERR, 0)
 
       -- Clear status, then write CMD last to trigger the DLL.
@@ -736,10 +730,10 @@ if not invokeUFunction or _invokeOutdated then
       -- Poll until the DLL's mailbox handler reports done.
       local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
       if not ok_w then
-        -- Remember that the mailbox may still be the DLL's. The flag was cleared
-        -- unconditionally below, INCLUDING here -- so the next invoke overwrote
-        -- className / funcName / params underneath an in-flight ProcessEvent and
-        -- was reported OK though it never ran. (audit #5 AA19)
+        -- Remember that the mailbox may still be the DLL's. Without this latch the busy
+        -- flag below would be cleared here too, and the next invoke would overwrite
+        -- className / funcName / params underneath an in-flight ProcessEvent and be
+        -- reported OK though it never ran.
         _ue5_invoke_stale_mb = mb
         return false, err_w
       end
@@ -804,7 +798,7 @@ if not readUFunctionReturn or _invokeOutdated then
   ---                          the 4-byte default. [RETINT64-2026-08-24]
   ---                          The signed spellings are the ones a UFunction
   ---                          return value normally wants: CE reads unsigned
-  ---                          unless told otherwise, so -1 used to come back
+  ---                          unless told otherwise, so -1 would come back
   ---                          as 4294967295. The unsigned spellings are kept
   ---                          for callers that want the raw magnitude.
   --- @return number|nil       The decoded value, or nil if the
@@ -822,13 +816,11 @@ if not readUFunctionReturn or _invokeOutdated then
     elseif valueType == 'bool' or valueType == 'byte' then
       return readByte(addr)
     elseif valueType == 'uint64' or valueType == 'qword' or valueType == 'int64' then
-      -- 'int64' MUST be here and not in the int32 default below. It was missing, so an
-      -- Int64Property return -- and an 8-byte EnumProperty -- fell through to the signed
-      -- FOUR-byte read and came back truncated: 0x0000000123456789 read as 591751049.
-      -- That is the same defect build 637 fixed for pointers; its one-line fix
-      -- (BakedScriptGenerator.cs `AppendInvokeAndResultHandler`) rewrote only "pointer" -> 'qword' and left "int64"
-      -- to reach here verbatim. UInt64Property was unaffected because it maps to
-      -- "pointer". [RETINT64-2026-08-24]
+      -- 'int64' MUST be here and not in the int32 default below: there an Int64Property
+      -- return -- and an 8-byte EnumProperty -- would fall through to the signed FOUR-byte
+      -- read and come back truncated (0x0000000123456789 read as 591751049). The generator
+      -- (BakedScriptGenerator.cs `AppendInvokeAndResultHandler`) rewrites only "pointer" -> 'qword' and sends "int64"
+      -- here verbatim; UInt64Property maps to "pointer". [RETINT64-2026-08-24]
       --
       -- No sign fixing is needed, and that is a property of the WIDTH, not an oversight:
       -- Lua integers are 64-bit two's complement, so the eight bytes CE hands back ARE
@@ -847,10 +839,10 @@ if not readUFunctionReturn or _invokeOutdated then
       -- Default: int32, SIGNED.
       --
       -- CE's readInteger/readSmallInteger interpret the bytes as UNSIGNED unless the
-      -- second argument is true, so a UFunction returning -1 read back as 4294967295
-      -- (or 65535 for an int16) -- while this same file already passes the flag for
-      -- the mailbox result code two functions up. The unsigned spellings above keep
-      -- working for callers that genuinely want the raw magnitude. (audit #5 AA20)
+      -- second argument is true, so without it a UFunction returning -1 reads back as
+      -- 4294967295 (or 65535 for an int16) -- the same reason the mailbox result code
+      -- is read signed. The unsigned spellings above serve callers that genuinely want
+      -- the raw magnitude.
       return readInteger(addr, true)
     end
   end
@@ -886,15 +878,14 @@ end
 
 
 -- ============================================================
--- One mailbox round trip, with the AA19 guard -- [A1-VERDICT-STALEMB]
+-- One mailbox round trip, with the stale-mailbox guard -- [A1-VERDICT-STALEMB]
 -- ============================================================
--- Every wrapper that owns the mailbox for one command needs the SAME three things, and the two small
--- ones (Debug Camera, offsets verdict) had none of them: an entry re-test, a latch when the wait times
--- out, and a release that only fires when the mailbox is ours again. Without the latch the next
--- invokeUFunction sails past its own guard and writes className / funcName / params on top of a command
--- the DLL is still running -- exactly the overwrite invokeUFunction latches against (audit #5 AA19).
--- Found by review 6 on getOffsetsVerdict, which is the likeliest to time out: it exists to be asked
--- while the game thread is wedged.
+-- Every wrapper that owns the mailbox for one command needs the SAME three things: an entry re-test,
+-- a latch when the wait times out, and a release that only fires when the mailbox is ours again.
+-- Without the latch the next invokeUFunction sails past its own guard and writes className / funcName /
+-- params on top of a command the DLL is still running -- exactly the overwrite invokeUFunction latches
+-- against. getOffsetsVerdict is the likeliest to time out: it exists to be asked while the game thread
+-- is wedged.
 --
 -- `prepare(mb)` writes the command's operands before the trigger; the status clear and the CMD write
 -- (LAST, it is what triggers the DLL) are here so no wrapper can forget the order.
@@ -925,7 +916,7 @@ local function simpleMailboxCall(cmd, prepare)
   local pok, res, mb_out, cur_out = pcall(function()
     local mb, cur = findMailbox()
     if prepare then prepare(mb) end
-    writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure (audit #5 AA18)
+    writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure
     writeInteger(mb + OFF_STATUS, 0)      -- clear status
     writeInteger(mb + OFF_CMD, cmd)       -- trigger (write LAST)
     local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
@@ -963,7 +954,7 @@ if not setDebugCamera or _invokeOutdated then
   local CMD_SET_DEBUG_CAMERA = 7
 
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
-  -- Reuses the file-local mailbox helpers + the shared AA19 guard.
+  -- Reuses the file-local mailbox helpers + the shared stale-mailbox guard (simpleMailboxCall).
   local function dbgCamMailbox(req)
     -- The state, then [INVOKE-NONSTATIC-ON-CDO] 'template' when the DLL (contract 7+) says the toggle targets the
     -- CheatManager's class default object -- no live CheatManager, where it does nothing. A caller that takes one
@@ -987,8 +978,9 @@ if not setDebugCamera or _invokeOutdated then
   ---                       the game responds), -17=an ON not sent: no CheatManager is live, and the toggle does
   ---                       nothing on its class default object [DEBUGCAM-FORCEON-CDO]
   --- @return string|nil warn  'template' when the toggle this call sent targets the CheatManager's class default
-  ---                       object (no live CheatManager), where it does nothing -- only a DLL from builds 3676-3681
-  ---                       sends that toggle; a newer one answers -17. nil for a re-send answered by a toggle already
+  ---                       object (no live CheatManager), where it does nothing -- only a DLL with
+  ---                       [INVOKE-NONSTATIC-ON-CDO] but not [DEBUGCAM-FORCEON-CDO] sends that toggle; a newer one
+  ---                       answers -17. nil for a re-send answered by a toggle already
   ---                       queued, nil otherwise, and nil from an older DLL
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
@@ -1024,7 +1016,7 @@ if not getOffsetsVerdict or _invokeOutdated then
     -- [A1-VERDICT-STALEMB] -1 and -10 are DIFFERENT answers and only one of them is about age:
     -- -1 is "Unknown command" (a DLL older than contract 5), -10 is "DLL not initialized" (the right
     -- DLL, no scan yet -- and on a pre-5 DLL this command is not init-exempt, so it is the answer that
-    -- arrives first). Reporting both as 'dll-too-old' told the user to update a DLL that is current.
+    -- arrives first). Reporting both as 'dll-too-old' would tell the user to update a DLL that is current.
     if code == -10 then return false, 'dll-not-initialised' end
     if code < 0 then return false, 'dll-too-old' end
     return code == 1, readString(mb + OFF_PARAMS, 127, false) or ''

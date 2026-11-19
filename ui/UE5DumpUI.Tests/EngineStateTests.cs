@@ -5,10 +5,10 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// Tests for <see cref="EngineState.GameSessionId"/> — the per-launch session
-/// token that gates the Snapshot-diff / SPC per-row Live/Addr/🌍 actions
-/// (build 1227). The id must distinguish two launches of the SAME build even
-/// when the EXE loads at a CONSTANT base (no effective ASLR, e.g. SEED), which
-/// the old <c>PeHash-ModuleBase</c> form could not.
+/// token that gates the Snapshot-diff / SPC per-row Live/Addr/🌍 actions.
+/// The id must distinguish two launches of the SAME build even when the EXE
+/// loads at a CONSTANT base (no effective ASLR, e.g. SEED), which a
+/// <c>PeHash-ModuleBase</c> form cannot.
 /// </summary>
 public class EngineStateTests
 {
@@ -43,10 +43,9 @@ public class EngineStateTests
     [Fact]
     public void GameSessionId_OldFormatSnapshot_DoesNotMatchNewCurrent()
     {
-        // A snapshot captured before build 1227 stored "PeHash-ModuleBase". The
-        // current session now computes "PeHash-CreationTime", so the stored id
-        // can never equal the current one → the gate correctly treats the old
-        // snapshot as a different (stale) session.
+        // A snapshot that stored a "PeHash-ModuleBase" id can never equal the
+        // current session's "PeHash-CreationTime" one → the gate correctly treats
+        // such a snapshot as a different (stale) session.
         var current = new EngineState { PeHash = "BUILD1", ProcessCreationTime = "01D9FFFF" }.GameSessionId;
         const string oldFormatStored = "BUILD1-7FF600000000";   // PeHash-ModuleBase
         Assert.NotEqual(oldFormatStored, current);
@@ -55,7 +54,7 @@ public class EngineStateTests
     [Fact]
     public void GameSessionId_OlderDll_EmptyCreationTime_DegradesToPeHashDash()
     {
-        // DLLs older than build 1227 omit process_creation_time → "" → the id is
+        // A DLL that omits process_creation_time → "" → the id is
         // "PeHash-". Documented degradation (no per-launch split); must not throw.
         var s = new EngineState { PeHash = "ABCD" };
         Assert.Equal("ABCD-", s.GameSessionId);

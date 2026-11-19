@@ -2,22 +2,21 @@ r"""b636 — the static-native fast path really does bypass the game thread.
 
     py tools/verify/b636_latency.py
 
-WHAT THE ROW ASKS, AND WHY THE LAST ATTEMPT WAS DISCARDED
+WHAT THE ROW ASKS, AND WHY A LATENCY NUMBER ALONE IS NOT ENOUGH
   `Mimic` short-circuits a UFunction tagged Native+Static straight to
   `UE5_CallProcessEventDirect`, instead of queueing it on `GameThreadDispatch`. The point
   is that a pure helper (KismetMathLibrary etc.) must work on an IDLE or STALLED game,
   where the queue is never drained and every queued invoke times out.
 
-  A latency number alone cannot show that. On 2026-08-23 the attempt was abandoned
-  because `Abs(-3.5)` came back with a params buffer of `-3.5, 0, -3.5`: the return slot
-  MIRRORED THE INPUT, so "it ran and wrote this" was indistinguishable from "it never
-  executed" ([B636-NOACCIDENT-2026-08-23]). The number was discarded rather than
-  published, which was the right call.
+  A latency number alone cannot show that. A fixture like `Abs(-3.5)` can come back with
+  a params buffer of `-3.5, 0, -3.5`: the return slot MIRRORS THE INPUT, so "it ran and
+  wrote this" is indistinguishable from "it never executed"
+  ([B636-NOACCIDENT-2026-08-23]). Such a number must be discarded rather than published.
 
-  Two things fix that here:
+  Two things close that here:
 
-  1. The DLL now CLEARS the ReturnValue slot before dispatch (Mimic.cpp, build 3349), so
-     a slot that still holds the pre-fill was never written.
+  1. The DLL CLEARS the ReturnValue slot before dispatch (Mimic.cpp), so a slot that
+     still holds the pre-fill was never written.
   2. The fixture is chosen so no ambiguity survives: **Sqrt(16.0) = 4.0**. The result is
      neither zero (which a legitimately-zero return would confuse) nor equal to the input
      (which a mirror would confuse). The rig ALSO pre-fills the whole buffer with 0xAA, so

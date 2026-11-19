@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1. The grant core on its own, with no pipe and no tool: which host gets writes,
+/// [MCP-WRITE-GRANTS-2026-11-14] The grant core on its own, with no pipe and no tool: which host gets writes,
 /// how a DLL command is classed, what counts as a release, and what a grant admits. The plan and the measurements
 /// behind each rule are docs/mcp-write-approval-eval.md.
 /// </summary>
@@ -265,7 +265,7 @@ public sealed class McpGrantsTests
     [Fact]
     public void EveryCallTheGrantLetsThrough_IsCounted_AndNothingElse()
     {
-        // [MCP-GRANT-USES-RELEASES] Found live (build 3714): uses counted an OFF and a reset that needed no grant.
+        // [MCP-GRANT-USES-RELEASES] uses must not count an OFF or a reset, which need no grant.
         var g = Decided();
         g.Grant(McpGrantKind.Movement, Ptrs(), out _);
         var fly = Req("""{"cmd":"fly_set","enable":true}""");
@@ -322,7 +322,7 @@ public sealed class McpGrantsTests
         Assert.Null(g.Admit(role, McpGrantKind.Toggles, Ptrs(), out _));
     }
 
-    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] §4.4) ──────────────────────────────────────────────
 
     // Ubel::GetFullName's form, as walk_functions sends it in `full`: the function comes last.
     private const string SetHidden = "//Script/Engine/Actor.SetActorHiddenInGame";
@@ -376,7 +376,7 @@ public sealed class McpGrantsTests
         Assert.Empty(g.List());
     }
 
-    // Review: a Blueprint function or custom event may be named with a space, '?' or '*' (UE's Blueprint name rules
+    // A Blueprint function or custom event may be named with a space, '?' or '*' (UE's Blueprint name rules
     // allow them), and the DLL compares full names ordinally, so none of them can stand for several functions.
     [Theory]
     [InlineData("//Game/Door/BP_Door/BP_Door_C.Open Door")]
@@ -435,7 +435,7 @@ public sealed class McpGrantsTests
         Assert.Null(marked.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden));
     }
 
-    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] §4.5) ─────────────────────────────────────────────
 
     // A class's full path (walk_class' full_path), a colon, the field.
     private const string HolderValue = "//Script/DumperTest/DumperTestHolder:HolderValue";
@@ -596,8 +596,8 @@ public sealed class McpGrantsTests
     [InlineData("""{"cmd":"reset_field","class_name":"Pawn","field_name":"X","if_free":true}""", "force_field:Pawn::X")]
     public void AnOffOfWhatSomeoneElseHolds_IsRefusedNamingTheHolder_GrantOrNot(string request, string hold)
     {
-        // Found live (build 3714, mcp_client.py holdsmore): the refusal stopped naming the holder once the server, not
-        // the DLL's if_free, refused it. The DLL would refuse it anyway, so no grant is asked for.
+        // The refusal names the holder when the server, not the DLL's if_free, refuses it. The DLL would refuse it
+        // anyway, so no grant is asked for.
         var g = Decided();
         g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
         var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);

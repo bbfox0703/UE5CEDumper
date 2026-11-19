@@ -7,9 +7,8 @@ namespace UE5DumpUI.Services;
 /// FUObjectItem layout, so every export generated while it is active can embed a one-line
 /// "best-effort" note. Held as process-wide state because the app is single-instance
 /// (Mutex-guarded) and attaches to exactly one game at a time — the static export utilities
-/// (CeXmlExportService / CsxExportService / Teleport "Copy CE Script") would otherwise need
-/// the flag threaded through dozens of call sites. Set from <c>PointerPanelViewModel.Update</c>
-/// on every engine-state refresh.
+/// would otherwise need the flag threaded through dozens of call sites. Set from
+/// <c>PointerPanelViewModel.Update</c> on every engine-state refresh.
 /// </summary>
 public static class PackedLayoutNotice
 {

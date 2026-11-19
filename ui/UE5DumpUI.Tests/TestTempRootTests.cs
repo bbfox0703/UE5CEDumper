@@ -4,7 +4,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [TEST-TEMP-HYGIENE-2026-11-11] The suite's scratch lives in one folder per run, and no run leaves any in %TEMP%
-/// (<see cref="TestTempRoot"/>). Before this, one run of the suite left about 220 folders there and nothing removed them.
+/// (<see cref="TestTempRoot"/>). Without it, every run leaves its folders there and nothing removes them.
 /// </summary>
 public class TestTempRootTests : IDisposable
 {
@@ -85,7 +85,7 @@ public class TestTempRootTests : IDisposable
     public void ASweepWhoseFolderIsGoneThrowsNothing()
         => Assert.Empty(TestTempRoot.SweepLegacy(Path.Combine(_sandbox, "absent"), DateTime.UtcNow));
 
-    /// <summary>Every name an older build of the suite left straight in %TEMP% (counted there on 2026-11-11).</summary>
+    /// <summary>Every name an older build of the suite left straight in %TEMP%.</summary>
     public static TheoryData<string> LegacyNames => new()
     {
         "UE5DumpAobRows_" + Guid32, "UE5DumpArrPivot_" + Guid32, "UE5DumpDiscTest_" + Guid32,
@@ -144,7 +144,7 @@ public class TestTempRootTests : IDisposable
 
     /// <summary>A sweep never reaches through a junction: VolumeRootTests makes one to another volume's ROOT, and one it
     /// failed to remove lands in the run's folder. The read-only file fails the first delete, which has unlinked the
-    /// junction by then (measured: Directory.Delete goes on past a file it cannot delete), so the second attempt's walk
+    /// junction by then (Directory.Delete goes on past a file it cannot delete), so the second attempt's walk
     /// finds it gone; <see cref="TheAttributeWalkNeverEntersAJunction"/> holds that walk with the junction in place.</summary>
     [Fact]
     public void ADeadRunHoldingAJunctionGoes_AndWhatTheJunctionPointsAtIsUntouched()
@@ -258,7 +258,7 @@ public class TestTempRootTests : IDisposable
     public void RemoveRun_ReleasesThePool_DeletesTheRun_AndKeepsTheSharedRoot()
     {
         // Short names: SQLite cannot open a database whose journal path passes MAX_PATH, and %TEMP% may be deep
-        // (measured: a 114-character TEMP gave SQLite Error 14 with the run's folder names spelled out).
+        // (a 114-character TEMP is enough for SQLite Error 14 with the run's folder names spelled out).
         var root = Directory.CreateDirectory(Path.Combine(_sandbox, "r")).FullName;
         var run = Directory.CreateDirectory(Path.Combine(root, "1")).FullName;
         var db = Path.Combine(run, "s.db");
@@ -278,9 +278,9 @@ public class TestTempRootTests : IDisposable
 
     /// <summary>Install does the housekeeping before TMP / TEMP move. The run's folder is removed by an assembly fixture,
     /// inside the test session, and never at ProcessExit: xunit.v3 forces exit code 1 when the process is still alive
-    /// about 11 s after the session ends, and a removal at ProcessExit took longer than that while another process held
-    /// the SSD at 100% I/O (measured 2026-11-11; a 15-s delay there reproduces it: 17 passed, exit 1). Install runs once
-    /// per process, before any test, so this reads the source rather than calling it.</summary>
+    /// about 11 s after the session ends, and a removal at ProcessExit can take longer than that while another process
+    /// holds the SSD at 100% I/O (a 15-s delay there turns a green run into exit 1). Install runs once per process,
+    /// before any test, so this reads the source rather than calling it.</summary>
     [Fact]
     public void Install_SweepsFirst_ThenMovesTemp_AndTheRunGoesInsideTheSession()
     {

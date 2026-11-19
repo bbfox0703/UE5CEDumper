@@ -127,9 +127,9 @@ public static class CoordLibraryScriptGenerator
         var shownGroups = groups.Take(MaxGroupButtons).ToList();
         foldedGroups = groups.Skip(MaxGroupButtons).ToList();
 
-        // Each flavour owns its OWN form global. Sharing one made the second record
-        // to be enabled re-show the first's window and return, so its own picker was
-        // never built -- and left [DISABLE] able to touch a caFree'd form.
+        // Each flavour owns its OWN form global. Sharing one would make the second record
+        // to be enabled re-show the first's window and return, so its own picker would
+        // never be built -- and leave [DISABLE] able to touch a caFree'd form.
         string formVar = FormGlobal(flavour);
 
         var sb = new StringBuilder(4096 + list.Count * 128);
@@ -396,7 +396,7 @@ public static class CoordLibraryScriptGenerator
         Line(sb, "  pnlTop.Align = 'alTop'");
         // Placeholder: the real height is measured from the controls once they exist
         // (see the "pnlTop.Height =" assignment after the last row is created). Guessing
-        // it up front is what clipped the selectors.
+        // it up front clips the selectors.
         Line(sb, "  pnlTop.Height = 40");
         Line(sb, "  pnlTop.BevelOuter = 'bvNone'");
         Line(sb);
@@ -592,8 +592,8 @@ public static class CoordLibraryScriptGenerator
         Line(sb, "    -- map you had already left. There is no UI polling this for us.");
         Line(sb, "    local fresh, ferr = currentMap()");
         // Abort on the FIRST failed round-trip. Without this the teleport below runs anyway
-        // and fails the same way, so a dead game cost two full idle-wait deadlines (~3 s)
-        // and still showed only one message.
+        // and fails the same way, so a dead game would cost two full idle-wait deadlines
+        // and still show only one message.
         Line(sb, "    if ferr ~= nil then showMessage('[Coordinate Library] ' .. ferr); return end");
         Line(sb, "    if fresh ~= nil and fresh ~= '' and fresh ~= mapNow then");
         Line(sb, "      mapNow = fresh");

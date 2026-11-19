@@ -113,7 +113,7 @@ public sealed class SnapshotCapturedObject
     public string OuterClassName { get; set; } = "";  // loose-join component
     public string Path           { get; set; } = "";  // full object path (cross-session id)
     public List<SnapshotCapturedField> Fields { get; set; } = new();
-    /// <summary>Struct-array inner-key captures (Phase A1b).</summary>
+    /// <summary>Struct-array inner-key captures.</summary>
     public List<SnapshotCapturedArray> Arrays { get; set; } = new();
 }
 
@@ -148,7 +148,7 @@ public sealed class SnapshotChunkResult
 {
     public int Total   { get; set; }   // GObjects count
     public int Scanned { get; set; }   // indices iterated (advance offset by this)
-    // Phase-0 telemetry (DLL-side, per chunk): the parallel walk+merge and the JSON
+    // Telemetry (DLL-side, per chunk): the parallel walk+merge and the JSON
     // DOM-build wall-times. Default 0 keeps older DLLs / test stubs back-compatible.
     public long WalkMs      { get; set; }
     public long SerializeMs { get; set; }

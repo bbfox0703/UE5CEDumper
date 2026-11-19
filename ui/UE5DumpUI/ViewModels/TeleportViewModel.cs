@@ -65,7 +65,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // trainer are kept in SEPARATE groups. (Needs an AOBMaker plugin that handles the
     // `group` field; older builds ignore it and land the records at root.)
     // ⛔ DO NOT LOCALIZE: the plugin finds-or-creates a group BY NAME, so a translated name would start a second
-    // folder in a table the user already has. [I18N-READINESS-2026-11-04] P4
+    // folder in a table the user already has. [I18N-READINESS-2026-11-04]
     private const string CeGroupDll = "UE5CEDumper (DLL)";
     private const string CeGroupTrainer = "UE5CEDumper (no-DLL trainer)";
 
@@ -1103,13 +1103,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // PoseMap would otherwise survive the disconnect and feed the "current map
             // only" coord filter, so connecting to a DIFFERENT game would load its
             // library and then drop every row against the previous game's map name,
-            // self-healing only after a manual Refresh pose. (B9) (B17)
+            // self-healing only after a manual Refresh pose.
             ClearPoseDisplay();
             ApplyCoordFilter();
-            _pushedQuerySymbols.Clear();   // new game, new CE table (B26)
+            _pushedQuerySymbols.Clear();   // new game, new CE table
             // Reset the Stealth card too — otherwise a reconnect (possibly to a DIFFERENT
             // game) shows the old game's hold and Hold @0 would send its stale
-            // class::field. (L13)
+            // class::field.
             _stealthCandidate = null;
             _stealthArmed = false;   // the hold outlives the pipe; the connect prime claims it again if it can
             _stealthKnown = false;
@@ -2015,7 +2015,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>[EXPOFF-ROUND3-PAUSED] The DLL keeps a hold job on <see cref="_stealthCandidate"/> that this card set,
     /// or that the connect prime claimed as the meter's: what Reset releases, what Detect leaves alone, and what the
-    /// experimental teardown releases (M9). Its own flag because Solide keeps a job the card's answer does not say is
+    /// experimental teardown releases. Its own flag because Solide keeps a job the card's answer does not say is
     /// holding -- one that matched no instance yet, and an armed one whose re-arm was refused.</summary>
     private bool _stealthArmed;
     /// <summary>[EXPOFF-ROUND3-PAUSED] Since the connect, the prime read the DLL's holds, and no Hold has lost its answer
@@ -2031,8 +2031,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _stealthNoneHeld;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
-    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
-    /// with a tuple -- a claim nothing had checked, while Solide kept holding -- and the gate could not see it.</summary>
+    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. A badge set with a bare tuple
+    /// is invisible to that gate, and an "Off" set that way claims what nothing checked while Solide may still hold.</summary>
     private void ApplyStealthState(int state)
         => (StealthState, StealthBadgeColor) = state switch
         {
@@ -2059,8 +2059,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // [SOLIDE-RELATED-STOPS] Said after whichever line below: a meter past where the search stopped is missed.
             var stopped = Helpers.StealthText.StopsClause(found.Stops);
             // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
-            // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
-            // went on forcing the meter.
+            // release, so Detect only reads: overwritten, they would release the newly found field or none while Solide
+            // goes on forcing the meter.
             if (_stealthArmed && _stealthCandidate is { } held)
             {
                 var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
@@ -2169,7 +2169,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 // [STEALTH-RESET-STALE-HELD] No meter is known to the card: none detected yet, or a reconnect whose
                 // prime could not match a forced field to one (a loading screen has no candidates). Nothing is sent,
-                // so the badge keeps what the card knew -- "Off" was a claim over a hold Solide may still run.
+                // so the badge keeps what the card knew -- "Off" would be a claim over a hold Solide may still run.
                 StatusText = StealthNothingText;
                 return true;   // nothing was sent, so nothing failed to land
             }
@@ -2341,7 +2341,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // ownership before freeing), a duplicate pair of records is still confusing and there
             // is no reason to create one. A repeat click falls through to the clipboard instead of
             // being refused, because the legitimate reason to click again is "I deleted the record
-            // and want it back", and pasting satisfies that without a second AOBMaker push. (B26)
+            // and want it back", and pasting satisfies that without a second AOBMaker push.
             bool alreadyPushed = _pushedQuerySymbols.Contains(sym);
             bool available = !alreadyPushed
                              && _aobMaker != null && await _aobMaker.CheckAvailabilityAsync();
@@ -2372,7 +2372,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 + $"Paste into Cheat Engine's address list (right-click → Paste), then enable it to register '{sym}'.";
             // [QUERYPTR-LOG-ABSENT-LABEL] Name the branch, the same three the status line tells apart. The
             // already-pushed branch never asks AOBMaker, so `available` is false there too, and reading it alone
-            // logged "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
+            // would log "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
             string branch = alreadyPushed ? "already pushed this session"
                           : available ? "AOBMaker refused"
                           : "AOBMaker absent";
@@ -3583,8 +3583,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.3+) ──
 
     // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
-    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
-    // which is what the connect/disconnect reset's own comment always said it did.
+    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown.
     private const int GravDirUnavailable = -2;
 
     private void ApplyGravDirState(int state)
@@ -3768,7 +3767,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             // ⛔ DO NOT PAINT A LANDING NOBODY MEASURED. When the post-move re-read
-            // fails the DLL now says so instead of publishing (0,0,0); calling ApplyPose
+            // fails the DLL says so (LandingUnknown) rather than publishing (0,0,0); calling ApplyPose
             // there would overwrite the live X/Y/Z with zeros the user can copy into the
             // coords box or save as a marker. The move itself succeeded.
             // [TPREL-ZEROPOSE-2026-09-10]
@@ -3849,7 +3848,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  Coordinate Library (P1) — docs/teleport-coord-library-spec.md
+    //  Coordinate Library — docs/teleport-coord-library-spec.md
     //
     //  An unlimited, labelled + grouped list of positions, persisted PER GAME
     //  by exe module name. Separate from the 3 DLL marker slots by design: those
@@ -3911,7 +3910,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public bool HasAiWriteBlock => _aiWriteBlock != null;
 
     // ── Who else holds each card's feature ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──
-    // Once grants took the per-call prompt away, the window must show what an AI session holds, as a ticked CE record
+    // Grants take the per-call prompt away, so the window must show what an AI session holds, as a ticked CE record
     // shows in CE. get_holds (DLL 3704+) names each hold's holder; every HoldsPollInterval while connected to such a DLL,
     // each card's *HolderText says who other than this window holds its feature (HolderText's words), and a card
     // someone else holds is read again, so its badge follows what they do. The card's OFF or Reset still takes it over:
@@ -4276,23 +4275,23 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// DLL), or "". While set, adding to the library is refused with <see cref="CoordLibraryUnavailableText"/>
     /// instead of adding a row that is never saved.</summary>
     private string _coordUnusableModule = "";
-    /// <summary>(QM-1) Under an older DLL: the file name of a library that name saved earlier, named in the
+    /// <summary>Under an older DLL: the file name of a library that name saved earlier, named in the
     /// refusal, or "".</summary>
     private string _coordLegacyFile = "";
-    /// <summary>(QM-2) CoordStatus holds a refusal: the next usable load clears it.</summary>
+    /// <summary>CoordStatus holds a refusal: the next usable load clears it.</summary>
     private bool _coordStatusIsRefusal;
     private bool _suppressCoordPersist;
     // Set only while ApplyCoordFilter re-selects the equivalent row after rebuilding
-    // CoordResults, so the editor fields are not rewritten from the stored entry. (B20)
+    // CoordResults, so the editor fields are not rewritten from the stored entry.
     private bool _suppressCoordEditorSync;
 
     /// <summary>Global-pointer symbols already pushed to CE via AOBMaker this session. Both
     /// symbols such a record registers are GLOBAL, so a second record for the same symbol shares
     /// them; one push per symbol per session is enough, and a repeat click gets the clipboard
-    /// fallback instead. Cleared on disconnect — a new game is a new table. (B26)</summary>
+    /// fallback instead. Cleared on disconnect — a new game is a new table.</summary>
     private readonly HashSet<string> _pushedQuerySymbols = new(StringComparer.Ordinal);
 
-    /// <summary>Card open/closed. Collapsed by default (R4).</summary>
+    /// <summary>Card open/closed. Collapsed by default.</summary>
     [ObservableProperty] private bool _coordLibraryExpanded;
 
     [ObservableProperty] private string _coordFilterText = "";
@@ -4349,14 +4348,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Map names are compared case-insensitively everywhere: CSV import
     /// makes Map user-authored ("map01" vs "Map01"), and an ordinal comparison would
-    /// flag every imported row cross-map. See spec §3 D2.</summary>
+    /// flag every imported row cross-map. See docs/teleport-coord-library-spec.md §3 D2.</summary>
     internal static bool IsSameMap(string? a, string? b) =>
         string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[W2-TPREL-MAP] An UNKNOWN current map ("" -- before the first pose read, with no pawn,
-    /// or disconnected) is not a different map. The filter and the teleport guard already treated it
-    /// so; the row flag and the summary did not, and flagged every row "you are on ''". One predicate
-    /// for all four, so they cannot drift apart again.</summary>
+    /// or disconnected) is not a different map: a row flag that read it as one would flag every row
+    /// "you are on ''". One predicate shared by the current-map checks, so they cannot drift apart.</summary>
     private bool IsOnCurrentMap(string? entryMap) =>
         string.IsNullOrEmpty(PoseMap) || IsSameMap(entryMap, PoseMap);
 
@@ -4381,8 +4379,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         OnPropertyChanged(nameof(CoordZToleranceValue));
         // Suppressed while ApplyCoordFilter restores the selection onto a rebuilt row —
-        // that is not the user choosing a row, and treating it as one wiped an
-        // in-progress edit on every filter keystroke. (B20)
+        // that is not the user choosing a row, and treating it as one would wipe an
+        // in-progress edit on every filter keystroke.
         if (_suppressCoordEditorSync) return;
         EditCoordLabel = value?.Entry.Label ?? "";
         EditCoordGroup = value?.Entry.Group ?? "";
@@ -4412,7 +4410,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _activeCoordKey = CoordinateLibraryStore.KeyFor(moduleName);
         _coordUnusableModule = !string.IsNullOrWhiteSpace(moduleName) && string.IsNullOrEmpty(_activeCoordKey)
             ? moduleName! : "";
-        // [PATH-UI-LEGACY-QMARK] (QM-1) The key an older DLL's '?' report of this game keyed to.
+        // [PATH-UI-LEGACY-QMARK] The key an older DLL's '?' report of this game keyed to.
         string legacyKey = CoordinateLibraryStore.LegacyKeyFor(moduleName);
         _coordLegacyFile = _coordUnusableModule.Length > 0 && _coordStore.Exists(legacyKey)
             ? Path.GetFileName(_coordStore.FilePathFor(legacyKey)) : "";
@@ -4431,7 +4429,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(_activeCoordKey))
             {
                 var file = _coordStore.Load(_activeCoordKey);
-                // (QM-1 / T6) Nothing saved under the real name yet, but the older DLL's key holds a library:
+                // Nothing saved under the real name yet, but the older DLL's key holds a library:
                 // carry it over, and leave the old file as it was -- that key can be shared by another game whose
                 // name the old DLL mangled the same way, so it is copied, never moved.
                 string carriedFrom = "";
@@ -4458,7 +4456,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 }
                 else if (wasRefusal)
                 {
-                    CoordStatus = "";   // (QM-2) the refusal's cause is gone
+                    CoordStatus = "";   // the refusal's cause is gone
                 }
             }
             RebuildCoordGroups();
@@ -4485,7 +4483,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     };
 
     /// <summary>All entries, newest-first insertion order preserved. Exposed for the
-    /// export/import codecs (P2+) and for tests.</summary>
+    /// export/import codecs and for tests.</summary>
     public IReadOnlyList<CoordEntry> CoordEntries => _coordAll;
 
     private void RebuildCoordGroups()
@@ -4552,8 +4550,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // row: the rebuild makes fresh CoordRow objects, so SelectedCoord always changes
             // reference and OnSelectedCoordChanged always fires — overwriting
             // EditCoordLabel/Group from the stored entry (with "" for the detach). This runs
-            // per keystroke in the filter box, so typing while an edit was in progress
-            // silently reverted it. Same shape as _suppressCoordPersist. (B20)
+            // per keystroke in the filter box, so typing while an edit is in progress
+            // would silently revert it. Same shape as _suppressCoordPersist.
             _suppressCoordEditorSync = true;
             try
             {
@@ -4649,7 +4647,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Build an entry from a pose, applying the capture-time rounding that
-    /// makes every wire format round-trip bit-exactly (spec D4).</summary>
+    /// makes every wire format round-trip bit-exactly (D4 in docs/teleport-coord-library-spec.md).</summary>
     internal static CoordEntry FromPose(TeleportPose p, string label) => new()
     {
         Uid = NewCoordUid(),
@@ -4699,8 +4697,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>[PATH-UI-LEGACY-QMARK] Says why the library cannot be used for this game, and that nothing was
     /// saved, rather than letting a row sit in memory as "Added" and vanish on the next launch.</summary>
-    /// (QM-5) The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
-    /// re-inject into it reattaches to the old DLL, so the game must be closed first. (QM-1) A library the old name
+    /// The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
+    /// re-inject into it reattaches to the old DLL, so the game must be closed first. A library the old name
     /// saved is named: it is carried over after the update.
     private string CoordLibraryUnavailableText() =>
         $"Coordinate library unavailable: the connected DLL reports this game as '{_coordUnusableModule}', which "
@@ -4713,7 +4711,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         + " Nothing was saved.";
 
     /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written: a lossy
-    /// name, or (QM-4) no game yet -- entries are kept per game, so a row added before the first connect would be
+    /// name, or no game yet -- entries are kept per game, so a row added before the first connect would be
     /// reported "Added", never saved, and cleared by that connect.</summary>
     private bool CoordLibraryRefused()
     {
@@ -4730,11 +4728,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool AddCoordEntry(CoordEntry entry)
     {
         if (CoordLibraryRefused()) return false;
-        // Re-mint when the uid is EMPTY or ALREADY TAKEN. "Only when empty" trusted an
-        // incoming uid to be unique, and an imported file need not be: duplicate a row in
-        // Excel and rename it, and the merge diff commits it as Added (the uid match is
-        // consumed by row 1, the new label defeats the identity match) — carrying the
-        // duplicate uid straight in. (B7)
+        // Re-mint when the uid is EMPTY or ALREADY TAKEN. An incoming uid need not be
+        // unique: duplicate a row in Excel and rename it, and the merge diff commits it as
+        // Added (the uid match is consumed by row 1, the new label defeats the identity
+        // match) — carrying the duplicate uid straight in.
         if (string.IsNullOrEmpty(entry.Uid) ||
             _coordAll.Any(e => string.Equals(e.Uid, entry.Uid, StringComparison.Ordinal)))
         {
@@ -4877,8 +4874,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (row == null) return;
         // Remove the entry the user actually selected, BY REFERENCE. RemoveAll-by-uid is
         // identical whenever uids are unique — so this is a no-op in the intended state —
-        // but with a duplicate uid it deleted BOTH rows, persisted immediately, and the
-        // status line named one of them. (B7)
+        // but with a duplicate uid it would delete BOTH rows, persist immediately, and the
+        // status line would name one of them.
         _coordAll.Remove(row.Entry);
         SelectedCoord = null;
         PersistCoordLibrary();
@@ -4970,7 +4967,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
             // Read the map AT CHECK TIME. PoseMap is only refreshed by the panel's
             // ~2s poll, which the user can switch off (and which does not exist at all
-            // for the generated Lua picker) -- so relying on it meant the guard could
+            // for the generated Lua picker) -- so relying on it would let the guard
             // fire on a map you had already left. One extra round-trip on an explicit
             // button press is a fair price for a guard that is actually correct.
             await RefreshCurrentMapAsync();
@@ -5019,7 +5016,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         CoordStatus = $"'{e.Label}' copied into the coordinate fields.";
     }
 
-    // ── CSV round-trip (P2) — spec §5 ───────────────────────────────────
+    // ── CSV round-trip — spec §5 ────────────────────────────────────────
 
     /// <summary>Pending import, held between stage 1 (parse + preview) and stage 2
     /// (commit). Null when no import is awaiting confirmation.</summary>
@@ -5097,7 +5094,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { SetError(ex); _log.Error("Coord CSV preview failed", ex); }
     }
 
-    /// <summary>Shared by the CSV importer and (P4) the Lua importer.</summary>
+    /// <summary>Shared by the CSV importer and the Lua importer.</summary>
     internal void BuildImportPreview(CoordCsvParseResult parsed, string sourceName)
     {
         if (!parsed.HasEntries)
@@ -5133,7 +5130,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (parsed.Issues.Count > 0)
             sb.Append("\nSkipped / adjusted:\n").Append(FormatIssues(parsed.Issues));
 
-        // (QM-6) Say so up front when Apply can only be refused.
+        // Say so up front when Apply can only be refused.
         if (_coordStore != null && _activeCoordKey.Length == 0)
             sb.Append("\nApply is unavailable: ").Append(_coordUnusableModule.Length > 0
                 ? "the coordinate library cannot be used for this game -- see the status line."
@@ -5156,7 +5153,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyCoordImport()
     {
         if (_pendingImport == null || _pendingChanges == null) return;
-        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. (QM-6) The preview cannot outlive
+        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. The preview cannot outlive
         // the fix: the reconnect it needs drops it (LoadCoordLibraryForGame), so it is previewed again after.
         if (CoordLibraryRefused()) return;
 
@@ -5168,7 +5165,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             foreach (var e in _pendingImport)
             {
                 // Replace mode starts from an empty list, so a duplicate can only come
-                // from WITHIN the imported file — which is exactly the Excel case. (B7)
+                // from WITHIN the imported file — which is exactly the Excel case.
                 if (string.IsNullOrEmpty(e.Uid) ||
                     _coordAll.Any(x => string.Equals(x.Uid, e.Uid, StringComparison.Ordinal)))
                 {
@@ -5188,7 +5185,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                         if (string.IsNullOrEmpty(add.Uid) ||
                             _coordAll.Any(x => string.Equals(x.Uid, add.Uid, StringComparison.Ordinal)))
                         {
-                            add.Uid = UniqueUid();   // (B7)
+                            add.Uid = UniqueUid();
                         }
                         _coordAll.Add(add);
                         break;
@@ -5236,7 +5233,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         CoordStatus = "Import cancelled — nothing was changed.";
     }
 
-    // ── CE Lua export (P3) — spec §4 / §6 ───────────────────────────────
+    // ── CE Lua export — spec §4 / §6 ────────────────────────────────────
 
     /// <summary>
     /// Emit the library as a self-contained AA script (fenced data block + picker
@@ -5405,8 +5402,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
             bool sent = pushed.Created;
-            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set raised
-            // nothing then, and the toolbar chip kept what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set would
+            // raise nothing then, and the toolbar chip would keep what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
             ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
             CoordStatus = sent
@@ -5690,7 +5687,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (_seeThroughActive) done &= await TurnSeeThroughOffAsync();
         // Release the card's Solide stealth-meter hold too, holding or armed — its card is about to be
         // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
-        // otherwise keep writing game memory with no visible way to stop it. (M9)
+        // otherwise keep writing game memory with no visible way to stop it.
         if (_stealthArmed) done &= await ReleaseStealthAsync();
         return done;
     }
@@ -6289,8 +6286,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _cursorHotkey = null;
         foreach (var live in _markerHotkeys.Values) live.Registration.Dispose();
         _markerHotkeys.Clear();
-        // The other five disposable VMs dispose their KeywordSearchMemory; this one
-        // was the holdout, so its debounce timer outlived the VM. (B20)
+        // Dispose the filter's KeywordSearchMemory, or its debounce timer outlives the VM.
         _coordFilterMemory.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -6316,7 +6312,7 @@ public partial class CoordRow : ObservableObject
     public string Map => Entry.Map;
 
     // Display strings use the same canonical text as every wire format, so what the
-    // grid shows is exactly what an export writes (spec D4).
+    // grid shows is exactly what an export writes (D4 in docs/teleport-coord-library-spec.md).
     public string XText => CoordPrecision.Text(Entry.X);
     public string YText => CoordPrecision.Text(Entry.Y);
     public string ZText => CoordPrecision.Text(Entry.Z);

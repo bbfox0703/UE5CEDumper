@@ -17,7 +17,7 @@ block layout and per-block MD5s matched Ghidra's.
 
 WHAT IT WILL NOT DO. It will not scan a program that is not in the map. A row whose binary is
 missing (or whose only candidate failed the hash check) is reported as UNMAPPED and skipped —
-because a silently missing scan TSV becomes a missing ROW in REPORT.md, which reads as "that
+because a silently missing scan TSV becomes a missing ROW in `out/sweep/REPORT.md`, which reads as "that
 pattern was never tested" rather than "that program did not run". That is the same failure
 `sweep.sh`'s `_failures.tsv` exists to prevent.
 """

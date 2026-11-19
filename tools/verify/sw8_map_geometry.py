@@ -3,10 +3,10 @@ r"""SW8 — `Ubel::GetMapPairLayout`'s refusal must not fire SPURIOUSLY on a rea
     py tools/verify/sw8_map_geometry.py                  # any UE >= 4.25 title, injected
     py tools/verify/sw8_map_geometry.py --queries a,e,i,o,u --limit 50000
 
-THE ROW. `[TMAPGEOM-2026-09-09]` made `GetMapPairLayout` REFUSE rather than derive a pair stride
+THE ROW. `[TMAPGEOM-2026-09-09]`: `GetMapPairLayout` REFUSES rather than derive a pair stride
 from an `FStructProperty::Struct` pointer it could not read, because a silent 0 there flows into
-`ResolveElementAlignment` -> `pairAlign` -> `pairStride` and mis-strides the WHOLE map. That fix is
-✅ proven, but **offline by construction**: `dll_core_test` manufactures the partial read with a
+`ResolveElementAlignment` -> `pairAlign` -> `pairStride` and mis-strides the WHOLE map. That refusal
+is pinned, but **offline by construction**: `dll_core_test` manufactures the partial read with a
 page edge (`VirtualAlloc`, one page of two committed), since a wholly-unreadable property
 short-circuits earlier and no live game can be made to unmap one page of a property.
 
@@ -15,8 +15,8 @@ short-circuits earlier and no live game can be made to unmap one page of a prope
 regression even though every unit test of the refusal passes.
 
 ⛔ TRAP 1 — `walk_instance` IS NOT THIS FUNCTION. The instance walk carries its own inlined copy
-of the map geometry (`Ubel.cpp:~4730`) and never calls `GetMapPairLayout`, so `map_stride` on the
-wire is NOT evidence about it. The four real callers are all recursive collectors in `Aura.cpp`:
+of the map geometry (`Ubel.cpp`'s `WalkInstance`) and never calls `GetMapPairLayout`, so
+`map_stride` on the wire is NOT evidence about it. The four real callers are all recursive collectors in `Aura.cpp`:
 `CollectContainersRecursive`, `CollectRefMetaRecursive`, `CollectSchemaLeaves`, `ScanForValue`.
 This rig drives `CollectSchemaLeaves` through `search_properties` with `deep: true`.
 
@@ -82,9 +82,8 @@ def injected_process(max_age_s: int = 600) -> str:
     ⛔ NOT via `tasklist /m`. That works for a hand-injected `UE5Dumper.dll`, but a DEPLOYED
     PROXY is named `version` / `dinput8` / `dxgi` / `winmm`, and matching those bare names is
     worse than useless -- every D3D title loads the SYSTEM `dxgi.dll`, so the probe would
-    "find" the dumper in a process that has never heard of it. Measured on Titan Quest II,
-    2026-09-09: our code was live via the deployed `dxgi.dll` proxy and the tasklist probe
-    reported "inject first".
+    "find" the dumper in a process that has never heard of it -- and with our code live via a
+    deployed `dxgi.dll` proxy, the tasklist probe reports "inject first".
 
     The log stream settles it without guessing a module name: the DLL writes continuously, so
     the log folder touched most recently IS the process it is in. Recency is asserted, because

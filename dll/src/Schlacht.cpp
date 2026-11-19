@@ -6,7 +6,8 @@
 // camera→pawn (LineTraceSingle, game thread via Stark), take the NEAREST hit;
 // if it is NOT a Pawn/Character, hide it (SetActorHiddenInGame). The prior
 // occluder is restored as the view changes; all hides are undone on disable.
-// Stage 1: one nearest occluder at a time. Single-player only.
+// The nearest occluder by default, more under a pierce depth (SetPierceCount).
+// Single-player only.
 // ============================================================
 
 #define LOG_CAT "SEETHRU"
@@ -15,8 +16,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — see-through worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::RunTickGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — see-through worker ignores per-command cancel
+#include "Routine.h"   // Routine::RunTickGuarded — a throw out of a thread proc is std::terminate
 #include "Ubel.h"
 #include "Stark.h"      // IsGameThreadResponsive — gate the game-thread invokes
 
@@ -91,7 +92,7 @@ bool IEq(const std::string& a, const char* b) {
 // GARBAGE-huge parmsSize, and `std::vector<uint8_t> buf(parmsSize)` would then
 // throw std::bad_alloc — which, from the worker thread with no handler, calls
 // std::terminate and fail-fasts the whole game (0xC0000409). Rejecting an insane
-// size here makes the per-tick invoke a clean no-op instead. (See-through M5.)
+// size here makes the per-tick invoke a clean no-op instead.
 constexpr int32_t kMaxSaneParmsSize = 0x4000;
 
 // Find a UFunction by name, walking class → Super (engine setters live on the
@@ -507,7 +508,7 @@ struct State {
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
     bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up, or none could wait (a shutdown); cleared by SetEnabled
-    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C). Changed only with s_workerMutex AND s_mutex held, so
+    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06]). Changed only with s_workerMutex AND s_mutex held, so
     // either lock is enough to read it.
     std::vector<uint64_t> owners;
 };
@@ -607,7 +608,7 @@ void Tick() {
 }
 
 void WorkerLoop() {
-    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown (M4)
+    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown
     LOG_INFO("SeeThrough: worker started (%d ms tick)", Grimoire::SCHLACHT_TICK_MS);
     bool warnedThrow = false;
     while (!s_workerStop.load()) {
@@ -634,7 +635,7 @@ void WorkerLoop() {
 }
 
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -662,7 +663,7 @@ std::atomic<bool> s_pendingStop{false};
 std::atomic<bool> s_pendingRunning{false};
 
 void PendingRestoreLoop() {
-    Tot::MarkBackgroundWorker();   // shutdown-only cancel, like every re-assert worker (M4)
+    Tot::MarkBackgroundWorker();   // shutdown-only cancel, like every re-assert worker
     LOG_INFO("SeeThrough: waiting for the game thread to resume so the leftover "
              "hidden actor(s) can be restored");
     int waited = 0;
@@ -749,11 +750,11 @@ void PendingRestoreLoop() {
 }
 
 // True when a deferred restore is waiting, already or now. False under a shutdown, which starts no thread nothing would
-// join (M5): the caller then says no restore is waiting.
+// join: the caller then says no restore is waiting.
 bool StartPendingLocked() {   // s_workerMutex held
     if (s_pendingRunning.load()) return true;                // already waiting
     if (s_pendingWorker.joinable()) s_pendingWorker.join();  // reap a finished one
-    if (Tot::ShutdownRequested()) return false;              // M5 spawn chokepoint
+    if (Tot::ShutdownRequested()) return false;              // no spawn in the shutdown window
     // A restore waits now, for the whole record: an earlier "gave up" no longer holds.
     { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = false; }
     s_pendingStop.store(false);
@@ -784,7 +785,7 @@ static int32_t ApplyLocked(bool enable) {
         // responsive); if it's still unresponsive, LEAVE the set intact so the worker
         // inherits it and its first live tick's diff un-hides anything no longer
         // occluding — moving+clearing it here without un-hiding would orphan those
-        // actors (they'd stay SetActorHiddenInGame with nothing tracking them). (M1/M2)
+        // actors (they'd stay SetActorHiddenInGame with nothing tracking them).
         // The worker's whole job is invoking LineTraceSingle ~10x/s. Those invokes
         // are refused when the game-thread hook is down (the direct-call fallback
         // off the game thread is the historic crash shape), so a worker started
@@ -846,7 +847,7 @@ static int32_t ApplyLocked(bool enable) {
         return 1;
     }
     // Disable. Early-out when there is genuinely nothing to undo (not running, nothing
-    // hidden) so blind disconnect/shutdown callers don't spam or probe. (M3)
+    // hidden) so blind disconnect/shutdown callers don't spam or probe.
     {
         std::lock_guard<std::mutex> lk(s_mutex);
         if (!s_state.active && s_state.hiddenActors.empty()) return 0;
@@ -856,7 +857,7 @@ static int32_t ApplyLocked(bool enable) {
     }
     // Quiesce the worker BEFORE snapshotting the hidden set — otherwise an in-flight
     // Tick could repopulate hiddenActors AFTER we restore it, orphaning those actors
-    // on the next enable. Join first, THEN restore. (M1)
+    // on the next enable. Join first, THEN restore.
     StopWorkerLocked();        // join with s_mutex released
     if (Stark::IsGameThreadResponsive()) {
         std::unordered_set<uintptr_t> restore;
@@ -884,14 +885,14 @@ static int32_t ApplyLocked(bool enable) {
     } else {
         // Game thread unresponsive (paused / backgrounded) → we can't un-hide now.
         // KEEP the record so the next enable (when responsive) restores them, rather
-        // than discarding it and leaving the actors hidden with nothing tracking. (M2)
+        // than discarding it and leaving the actors hidden with nothing tracking.
         size_t kept;
         {
             std::lock_guard<std::mutex> lk(s_mutex);
             kept = s_state.hiddenActors.size();
             s_state.hiddenCount = static_cast<int32_t>(kept);
         }
-        // A shutdown starts no deferred restore (M5): say so, rather than promise one that is not waiting.
+        // A shutdown starts no deferred restore: say so, rather than promise one that is not waiting.
         if (kept == 0) {
             LOG_INFO("SeeThrough: disabled (nothing hidden)");
         } else if (StartPendingLocked()) {

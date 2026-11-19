@@ -1,4 +1,4 @@
-r"""SW4 — does a delegate record pushed into Cheat Engine resolve to the InvocationList?
+r"""Does a delegate record pushed into Cheat Engine resolve to the InvocationList?
 
     py tools/verify/sw4_ce_delegate_pad.py install     # then RESTART Cheat Engine
     <in UE5DumpUI: Live Walker on DumperTestActor, push the delegate row to CE>
@@ -8,9 +8,8 @@ r"""SW4 — does a delegate record pushed into Cheat Engine resolve to the Invoc
 THE ROW. `[D4B-DELEGATEPAD]` put `delegate_pad` on the wire so `CeXmlExportService.CeOffset`
 adds it before emitting a delegate leaf. Without it a CE record for a delegate on a CHECKED build
 points at the 8-byte access detector instead of at `InvocationList::Data` — a pointer that reads
-0. The DLL half was fixed and measured 2026-09-09 (`[SW7]` found it had never reached the wire at
-all); what had never happened is CHEAT ENGINE resolving such a record and someone reading the
-answer.
+0. The DLL half, `delegate_pad` reaching the wire, is `[SW7]`'s; what only this rig shows is
+CHEAT ENGINE resolving such a record and someone reading the answer.
 
 ⛔ A SHIPPING TITLE PROVES NOTHING HERE. The access detector exists only where `DO_CHECK` is on,
 so the pad is 0 in Shipping/Test and a right and a wrong exporter emit the SAME offset. This must
@@ -23,7 +22,7 @@ which of two addresses 8 bytes apart is right. The harness writes
 `getMemoryRecord(i).CurrentAddress` — what CE actually resolved — to a file, and this rig
 compares it to the two candidates the wire itself supplies.
 
-⚠ TWO SHAPE CORRECTIONS from the scouting pass, checked here rather than assumed:
+⚠ TWO SHAPE FACTS, checked here rather than assumed:
   * a **scalar `DelegateProperty`** never emits `<Offsets>` at all — `MapCeField` routes it to a
     flat `"8 Bytes", ShowAsHex` leaf — so the row's "the group must resolve to the InvocationList"
     describes the MULTICAST shape. `--field` defaults to `Multicast_Inline` for that reason.

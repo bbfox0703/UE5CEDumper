@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the X12 classifier that decides when Install-CE-autorun takes its manual
+/// Pins the classifier that decides when Install-CE-autorun takes its manual
 /// save-dialog fallback: a denied/failed write to CE's install folder (commonly
 /// under %ProgramFiles%, needing elevation) must be treated as "not writable" so
 /// the fallback runs — while unrelated programming errors (and cancellation) must

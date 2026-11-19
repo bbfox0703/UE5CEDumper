@@ -2,12 +2,12 @@
 
     py fl_staging_sweep.py
 
-THE FIX (audit L4, build 3263, `Flamme.cpp:139-168`). A failed hint-cache write used
-to leak `<cache>.tmp.<pid>` forever. The cache now sweeps its OWN `"<name>.tmp."`
-prefix -- never a folder wildcard -- and only files older than **1 hour**.
+THE SWEEP (`Flamme.cpp`). A failed hint-cache write leaves `<cache>.tmp.<pid>`
+behind. The cache sweeps its OWN `"<name>.tmp."` prefix -- never a folder wildcard --
+and only files older than **1 hour**.
 
 WHY THE AGE GUARD IS THE WHOLE POINT, AND WHY THIS RIG PLANTS TWO FILES. The UI writes
-its own `<file>.tmp.<pid>` concurrently (`AobUsageService.cs:139`). A sweep without the
+its own `<file>.tmp.<pid>` concurrently (`AobUsageService.SaveFileAsync`). A sweep without the
 age guard would delete a *live* write in progress. So testing only "the stale one is
 gone" would pass just as happily on a sweep that deletes EVERYTHING -- which is the
 dangerous version of this code. This plants both:
@@ -66,10 +66,9 @@ def main(logdir_name):
     print(f"planted:\n  {STALE.name}  mtime {time.ctime(STALE.stat().st_mtime)}  (must be DELETED)")
     print(f"  {FRESH.name}  mtime {time.ctime(FRESH.stat().st_mtime)}  (must SURVIVE)")
 
-    # ⚠ A FRESH PROCESS IS MANDATORY, and this is the trap that made the first run of
-    # this rig report a false FAIL. SweepOrphanTemps holds
-    # `static std::atomic<bool> s_swept` and so runs AT MOST ONCE PER PROCESS
-    # (Flamme.cpp). In an already-injected game it has therefore already run --
+    # ⚠ A FRESH PROCESS IS MANDATORY; on a reused one this rig reports a false FAIL.
+    # SweepOrphanTemps holds `static std::atomic<bool> s_swept` and so runs AT MOST
+    # ONCE PER PROCESS (Flamme.cpp). In an already-injected game it has therefore already run --
     # before you planted anything -- and `trigger_scan` does not re-run it. Worse,
     # `trigger_scan` on an already-scanned process does not even re-save the hint
     # cache, so BOTH the sweep line and the "Saved results" line are legitimately

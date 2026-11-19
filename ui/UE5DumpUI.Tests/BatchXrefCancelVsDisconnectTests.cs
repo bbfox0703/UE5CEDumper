@@ -11,22 +11,20 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 Z5 — "Find Funcs cancelled at N/M" for something that was not a cancel.
+/// "Find Funcs cancelled at N/M" only for a real cancel.
 ///
 /// <para>
-/// <see cref="PipeClient"/> distinguishes three causes as of audit #5 AC10: a CALLER
-/// cancel throws an <see cref="OperationCanceledException"/> carrying the caller's own
-/// token, a deliberate teardown throws one carrying the client's token, and an
-/// unexpected pipe death — game crash, DLL unload — arrives as an
-/// <see cref="System.IO.IOException"/>. Two batch loops still caught
-/// <c>OperationCanceledException</c> bare, so every one of those read as "you pressed
-/// Cancel", with nothing written to the log. This is audit #3's L14 applied at the two
-/// sites it missed; the two siblings that already carried the fix (Property Search,
-/// Instance Finder) are the shape copied here.
+/// <see cref="PipeClient"/> distinguishes three causes: a CALLER cancel throws an
+/// <see cref="OperationCanceledException"/> carrying the caller's own token, a deliberate
+/// teardown throws one carrying the client's token, and an unexpected pipe death — game
+/// crash, DLL unload — arrives as an <see cref="System.IO.IOException"/>. A batch loop
+/// catching <c>OperationCanceledException</c> bare would read every one of those as "you
+/// pressed Cancel", with nothing written to the log. The batch loops here take the shape
+/// their siblings (Property Search, Instance Finder) use.
 /// </para>
 /// <para>
 /// Both tests below drive the SAME loop with the SAME exception TYPE and differ only in
-/// which token it carries — which is precisely the distinction the old code could not
+/// which token it carries — which is precisely the distinction a bare catch cannot
 /// make.
 /// </para>
 /// </summary>
@@ -83,7 +81,7 @@ public class BatchXrefCancelVsDisconnectTests
 
     /// <summary>
     /// A pipe-side OCE that is NOT the user's cancel (token-less / another token) must
-    /// read as a FAILURE and be logged. Before the fix: "Find Funcs cancelled at 0/2",
+    /// read as a FAILURE and be logged — never "Find Funcs cancelled at 0/2",
     /// silently.
     /// </summary>
     [Fact]
@@ -102,7 +100,7 @@ public class BatchXrefCancelVsDisconnectTests
 
         Assert.Contains("failed", vm.StatusText);
         Assert.DoesNotContain("cancelled", vm.StatusText);
-        Assert.NotEmpty(log.Errors);   // a disconnect used to leave no trace at all
+        Assert.NotEmpty(log.Errors);   // a disconnect must leave a trace
     }
 
     /// <summary>Negative control: a REAL cancel must still read as a cancel.</summary>
@@ -179,7 +177,7 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     // ==================================================================
-    // AF7 — the disassembler's instruction budget must reach the cell.
+    // The disassembler's instruction budget must reach the cell.
     // ==================================================================
 
     /// <summary>A props walk whose <c>BudgetHit</c> the test controls.</summary>
@@ -200,16 +198,15 @@ public class BatchXrefCancelVsDisconnectTests
     /// The native disassembler stops at 8,192 instructions (<c>Denken.cpp</c> <c>kInstrBudget</c>) and
     /// reports it as <c>budget_hit</c>. Truncated, the props list is a PREFIX — so a bare
     /// "0" in the Uses column reads as "this function touches no class fields", which is
-    /// the conclusion the user acts on. Same cell-level lie Z9 fixed for the scan deadline.
+    /// the conclusion the user acts on. The same cell-level lie the deadline flag below guards.
     ///
     /// <para><b>The pair is the test.</b> "The marker appears" alone is satisfied by a
     /// marker appended unconditionally, which would make every row look truncated and the
     /// column useless. The control asserts an untruncated walk writes exactly <c>"0"</c>.</para>
     ///
-    /// <para>⚠ Written because the DLL half could be verified exhaustively and this half
-    /// could not: all 3,109 native UFunctions on DumperTest return <c>budget_hit=false</c>
-    /// (none is big enough to trip it), so no live run reaches the truncated branch. A
-    /// <c>false</c> everywhere is also what a hardwired <c>false</c> produces —
+    /// <para>⚠ No live run reaches the truncated branch: no native UFunction on DumperTest
+    /// is big enough to trip the budget, so every walk there returns <c>budget_hit=false</c>
+    /// — which is also what a hardwired <c>false</c> produces —
     /// <c>[AF7-BUDGET-2026-08-22]</c>.</para>
     /// </summary>
     [Fact]
@@ -256,14 +253,14 @@ public class BatchXrefCancelVsDisconnectTests
     /// <summary>
     /// Two of the DLL's four method tags mean nothing was analysed: "none" (the Func offset is
     /// unresolved on this build) and "blueprint_no_script" (refused: disassembling would read the shared
-    /// interpreter). The batch read Props and BudgetHit and never Method, so both wrote a bare "0" --
+    /// interpreter). A batch that reads Props and BudgetHit and never Method writes a bare "0" for both --
     /// "analysed, touches no class fields", the conclusion the user acts on. The single-function dialog
-    /// already says "NOTHING was analysed".
+    /// says "NOTHING was analysed", and the batch row must say no less.
     /// </summary>
     [Theory]
     [InlineData("none")]
     [InlineData("blueprint_no_script")]
-    [InlineData("bytecode_unreadable")]   // review of 0de62ec1: a Script header whose buffer did not read
+    [InlineData("bytecode_unreadable")]   // a Script header whose buffer did not read
     public async Task Functions_props_batch_marks_a_not_analysed_row_as_such(string method)
     {
         var rows = new List<ScoredFunctionRow> { FuncRow("NativeOrEmptyBlueprint") };
@@ -291,7 +288,7 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     // ==================================================================
-    // Z9 — the deadline flag must reach the cell and the roll-up.
+    // The deadline flag must reach the cell and the roll-up.
     // ==================================================================
 
     private sealed class DeadlineXrefDump : StubDumpService
@@ -362,10 +359,9 @@ public class BatchXrefCancelVsDisconnectTests
     // ==================================================================
     // Game Class Filter — batch "Find Func" (find_functions_by_class).
     //
-    // The FOURTH site of the same three defects, filed separately as
-    // AE17 (the deadline flag discarded), AE18 (so a timed-out sweep is
-    // written as a bare "0") and AE19 (a pipe death reported as "you
-    // cancelled" — audit #3's L14 at a third unfixed site).
+    // Another site of the same three hazards: the deadline flag discarded,
+    // so a timed-out sweep written as a bare "0", and a pipe death reported
+    // as "you cancelled".
     // ==================================================================
 
     private sealed class NoopPlatform : IPlatformService
@@ -411,7 +407,7 @@ public class BatchXrefCancelVsDisconnectTests
     private static GameClassFilterViewModel ClassVm(ClassXrefDump dump, NoopLog log)
         => new(dump, log, new NoopPlatform());
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-32: the Classes batch counts its units as classes, as its own confirm
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The Classes batch counts its units as classes, as its own confirm
     /// prompt and the Instances batch do.</summary>
     [Fact]
     public async Task ClassFilter_batch_partial_and_cap_clauses_count_classes()
@@ -428,7 +424,7 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     /// <summary>
-    /// AE17/AE18: a sweep that ran out of the DLL's 30 s budget must not be written as a
+    /// A sweep that ran out of the DLL's 30 s budget must not be written as a
     /// bare "0" — that reads as "no function takes this class", the opposite of what a
     /// timeout establishes.
     /// </summary>
@@ -490,7 +486,7 @@ public class BatchXrefCancelVsDisconnectTests
         Assert.Contains("1 cached", vm.StatusText);
     }
 
-    /// <summary>AE19: a token-less OCE is a pipe death, not the user's Cancel.</summary>
+    /// <summary>A token-less OCE is a pipe death, not the user's Cancel.</summary>
     [Fact]
     public async Task ClassFilter_batch_reports_a_disconnect_as_failed_not_cancelled()
     {
@@ -502,7 +498,7 @@ public class BatchXrefCancelVsDisconnectTests
 
         Assert.Contains("failed", vm.StatusText);
         Assert.DoesNotContain("cancelled", vm.StatusText);
-        Assert.NotEmpty(log.Errors);   // used to leave no trace at all
+        Assert.NotEmpty(log.Errors);   // and leaves a trace
     }
 
     /// <summary>Negative control: a REAL cancel must still read as a cancel.</summary>

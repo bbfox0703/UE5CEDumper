@@ -7,8 +7,8 @@ WHY THIS EXISTS
   acceptance criteria — there is no test that runs it, because what it tests is a live
   process being injected into and walked.
 
-  That makes it a textbook instance of audit #4's 4a root cause: *the report and the
-  reality are computed by different code paths*. Change `I32 = 1234567` in the .cpp and
+  That makes it a textbook instance of one root cause: *the report and the reality are
+  computed by different code paths*. Change `I32 = 1234567` in the .cpp and
   forget the table, and the next tester scans for a number that is not there — then spends
   the session doubting the dumper. Nothing else in this repo can catch that.
 
@@ -29,15 +29,15 @@ WHY THIS EXISTS
   being tested. Edit the literal to 統一性 and the name silently lies, the string stops
   being an even-length U+xx00 case, and the test keeps "passing" while testing nothing.
 
-NEGATIVE CONTROLS -- all four were run and observed to FAIL, on a temp copy:
+NEGATIVE CONTROLS -- each must make this gate FAIL, run on a temp copy:
     1. I32 changed in the .cpp only              -> caught (invariant 3, number)
     2. the primary B28 literal edited            -> caught (invariant 3, CJK)
     3. an undocumented UPROPERTY added           -> caught (invariant 1)
     4. a 3rd char appended to Even2_TwoNull      -> caught (invariant 4)
-  Two of them MISSED on the first attempt, and both misses were bugs in THIS file:
-    * markdown bold between two code spans parsed as the token '**', which compiled to
-      the glob ^.*$ and matched every field -- invariant 1 was a silent no-op reporting OK
-    * the CJK corpus-wide fallback found 統一 inside 統一言語, so an edited literal passed
+  Two parsing traps would turn a control into a silent pass (both guarded in check()):
+    * markdown bold between two code spans, parsed as the token '**', compiles to the glob
+      ^.*$ and matches every field -- invariant 1 becomes a silent no-op reporting OK
+    * a CJK corpus-wide fallback finds 統一 inside 統一言語, so an edited literal passes
   A gate written after the thing it guards, and never observed failing, is a guess.
 
 Usage:
@@ -54,7 +54,7 @@ SAMPLE = os.path.join("tools", "ue-sample")
 SRC = os.path.join(SAMPLE, "DumperTest", "Source", "DumperTest")
 HEADERS = ["DumperTestActor.h", "DumperTestTypes.h"]
 
-# ⭐ THE SECOND FIXTURE, added 2026-09-16. `DumperTest58` carries only what 5.4 CANNOT host --
+# ⭐ THE SECOND FIXTURE. `DumperTest58` carries only what 5.4 CANNOT host --
 # a container optional (5.4's UHT refuses one outright) and the intrusive string / name / struct
 # optionals that exist from 5.5. Its fields are documented in the same README, so this gate has to
 # know about them or every one of its rows reads as a phantom claim about the 5.4 headers.
@@ -73,7 +73,7 @@ VALUE_SOURCES = ["DumperTestActor.cpp", "DumperTestActor.h", "DumperTestTypes.h"
 COMPUTED = {
     "FixedArr": "set by a loop, (i + 1) * 100 -- 800 never appears as a literal",
     "TickCount": "starts at 0 and is incremented by the timer",
-    # --- Batch 2 (2026-09-06). Each is computed or seeded at runtime, so no literal exists
+    # --- Batch 2. Each is computed or seeded at runtime, so no literal exists
     # to match. They are still checked for EXISTENCE and DOCUMENTATION like everything else;
     # only the literal comparison is exempt, and each exemption states the formula so a reader
     # can still derive the expected value.
@@ -113,10 +113,9 @@ def collect_fields(root):
 
     The RAW members matter as much as the reflected ones: they are the deliberate
     non-UPROPERTY holes that "Guess What" and the Native-C scan have to find, so the
-    README documents them and this gate must recognise them as real fields. The first
-    version of this check knew only about UPROPERTY and reported RawInt/RawFloat/
-    RawDouble as phantom README rows -- flagging the sample's most deliberate feature
-    as a typo.
+    README documents them and this gate must recognise them as real fields. A check
+    that knew only about UPROPERTY would report RawInt/RawFloat/RawDouble as phantom
+    README rows -- flagging the sample's most deliberate feature as a typo.
     """
     fields = {}
     for src, hdr in ([(SRC, h) for h in HEADERS]
@@ -126,8 +125,8 @@ def collect_fields(root):
         for m in UPROP_RE.finditer(text):
             decl = " ".join(m.group("decl").split())
             # Drop any initialiser first. `UPROPERTY() float BaseValue = 0.f;` otherwise
-            # yields the trailing identifier of "0.f" -- the field was recorded as `f`,
-            # and then reported as undocumented. Found by a negative control.
+            # yields the trailing identifier of "0.f" -- the field would be recorded as `f`,
+            # and then reported as undocumented.
             decl = decl.split("=")[0].strip()
             nm = NAME_RE.search(decl)
             if nm:
@@ -172,9 +171,9 @@ def check(root, verbose):
     fields = collect_fields(root)
     # Strip fenced blocks BEFORE any backtick parsing. A ``` fence is three backticks:
     # the naive `([^`]+)` pairing consumes one of them, desynchronising every code span
-    # after it, so real field names get swallowed into multi-line prose blobs and one of
-    # those blobs was the token '**'. Two of this gate's own bugs came from that single
-    # oversight. Fences carry shell commands, never field claims -- drop them outright.
+    # after it, so real field names get swallowed into multi-line prose blobs, one of
+    # which can be the token '**'. Fences carry shell commands, never field claims -- drop
+    # them outright.
     readme = re.sub(r"```.*?```", "", read(root, SAMPLE, "README.md"), flags=re.S)
     corpus = "\n".join([read(root, SRC, f) for f in VALUE_SOURCES]
                        + [read(root, SRC58, f) for f in VALUE_SOURCES58
@@ -185,12 +184,11 @@ def check(root, verbose):
 
     # --- 1. every field is documented -------------------------------------------------
     # BOTH sets are restricted to IDENTIFIER-SHAPED tokens, and the glob form to a
-    # trailing-* prefix (`Str_*`). This is not tidiness -- the first version accepted any
-    # backticked token containing '*', and markdown bold sitting between two code spans
-    # ("`a` ** `b`") was parsed as the token '**', which compiled to the glob ^.*$ and
-    # matched EVERY field. Check 1 silently became a no-op and reported OK. A negative
-    # control caught it; nothing else would have. Exactly the failure mode this gate
-    # exists to prevent, in the gate itself.
+    # trailing-* prefix (`Str_*`). This is not tidiness -- accepting any backticked token
+    # containing '*' lets markdown bold sitting between two code spans ("`a` ** `b`")
+    # parse as the token '**', which compiles to the glob ^.*$ and matches EVERY field.
+    # Check 1 would silently become a no-op and report OK, and only a negative control
+    # shows it: exactly the failure mode this gate exists to prevent, in the gate itself.
     ticked = set()
     globs = []
     for tok in BACKTICK_RE.findall(readme):
@@ -210,7 +208,7 @@ def check(root, verbose):
     # --- 2 + 3, over the table rows ----------------------------------------------------
     # Only cell 0 of a table row is a FIELD CLAIM. Backticks anywhere else are prose or
     # values (`OptionalPresent`, `Set[idx]`, `TextProperty`) and must not be policed as
-    # field names -- the first draft of this check did, and flagged a string literal.
+    # field names -- policing them flags a string literal.
     known = set(fields) | {"Health.BaseValue", "Health.CurrentValue"}
     loose = 0
     for line in readme.splitlines():
@@ -271,8 +269,8 @@ def check(root, verbose):
         # CJK is FIELD-SCOPED ONLY -- deliberately no corpus-wide fallback.
         # The literals are substrings of one another (統一 lives inside 統一言語), so a
         # corpus-wide search finds a changed string in a *different* constant and passes.
-        # Measured: editing Even2_OneNull from 統一 to 最強 was caught by nothing until
-        # this fallback was removed. Numbers can afford the looser tier; these cannot.
+        # With such a fallback, editing Even2_OneNull from 統一 to 最強 is caught by
+        # nothing. Numbers can afford the looser tier; these cannot.
         cjk = escape_cjk("".join(ch for ch in value_cell
                                  if ord(ch) > 0x2BFF or 0x3000 <= ord(ch)))
         if cjk and cjk not in haystack:
@@ -331,10 +329,9 @@ def check_identity_covers_mirror(root):
     "in sync" while the packaged binary genuinely differs. A false negative in the tool whose only
     job is catching drift is worse than having no tool.
 
-    ⚠ Found by hand 2026-09-06: DumperTestHUD.h/.cpp had been mirrored since 2026-08-14 and were
-    never listed. The HUD is the sample's own health readout and the ONLY way to learn the values
-    of the non-UPROPERTY raw fields, so its silent drift would break exactly the rows that have no
-    other oracle. Nothing would have caught it; hence this check.
+    ⚠ The case that matters most: DumperTestHUD.h/.cpp. The HUD is the sample's own health readout
+    and the ONLY way to learn the values of the non-UPROPERTY raw fields, so its silent drift would
+    break exactly the rows that have no other oracle -- mirrored but unlisted, nothing else catches it.
     """
     src = os.path.join(root, SRC)
     ident = os.path.join(root, SAMPLE, "capture_package_identity.py")

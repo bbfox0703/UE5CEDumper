@@ -5,15 +5,15 @@
                                                        [--all-offsets] [--out DIR]
 
 WHY IT EXISTS
-  docs/vendor-pin-reviews.md § zydis. Reading 13 upstream commits answered "does this matter?" only by argument; this
-  answers it by running the REAL dll/src/Denken.cpp against both revisions over real game binaries. It was written for
-  the 2026-11-06 review (a95bb71 vs fcc63c6) and is kept so the next review only has to run it on the new delta.
+  docs/vendor-pin-reviews.md § zydis. Reading upstream commits answers "does this matter?" only by argument; this
+  answers it by running the REAL dll/src/Denken.cpp against both revisions over real game binaries, so each review
+  only has to run it on the new delta.
 
 WHAT IT DOES
   Per revision (base = the gitlink this repo pins, candidate = origin/master unless given):
     1. `git archive`s vendor/zydis include/ + src/ at that revision into OUT/src_<tag>/. The submodule checkout and the
        gitlink are never touched. zycore comes from the checkout, so a candidate whose zycore gitlink differs is
-       refused: a bump must keep zycore at what zydis itself pins (sync_tools.ps1 records the time it did not).
+       refused: a bump must keep zycore at what zydis itself pins (sync_tools.ps1's submodule bump says why).
     2. Compiles Zydis decoder-only with the defines dll/CMakeLists.txt sets, plus /DNDEBUG like the Release DLL.
     3. COMPILE CHECK: compiles the real dll/src/Denken.cpp against that revision's headers with the repo's flags.
     4. Links denken_<tag>.exe (real Denken.cpp + that Zydis) and zproj_<tag>.dll (a version-neutral projection of one

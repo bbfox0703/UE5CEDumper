@@ -21,8 +21,8 @@ Spawn source, selected with `--spawn`:
             and its components lazily on the first toggle, so this manufactures new
             UActorComponents without anyone playing the game. ⚠ It is ONE-SHOT per
             process: once those objects exist, cycling the camera off/on creates
-            nothing, so a second run in the same session cannot spawn (measured on
-            DumperTest 2026-08-22: 295 live objects before, 295 after).
+            nothing, so a second run in the same session cannot spawn (the live
+            object count before and after is the same).
 
   manual    Poll for new objects while a human — or computer-use — makes the game
             spawn them: walk into a battle, change map, reload a save. This is the
@@ -58,9 +58,9 @@ from pipe_client import PipeClient  # noqa: E402
 # line_buffering matters as much as the encoding here: in manual spawn mode this run
 # blocks for MINUTES, and a redirected stdout is block-buffered, so the whole (A)
 # section -- the CDO address, `held=N`, the live-sample channel proof -- can still be
-# sitting in the buffer while the poll lines stream out. Measured 2026-08-23: a
-# captured run began at the spawn banner with the entire mechanism half missing, i.e.
-# the evidence existed and did not reach the log, which is the same as not having it.
+# sitting in the buffer while the poll lines stream out: a captured run then begins at
+# the spawn banner with the mechanism half missing, i.e. the evidence exists and does
+# not reach the log, which is the same as not having it.
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
@@ -83,8 +83,8 @@ def _components(c: PipeClient, limit: int = 200000) -> dict:
     ⚠ THE CAP IS LOAD-BEARING AND MUST NOT SILENTLY BITE. Newness is decided by
     diffing this set against itself across the spawn, so a truncated `before` makes
     every unsampled survivor look NEWLY SPAWNED — a false positive, in the direction
-    that invents evidence rather than losing it. The old default was 400, which is
-    fine on DumperTest (295 components) and wrong on any real game. `check_complete`
+    that invents evidence rather than losing it. A cap of a few hundred fits
+    DumperTest and is wrong on any real game. `check_complete`
     turns a cap into a loud failure instead of a quiet sample.
     """
     out = {}

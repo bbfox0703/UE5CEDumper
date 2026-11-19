@@ -44,7 +44,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// checks. Mirrors <see cref="LiveWalkerViewModel"/>'s pattern.</summary>
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
     /// <summary><see cref="Environment.TickCount64"/> at the last check, null before the first: on the wall clock a
-    /// step back made the time since the last check negative, and nothing re-checked until the clock caught up.
+    /// step back makes the time since the last check negative, and nothing re-checks until the clock catches up.
     /// [PROPSEARCH-FREEZE-STALE-AOBMAKER]</summary>
     private long? _lastAobMakerCheck;
 
@@ -79,8 +79,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// toggle on, let the load reconcile, toggle off — and if the first scoring lands last, the
     /// grid keeps the pack's rows while the CheckBox reads off AND
     /// <c>_scoredWithGameplayActions</c> reads off, so the mismatch the field exists to detect is
-    /// invisible and nothing ever reconciles it. That is Z1's "CheckBox and rows disagree,
-    /// permanently, recover by untick+retick" arriving by a different route.</para>
+    /// invisible and nothing ever reconciles it: the CheckBox and the rows disagree permanently,
+    /// until an untick+retick.</para>
     /// </summary>
     private int _rescoreGeneration;
 
@@ -98,10 +98,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// with two writers would make that null ambiguous and break that test in the
     /// very interleaving it exists to pin.
     ///
-    /// Why a seam at all: the setter is fire-and-forget, so a test that set the
-    /// property and then called RescoreAsync() itself started a SECOND re-score
+    /// Why a seam at all: the setter is fire-and-forget, so a test that sets the
+    /// property and then calls RescoreAsync() itself starts a SECOND re-score
     /// racing the first. Both end in ApplyFilter(), which Clear()s and refills
-    /// Results, so the assertion could enumerate a half-rebuilt (or momentarily
+    /// Results, so the assertion can enumerate a half-rebuilt (or momentarily
     /// EMPTY) collection. Awaiting this instead is what makes the toggle path
     /// deterministic.</summary>
     internal Task? PendingToggleRescore { get; private set; }
@@ -193,14 +193,11 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returns at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy was even attempted, and the bool the handler eventually got would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
@@ -248,7 +245,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         _allRows = new List<ScoredFunctionRow>();
         _entries = Array.Empty<AllFunctionEntry>();
         _scoredWithGameplayActions = false;
-        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan (Z15)
+        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan
         SelectedResult = null;
         Results.Clear();
         ClassFilter.Reset();
@@ -307,7 +304,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -332,14 +329,14 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                         // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script" /
                         // "bytecode_unreadable" -- see FunctionPropRefsResult.NotAnalysed), so a
                         // bare "0" would read as "analysed, touches no class fields". The single-function
-                        // dialog already says "NOTHING was analysed"; the batch never read the tag.
+                        // dialog says "NOTHING was analysed" too.
                         row.XrefInfo = PartialResultNotice.NotAnalysedCell;
                         notAnalysed++;
                     }
                     else
                     {
                         var fields = res.Props.Where(p => p.IsClassField).ToList();
-                        // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
+                        // A partial result is marked per cell, as for the scan deadline:
                         // a disasm that stopped at its instruction budget yields a SHORT
                         // list, and a bare "0" then reads as "this function touches no class
                         // fields" — the conclusion the user acts on. Mark it.
@@ -501,7 +498,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             _allRows = await Task.Run(() => ScoreEntries(_entries, includeActions));
 
             // Keep the scan facts so RescoreAsync can rewrite the SAME status line
-            // rather than leaving the previous scoring's numbers on screen. (Z15)
+            // rather than leaving the previous scoring's numbers on screen.
             _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
                                           result.ClassesWithFunctions, result.ScannedObjects,
                                           result.Truncated, result.Aborted, result.Limit, GameOnly: gameOnly);
@@ -524,14 +521,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             // reflects current connectivity. Fire-and-forget: this MUST NOT
             // be awaited. CheckAvailabilityAsync pays AobMakerBridgeService's
             // 2s pipe-connect timeout whenever CE isn't running -- the normal
-            // state for this panel -- and awaiting it held IsLoading true for
-            // those 2s AFTER the grid was already painted and the final status
-            // written, so the panel looked idle while RescoreAsync's
-            // `if (IsLoading ...) return;` guard silently swallowed every
-            // Gameplay-Actions toggle. Every other AOBMaker probe in the UI is
-            // fire-and-forget for the same reason; this was the lone `await`.
-            // Dropping the Task is safe -- CheckAobMakerAsync swallows its own
-            // exceptions into IsAobMakerAvailable = false.
+            // state for this panel -- and awaiting it would hold IsLoading true
+            // for those 2s AFTER the grid is painted and the final status
+            // written, so the panel would look idle while RescoreAsync's
+            // `if (IsLoading ...) return;` guard silently swallows every
+            // Gameplay-Actions toggle. Dropping the Task is safe --
+            // CheckAobMakerAsync swallows its own exceptions into
+            // IsAobMakerAvailable = false.
             _ = CheckAobMakerAsync();
         }
         catch (Exception ex)
@@ -672,10 +668,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
     /// <summary>
     /// The panel's one status sentence. Pure + internal so both writers share it
-    /// verbatim (Z15) and so the truncation disclosure (Z8) is unit-testable without a
-    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows and emitted no
-    /// marker at all before Z8, so "N functions across M classes" read as a complete
-    /// census of the game.
+    /// verbatim and so the truncation disclosure is unit-testable without a
+    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows, and without a
+    /// marker "N functions across M classes" would read as a complete census of the game.
     /// </summary>
     internal static string BuildStatusLine(LoadScanFacts f, int interesting)
     {
@@ -688,8 +683,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                                  : "tick \"Game Only\" to skip engine classes, or scan a narrower game")
                 : "";
         // "from M of N classes", not "across N classes": the second number is the
-        // EXAMINED count and reads as provenance, which overstated coverage 2.6x on
-        // P3R (2,293 examined, ~889 contributing). (FUNCDENOM-2026-08-26)
+        // EXAMINED count, and read as provenance it overstates coverage wherever many
+        // examined classes contribute no function. (FUNCDENOM-2026-08-26)
         return $"{f.Total:N0} functions from {f.ClassesWithFunctions:N0} of " +
                $"{f.ScannedClasses:N0} classes  " +
                $"({interesting:N0} above threshold {KeywordScoringTable.InterestingThreshold}, " +
@@ -740,7 +735,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
-        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
         FilterText      = "";
         CategoryFilter  = null;
         ShowAll         = false;

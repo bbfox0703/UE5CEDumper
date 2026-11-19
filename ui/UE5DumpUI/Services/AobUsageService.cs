@@ -141,9 +141,9 @@ public sealed class AobUsageService
             return new AobUsageFile();
         }
 
-        // A document of literally `null` parses fine and deserializes to null. The old
-        // `?? new AobUsageFile()` treated that as "empty cache" and wiped the same way a
-        // parse failure did, just without even a log line.
+        // A document of literally `null` parses fine and deserializes to null. Treating that
+        // as "empty cache" (`?? new AobUsageFile()`) would wipe the file the same way a parse
+        // failure does, just without even a log line.
         if (parsed == null)
         {
             QuarantineCorruptFile("document deserialized to null");

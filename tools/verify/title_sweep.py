@@ -18,8 +18,8 @@ WHAT ONE SWEEP PAYS FOR (session plan, GROUP 7 — "advances 4 rows at once"):
   * `G1`/`X3`/`U7` — class/offset totals from a real pool.
 
 PROXY FRESHNESS IS CHECKED FIRST, not assumed: `assert_build()` compares the DLL
-answering the pipe against `dist/build_number.txt`, and every deployed proxy on this
-machine was stale on 2026-08-19. A stale proxy owns the pipe and answers happily.
+answering the pipe against `dist/build_number.txt`, because a deployed proxy goes stale
+with every build. A stale proxy owns the pipe and answers happily.
 """
 import os
 import argparse
@@ -76,8 +76,7 @@ def drop_hint(exe_name):
 
     Without this the scan logs `FindAll: UE Version = NNN (cached, rev=5, detected=yes,
     lowConf=no) — skipped DetectVersion` and produces NO `[SCAN:Ver] DetectVersion`
-    lines at all, so G8/G9/G11/G12 get no evidence whatsoever from the run. Measured on
-    Lushfoil before this was added.
+    lines at all, so G8/G9/G11/G12 get no evidence whatsoever from the run.
 
     The entry is READ FIRST and returned, because its `ueVersion` is the only "before"
     that exists for G11 step 1's regression comparison -- deleting it without capturing
@@ -87,7 +86,7 @@ def drop_hint(exe_name):
     # ALL matches, not just the first. One exe can own several entries: the cache is
     # keyed by PE hash, and a game patch re-hashes the binary while keeping the name
     # (DQ7R has two, 69BA4044185AB000 -> 69BB84C7069E9000). Deleting only the first
-    # left the second behind and the delete-then-verify guard correctly refused.
+    # would leave the second behind, and the delete-then-verify guard would refuse.
     doomed = [k for k, v in d["games"].items()
               if (v.get("gameName") or "").lower() == exe_name.lower()]
     if not doomed:
@@ -196,12 +195,12 @@ def main():
 
         # Wait for the pipe rather than assuming the boot budget was enough. When it
         # never appears, print init-0.log's tail: it says WHY, and the reason is often
-        # not "the game is slow". Measured on OCTOPATH, which relaunches itself --
-        # instance A opened the pipe, instance B logged `UE5_StartPipeServer: pipe
-        # already exists (another instance running) — skipping`, then A exited and took
-        # the pipe with it, leaving a live game with no server at all.
+        # not "the game is slow". A game that relaunches itself (OCTOPATH does) can have
+        # instance A open the pipe, instance B log `UE5_StartPipeServer: pipe already
+        # exists (another instance running) — skipping`, then A exit and take the pipe
+        # with it, leaving a live game with no server at all.
         # [PIPE-PER-PROCESS-2026-11-06] The game's pipe is UE5DumpBfx_<pid>. Wait for one to be LISTED, which opens
-        # nothing: opening it took a pipe instance and showed the DLL a client that left at once.
+        # nothing: opening it would take a pipe instance and show the DLL a client that left at once.
         deadline = time.time() + 120
         while time.time() < deadline:
             pids, legacy = list_dumper_pipes()
@@ -209,7 +208,7 @@ def main():
                 break
             if legacy:
                 # Only the legacy name: the DLL in this game predates the per-process pipe, so the deployed proxy is
-                # stale -- the verdict assert_build() gave before the name changed, which it can no longer reach.
+                # stale -- the verdict assert_build() would give, but it cannot reach the legacy pipe to give it.
                 say("*** STALE BUILD *** only the legacy pipe \\\\.\\pipe\\UE5DumpBfx is up: the proxy in this game "
                     "predates the per-process pipe. Refresh it: py tools/verify/proxy_refresh.py refresh "
                     f"\"{exe.stem}\"")
@@ -224,8 +223,8 @@ def main():
                 say("   " + l.strip()[:180])
 
             # [RELAUNCHPIPE-2026-08-19]: on a self-relaunching title the survivor
-            # skipped starting a server because the launcher still held the pipe, then
-            # the launcher exited with it. The DLL is mapped and healthy -- it just has
+            # skips starting a server because the launcher still holds the pipe, then
+            # the launcher exits with it. The DLL is mapped and healthy -- it just has
             # no server. Ask it to start one.
             if "pipe already exists" in txt:
                 say("  -> this is [RELAUNCHPIPE]. Calling UE5_StartPipeServer in the "

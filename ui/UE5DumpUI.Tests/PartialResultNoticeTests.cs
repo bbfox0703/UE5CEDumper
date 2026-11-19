@@ -8,8 +8,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 L8, findings Z4 / Z8 / Z9 / Z10 / Z12 — one theme: a truncation or deadline
-/// signal existed and was discarded before the user saw it.
+/// One theme: a truncation or deadline signal that exists must reach the user, not be
+/// discarded before they see it.
 ///
 /// <para>
 /// These cover the pure half: the shared disclosure vocabulary
@@ -21,8 +21,8 @@ namespace UE5DumpUI.Tests;
 public class PartialResultNoticeTests
 {
     /// <summary>
-    /// AF7's row names this sentence: when the native disassembler stops early the Props
-    /// dialog must say it "hit its instruction budget". Pinned because a truncated list is
+    /// When the native disassembler stops early the Props dialog must say it "hit its
+    /// instruction budget". Pinned because a truncated list is
     /// indistinguishable from a complete one — the whole point is that a field missing from
     /// it is "not seen yet", not "not used", and the sentence has to carry that.
     /// </summary>
@@ -52,7 +52,7 @@ public class PartialResultNoticeTests
     [Fact]
     public void BatchCapClause_ClaimsOnlyWhatTheDllKnows()
     {
-        // Review 3 of 640e7364: capHit fires when ONE worker reached the cap -- even a worker whose 200th match
+        // capHit fires when ONE worker reached the cap -- even a worker whose 200th match
         // was its range's last object, with exactly 200 in total. The DLL knows "more MAY exist", never
         // "matched more than" -- the dialog's own "[CAP HIT ... more may exist]" wording.
         var s = PartialResultNotice.BatchCapClause(1, 1, 200);
@@ -93,7 +93,7 @@ public class PartialResultNoticeTests
     [Fact]
     public void XrefDialogStatus_DeadlineOnly_HasNoCapWording()
     {
-        // The control, green before and after: the deadline keeps its own words, and a scan that was not
+        // The control: the deadline keeps its own words, and a scan that was not
         // capped says nothing about a cap.
         var res = new FindPropertyXrefsResult
         {
@@ -141,15 +141,14 @@ public class PartialResultNoticeTests
     }
 
     // ==================================================================
-    // Z10 — the advice must name a lever the panel actually has.
+    // The advice must name a lever the panel actually has.
     // ==================================================================
 
     /// <summary>
-    /// The Property Search cap suffix used to end "…narrow the query or raise Max". That
-    /// panel has no Max control — the string had been lifted from Instance Finder, which
-    /// really does own an InstanceSearchCap NumericUpDown — so half the advice pointed at
-    /// a control the user could hunt for and never find. RowCap now takes the advice as a
-    /// parameter precisely so each caller supplies its OWN levers.
+    /// RowCap takes the advice as a parameter precisely so each caller supplies its OWN
+    /// levers: advice lifted from another panel ("…or raise Max" from Instance Finder, which
+    /// owns an InstanceSearchCap NumericUpDown) points, on a panel without that control, at
+    /// something the user can hunt for and never find.
     /// </summary>
     [Fact]
     public void RowCap_puts_the_callers_advice_in_the_sentence()
@@ -167,9 +166,8 @@ public class PartialResultNoticeTests
                            PartialResultNotice.RowCap(100000, "functions", "x"));
 
     /// <summary>
-    /// One vocabulary, not four. Every disclosure this batch touches carries the ⚠
-    /// marker and an em dash before the consequence — the phrasing the two fixes that
-    /// landed just before it already shipped ([CLASSTOTAL] / [CONTAINERCAP]).
+    /// One vocabulary, not four. Every disclosure here carries the ⚠ marker and an em
+    /// dash before the consequence — the phrasing of [CLASSTOTAL] / [CONTAINERCAP].
     /// </summary>
     [Theory]
     [InlineData("cancel")]
@@ -192,7 +190,7 @@ public class PartialResultNoticeTests
     }
 
     // ==================================================================
-    // Z12 — the [scanned X/Y] suffix must discriminate.
+    // The [scanned X/Y] suffix must discriminate.
     // ==================================================================
 
     [Fact]
@@ -223,9 +221,9 @@ public class PartialResultNoticeTests
     }
 
     /// <summary>
-    /// The heart of Z12. A deep MISS has a SECOND bound the suffix never mentioned: the
-    /// deep descent probes at most N elements per container, so "scanned 430,112/430,112"
-    /// with no warning read as an exhaustive negative when the cap could have ended it.
+    /// The heart of it. A deep MISS has a SECOND bound the suffix must mention: the deep
+    /// descent probes at most N elements per container, so "scanned 430,112/430,112" with
+    /// no warning reads as an exhaustive negative when the cap could have ended it.
     /// </summary>
     [Fact]
     public void ScanSuffix_deep_miss_discloses_the_element_cap_so_a_miss_is_not_read_as_absence()
@@ -242,8 +240,8 @@ public class PartialResultNoticeTests
     /// <summary>
     /// On a deep HIT the cap did not stand between the user and the answer, so the
     /// caveat would be noise — but the suffix must still say the deep pass ran, because
-    /// the numbers it quotes are now the DEEP pass's (the DLL used to report the shallow
-    /// pass's counters here, describing a pass that had nothing to do with the answer).
+    /// the numbers it quotes are the DEEP pass's (the shallow pass's counters would describe
+    /// a pass that had nothing to do with the answer).
     /// </summary>
     [Fact]
     public void ScanSuffix_deep_hit_names_the_pass_but_drops_the_cap_caveat()
@@ -276,13 +274,13 @@ public class PartialResultNoticeTests
                PartialResultNotice.ScanSuffix(1, 2, 3, false, true, 1024, false));
 
     // ==================================================================
-    // Z9 — a timed-out xref sweep must not be written as a bare 0.
+    // A timed-out xref sweep must not be written as a bare 0.
     // ==================================================================
 
     /// <summary>
-    /// The exact failure Z9 describes: a row whose game-wide bytecode sweep hit the
-    /// DLL's 30 s budget was written as "0", which the user reads as "no Blueprint
-    /// function touches this field, so freezing it is safe".
+    /// The exact hazard: a row whose game-wide bytecode sweep hit the DLL's 30 s budget,
+    /// written as "0", reads to the user as "no Blueprint function touches this field, so
+    /// freezing it is safe".
     /// </summary>
     [Fact]
     public void FunctionsSummary_zero_after_a_deadline_is_not_the_same_cell_as_a_clean_zero()
@@ -382,7 +380,7 @@ public class PartialResultNoticeTests
     public void BatchPartialClause_is_silent_when_nothing_was_partial()
         => Assert.Equal("", PartialResultNotice.BatchPartialClause(0, 40));
 
-    /// <summary>The roll-up must spell out what a 0 on those rows now means, because the
+    /// <summary>The roll-up must spell out what a 0 on those rows means, because the
     /// cell marker alone is easy to read as a rendering artefact.</summary>
     [Fact]
     public void BatchPartialClause_explains_what_a_zero_on_a_partial_row_means()

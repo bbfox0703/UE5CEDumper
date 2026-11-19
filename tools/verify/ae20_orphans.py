@@ -1,12 +1,13 @@
-"""AE20: stage MANY synthetic leftover-proxy trees so the Delete-checked pass can be cancelled.
+"""Stage MANY synthetic leftover-proxy trees so the Delete-checked pass can be cancelled.
 
     py tools/verify/ae20_orphans.py create [--count 40]
     py tools/verify/ae20_orphans.py status
     py tools/verify/ae20_orphans.py clean
 
 WHY IT IS NOT `stage_synth.py`
-    That rig stages exactly ONE orphan, which is right for AE4 step 4. AE20 is the
-    CANCEL path, and the row says so itself: "Needs several rows: with one row the
+    That rig stages exactly ONE orphan, which is right for a single-row delete. This one
+    is for the CANCEL path (AE20 in docs/audit-2026-08-13-early-code-findings.md), and
+    the check says so itself: "Needs several rows: with one row the
     loop finishes before a human can click". A cancel that arrives after the loop
     ended is indistinguishable from a cancel that does nothing, so the run has to be
     long enough that Cancel lands INSIDE it.
@@ -24,18 +25,18 @@ WHY SYNTHETIC, AND WHY THAT IS NOT A COMPROMISE HERE
     `clean` removes only paths matching the `ZZAe20Orphan` prefix, and refuses
     anything else.
 
-⭐ WHY `--dlls` AND `lock` EXIST (added 2026-08-24)
+⭐ WHY `--dlls` AND `lock` EXIST
     Cancelling a 1-DLL-per-row pass is NOT a discriminating test of the
-    `[ORPHANCANCEL-2026-08-20]` fix, and the first re-run on disk proved it: the cancel
-    landed in the 11 ms gap BETWEEN rows, so the interrupted row had recycled nothing and
-    the tally matched the log (3 == 3) — which the PRE-fix code would also have reported.
-    A run only discriminates when a NON-SUCCESSFUL row has already recycled something,
-    because that is the arithmetic the fix moved out of `if (result.Success)`.
+    `[ORPHANCANCEL-2026-08-20]` fix: the cancel can land in the few-ms gap BETWEEN rows,
+    so the interrupted row has recycled nothing and the tally matches the log — which a
+    build without the fix would also report. A run only discriminates when a
+    NON-SUCCESSFUL row has already recycled something, because that is the arithmetic
+    that must sit outside `if (result.Success)`.
 
-    The fix record names the deterministic way to get there — the sibling hole the finding
-    did not mention and `APartlyLockedRow_AlsoCountsWhatItRecycled` pins: a row that
-    recycles one of its DLLs and then hits a LOCK returns `Success == false`, so
-    everything it recycled used to go unreported. No cancel, no timing.
+    The deterministic way to get there is the sibling hole
+    `APartlyLockedRow_AlsoCountsWhatItRecycled` pins: a row that recycles one of its DLLs
+    and then hits a LOCK returns `Success == false`, so without the fix everything it
+    recycled goes unreported. No cancel, no timing.
 
         create --count 2 --dlls version,dxgi   # two proxies per row
         lock ZZAe20Orphan000 dxgi.dll          # hold it open with NO sharing
@@ -44,7 +45,9 @@ WHY SYNTHETIC, AND WHY THAT IS NOT A COMPROMISE HERE
     `FileStream(..., FileShare.Read | FileShare.Delete)` fails with
     ERROR_SHARING_VIOLATION (0x80070020) — the exact `catch` that appends to `locked`.
     Expect `1 file(s) recycled` in the summary and exactly one `Recycled leftover proxy`
-    line in the log; the pre-fix code said 0 against that same 1.
+    line in the log; a build without the fix says 0 against that same 1.
+    ⚠ The delete-time re-plan can drop a locked file before the loop sees it -- see
+    `readonly` for the route that reaches the partly-failed row every time.
 """
 import ctypes
 import hashlib
@@ -100,8 +103,8 @@ def create(count, spec="version", link=False):
         say("REFUSING: %d %s* tree(s) already exist -- run clean first" % (len(trees()), PREFIX))
         return 1
 
-    # ⭐ HARDLINKS, for the counts that make a timing window. AE4-AE7 step 3's orphan-scan
-    # cancel and step 4's mutual-exclusion half both need the operation to last longer than
+    # ⭐ HARDLINKS, for the counts that make a timing window. The orphan-scan cancel and
+    # the mutual-exclusion check both need the operation to last longer than
     # one input event, which needs HUNDREDS of trees -- and at 2.9 MB per proxy that is
     # gigabytes of identical bytes. A hardlink is a second directory entry for the SAME
     # extents: the scanner's `HasExportQuorum` reads a real proxy, and the disk cost is ~0.
@@ -152,17 +155,17 @@ def create(count, spec="version", link=False):
 def readonly(tree, dll, on=True):
     """Flip the ReadOnly attribute on one staged DLL, AFTER the scan.
 
-    ⭐ THIS, NOT `lock`, IS THE DETERMINISTIC PARTLY-FAILED ROW — measured 2026-08-24.
+    ⭐ THIS, NOT `lock`, IS THE DETERMINISTIC PARTLY-FAILED ROW.
     A LOCKED file is invisible to the delete-time RE-PLAN: `RemoveOrphanProxyAsync` re-scans
     the folder and the identity re-check cannot open a share-locked file, so it drops out of
     `plan.FilesToRecycle` entirely and the row succeeds at everything it is still asked to do
-    (measured: `Cleaned 2 of 2 ... 3 file(s) recycled`, no `is locked` warning anywhere, and
-    the DLL still on disk). The `locked` list is unreachable that way.
+    (every row reported cleaned, no `is locked` warning anywhere, and the DLL still on
+    disk). The `locked` list is unreachable that way.
 
     A READ-ONLY file still OPENS, so it survives the re-plan and reaches the loop's own
     `(fi.Attributes & FileAttributes.ReadOnly) != 0 -> readOnly.Add(...); continue;` branch.
     `ResolveRemovalOutcome` then returns Success=false with `recycled >= 1` from the row's
-    OTHER DLL - which is precisely the accounting the fix moved out of `if (result.Success)`,
+    OTHER DLL - which is precisely the tally that must sit outside `if (result.Success)`,
     and the case `APartlyLockedRow_AlsoCountsWhatItRecycled` pins at the seam.
 
     Never clear it on a file we did not stage: `clean` would then leave it behind.
@@ -192,8 +195,8 @@ def lock(tree, dll, seconds):
 
     This is what makes a row PARTLY succeed: the service recycles the row's other DLL,
     then this one throws IOException 0x80070020 into the `locked` list -> Success=false
-    with recycled >= 1, which is the accounting case the fix moved out of the success
-    branch. `FileShare.None` is deliberate: FileShare.Delete would let the recycle through.
+    with recycled >= 1, which is the case the tally outside the success branch must
+    count. `FileShare.None` is deliberate: FileShare.Delete would let the recycle through.
     """
     path = bin_of(LIB / tree) / dll
     if not path.is_file():

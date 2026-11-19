@@ -2,7 +2,7 @@
 
     py tools/check_inert_trimming.py [--list]
 
-THE DEFECT, which has now shipped four times:
+THE DEFECT, recorded under each of these tags:
 
   [FORCESTATUSCLIP-2026-08-22]  PropertySearchPanel status line
   [V8PREVIEWCLIP-2026-08-23]    Live Walker Value column
@@ -20,16 +20,16 @@ and asked for an ellipsis. If it also has no tooltip anywhere up its ancestor ch
 clipped tail is unrecoverable -- and in every case above the TAIL was the load-bearing
 part (`-- cap reached, more exist unheld`; the dump timestamp).
 
-WHAT IS **NOT** A HIT, each verified by hand 2026-08-23 against a real dropout:
+WHAT IS **NOT** A HIT:
 
   * an explicit `Width`/`MaxWidth` on the TextBlock or anywhere between it and the panel
     -- it is then self-constrained and trimming works normally
-    (ValueSearchPanel.axaml:694, `Width="520"`);
+    (ValueSearchPanel.axaml's slot `DisplayLabel`, `Width="520"`);
   * a `ToolTip.Tip` on the TextBlock **or on any ancestor** -- the tail stays readable
-    even when clipped (MainWindow.axaml:338/353, where the tooltip is on the wrapping
-    `Border`, not the TextBlock). ⚠ An earlier draft of this check looked only at DIRECT
-    children of the panel, which excluded those two for the WRONG reason and would have
-    hidden a genuine case nested one level deeper.
+    even when clipped (MainWindow.axaml's toolbar badges, where the tooltip is on the
+    wrapping `Border`, not the TextBlock). ⚠ Both tests walk the WHOLE ancestor chain up
+    to the panel: a test of its DIRECT children alone would exclude those badges for the
+    WRONG reason and hide a genuine case nested one level deeper.
 
 Deliberately NOT flagged: a bound TextBlock with no TextTrimming at all. There are ~130
 of those and nearly all are short scalars (`PoseX`, `ArrayLimit`); flagging them is noise,

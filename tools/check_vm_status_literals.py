@@ -7,7 +7,7 @@
     py tools/check_vm_status_literals.py --list     # print every counted literal, exit 0
 
 CLAUDE.md puts every UI string in en.axaml, but the view models set their status line
-with C# literals. The maintainer's call ([VM-INLINE-STRINGS], 2026-09-26): NEW
+with C# literals. The rule ([VM-INLINE-STRINGS] 2026-09-26): NEW
 view-model status strings go to en.axaml (Res.Get / Res.Format); the EXISTING ones stay,
 because moving them means a large round of re-testing for little gain. So this gate
 freezes the per-file count instead of demanding zero:
@@ -20,8 +20,8 @@ Counted: one per ASSIGNMENT to `StatusText` or to any property named `...Status`
 `...StatusText` (capitalised: a property, not a camelCase local), when its right-hand side
 up to the `;` holds a non-empty string literal anywhere -- a plain value, a ternary or
 switch arm, a concatenation, across lines. An empty "" is a clear, not text; // comment
-lines are skipped. The first version matched only `StatusText = "` on one line, so a
-ternary, a multi-line value or a sibling status property passed ([WIKI-REVIEW-GATES]).
+lines are skipped. Matching only `StatusText = "` on one line would let a ternary, a
+multi-line value or a sibling status property pass ([WIKI-REVIEW-GATES]).
 Other properties (ErrorMessage, computed tooltips) are out of scope, as the decision was
 about status strings.
 """
@@ -37,10 +37,10 @@ VMS = os.path.join(ROOT, "ui", "UE5DumpUI", "ViewModels")
 BASELINE = os.path.join(ROOT, "tools", "vm_status_literals_baseline.json")
 
 # `X = ` or `X += ` where X is a capitalised ...Status / ...StatusText name; not `==`, `!=`, `=>`. `+=` counts: an
-# appended clause is text the user reads as much as an assigned one ([I18N-READINESS-2026-11-04]; Live Funcs had seven).
+# appended clause is text the user reads as much as an assigned one ([I18N-READINESS-2026-11-04]).
 ASSIGN = re.compile(r'\b((?:[A-Z]\w*)?Status(?:Text)?)\s*\+?=(?![=>])')
 # A literal that is a COMPARISON operand or a PATTERN is logic, not text: `result == "ok" ? ... : ...`, `"x" => ...`,
-# `is "x"`. It used to keep a line counted after its text had moved to en.axaml.
+# `is "x"`. Counted, it would keep a line counted after its text had moved to en.axaml.
 LOGIC_BEFORE = re.compile(r'(?:==|!=|\bis|\bcase)\s*$')
 LOGIC_AFTER = re.compile(r'^\s*(?:==|!=|=>)')
 # A resource key (Res.Get("str.X") / Res.Format("str.X", ...)) is the compliant form, not text.
@@ -147,7 +147,7 @@ def main() -> int:
             shrank.append((rel, was, now))
 
     # --update lowers the baseline after literals moved out. It REFUSES while any file grew: rewriting the whole
-    # baseline from the tree used to accept a new literal added elsewhere in the same run. --rebaseline rewrites it
+    # baseline from the tree would accept a new literal added elsewhere in the same run. --rebaseline rewrites it
     # regardless, and is only for a change to the COUNTING RULES themselves (say so in the commit).
     if "--update" in sys.argv or "--rebaseline" in sys.argv:
         if grew and "--rebaseline" not in sys.argv:

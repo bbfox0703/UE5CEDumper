@@ -15,7 +15,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Views;
 
 /// <summary>
-/// Stage 2 (Invoke param picker): modal dialog that lists live UObject
+/// Invoke param picker: modal dialog that lists live UObject
 /// instances matching an expected UClass, returns the chosen instance's
 /// address back to the caller. Opens from <see cref="InvokeParamDialog"/>
 /// when the user clicks "Pick..." next to a pointer-flavoured parameter.
@@ -45,9 +45,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
         new Dictionary<string, IComparer>
         {
             ["Index"]     = DataGridSortComparers.Number<InstanceResult>(r => r.Index),
-            // Hex, not Ordinal: the cell shows "0x…" and the sort must be numeric. The
-            // sibling one panel over (RelatedObjectsPanel.axaml.cs) already did this
-            // correctly and was the only user of DataGridSortComparers.Hex in the tree.
+            // Hex, not Ordinal: the cell shows "0x…" and the sort must be numeric.
             ["Address"]   = DataGridSortComparers.Hex<InstanceResult>(r => r.AddressValue),
             ["ClassName"] = DataGridSortComparers.Ordinal<InstanceResult>(r => r.ClassName),
             ["Name"]      = DataGridSortComparers.Ordinal<InstanceResult>(r => r.Name),

@@ -22,9 +22,9 @@
 //     value i @ (TaggedValues&~1) + i*8
 //
 // The UE5.7+ container is "disguised" at the old offset: a single-format reader
-// mis-reads TaggedValues (a pointer) as ArrayNum (a count) and fails — this is
-// what broke stock UE5.7 enum name resolution (Solarpunk, ~46% names). The whole
-// job here is to disambiguate the two and read the right one.
+// mis-reads TaggedValues (a pointer) as ArrayNum (a count) and fails, and stock
+// UE5.7 enum names then do not resolve. The whole job here is to disambiguate
+// the two and read the right one.
 //
 // Disambiguation: a real ArrayNum is a small int (< maxCount) and is NEVER a
 // readable heap pointer; TaggedValues IS a readable heap pointer. So if the word

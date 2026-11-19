@@ -474,9 +474,9 @@ public partial class MainWindow : Window
         {
             _normalHeight = _pendingHeight;
         }
-        // Position promotion is gated like the stash (was unconditional): an off-screen /
-        // maximized-origin top-left must never latch into _normalPosition, or the next
-        // restore re-applies it (the "second restore jumps to 0,0" bug).
+        // Position promotion is gated like the stash: an off-screen / maximized-origin
+        // top-left must never latch into _normalPosition, or the next restore re-applies it
+        // and the second restore jumps to 0,0.
         if (IsSnapshotPositionAcceptable(_pendingPosition))
         {
             _normalPosition = _pendingPosition;
@@ -623,8 +623,8 @@ public partial class MainWindow : Window
     // everything here is plumbing.
 
     /// <summary>True when the Live Walker tab is the one on screen. Matched by
-    /// <c>TabItem.Tag</c>, never by index — MainTabIndex documents how those indices
-    /// silently drifted when tabs were inserted.</summary>
+    /// <c>TabItem.Tag</c>, never by index — an index silently drifts when a tab is
+    /// inserted (see MainTabIndex).</summary>
     private bool IsLiveWalkerTabActive()
         => (MainTabs.SelectedItem as TabItem)?.Tag as string == "LiveWalker";
 
@@ -675,10 +675,9 @@ public partial class MainWindow : Window
     /// </summary>
     /// <remarks>
     /// Routing is keyed on the selected <see cref="TabItem.Tag"/>, NOT its
-    /// position. Index-based routing here has silently drifted twice as tabs
-    /// were inserted into MainWindow.axaml (the Pointers re-check pointed at
-    /// the wrong index, and the autorefresh-stop assumed LiveWalker == 0).
-    /// The Tag travels with its TabItem, so reordering can't break this.
+    /// position. Index-based routing silently drifts whenever a tab is inserted
+    /// into MainWindow.axaml, sending a re-check or the autorefresh-stop to the
+    /// wrong tab. The Tag travels with its TabItem, so reordering can't break this.
     /// SelectedItem is the outer TabControl's selection, so inner
     /// SelectionChanged events bubbling from child grids are harmless.
     /// </remarks>
@@ -715,7 +714,7 @@ public partial class MainWindow : Window
         // Cancel any experimental tab's in-flight HEAVY query when navigating
         // away from it. Leaving a multi-million-row SPC / diff / pivot running on
         // a thread-pool thread while another tab loads pegs a core + allocates
-        // GBs — the tab-switch UI hang the user reported. Each VM's
+        // GBs, and the UI hangs on the tab switch. Each VM's
         // CancelPendingWork only cancels its heavy in-memory op (capture, which
         // yields between chunks, is deliberately left alone).
         if (tag != "SpcQuery")   vm.Spc?.CancelPendingWork();

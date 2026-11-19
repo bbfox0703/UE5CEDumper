@@ -40,11 +40,11 @@ public static class UsmapExportService
     // LargeEnums=3, ExplicitEnumValues=4 (Latest). We emit 4 -- what both canonical writers
     // produce today -- and every one of these thresholds changes the BYTES:
     //   >= PackageVersioning  : the int32 bHasVersionInfo header field becomes MANDATORY
-    //   >= LongFName          : name lengths are uint16 (this writer always did that, which is
+    //   >= LongFName          : name lengths are uint16 (as this writer writes them, which is
     //                           why the version can never go below 2)
     //   >= LargeEnums         : enum member counts are uint16, so a >255-member enum survives
     //   >= ExplicitEnumValues : each enum member carries its int64 value, so an enum with gaps
-    //                           or explicit values is no longer flattened to 0..N-1
+    //                           or explicit values keeps them instead of being flattened to 0..N-1
     private const byte Version = 4;
 
     // "No UE4/UE5 version info follows." The format spells this field 'bool' and a UE bool
@@ -121,8 +121,8 @@ public static class UsmapExportService
     /// <summary>
     /// Generate a complete USMAP binary file from the connected game's data.
     /// </summary>
-    /// <param name="warnings">[P1-ENUMNAMES] review 5: collects what the finished export must still say -- the enum
-    /// warning, which a progress line alone lost one pipe round-trip later. Null to ignore.</param>
+    /// <param name="warnings">[P1-ENUMNAMES] Collects what the finished export must still say -- the enum
+    /// warning, which a progress line alone loses one pipe round-trip later. Null to ignore.</param>
     public static async Task<byte[]> GenerateUsmapAsync(
         IDumpService dump, IProgress<string>? progress = null,
         CancellationToken ct = default, ICollection<string>? warnings = null)
@@ -429,7 +429,7 @@ public static class UsmapExportService
             case EPropertyType.EnumProperty:
                 // EnumProperty: underlying type + enum name. [A4-USMAP-ENUM-UNDERLYING] arm 1: the underlying
                 // type is the enum's REAL width -- unversioned cooked data serializes an enum UPROPERTY as an
-                // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte made a
+                // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte would make a
                 // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
                 WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.EnumUnderlyingType, f.Size));
                 w.Write(nameTable.IndexOf(
@@ -530,8 +530,8 @@ public static class UsmapExportService
                 break;
 
             case EPropertyType.EnumProperty:
-                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING], left as is for the UNDERLYING: an inner carries no size to
-                // derive it from. The enum NAME is now the inner's own ([A4-USMAP-CONTAINER-ENUM]), not "None".
+                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING]: the UNDERLYING stays Byte, as an inner carries no size to
+                // derive it from. The enum NAME is the inner's own ([A4-USMAP-CONTAINER-ENUM]), "None" when it has none.
                 WriteInnerPropertyType(w, "ByteProperty");
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(enumName) ? enumName : "None"));

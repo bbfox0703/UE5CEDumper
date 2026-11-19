@@ -9,7 +9,7 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 2 (docs/mcp-write-approval-eval.md §4.5): <c>write_field</c> writes the one
+/// [MCP-WRITE-GRANTS-2026-11-14] (docs/mcp-write-approval-eval.md §4.5): <c>write_field</c> writes the one
 /// field a field grant names, on a live instance of the granted class or of a subclass, without a prompt per call. The
 /// grant is <see cref="McpGrantTools"/>' field grant, which finds the field with <see cref="FindGrantableFieldAsync"/>.
 ///
@@ -28,9 +28,10 @@ namespace UE5DumpUI.Mcp;
 /// (<see cref="FieldValueConverter.PlanBoolWrite"/>). The write carries the bytes read just before it (expect), so a
 /// value the game or the user changed in between is not overwritten. The DLL compares and then writes, not atomically:
 /// a sibling bit the game flips in the instant between the two is lost by a packed bool's byte write, as by the Live
-/// Walker's editor. A template is refused, by the DLL's own verdict
-/// (get_object's template, DLL 3718+): a class default, a class default's subobject or a Blueprint component template
-/// holds what every instance spawned later starts with, which is more than the grant's "every live instance".</para>
+/// Walker's editor. A template is refused, by the DLL's own verdict (get_object's template, which every DLL from
+/// <see cref="Constants.McpMinDllBuildForFieldWrites"/> on reports): a class default, a class default's subobject or a
+/// Blueprint component template holds what every instance spawned later starts with, which is more than the grant's
+/// "every live instance".</para>
 /// </summary>
 internal static partial class McpFieldTools
 {

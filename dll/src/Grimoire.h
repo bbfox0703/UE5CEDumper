@@ -41,7 +41,7 @@ constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 // module exports that name, so a module that does is not one the walk needs.
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 // [DUMPER-SECOND-COPY-AUTOSTART] What a later copy calls or reads on an earlier copy in the same process (Land): its
-// mailbox, the hand-off it carries from this change on, and the shutdown every build carries.
+// mailbox, the hand-off a newer build carries (an older one lacks it), and the shutdown every build carries.
 constexpr const char*    DUMPER_MAILBOX_EXPORT  = "g_invokeMailbox";
 constexpr const char*    DUMPER_YIELD_EXPORT    = "UE5_YieldToLaterCopy";
 constexpr const char*    DUMPER_SHUTDOWN_EXPORT = "UE5_Shutdown";
@@ -50,7 +50,7 @@ constexpr const char*    DUMPER_HAND_OVER_HIDDEN_EXPORT = "UE5_HandOverHiddenAct
 // How many actors the later copy takes per call: See-through hides a handful at a time, so one call is the usual case.
 constexpr int32_t        LAND_HIDDEN_BATCH = 256;
 // How long a later copy asks an earlier copy that is still handing over (to a copy it took over) for that record, and
-// how often: a hand-off's shutdown can take 9-13 s on a busy game, and it may run past the pass's own wait.
+// how often: a hand-off's shutdown can take many seconds on a busy game, and it may run past the pass's own wait.
 constexpr int32_t        LAND_HIDDEN_WAIT_MS = 120000;
 constexpr int32_t        LAND_HIDDEN_POLL_MS = 100;
 // One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two
@@ -734,10 +734,10 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
-// [VND583-07, A9 step 11] Where FName::Number sits. It is +4 on every non-case-preserving build and on
+// [VND583-07] Where FName::Number sits. It is +4 on every non-case-preserving build and on
 // case-preserving UE 5.1+ ({ComparisonIndex, Number, DisplayIndex}). It is +8 on case-preserving UE4 and
 // 5.0 ({ComparisonIndex, DisplayIndex, Number}) -- NameTypes.h at origin/4.27 and 5.0.3-release vs
-// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated (A9): on a case-preserving
+// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated: on a case-preserving
 // build DetectCasePreservingName votes on which of UObject::NamePrivate +4 / +8 repeats the
 // ComparisonIndex -- that one is the DisplayIndex, equal to it for every name whose case was never
 // re-spelled.
@@ -747,7 +747,7 @@ constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int dis
     return displayAt4 > displayAt8 ? 8 : 4;
 }
 
-// [VND583-07, A9 step 1] sizeof(FName), MEASURED: the modal ElementSize of the NameProperty fields a walk
+// [VND583-07] sizeof(FName), MEASURED: the modal ElementSize of the NameProperty fields a walk
 // meets (Ubel::ProbeFNameSize) -- UE sets ElementSize from sizeof(FName) itself. Only a size this build's
 // family can have is taken: 4 or 8 on a standard build, 8 or 12 on a case-preserving one (the smaller of
 // each pair is UE_FNAME_OUTLINE_NUMBER, which moves Number out of FName), and only when at least
@@ -863,7 +863,7 @@ constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alr
 // FVector GravityDirection PROPERTY is already in stock 5.3 (Release-5.3-CL-29314046; absent from 5.1), and what 5.4
 // added is the reflected UFUNCTIONs SetGravityDirection / GetGravityDirection (in 5.4.4, 5.6, 5.7 and 5.8, not in
 // 5.3). Read as a 5.4 marker, the property would raise a stock 5.3 title to 504, which also switches off the 5.0-5.3
-// PendingKill tag (IsWeakTargetGarbage, R7-B-01). So the function means 5.4+, and the property alone only 5.3+ (a
+// PendingKill tag (IsWeakTargetGarbage, [R7-B-01]). So the function means 5.4+, and the property alone only 5.3+ (a
 // floor for a stripped build detected lower).
 constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool hasGravityDirectionProperty,
                                     bool hasSetGravityDirectionFunction) {
@@ -1536,7 +1536,7 @@ inline int UPropertySubclassStart(unsigned ueVersion) {
 // `bCasePreservingName` is set by `DetectCasePreservingName` (Genau.cpp, inside a live 20-object
 // vote), and no config/preset/UI can force it true.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
-    // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and
+    // [VND583-07] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and
     // only while it still fits this build's family -- a re-detection that flips bCasePreservingName
     // must not keep a size measured under the other answer.
     const int measured = FNAME_SIZE_MEASURED.load(std::memory_order_acquire);
@@ -1752,7 +1752,7 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 // So EngineBuildStringCode demands a `UE<M>` branch AND an M.m that agrees: the version half with a
 // full or simplified branch, or a branch-first string's major with its release. A licensee branch reads
 // 0, which costs a corroboration, never causes a refusal; loosening the parser to accept one would let
-// a single game-authored resource arm the refusal again (the B25 shape).
+// a single game-authored resource arm the refusal.
 // Engine build string examples:
 //     IS Defense         4.10.2-0+++depot+UE4-Releases+4.10          (fixed version 4.10.2.0)
 //     launcher 4.10.4    4.10.4-2872498+++depot+UE4-Releases+4.10    (UE4Game and CrashReportClient)
@@ -2019,7 +2019,7 @@ inline bool HostAllowsBackgroundThreads(const wchar_t* hostExePath) {
 namespace Grimoire {
 
 // Every re-assert worker sleeps its period in slices of this, so StopWorker()'s join
-// waits at most one slice rather than a whole period (R5). Keep it well under the
+// waits at most one slice rather than a whole period. Keep it well under the
 // shortest period (PROTECT/MOVE/TIME/SOLIDE) —
 // a slice longer than a period would turn the sliced sleep into a single long one.
 constexpr int     WORKER_SLEEP_SLICE_MS = 25;

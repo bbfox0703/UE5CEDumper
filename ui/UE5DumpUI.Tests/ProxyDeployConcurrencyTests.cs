@@ -14,16 +14,14 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// What happens when two Proxy Deploy operations overlap.
 ///
-/// <para><c>IsScanning</c>'s own declaration called itself "the mutual-exclusion guard" and it was
-/// not one: three of the eight long operations SET it while six TESTED it, so the guard was
-/// one-directional — a scan blocked a deploy, a deploy blocked nothing. Deploy and Undeploy could
-/// run over the same <c>Binaries</c> folder at once and both write the single result line, and
-/// Scan — which had no entry guard at all — could <c>Games.Clear()</c> the collection Update All
-/// was iterating. (audit #5 AE4-AE7)</para>
+/// <para>The guard must be two-directional: every long operation both SETS it and TESTS it. A guard
+/// some operations only test lets a scan block a deploy while a deploy blocks nothing — Deploy and
+/// Undeploy would run over the same <c>Binaries</c> folder at once and both write the single result
+/// line, and Scan could <c>Games.Clear()</c> the collection Update All is iterating.</para>
 ///
-/// <para>MEASURED, not assumed: <c>AsyncRelayCommand</c> reports <c>CanExecute == false</c> while it
-/// runs, and Avalonia's Button gates on that — so a command already could not re-enter ITSELF from
-/// its own button. What it never covered is two DIFFERENT commands, which is what these tests drive.
+/// <para>Checked, not assumed: <c>AsyncRelayCommand</c> reports <c>CanExecute == false</c> while it
+/// runs, and Avalonia's Button gates on that — so a command cannot re-enter ITSELF from its own
+/// button. What that never covers is two DIFFERENT commands, which is what these tests drive.
 /// They call <c>ExecuteAsync</c> directly, which bypasses <c>CanExecute</c> exactly as the
 /// property-changed and hotkey paths do.</para>
 /// </summary>
@@ -95,8 +93,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
             {
                 var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 // Continuations run on the pool (RunContinuationsAsynchronously), so a correcting refresh can add
-                // here while a test copies the list: the copy then threw "Destination array was not long enough"
-                // (CI, 2026-10-07). Writes and the tests' snapshots share this lock.
+                // here while a test copies the list, and the copy then throws "Destination array was not long
+                // enough". Writes and the tests' snapshots share this lock.
                 lock (PendingRefreshes) PendingRefreshes.Add(tcs);
                 await tcs.Task;
             }
@@ -158,8 +156,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         /// <summary>Source newer than target, or -- with Force Overwrite off, the default -- UpdateAllAsync's
         /// "already up to date" branch skips every game and DeployAsync is never called — which would make the two Update All
-        /// tests below pass while exercising nothing. (One of them silently did, until the
-        /// throwing test showed the loop body was unreachable.)</summary>
+        /// tests below pass while exercising nothing.</summary>
         public string? GetDllVersion(string dllPath)
             => VersionOf is { } v ? v(dllPath) : dllPath.Contains($"{Path.DirectorySeparatorChar}proxy{Path.DirectorySeparatorChar}",
                                 StringComparison.OrdinalIgnoreCase) ? "2.0.0" : "1.0.0";
@@ -264,15 +261,15 @@ public class ProxyDeployConcurrencyTests : IDisposable
     /// <para>Every "the second operation is refused" assertion below awaits a command that, if the
     /// gate regresses, stops being refused and instead parks on the same <see cref="GatedService"/>
     /// gate as the first one — which the test only opens afterwards. A bare await then deadlocks
-    /// the whole suite instead of failing, which is what the first negative-control run did. A
-    /// concurrency test that can hang forever when the fix regresses is not a usable test.</para>
+    /// the whole suite instead of failing. A concurrency test that can hang forever when the gate
+    /// regresses is not a usable test.</para>
     /// </summary>
     private static Task Refused(Task t) => t.WaitAsync(TimeSpan.FromSeconds(10));
 
     // ── [A3-DEPLOY-CANCEL]: "Cancel operation" during Deploy / Undeploy / Refresh ─────────
     //
-    // AE20 made Cancel reach all nine commands, but DeploySelectedAsync and UndeploySelectedAsync
-    // had no try/catch: the cancel rethrew out of the AsyncRelayCommand onto the dispatcher, where
+    // Cancel reaches DeploySelectedAsync and UndeploySelectedAsync too, so they must catch it:
+    // a cancel rethrown out of the AsyncRelayCommand lands on the dispatcher, where
     // DispatcherFaultGuard refuses to swallow it and the process dies. Here the escape is the
     // ExecuteAsync task faulting with the same exception the dispatcher would have received.
 
@@ -325,7 +322,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
         Assert.Contains("deployed: 1", vm.LastOperationResult ?? "");
         // The grid was brought back in line WITHOUT the cancelled token: a refresh landed after the
-        // throwing one, and nothing was reported as an error. (review of b8d09045)
+        // throwing one, and nothing was reported as an error.
         Assert.NotEmpty(svc.Applied);
         Assert.Null(vm.ErrorMessage);
     }
@@ -351,7 +348,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task Undeploy_OneGame_CancelReachingTheFinalRefresh_DoesNotEscape()
     {
-        // The Remove twin of the one-game Deploy case (review of b8d09045): the real UndeployAsync
+        // The Remove twin of the one-game Deploy case: the real UndeployAsync
         // never checks its token inside the worker, so a one-game Remove cancelled mid-run finishes
         // that game and reaches the post-loop refresh with the cancelled token.
         var (vm, svc) = Ready();
@@ -372,9 +369,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UpdateAll_Cancelled_BringsTheGridBackInLine()
     {
-        // Update All's cancel path -- the model Deploy's was copied from -- reported its partial
-        // tally but never refreshed, so the grid kept the old versions for the games it HAD
-        // written. (review of b8d09045)
+        // Update All's cancel path -- the model Deploy's follows -- refreshes after reporting its
+        // partial tally; without that the grid would keep the old versions for the games it HAD
+        // written.
         var (vm, svc) = Ready(deployed: true);
         svc.Gate.SetResult();
         svc.ThrowOnCancelledRefresh = true;
@@ -392,7 +389,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task Refresh_Cancelled_IsNeutral_NotAFailure()
     {
-        // Refresh's catch(Exception) showed the user's own cancel as a red "Refresh failed".
+        // Refresh's catch(Exception) must not show the user's own cancel as a red "Refresh failed".
         var (vm, svc) = Ready();
         svc.ParkRefreshes = true;
         svc.ThrowOnCancelledRefresh = true;
@@ -423,10 +420,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
     // ── [A3-RADIO-MIDDEPLOY]: the proxy-type radios stay live during Deploy ─────────────────
     //
-    // A click mid-Deploy re-targeted every remaining game to another DLL flavour, and
-    // LastManualProxyByGame recorded the NEW flavour for the game in flight. The recorded fix binds
-    // the four radios -- not their panel, which also holds the LKG checkbox -- to !IsBusy. Pinned
-    // from the AXAML (the window cannot be constructed here).
+    // A click mid-Deploy would re-target every remaining game to another DLL flavour, and
+    // LastManualProxyByGame would record the NEW flavour for the game in flight. The four radios --
+    // not their panel, which also holds the LKG checkbox -- are bound to !IsBusy. Pinned from the
+    // AXAML (the window cannot be constructed here).
     private static string PanelXaml()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -453,7 +450,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("IsEnabled", lkg.Value);
 
         // The recorded-unsafe variants: disabling the foreign-overwrite checkbox, or the panel that
-        // holds the radios (it also holds the LKG checkbox). (review of b8d09045)
+        // holds the radios (it also holds the LKG checkbox).
         var foreign = System.Text.RegularExpressions.Regex.Match(xaml, @"<CheckBox[^>]*AllowForeignOverwrite[^>]*>");
         Assert.True(foreign.Success, "the foreign-overwrite checkbox is gone -- re-point this pin");
         Assert.DoesNotContain("IsEnabled", foreign.Value);
@@ -464,7 +461,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("IsEnabled", panelTag);
 
         // ...nor through the foreign-overwrite checkbox's OWN panel: disabling that parent disables the
-        // checkbox as surely as an attribute on it. (review of 64b28058)
+        // checkbox as surely as an attribute on it.
         int foreignAt = xaml.IndexOf("AllowForeignOverwrite", StringComparison.Ordinal);
         int foreignPanel = xaml.LastIndexOf("<StackPanel", foreignAt, StringComparison.Ordinal);
         Assert.True(foreignPanel >= 0, "the foreign-overwrite checkbox's panel is gone -- re-point this pin");
@@ -486,7 +483,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("IsEnabled", box.Value);
     }
 
-    // ── AE6: two DIFFERENT commands over the same folder ─────────────────────
+    // ── two DIFFERENT commands over the same folder ─────────────────────
 
     [Fact]
     public async Task Undeploy_IsRefused_WhileDeployIsRunning()
@@ -499,7 +496,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.UndeploySelectedCommand.ExecuteAsync(null));
 
         // The refusal is what matters; the message naming the holder is the part that makes it
-        // actionable (it used to say "Wait for scan to finish" when no scan was running).
+        // actionable (not "Wait for scan to finish" when no scan is running).
         Assert.Contains("Deploy", vm.LastOperationResult);
         Assert.DoesNotContain(svc.Calls, c => c.StartsWith("undeploy:", StringComparison.Ordinal));
 
@@ -526,8 +523,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task TheRefusedOperation_DoesNotOverwriteTheRunningOnesResultLine()
     {
-        // Both write LastOperationResult via the same SetOperationResult, so before the gate the
-        // later finisher's line replaced the earlier's and one operation's outcome vanished.
+        // Both write LastOperationResult via the same SetOperationResult, so without the gate the
+        // later finisher's line would replace the earlier's and one operation's outcome would vanish.
         var (vm, svc) = Ready();
 
         var deploy = vm.DeploySelectedCommand.ExecuteAsync(null);
@@ -539,7 +536,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("Deployed:", vm.LastOperationResult);   // the winner's tally survives
     }
 
-    // ── AE5: the operations that tested the flag but never set it ────────────
+    // ── every long operation sets the flag, not only tests it ────────────
 
     [Theory]
     [InlineData("Refresh")]
@@ -550,13 +547,11 @@ public class ProxyDeployConcurrencyTests : IDisposable
     {
         // Every case must reach an await INSIDE the gate, or the mid-flight assertion below is
         // unreachable and the test decays into `Assert.False(IsScanning)` after the fact — which
-        // a build that never sets the flag passes just as happily. It used to be exactly that:
-        // the assertion was guarded by `if (!running.IsCompleted)`, and Refresh and UpdateAll
-        // both completed synchronously against the default harness, so the two commands AE5 was
-        // ABOUT were the two this test silently skipped. Measured 2026-08-24 by running the real
-        // Update All over 9 stale proxies: it finished inside one screenshot round-trip, so the
-        // panel's bar is not observable by eye for these either — this assertion is the only
-        // thing standing behind "the busy indicator appears for them".
+        // a build that never sets the flag passes just as happily. Guarded by
+        // `if (!running.IsCompleted)`, the assertion would silently skip Refresh and UpdateAll,
+        // which complete synchronously against the default harness. A real Update All finishes inside one
+        // screenshot round-trip, so the panel's bar is not observable by eye for these either —
+        // this assertion is the only thing standing behind "the busy indicator appears for them".
         //   * UpdateAll — needs a proxy ALREADY on disk, else every game hits the
         //                 `!File.Exists(targetDll)` continue and DeployAsync is never called.
         //   * Refresh   — makes no gated service call of its own; park the status refresh.
@@ -585,8 +580,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task AScan_IsRefused_WhileADeployIsRunning()
     {
-        // The direction that did not exist before: a deploy blocked nothing, so Scan could start
-        // and Games.Clear() under it. Scan had no entry guard of its own at all.
+        // The deploy-blocks-scan direction: without it, Scan could start and Games.Clear() under a
+        // running deploy. Scan needs an entry guard of its own.
         var (vm, svc) = Ready();
 
         var deploy = vm.DeploySelectedCommand.ExecuteAsync(null);
@@ -599,15 +594,15 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await deploy;
     }
 
-    // ── AE7: Update All over a collection something else can mutate ──────────
+    // ── Update All over a collection something else can mutate ──────────
 
     [Fact]
     public async Task UpdateAll_SurvivesGamesBeingReplacedMidLoop()
     {
-        // The gate now stops Scan overlapping Update All, so this drives the mutation directly —
+        // The gate stops Scan overlapping Update All, so this drives the mutation directly —
         // the snapshot is what makes the loop survive it either way. Without both, the enumerator
-        // throws InvalidOperationException, and UpdateAllAsync had no catch: on the button path a
-        // faulted AsyncRelayCommand task is rethrown onto the UI thread.
+        // throws InvalidOperationException, and without a catch in UpdateAllAsync, on the button
+        // path a faulted AsyncRelayCommand task is rethrown onto the UI thread.
         var (vm, svc) = Ready(deployed: true);
         svc.DuringDeploy = () => { vm.Games.Clear(); vm.Games.Add(Game("C")); };
 
@@ -615,8 +610,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         svc.Gate.SetResult();
 
         await update;                                  // must not throw
-        // Prove the loop body actually ran: without this the test passes when UpdateAllAsync
-        // skips every game, which is how it was silently vacuous on the first attempt.
+        // Prove the loop body actually ran: without this the test passes, vacuously, when
+        // UpdateAllAsync skips every game.
         Assert.Contains(svc.Calls, c => c.StartsWith("deploy:", StringComparison.Ordinal));
         // Not merely "did not throw": the catch would satisfy that while the loop aborted
         // half-way. The success tally is the only wording that means the loop RAN TO THE END,
@@ -626,9 +621,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
     // ── [PROXY-FORCE-UPDATEALL] Update All honours Force Overwrite ────────────
     //
-    // Reported by the maintainer: with Force Overwrite ticked, Update All skipped every proxy whose version
-    // equalled the source's and said "already up-to-date". A rebuild that kept its build number was never
-    // redeployed. Force Overwrite means rewrite OUR proxy whatever its version -- in Update All too.
+    // With Force Overwrite ticked, Update All must not skip a proxy whose version equals the source's as
+    // "already up-to-date": a rebuild that kept its build number would never be redeployed. Force Overwrite
+    // means rewrite OUR proxy whatever its version -- in Update All too.
 
     private const string SameVersion = "1.0.0.3552";
 
@@ -648,7 +643,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
 
         Assert.Empty(svc.Deploys);
-        // (second review, UNREAD-RESULTLINE-CLAIMS-OURS) Counted as what it is, not as 'another of our proxies'.
+        // Counted as what it is, not as 'another of our proxies'.
         Assert.Contains("cannot read: 1", vm.LastOperationResult);
         Assert.DoesNotContain("another of our proxies", vm.LastOperationResult);
         Assert.Contains("winmm.dll", vm.Games[0].StatusDetail ?? "");
@@ -658,8 +653,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task Deploy_TheSelectedTypeAlreadyOurs_BesideAnUnreadableFile_FollowsTheSameTypeRules()
     {
-        // (second review, UNREAD-VM-GUARD-OWNTYPE) The unreadable guard skipped even when the selected type was already
-        // ours there -- 'does not add a second proxy' was false, and the service backstop and Update All disagreed.
+        // The unreadable guard does not skip when the selected type is already ours there: 'does not add a second proxy'
+        // would be false, and the service backstop and Update All would disagree.
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
         svc.IsOurs = p => !IsWinmm(p);
         svc.Unreadable = IsWinmm;
@@ -674,8 +669,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UpdateAll_TheSelectedNameUnreadable_SaysItOnce()
     {
-        // (second review, UNREAD-UPDATEALL-DUP-NOTE) The refresh already reports the selected name as unreadable; the
-        // note repeated the sentence, with '..' between.
+        // The refresh already reports the selected name as unreadable; the note must not repeat the sentence, with '..'
+        // between.
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
         svc.IsOurs = _ => false;
         svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
@@ -711,7 +706,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
         svc.IsOurs = _ => false;
         svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
-        // As the real refresh: it reports the selected name as unreadable (second review: the VM adds only "Not updated.").
+        // As the real refresh: it reports the selected name as unreadable (the VM adds only "Not updated.").
         svc.RefreshDetail = _ => UE5DumpUI.Services.ProxyDeployService.DescribeUnreadable(new[] { "version.dll" });
         svc.Gate.SetResult();
 
@@ -723,8 +718,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("Not updated", vm.Games[0].StatusDetail ?? "");
     }
 
-    // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The real refresh names an unreadable file at ANY proxy name, not
-    // only the selected one -- so a note that restated it came out twice. And a row the refresh PRESERVES (a failure in
+    // The real refresh names an unreadable file at ANY proxy name, not only the selected one -- so a note that restated
+    // it would come out twice. And a row the refresh PRESERVES (a failure in
     // the same folder) is never refreshed, so there the note must name the file itself.
     private static string RealRefreshNaming(params string[] unreadable) =>
         UE5DumpUI.Services.ProxyDeployService.DescribeUnreadable(unreadable);
@@ -763,7 +758,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         string detail = vm.Games[0].StatusDetail ?? "";
         Assert.Equal(1, Count(detail, "access denied"));
-        // (fourth review, R4-UPDATEALL-SHORT-NOTE-NAME-UNPINNED) The short note names its file: two unreadable files
+        // The short note names its file: two unreadable files
         // must not read "Not updated. Not updated."
         Assert.Contains("Not updated: winmm.dll.", detail);
         Assert.Contains("cannot read: 1", vm.LastOperationResult);
@@ -773,7 +768,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     public async Task UpdateAll_APreservedRow_StillNamesTheUnreadableFile()
     {
         // version.dll (the radio's) cannot be read; winmm.dll (ours) fails to write, so the row is preserved and the
-        // refresh never names version.dll. Details said '<the lock failure> Not updated.' beside 'cannot read: 1'.
+        // refresh never names version.dll. Details must not read '<the lock failure> Not updated.' beside 'cannot read: 1'.
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
         svc.IsOurs = IsWinmm;
         svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
@@ -848,9 +843,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UpdateAll_ADoubledFolder_ALaterSuccessDoesNotHideAnEarlierFailure()
     {
-        // (second review, UPDATEALL-DOUBLED-FAIL-OVERWRITTEN, pre-existing) version.dll locked (the running game maps
-        // it), winmm.dll rewritten: the success's status overwrote the failure on a row the refresh preserves -- the
-        // grid said DeployedCurrent with no reason while the line said 'failed: 1'.
+        // version.dll locked (the running game maps it), winmm.dll rewritten: the success's status must not overwrite
+        // the failure on a row the refresh preserves -- the grid would say DeployedCurrent with no reason while the line
+        // says 'failed: 1'.
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
         svc.VersionOf = _ => SameVersion;
         vm.ForceOverwrite = true;
@@ -876,9 +871,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
 
         Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
-        // The forced path now RELIES on this: with ForceSameVersion false the real service answers AlreadyCurrent,
-        // returns true WITHOUT writing, and the line below would claim a rewrite that never happened. (the fix's
-        // correctness skeptic)
+        // The forced path RELIES on this: with ForceSameVersion false the real service answers AlreadyCurrent,
+        // returns true WITHOUT writing, and the line below would claim a rewrite that never happened.
         Assert.All(svc.Deploys, d => Assert.True(d.Options.ForceSameVersion));
         Assert.StartsWith("Updated: 2", vm.LastOperationResult);
         Assert.Contains("same version", vm.LastOperationResult);
@@ -903,7 +897,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UpdateAll_Force_NeverTouchesForeignOrUndeployed_AndNeverGrantsForeignConsent()
     {
-        // AC1 stays: Force reaches only a proxy that is already deployed AND ours, and Update All never
+        // Force reaches only a proxy that is already deployed AND ours, and Update All never
         // passes foreign consent -- not even with "Replace other tools' DLLs" ticked beside it.
         var (vm, svc) = Ready(deployed: true);
         char sep = Path.DirectorySeparatorChar;
@@ -923,8 +917,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UpdateAll_ForceUntickedMidRun_StillCoversTheWholeRun()
     {
-        // The checkbox stays live during a run. Read per proxy, an untick half-way split one Update All into
-        // two policies; it is read once, when the user pressed the button.
+        // The checkbox stays live during a run. Read per proxy, an untick half-way would split one Update All into
+        // two policies; it is read once, when the user presses the button.
         var (vm, svc) = Ready(deployed: true);
         svc.VersionOf = _ => SameVersion;
         vm.ForceOverwrite = true;
@@ -956,7 +950,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     // ── [PROXY-DEPLOY-NOOP-COUNT] Deploy does not report a write that never happened ──────
     //
     // The same situation through the Deploy button: Force off, same version. The real service answers
-    // AlreadyCurrent and returns TRUE without writing, so the VM counted it and showed "Deployed: 2 success".
+    // AlreadyCurrent and returns TRUE without writing, so a VM counting it would show "Deployed: 2 success".
 
     [Fact]
     public async Task Deploy_SameVersion_NoForce_SaysAlreadyCurrent_NotDeployed()
@@ -972,7 +966,6 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("already current: 2", vm.LastOperationResult);
         Assert.Contains("Force Overwrite", vm.LastOperationResult);
         // Nothing was written: neutral, as Update All shows the same situation -- not the success colour.
-        // (the fix's tests-and-text skeptic)
         Assert.Equal("#888888", vm.LastOperationColor);
         Assert.Equal("#888888", vm.StatusColor);
     }
@@ -1010,8 +1003,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
     // ── [PROXY-DOUBLE-GUARD] Deploy never adds a second of our proxy types ──────────────
     //
-    // Maintainer request: Select All + Deploy over games that already carry ANOTHER of our proxies made doubles,
-    // each to be fixed by hand. The guard skips those games -- even with Force Overwrite, and without consuming
+    // Select All + Deploy over games that already carry ANOTHER of our proxies would make doubles, each to be
+    // fixed by hand. The guard skips those games -- even with Force Overwrite, and without consuming
     // foreign consent -- and says why in Details, AFTER the refresh that would otherwise wipe it.
 
     [Fact]
@@ -1093,8 +1086,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task Deploy_SkippingAnAlreadyDoubledFolder_KeepsTheDoubleWarning()
     {
-        // The skip note replaced the refresh's "Multiple proxy DLLs deployed …" -- losing the one warning about the
-        // double on exactly the folder this guard exists for. (the text skeptic)
+        // The skip note must not replace the refresh's "Multiple proxy DLLs deployed …" -- that would lose the one
+        // warning about the double on exactly the folder this guard exists for.
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Dxgi, ProxyType.Winmm));
         svc.RefreshDetail = _ => "Multiple proxy DLLs deployed (dxgi.dll, winmm.dll) — only one will activate at runtime";
         svc.Gate.SetResult();
@@ -1135,7 +1128,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
     // ── [PROXY-USE-CONFIRMED] "Use confirmed-working proxy" ─────────────────────────────
     //
-    // Maintainer request: for a game with a CONFIRMED-WORKING proxy on record and none of ours in its folder (a
+    // For a game with a CONFIRMED-WORKING proxy on record and none of ours in its folder (a
     // reinstall, say), deploy the recorded type instead of the radio's. Read from ConfirmedProxyByExe -- never from
     // the Suggested column, which also carries last-used and the default.
 
@@ -1208,9 +1201,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UseConfirmed_TheSameExeListedTwiceInOneFolder_IsNotShared()
     {
-        // (fifth review, R5-T-SAMEFOLDER-CONTROL-UNREACHABLE) Only DIFFERENT folders make a name ambiguous: the same
-        // folder listed twice (SharedExeNames' Distinct over BinariesDir) keeps its record. The old control was ONE game
-        // and could not reach the Distinct.
+        // Only DIFFERENT folders make a name ambiguous: the same folder listed twice (SharedExeNames' Distinct over
+        // BinariesDir) keeps its record. Two rows, not ONE game, so the control reaches the Distinct.
         var a = Game("A");
         var twin = new DetectedGame { Name = "A (again)", BinariesDir = a.BinariesDir, ExePath = a.ExePath, IsSelected = false };
         var (vm, svc) = ReadyWith(a, twin);
@@ -1227,7 +1219,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UseConfirmed_ASharedExeName_IsAmbiguousOverTheLISTEDGames_NotTheSelectedOnes()
     {
-        // (fifth review, R5-T-SHARED-DEPLOY-SELECTED-SUBSET) Deploying to ONE of the two -- the common case: the other
+        // Deploying to ONE of the two -- the common case: the other
         // game is listed, not ticked, and still makes the record ambiguous.
         var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B"), selected: false));
         vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
@@ -1247,7 +1239,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [InlineData(true, false)]    // the box is on, no record
     public async Task UseConfirmed_ASharedExeName_WithNothingToSubstitute_SaysNothing(bool useConfirmed, bool record)
     {
-        // (fifth review, R5-T-SHARED-NOTE-WITHOUT-SUBSTITUTION) The note and the count mean "the record WOULD have been
+        // The note and the count mean "the record WOULD have been
         // used and was not": with nothing to substitute there is nothing to say.
         var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B")));
         if (record) vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
@@ -1264,7 +1256,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task UseConfirmed_ASharedExeName_CancelledMidRun_StillCountsIt()
     {
-        // (fifth review, R5-T-SHARED-CANCEL-LINE-UNPINNED) The cancelled result line counts it too (6452f625 says so).
+        // The cancelled result line counts it too.
         var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B")));
         vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
         vm.UseConfirmedProxy = true;
@@ -1411,7 +1403,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("failed", vm.LastOperationResult, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ── AE4: the proxy-type radio race ───────────────────────────────────────
+    // ── the proxy-type radio race ───────────────────────────────────────
 
     [Fact]
     public async Task RapidTypeChanges_LeaveTheGridOnTheTypeTheRadioShows()
@@ -1433,9 +1425,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
         svc.PendingRefreshes[0].SetResult();
 
         // Drain, releasing anything that parks afterwards — the CORRECTION is itself a refresh,
-        // so a test that only released the first two would deadlock the fix it is measuring.
-        // On a deadline, not a count of yields: the continuations run on the pool, and 200 yields on this thread
-        // were sometimes over before the correcting refresh had landed (1 run in 5 locally, 2026-10-08).
+        // so a test that only released the first two would deadlock the correction it is measuring.
+        // On a deadline, not a count of yields: the continuations run on the pool, and a fixed count of yields on this
+        // thread can be over before the correcting refresh has landed.
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
@@ -1456,8 +1448,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
     // ── [UI-ELEVATED-ACCESS-DENIED]: the post-inject connect meets a refusal ──────────────────────────
     //
     // Every attempt in the post-inject window is suppressed and expected to fail while the DLL scans. A refusal is not
-    // that: Windows will refuse every attempt (the game runs elevated and this UI does not), so the loop spun the whole
-    // 45 s and then said the pipe "never opened" and to check the DLL's init log -- false, and the init log says nothing.
+    // that: Windows will refuse every attempt (the game runs elevated and this UI does not), so a loop that kept trying
+    // would spin the whole 45 s and then say the pipe "never opened" and to check the DLL's init log -- false, and the
+    // init log says nothing.
 
     [Fact]
     public async Task A_refused_post_inject_connect_stops_at_once_and_says_why()

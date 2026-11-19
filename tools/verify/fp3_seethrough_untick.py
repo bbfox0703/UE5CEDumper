@@ -5,7 +5,7 @@ r"""`[FP3]` — does See-through's [DISABLE] WAIT for an idle mailbox before it 
     py tools/verify/fp3_seethrough_untick.py restore  # resume + clear, ALWAYS run this
 
 ⛔ THE ROW'S OWN VACUITY TRAP, and it is why this rig exists rather than a stopwatch.
-`[R3-SEETHRU-2026-09-10]` fixed a [DISABLE] block that wrote the mailbox with no bounded
+`[R3-SEETHRU-2026-09-10]`: the [DISABLE] block must not write the mailbox without a bounded
 wait-for-IDLE. Unticking while the mailbox happens to be IDLE proves NOTHING: the wait
 exits on its first read and the run is indistinguishable from having no wait at all. The
 mailbox must be BUSY at the instant of the untick, and it must be busy DETERMINISTICALLY.

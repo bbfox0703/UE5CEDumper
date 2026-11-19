@@ -7,8 +7,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the SCOPE of the dispatcher fault guard added for
-/// <c>[PASTECRASH-2026-08-18]</c>.
+/// Pins the SCOPE of the dispatcher fault guard
+/// (<c>[PASTECRASH-2026-08-18]</c>).
 ///
 /// <para>The guard's only risk is over-reach: marking a dispatcher exception
 /// handled turns a crash into silent corruption, so half of these tests are
@@ -32,8 +32,8 @@ public class InputLayerFaultClassifierTests
         "   at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)";
 
     /// <summary>
-    /// The whole trace, copied out of the real
-    /// <c>%LOCALAPPDATA%\UE5CEDumper\crash.log</c> written at 2026-08-18 22:02:50 —
+    /// The whole trace, copied out of a real
+    /// <c>%LOCALAPPDATA%\UE5CEDumper\crash.log</c> —
     /// 23 frames plus the unwind separator, not the 5-frame excerpt above.
     ///
     /// <para><b>Its last frame is <c>UE5DumpUI.Program.Main</c></b>, so as a piece of
@@ -344,7 +344,7 @@ public class InputLayerFaultClassifierTests
         // The IL is kept because it is what makes this a decision. If Cut ever grows
         // a mutation whose undo is NOT a no-op, re-run the read and re-take it.
         //
-        // Re-read on Avalonia 12.1.3 (ninth review, R9-06): Cut / Copy / Paste now catch
+        // On Avalonia 12.1.3, Cut / Copy / Paste catch
         // ClipboardHelper.IsExpectedClipboardException (Timeout, OperationCanceled,
         // UnauthorizedAccess, COMException) themselves, log it and return. Cut still
         // snapshots undo before the await and returns before DeleteSelection, so the
@@ -404,10 +404,10 @@ public class InputLayerFaultClassifierTests
     }
 
     [Theory]
-    // A method marker must be a whole method NAME, not any prefix of one. This
-    // found a live over-match: plain string.Contains accepted
+    // A method marker must be a whole method NAME, not any prefix of one. Plain
+    // string.Contains would accept
     // "TextBox.PasteHistoryItem()" as a Paste frame, so a method nobody had reasoned
-    // about would have been inside the swallow. Avalonia has no such method today —
+    // about would be inside the swallow. Avalonia has no such method today —
     // which is the point, the guard must not silently acquire one.
     [InlineData("   at Avalonia.Controls.TextBox.PasteHistoryItem()")]
     [InlineData("   at Avalonia.Controls.TextBox.CopyToBuffer(Int32 n)")]
@@ -461,10 +461,10 @@ public class InputLayerFaultClassifierTests
     public void GeneratedXamlFrameCountsAsOurCode_EvenUnderAClipboardStack()
     {
         // The hole this closes: rule 3 tests for the "UE5DumpUI." root namespace, but
-        // 47 types in the shipped assembly live outside it — 35 of them under
-        // CompiledAvaloniaXaml (the compiled-binding setters and trampolines, where a
-        // binding type mismatch raises InvalidCastException). Such a fault, arriving
-        // under a clipboard-topped stack, used to look like nobody's code.
+        // types in the shipped assembly live outside it — CompiledAvaloniaXaml among
+        // them (the compiled-binding setters and trampolines, where a binding type
+        // mismatch raises InvalidCastException). Such a fault, arriving under a
+        // clipboard-topped stack, would otherwise look like nobody's code.
         const string generated =
             "   at CompiledAvaloniaXaml.XamlIlTrampolines.Set_UE5DumpUI_ViewModels_X_Y(Object o, Object v)\n" +
             "   at Avalonia.Win32.ClipboardImpl.TryGetDataAsync()\n" +

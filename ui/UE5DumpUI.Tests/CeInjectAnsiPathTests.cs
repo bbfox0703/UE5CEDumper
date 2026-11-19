@@ -9,9 +9,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [PATH-CE-INJECT-ANSI] Cheat Engine's <c>injectDLL</c> copies the path's bytes into the game and calls
-/// <c>LoadLibraryA</c> (CEFuncProc.pas InjectDll, no path check before it). The generated scripts baked the UI's
-/// folder as a UTF-8 Lua literal, so under a non-ASCII folder (D:\工具\…, a CJK user profile, …™…) LoadLibraryA got
-/// UTF-8 bytes read as the ANSI code page, failed, and CE silently manual-mapped the DLL instead (no TLS, no .pdata).
+/// <c>LoadLibraryA</c> (CEFuncProc.pas InjectDll, no path check before it). A script that bakes the UI's folder as a
+/// UTF-8 Lua literal hands LoadLibraryA, under a non-ASCII folder (D:\工具\…, a CJK user profile, …™…), UTF-8 bytes
+/// read as the ANSI code page: it fails, and CE silently manual-maps the DLL instead (no TLS, no .pdata).
 /// The path must reach injectDLL as the ANSI bytes of the path, the 8.3 short path, or not at all -- with a message.
 /// </summary>
 public class CeInjectAnsiPathTests
@@ -125,12 +125,12 @@ public class CeInjectAnsiPathTests
         Assert.Contains(@"local DLL_PATH = 'C:\\Tools\\UE5CEDumper\\UE5Dumper.dll'", lua);
     }
 
-    // ── the skeptic review (wf_6ba4bc83-14d) ──
+    // ── the bytes injectDLL receives ──
 
     [Fact]
     public void AnsiPathBytes_AnAsciiShortPath_IsPreferred_ItDoesNotDependOnTheGamesCodePage()
     {
-        // (CEINJ-4) The bytes are made in the UI's ACP but decoded in the GAME's -- a game under Locale Emulator has
+        // The bytes are made in the UI's ACP but decoded in the GAME's -- a game under Locale Emulator has
         // another one. An ASCII 8.3 alias reads the same in every code page.
         const string shortPath = @"C:\PROGRA~2\TOOLS~1\UE5Dumper.dll";
         Assert.Equal(Encoding.ASCII.GetBytes(shortPath),
@@ -140,8 +140,8 @@ public class CeInjectAnsiPathTests
     [Fact]
     public void AnsiPathBytes_TheRealApi_OnAFolderNoAnsiCodePageHolds()
     {
-        // (T9) The production entry point (GetACP, GetShortPathNameW) was never run by a test. An emoji is in no ANSI
-        // code page, so the answer must be null, an ASCII alias that opens the file, or (a UTF-8 ACP) the UTF-8 bytes.
+        // The production entry point (GetACP, GetShortPathNameW), run for real. An emoji is in no ANSI code page, so
+        // the answer must be null, an ASCII alias that opens the file, or (a UTF-8 ACP) the UTF-8 bytes.
         string dir = Path.Combine(Path.GetTempPath(), "ue5-ansi-\U0001F600-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
         string dll = Path.Combine(dir, "UE5Dumper.dll");
@@ -161,7 +161,7 @@ public class CeInjectAnsiPathTests
     [MemberData(nameof(Generators))]
     public void GeneratedScripts_OnCesVm_CompileAndBakeTheExactBytes(string which)
     {
-        // (T9) The CE-VM check was run once by hand; this commits it. Skips where the host is not built.
+        // Compiles the generated scripts on CE's own VM. Skips where the host is not built.
         const string path = @"D:\工具\UE5CEDumper\UE5Dumper.dll";
         byte[] big5 = Big5.GetBytes(path);
         string lua = Gen(which, path, new FakeCodePage(big5));
@@ -186,7 +186,7 @@ public class CeInjectAnsiPathTests
     [Fact]
     public void AnsiPathBytes_AnAsciiPath_IsNeverAliased()
     {
-        // (second review, T-ALIAS-LEAF-UI) The alias exists for code-page independence; ASCII already has it.
+        // The alias exists for code-page independence; ASCII already has it.
         Assert.Equal(Encoding.ASCII.GetBytes(@"C:\Program Files\UE5CEDumper\UE5Dumper.dll"),
             WindowsSystemCodePage.AnsiPathBytes(@"C:\Program Files\UE5CEDumper\UE5Dumper.dll", 950,
                 _ => @"C:\PROGRA~1\UE5CED~1\UE5Dumper.dll"));
@@ -195,8 +195,8 @@ public class CeInjectAnsiPathTests
     [Fact]
     public void AnsiPathBytes_AnAliasThatRenamesTheDll_IsNeverUsed()
     {
-        // (second review, HIGH, measured) GetShortPathNameW of the FILE gives the leaf UE5DUM~1.DLL, and the game then
-        // maps our DLL under that name: load_mode 'loaded:ue5dum~1.dll', the UI's loaded-module detection misses it.
+        // GetShortPathNameW of the FILE gives the leaf UE5DUM~1.DLL, and the game would then map our DLL under that
+        // name: load_mode 'loaded:ue5dum~1.dll', which the UI's loaded-module detection misses.
         const string path = @"C:\工具\下載\UE5CEDumper\UE5Dumper.dll";
         byte[]? b = WindowsSystemCodePage.AnsiPathBytes(path, 950, _ => @"C:\5DE5~1\4E0B~1\UE5CED~1\UE5DUM~1.DLL");
         Assert.Equal(Big5.GetBytes(path), b);                        // the exact narrowing, the DLL's own name
@@ -205,8 +205,8 @@ public class CeInjectAnsiPathTests
     [Fact]
     public void AnsiPathBytes_TheProductionAlias_KeepsTheDllsName_AndIsFoundWhenTheVolumeHasOne()
     {
-        // (second review, T-REALAPI-VACUOUS) The real entry point again, but no vacuous pass: when the folder HAS an
-        // ASCII 8.3 form (measured independently here), the answer must be non-null and end in the DLL's own name.
+        // The real entry point again, with no vacuous pass: when the folder HAS an ASCII 8.3 form (asked of
+        // GetShortPathNameW independently here), the answer must be non-null and end in the DLL's own name.
         string dir = Path.Combine(Path.GetTempPath(), "ue5-alias-\U0001F600-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
         string dll = Path.Combine(dir, "UE5Dumper.dll");
@@ -225,9 +225,8 @@ public class CeInjectAnsiPathTests
             }
             else
             {
-                // (third review) No ASCII alias here (a volume without 8.3 names): an emoji is in no ANSI code page, so
-                // the only right answers are none at all, or the UTF-8 bytes under a UTF-8 ANSI code page. Before, this
-                // branch asserted nothing.
+                // No ASCII alias here (a volume without 8.3 names): an emoji is in no ANSI code page, so the only
+                // right answers are none at all, or the UTF-8 bytes under a UTF-8 ANSI code page.
                 Assert.True(b is null || b.SequenceEqual(Encoding.UTF8.GetBytes(dll)),
                             "no alias, and yet bytes that are not the UTF-8 path");
             }

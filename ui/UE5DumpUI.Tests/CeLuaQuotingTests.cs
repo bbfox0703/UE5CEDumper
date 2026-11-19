@@ -22,21 +22,17 @@ namespace UE5DumpUI.Tests;
 
 ///
 
-/// <para>Every existing test on the generated scripts asserts that some substring is
+/// <para>A test that asserts only that some substring is present or absent does not ask
 
-/// present or absent. None of them asked whether the result is valid Lua, and one of
+/// whether the result is valid Lua: it passes on a script that does not compile, because
 
-/// them — <c>Y13_ComplexReturnHint_OnlyClaimsTheDumpWhenItReallyHoldsIt</c> — was
-
-/// generating the exact broken script and passing on it, because the substrings it
-
-/// looked for were all there. The script simply did not compile.</para>
+/// the substrings it looks for are all there.</para>
 
 ///
 
-/// <para>What happened: <c>BakedScriptGenerator</c> interpolated an English hint into a
+/// <para>The hazard: <c>BakedScriptGenerator</c> interpolating an English hint into a
 
-/// single-quoted Lua literal without <c>EscapeLua</c>, and the hint's does-not-fit branch
+/// single-quoted Lua literal without <c>EscapeLua</c>, where the hint's does-not-fit branch
 
 /// contains an apostrophe ("CE's"). That closes the string early and the WHOLE
 
@@ -52,21 +48,17 @@ namespace UE5DumpUI.Tests;
 
 /// no output, so the user sees a checkbox that will not stay ticked and nothing else.
 
-/// Measured in CE 7.7 against DumperTest while running Y10 step 4 on
+/// Any large by-value struct return reaches that branch (an <c>FMinimalViewInfo</c> of
 
-/// <c>SequenceCameraShakeTestUtil::GetCameraCachePOV</c> (ParmsSize 2064, an
+/// 2048 bytes, as <c>SequenceCameraShakeTestUtil::GetCameraCachePOV</c> returns), so it is
 
-/// <c>FMinimalViewInfo</c> return of 2048 bytes at +16 — i.e. any large by-value struct
-
-/// return, which is not an exotic case).</para>
+/// not an exotic case.</para>
 
 ///
 
-/// <para>The scanner below was written against the real broken artifact first and shown
+/// <para>The scanner below is shown to BOTH fire (1 unterminated string, at the print line)
 
-/// to BOTH fire (1 unterminated string, at the print line) and clear (0 after escaping
-
-/// that one apostrophe and nothing else), before being ported here.</para>
+/// and clear (0 after escaping that one apostrophe and nothing else) on the broken script.</para>
 
 /// </summary>
 

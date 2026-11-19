@@ -60,7 +60,7 @@ public class PropertySearchForceTests
 
     /// <summary>
     /// A REJECTED value is not a cancel: nothing is sent (same as cancel), but the user is
-    /// told why. Before AF6 both came back as null and the command returned in silence.
+    /// told why. If both came back as null the command would return in silence.
     /// </summary>
     [Fact]
     public async Task ForceNumeric_prompt_reject_does_not_send_but_reports_why()
@@ -162,10 +162,9 @@ public class PropertySearchForceTests
     /// the job was kept and the re-assert worker started, so the hold begins writing
     /// into the game the moment a matching instance spawns.
     ///
-    /// <para>This test used to assert the opposite ("nothing held") — it encoded the
-    /// defect. The two states must read differently, because the "Forced fields (N held)"
-    /// strip on the same panel lists the armed hold while the status line denied it.
-    /// (audit #5 Z11)</para>
+    /// <para>The two states must read differently, because the "Forced fields (N held)"
+    /// strip on the same panel lists the armed hold; a status line saying "nothing held"
+    /// would deny it.</para>
     /// </summary>
     [Fact]
     public async Task Force_zero_held_with_ok_code_says_the_hold_is_ARMED_not_that_nothing_happened()
@@ -183,8 +182,8 @@ public class PropertySearchForceTests
         Assert.Contains("release", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] review 1: a hold armed on nothing because every object of the class is
-    /// a template says so -- "it applies as soon as one spawns" alone sent the user waiting for a spawn that a
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] A hold armed on nothing because every object of the class is
+    /// a template says so -- "it applies as soon as one spawns" alone would send the user waiting for a spawn that a
     /// GameplayEffect's component subobjects, say, never get.</summary>
     [Fact]
     public async Task Force_zero_held_because_only_templates_exist_says_so()
@@ -210,7 +209,7 @@ public class PropertySearchForceTests
         Assert.DoesNotContain("Only templates", vm.StatusText, StringComparison.Ordinal);
     }
 
-    /// <summary>The genuinely-futile case still reports as an error, unchanged: a
+    /// <summary>The genuinely-futile case still reports as an error: a
     /// negative code is the "resolved but type-refused everywhere" verdict.</summary>
     [Fact]
     public async Task Force_negative_code_still_reports_a_DLL_error_not_an_armed_hold()
@@ -225,9 +224,9 @@ public class PropertySearchForceTests
     }
 
     /// <summary>The class name on a Property Search row is the DEFINING class, and the
-    /// DLL holds the field across it AND every subclass (audit #5 A6, build 3036). A
+    /// DLL holds the field across it AND every subclass. A
     /// zero-held message that names only the class reads as "that exact class had no
-    /// instances", which is a different — and now wrong — diagnosis: it would send the
+    /// instances", which is a different — and wrong — diagnosis: it would send the
     /// user looking for instances of a base class that legitimately has none of its own.
     /// </summary>
     [Fact]
@@ -398,7 +397,7 @@ public class PropertySearchForceTests
     {
         // [VND583-DOC D7-04] Solide.cpp is compiled by no test target, so its call site is pinned as
         // text: the gate must go through ObjectNullShapeFor WITH the ElementSize (a 16-byte remote-handle
-        // weak pointer is refused), and must not fall back to the old strong-only type test.
+        // weak pointer is refused), and must not keep a strong-only type test beside it.
         var solide = SolideSource();
         Assert.Contains("ObjectNullShapeFor(fi.TypeName, fi.Size)", solide, StringComparison.Ordinal);
         Assert.DoesNotContain("if (fi.TypeName != \"ObjectProperty\") { refusal = FR_ERR_WEAK_PTR", solide,

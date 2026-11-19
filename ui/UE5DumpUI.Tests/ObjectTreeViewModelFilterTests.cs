@@ -170,7 +170,7 @@ public class ObjectTreeViewModelFilterTests
     private static bool ReflectionMetaClassName(string className) =>
         UE5DumpUI.Helpers.ReflectionMetaClassifier.IsReflectionMeta(className);
 
-    // ── Top Search box → server-side global keyword search (Phase 2) ────────────────
+    // ── Top Search box → server-side global keyword search ──────────────────────────
 
     /// <summary>Records the args the VM passes to the server search and returns a
     /// caller-controlled result (so truncation / instances-only wiring can be asserted).</summary>
@@ -207,8 +207,8 @@ public class ObjectTreeViewModelFilterTests
 
         await vm.SearchCommand.ExecuteAsync(null);
 
-        // The top Search now forwards the Instances-only toggle and the higher search cap
-        // (not the old 2000 page size), so the server does the same space=AND + gate.
+        // The top Search forwards the Instances-only toggle and the higher search cap
+        // (not the 2000-object page size), so the server does the same space=AND + gate.
         Assert.Equal("Enemy Boss", dump.LastQuery);
         Assert.True(dump.LastInstancesOnly);
         Assert.Equal(Constants.ObjectTreeSearchCap, dump.LastLimit);

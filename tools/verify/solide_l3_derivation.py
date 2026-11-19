@@ -2,14 +2,14 @@
 
     py tools/verify/solide_l3_derivation.py
 
-WHY THIS HAS NEVER BEEN FALSIFIABLE HERE UNTIL NOW.
+WHY A COMMERCIAL GAME CANNOT FALSIFY THIS.
 `Aura::FindInstancesDerivedFrom` is specified to hold a class *and every subclass of
 it*. The obvious wrong implementation — matching class NAMES by substring — passes
 every check you can build from a commercial game's class pool, because in practice
-subclasses are usually named after their base. `[A6-DERIVE-2026-08-22]` got as close
+subclasses are usually named after their base. `[A6-DERIVE-2026-08-22]` gets as close
 as a real title allows: `StaticMeshActor` derives from `AActor` without being named
 "Actor*" (the positive), and `ActorSequence` is a same-prefix stranger (the negative).
-Good, but assembled from whatever a shipped game happened to contain.
+Good, but assembled from whatever a shipped game happens to contain.
 
 The DumperTest spawner supplies the pair on purpose, and it is INVERTED so the two
 rules cannot agree:

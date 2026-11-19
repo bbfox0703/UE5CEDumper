@@ -7,13 +7,14 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [SDK-LIVE-VALUE-TYPES] Live Walker's "Export .h" declared each member's TYPE from what the instance
-/// HOLDS. A <c>walk_instance</c> row's <c>EnumName</c> is the enum VALUE's name (<c>Ubel.cpp</c>
-/// <c>ResolveEnumValue</c>) and its <c>PtrClassName</c> is the pointee's RUNTIME class, so the header
-/// read <c>EDumperTestGrade__Elite Grade;</c> and <c>class BP_ThirdPersonCharacter_C* CharacterOwner;</c>,
-/// and changed whenever a value did. The same wire key <c>enum_name</c> means the enum TYPE in
-/// <c>walk_class</c>, which is where declared types come from. For an object view the export never
-/// walked the class at all, so it had no super and re-declared every inherited property (audit #5 W2).
+/// [SDK-LIVE-VALUE-TYPES] Live Walker's "Export .h" must declare each member's TYPE from the class, not
+/// from what the instance HOLDS. A <c>walk_instance</c> row's <c>EnumName</c> is the enum VALUE's name
+/// (<c>Ubel.cpp</c> <c>ResolveEnumValue</c>) and its <c>PtrClassName</c> is the pointee's RUNTIME class, so
+/// a header built from them would read <c>EDumperTestGrade__Elite Grade;</c> and
+/// <c>class BP_ThirdPersonCharacter_C* CharacterOwner;</c>, and change whenever a value did. The same wire
+/// key <c>enum_name</c> means the enum TYPE in <c>walk_class</c>, which is where declared types come from.
+/// An object view needs the class walk too: without it the export has no super and re-declares every
+/// inherited property.
 /// </summary>
 public class SdkLiveWalkerExportTests : IDisposable
 {
@@ -185,8 +186,7 @@ public class SdkLiveWalkerExportTests : IDisposable
     {
         // A DLL older than [SDK-METACLASS], or a MetaClass read that did not validate, sends no
         // meta_class -- only the PropertyClass, `Class` for a TSubclassOf. Declaring that as
-        // `TSubclassOf<class Class>` (222 of 224 TSubclassOf in a real 5.4 export, before the
-        // MetaClass reached the wire) names a subclass of UClass, which no property holds.
+        // `TSubclassOf<class Class>` names a subclass of UClass, which no property holds.
         Assert.Equal("UClass*", SdkExportService.MapCppDecl(
             new FieldInfoModel { Name = "C", TypeName = "ClassProperty", ObjClassName = "Class", Size = 8 }).Type);
         Assert.Equal("TSoftClassPtr<UObject>", SdkExportService.MapCppDecl(

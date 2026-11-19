@@ -23,7 +23,7 @@ The copyright year tracks the ENGINE SNAPSHOT, not the ship date — Gal*Gun: Do
 an Epic notice ending 2013 or earlier cannot be UE4/UE5. The inference is ONE-DIRECTIONAL: a
 2014+ year proves nothing, since late UE3 games shipped well past 2014.
 
-MEASURED (2026-07-30), and what each number is for:
+MEASURED, and what each number is for:
 
     30 reference builds, UE 4.10-5.8            all four markers 0  -> zero false positives
     35 installed UE games                       only the UE3 title scores

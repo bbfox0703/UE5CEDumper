@@ -5,8 +5,8 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [LIVEFUNCS-CAP-ADVICE] Live Funcs fetches only the top FetchLimit functions by count, and its
 /// filter runs over the rows already fetched (ApplyFilter over _allEntries), so the filter cannot
-/// bring back a function that fell below the cut. The capped-fetch warning advised "use the
-/// filter"; what helps is a higher Fetch limit (the user's since 2026-10-06) or a shorter
+/// bring back a function that fell below the cut. So the capped-fetch warning must not advise
+/// "use the filter"; what helps is a higher Fetch limit (the user sets it) or a shorter
 /// recording window.
 /// </summary>
 public class LiveFuncsCapAdviceTests

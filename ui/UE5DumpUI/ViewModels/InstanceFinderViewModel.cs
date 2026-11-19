@@ -98,6 +98,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// Seeded from the toolbar master; passed to CE XML export.</summary>
     public int CeStringLength { get; set; } = Constants.DefaultCeStringLength;
 
+    /// <summary>[CEXML-STRING-CAPACITY] 2026-11-19 Leave exported String records editable in CE (off by default: each
+    /// carries a read-only drop-down list). Seeded from the toolbar master; passed to CE XML export.</summary>
+    public bool CeEditableStrings { get; set; }
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     /// <summary>Optional object-name filter (case-insensitive substring), ANDed
@@ -143,11 +147,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         set
         {
             InstanceSearchCap = NumericInput.KeepCurrentIfEmpty(value, InstanceSearchCap);
-            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
-            // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // [SNAPINTERVAL-2026-08-20] Notify UNCONDITIONALLY. A rejected or emptied entry
+            // leaves the backing value unchanged, so nothing else would raise a change and the
+            // control would keep painting an empty box while a different value was in force.
             OnPropertyChanged();
         }
     }
@@ -166,7 +168,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// <summary>Keeps the instances grid's selection and scroll position across filter edits
     /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.
     /// Not keyed on the address: selecting a NEW row object walks it, so a row a server re-run
-    /// replaced is left unselected rather than re-selected by the View (Z7).</summary>
+    /// replaced is left unselected rather than re-selected by the View.</summary>
     public FilterViewKeeper InstancesView { get; } = new();
     [ObservableProperty] private bool _isXrefBatchRunning;
     [ObservableProperty] private InstanceResult? _selectedInstance;
@@ -494,7 +496,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         if (className.Length == 0 && nameFilter.Length == 0) return;
 
         // A fresh manual query: drop any server-side exclusions left from a PREVIOUS
-        // search (now that exclusion persists server-side, a class hidden for "Pawn"
+        // search (exclusion persists server-side, so a class hidden for "Pawn"
         // would otherwise silently filter "Inventory" — possibly with no visible row
         // to untick). Reset() does NOT fire onChanged, so this won't re-run here.
         _reRunCts?.Cancel();          // supersede an in-flight class-noise re-run
@@ -610,10 +612,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             LookupStatusText = "Looking up...";
             ShowCeXml = false;
 
-            // Reject malformed input up-front. Prior behavior surfaced
-            // "No UObject found at this address" for "0xajsd;jald" — misleading,
-            // because the DLL silently parsed it to 0 (noexcept StrToAddr) and
-            // searched for a UObject at 0 instead.
+            // Reject malformed input up-front. The DLL silently parses "0xajsd;jald"
+            // to 0 (noexcept StrToAddr) and searches for a UObject at 0, so sending it
+            // would surface a misleading "No UObject found at this address".
             if (!AddressHelper.TryNormalizeAddress(LookupAddress, _engineState?.ModuleBase, out var addrStr))
             {
                 LookupStatusText = "Invalid address — expected hex (e.g. 0x7FF... or module.exe+RVA)";
@@ -679,11 +680,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                     OuterAddr = result.OuterAddr,
                 };
                 // [W4-LOOKUP-FILTER] Into the BACKING list too. It was emptied just above, and every
-                // later ApplyInstanceFilter re-projects from it -- so a leftover keyword, or clearing it,
-                // erased the lookup result for good while the status line still reported a match.
+                // later ApplyInstanceFilter re-projects from it -- without this a leftover keyword, or
+                // clearing it, would erase the lookup result for good while the status line still
+                // reported a match.
                 // ⛔ The keyword is NOT cleared here: it is an [ObservableProperty], and the assignment
-                // re-enters the filter (harmless now that the backing list holds the row, but still
-                // not the lookup's call to make).
+                // re-enters the filter (harmless, as the backing list holds the row, but still not the
+                // lookup's call to make).
                 _allInstances.Add(instance);
                 Instances.Add(instance);
                 HasInstances = true;
@@ -930,6 +932,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength,
+                ceEditableStrings: CeEditableStrings,
                 headerNotes: notes);
             // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
             // the synchronous Generate* call"), and after an await this method may resume on another thread.
@@ -1126,7 +1129,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -1178,7 +1181,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         {
             StatusText = $"Find Func cancelled ({classesScanned} classes scanned).";
         }
-        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled) (L14)
+        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled)
         {
             _log.Error("Batch Find Func failed", ex);
             StatusText = $"Find Func failed ({classesScanned} classes scanned).";

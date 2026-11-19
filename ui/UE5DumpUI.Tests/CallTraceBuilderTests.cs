@@ -127,7 +127,7 @@ public class CallTraceBuilderTests
     [Fact]
     public void An_entry_dropped_inside_the_window_leaves_its_callers_open()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_d3c2ec9a-d52 UI-DROPPED-INWINDOW-ENTRY: the ring kept seq 10 on and DROPPED 11
+        // [TRACE-DROPPED-ENTRY] The ring keeps seq 10 on and has DROPPED 11
         // (a slot written out of turn, [LINIE-SEQ-LAST]). Its return at 12 is not a call from before the window: A at
         // 10 is still open, and B at 13 is its child.
         var t = CallTraceBuilder.Build(new[]
@@ -145,7 +145,7 @@ public class CallTraceBuilderTests
     [Fact]
     public void A_return_dropped_inside_the_window_is_counted()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the ring kept 10..15 and dropped 12 -- the RETURN of the call at
+        // [TRACE-DROPPED-ENTRY] The ring keeps 10..15 and has dropped 12 -- the RETURN of the call at
         // 11. Nothing in the records says so, so it is counted from the window: 6 numbers kept, 5 records sent, no
         // entry missing -> one return dropped.
         var t = CallTraceBuilder.Build(new[]
@@ -233,7 +233,7 @@ public class CallTraceBuilderTests
         Assert.False(t.ObjStale(2));
     }
 
-    // [TRACE-UI-LOAD-MEMORY] D2: a page goes from its base64 straight into the caller's window -- no byte[] and no
+    // [TRACE-UI-LOAD-MEMORY] A page goes from its base64 straight into the caller's window -- no byte[] and no
     // TraceRecord[] of its own -- whether the base64 arrives as UTF-8 (the pipe's JSON) or as chars.
     private static TraceRecord[] Three() => new[]
     {
@@ -284,7 +284,7 @@ public class CallTraceBuilderTests
             CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes("not base64!"), new TraceRecord[2]));
     }
 
-    // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded before Stop keeps the name read at its first call.
+    // [TRACE-UNLOADED-NAMES] A function the game unloaded before Stop keeps the name read at its first call.
     private static CallTrace UnloadedSample() => CallTraceBuilder.Build(new[]
         {
             Entry(0, 1, 0xF1), Entry(1, 2, 0xF1), Entry(2, 3, 0xF1),   // live, 3 calls
@@ -307,14 +307,14 @@ public class CallTraceBuilderTests
         Assert.Equal("WBP_Inventory_C", t.ClassName(3));
         Assert.True(t.FuncUnloaded(3));
         Assert.False(t.FuncUnloaded(0));
-        Assert.Equal("0xF3", t.FuncName(4));   // never read: an address, as before
+        Assert.Equal("0xF3", t.FuncName(4));   // never read: shown as its address
         Assert.False(t.FuncUnloaded(4));
     }
 
     [Fact]
     public void An_address_that_held_two_functions_is_marked_reused()
     {
-        // Review DLL-3: another function took the address during the recording; its calls and the first one's share it.
+        // Another function took the address during the recording; its calls and the first one's share it.
         var t = CallTraceBuilder.Build(new[] { Entry(0, 1, 0xF1), Entry(1, 2, 0xF2) }, Info, new[]
         {
             new TraceFuncName { Addr = 0xF1, Live = true, ClassName = "Pawn", FuncName = "Jump" },
@@ -343,7 +343,7 @@ public class CallTraceBuilderTests
     [InlineData(1L, 3L, "33.33%")]
     [InlineData(3L, 3L, "100%")]
     [InlineData(0L, 0L, "0%")]
-    // Review UI-3: 50 in a million is exactly 0.005%, which banker's rounding takes to 0; 999,960 in a million rounds
+    // 50 in a million is exactly 0.005%, which banker's rounding takes to 0; 999,960 in a million rounds
     // to 100 while 40 calls are named. Neither may claim the clean (or the total) answer.
     [InlineData(50L, 1_000_000L, "<0.01%")]
     [InlineData(999_960L, 1_000_000L, ">99.99%")]

@@ -1,19 +1,20 @@
-r"""Audit A1 — the TSoftObjectPtr / TLazyObjectPtr payload envelope, measured on a live game.
+r"""The TSoftObjectPtr / TLazyObjectPtr payload envelope, measured on a live game.
 
     py tools/verify/a1_softlazy_envelope.py <ProcessFolderName>
     py tools/verify/a1_softlazy_envelope.py ES2-Win64-Shipping
     py tools/verify/a1_softlazy_envelope.py LushfoilSim-Win64-Shipping
 
-THE QUESTION. `5eafd419` (+ the follow-up `fffe5fcf`) stopped reading `TSoftObjectPtr`'s
-`FSoftObjectPath` at a hardcoded `+0x10`. That is right only up to UE 5.2: 5.3 deleted
-`TPersistentObjectPtr::TagAtLastTest` and the path moved to `+0x08`. `TLazyObjectPtr`'s `FGuid`
-was read at `+0x10` too and was wrong in EVERY era. The envelope is now MEASURED
-(`Ubel.cpp` `PersistentPtrEnvelope`), and only a real measurement is latched.
+THE QUESTION. A hardcoded `+0x10` for `TSoftObjectPtr`'s `FSoftObjectPath` is right only up to
+UE 5.2: 5.3 deleted `TPersistentObjectPtr::TagAtLastTest` and the path moved to `+0x08`. For
+`TLazyObjectPtr`'s `FGuid`, `+0x10` is wrong in EVERY era. The envelope is MEASURED
+(`Ubel.cpp` `PersistentObjectPtrEnvelope`), and only a real measurement is latched.
 
-WHY THE SUITE CANNOT CLOSE IT. `dll/CMakeLists.txt` compiles only `dll_helpers_test.cpp` +
-`Radar.cpp` + `Denken.cpp`; `Ubel.cpp` is in NO test target. The helper test pins the ARITHMETIC
-(`FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor`); nothing exercises the latch, the log line,
-or the readers. So the DLL-side half of this row can only be taken from a running game.
+WHY THE SUITE CANNOT CLOSE IT. `dll_helpers_test.cpp` pins the ARITHMETIC
+(`FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor`), and `dll_core_test.cpp` drives the latch
+and the readers over hand-built ElementSizes and arrays in its own memory. Neither shows that a
+real title's engine hands the walk the ElementSize those tests assume, or that walking the engine's
+own classes reaches the measurement and writes its log line. So the DLL-side half of this row can
+only be taken from a running game.
 
 WHAT THIS RIG DOES. It finds soft/lazy properties by TYPE (`search_properties` matches by name, so
 the type filter is applied client-side), walks the classes that own them -- which is what makes the
@@ -28,8 +29,8 @@ nothing and reads as a failure. (`docs/verification-register.md` says so out lou
 hardcoding one. From 5.3 both are `+0x08`. Before 5.3 they DIFFER: soft is `+0x10`
 (FWeakObjectPtr 8 + Tag 4 + pad 4, because FSoftObjectPath is 8-aligned) and lazy is `+0x0C`
 (no pad -- FUniqueObjectGuid is a bare FGuid, alignof 4). A pre-5.3 title is a NEGATIVE CONTROL,
-not a failure. ⛔ Do NOT assume the two share a value: this rig did on its first run, and scored a
-CORRECT DLL as a FAIL on OCTOPATH for reading lazy at the 0x0C the engine actually uses.
+not a failure. ⛔ Do NOT assume the two share a value: a rig that does so scores a CORRECT DLL as a
+FAIL on a pre-5.3 title for reading lazy at the 0x0C the engine actually uses.
 """
 import pathlib
 import re

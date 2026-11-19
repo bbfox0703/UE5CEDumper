@@ -8,32 +8,28 @@ Three directions, and they fail for different reasons:
 
   ORPHANS   a key defined in en.axaml that nothing references. Harmless at runtime, but
             the dictionary then overstates what is localizable — a translator (or the
-            wiki's translation pass) spends effort on strings no user can ever see. An
-            audit found 24, two of which were worse than dead: they were SHADOWED by
-            hardcoded C# that computed the same text, so the file claimed a string was
-            configurable when editing it changed nothing.
+            wiki's translation pass) spends effort on strings no user can ever see. Worse
+            than dead is an orphan SHADOWED by hardcoded C# that computes the same text:
+            the file then claims a string is configurable when editing it changes nothing.
 
   DANGLING  a `{StaticResource str.…}` or Res.Get("str.…") with no definition. This one
             is a real bug: Avalonia raises at load time for a missing StaticResource, so
-            it is a crash on whichever panel first uses it. There were ZERO at audit
-            time, which is exactly the state worth keeping.
+            it is a crash on whichever panel first uses it. Keep it at ZERO.
 
   INLINE    a user-visible attribute in a view (Text / ToolTip.Tip / Content /
             PlaceholderText / Header / Title / Watermark) holding literal English
             instead of a key -- CLAUDE.md puts every UI string in en.axaml. The two
-            checks above only ever looked at keys, so 123 of these accumulated unseen
-            in 15 views ([AXAML-INLINE-STRINGS], 2026-09-26). A value with no run of
+            checks above look only at keys, so these accumulate unseen without this one
+            ([AXAML-INLINE-STRINGS], 2026-09-26). A value with no run of
             two letters (`>`, `▲`, `X`, a number) is a glyph, not text, and passes.
             Strings a view model or code-behind builds in C# are out of reach here.
             Text inside a binding counts too: a quoted StringFormat / FallbackValue /
             TargetNullValue, and a MultiBinding's StringFormat attribute, are checked
             once their `{}` escape and `{0}` / `{0:X}` placeholders are stripped
-            ([WIKI-REVIEW-GATES]). Three formats predate that and are allow-listed below.
+            ([WIKI-REVIEW-GATES]). Three formats are exempt and allow-listed below.
 
 Deliberately a plain grep-style scan with no XML parser and no Avalonia dependency, for
 the same reason as aob_specificity.py: it has to run in CI and on a bare checkout.
-
-Audit #4 R6.
 """
 from __future__ import annotations
 

@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
   Cheat Engine's injection stub does not wait for us. From CE's own source
-  (read at tag 7.5, 2026-08-15):
+  (read at tag 7.5):
 
     CEFuncProc.pas:1346-1360   createremotethread, then a wait loop of
                                `counter := 10000 div 10` x 10 ms — a HARD,
@@ -16,8 +16,8 @@ WHY THIS EXISTS
 
   So if UE5_AutoStart runs its multi-second AOB scan to completion on CE's remote
   thread, CE frees the page that thread is executing on, and the eventual `ret`
-  crashes THE GAME. (audit #5 AB2. Note CE's own timeout text claims "Injection
-  routine not freed", which that `finally` contradicts.)
+  crashes THE GAME. (Note CE's own timeout text claims "Injection routine not
+  freed", which that `finally` contradicts.)
 
   UE5_AutoStart therefore spawns and returns. That is a behaviour, not a shape, and
   no test target in this repo compiles Frieren.cpp — so it is measured here.
@@ -34,10 +34,10 @@ WHAT IT MEASURES
   This host is not a UE game, so where the scan ENDS is irrelevant and is not
   asserted. What matters is when the call returns relative to the work.
 
-  Reference numbers on the dev machine (build 2932): fixed = 2.3 ms to return with
-  ~3.6 s of work after it; the same build with the spawn reverted = 3486 ms to
-  return, initState already 2. A real game's scan is 2-8 s, i.e. inside CE's
-  ceiling and always past the APC path's 1 s.
+  The reference shape: the async call returns in a few ms with seconds of work
+  after it; with the spawn reverted it returns only after that work, seconds later,
+  initState already 2. A real game's scan is 2-8 s, i.e. inside CE's ceiling and
+  always past the APC path's 1 s.
 
 MANUAL TOOL — deliberately not wired into build.ps1 or CI
   It LOADS THE DLL INTO THIS PROCESS, which starts real worker threads and opens
@@ -54,7 +54,7 @@ import sys
 import time
 
 OFF_INIT_STATE = 0x0C          # Mimic::MailboxData::initState
-RETURN_BUDGET_MS = 500.0       # generous: the fixed path measures ~2 ms
+RETURN_BUDGET_MS = 500.0       # generous: the async path returns in ~2 ms
 STATE_NAMES = {0: "IDLE", 1: "RUNNING", 2: "READY", 3: "FAILED", 4: "SKIPPED"}
 
 

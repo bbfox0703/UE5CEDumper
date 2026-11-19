@@ -36,8 +36,8 @@ public readonly record struct DeployOptions(bool ForceSameVersion, bool ForeignC
 
 /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Whose a proxy-named DLL is. FileVersionInfo gives the SAME null ProductName for
 /// a file with no version resource and for one it could not read at all (ACL deny, held with FileShare.None --
-/// measured), so "not ours" alone confused the two. Our DLLs always carry a version resource: readable without one is
-/// <see cref="NotOurs"/>; not readable is <see cref="Unreadable"/> -- never written or deleted, and said so.</summary>
+/// measured), so "not ours" alone would confuse the two. Our DLLs always carry a version resource: readable without one
+/// is <see cref="NotOurs"/>; not readable is <see cref="Unreadable"/> -- never written or deleted, and said so.</summary>
 public enum DllOwner
 {
     Ours,

@@ -14,7 +14,7 @@ namespace UE5DumpUI.Models;
 /// classes into a short, ranked shortlist. Reuses the SPC in-memory intersection
 /// load (<see cref="SpcQuery"/>'s machinery); ranks instead of requiring a
 /// user-authored predicate chain. See docs/experimental-snapshot-spc-pivot.md
-/// §"Phase C — C3".
+/// §"Phase C — Class Pivot", item C3.
 /// </summary>
 public sealed class DiscoveryQuery
 {
@@ -34,8 +34,8 @@ public sealed class DiscoveryQuery
     /// in this set are skipped at load. Null / empty = no filtering.</summary>
     public HashSet<string>? ExcludedClasses { get; set; }
 
-    /// <summary>Max ranked candidates returned (default 200). One extra is probed
-    /// to set <see cref="DiscoveryResult.Truncated"/>.</summary>
+    /// <summary>Max ranked candidates returned (default 200). More changed groups
+    /// than that set <see cref="DiscoveryResult.Truncated"/>.</summary>
     public int MaxResults { get; set; } = 200;
 }
 
@@ -113,8 +113,8 @@ public sealed class DiscoveryCandidate
     public string CategoryColor { get; set; } = "";
 
     /// <summary>Composite rank score (higher = more likely the intended target).
-    /// The sub-scores below are exposed for a future cross-game calibration pass
-    /// (mirrors how PropertyScoringTable was tuned).</summary>
+    /// The sub-scores below are exposed so the weights can be calibrated across
+    /// games, as PropertyScoringTable's are.</summary>
     public double Score { get; set; }
     public double ChangeScore       { get; set; }
     public double Selectivity       { get; set; }
@@ -123,8 +123,8 @@ public sealed class DiscoveryCandidate
     /// <summary>Shape sub-score (only meaningful with ≥3 snapshots): 1.0 = a single
     /// discrete change (the in-game action you captured around) — or a 2-snapshot
     /// compare where shape can't be inferred; 0.5 = a steady monotonic trend (e.g. a
-    /// draining resource); 0.0 = jitter on every interval (per-frame render/anim/
-    /// physics noise). Exposed for a future cross-game calibration pass.</summary>
+    /// draining resource); 0.0 = non-monotonic moves in more than one interval
+    /// (per-frame render/anim/physics noise). Exposed for cross-game calibration.</summary>
     public double ShapeScore { get; set; }
     /// <summary>How many of the N-1 snapshot intervals the representative moved in.</summary>
     public int ChangeIntervals { get; set; }

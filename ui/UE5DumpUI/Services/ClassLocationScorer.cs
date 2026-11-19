@@ -39,10 +39,9 @@ namespace UE5DumpUI.Services;
 public static class ClassLocationScorer
 {
     // ------------------------------------------------------------------
-    // Function-side bonuses (verbatim from KeywordScoringTable build 607
-    // when ClassBonuses lived inside that file -- moved here so Property
-    // side can share the bag-of-substrings pattern + tests cover both
-    // call sites).
+    // Function-side bonuses. Here rather than in KeywordScoringTable so the
+    // Property side shares the bag-of-substrings pattern and the tests cover
+    // both call sites.
     // ------------------------------------------------------------------
 
     private static readonly (string Substring, int Bonus)[] FunctionBonuses =
@@ -57,23 +56,21 @@ public static class ClassLocationScorer
         // false-positives (PlayerCameraManager) are still tolerable.
         // NOT a fallback for the four rows above: it STACKS with them, so
         // "PlayerController" scores 3+2=5 and "PlayerCharacter" 3+2=5 —
-        // the interesting threshold, from the class name alone. (AC7)
+        // the interesting threshold, from the class name alone.
         ("Player",            2),
-        // === Build 686 — Phase 2 function-side analyzer additions.
+        // === Function-side analyzer additions.
         // 15-game cross-game function-token co-occurrence:
         //   enemy → damage / attack  : 3-4 games, 39+15 hits — Enemy* classes
         //                              clearly host attack/damage functions
         //   weapon → weapon / save   : 3-5 games — Weapon* classes host
         //                              weapon-related functions (mirror of the
-        //                              build 678 Property-side Weapon rule)
+        //                              Property-side Weapon rule)
         ("Enemy",             2),
         ("Weapon",            2),
-        // === 7-game cross-game analysis (2026-07-09, ES2/SEED/TQ2/Avowed/
-        // DQ7R/HogwartsLegacy/SB): Health* (4/7) and Damage* (5/7) classes
-        // host cheat-relevant functions. Clean tokens (no core UE class
+        // === 7-game cross-game analysis: Health* (4/7) and Damage* (5/7)
+        // classes host cheat-relevant functions. Clean tokens (no core UE class
         // contains them). The +2 lands on the CLASS NAME ALONE — there is no
-        // keyword gate here or anywhere in this table (see the class doc);
-        // the earlier claim of one was never implemented. (AC8) ===
+        // keyword gate here or anywhere in this table (see the class doc). ===
         ("Health",            2),
         ("Damage",            2),
         // Game-level systems
@@ -125,13 +122,13 @@ public static class ClassLocationScorer
     }
 
     // ------------------------------------------------------------------
-    // Property-side bonuses (NEW for B' / Interesting Properties).
+    // Property-side bonuses (Interesting Properties).
     //
     // Key conceptual addition: an "Unusual" tier separated from the
     // regular bonus tier. Classes in the Unusual tier ARE valid places
     // to find gameplay state -- just not the FIRST place a cheat-engine
     // user would think to look. Surfacing them with a ⚠ badge is the
-    // whole point of B'.
+    // whole point of the Interesting Properties Finder.
     // ------------------------------------------------------------------
 
     /// <summary>One row of the property-side class-location table.
@@ -153,7 +150,7 @@ public static class ClassLocationScorer
         // Generic "Player" catches game-named classes like BP_Player_C,
         // AnimMan_Player_C, MyPlayerStats, etc. Mild bonus (+2). NOT a
         // fallback for the rows above — it STACKS with them (LocalPlayer
-        // scores 4+2=6, pinned by PropertyScoringTableTests). (AC7)
+        // scores 4+2=6, pinned by PropertyScoringTableTests).
         new("Player",           2, false),
         // Game-level
         new("GameMode",         2, false),
@@ -161,7 +158,7 @@ public static class ClassLocationScorer
         new("SaveGame",         2, false),
         new("PlayerProfile",    2, false),
 
-        // === Added build 678 — derived from 15-game cross-game dump
+        // === Derived from 15-game cross-game dump
         // analysis. Each token confirmed as host for cheat-relevant
         // properties in ≥ 4 of 15 games (see scripts/analysis/
         // analyze_dumps.py "Candidate Unusual Location" section). ===
@@ -170,25 +167,24 @@ public static class ClassLocationScorer
         new("Battle",           2, false),  // 5 games — Battle* containers
                                             // for damage/count/max (common
                                             // in JRPG/strategy battles)
-        // === Added build 686 — Phase 2 function-side analyzer also
+        // === The function-side analyzer also
         // reveals "enemy" class token hosting damage/attack functions
         // in 3-4 games. Mirror to Property side for symmetric scoring
         // (an "Enemy*" class is just as likely to hold damage / health
         // properties as it is to expose damage functions). ===
         new("Enemy",            2, false),
 
-        // === 7-game cross-game analysis (2026-07-09): Health* (4/7) and
+        // === 7-game cross-game analysis: Health* (4/7) and
         // Damage* (5/7) classes host cheat-relevant properties (HealthComponent,
         // DamageDealer, etc.). Clean tokens — no core UE class contains them.
         // The +2 lands on the CLASS NAME ALONE: there is no keyword gate in
-        // this table (see the class doc), and the claim of one was never
-        // implemented. (AC8) Rejected same-pass: Item (redundant with
+        // this table (see the class doc). Rejected: Item (redundant with
         // the Resources keyword + UI-widget over-match), Jump/Objective/Mission
         // (marginal), Modifier (UInputModifier_* engine over-match). ===
         new("Health",           2, false),
         new("Damage",           2, false),
 
-        // === Timing (L1) — canonical homes of cooldown/duration/dilation
+        // === Timing — canonical homes of cooldown/duration/dilation
         // fields. GameplayEffect holds effect Duration/Period; GameplayAbility
         // holds cooldown/cost tags; WorldSettings holds TimeDilation. (Ability
         // System/AttributeSet already bonused above; Weapon/Projectile carry
@@ -221,10 +217,10 @@ public static class ClassLocationScorer
         // property NAMES alone already filter most noise (a property
         // called "PlaybackSpeed" on UAudioComponent doesn't match any
         // Stats / Combat / Resources keyword, so it naturally scores 0).
-        // The substring "Anim" / "Sound" / "Particle" penalty bit us hard
-        // in TowerOfMask: the game's player character class is named
-        // "AnimMan_Player_C" — a perfectly cheat-relevant target whose
-        // Health field was being filtered out because of the Anim penalty.
+        // A substring "Anim" / "Sound" / "Particle" penalty hits real targets:
+        // TowerOfMask's player character class is named "AnimMan_Player_C" —
+        // a perfectly cheat-relevant target whose Health field an Anim penalty
+        // would filter out.
         // The Function side keeps refined COMPOUND-name penalties for the
         // function-flavoured noise (which would otherwise dominate);
         // Property side doesn't have that problem and ships penalty-free.

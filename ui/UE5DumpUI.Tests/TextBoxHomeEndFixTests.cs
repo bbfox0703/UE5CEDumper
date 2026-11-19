@@ -6,9 +6,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [TEXTBOX-HOMEEND-CARET] Avalonia's TextBox puts the caret at the selection's START when a plain
-/// Home / End finds the caret already on its target (measured on build 3574: End after the
-/// AutoCompleteBox's select-all went to the start of the box). The fix collapses the selection
-/// onto its active end first; these pin WHEN it acts. The TextBox itself is driven in
+/// Home / End finds the caret already on its target (End after the AutoCompleteBox's select-all
+/// lands at the start of the box). TextBoxHomeEndFix collapses the selection onto its active end
+/// first; these pin WHEN it acts. The TextBox itself is driven in
 /// UE5DumpUI.HeadlessTests (TextBoxHomeEndTests).
 /// </summary>
 public class TextBoxHomeEndFixTests
@@ -47,7 +47,7 @@ public class TextBoxHomeEndFixTests
     [Fact]
     public void A_select_all_collapses_onto_its_active_end_so_End_stays_at_the_end()
     {
-        // The measured case: "spawn" selected by AutoCompleteBox's SelectAll (0 -> 5).
+        // The AutoCompleteBox case: "spawn" selected by AutoCompleteBox's SelectAll (0 -> 5).
         Assert.Equal((5, 5), TextBoxHomeEndFix.CollapseOntoActiveEnd(0, 5));
     }
 

@@ -243,13 +243,12 @@ void TraceBlock(Ctx& ctx, uintptr_t startAddr, ThisRegs tr, int depth) {
                 }
             }
 
-            // [W5-DENKEN-DEADGUARD] A "bail to save budget in a followed impl" guard stood here --
-            // `if (tr.Empty() && ctx.callsFollowed == 0) { if (depth > 0) return; }` -- and it was DEAD
-            // in every reachable state: TryFollow counts the follow BEFORE it recurses, so callsFollowed
-            // is >= 1 whenever depth > 0. Removed, not "repaired": dropping the callsFollowed term would
-            // stop a followed impl the moment its this-alias dies and lose its later low-confidence
-            // accesses (dll_helpers_test's Test_Denken_FollowedImplOutlivesItsAlias). kInstrBudget and
-            // kBlockGuard bound the cost instead.
+            // [W5-DENKEN-DEADGUARD] No "bail to save budget in a followed impl" guard here.
+            // `if (tr.Empty() && ctx.callsFollowed == 0) { if (depth > 0) return; }` would be DEAD in every
+            // reachable state: TryFollow counts the follow BEFORE it recurses, so callsFollowed is >= 1
+            // whenever depth > 0. The same guard without the callsFollowed term would stop a followed impl
+            // the moment its this-alias dies and lose its later low-confidence accesses (dll_helpers_test's
+            // Test_Denken_FollowedImplOutlivesItsAlias). kInstrBudget and kBlockGuard bound the cost instead.
 
             consumed += instr.length;
             ip       += instr.length;

@@ -5,18 +5,16 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [WIKI-TIPS-B2] Tooltips checked against the behaviour they describe, found by the Wiki
-/// re-translation pass. Where the fact lives in code (a slider range, a VM default, the
-/// category table) the expected text is derived from it, so the tooltip cannot drift again
-/// without a failure; the rest pin the claim that was wrong.
+/// [WIKI-TIPS-B2] Tooltips checked against the behaviour they describe. Where the fact lives
+/// in code (a slider range, a VM default, the category table) the expected text is derived
+/// from it, so the tooltip cannot drift without a failure; the rest pin the claim itself.
 /// </summary>
 public class WikiTooltipAccuracyTests
 {
     [Fact]
     public void Result_filters_say_their_keywords_are_ANDed_not_substring_matched()
     {
-        // All go through ObjectTreeFilter.MatchesAllTerms (term-level AND); the last two were
-        // missed by the first pass and found by review [WIKI-REVIEW-TEXT].
+        // All go through ObjectTreeFilter.MatchesAllTerms (term-level AND) [WIKI-REVIEW-TEXT].
         foreach (var key in new[] { "str.Tip.PropertySearch.ResultFilter", "str.Tip.IF.Filter", "str.Tip.IP.Filter",
                                     "str.Tip.LiveWalker.FuncFilter", "str.Tip.Con.Filter" })
         {
@@ -90,7 +88,7 @@ public class WikiTooltipAccuracyTests
 
         string expected = $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMinExponent} to "
                         + $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMaxExponent}, default {1 << settingsDefault}";
-        // R1 (maintainer, 2026-10-06): neither an exemption for NEW rows nor a tooltip warning about them.
+        // Neither an exemption for NEW rows nor a tooltip warning about them.
         Assert.DoesNotContain("NEW", EnString("str.Tip.LF.MinCalls"), StringComparison.Ordinal);
         Assert.Contains(expected, EnString("str.Tip.LF.MinCalls"), StringComparison.Ordinal);
     }
@@ -108,7 +106,7 @@ public class WikiTooltipAccuracyTests
     [Fact]
     public void Locate_in_GWorld_tip_claims_no_GWorld_gate()
     {
-        // Audit #5 AE10 removed the client-side IsGWorldAvailable gate on purpose.
+        // There is no client-side IsGWorldAvailable gate, on purpose.
         Assert.DoesNotContain("Disabled until", EnString("str.Tip.IP.LocateGWorld"), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -132,7 +130,7 @@ public class WikiTooltipAccuracyTests
     [Fact]
     public void Property_category_tip_names_every_category_the_filter_can_show()
     {
-        // [WIKI-REVIEW-TEXT] The IF twin below was fixed in B2; this one omitted Timing.
+        // [WIKI-REVIEW-TEXT] Every category, Timing included, as in the IF twin below.
         var tip = EnString("str.Tip.IP.Category");
         foreach (var cat in Enum.GetValues<PropertyCategory>())
             Assert.Contains(PropertyScoringTable.DisplayName(cat), tip, StringComparison.Ordinal);

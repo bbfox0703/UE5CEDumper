@@ -6,8 +6,7 @@
 
 WHY. The sweep's only inputs are image base, block map and bytes (see `pe_memory.py`), all of
 which a PE reader can supply. Dropping Ghidra from the sweep removes the JVM, the 12-15 min wall
-time, the Ghidra install, and the GB-scale transient writes that `-readOnly` does NOT prevent —
-the ones behind the 2026-08-01 USB drive failure.
+time, the Ghidra install, and the GB-scale transient writes that `-readOnly` does NOT prevent.
 
 THE BAR IS BYTE-IDENTICAL OUTPUT, so this is a transcription of the Java, not a reimplementation
 of the idea, and the awkward parts are awkward on purpose:
@@ -18,11 +17,11 @@ of the idea, and the awkward parts are awkward on purpose:
   * JAVA ROUNDS %f HALF-UP, Python rounds half-to-even. Differs on midpoints only, but `%.1f` on
     hits-per-MB reaches them; `_jfmt` does it Java's way.
   * CRLF. Java's `println` uses the platform separator and the reference was produced on Windows.
-  * INSERTION-ORDERED CONSENSUS. The Java used a `HashMap` there, whose iteration order decides
-    ties in the consensus listing; that was made a `LinkedHashMap` so both sides are ordered by
-    first appearance. Bucket order is deterministic but depends on the JDK's hash spreading, so
-    the old output was only reproducible by emulating `java.util.HashMap` — and would have
-    shifted under a JDK upgrade.
+  * INSERTION-ORDERED CONSENSUS. The Java uses a `LinkedHashMap` there, not a `HashMap`, because
+    the iteration order decides ties in the consensus listing; both sides are ordered by first
+    appearance. `HashMap` bucket order is deterministic but depends on the JDK's hash spreading,
+    so its output would only be reproducible by emulating `java.util.HashMap` — and would shift
+    under a JDK upgrade.
 
 Scanning strategy differs from the Java and must not change results: the Java sweeps every byte
 once against an anchor-bucket map (cheap in a JIT, hopeless in CPython), while this prefilters

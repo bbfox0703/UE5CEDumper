@@ -1,15 +1,15 @@
-r"""`[A4-ASSESS-2026-09-09]` phase 2 — the pipe contract, PER COMMAND rather than globally.
+r"""`[A4-ASSESS-2026-09-09]` — the pipe contract, PER COMMAND rather than globally.
 
     py tools/verify/pipe_command_contract.py list            # every command, its params and reply keys
     py tools/verify/pipe_command_contract.py show <cmd>      # one command in detail
     py tools/verify/pipe_command_contract.py json            # machine-readable, for the pairing pass
 
-⛔ WHY PER-COMMAND. `pipe_wire_parity.py` compares the two sides GLOBALLY and measures clean:
-0 UI-sent params no DLL reads, 0 command names either side lacks. That is a real result and it is
-also the weaker question. A key that is valid for command X and a silent no-op for command Y
-matches in a global comparison -- and that is precisely where the `l12` rig failure lived (it sent
-`addr=` where `Fern` reads `instance_addr`; both names exist somewhere on the DLL side, so a global
-check sees nothing, while 2,000 requests measured nothing and reported `ok: true`).
+⛔ WHY PER-COMMAND. `pipe_wire_parity.py` compares the two sides GLOBALLY: UI-sent params no DLL
+reads, command names either side lacks. That is a real check and it is also the weaker question.
+A key that is valid for command X and a silent no-op for command Y matches in a global comparison
+-- a rig that sends `addr=` where `Fern` reads `instance_addr` is the shape: both names exist
+somewhere on the DLL side, so a global check sees nothing, while every request measures nothing
+and reports `ok: true`.
 
 WHAT IT EXTRACTS, from `Fern.cpp`'s dispatch chain:
   * the handler block for each `if (cmd == Renge::CMD_*)`, by brace matching;

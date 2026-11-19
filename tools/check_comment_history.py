@@ -4,7 +4,7 @@
     py tools/check_comment_history.py              # compare with the baseline; exit 1 on any change
     py tools/check_comment_history.py --update     # lower the baseline after history was cut (refuses on growth)
     py tools/check_comment_history.py --rebaseline # rewrite it regardless: ONLY when the counting rules change
-    py tools/check_comment_history.py --list [PATH-SUBSTRING]   # print every counted comment line, exit 0
+    py tools/check_comment_history.py --list [path-substring]   # print every counted comment line, exit 0
 
 The rule ([COMMENT-NO-HISTORY-2026-11-18], working-lessons §8 rule 7): a comment says what the code does and why, as
 it stands. History -- a fix narrative, a review id, a measurement, a bug's cause -- belongs in dev-log.md under a
@@ -15,8 +15,10 @@ and cut down by hand; this gate keeps the count from growing:
   * a file's count going DOWN also fails, and prints the --update command, so the baseline ratchets down and a later
     history line cannot hide in the slack an old one left.
 
-Scope: the shipped code, dll/src (*.h, *.cpp) and ui/UE5DumpUI (*.cs). Counted: one per comment LINE (// or a /* */
-block's line; string literals are skipped) holding any HISTORY pattern below. The patterns are chosen for few false
+Scope: SCOPES below -- the product and test code (C++ / C#, and the UI's XAML), the scripts (Lua, the .CT,
+PowerShell, Python) and the tooling (Python). Counted: one per comment LINE (// or a /* */ block's line in C++ / C#;
+the other languages through tools/comment_lang.py, a Python docstring included; string literals are skipped) holding
+any HISTORY pattern below. The patterns are chosen for few false
 hits on a NEW line, since a false hit fails the gate: "is used to", "measured at init" and a [TAG] with its date are
 not history.
 """
@@ -27,11 +29,24 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import comment_lang  # noqa: E402  (the XAML / Lua / PowerShell / Python comment scanners)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(ROOT, "tools", "comment_history_baseline.json")
 SCOPES = [(os.path.join(ROOT, "dll", "src"), (".h", ".cpp")),
-          (os.path.join(ROOT, "ui", "UE5DumpUI"), (".cs",))]
-SKIP_DIRS = {"bin", "obj"}
+          (os.path.join(ROOT, "ui", "UE5DumpUI"), (".cs", ".axaml")),
+          # The tests' comments too: a test's doc says what it pins, and the history behind it is the dev-log's.
+          (os.path.join(ROOT, "dll", "tests"), (".h", ".cpp")),
+          (os.path.join(ROOT, "ui", "UE5DumpUI.Tests"), (".cs",)),
+          (os.path.join(ROOT, "ui", "UE5DumpUI.HeadlessTests"), (".cs",)),
+          # The emitted / shipped scripts and the repo's own tooling, through comment_lang's scanners.
+          (os.path.join(ROOT, "scripts"), (".lua", ".ct", ".ps1", ".py")),
+          (os.path.join(ROOT, "tools"), (".py",))]
+SKIP_DIRS = {"bin", "obj", "TestResults", "__pycache__"}
+# This file's own comments document the patterns with examples of the history they count.
+SKIP_FILES = {"tools/check_comment_history.py"}
+C_LIKE = (".h", ".cpp", ".cs")
 
 HISTORY = [
     re.compile(r"\bwf_[0-9a-f]{8}-[0-9a-f]{3}\b"),                         # a review workflow's id
@@ -63,6 +78,9 @@ HISTORY = [
     re.compile(r"\baudit (?:fix(?:es)?|finding) #\d+", re.IGNORECASE),        # "Audit fix #10:", "audit finding #2"
     re.compile(r"\baudit [A-Z]{1,3}\d+[a-z]?\b", re.IGNORECASE),             # "(audit U17)", "Audit PX1"
     re.compile(r"\b[Rr]eview [A-Z]{1,3}\d+[a-z]?\b"),                         # "(review F4)"
+    # A dated event with no preposition ("Found 2026-09-06.", "Added 2026-09-09."); the project's own years only.
+    re.compile(r"\b(?:[Ff]ound|[Ss]een|[Oo]bserved|[Rr]eported|[Rr]eproduced|[Mm]easured|[Cc]onfirmed|[Vv]erified|"
+               r"[Ff]ixed|[Aa]dded|[Ss]hipped|[Ll]anded)\s+(?:on\s+)?202[6-9]-\d\d-\d\d\b"),
 ]
 
 
@@ -109,9 +127,10 @@ def comment_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def history_rows(text: str) -> list[str]:
-    """[`line: comment`] for each comment line holding a history pattern."""
-    return [f"{no}: {c.strip()[:140]}" for no, c in comment_lines(text) if any(p.search(c) for p in HISTORY)]
+def history_rows(text: str, rel: str = "x.cs") -> list[str]:
+    """[`line: comment`] for each comment line holding a history pattern; `rel` picks the language."""
+    lines = comment_lines(text) if rel.lower().endswith(C_LIKE) else comment_lang.comments(rel, text)
+    return [f"{no}: {c.strip()[:140]}" for no, c in lines if any(p.search(c) for p in HISTORY)]
 
 
 def scan() -> dict[str, list[str]]:
@@ -120,12 +139,14 @@ def scan() -> dict[str, list[str]]:
         for base, dirs, files in os.walk(base_dir):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for name in sorted(files):
-                if not name.endswith(exts):
+                if not name.lower().endswith(exts):
                     continue
                 path = os.path.join(base, name)
                 rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+                if rel in SKIP_FILES:
+                    continue
                 with open(path, encoding="utf-8-sig", errors="replace") as fh:
-                    rows = history_rows(fh.read())
+                    rows = history_rows(fh.read(), rel)
                 if rows:
                     found[rel] = rows
     return found
@@ -171,12 +192,28 @@ SELFTEST = [
     ("// shared with the reflected-struct preview (audit U17).", 1),
     ("// wraps to about 1.8e15 ms (review F4).", 1),
     ("// the audit log records every write", 0),                        # a feature, not a finding
+    ("// Found 2026-09-06 in the archive, which had carried it", 1),
+    ("// Added 2026-09-09. The widening and its control", 1),
+    ("// the record was found in 2026-09 by its owner", 0),             # no date-shaped event
+]
+
+
+SELFTEST_OTHER = [   # the same rules over the other languages' comments
+    ("a.lua", "x = 1 -- it used to answer the old walk", 1),
+    ("a.lua", "x = 'it used to answer' -- the current walk", 0),         # history inside a string
+    ("a.axaml", "<Grid><!-- since build 3713 the panel refuses it --></Grid>", 1),
+    ("a.py", '"""Review wf_1b9e937b-a0d DLL-1: the guard missed it."""\nx = 1\n', 1),
+    ("a.py", "x = 'measured on DumperTest'  # reads the name\n", 0),
+    ("a.ps1", "$x = 1 # (audit #5 F8)", 1),
 ]
 
 
 def selftest() -> list[str]:
-    return [f"{src!r}: counted {len(history_rows(src))}, expected {want}"
-            for src, want in SELFTEST if len(history_rows(src)) != want]
+    bad = [f"{src!r}: counted {len(history_rows(src))}, expected {want}"
+           for src, want in SELFTEST if len(history_rows(src)) != want]
+    bad += [f"{rel} {src!r}: counted {len(history_rows(src, rel))}, expected {want}"
+            for rel, src, want in SELFTEST_OTHER if len(history_rows(src, rel)) != want]
+    return bad + comment_lang.selftest()
 
 
 def main() -> int:

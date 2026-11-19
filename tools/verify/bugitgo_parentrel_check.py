@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-r"""Live check for [TELEPORT-BUGITGO-PARENTREL] (build 3675 on): DumperTest, headless, no CE.
+r"""Live check for [TELEPORT-BUGITGO-PARENTREL]: DumperTest, headless, no CE.
 
     py tools/verify/l78_parentrel_arm.py find                    # once per launch, then:
-    py tools/verify/bugitgo_parentrel_check.py --expect refuse   # the fixed DLL
-    py tools/verify/bugitgo_parentrel_check.py --expect jump     # the red arm: a DLL from before the fix
+    py tools/verify/bugitgo_parentrel_check.py --expect refuse   # a DLL with the fix
+    py tools/verify/bugitgo_parentrel_check.py --expect jump     # the red arm: a DLL without the fix
 
 A parent-relative BugIt is staged with l78_parentrel_arm.py's verbs (attach, degrade, heal, detach, restore) and the
 CE mailbox's CMD_TELEPORT is driven directly, the way mailbox_poke.py does it: inputs first, `cmd` last, a real

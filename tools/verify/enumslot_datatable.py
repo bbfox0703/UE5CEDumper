@@ -4,18 +4,17 @@
 
 WHY THIS EXISTS. A TEnumAsByte member is a ByteProperty, and FByteProperty keeps its UEnum in
 its own subclass slot; FEnumProperty keeps its UEnum one pointer further on, after the
-underlying property. `WalkDataTableRows` read every enum column at the EnumProperty slot, so a
-TEnumAsByte column was read one pointer past the end of its FByteProperty. Build 3596 made it
-read the type's own slot, but no fixture DataTable had such a column, so the fix rested on the
-code alone. DumperTest 5.4's `FDumperTestTableRow.RowLane` is that column (tools/ue-sample/
-README.md): `Lane_Left` / `Lane_Center` / `Lane_Right` (11 / 33 / 22) by the row's `Index`
-mod 3, never `Lane_None`.
+underlying property. A `WalkDataTableRows` that reads every enum column at the EnumProperty slot
+reads a TEnumAsByte column one pointer past the end of its FByteProperty; it must read the
+type's own slot. This rig gives that a fixture: DumperTest 5.4's `FDumperTestTableRow.RowLane`
+is such a column (tools/ue-sample/README.md): `Lane_Left` / `Lane_Center` / `Lane_Right`
+(11 / 33 / 22) by the row's `Index` mod 3, never `Lane_None`.
 
 TWO CHECKS PER ROW, and they are not the same claim:
   * the cell's BYTE is the seeded value -- the column, the row data and the package are right.
-    It does not touch the enum slot, so it must hold on every build, old or new.
+    It does not touch the enum slot, so it must hold on every build, with the fix or without.
   * `enum_name` is the seeded enumerator -- the slot is read right. This is the check a build
-    before 3596 is expected to fail while still passing the first.
+    without [ENUMSLOT-ANY-NAME] is expected to fail while still passing the first.
 Both tables are read: `Table_Small` (8 rows, whole) and `Table_Big`'s first page.
 
 Inject any build (`inject.py --dll` for an old one) into a fresh DumperTest; nothing else first.
@@ -41,7 +40,7 @@ def check_table(c, label, addr):
     bad_bytes, bad_names, shown = [], [], 0
     for row in r["rows"]:
         # Keyed case-insensitively, as UE compares FNames: the pool keeps the casing registered
-        # FIRST, and the Development package names this column `index` (measured 2026-09-28).
+        # FIRST, and the Development package names this column `index`.
         fields = {f["name"].lower(): f for f in row["fields"]}
         lane, idx = fields.get("rowlane"), fields.get("index", {}).get("value")
         if lane is None or idx is None:

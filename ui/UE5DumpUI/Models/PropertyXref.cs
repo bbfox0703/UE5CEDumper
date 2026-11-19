@@ -49,7 +49,7 @@ public sealed class PropertyXrefMatch
     public string Kind { get; init; } = "";
 
     /// <summary>
-    /// v2a: for hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
+    /// For hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
     /// event(s) whose entry offset precedes the reference (comma-joined). Empty
     /// for non-ubergraph functions. Best-effort (nearest-preceding heuristic).
     /// </summary>

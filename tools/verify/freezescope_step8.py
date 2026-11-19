@@ -8,16 +8,15 @@ THE ROW (step 8, the backward-compatibility control): *"tick an older saved `.CT
 script predates contract 3 -> it still runs and still holds its exact-class pool. The flag defaults
 off and the handler clears it, so an old script must be unaffected."*
 
-⭐ THE BLOCKER WAS "no pre-contract-3 `.CT` exists on this machine". It is retired by locating the
-contract where it actually lives. A `.CT` bakes NO contract at all (`grep -c CONTRACT
-scripts/UE5CEDumper.CT` = 0) and neither does the generated freeze script - the version is carried
-by the HELPER, as `local UE5_SCRIPT_CONTRACT = <n>`. And an old helper is in git:
+⭐ NO pre-contract-3 `.CT` IS NEEDED: the contract lives elsewhere. A `.CT` bakes NO contract at
+all (`grep -c CONTRACT scripts/UE5CEDumper.CT` = 0) and neither does the generated freeze script -
+the version is carried by the HELPER, as `local UE5_SCRIPT_CONTRACT = <n>`. And a helper that
+predates contract 3 is in git:
 
     git show 04d40803^:scripts/ue5_freeze_helper.lua      -> v1.1, UE5_SCRIPT_CONTRACT = 2
 
-a period artifact from commit 661c3925 (2026-08-16), which predates contract 3 (2c2a950c,
-2026-08-19). So the fixture is real, not reconstructed - the objection the row records ("it would
-have to be reconstructed, which tests the reconstruction") does not apply.
+So the fixture is real, not reconstructed - the objection the row records ("it would have to be
+reconstructed, which tests the reconstruction") does not apply.
 
 ⭐ WHY `DumperTestHolder` AND NOT THE CLASS THE OTHER FREEZE ROWS USE. Exact-vs-derived is the whole
 assertion, so the base needs a real subclass. `ADumperTestDerivedHolder : public ADumperTestHolder`
