@@ -54,7 +54,7 @@ public class LoggingServiceRetentionTests : IDisposable
         // DLL's own logs.
         for (int i = 0; i < 30; i++) MakeFolder($"Game{i:D2}", daysOld: 1);
 
-        using (var log = new LoggingService(_dir))
+        using (var log = new LoggingService(_dir, writeToConsole: false))
             log.StartProcessMirror("Game00");
 
         for (int i = 0; i < 30; i++)
@@ -71,7 +71,7 @@ public class LoggingServiceRetentionTests : IDisposable
         MakeFolder("StaleGame", daysOld: UE5DumpUI.Constants.LogMaxAgeDays + 5);
         MakeFolder("FreshGame", daysOld: 1);
 
-        using (new LoggingService(_dir)) { }   // CleanupOldLogFolders runs in the ctor
+        using (new LoggingService(_dir, writeToConsole: false)) { }   // CleanupOldLogFolders runs in the ctor
 
         Assert.False(Directory.Exists(Path.Combine(_dir, "StaleGame")));
         Assert.True(Directory.Exists(Path.Combine(_dir, "FreshGame")));
@@ -85,7 +85,7 @@ public class LoggingServiceRetentionTests : IDisposable
         MakeFolder(UE5DumpUI.Constants.LogSubfolderName,
                    daysOld: UE5DumpUI.Constants.LogMaxAgeDays + 100);
 
-        using (new LoggingService(_dir)) { }
+        using (new LoggingService(_dir, writeToConsole: false)) { }
 
         Assert.True(Directory.Exists(
             Path.Combine(_dir, UE5DumpUI.Constants.LogSubfolderName)));
@@ -106,7 +106,7 @@ public class LoggingServiceRetentionTests : IDisposable
         var payload = new string('x', 4096);
         const string marker = "MARKER-AFTER-THE-CAP";
 
-        using (var log = new LoggingService(_dir))
+        using (var log = new LoggingService(_dir, writeToConsole: false))
         {
             long budget = UE5DumpUI.Constants.LogMaxSizeBytes + (2L * 1024 * 1024);
             for (long written = 0; written < budget; written += payload.Length)
@@ -139,7 +139,7 @@ public class LoggingServiceRetentionTests : IDisposable
             @"E:\Games\Title {GOTY}\x.dll",
             "index {0} and {Name:l} and }} and {{",
         };
-        using (var log = new LoggingService(_dir))
+        using (var log = new LoggingService(_dir, writeToConsole: false))
         {
             log.Info(UE5DumpUI.Constants.LogCatInit, texts[0]);
             log.Warn(UE5DumpUI.Constants.LogCatInit, texts[1]);

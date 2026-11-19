@@ -61,7 +61,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
     private Serilog.Core.Logger? _mirrorPipeLogger;
     private Serilog.Core.Logger? _mirrorViewLogger;
 
-    public LoggingService(string logDirectory)
+    /// <param name="writeToConsole">Also echo every message to the console. The app does; a test that writes
+    /// megabytes to exercise rolling passes false, or the test run's console fills with it.</param>
+    public LoggingService(string logDirectory, bool writeToConsole = true)
     {
         _logDirectory = logDirectory;
         Directory.CreateDirectory(logDirectory);
@@ -87,11 +89,11 @@ public sealed class LoggingService : ILoggingService, IDisposable
         _pipeLogger = CreateFileLogger(Path.Combine(_moduleDir, "pipe-0.log"));
         _viewLogger = CreateFileLogger(Path.Combine(_moduleDir, "view-0.log"));
 
-        // Console logger (shared across all categories)
-        _consoleLogger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}")
-            .CreateLogger();
+        // Console logger (shared across all categories); with no sink it drops every event.
+        var console = new LoggerConfiguration().MinimumLevel.Debug();
+        if (writeToConsole)
+            console = console.WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}");
+        _consoleLogger = console.CreateLogger();
 
         // Retention, in cheapest-first order: whole aged-out folders, then the
         // per-file orphan sweep over whatever survived.
