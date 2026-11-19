@@ -4203,6 +4203,15 @@ red first, and **in the same tests** the stock shapes, asserting that each still
 *Why.* Every target shares the stock logic; a game-specific change that moved it would break games that work today
 to support one that nobody can check here.
 
+**6. A file outside every test target is no reason to leave a change untested.** (2026-11-19)
+
+That a `.cpp` reaches no test target only means nobody has needed it there yet. When a change in it needs a test, add
+the file to a target (an existing one or a new one), or move the decision into a header a target compiles and have the
+`.cpp` call it. "It is in no test target, so the DLL build is the check" is not an answer.
+
+*Why.* CLAUDE.md lists which files the test targets compile so that a green run is not mistaken for coverage of the
+rest, not to mark the rest as untestable.
+
 ## 8. Writing code comments
 
 `[COMMENT-INTEGRITY-2026-09-26]`, measured on build 3560 ([comment-integrity-eval.md](comment-integrity-eval.md)):
