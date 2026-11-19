@@ -231,6 +231,47 @@ function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
+function Repair-MsvcToolOrder() {
+    <#
+    .SYNOPSIS
+        Put Visual Studio's copy of cl, link, cmake and ninja first on PATH when another folder shadows it.
+
+    .DESCRIPTION
+        A shell started from a developer environment (Git Bash, MSYS2) may put its own folders in front of PATH,
+        and build.ps1 reuses such an environment as it is. Git's and MSYS2's usr\bin hold a coreutils link.exe,
+        which the AOT publish would run, and MSYS2's mingw64\bin holds c++.exe, which CMake's Ninja generator
+        takes from the first PATH folder holding any compiler it knows. For each tool whose first copy on PATH is
+        not under VSINSTALLDIR, the folder of the first copy that is moves to the front. A tool this Visual Studio
+        does not ship (no CMake component) is left alone; cl and link must exist. [MSVC-GUARD-2026-11-19]
+    #>
+    if (-not $env:VSINSTALLDIR) {
+        Write-Fail "The developer environment names no VSINSTALLDIR, so the MSVC tools cannot be located"
+        return $false
+    }
+    $vsRoot = [System.IO.Path]::GetFullPath($env:VSINSTALLDIR).TrimEnd('\') + '\'
+    $front = [System.Collections.Generic.List[string]]::new()
+    foreach ($tool in @('cl.exe', 'link.exe', 'cmake.exe', 'ninja.exe')) {
+        $all = @(Get-Command $tool -CommandType Application -All -ErrorAction SilentlyContinue |
+                 ForEach-Object { $_.Source })
+        $vsCopy = $all | Where-Object { $_.StartsWith($vsRoot, [StringComparison]::OrdinalIgnoreCase) } |
+                  Select-Object -First 1
+        if (-not $vsCopy) {
+            if ($tool -in 'cl.exe', 'link.exe') {
+                Write-Fail "No $tool under $vsRoot is on PATH; the MSVC x64 environment is incomplete"
+                return $false
+            }
+            continue
+        }
+        if ($all[0] -ne $vsCopy) {
+            $dir = Split-Path $vsCopy -Parent
+            Write-Info "$tool resolved to $($all[0]); putting $dir first on PATH"
+            if (-not $front.Contains($dir)) { $front.Add($dir) }
+        }
+    }
+    if ($front.Count -gt 0) { $env:PATH = ($front -join ';') + ';' + $env:PATH }
+    return $true
+}
+
 function Enter-VsDevEnvironment() {
     <#
     .SYNOPSIS
@@ -244,7 +285,9 @@ function Enter-VsDevEnvironment() {
     # this same session), DON'T enter it again. Enter-VsDevShell PREPENDS the VC paths
     # to PATH/LIB/INCLUDE every time, so re-entering stacks them until the linker's
     # command line blows past the 8191-char Windows limit (-> AOT link exits 123).
+    # What a later shell put in front of PATH is repaired instead.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
+        if (-not (Repair-MsvcToolOrder)) { return $false }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
         return $true
@@ -259,6 +302,7 @@ function Enter-VsDevEnvironment() {
     try {
         Import-Module $devShellDll
         Enter-VsDevShell -VsInstallPath $script:vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
+        if (-not (Repair-MsvcToolOrder)) { return $false }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment loaded"
         return $true
