@@ -278,8 +278,8 @@ public class VolumeRootTests
     [Fact]
     public void LogCompression_IsSupported_StillAnswersNtfsForTheRealLogVolume()
     {
-        // GetVolumeInformationW replaced DriveInfo.DriveFormat; the answer for an ordinary
-        // local NTFS path must be unchanged. Cross-checked against DriveInfo so this cannot
+        // The answer comes from GetVolumeInformationW, not DriveInfo.DriveFormat; for an ordinary
+        // local NTFS path the two must agree. Cross-checked against DriveInfo so this cannot
         // pass by returning false for the wrong reason.
         string probe = Path.GetFullPath(Path.GetTempPath());
         string? resolved = VolumeRoot.Resolve(probe);

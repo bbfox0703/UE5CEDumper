@@ -1353,8 +1353,8 @@ public class TeleportViewModelTests
     }
 
     // [SOLIDE-RELATED-STOPS] The search scores the pawn and the objects it owns, the Related Objects walk's list, which
-    // stops at 128 owned objects (and at a pointer budget and a deadline). A meter past that point was never found, and
-    // nothing said the search had not looked there.
+    // stops at 128 owned objects (and at a pointer budget and a deadline). A meter past that point is never found, so
+    // the result must say the search has not looked there.
 
     private static RelatedObjectsStops OwnedCut => new() { OwnedCapHit = true, MaxOwned = 128 };
 
@@ -1561,8 +1561,9 @@ public class TeleportViewModelTests
         Assert.Equal("—", vm.StealthFieldText);
     }
 
-    // [A4-STEALTH-PRIME] BADGEPRIME's connect prime skipped the Stealth card, so after a reconnect it read "Off" while
-    // Solide kept holding the meter -- and the experimental gate-off, which keys on the badge, then released nothing.
+    // [A4-STEALTH-PRIME] BADGEPRIME's connect prime covers the Stealth card too: skipping it, the card reads "Off" after a
+    // reconnect while Solide keeps holding the meter -- and the experimental gate-off, which keys on the badge, then
+    // releases nothing.
     [Fact]
     public async Task Connect_primes_a_Stealth_hold_the_DLL_still_holds()
     {
@@ -1607,7 +1608,7 @@ public class TeleportViewModelTests
         Assert.Contains("Visibility", vm.StealthFieldText);   // which meter it was stays readable
     }
 
-    // [STEALTH-RESET-STALE-HELD] With no meter detected Reset sent nothing, yet said it released the hold.
+    // [STEALTH-RESET-STALE-HELD] With no meter detected Reset sends nothing, so it must not say it released the hold.
     [Fact]
     public async Task Reset_with_no_meter_does_not_claim_a_release()
     {
@@ -1727,7 +1728,7 @@ public class TeleportViewModelTests
     public async Task HoldStealth_zero_held_shows_armed()
     {
         // [EXPOFF-ROUND3-PAUSED] Held 0 with code 0 is a job Solide KEPT: it applies as soon as an instance spawns.
-        // This read "Not found" and "Hold failed" while the DLL forced the meter on the next spawn.
+        // "Not found" or "Hold failed" would be wrong here: the DLL forces the meter on the next spawn.
         var fake = new FakeDumpService
         {
             NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
@@ -2175,8 +2176,8 @@ public class TeleportViewModelTests
     public async Task CopyAsBugItGo_a_parent_relative_pose_is_not_copied_and_empties_the_run_field()
     {
         // [TELEPORT-BUGITGO-PARENTREL] A "BugItGo X Y Z" string claims world coordinates to whatever reads it, and a
-        // parent-relative read is not -- the string cannot carry the flag a marker keeps. Copy refused nothing, so the
-        // Run field (and the `bugitgo` hotkey) then drove those numbers into the pawn as world coordinates.
+        // parent-relative read is not -- the string cannot carry the flag a marker keeps. So Copy refuses it: otherwise
+        // the Run field (and the `bugitgo` hotkey) drives those numbers into the pawn as world coordinates.
         var fake = new FakeDumpService
         {
             NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, Source = "raw", ParentRelative = true, ParentRelativeKnown = true },
@@ -2199,8 +2200,8 @@ public class TeleportViewModelTests
     [Fact]
     public async Task CopyAsBugItGo_a_refused_clipboard_is_not_claimed_and_the_run_field_is_still_filled()
     {
-        // The blind-spot sweep's round-3 tail: the line said "copied + filled the Run field" whatever the clipboard answered, so a
-        // refused write sent the user to paste the previous clipboard into the console.
+        // The line follows the clipboard's answer: "copied + filled the Run field" over a refused write sends the user
+        // to paste the previous clipboard into the console.
         var fake = new FakeDumpService { NextPose = new() { Code = 0, X = 100, Y = 200, Z = 300 } };
         var vm = CreateVm(fake, out var platform);
         vm.IsConnected = true;
@@ -2533,7 +2534,7 @@ public class TeleportViewModelTests
     }
 
     // ── God Mode / Keep Foreground "Add to CE" delivery ────────────────
-    // Regression: these must NOT copy raw AA to the clipboard (a bare AA body
+    // Pinned: these must NOT copy raw AA to the clipboard (a bare AA body
     // can't be pasted into a CE record). With no AOBMaker they fall back to
     // paste-able CE memory-record XML (WrapAaScriptXml).
 
@@ -2904,7 +2905,7 @@ public class TeleportViewModelTests
 
     /// <summary>A force with no pawn yet must show the REQUEST, not "Unknown":
     /// set_god_mode reports only the observed value, and the user needs to see that
-    /// their toggle registered. This is the path the filed fix left behind.</summary>
+    /// their toggle registered. The force path needs this as much as the refresh path.</summary>
     [Fact]
     public async Task ForceGodModeOn_with_no_pawn_reads_pending_not_unknown()
     {
@@ -3276,7 +3277,7 @@ public class TeleportViewModelTests
     [InlineData(false)]   // the world lane
     public async Task ApplyTime_without_its_owner_promises_nothing(bool pawnLane)
     {
-        // The twin found while fixing [W2-MS-PROMISE]: Hemmung::SetDilation also returns before storing
+        // The twin of [W2-MS-PROMISE]: Hemmung::SetDilation also returns before storing
         // anything when its owner does not resolve, so nothing is queued to "apply once" it exists.
         var fake = new FakeDumpService { NextTimeSet = new TimeDilationSetResult { State = -3 } };
         var vm = CreateVm(fake, out _);
@@ -3508,7 +3509,7 @@ public class TeleportViewModelTests
     {
         // A combo another app holds this launch may be free the next: the row keeps it, flagged, and so must the file.
         // Every re-bind or clear of ANY row rewrites the file from the persisted set, so a combo left out of that set
-        // was erased by the first one.
+        // would be erased by the first one.
         var platform = new FakePlatform();
         new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
         {
@@ -3762,9 +3763,9 @@ public class TeleportViewModelTests
     }
 
     // Disabling while the game thread is paused CANNOT un-hide; the DLL keeps the
-    // record and reports the leftover in HiddenCount. Observed live on Elliot --
-    // clicking in the UI backgrounds the game, which is exactly when this fires -- so
-    // reporting only "OFF" would leave an actor invisible with no hint why.
+    // record and reports the leftover in HiddenCount. Clicking in the UI backgrounds
+    // the game, which is exactly when this fires, so reporting only "OFF" would leave
+    // an actor invisible with no hint why.
     [Fact]
     public async Task ResetSeeThrough_with_actors_left_hidden_says_so_and_how_to_recover()
     {
@@ -3780,7 +3781,7 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.SeeThroughState);
         Assert.Contains("still hidden", vm.StatusText);
         Assert.Contains("still hidden", vm.SeeThroughCurrentText);
-        // Recovery is AUTOMATIC now (the DLL waits for the game thread), so the message
+        // Recovery is AUTOMATIC (the DLL waits for the game thread), so the message
         // must say that rather than hand the user a chore -- and it points at the
         // feature that avoids the situation entirely.
         Assert.Contains("automatically", vm.StatusText);
@@ -4473,9 +4474,9 @@ public class TeleportViewModelTests
 
     // ---- [W2-TPREL-MAP] an absent map is not an empty map ----
     //
-    // teleport_relative's reply carries no `map` key, ParsePose read that as "", and ApplyPose wrote ""
-    // over the known map: every library row re-flagged as another map's, the summary reading "you are
-    // on ''", and "Add from fields" persisting map = "" -- which then matches no map ever again.
+    // teleport_relative's reply carries no `map` key. Read as "", ApplyPose would write "" over the
+    // known map: every library row re-flagged as another map's, the summary reading "you are on ''",
+    // and "Add from fields" persisting map = "" -- which then matches no map ever again.
 
     [Fact]
     public async Task ParsePose_reports_an_absent_map_as_absent_not_empty()
@@ -5210,8 +5211,8 @@ public class TeleportViewModelTests
 
         vm.SetConnected(false);
 
-        // ⚠ THE BADGES DO NOT SHARE A WORD, and assuming they did is what this assertion
-        // caught: Apply*State(-1) renders "Unknown" for the cursor but "Unavailable" for
+        // ⚠ THE BADGES DO NOT SHARE A WORD, so this assertion must not assume they do:
+        // Apply*State(-1) renders "Unknown" for the cursor but "Unavailable" for
         // Fly, See-through and Gravity. Pinning the literal per card is deliberate -- a
         // helper that accepted either would stop noticing if one card's reset broke.
         Assert.Equal("Unknown", vm.MouseCursorState);

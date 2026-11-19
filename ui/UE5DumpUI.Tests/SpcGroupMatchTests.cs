@@ -288,7 +288,7 @@ public class SpcGroupMatchTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
         // All values live in ONE array (offset 0 for every element). Tunes[0] + Tunes[1]
         // both decrease; Tunes[2] holds. The Decreased slot matches TWO elements, so it
-        // must NOT report "locked" (a single resolved offset) — the old dedup-by-offset
+        // must NOT report "locked" (a single resolved offset) — a dedup by offset alone
         // would collapse both offset-0 elements to one and falsely lock it.
         var ids = await SeedSeqAsync(ct,
             new[] { ObjWithArray(1, "BP_Save_C", "Tunes", (0, IntHex(10)), (1, IntHex(20)), (2, IntHex(5))) },
@@ -312,8 +312,8 @@ public class SpcGroupMatchTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         // X and Y both equal 100 and both hold. Two identical slots (Unchanged + Exact 100)
-        // each match {X, Y}; the SDR must give them DISTINCT representatives — the old
-        // hits[0] rep rendered the SAME field (X) on both slots.
+        // each match {X, Y}; the SDR must give them DISTINCT representatives — taking
+        // hits[0] as the rep would render the SAME field (X) on both slots.
         var ids = await SeedSeqAsync(ct,
             new[] { Obj(1, "C", ("X", "IntProperty", 0x10, IntHex(100)), ("Y", "IntProperty", 0x14, IntHex(100))) },
             new[] { Obj(1, "C", ("X", "IntProperty", 0x10, IntHex(100)), ("Y", "IntProperty", 0x14, IntHex(100))) });

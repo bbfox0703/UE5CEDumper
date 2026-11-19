@@ -330,10 +330,10 @@
          out as each row's are and take the same widths from the view model, so header and rows move together; a
          thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
     <!-- [CT-DETAIL-COVERS-LIST] Header and rows bind the widths SHOWN: the remembered ones fitted so Function keeps its
-         slice. Unfitted, a column wider than the list hid Function and the handles of the columns after it. -->
+         slice. Unfitted, a column wider than the list hides Function and the handles of the columns after it. -->
     <!-- [CT-COLUMNS-OVERLAP] When the list is narrower than its fixed columns, DockPanel gives a cell that no longer fits
-         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot: it drew over the column
-         on its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
+         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot, over the column on
+         its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
          The header cuts that overflow itself: it is drawn after the detail pane and would cover it. -->
     <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2" ClipToBounds="True">
       <Panel DockPanel.Dock="Left" Width="{Binding ShownTimeColWidth}" HorizontalAlignment="Left">

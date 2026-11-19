@@ -217,7 +217,7 @@
         <DropDownButton.Flyout>
           <!-- MenuFlyout + checkable MenuItems: same proven pattern as Export CSX,
                with reliable DataContext inheritance and TwoWay IsChecked write-back
-               (a plain Flyout's content did NOT reliably write the toggles back). -->
+               (a plain Flyout's content does NOT reliably write the toggles back). -->
           <MenuFlyout Placement="Bottom">
             <MenuItem Header="{StaticResource str.LiveWalker.DescShowOffset}"
                       ToggleType="CheckBox" IsChecked="{Binding DescShowOffset, Mode=TwoWay}"
@@ -550,17 +550,15 @@
               SelectionChanged="FieldGrid_SelectionChanged">
       <!-- Row tint and dimming, bound to the ROW ITEM. [LWREFRESH-2026-08-21]
 
-           This replaces FieldGrid_LoadingRow, which set Row.Background/Foreground imperatively.
-           That handler runs only when a row is REALIZED, which was fine while every refresh
-           replaced the row objects — and stopped being fine the moment the refresh started reusing
-           them so the grid would stop scrolling up a row per Refresh.
+           Not a LoadingRow handler setting Row.Background/Foreground imperatively: that runs only
+           when a row is REALIZED, and the refresh reuses the row objects (so the grid does not
+           scroll up a row per Refresh), so a reused row's tint would not follow its item.
 
-           ⚠ The handler could NOT be kept as a fallback: `e.Row.Background = …` writes at
+           ⚠ Nor such a handler as a fallback: `e.Row.Background = …` writes at
            LocalValue priority, which outranks a Style setter, so even its Transparent branch would
-           have pinned every non-matching row and this binding would never have shown. It is
-           deleted, not disabled.
+           pin every non-matching row and this binding would never show.
 
-           Colours are the same three the handler used: #3CFFC800 tint, #666666 guessed, #D4D4D4
+           Colours: #3CFFC800 tint, #666666 guessed, #D4D4D4
            normal. Selection still paints over the tint, because the DataGridRow theme drives
            :selected from its own BackgroundRectangle rather than from Background. -->
       <DataGrid.Styles>
@@ -595,8 +593,8 @@
                             Binding="{Binding Name}" SortMemberPath="Name"
                             Width="220" MinWidth="140" IsReadOnly="True"/>
         <!-- A TemplateColumn only so the cell has an element to hang ToolTip.Tip on;
-             a DataGridTextColumn's Binding= has none. 115px clips readily — the case
-             that prompted it was "DataTableRows" rendering as "DataTableRo", and UE
+             a DataGridTextColumn's Binding= has none. 115px clips readily —
+             "DataTableRows" renders as "DataTableRo", and UE
              type names are long by nature (SoftObjectProperty,
              MulticastInlineDelegateProperty). Same [V8PREVIEWCLIP-2026-08-23] shape as
              the Value column beside it, which is why this template is deliberately
@@ -626,7 +624,7 @@
                    with nothing on screen saying so. [V8PREVIEWCLIP-2026-08-23] — a
                    DataTable's "showing 64 of 100" badge is appended after
                    "{DataTable: 100 rows, <struct>}", which alone overflows, so the
-                   badge could not be read at the default width on any table.
+                   badge cannot be read at the default width on any table.
                    Bound to ValueTooltip (null when empty), NOT to DisplayValue, so a
                    blank cell does not pop an empty tooltip. -->
               <TextBlock Text="{Binding DisplayValue}"
@@ -997,10 +995,10 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <!-- (Build 688) Notes column removed — the value was identical
+          <!-- No Notes column — its value would be identical
                on every row (VM-level AOBMaker status). The function-list
                toolbar above the grid carries the same indicator when the
-               plugin isn't reachable, so per-row repetition was pure noise. -->
+               plugin isn't reachable, so per-row repetition would be pure noise. -->
         </DataGrid.Columns>
       </DataGrid>
       </DockPanel>

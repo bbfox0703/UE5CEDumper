@@ -101,9 +101,9 @@ public class SpcQueryViewModelTests : IDisposable
     // ---- [W1-SPC-JOINMODE] the join mode is persisted and restored through session-safe members ----
     //
     // Opening the tab auto-ticks the two newest picks and auto-selects the join mode, so an AUTO-chosen
-    // In-session reached ui-options.json with no user action. ApplyOptions then wrote it back through the
-    // public setter, which latched _joinModeUserOverride for good: AutoSelectJoinMode early-returned
-    // forever, and the documented cross-session fallback to Strict was dead. In-session joins on GObjects
+    // In-session would reach ui-options.json with no user action. Written back through the public setter,
+    // it would latch _joinModeUserOverride for good: AutoSelectJoinMode would early-return forever, and
+    // the documented cross-session fallback to Strict would be dead. In-session joins on GObjects
     // slot numbers, which mean nothing in another launch. The wiring lives in MainWindowViewModel, which
     // no test constructs, so it is pinned from the source.
     [Fact]
@@ -140,7 +140,7 @@ public class SpcQueryViewModelTests : IDisposable
     [Fact]
     public async Task RestoredInSession_DoesNotLatchAFakeOverride()
     {
-        // The recorded repro: an options file holding In-session, then picks from two launches.
+        // The shape: an options file holding In-session, then picks from two launches.
         await SeedInSessionAsync("old", "S-OLD", 100);
         await SeedInSessionAsync("new", "S-NEW", 90);
         var vm = NewVm();
@@ -167,9 +167,9 @@ public class SpcQueryViewModelTests : IDisposable
     [Fact]
     public async Task RestoredStrict_IsNotAUserChoice()
     {
-        // Review of de4a7e05: Strict is also what an AUTO In-session is written as, so restoring it through
-        // the setter latched the very fake override this fix removes -- latent only because the one call
-        // site runs while the combo already holds Strict. Pinned in the order that shows it.
+        // Strict is also what an AUTO In-session is written as, so restoring it must not latch a user override.
+        // Through the setter it would, unseen while the combo already holds Strict; pinned in the order that
+        // shows it.
         await SeedInSessionAsync("a", "S", 100);
         await SeedInSessionAsync("b", "S", 90);
         var vm = NewVm();

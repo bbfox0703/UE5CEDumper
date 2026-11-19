@@ -766,14 +766,14 @@
                    TextWrapping="Wrap"
                    IsVisible="{Binding DiagGameThread, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
-        <!-- CanUserResizeColumns is set EXPLICITLY: the numeric columns were sized
-             to their content and clipped their own headers ("Cou", "% bu"), with no
+        <!-- CanUserResizeColumns is set EXPLICITLY: sized to their content, the numeric
+             columns clip their own headers ("Cou", "% bu"), and without it there is no
              way to widen them. Sorting stays OFF here on purpose — Avalonia's
              DataGrid sort is reflection-based (an AOT hazard, see
              ui-avalonia12-pinvoke-gotchas) and the rows already arrive ranked by
              total time, which is the ordering that answers the question. Turning it
-             off also reclaims the header space the sort glyph was reserving, which
-             is part of why the headers fit now.
+             off also reclaims the header space the sort glyph would reserve, which
+             is part of why the headers fit.
              MinWidth keeps a dragged column from collapsing to nothing. -->
         <DataGrid ItemsSource="{Binding DiagCommands}"
                   AutoGenerateColumns="False" IsReadOnly="True"
@@ -801,7 +801,7 @@
 
     <!-- Pipe Activity: live tail of UI<->DLL pipe traffic (newest first). A
          convenience mirror of the pipe log file so the user can watch light
-         commands stay responsive while a heavy scan runs (Phase 1 lane split)
+         commands stay responsive while a heavy scan runs (the two-lane split)
          without opening %LOCALAPPDATA% logs. Always visible (no live connection
          needed); fed from PipeClient.Activity via a coalesced UI-thread flush. -->
     <Border Background="#2D2D30" CornerRadius="4" Padding="16,12"

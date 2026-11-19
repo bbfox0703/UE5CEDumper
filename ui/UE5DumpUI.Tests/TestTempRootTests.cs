@@ -4,7 +4,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [TEST-TEMP-HYGIENE-2026-11-11] The suite's scratch lives in one folder per run, and no run leaves any in %TEMP%
-/// (<see cref="TestTempRoot"/>). Before this, one run of the suite left about 220 folders there and nothing removed them.
+/// (<see cref="TestTempRoot"/>). Without it, every run leaves its folders there and nothing removes them.
 /// </summary>
 public class TestTempRootTests : IDisposable
 {

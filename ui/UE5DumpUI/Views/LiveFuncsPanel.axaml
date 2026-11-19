@@ -217,7 +217,7 @@
            it applies. Lines of their own, because a TextBlock in a horizontal StackPanel never wraps; each twice, toggled
            by a bool (the D3 pattern). Hidden with the row above when Trace is unavailable, as a Start then takes no
            stacks. [LF-COMPACT-TOP] The warning shows one line of its essentials and the whole text only under Details:
-           four lines of it were the biggest block above the table. A WrapPanel keeps Details beside the line while it
+           its four lines would be the biggest block above the table. A WrapPanel keeps Details beside the line while it
            fits and lets the line wrap rather than clip in a narrow window. -->
       <Panel IsVisible="{Binding TraceAvailable}">
         <StackPanel IsVisible="{Binding HasStackChoices}" Margin="0,0,0,4">
@@ -497,7 +497,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Params}" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
-        <!-- Period: mean inter-arrival cadence (Phase E); "Timer" in the Kind column
+        <!-- Period: mean inter-arrival cadence; "Timer" in the Kind column
              marks a regular timer-like callback. -->
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Period}" Binding="{Binding PeriodLabel}" SortMemberPath="MeanPeriodMs" Width="72"/>
         <DataGridTemplateColumn Header="" Width="Auto" CanUserSort="False">

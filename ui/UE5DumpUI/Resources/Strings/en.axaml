@@ -629,7 +629,7 @@
     <sys:String x:Key="str.System.SelfTest.Running">Probing KismetMathLibrary helpers...</sys:String>
     <sys:String x:Key="str.System.SelfTest.NoCandidate">No testable BlueprintFunctionLibrary helper found in this game.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Error">Self-Test failed: {0}</sys:String>
-    <!-- Self-Test FAILED. {0} label, {1} expected, {2} actual, {3} advice (one of the four below), {4} raw buffer. -->
+    <!-- Self-Test FAILED. {0} label, {1} expected, {2} actual, {3} advice (one of the Fail.* keys below), {4} raw buffer. -->
     <sys:String x:Key="str.System.SelfTest.Fail">✗ {0} expected {1}, got {2}&#10;{3}&#10;Raw buffer: {4}</sys:String>
     <sys:String x:Key="str.System.SelfTest.Fail.HookFiring">The ProcessEvent hook is installed AND firing, so the invoke path itself is working. A wrong answer here most likely means this game's build resolves that helper through BlueprintFastCall, which makes it a no-op when called via ProcessEvent — so this result is not evidence of a broken hook. Verify with a game-specific UFunction instead. Re-deploying the DLL will not change it.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Fail.HookNeverFired">The ProcessEvent hook is installed but has never fired. That is the signature of a MIS-DETECTED vtable slot — check init-*.log for 'VALIDATION FAILED'. Re-deploying the DLL will NOT help: the binary is current, the detected slot is wrong. The same reading also appears when the game thread is simply idle (paused, loading, minimised), so retry once while the game is actually running before concluding.</sys:String>
@@ -705,7 +705,7 @@
     <sys:String x:Key="str.Experimental.EnableHint">Enable advanced experimental features</sys:String>
     <sys:String x:Key="str.Experimental.LockedForSession">Advanced experimental features stay on until the UI restarts, because Snapshot, SPC Query, Class Pivot or Call Trace was opened this session.</sys:String>
 
-    <!-- Snapshot tab (experimental — Phase A) -->
+    <!-- Snapshot tab (experimental) -->
     <sys:String x:Key="str.Snapshot.Intro">Capture every numeric UPROPERTY of every (scoped) object into a persisted snapshot. Snapshots feed SPC Query and Class Pivot. Enable "Native-C" to also capture unmanaged (non-UPROPERTY) raw values.</sys:String>
     <sys:String x:Key="str.Snapshot.NativeC">Native-C (raw)</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.NativeC">Opt-in (default off). In addition to reflected UPROPERTY fields, captures each object's UNMANAGED holes (non-UPROPERTY raw bytes) as synthetic "&lt;raw@0xNN&gt;" fields — the bytes are interpreted via the Guess-What heuristic and normalized to a numeric type (pointer/padding guesses are dropped). Lets SPC Query diff and Class Pivot track native values (HP/MP) that reflection can't see. Slower and larger per capture. Raw fields join across snapshots by offset; a guess that flips type between captures (rare for stable values) simply won't join.</sys:String>

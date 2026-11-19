@@ -1081,7 +1081,7 @@ public class SnapshotViewModelTests : IDisposable
         var vm = new SnapshotViewModel(new CaptureStub(), _store, _lastLog);
         vm.SetEngineState(new EngineState { PeHash = "GVM", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" });
         // Drain the refresh SetEngineState itself started. Running RefreshCommand here
-        // instead did not replace that refresh, it raced it — two concurrent
+        // instead would not replace that refresh but race it — two concurrent
         // UiCollection.Reset passes over one ObservableCollection (see DrainAsync).
         await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
         return vm;
@@ -1160,8 +1160,8 @@ public class SnapshotViewModelTests : IDisposable
 
         await vm.RunGroupMatchCommand.ExecuteAsync(null);
 
-        // Surface the VM's own explanation on failure. This assert has been seen to flake
-        // under the full parallel suite, and a bare "collection was empty" says nothing:
+        // Surface the VM's own explanation on failure. Under the full parallel suite a
+        // flake of this assert with a bare "collection was empty" says nothing:
         // GroupStatusText already distinguishes a store error from a cancellation from a
         // genuine zero-row match, so fail with it attached.
         Assert.True(vm.GroupCandidates.Count == 1,
@@ -1349,7 +1349,7 @@ public class SnapshotViewModelTests : IDisposable
 
         await vm.RefreshCommand.ExecuteAsync(null);  // e.g. after a capture completes
 
-        Assert.NotNull(vm.GroupCompareSnapshot);     // preserved (was: silently dropped -> reverts to Mode A)
+        Assert.NotNull(vm.GroupCompareSnapshot);     // preserved (dropped, it would revert to Mode A)
         Assert.Equal(compareId, vm.GroupCompareSnapshot!.Id);
         Assert.True(vm.IsGroupCompareMode);
     }

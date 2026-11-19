@@ -138,8 +138,8 @@ public class TeleportScriptGeneratorTests
     [Fact]
     public void BugItGo_record_bakes_its_negative_code_the_same_in_every_culture()
     {
-        // Review of 22badc06: the -16 was interpolated with the user's culture, and ICU's sv-SE writes the minus as
-        // U+2212 -- a character Lua cannot parse, so the whole BugItGo record failed to compile.
+        // Pins a culture-invariant -16: interpolated with the user's culture, ICU's sv-SE writes the minus as
+        // U+2212 -- a character Lua cannot parse, so the whole BugItGo record fails to compile.
         var saved = System.Globalization.CultureInfo.CurrentCulture;
         try
         {
@@ -169,8 +169,8 @@ public class TeleportScriptGeneratorTests
     [Fact]
     public void BugItGo_control_any_other_failure_is_the_generic_report_an_older_record_also_shows()
     {
-        // The generic `code < 0` branch every contract-checking record carries is what a record generated before this
-        // fix shows for -16: visible, window open, nothing moved.
+        // The generic `code < 0` branch every contract-checking record carries is what a record from an older generator
+        // shows for -16: visible, window open, nothing moved.
         var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, TeleportCodes.EmptyMarker);
 
         Assert.Equal("1", r["DIALOGS"]);
@@ -182,8 +182,8 @@ public class TeleportScriptGeneratorTests
     }
 
     /// <summary>[TELEPORT-RECALL-PARENTREL] The DLL refuses a Recall of a marker saved from a parent-relative read, and a
-    /// TP facing step from such a pose, with -16. The records name it as BugItGo's does; a record from before shows the
-    /// generic "failed (code -16)", also with its window open.</summary>
+    /// TP facing step from such a pose, with -16. The records name it as BugItGo's does; a record from an older generator
+    /// shows the generic "failed (code -16)", also with its window open.</summary>
     [Theory]
     [InlineData(TeleportScriptGenerator.Action.Recall)]
     [InlineData(TeleportScriptGenerator.Action.Relative)]
@@ -223,7 +223,7 @@ public class TeleportScriptGeneratorTests
     [Fact]
     public void BugIt_from_a_parent_relative_read_warns_that_BugItGo_will_refuse_it()
     {
-        // The producer-side half: the BugIt record already says the pose is not world coordinates; it now also says
+        // The producer-side half: the BugIt record says the pose is not world coordinates, and it also says
         // the jump back will be refused, so the refusal is not the first the user hears of it.
         var r = RunTeleport(TeleportScriptGenerator.Action.BugIt, 0, poseFlags: 1);
 
@@ -357,9 +357,9 @@ public class TeleportScriptGeneratorTests
 
     // ---- "Clear all markers" can raise three dialogs for one click (docs/todo.md, amended by [TRACKB-A4-2026-09-10]) ----
     //
-    // Both waits leave only their OWN while-loop on failure, so the slot loop ran on: a wedged mailbox on slot 0 asked
-    // again for slots 1 and 2 (three dialogs), and a busy idle wait fell through to its slot's write -- the DLL drains
-    // the mailbox while CE sits in the modal, so slot 0 was cleared after all, under "markers not cleared". A flag at
+    // A wait that leaves only its OWN while-loop on failure lets the slot loop run on: a wedged mailbox on slot 0 asks
+    // again for slots 1 and 2 (three dialogs), and a busy idle wait falls through to its slot's write -- the DLL drains
+    // the mailbox while CE sits in the modal, so slot 0 is cleared after all, under "markers not cleared". A flag at
     // the top of the loop cannot stop that same-iteration write; leaving the loop right after each wait does, and the
     // deferred untick after the loop still runs. The two-line form is deliberate: `then break end` is the greppable
     // shape of a SILENT break, which No_generator_breaks_a_mailbox_wait_silently forbids, and this one is not silent.
@@ -478,10 +478,10 @@ public class TeleportScriptGeneratorTests
     }
 
     [Theory]
-    // A wedged command on slot 0: the old loop asked again for slots 1 and 2 -- three dialogs for one click.
+    // A wedged command on slot 0: a loop that runs on asks again for slots 1 and 2 -- three dialogs for one click.
     [InlineData("wedged", 0, false, 1)]
-    // Busy before slot 0, drained while the dialog was up: the old loop then cleared all three anyway, under a
-    // dialog that said they were not cleared.
+    // Busy before slot 0, drained while the dialog is up: a loop that runs on clears all three anyway, under a
+    // dialog that says they were not cleared.
     [InlineData("ok", CeMailboxLayout.CmdQueryPtr, true, 0)]
     public void ClearAll_says_its_failure_once_and_clears_nothing_after_it(string dll, int startCmd, bool drains,
                                                                           int clears)
@@ -498,7 +498,7 @@ public class TeleportScriptGeneratorTests
     [Fact]
     public void ClearAll_on_an_idle_mailbox_clears_all_three_and_closes_quietly()
     {
-        // The control, green both ways: the clean path the fix must not disturb.
+        // The control, green both ways: the clean path the early exit must not disturb.
         var r = RunClearAll("ok", 0, false);
 
         Assert.Equal("true|nil", r["OK"]);

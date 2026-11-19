@@ -244,7 +244,7 @@ public class UsmapExportServiceTests
 
     // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers -- AssetObjectProperty / AssetClassProperty, renamed Soft* in
     // 4.18 -- take the canonical slot the enum already reserves for them, AssetObjectProperty = 16 (the class flavour too,
-    // as SoftClass shares SoftObject's). Mapped by name, they were Unknown: a 0xFF no reader can skip.
+    // as SoftClass shares SoftObject's). Left unmapped, they would be Unknown: a 0xFF no reader can skip.
 
     [Theory]
     [InlineData("AssetObjectProperty")]
@@ -693,7 +693,7 @@ public class UsmapExportServiceTests
     public void BuildUsmap_StaticArrayProperty_CountsEverySchemaSlot()
     {
         // A static C array (Foo[4]) occupies four schema slots but is ONE record. The two counts
-        // in a struct header are therefore different numbers; emitting Fields.Count for both made
+        // in a struct header are therefore different numbers; emitting Fields.Count for both makes
         // a reader that walks slots disagree with the records it was handed.
         var structs = new List<ClassInfoModel>
         {
@@ -762,8 +762,8 @@ public class UsmapExportServiceTests
     // ---- [A4-USMAP-ENUM-UNDERLYING] an enum's underlying type is its REAL width ----
     //
     // In unversioned cooked data an enum UPROPERTY is serialized as an integer of its own size, and CUE4Parse
-    // takes that size from the mapping. Every EnumProperty was written with a Byte underlying type, so a
-    // `: uint32` enum read 1 byte of 4 and misaligned every later property of its object.
+    // takes that size from the mapping. Writing every EnumProperty with a Byte underlying type makes a
+    // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
 
     [Theory]
     [InlineData(1, (byte)0)]    // ByteProperty
@@ -794,7 +794,7 @@ public class UsmapExportServiceTests
     //
     // The walker leaves EnumName and enum_underlying empty when the property's UEnum slot does not validate.
     // Dumper-7 writes [26][size-derived int]["None"] there and RE-UE4SS (23e089e4) the bare integer; this writer
-    // follows Dumper-7 (the UsmapExportService header, point 3). Nothing pinned that shape before. Writing the bare
+    // follows Dumper-7 (the UsmapExportService header, point 3). Writing the bare
     // integer at the top level turns all three cases red (mutation-checked); the name half is also covered by
     // NameTable.IndexOf, which answers "None" for any unregistered name.
 
@@ -873,8 +873,8 @@ public class UsmapExportServiceTests
     [Fact]
     public void BuildUsmap_ByteEnum_IsWrittenAsTheCanonicalEnumShape()
     {
-        // Arm 3: a TEnumAsByte (a ByteProperty carrying an enum) was written as a bare ByteProperty, so every
-        // consumer showed its number, not its name. Both canonical writers emit [26][0][enumName].
+        // Arm 3: a TEnumAsByte (a ByteProperty carrying an enum) written as a bare ByteProperty makes every
+        // consumer show its number, not its name. Both canonical writers emit [26][0][enumName].
         var structs = new List<ClassInfoModel>
         {
             new()
@@ -1260,7 +1260,7 @@ internal sealed class UsmapFile
         }
 
         // Mirrors WritePropertyType / WriteInnerPropertyTypeFromField. An enum's underlying type is itself a
-        // property type, read through the inner reader -- it was skipped as ONE byte, so nothing could see
+        // property type, read through the inner reader -- skipping it as ONE byte would hide
         // what was written there. [A4-USMAP-ENUM-UNDERLYING]
         (byte Type, byte Underlying, string? EnumName) ReadInner()
         {

@@ -8,7 +8,7 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Unit tests for the pure maximize/restore snapshot state machine that backs
 /// <see cref="Views.ManagedDialogWindow"/> (the Find Func / Prop / instance-picker
-/// dialogs). Verifies the core bug fix: after a maximize→restore, the window's
+/// dialogs). Pins the core invariant: after a maximize→restore, the window's
 /// pre-maximize NORMAL rect is what gets re-applied — even though the Windows
 /// property-change order stashes the maximized dimensions first.
 /// </summary>
@@ -113,8 +113,8 @@ public class WindowRestoreStateTests
     [Fact]
     public void NotePosition_OffScreen_IsRejected()
     {
-        // Direct BUG 1 regression: a transition transient at a far-off top-left must not
-        // poison the stash. Without the guard, Commit would promote it into the snapshot.
+        // A transition transient at a far-off top-left must not poison the stash.
+        // Without the guard, Commit would promote it into the snapshot.
         var s = new WindowRestoreState();
         s.SetScreens(SinglePrimary);
         s.Seed(new PixelPoint(100, 200), 1400, 900);
@@ -129,8 +129,8 @@ public class WindowRestoreStateTests
     public void NotePosition_OnScreenCorner_IsAccepted()
     {
         // The guard must NOT over-reject: (0,0) is a legitimate on-screen top-left, so a
-        // user who parks the window in the corner is honoured. (The "jumps to 0,0" bug is
-        // fixed by the deferred re-apply ordering, not by rejecting (0,0).)
+        // user who parks the window in the corner is honoured. (The deferred re-apply
+        // ordering, not a rejection of (0,0), is what keeps a restore off 0,0.)
         var s = new WindowRestoreState();
         s.SetScreens(SinglePrimary);
         s.Seed(new PixelPoint(100, 200), 1400, 900);
@@ -163,7 +163,7 @@ public class WindowRestoreStateTests
     [Fact]
     public void OnRestoreReapplied_ResetsPendingToCommittedNormal()
     {
-        // The core BUG 1 regression at the state-machine level. A maximize leaves the
+        // The stash poisoning at the state-machine level. A maximize leaves the
         // maximized dims + origin poisoning the pending stash. The caller defers the
         // restore re-apply and then calls OnRestoreReapplied so a LATER commit (the
         // Background-deferred commit firing while genuinely Normal) can't promote the
@@ -203,9 +203,9 @@ public class WindowRestoreStateTests
 
     // ── [W3-DIP-PIXELS] the guard is handed PHYSICAL pixels, as WindowPlacement requires ──────
     // WindowPlacement's header: "All coordinates are PHYSICAL pixels". The position and the screens are; the stash's
-    // width/height are Avalonia Width/Height -- DIPs. MainWindow got the AF21 unit fix and this newer twin never did, so at
-    // 225% a 1,124-DIP dialog was judged by a 1,124 px rect instead of 2,529 px, and a legitimately placed position was
-    // discarded. The AF21 geometry, so this measures the same case: 3840 px wide at 225%, x = -1707.
+    // width/height are Avalonia Width/Height -- DIPs, so they are scaled first, as MainWindow does ([AF21-HIDPI-2026-08-21]).
+    // Unscaled, at 225% a 1,124-DIP dialog is judged by a 1,124 px rect instead of 2,529 px, and a legitimately placed
+    // position is discarded. The AF21 geometry, so this checks the same case: 3840 px wide at 225%, x = -1707.
     private static readonly IReadOnlyList<(int, int, int, int)> Af21Screen = new[] { (0, 0, 3840, 2400) };
 
     [Fact]

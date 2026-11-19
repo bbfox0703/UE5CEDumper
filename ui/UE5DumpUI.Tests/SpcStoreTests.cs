@@ -250,17 +250,12 @@ public class SpcStoreTests : IDisposable
     ///
     /// This is the SPC-Query arm of the P3 acceptance list
     /// (native-c-value-scan-spec.md: "capture native_c on two snapshots -> SPC query on a
-    /// &lt;raw@0x..&gt; field joins by offset"). The 2026-09-06 in-game run proved the Class
-    /// Pivot half and recorded, honestly, that it had used the Snapshot panel's *Compare
-    /// snapshots* rather than SPC Query -- so this arm was still owed.
+    /// &lt;raw@0x..&gt; field joins by offset"). The Class Pivot half is checked in-game;
+    /// the Snapshot panel's *Compare snapshots* is not SPC Query and does not cover this arm.
     ///
-    /// Confirmed against the REAL capture from that run before this test was written
-    /// (snapshots.6A9C1C8410F23000.db, snapshots 2 and 3, 77 s apart): all 8,556
-    /// &lt;raw@0x..&gt; fields join under the Strict key, none has a zero/absent prop_offset,
-    /// and 8 changed -- four of them on DumperTestActor itself, including
-    /// &lt;raw@0x918&gt; 4684 -> 5829, whose 5829 is the exact pivot group key that run
-    /// recorded. That also answers the run's second open note ("DumperTestActor's own raw
-    /// rows did not appear in the changed list ... not chased"): they do.
+    /// The seeded rows follow the shape of a real DumperTest capture, where every
+    /// &lt;raw@0x..&gt; field joins under the Strict key with a non-zero prop_offset and
+    /// DumperTestActor's own raw rows appear in the changed list.
     /// </summary>
     [Fact]
     public async Task NativeCRawHoles_JoinAcrossSnapshots_AndTrackTheirValues()

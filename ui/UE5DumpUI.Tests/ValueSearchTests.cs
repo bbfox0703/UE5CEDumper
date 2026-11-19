@@ -3374,7 +3374,7 @@ public class ValueSearchTests
 
     // Poll until a condition holds (or a generous timeout elapses) instead of sleeping a
     // fixed interval — deterministic under CI load. A fixed Task.Delay past the debounce
-    // flaked when a loaded runner scheduled the debounce continuation late (blocked a merge).
+    // flakes when a loaded runner schedules the debounce continuation late.
     // The caller still asserts afterward, so a real failure (condition never true) surfaces
     // as a normal assertion failure rather than a hang.
     private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 5000, int pollMs = 10)

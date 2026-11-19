@@ -102,7 +102,7 @@
         <!-- Auto snapshot (periodic capture). Manual Start/Stop toggle, session-only:
              never auto-starts on connect / auto-resumes on launch; only settings persist.
              The idle gap between snapshots (≥60s) is the game-impact lever — no thread-
-             priority drop (that was tried and reverted for starving scans). -->
+             priority drop, which starves scans. -->
         <Border Background="#2D2D30" BorderBrush="#3C3C3C" BorderThickness="1" CornerRadius="3"
                 Padding="8" Margin="0,4,0,0">
           <StackPanel Spacing="6">
@@ -395,11 +395,11 @@
                          IsVisible="{Binding IsGroupMatching}"/>
             <!-- The cap notice can be ~230 characters (PartialResultNotice.PerSlotWitnessCap,
                  the SAME string the live Group Scan shows). The live panel gives it both
-                 TextWrapping and a ToolTip (ValueSearchPanel.axaml:52-59); this one had
-                 neither, so at the window's 800 DIP MinWidth the sentence that exists to tell
-                 you results were truncated was itself truncated. ToolTip.Tip is the half that
-                 always works. ⚠ TextWrapping inside a WrapPanel only bites once the text has a
-                 bounded width, hence MaxWidth — visual confirmation is owed.
+                 TextWrapping and a ToolTip (ValueSearchPanel.axaml's shared status row), and so
+                 does this one: without them, at the window's 800 DIP MinWidth the sentence that
+                 exists to tell you results were truncated is itself truncated. ToolTip.Tip is the
+                 half that always works. ⚠ TextWrapping inside a WrapPanel only bites once the text
+                 has a bounded width, hence MaxWidth ([PARAMSSORT-B-WRAP-2026-08-24]).
                  [PARAMSSORT-2026-08-22] -->
             <TextBlock Text="{Binding GroupStatusText}" Foreground="#4EC9B0" FontSize="12"
                        VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="760"

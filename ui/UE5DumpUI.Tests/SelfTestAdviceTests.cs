@@ -7,8 +7,8 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Self-Test failure advice — [PEHOOK-2026-08-17].
 ///
-/// The old message asserted one cause for every wrong answer: "Hook may be on the
-/// wrong vtable slot … re-deploy the DLL". Both halves were wrong. Re-deploying
+/// The advice must not assert one cause for every wrong answer ("Hook may be on the
+/// wrong vtable slot … re-deploy the DLL"): both halves of that are wrong. Re-deploying
 /// cannot fix a mis-detected slot (the binary is current; the detected offset is
 /// what is wrong), and the test's own evidence — arguments written, return slot
 /// untouched — is byte-for-byte what <c>docs/working-lessons.md</c> §4.4 documents
@@ -97,7 +97,7 @@ public class SelfTestAdviceTests
     /// <summary>
     /// THE REGRESSION GUARD. An absent measurement is not evidence for either
     /// cause. When the diagnostics probe fails, the advice must name both
-    /// possibilities rather than defaulting to one — defaulting is the original bug.
+    /// possibilities rather than defaulting to one — a default names a cause nothing measured.
     /// </summary>
     [Theory]
     [InlineData(false, false)]
@@ -171,13 +171,12 @@ public class SelfTestAdviceTests
 
     /// <summary>
     /// The advice must never tell the user that re-deploying the DLL is a remedy.
-    /// That was the old message's instruction and it cannot help: a mis-detected
-    /// vtable slot is not a staleness problem, and the one measured case had a
-    /// current DLL.
+    /// It cannot help: a mis-detected vtable slot is not a staleness problem, and
+    /// a re-deployed copy of the same DLL runs the same detection again.
     ///
-    /// <para>This pins the RULE, not the old sentence. An earlier version banned the
-    /// exact literal "and re-deploy the DLL", which "redeploy the DLL", "deploy the
-    /// DLL again" and any reword would have walked straight past.</para>
+    /// <para>This pins the RULE, not one sentence. Banning only the exact literal
+    /// "and re-deploy the DLL" would let "redeploy the DLL", "deploy the DLL again"
+    /// and any reword walk straight past.</para>
     /// </summary>
     [Fact]
     public void NoAdviceRecommendsRedeploying()

@@ -658,8 +658,8 @@ public class SnapshotStoreTests : IDisposable
     [Fact]
     public async Task SpcQuery_InSession_keeps_two_same_named_properties_at_different_offsets_apart()
     {
-        // [SNAPDIFF-SHADOWED-PROP] The SPC InSession key (class, GObjects index, name) had the same collision; Strict
-        // already carried the offset. Loose stays name-only on purpose: it matches across sessions and game patches,
+        // [SNAPDIFF-SHADOWED-PROP] The SPC InSession key carries the offset, as Strict does: (class, GObjects index,
+        // name) alone collides here. Loose stays name-only on purpose: it matches across sessions and game patches,
         // where a property's offset may move.
         var ct = TestContext.Current.CancellationToken;
         _store.SetActiveGame("SHADOWSPC");

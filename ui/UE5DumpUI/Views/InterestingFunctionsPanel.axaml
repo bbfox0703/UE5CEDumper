@@ -85,8 +85,8 @@
               Cursor="Hand"/>
     </StackPanel>
 
-    <!-- Status + progress in their own dock row (mirrors Interesting
-         Properties panel build 681 layout) so a long status message
+    <!-- Status + progress in their own dock row (mirrors the Interesting
+         Properties panel's layout) so a long status message
          doesn't get clipped behind the filter buttons at narrow widths. -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8"
                 Margin="0,0,0,4" VerticalAlignment="Center">
@@ -102,10 +102,9 @@
       <TextBlock Text="{Binding ClassFilterNote}"
                  IsVisible="{Binding ClassFilterNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                  Foreground="#E0A050" FontSize="12" VerticalAlignment="Center"/>
-      <!-- AOBMaker availability indicator — single place (build 688).
-           Was previously repeated per-row in the Notes column; that
-           was pure noise since the value is VM-level. Visible only
-           when the plugin isn't reachable. -->
+      <!-- AOBMaker availability indicator — single place, not per row:
+           the value is VM-level, so a copy on every row would be pure
+           noise. Visible only when the plugin isn't reachable. -->
       <TextBlock Text="{Binding AobMakerNote}"
                  IsVisible="{Binding AobMakerNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                  Foreground="#E0A050"
@@ -247,7 +246,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <!-- (Build 688) Notes column removed — the value was identical on
+        <!-- No Notes column — its value would be identical on
              every row (VM-level AOBMaker status); see status row above
              for the single-place indicator. -->
       </DataGrid.Columns>

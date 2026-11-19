@@ -140,7 +140,7 @@
                          IsVisible="{Binding UsesSnapshot}"
                          PlaceholderText="{StaticResource str.Pivot.ClassFilterHint}"/>
 
-        <!-- Snapshot Array source (Phase C6: inner-key pivot of a struct array) -->
+        <!-- Snapshot Array source (inner-key pivot of a struct array) -->
         <TextBlock Text="{StaticResource str.Pivot.ArrayField}" Foreground="#CCCCCC"
                    VerticalAlignment="Center" Margin="0,0,4,0" IsVisible="{Binding IsArraySource}"/>
         <ComboBox ItemsSource="{Binding ArrayFields}" SelectedItem="{Binding SelectedArrayField}"
@@ -152,7 +152,7 @@
           </ComboBox.ItemTemplate>
         </ComboBox>
 
-        <!-- DataTable source (Phase C4: zero-config, RowName is the key) -->
+        <!-- DataTable source (zero-config, RowName is the key) -->
         <TextBlock Text="{StaticResource str.Pivot.DataTable}" Foreground="#CCCCCC"
                    VerticalAlignment="Center" Margin="0,0,4,0" IsVisible="{Binding IsDataTableSource}"/>
         <ComboBox ItemsSource="{Binding DataTables}" SelectedItem="{Binding SelectedDataTable}"
