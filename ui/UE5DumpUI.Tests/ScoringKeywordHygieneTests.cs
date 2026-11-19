@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 Z13 / Z14 — keyword-table hygiene for BOTH scoring tables.
+/// Keyword-table hygiene for BOTH scoring tables.
 ///
 /// <para>
 /// <b>The rule these tests draw, and why it is drawn exactly there.</b>
@@ -17,22 +17,20 @@ namespace UE5DumpUI.Tests;
 /// two entries that tokenise to the SAME set are one keyword written twice — it fires on
 /// identical input, can express no difference, and double-counts against
 /// <c>CountTokenHits</c>' own documented contract ("Each keyword counts once total").
-/// <c>"HP"</c> and <c>"Hp"</c> were exactly that in both tables: the tokeniser lowercases,
-/// so both are <c>["hp"]</c>. Removed (Z13).
+/// The tokeniser lowercases, so <c>"HP"</c> and <c>"Hp"</c> are both <c>["hp"]</c>: one
+/// keyword, never two entries.
 /// </para>
 /// <para>
 /// A SUBSUMED entry is a different animal and is deliberately kept: <c>"IsDead"</c>
 /// tokenises to <c>["is","dead"]</c>, which can only match when <c>"Dead"</c> also
 /// matches — but it fires on a strictly narrower set of names, so the extra hit is a
-/// specificity weight separating <c>bIsDead</c> from <c>DeadZone</c>. Eight such
-/// compounds already live in these tables (CritDamage, HitDamage, CritRate, JumpHeight,
-/// JumpZ, InitialLifeSpan, GlobalTimeDilation, TimeDilation) and every one would have to
-/// go if subsumption were treated as duplication. The comment beside IsDead/IsAlive DID
-/// claim they were needed to MATCH — behaviour the code does not have — and that comment
-/// was corrected instead (Z14). This is the same line
-/// <c>PropertySearchTests.SeedQueries_ContainNoExactDuplicates</c> already draws for the
-/// seed list, for the same reason, and its own doc records that widening it to
-/// subsumption would have deleted three working entries.
+/// specificity weight separating <c>bIsDead</c> from <c>DeadZone</c>. The tables use such
+/// compounds on purpose (CritDamage and JumpHeight among them), and each would have to
+/// go if subsumption were treated as duplication. The comment beside IsDead/IsAlive in
+/// <c>PropertyScoringTable</c> says the same: a weight, not a match requirement. This is
+/// the same line <c>PropertyScoringTableTests.SeedQueries_ContainNoExactDuplicates</c> draws for
+/// the seed list, for the same reason, and its own doc says what widening it to
+/// subsumption would delete.
 /// </para>
 /// </summary>
 public class ScoringKeywordHygieneTests
@@ -55,11 +53,12 @@ public class ScoringKeywordHygieneTests
     };
 
     /// <summary>
-    /// The invariant. FAILS before Z13 on <c>HP</c>/<c>Hp</c> in two tables at once.
+    /// The invariant: fails when any table carries two entries that tokenise alike, such
+    /// as <c>HP</c> beside <c>Hp</c>.
     ///
     /// <para>⚠ Do NOT widen this to reject a keyword whose tokens are a SUBSET of
-    /// another's — see the class doc. Subsumption is a working specificity weight in
-    /// eight places; identical token sets are dead weight in zero.</para>
+    /// another's — see the class doc. Subsumption is a working specificity weight;
+    /// identical token sets are dead weight.</para>
     /// </summary>
     [Fact]
     public void No_scoring_table_lists_one_keyword_twice_under_different_casing()
@@ -90,8 +89,8 @@ public class ScoringKeywordHygieneTests
     }
 
     /// <summary>
-    /// The behavioural half of Z13, function side: one "hp" token, one Stats hit.
-    /// Before the fix this returned 2 hits and 10 points.
+    /// The behavioural half, function side: one "hp" token, one Stats hit. A case
+    /// duplicate in the table would score 2 hits and twice the Stats score.
     /// </summary>
     [Theory]
     [InlineData("GetHP")]
@@ -106,7 +105,7 @@ public class ScoringKeywordHygieneTests
         Assert.Equal(FunctionCategory.Stats, r.Category);
     }
 
-    /// <summary>The property side of the same defect.</summary>
+    /// <summary>The property side of the same rule.</summary>
     [Theory]
     [InlineData("HP")]
     [InlineData("Hp")]
@@ -123,9 +122,9 @@ public class ScoringKeywordHygieneTests
     }
 
     /// <summary>
-    /// Negative control for the removal: a genuinely two-keyword name still counts two.
-    /// Without this, "score dropped from 10 to 5" could equally mean the whole Stats
-    /// bucket had stopped working.
+    /// Control for the single-hit tests above: a genuinely two-keyword name still counts
+    /// two. Without it, those tests could equally be met by a Stats bucket that counts at
+    /// most one hit per name.
     /// </summary>
     [Fact]
     public void A_name_hitting_two_DISTINCT_stats_keywords_still_counts_two()
@@ -140,10 +139,9 @@ public class ScoringKeywordHygieneTests
     }
 
     /// <summary>
-    /// Z14, direction "the comment was wrong": the compound entries stay, so
-    /// <c>bIsDead</c> (2 hits: Dead + IsDead) still outranks <c>DeadZone</c> (1 hit:
-    /// Dead). Pinning this is what stops a later reader "tidying up" the redundancy the
-    /// corrected comment now explains.
+    /// The compound entries stay, so <c>bIsDead</c> (2 hits: Dead + IsDead) still
+    /// outranks <c>DeadZone</c> (1 hit: Dead). Pinning this is what stops a later reader
+    /// "tidying up" the redundancy the comment beside those entries explains.
     /// </summary>
     [Fact]
     public void IsDead_compound_is_a_specificity_weight_that_outranks_a_bare_Dead_match()

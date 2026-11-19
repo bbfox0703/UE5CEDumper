@@ -11,23 +11,20 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// AE4–AE7 step 4 — the Proxy Deploy panel's mutual-exclusion gate, on the arm nothing covered.
+/// The Proxy Deploy panel's mutual-exclusion gate, on the orphan arm.
 ///
 /// <para><c>ProxyDeployConcurrencyTests</c> pins Refresh / UpdateAll / Deploy / Undeploy / Scan
-/// against each other. It never mentions orphans, so the **destructive** operation — the one that
-/// recycles a chain of files per row — was the only long operation whose gate was untested in both
-/// directions.</para>
+/// against each other. It never mentions orphans, so the gate of the **destructive** operation —
+/// the one that recycles a chain of files per row — is pinned here, in both directions.</para>
 ///
-/// <para>⭐ <b>Why this is a test and not a click.</b> The live checklist row has failed twice for
-/// the same reason, and the second time the maintainer wrote it down verbatim: 「執行時間太短無法
-/// 測試」 — the delete finished before the next button could be pressed, so the gate was never
-/// exercised. That is a *timing* problem, not a logic problem, and a stub that parks mid-delete
-/// removes the timing entirely. What a live run would still add is that the real buttons are bound
-/// to these commands; what it cannot do reliably is hold a delete open.</para>
+/// <para>⭐ <b>Why this is a test and not a click.</b> A live delete finishes before the next
+/// button can be pressed, so a live run never exercises the gate. That is a *timing* problem, not
+/// a logic problem, and a stub that parks mid-delete removes the timing entirely. What a live run
+/// would still add is that the real buttons are bound to these commands; what it cannot do
+/// reliably is hold a delete open.</para>
 ///
-/// <para>ℹ️ The row's own ⚠ — "a confirmation dialog on screen is not a delete running" — is
-/// literally true of this code and is pinned below, with the reason it is correct rather than a
-/// hole.</para>
+/// <para>ℹ️ "A confirmation dialog on screen is not a delete running" is literally true of this
+/// code and is pinned below, with the reason it is correct rather than a hole.</para>
 /// </summary>
 public class ProxyOrphanGateTests
 {
@@ -140,17 +137,17 @@ public class ProxyOrphanGateTests
         Assert.True(busyDuringDelete, "the delete must hold the gate while it runs");
         Assert.Equal(findCallsBefore, svc.FindCalls);          // the scan never reached the service
         Assert.NotNull(refusedWith);
-        // NAMES THE HOLDER. `Contains("Busy")` alone passed before [ORPHANBUSYMSG-2026-08-24]
-        // too: the delete hand-rolled its predicate and never set `_busyWith`, so the refusal
-        // came out of BusyMessage()'s `?? "another operation"` fallback — still starting with
-        // "Busy", still naming nothing. Asserting the operation's own label is what tells the
-        // two apart, and the explicit DoesNotContain pins the fallback as the failure mode.
+        // NAMES THE HOLDER [ORPHANBUSYMSG-2026-08-24]. `Contains("Busy")` alone also passes for
+        // BusyMessage()'s `?? "another operation"` fallback, which a delete that never set
+        // `_busyWith` would produce — still starting with "Busy", still naming nothing. Asserting
+        // the operation's own label is what tells the two apart, and the explicit DoesNotContain
+        // pins the fallback as the failure mode.
         Assert.Contains("Delete leftovers", refusedWith!, StringComparison.Ordinal);
         Assert.DoesNotContain("another operation", refusedWith!, StringComparison.Ordinal);
         Assert.False(vm.IsBusy);                                // released on the way out
     }
 
-    /// <summary>...and the other direction, which is the one the live row could never reach: a
+    /// <summary>...and the other direction, which a live run cannot reach: a
     /// delete invoked while a scan is running must not remove anything.</summary>
     [Fact]
     public async Task AnOrphanDelete_IsRefused_WhileAScanIsRunning()
@@ -169,10 +166,9 @@ public class ProxyOrphanGateTests
                  .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.Equal(0, svc.RemoveCalls);                       // nothing was recycled
-        // ...and the refusal names the ORPHAN SCAN as the holder. This used to assert the generic
-        // "Wait for the current operation to finish" — i.e. the test pinned the very wording
-        // [ORPHANBUSYMSG-2026-08-24] identified as the defect, which is why fixing it turned this
-        // assertion red. It now asserts the label the scan passes to TryBeginExclusive.
+        // ...and the refusal names the ORPHAN SCAN as the holder: it asserts the label the scan
+        // passes to TryBeginExclusive, and fails if the refusal names the generic holder
+        // [ORPHANBUSYMSG-2026-08-24].
         Assert.Contains("Find leftovers", vm.LastOperationResult ?? "", StringComparison.Ordinal);
         Assert.DoesNotContain("another operation", vm.LastOperationResult ?? "", StringComparison.Ordinal);
 
@@ -210,8 +206,8 @@ public class ProxyOrphanGateTests
     /// user may sit on indefinitely would lock the panel on a prompt that can still be
     /// cancelled — the "Cancelled — nothing was removed" path must leave nothing behind.</para>
     ///
-    /// <para>It is also exactly why the live checklist row says a visible dialog does not count as
-    /// having tested the gate.</para>
+    /// <para>It is also why a visible dialog does not count as having tested the gate in a live
+    /// run.</para>
     /// </summary>
     [Fact]
     public async Task TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate()

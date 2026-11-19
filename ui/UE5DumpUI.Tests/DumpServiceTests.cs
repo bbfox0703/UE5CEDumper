@@ -105,7 +105,7 @@ public class DumpServiceTests
 
     private DumpService CreateService() => new(_pipe, _log, UE5DumpUI.Core.IdentityCodePage.Instance);
 
-    // [UI-TEXT-AUDIT-2026-11-18] UT-15. A write the DLL refuses comes back with a code and a sentence written for the
+    // [UI-TEXT-AUDIT-2026-11-18] A write the DLL refuses comes back with a code and a sentence written for the
     // reader ("Not written: <addr> <why>"); the field edit shows it after "Write failed for X:", so it is passed on as
     // it is, not under "DLL error:", and it names no pipe command. A failure without a code keeps the "DLL error:" form.
     [Fact]
@@ -137,7 +137,7 @@ public class DumpServiceTests
         Assert.DoesNotContain("write_mem", code, StringComparison.Ordinal);
     }
 
-    // Audit #5 AD4 — get_protect_state parsing.
+    // get_protect_state parsing.
     //
     // The one trap: the live value arrives on the wire as `godmode`, NOT `live`
     // (Fern.cpp's CMD_GET_PROTECT_STATE handler). Reading the wrong key falls
@@ -470,10 +470,9 @@ public class DumpServiceTests
         Assert.True(state.VersionDetected);  // Default when field absent
         Assert.Equal("0x7FF600A12340", state.GObjectsAddr);
         Assert.Equal(58432, state.ObjectCount);
-        // init + get_pointers + get_offsets. The third is new in the X3 fix (audit #5):
-        // the DLL's offset-validation verdict had been published and never fetched, so
-        // nothing could tell the user the walker was running on unmeasured defaults.
-        // Kept as an exact count deliberately — this assertion is what would catch an
+        // init + get_pointers + get_offsets. The third fetches the DLL's offset-validation
+        // verdict; unfetched, nothing could tell the user the walker was running on
+        // unmeasured defaults. Kept as an exact count deliberately — this assertion is what would catch an
         // accidental extra round-trip being added to the connect path.
         Assert.Equal(3, callCount);
     }
@@ -695,7 +694,7 @@ public class DumpServiceTests
     public async Task GetPointersAsync_CarriesOverrideContradicted()
     {
         // [OVERRIDE-REVIEW2-LOWS] An override saved before the DLL refused a version the UFunctions contradict, or chosen
-        // before any scan, is applied at every launch; get_pointers now says so, and every refresh must keep saying it.
+        // before any scan, is applied at every launch; get_pointers says so, and every refresh must keep saying it.
         _pipe.SetHandler(req =>
         {
             var cmd = req["cmd"]?.GetValue<string>();
@@ -763,7 +762,7 @@ public class DumpServiceTests
         Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
     }
 
-    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. A refused clear proves only
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] `persisted` is the write's answer. A refused clear proves only
     /// that the clear was not written -- an override saved earlier still applies at the next launch, and whether one was
     /// saved is not known here -- so the log says that, and never promises "Auto applies at the next launch". Even with
     /// no override in force in this session one may be on disk (an Auto whose write failed, then a refused pick), so
@@ -895,9 +894,9 @@ public class DumpServiceTests
     [Fact]
     public async Task SetInvokeTimeoutAsync_SendsCorrectPayloadAndRefetches()
     {
-        // Reproduces the Meltopia case from the old logs: 4x GameThreadDispatch invoke
-        // timeout (5s) errors fired on Blueprint widget delegates. UI raises the timeout
-        // to 15s for that game; the value must round-trip and surface in the next state.
+        // The Meltopia shape: GameThreadDispatch invoke timeout (5s) errors fire on
+        // Blueprint widget delegates. UI raises the timeout to 15s for that game; the
+        // value must round-trip and surface in the next state.
         JsonObject? lastReq = null;
         int getPointersCount = 0;
         _pipe.SetHandler(req =>
@@ -1020,11 +1019,10 @@ public class DumpServiceTests
         Assert.False(state.VersionDetected);
     }
 
-    // Regression: BuildEngineState took `bool versionDetected = true` — a non-nullable default
-    // with no "absent" sentinel — and never read ptrs["version_detected"]. InitAsync passed the
-    // real value, GetPointersAsync did not, so the honest
+    // BuildEngineState must read ptrs["version_detected"], not lean on a `bool versionDetected = true`
+    // default with no "absent" sentinel: if only InitAsync passes the real value, the honest
     // "⚠ Version not detected — inferred from engine analysis (custom UE build?)" badge
-    // (PointerPanelViewModel.ShowVersionWarning) showed after connect and then VANISHED on the
+    // (PointerPanelViewModel.ShowVersionWarning) shows after connect and then VANISHES on the
     // next pointer refresh. The DLL puts the field on every snapshot (Fern.cpp
     // FillPointerSnapshot) — the UI has to read it.
     [Fact]
@@ -1052,8 +1050,8 @@ public class DumpServiceTests
 
         Assert.Equal(504, state.UEVersion);
         Assert.False(state.VersionDetected);
-        // is_low_confidence was already read from the wire (bool? param) — pin it so the two
-        // flags can't diverge again.
+        // is_low_confidence is read from the wire too (bool? param) — pin it so the two
+        // flags can't diverge.
         Assert.True(state.IsLowConfidence);
     }
 
@@ -1076,8 +1074,8 @@ public class DumpServiceTests
         Assert.False(state.IsLowConfidence);
     }
 
-    // The user-visible symptom: any refresh routed through GetPointersAsync (invoke-timeout
-    // change, UE version override) used to reset VersionDetected to the `= true` default.
+    // Any refresh routed through GetPointersAsync (invoke-timeout change, UE version
+    // override) must keep VersionDetected, not reset it to the `= true` default.
     // Models The Adventures of Elliot: ueVersion=504, versionDetected=false, lowConfidence=true.
     [Fact]
     public async Task SetInvokeTimeoutAsync_PreservesVersionDetectedFalse()
@@ -1243,7 +1241,7 @@ public class DumpServiceTests
     [Fact]
     public async Task GetRelatedObjectsAsync_AnOlderDllWithoutStops_LeavesThemNull()
     {
-        // The control, green before and after: no "stops" key reads as "not said", never as "complete".
+        // The control: no "stops" key reads as "not said", never as "complete".
         _pipe.SetHandler(req => new JsonObject { ["ok"] = true, ["related"] = new JsonArray() });
 
         var result = await CreateService().GetRelatedObjectsAsync("0x1", ct: TestContext.Current.CancellationToken);
@@ -1277,7 +1275,7 @@ public class DumpServiceTests
     [Fact]
     public async Task WalkClassAsync_CarriesEachContainerInnersEnum()
     {
-        // [A4-USMAP-CONTAINER-ENUM] inner_enum / elem_enum / key_enum / value_enum are new, additive wire keys.
+        // [A4-USMAP-CONTAINER-ENUM] inner_enum / elem_enum / key_enum / value_enum are additive wire keys.
         _pipe.SetHandler(req => new JsonObject
         {
             ["ok"] = true,
@@ -1325,7 +1323,7 @@ public class DumpServiceTests
     [Fact]
     public async Task WalkClassAsync_CarriesEachContainerObjClass()
     {
-        // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are new, additive wire keys.
+        // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are additive wire keys.
         _pipe.SetHandler(req => new JsonObject
         {
             ["ok"] = true,
@@ -1387,7 +1385,7 @@ public class DumpServiceTests
     [Fact]
     public async Task ListEnumsDetailedAsync_CarriesTheFailedLatchAndTheTruncation()
     {
-        // [P1-ENUMNAMES] list_enums answered ok with every UEnum's entries empty, and no exit said why.
+        // [P1-ENUMNAMES] list_enums can answer ok with every UEnum's entries empty; the reply says why.
         _pipe.SetHandler(req => new JsonObject
         {
             ["ok"] = true,
@@ -1411,7 +1409,7 @@ public class DumpServiceTests
     [InlineData(false, true)]
     public async Task ListEnumsDetailedAsync_ReadsEachFlagFromItsOwnKey(bool failed, bool truncated)
     {
-        // Review 5 of 7e5a71fc: the test above sets both keys, so a swapped or duplicated key passed it.
+        // The test above sets both keys, so a swapped or duplicated key would pass it.
         _pipe.SetHandler(req => new JsonObject
         {
             ["ok"] = true, ["enums"] = new JsonArray(), ["enum_names_failed"] = failed, ["truncated"] = truncated,
@@ -1805,7 +1803,7 @@ public class DumpServiceTests
     [InlineData(false)]
     public async Task TeleportSaveMarkerAsync_ReportsWhetherTheReplyCarriedTheFlag(bool carried)
     {
-        // Review 5 of 7490c24e: the save reply never carries 'source', so the pose card needs to know whether it carried
+        // The save reply never carries 'source', so the pose card needs to know whether it carried
         // parent_relative at all -- false is an answer, absence (an older DLL) is not.
         _pipe.SetHandler(_ =>
         {
@@ -2050,7 +2048,7 @@ public class DumpServiceTests
         int latch = s.IndexOf("DynOff::bUEnumNamesFailed.load(", start, StringComparison.Ordinal);
         Assert.True(flag > start && flag < end, "the walk encoder must carry the latch");
         Assert.True(latch > start && latch < flag);
-        // Review round 1: the statement that guards the emit names no lean condition, and it is not inside the
+        // The statement that guards the emit names no lean condition, and it is not inside the
         // encoder's `if (!lean) {` block -- the export's resolver walks lean, and it learns the latch from them too.
         int guard = s.LastIndexOf("if (", flag, StringComparison.Ordinal);
         Assert.DoesNotContain("lean", s[guard..flag]);
@@ -2080,13 +2078,13 @@ public class DumpServiceTests
     [Fact]
     public void Ubel_NameGuards_GoThroughOneUtf8AwareCheck()
     {
-        // [UBEL-ASCII-FIRSTCHAR] Thirteen guards in Ubel.cpp tested a name's first byte against printable ASCII, so a
-        // name opening with a CJK character was dropped. They go through Utf8Helpers::IsPlausibleNameStart (unit-tested
-        // in utf8_helpers_test); no raw first-byte test of a name may be left.
+        // [UBEL-ASCII-FIRSTCHAR] A guard that tests a name's first byte against printable ASCII drops a name opening with
+        // a CJK character. Ubel.cpp's guards go through Utf8Helpers::IsPlausibleNameStart (unit-tested in
+        // utf8_helpers_test); no raw first-byte test of a name may be left.
         var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"));
         Assert.Contains("IsPlausibleNameStart(", s);
-        // Review round 2: Wirbel::StructInner kept the same ASCII-only test, "mirroring" Ubel's probe, where a pin over
-        // Ubel.cpp alone could not see it. Every DLL source is held to it.
+        // A file that "mirrors" Ubel's probe (Wirbel::StructInner) can carry the same ASCII-only test where a pin over
+        // Ubel.cpp alone cannot see it, so every DLL source is held to it.
         var src = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"))!;
         var left = new List<string>();
         foreach (var file in Directory.EnumerateFiles(src, "*.*").Where(f => f.EndsWith(".cpp") || f.EndsWith(".h")))
@@ -2099,8 +2097,8 @@ public class DumpServiceTests
     [Fact]
     public async Task WalkDataTableRowsAsync_CarriesTheFailedLatch()
     {
-        // Review round 2 of [CEXPORT-ENUMNAMES-NOTE]: a DataTable's rows are read by their own command, whose reply did
-        // not say the latch was set -- and the table's own walk can run before the row walk that trips detection.
+        // [CEXPORT-ENUMNAMES-NOTE] A DataTable's rows are read by their own command, whose reply must say the latch is
+        // set too -- the table's own walk can run before the row walk that trips detection.
         _pipe.SetHandler(req => new JsonObject
         {
             ["ok"] = true, ["row_count"] = 0, ["rows"] = new JsonArray(), ["enum_names_failed"] = true,
@@ -2124,8 +2122,8 @@ public class DumpServiceTests
     [Fact]
     public void Fern_SendsAnEnumsAddress_EvenWithNoEntries()
     {
-        // Review round 1 of [CEXPORT-ENUMNAMES-NOTE]: enum_addr went out only beside a non-empty entry list, so under
-        // the latch a TEnumAsByte field arrived as a plain ByteProperty and an export could not tell it held an enum.
+        // [CEXPORT-ENUMNAMES-NOTE] enum_addr goes out even beside an empty entry list: otherwise under the latch a
+        // TEnumAsByte field arrives as a plain ByteProperty and an export cannot tell it holds an enum.
         // Every reader of enum_addr also requires entries before it builds a dropdown.
         var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
         Assert.DoesNotContain("if (fv.enumAddr != 0 && !fv.enumEntries.empty())", s);
@@ -2212,7 +2210,7 @@ public class DumpServiceTests
         Assert.Null(field.ArrayElements);
     }
 
-    // [EXTPR-539-540-2026-10-02] D4 (R3): the object index asks get_object_list for paths and GObjects indexes;
+    // [EXTPR-539-540-2026-10-02] The object index asks get_object_list for paths and GObjects indexes;
     // a DLL that predates include_index sends no index, and the node keeps none rather than one guessed from
     // the page position (the handler skips null and unnamed slots).
     [Fact]
@@ -2292,7 +2290,7 @@ public class DumpServiceTests
         Assert.Empty(plain.PerFrameFuncs);
     }
 
-    // [TRACE-UI-LOAD-MEMORY] D2: pe_trace_get decoded straight into the caller's window. A reply parsed from the pipe's
+    // [TRACE-UI-LOAD-MEMORY] pe_trace_get decodes straight into the caller's window. A reply parsed from the pipe's
     // text holds its values as JSON elements (the UTF-8 path); one built in code holds strings (the char path). Both are
     // run, so a test cannot pass on the path production never takes.
     private static string TracePageJson(TraceRecord[] recs) =>
@@ -2333,7 +2331,7 @@ public class DumpServiceTests
     [Fact]
     public async Task PeProfileStartAsync_ReadsHowManyTicksTheDllLeftOut()
     {
-        // Review UI-1: the DLL checks the ticks against the previous recording and leaves out the unloaded ones.
+        // The DLL checks the ticks against the previous recording and leaves out the unloaded ones.
         _pipe.SetHandler(_ => new JsonObject
         {
             ["ok"] = true, ["hook_active"] = true,
@@ -2347,7 +2345,7 @@ public class DumpServiceTests
         Assert.Equal(2, r.Trace.TickedDropped);
     }
 
-    // [TRACE-UNLOADED-NAMES] D1: a function unloaded since it fired comes back named from its first call, marked.
+    // [TRACE-UNLOADED-NAMES] A function unloaded since it fired comes back named from its first call, marked.
     [Fact]
     public async Task PeProfileGetAsync_AsksForUnloadedRows_AndReadsTheirMarksAndTheCounts()
     {
@@ -2381,7 +2379,7 @@ public class DumpServiceTests
         Assert.False(r.Entries[1].IsRecycled);
         Assert.True(r.Entries[2].IsUnloaded && r.Entries[2].IsRecycled);
         Assert.False(r.Entries[2].IsReused);
-        Assert.True(r.Entries[3].IsReused && !r.Entries[3].IsUnloaded);   // review DLL-3: two functions at one address
+        Assert.True(r.Entries[3].IsReused && !r.Entries[3].IsUnloaded);   // two functions at one address
         Assert.Equal(2, r.UnloadedFuncs);
         Assert.Equal(10L, r.UnloadedCalls);
         Assert.Equal(1, r.UnnamedFuncs);
@@ -2636,7 +2634,7 @@ public class DumpServiceTests
         Assert.Equal(7UL, page.Next);
     }
 
-    // [LIVEFUNCS-STEP2] U2: every reader of a stopped trace pages megabytes; none may hold the interactive lane.
+    // [LIVEFUNCS-STEP2] Every reader of a stopped trace pages megabytes; none may hold the interactive lane.
     [Theory]
     [InlineData("pe_snap_layouts", true)]
     [InlineData("pe_snap_get", true)]
@@ -2691,8 +2689,8 @@ public class DumpServiceTests
     [Fact]
     public async Task FindLiveInstance_OnADllThatPredatesIt_FallsBackToTheExactNameLookup()
     {
-        // Review 1: a proxy DLL left in a game folder outlives a UI upgrade. It answers "Unknown command", and every
-        // navigate and Locate then did nothing at all, with Detect Stats reporting "0 confirmed" as a result.
+        // A proxy DLL left in a game folder outlives a UI upgrade. It answers "Unknown command", and without a fallback
+        // every navigate and Locate would do nothing at all, with Detect Stats reporting "0 confirmed" as a result.
         var pipe = new MockPipeClient();
         var cmds = new List<string>();
         pipe.SetHandler(req =>
@@ -2743,8 +2741,8 @@ public class DumpServiceTests
     [Fact]
     public async Task FindLiveInstance_OnAnOldDll_AsksTheOldLookupExactly_AndAMissIsStillMarkedLegacy()
     {
-        // Review 2: the legacy answer has the old limits (an exact class name, no subclass), and a MISS said "none" --
-        // so the line claimed "no live instance of X or of a subclass" though no subclass had been looked for.
+        // The legacy answer has the old limits (an exact class name, no subclass), so a MISS must not read as "none" --
+        // that would claim "no live instance of X or of a subclass" though no subclass had been looked for.
         var (pipe, sent) = OldDllPipe(anyInstance: false);
         var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
@@ -2760,7 +2758,7 @@ public class DumpServiceTests
     [Fact]
     public async Task FindLiveInstance_OnAnOldDll_IsAskedOncePerConnection()
     {
-        // Review 2: every call paid a failing round trip and a warning -- 30 of each in one Detect Stats run.
+        // Asked every time, each call would pay a failing round trip and a warning -- dozens in one Detect Stats run.
         var (pipe, sent) = OldDllPipe(anyInstance: true);
         var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
         var ct = TestContext.Current.CancellationToken;
@@ -2779,8 +2777,8 @@ public class DumpServiceTests
     [Fact]
     public async Task FindLiveInstance_AnOldDllsAnswer_ThatArrivesAfterAReconnect_DoesNotMarkTheNewConnection()
     {
-        // Review 3: the "Unknown command" reply's continuation can run after the connection dropped and a newer DLL
-        // connected -- and set the flag for a connection that has the command.
+        // The "Unknown command" reply's continuation can run after the connection dropped and a newer DLL connected --
+        // and must not set the flag for a connection that has the command.
         var pipe = new MockPipeClient();
         var cmds = new List<string>();
         bool reconnectDuringRequest = true;
@@ -2901,7 +2899,7 @@ public class DumpServiceTests
             sent[1]);
     }
 
-    // M3 of the design review: "every stack choice refused" (names.stacks 0) must read apart from "an old DLL" (absent).
+    // "Every stack choice refused" (names.stacks 0) must read apart from "an old DLL" (absent).
     [Fact]
     public async Task TheStartAndStopReplies_ReadTraceStackAndNamesStacks_AndTheirAbsenceReadsNull()
     {
@@ -2959,7 +2957,7 @@ public class DumpServiceTests
     [Fact]
     public async Task PeStackGetAsync_ReadsASitesUFunctionNames_AndTheirAbsence()
     {
-        // [LIVEFUNCS-STEP3] S3-A1: the DLL's native-entry index on a site; an older DLL sends none of it.
+        // [LIVEFUNCS-STEP3] The DLL's native-entry index on a site; an older DLL sends none of it.
         _pipe.SetHandler(req => Reply("""
             {"ok":true,"allocated":true,"gen":5,"qpc_freq":10000000,"ring":0,"kind":"stack","rings":[],"count":1,"next":1,
              "orphans":0,
@@ -3077,7 +3075,7 @@ public class DumpServiceTests
         Assert.Contains(_log.Messages, m => m.StartsWith("[WARN") && m.Contains("dropped 2 frame"));
     }
 
-    // One command, two reply shapes (design D5): a page not marked as stacks carries parameter slots, which must never be
+    // One command, two reply shapes: a page not marked as stacks carries parameter slots, which must never be
     // joined to calls as stacks. A refused or stale page carries nothing to misread, and stays quiet.
     [Fact]
     public async Task PeStackGetAsync_APageNotMarkedAsStacks_ReadsNoSlots_AndAStalePageStaysQuiet()
@@ -3168,7 +3166,7 @@ public class DumpServiceTests
         Assert.Equal(4, param.StructFields[1].Offset);
     }
 
-    // [EXTPR-539-540-2026-10-02] D3: `parm` says which chain entries are parameters (a Blueprint function's
+    // [EXTPR-539-540-2026-10-02] `parm` says which chain entries are parameters (a Blueprint function's
     // locals follow them in the same chain). A DLL that predates the key sends none, and that must stay apart
     // from "not a parameter".
     [Fact]
@@ -3804,7 +3802,7 @@ public class DumpServiceTests
         Assert.Equal("0x10 +2", new UE5DumpUI.Models.FunctionPropRef
             { WriteSites = new[] { "0x10", "0x20", "0x30" }, WriteSitesViaThis = 1 }.WriteSitesText);
         Assert.Equal("", new UE5DumpUI.Models.FunctionPropRef().WriteSitesText);
-        // Review DWS-DLL-1: when not even the first site is proven to write through `this`, the text says so.
+        // When not even the first site is proven to write through `this`, the text says so.
         Assert.Equal("0x10 ?", new UE5DumpUI.Models.FunctionPropRef { WriteSites = new[] { "0x10" } }.WriteSitesText);
     }
 
@@ -3924,7 +3922,7 @@ public class DumpServiceTests
     [Fact]
     public async Task InitAsync_ParsesTheStrideVerdict()
     {
-        // [W4-STRIDE-TENTATIVE] The verdict DetectItemSize used to spend on log lines, now on the wire.
+        // [W4-STRIDE-TENTATIVE] DetectItemSize's verdict goes on the wire, not only into log lines.
         _pipe.SetHandler(req =>
         {
             var cmd = req["cmd"]?.GetValue<string>();
@@ -3954,7 +3952,7 @@ public class DumpServiceTests
     [Fact]
     public async Task InitAsync_AnOlderDllWithoutTheStrideVerdict_IsNotUntrusted()
     {
-        // The control, green before and after: absent evidence must not become a warning.
+        // The control: absent evidence must not become a warning.
         _pipe.SetHandler(req =>
         {
             var cmd = req["cmd"]?.GetValue<string>();
@@ -4047,7 +4045,7 @@ public class DumpServiceTests
         Assert.Equal(1, res.Samples[1].Index);
     }
 
-    // === Per-launch session token (build 1227) ===
+    // === Per-launch session token ===
 
     [Fact]
     public async Task GetPointersAsync_ParsesProcessCreationTime_IntoGameSessionId()
@@ -4075,7 +4073,7 @@ public class DumpServiceTests
     [Fact]
     public async Task GetPointersAsync_OlderDll_NoCreationTime_GameSessionIdDegrades()
     {
-        // Back-compat: a DLL older than build 1227 omits process_creation_time →
+        // Back-compat: a DLL that predates the key omits process_creation_time →
         // ProcessCreationTime defaults to "" → GameSessionId = "PeHash-".
         _pipe.SetHandler(req => new JsonObject
         {
@@ -4094,7 +4092,7 @@ public class DumpServiceTests
         Assert.Equal("ABCD1234-", state.GameSessionId);
     }
 
-    // === Property Search: deep descent (build 1222) ===
+    // === Property Search: deep descent ===
 
     [Fact]
     public async Task SearchPropertiesAsync_DefaultDeepFalse_SendsDeepFalse()
@@ -4296,12 +4294,11 @@ public class DumpServiceTests
         Assert.True(captured!["auto_skip_noise"]?.GetValue<bool>());
     }
 
-    // --- search_properties_batch truncation (audit #5 X1) ----------------------
+    // --- search_properties_batch truncation -----------------------------------
     //
-    // The DLL has emitted per-query `truncated` and batch `aborted` since the D5/F4 fix.
-    // The single-query parser read them; this batch twin, ~80 lines away in the same
-    // file, did not -- so the two discovery panels presented a capped page as the pool,
-    // which is the exact report class F4 was written to end.
+    // The DLL emits per-query `truncated` and batch `aborted`. The single-query parser
+    // reads them, and this batch twin in the same file must too -- otherwise the two
+    // discovery panels present a capped page as the pool.
 
     [Fact]
     public void ParseSearchPropertiesBatch_CarriesPerQueryTruncation()
@@ -4339,8 +4336,8 @@ public class DumpServiceTests
     [Fact]
     public void ParseSearchPropertiesBatch_OlderDllWithoutTheFlags_StaysSilent()
     {
-        // Backward-safe: a pre-2818 DLL omits both keys, and the old silent behaviour
-        // (no cap warning) must remain -- not a spurious warning on every scan.
+        // Backward-safe: a DLL that predates the keys omits both, and stays silent
+        // (no cap warning) -- not a spurious warning on every scan.
         var json = """
         {"per_query":[{"query":"Max","match_count":5,"results":[]}],
          "query_count":1,"total":5,"scanned_classes":1,"scanned_objects":1}
@@ -4354,7 +4351,7 @@ public class DumpServiceTests
     }
 
     // ------------------------------------------------------------------
-    // list_classes truncation (audit #5 X2)
+    // list_classes truncation
     //
     // The class list is a PAGE, not the pool: the DLL stops walking GObjects the
     // moment it has `limit` rows. Callers resolve class NAMES out of it, so a class
@@ -4413,9 +4410,9 @@ public class DumpServiceTests
     [Fact]
     public async Task ListClassesAsync_OlderDllWithoutTheFlag_InfersFromAFullPage()
     {
-        // A pre-2882 DLL omits the key. A FULL page is still evidence the walk stopped,
-        // so the caveat must survive the older DLL rather than silently degrading to
-        // "not found" — which is the bug this fix exists to end.
+        // A DLL that predates the key omits it. A FULL page is still evidence the walk
+        // stopped, so the caveat must survive the older DLL rather than silently
+        // degrading to "not found".
         _pipe.SetHandler(_ => ClassListResponse(rows: 4, truncated: null));
 
         var svc = CreateService();
@@ -4433,7 +4430,7 @@ public class DumpServiceTests
     [Fact]
     public async Task ListClassesAsync_HonestTotalExceedsThePage()
     {
-        // [CLASSTOTAL-2026-08-18]: the DLL now counts EVERY class to the end of GObjects
+        // [CLASSTOTAL-2026-08-18]: the DLL counts EVERY class to the end of GObjects
         // even after row collection stops at the cap, so total_classes can exceed the
         // returned row count. The UI must carry that number through unchanged — never
         // re-cap it to the page size — so the Classes tab can say "5,000 of 6,609".
@@ -4460,7 +4457,7 @@ public class DumpServiceTests
         Assert.True(r.Truncated);
         Assert.Equal(5000, r.Total);          // rows shown
         Assert.Equal(6609, r.TotalClasses);   // real total, NOT re-capped to 5000
-        Assert.True(r.TotalClasses > r.Total); // the two numbers now differ meaningfully
+        Assert.True(r.TotalClasses > r.Total); // the two numbers differ meaningfully
     }
 
     [Fact]

@@ -10,9 +10,9 @@ namespace UE5DumpUI.Tests;
 /// left in %TEMP% a day ago goes, and nothing else does -- not another repository's (another session builds beside
 /// this one, and cleans up after itself), not a build still running, not a log that recorded real work, not another
 /// program's folder.
-/// Measured on 2026-11-11 (SDK 10.0.403): each build leaves one Microsoft.NET.Workload_*.log and two empty folders
-/// named like Path.GetRandomFileName(), one made before the log (up to 581 ms) and one after it (up to 99 ms); in 107
-/// groups of them every group held exactly two folders per log.
+/// The shape a build leaves (SDK 10.0.403): one Microsoft.NET.Workload_*.log and two empty folders named like
+/// Path.GetRandomFileName(), one made before the log (up to 581 ms) and one after it (up to 99 ms) -- exactly two
+/// folders per log.
 /// </summary>
 public class SdkTempLeftoversTests : IDisposable
 {
@@ -577,7 +577,7 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.Empty(plan.Logs);
     }
 
-    // ---- the record of groups seen young (review round 3) ----------------------------------------------------------
+    // ---- the record of groups seen young ---------------------------------------------------------------------------
 
     private string SeenFile => Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName);
 
@@ -893,7 +893,7 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.False(File.Exists(log));
     }
 
-    // ---- fixtures: the shapes measured in %TEMP% on 2026-11-11 ----------------------------------------------------
+    // ---- fixtures: the shapes a build leaves in %TEMP% -------------------------------------------------------------
 
     /// <summary>One build as the SDK leaves it: a folder made before the log, the log, a folder made after it.</summary>
     private (string Log, string Before, string After) Build(DateTime createdUtc, string command, bool ended = true,

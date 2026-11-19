@@ -11,7 +11,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// P2 CSV round-trip — docs/teleport-coord-library-spec.md §5.
+/// CSV round-trip — docs/teleport-coord-library-spec.md §5.
 /// Every test here corresponds to a specific way a 4000-row hand-curated list gets
 /// silently corrupted; none of them are hypothetical.
 /// </summary>
@@ -246,8 +246,8 @@ public class CoordCsvParseTests
         Assert.Contains("not a number", issue.Reason);
     }
 
-    // [A3-COORD-NONFINITE] double.TryParse ACCEPTS "NaN" / "Infinity" / an overflow like "1e400", and Round mapped them to
-    // 0 without an issue -- a teleport to the world origin, the silent wrong coordinate B21 says must be a visible row.
+    // [A3-COORD-NONFINITE] double.TryParse ACCEPTS "NaN" / "Infinity" / an overflow like "1e400". Rounded to 0 with no
+    // issue, each would be a teleport to the world origin -- a silent wrong coordinate, so each must be a visible row.
     [Theory]
     [InlineData("NaN")]
     [InlineData("Infinity")]
@@ -523,14 +523,13 @@ public class CoordCsvFieldSplitTests
     }
 
     /// <summary>
-    /// B21 — a European decimal comma must NOT parse as a grouped-thousands number.
-    /// "67162,398" used to become 67162398: a coordinate a thousand times out, accepted with
-    /// no issue raised, because the decimal-comma repair only ran for ';'-delimited files.
-    /// The accepted cost is that Excel's grouped "67,162.398" is now rejected — a rejected row
+    /// A European decimal comma must NOT parse as a grouped-thousands number: "67162,398" read
+    /// as 67162398 is a coordinate a thousand times out, accepted with no issue raised.
+    /// The accepted cost is that Excel's grouped "67,162.398" is rejected too — a rejected row
     /// is visible in the import preview; a silently mis-scaled one is not.
     /// </summary>
     [Theory]
-    [InlineData("67162,398")]      // European decimal comma — the bug
+    [InlineData("67162,398")]      // European decimal comma — the hazard
     [InlineData("67,162.398")]     // Excel grouped thousands — the accepted casualty
     [InlineData("1,234")]
     public void CoordPrecision_RejectsAnyCommaInANumber(string text)
@@ -551,10 +550,10 @@ public class CoordCsvFieldSplitTests
 }
 
 /// <summary>
-/// [B21-CSV-QUOTE-HOLES] hole 2. The line splitter flipped its quote state on ANY quote while the field
-/// splitter honoured one only at field start, so one unpaired mid-field quote swallowed every later record to
-/// EOF. The maintainer's rule (2026-10-28): no repair -- an unpaired quote stops the whole import with an error
-/// naming its line, and nothing is imported.
+/// [B21-CSV-QUOTE-HOLES] hole 2. The line splitter and the field splitter must agree on which quotes count: a
+/// line splitter that flips its quote state on ANY quote, beside a field splitter that honours one only at field
+/// start, lets one unpaired mid-field quote swallow every later record to EOF. The rule: no repair -- an unpaired
+/// quote stops the whole import with an error naming its line, and nothing is imported.
 /// </summary>
 public class CoordCsvUnpairedQuoteTests
 {
@@ -585,8 +584,8 @@ public class CoordCsvUnpairedQuoteTests
     [Fact]
     public void AStrayOpeningQuote_IsNamedOnItsOwnLine_NotWhereALaterQuoteClosesIt()
     {
-        // Review finding: the quoted field opened on line 3 swallows rows until the legitimate opening quote of
-        // line 6 "closes" it, and the error named line 6 -- a correct row -- and never line 3.
+        // The quoted field opened on line 3 swallows rows until the legitimate opening quote of line 6 "closes" it.
+        // The issue must sit on line 3, where the stray quote is; line 6 -- a correct row -- is only where it closed.
         var r = CoordCsvCodec.Parse(Header + Good + "a,\"Chest 3,G,M,1,2,3,0,0,0\n" + Good + Good +
                                     "c,\"Boss, big\",G,M,1,2,3,0,0,0\n");
         AssertStopped(r, 3);
@@ -596,8 +595,8 @@ public class CoordCsvUnpairedQuoteTests
     [Fact]
     public void ASpaceBesideAQuote_IsNamedAsTheSpace_NotAsAnUndoubledQuote()
     {
-        // Review round 2: a space after a closing quote was diagnosed as "a quote inside it was not doubled" --
-        // advice that cannot fix the file. Still refused (no repair), but the reason must name what is wrong.
+        // A space after a closing quote is not "a quote inside it was not doubled" -- advice that cannot fix the
+        // file. Still refused (no repair), but the reason must name what is wrong.
         var after = Assert.Single(CoordCsvCodec.Parse(Header + "a,\"Boss\" ,G,M,1,2,3,0,0,0\n").Issues).Reason;
         Assert.Contains("space", after, StringComparison.Ordinal);
         Assert.DoesNotContain("doubled", after, StringComparison.Ordinal);
@@ -609,9 +608,9 @@ public class CoordCsvUnpairedQuoteTests
     [Fact]
     public void TheSpaceReason_IsGivenOnlyWhenTheSpaceIsAllThatIsWrong()
     {
-        // Review round 3: the space reason looked at one character. An undoubled inner quote followed by a space was
-        // blamed on the space; an NBSP or ideographic space after the quote was blamed on an inner quote; and a space
-        // after a correctly quoted multi-line field was blamed on a quote on one of its lines.
+        // The space reason judges the field, not one character: an undoubled inner quote followed by a space is the
+        // quote's fault; an NBSP or ideographic space after the quote is a space; and a space after a correctly
+        // quoted multi-line field is a space, not a quote on one of its lines.
         string R(string row) => Assert.Single(CoordCsvCodec.Parse(Header + row).Issues).Reason;
         Assert.Contains("doubled", R("a,\"Pipe 12\" wide\",G,M,1,2,3,0,0,0\n"), StringComparison.Ordinal);
         Assert.Contains("space", R("a,\"Home\" ,G,M,1,2,3,0,0,0\n"), StringComparison.Ordinal);
@@ -627,9 +626,9 @@ public class CoordCsvUnpairedQuoteTests
     [InlineData("k1,\"Gate\",\" east\",,,100,200,300,0,90,0\n")]
     public void ARecordWithADifferentCellCount_StopsTheImport(string row)
     {
-        // Review round 5: a stray quote PAIR is valid RFC 4180 grammar but merges or splits cells, and the reader
-        // never compared a record with the header (RFC 4180 2.4) -- every later column shifted, every coordinate
-        // wrong, no issue.
+        // A stray quote PAIR is valid RFC 4180 grammar but merges or splits cells, so a record's cell count must match
+        // the header's (RFC 4180 2.4); unchecked, every later column shifts and every coordinate is wrong with no
+        // issue raised.
         var r = CoordCsvCodec.Parse(Header + row);
         Assert.Empty(r.Entries);
         var issue = Assert.Single(r.Issues);
@@ -667,7 +666,8 @@ public class CoordCsvUnpairedQuoteTests
     public void ALeadingApostropheBeforeAFormulaLeader_SurvivesWriteThenParse(string label)
     {
         // A single quote is a quote too. The formula armour is one apostrophe, and Unarmour strips one when a
-        // leader follows -- so a label that itself began with an apostrophe before a leader came back without it.
+        // leader follows -- so a label that itself begins with an apostrophe before a leader must still come back
+        // with it.
         Assert.Equal(label, CoordCsvCodec.Unarmour(CoordCsvCodec.Armour(label)));
         var r = CoordCsvCodec.Parse(CoordCsvCodec.Write(new[] { new CoordEntry { Uid = "u", Label = label, Map = "M" } }));
         Assert.Equal(label, Assert.Single(r.Entries).Label);

@@ -52,12 +52,12 @@ public class FreezeScriptGeneratorTests
     }
 
     // ==================================================================
-    // Audit #5 Y15 — an EnumProperty's width comes from the ENGINE.
+    // An EnumProperty's width comes from the ENGINE.
     //
-    // The mapping used to answer "int32" for every enum, so freezing the
-    // dominant UE shape (`enum class E : uint8`) emitted a 4-byte
+    // A mapping that answers "int32" for every enum would make freezing the
+    // dominant UE shape (`enum class E : uint8`) emit a 4-byte
     // writeInteger over a 1-byte field — destroying the three bytes after
-    // it, 20 times a second, for as long as the freeze was active.
+    // it, 20 times a second, for as long as the freeze is active.
     // ==================================================================
 
     [Theory]
@@ -141,7 +141,7 @@ public class FreezeScriptGeneratorTests
         var script = FreezeScriptGenerator.Generate(p);
 
         Assert.Contains("valueType          = 'uint8',", script);
-        // The defect verbatim: a 4-byte writer aimed at a 1-byte field.
+        // The hazard verbatim: a 4-byte writer aimed at a 1-byte field.
         Assert.DoesNotContain("valueType          = 'int32',", script);
     }
 
@@ -169,8 +169,8 @@ public class FreezeScriptGeneratorTests
         Assert.Equal(expected, FreezeScriptGenerator.MapToHelperType("EnumProperty", size));
         Assert.Contains($"valueType          = '{expected}',", script);
         // The debug line names the same type — the CFG and the log must not disagree
-        // about what is being written (audit #4's root cause: report and reality
-        // computed by different code paths).
+        // about what is being written (report and reality must not be computed by
+        // different code paths).
         Assert.Contains($"({expected}@0x10)", script);
     }
 
@@ -252,17 +252,17 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("value              = false,", script);
         // A native bool owns its whole byte, so NO mask must be emitted —
         // emitting one would make the helper touch a single bit of a byte
-        // that is entirely this property's. (audit #5 AA1)
+        // that is entirely this property's.
         Assert.DoesNotContain("boolMask", script);
     }
 
-    // ── audit #5 AA1: packed bitfield bools ──────────────────────────────
+    // ── packed bitfield bools ────────────────────────────────────────────
     //
-    // UE packs `uint8 bFoo:1` bools eight to a byte. The freeze pipeline used
-    // to drop the FBoolProperty FieldMask, so the helper stamped the whole
+    // UE packs `uint8 bFoo:1` bools eight to a byte. A freeze pipeline that
+    // drops the FBoolProperty FieldMask makes the helper stamp the whole
     // byte ~16x/sec: up to 7 sibling bools clobbered, and — whenever the mask
-    // was not 0x01 — the intended bool never set at all (writing 1 sets bit 0),
-    // so the feature silently no-opped WHILE corrupting its neighbours.
+    // is not 0x01 — the intended bool never set at all (writing 1 sets bit 0),
+    // so the feature silently no-ops WHILE corrupting its neighbours.
 
     [Theory]
     [InlineData(0x01)]
@@ -293,7 +293,7 @@ public class FreezeScriptGeneratorTests
     }
 
     [Theory]
-    // 0 = the DLL reported no mask (native bool, or a pre-AA1 DLL).
+    // 0 = the DLL reported no mask (native bool, or a DLL that does not send one).
     [InlineData(0)]
     // 0xFF = UE's OWN native-bool marker: SetBoolSize writes FieldMask = 255
     // when bIsNativeBool. Treating it as a bit mask would write bit 0..7 of a
@@ -330,7 +330,8 @@ public class FreezeScriptGeneratorTests
     // ── [BOOL-NATIVE-SEARCH]: no single-bit mask AND no bool_native = an UNRESOLVED layout ──────
     //
     // The probe missed, so the byte may hold up to 8 packed bools. A whole-byte freeze stamps 0x01 / 0x00
-    // over the siblings ~20x/sec (the AA1 corruption) and never sets the intended bit unless it is bit 0.
+    // over the siblings ~20x/sec (the packed-bitfield corruption above) and never sets the intended bit
+    // unless it is bit 0.
     // The generator is the last line of defence behind the two callers' own refusals: it throws.
 
     [Theory]
@@ -396,7 +397,7 @@ public class FreezeScriptGeneratorTests
     [Fact]
     public void FreezeHelper_WriteBool_HonoursTheMaskItIsGiven()
     {
-        // The generator emitting `boolMask` is only half the fix — the helper
+        // The generator emitting `boolMask` is only half the job — the helper
         // has to ACT on it. This pins the helper source, because nothing else
         // in the suite executes Lua: the byte-stamping write must be reachable
         // ONLY when no packed mask was supplied.
@@ -416,12 +417,12 @@ public class FreezeScriptGeneratorTests
         Assert.DoesNotContain("[255]", lua);
         Assert.DoesNotContain("[0] =", lua);
 
-        // The old unconditional comment must be gone: it documented the defect
-        // as intended behaviour, which is how it survived so long.
+        // No comment may document whole-byte stamping as intended behaviour: a
+        // comment like that is how such a defect hides in plain sight.
         Assert.DoesNotContain("We do NOT support packed bitfield bools", lua);
     }
 
-    // ── audit #5 AA2/AA3: recycled slots and a cache kept forever ────────────
+    // ── recycled slots and a cache kept forever ──────────────────────────────
     //
     // The behaviour of these two is covered properly by scripts/tests/
     // freeze_helper_test.lua, which EXECUTES the helper against stubbed CE
@@ -440,16 +441,16 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("handle._classPtr", lua);
 
         // ...and the tick compares the object's live ClassPrivate against it. The
-        // witness is now per-ENTRY in derived scope and page-wide in exact scope, so
+        // witness is per-ENTRY in derived scope and page-wide in exact scope, so
         // the comparison reads `want` — resolved from clsOf[i] or cPtr — rather than
         // cPtr directly. The line that matters is that a compare still gates the write.
         Assert.Contains("local want = clsOf and clsOf[i] or cPtr", lua);
         Assert.Contains("readQword(addr + cOff) == want", lua);
 
-        // The old guard tested only "is qword 0 non-zero", which a recycled or
-        // pooled block passes because it holds old bytes or a free-list link.
-        // It survives ONLY as the no-witness fallback, so the bare form that
-        // used to gate the write must not be the gate any more.
+        // A guard that tests only "is qword 0 non-zero" is passed by a recycled
+        // or pooled block, which holds old bytes or a free-list link. That test
+        // survives ONLY as the no-witness fallback, so its bare form must not
+        // gate the write.
         Assert.DoesNotContain("local vt = readQword(addr)\n        if vt and vt ~= 0 then", lua);
     }
 
@@ -463,8 +464,8 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("handle._failStreak", lua);
         Assert.Contains("handle._abandoned", lua);
 
-        // _lastError had three writers and zero readers — the failure never
-        // reached anyone. Both accessors are the readers.
+        // _lastError needs a reader, or the failure reaches no one. Both
+        // accessors are the readers.
         Assert.Contains("handle.lastError = function()", lua);
         Assert.Contains("handle.isAbandoned = function()", lua);
     }
@@ -484,15 +485,14 @@ public class FreezeScriptGeneratorTests
     }
 
     // ==================================================================
-    // Audit #5 AA12 + AA13 — a freeze that applied NOTHING used to report
-    // a clean success.
+    // A freeze that applied NOTHING must not report a clean success.
     //
     // `pcall` answers "did Lua raise", never "did anything get frozen", and
     // no mailbox failure can raise (they are all caught inside the helper's
-    // own pcall). So the old `pcall(handleOrErr.start)` was true for a DLL
-    // that was not injected, a contract mismatch, and a stale mailbox alike
-    // — and the generator then auto-closed the Lua window over a CE record
-    // left ticked. start() now returns (ok, err, count).
+    // own pcall). So a bare `pcall(handleOrErr.start)` is true for a DLL
+    // that is not injected, a contract mismatch, and a stale mailbox alike
+    // — and the generator would auto-close the Lua window over a CE record
+    // left ticked. start() returns (ok, err, count).
     // ==================================================================
 
     /// <summary>
@@ -501,11 +501,11 @@ public class FreezeScriptGeneratorTests
     ///
     /// <para><b>Why this is not pedantry.</b> The script and the Freeze dialog both TELL the
     /// user to edit <c>className</c> in the CFG block to narrow the scope — the cap message
-    /// says so in as many words. Until 2026-08-22 doing that produced messages naming the
-    /// class they had just replaced. Measured in Cheat Engine with the CFG pointed at a class
-    /// that does not exist: the BEHAVIOUR followed the CFG (armed, 0 instances) while the line
-    /// read <c>no live instances of DumperTestActor</c> — a class with plenty of them. The
-    /// report and the reality came from different sources. <c>[FREEZECFGNAME-2026-08-22]</c></para>
+    /// says so in as many words. A message that reads the baked name names the class the
+    /// user just replaced: with the CFG pointed at a class that does not exist, the BEHAVIOUR
+    /// follows the CFG (armed, 0 instances) while the line reads <c>no live instances of
+    /// DumperTestActor</c> — a class with plenty of them. The report and the reality must come
+    /// from one source. <c>[FREEZECFGNAME-2026-08-22]</c></para>
     ///
     /// <para>The CFG line itself is the control: the literal belongs THERE and nowhere else,
     /// so a fix that simply deleted the name everywhere would fail this test.</para>
@@ -580,11 +580,11 @@ public class FreezeScriptGeneratorTests
                                        stopIdx < 0 ? 0 : stopIdx, System.StringComparison.Ordinal);
         Assert.True(stopIdx >= 0, "hard-failure branch must stop the timers");
         Assert.True(clearIdx > stopIdx, "stop() must come before the slot is cleared");
-        // ⚠ This used to assert the literal `if memrec then memrec.Active = false end`, i.e. it
-        // pinned the BROKEN shape: CE ignores an in-[ENABLE] untick entirely, because setActive
-        // exits early while fActive is still false and then sets it true after the script returns
-        // ([FREEZEUNTICK-2026-08-20]). The assertion passed for as long as the untick did nothing.
-        // What the branch has to do is untick DEFERRABLY, via the shared emitter.
+        // ⚠ Not the literal `if memrec then memrec.Active = false end`: that is the BROKEN shape.
+        // CE ignores an in-[ENABLE] untick entirely, because setActive exits early while fActive is
+        // still false and then sets it true after the script returns ([FREEZEUNTICK-2026-08-20]),
+        // so an assertion on it passes while the untick does nothing. What the branch has to do is
+        // untick DEFERRABLY, via the shared emitter.
         Assert.Contains(CeLuaHygiene.DeferredUntickLua().Trim(), enable, System.StringComparison.Ordinal);
     }
 
@@ -619,13 +619,12 @@ public class FreezeScriptGeneratorTests
         var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
 
         Assert.Contains("elseif scount == 0 then", enable);
-        // ⚠ The anchor deliberately does NOT include the class name any more. This line used
-        // to read `... no live instances of BP_Teammate_C`, i.e. it PINNED the generation-time
-        // literal — which is exactly the defect `[FREEZECFGNAME-2026-08-22]` turned out to be:
-        // edit `className` in the CFG (which the script itself tells you to do) and every
-        // message went on naming the class you replaced. The name was incidental to what this
-        // test is about — that the armed branch exists and does not untick — but using it as a
-        // convenient anchor is what made the defect look intentional.
+        // ⚠ The anchor deliberately does NOT include the class name. `... no live instances of
+        // BP_Teammate_C` would PIN the generation-time literal — the `[FREEZECFGNAME-2026-08-22]`
+        // hazard: edit `className` in the CFG (which the script itself tells you to do) and every
+        // message goes on naming the class you replaced. The name is incidental to what this test
+        // is about — that the armed branch exists and does not untick — and using it as a
+        // convenient anchor would make that hazard look intentional.
         Assert.Contains("[Freeze] armed: no live instances of", enable);
 
         // The close is gated on a reported outcome, a non-zero count, AND an
@@ -704,14 +703,13 @@ public class FreezeScriptGeneratorTests
     }
 
     // ==================================================================
-    // [FREEZESTUCK-2026-08-18] — an abandoned freeze left the record ACTIVE.
+    // [FREEZESTUCK-2026-08-18] — an abandoned freeze must not leave the record ACTIVE.
     //
-    // The helper stopped writing after MAX_FAIL_STREAK failed rescans and said so
-    // with a print() into a Lua Engine window this generator had already closed. CE
-    // shows a ticked record (a red X on the checkbox means ACTIVE, not failed), so
-    // the user was told a cheat was applied while nothing was being written — and
-    // the message's own advice ("re-enable the record") was unfollowable, because
-    // nothing had disabled it.
+    // The helper stops writing after MAX_FAIL_STREAK failed rescans. If it says so only
+    // with a print() into a Lua Engine window this generator has already closed, CE keeps
+    // showing a ticked record (a red X on the checkbox means ACTIVE, not failed), so
+    // the user is told a cheat is applied while nothing is being written — and advice
+    // to "re-enable the record" is unfollowable, because nothing disabled it.
     //
     // The BEHAVIOUR is proven by scripts/tests/freeze_helper_test.lua, which runs the
     // helper against a stubbed CE (including a memory record whose Active=false
@@ -755,8 +753,8 @@ public class FreezeScriptGeneratorTests
         // into the Lua Engine window disappears the moment the record clears.
         Assert.Contains("pcall(showMessage, message)", lua);
 
-        // The unfollowable advice must be GONE, not merely joined by better wording —
-        // it told the user to re-enable a record that had never been disabled.
+        // The unfollowable advice must be absent, not merely joined by better wording —
+        // it tells the user to re-enable a record that was never disabled.
         Assert.DoesNotContain("Re-enable the record after fixing it.", lua);
         Assert.Contains("has been unticked", lua);
         // ...and the no-record case still tells the truth about who has to act.
@@ -764,12 +762,12 @@ public class FreezeScriptGeneratorTests
     }
 
     // ==================================================================
-    // [FREEZESCOPE-2026-08-18] — the freeze held the DECLARING class only.
+    // [FREEZESCOPE-2026-08-18] — the freeze must not hold the DECLARING class only.
     //
     // A Property Search row for an inherited field is keyed to the class that
-    // DECLARES it, so freezing a pawn's bCanBeDamaged submitted "Actor" and the DLL's
-    // exact-name pool returned one incidental debug actor. The Force submenu on the
-    // SAME ROW already walked subclasses (Solide, audit #5 A6).
+    // DECLARES it, so freezing a pawn's bCanBeDamaged submits "Actor", and an exact-name
+    // pool returns one incidental debug actor. The Force submenu on the SAME ROW walks
+    // subclasses (Solide), and the freeze must ask for the same derived scope.
     // ==================================================================
 
     [Fact]
@@ -824,22 +822,22 @@ public class FreezeScriptGeneratorTests
     public void HeldClassName_PrefersTheDefiningClass()
     {
         // One definition, shared by the dialog's "Class:" row and the script the VM
-        // builds — they used to choose separately and could disagree.
+        // builds — choosing separately, they could disagree.
         Assert.Equal("Actor", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", "Actor"));
         Assert.Equal("BP_Pawn_C", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", ""));
         Assert.Equal("BP_Pawn_C", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", null));
         Assert.Equal("", FreezeScriptGenerator.HeldClassName(null, null));
     }
 
-    // ── AA12/AA13 step 4: a MISSPELLED class must be indistinguishable from an empty one ──
+    // ── a MISSPELLED class must be indistinguishable from an empty one ─────────────────────
     //
     // The DLL answers SetDone(0) for both -- Mimic.cpp's HandleListInstances cannot tell a
     // class with no live instances from a name that matches nothing -- so neither can the
     // script. "Armed, 0 right now" is the honest report; naming a typo would be a GUESS, which
     // is exactly what CLAUDE.md's mailbox rule forbids ("Never report a mailbox failure by
-    // guessing"). ue5_freeze_helper.lua `tick` states the rule at the implementation; nothing
-    // enforced it, so "class not found -- check the spelling" could be added as an
-    // improvement and every test would stay green.
+    // guessing"). ue5_freeze_helper.lua `tick` states the rule at the implementation; these
+    // tests enforce it, so "class not found -- check the spelling" cannot be added as an
+    // improvement with every test staying green.
     //
     // ⚠ This is an ABSENCE check, so it proves its own CHANNEL first (working-lessons 2.10):
     // the armed line must BE there, or the vocabulary sweep below passes over a script that
@@ -893,10 +891,9 @@ public class FreezeScriptGeneratorTests
 
     private static string FindRepoDir()
     {
-        // The marker is build.ps1, which exists at the repository root and nowhere else. It was
-        // CLAUDE.md until 2026-10-01: a folder's own rules now live in a CLAUDE.md beside it
-        // (ui/CLAUDE.md), so the walk up from the test output stopped at ui/ and looked for the
-        // fixture under ui\scripts.
+        // The marker is build.ps1, which exists at the repository root and nowhere else. Not
+        // CLAUDE.md: a folder's own rules live in a CLAUDE.md beside it (ui/CLAUDE.md), so a walk
+        // up from the test output would stop at ui/ and look for the fixture under ui\scripts.
         var d = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
         while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "build.ps1")))
             d = d.Parent;

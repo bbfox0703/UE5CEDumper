@@ -131,7 +131,7 @@ public class PropertySearchFreezeTests
     [Fact]
     public async Task CopyOffset_NestedRow_CopiesNothing()
     {
-        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] review round 2: the row hides Copy Offset as it hides Freeze, and past a
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] The row hides Copy Offset as it hides Freeze, and past a
         // container the offset it would copy is the element's, reading like a class offset. The command refuses too.
         var platform = new MockPlatformService(Path.GetTempPath());
         var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), platform: platform);
@@ -189,9 +189,9 @@ public class PropertySearchFreezeTests
         Assert.Contains("rejected", vm.StatusText);   // a reply came back: the plugin was reached and said no
     }
 
-    // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 3, F-C. The bool push folded three outcomes into one line: no reply (the
-    // record may still exist, so a second press could add a second one), a refusal that carried its reason, and a pipe
-    // that never opened. The detailed call tells them apart, as the Teleport pushes already do.
+    // [PROPSEARCH-FREEZE-STALE-AOBMAKER] A bool push folds three outcomes into one line: no reply (the record may still
+    // exist, so a second press could add a second one), a refusal that carried its reason, and a pipe that never opened.
+    // The detailed call tells them apart, as the Teleport pushes do.
 
     private static async Task<(PropertySearchViewModel Vm, RecordingBridge Bridge)> FreezePushAsync(
         SymbolScriptResult outcome, bool? availableAfter = null)
@@ -231,7 +231,7 @@ public class PropertySearchFreezeTests
     [Fact]
     public async Task Freeze_ThePrePushGate_SaysWhyThePluginIsUnreachable()
     {
-        // The gate before the value dialog said only "not reachable"; the push's own failure line says why. One
+        // The gate before the value dialog says why, in the push's own failure line, not only "not reachable". One
         // condition, one sentence.
         var bridge = new RecordingBridge { NextAvailability = false };
         var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge)
@@ -263,9 +263,9 @@ public class PropertySearchFreezeTests
     [Fact]
     public async Task Freeze_WhileTheSearchProbeIsInFlight_WaitsForItsAnswer()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, F1. The probe sets its cooldown when it STARTS, so a Freeze
-        // clicked while the Search's probe still waits on the pipe skipped its own probe and trusted the old "yes":
-        // the value dialog opened over a dead pipe and the push failed with the wrong reason.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The probe sets its cooldown when it STARTS, so a Freeze clicked while the
+        // Search's probe still waits on the pipe skips its own probe. Trusting the old "yes" would open the value dialog
+        // over a dead pipe and fail the push with the wrong reason, so the click waits for that probe's answer.
         var gate = new TaskCompletionSource<bool>();
         var bridge = new RecordingBridge { NextAvailability = true };
         await bridge.CheckAvailabilityAsync(TestContext.Current.CancellationToken);   // an earlier probe, before CE closed...
@@ -290,8 +290,8 @@ public class PropertySearchFreezeTests
     [Fact]
     public async Task Freeze_WhenThePushFindsThePipeGone_SaysSo_NotThatAobMakerRejectedIt()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, F2. Inside the cooldown, or with CE closed while the value dialog
-        // was open, the push is what finds the pipe gone -- and the line said the plugin REJECTED the script.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Inside the cooldown, or with CE closed while the value dialog was open, the
+        // push is what finds the pipe gone -- and the line must not say the plugin REJECTED the script.
         var bridge = new RecordingBridge { NextAvailability = true, AvailabilityAfterCreate = false };
         var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge)
         {
@@ -309,7 +309,7 @@ public class PropertySearchFreezeTests
     [Fact]
     public void TheFlagStartsFromTheSharedStatus_NotTheBridgesCache()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 1. The panel follows CHANGES of the shared status, so a
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The panel follows CHANGES of the shared status, so a
         // start from anything else stays wrong until the status changes again.
         var bridge = new RecordingBridge();                  // never probed: its cache says false
         var status = new AobMakerStatus(bridge);
@@ -402,8 +402,8 @@ public class PropertySearchFreezeTests
 
     // ------------------------------------------------------------------
     // [BOOL-NATIVE-SEARCH] -- a bool with no single-bit mask is native OR unresolved, and only the
-    // DLL's bool_native tells them apart. This path used to freeze both with a whole-byte write,
-    // which on an unresolved PACKED bool stamps 0x01 / 0x00 over up to 7 siblings every tick.
+    // DLL's bool_native tells them apart. Freezing both with a whole-byte write would, on an
+    // unresolved PACKED bool, stamp 0x01 / 0x00 over up to 7 siblings every tick.
     // ------------------------------------------------------------------
 
     [Fact]

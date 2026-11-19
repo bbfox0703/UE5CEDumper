@@ -8,25 +8,25 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 findings V1 and V2 — TMap element geometry on the C# side.
+/// TMap element geometry on the C# side.
 ///
-/// <para><b>V2</b>: the TSparseArray stride was re-implemented in three separate C# files as
-/// <c>AlignUp(elemSize,4)+8</c>. When the DLL's own formula was corrected to
-/// <c>Align(Align(elemSize, alignof(T)) + 8, alignof(T))</c> all three silently went stale, because
-/// the alignment is an engine fact that never crossed the wire. The DLL now publishes the stride it
-/// used and the C# consumes it.</para>
+/// <para><b>Stride</b>: the TSparseArray stride is
+/// <c>Align(Align(elemSize, alignof(T)) + 8, alignof(T))</c>, and the alignment is an engine fact the
+/// C# side cannot know — so the DLL publishes the stride it used and the C# consumes it, rather than
+/// re-deriving it as <c>AlignUp(elemSize,4)+8</c>, which goes silently stale.</para>
 ///
-/// <para><b>V1</b>: a map element row is built with the VALUE's type but was given the element
-/// BASE address — which is the key, since a TPair stores the key first. The inline editor writes to
-/// that address, so editing a <c>TMap&lt;FName,int32&gt;</c> value wrote over the FName key.</para>
+/// <para><b>Value address</b>: a map element row is built with the VALUE's type, so it must get the
+/// value's address, not the element BASE address — which is the key, since a TPair stores the key
+/// first. The inline editor writes to that address, so editing a <c>TMap&lt;FName,int32&gt;</c> value
+/// at the base would write over the FName key.</para>
 ///
-/// These tests are written so they FAIL if either fix is reverted — the fallback and the correct
-/// value are deliberately different numbers, and the key address is asserted to be NOT the answer.
+/// These tests FAIL if either rule is broken — the fallback and the correct value are deliberately
+/// different numbers, and the key address is asserted to be NOT the answer.
 /// </summary>
 public class ContainerGeometryTests
 {
     // TMap<AActor*, float>: key 8 (8-aligned), value 4 => pair 12, pairAlign 8.
-    // Engine strides Align(Align(12,8)+8,8) = 24. The old C# guess gives (12+3&~3)+8 = 20.
+    // Engine strides Align(Align(12,8)+8,8) = 24. The 4-aligned fallback gives (12+3&~3)+8 = 20.
     private const int PairSize = 12;
     private const int TruePairStride = 24;
     private const int StalePairStride = 20;
@@ -45,12 +45,12 @@ public class ContainerGeometryTests
         MapDataAddr = "0x2000",
     };
 
-    // --- V2: the stride must come from the DLL, not from a client-side guess ---
+    // --- The stride must come from the DLL, not from a client-side guess ---
 
     [Fact]
     public void MapStrideOf_PrefersTheStrideTheDllActuallyUsed()
     {
-        // Guard against a regression to the local formula: the two answers differ by 4.
+        // The local formula and the DLL's stride differ by 4, so taking the local one fails here.
         Assert.Equal(StalePairStride, ContainerGeometry.FallbackStride(PairSize));
         Assert.Equal(TruePairStride, ContainerGeometry.MapStrideOf(PointerKeyedMap(TruePairStride)));
     }
@@ -65,13 +65,13 @@ public class ContainerGeometryTests
     [Fact]
     public void SetStrideOf_IsUnchangedByTheFix()
     {
-        // TSet was the case the stale copies got right: a bare elemSize is already a multiple of
-        // alignof(T), so the DLL's elemAlign default of 4 reproduces the old formula exactly.
+        // TSet is the case the fallback formula gets right: a bare elemSize is already a multiple of
+        // alignof(T), so the DLL's elemAlign default of 4 reproduces the fallback exactly.
         var set = new LiveFieldValue { SetCount = 2, SetElemType = "IntProperty", SetElemSize = 4 };
         Assert.Equal(ContainerGeometry.FallbackStride(4), ContainerGeometry.SetStrideOf(set));
     }
 
-    // --- V1: the value address, not the element base ---
+    // --- The value address, not the element base ---
 
     [Fact]
     public void MapValueAddress_TargetsTheValue_NotTheKey()
@@ -84,7 +84,7 @@ public class ContainerGeometryTests
 
         Assert.Equal(0x2000UL + 24 + 8, valueAddr);
         Assert.Equal(0x2000UL + 24, keyAddr);
-        Assert.NotEqual(keyAddr, valueAddr);   // the whole point of V1
+        Assert.NotEqual(keyAddr, valueAddr);   // the whole point: the value is not the key
     }
 
     [Theory]
@@ -94,10 +94,10 @@ public class ContainerGeometryTests
         Assert.Equal(0UL, ContainerGeometry.MapValueAddress(PointerKeyedMap(TruePairStride), dataBase, index));
     }
 
-    // --- V1 at the SEAM: the row the panel actually builds ---
+    // --- The value address at the SEAM: the row the panel actually builds ---
     //
-    // working-lessons 1.3: the helpers above were all individually correct before this fix too.
-    // What was broken was the caller. This drives the real populate path and inspects the row.
+    // working-lessons 1.3: helpers that are individually correct prove nothing about the caller.
+    // This drives the real populate path and inspects the row.
 
     private static LiveWalkerViewModel NewVm() =>
         new(new StubDumpService(), new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
@@ -142,7 +142,7 @@ public class ContainerGeometryTests
         Assert.Equal($"0x{0x2000UL + 2 * 24 + 8:X}", vm.Fields[0].FieldAddress);
     }
 
-    // --- V5 (closed in passing): the geometry must survive the multi-select filter ---
+    // --- The geometry must survive the multi-select filter ---
 
     [Fact]
     public void FilterContainerToElement_PreservesMapGeometry()
@@ -170,7 +170,7 @@ public class ContainerGeometryTests
         var selected = new List<LiveFieldValue> { new() { Name = "[2] C" } };
         var filtered = LiveWalkerViewModel.FilterContainerToElement(full, selected);
 
-        // Dropping either of these silently changes the exported layout (audit #5 V5).
+        // Dropping either of these silently changes the exported layout.
         Assert.Equal(full.MapValueOffset, filtered.MapValueOffset);
         Assert.Equal(full.MapStride, filtered.MapStride);
         Assert.Equal(TruePairStride, ContainerGeometry.MapStrideOf(filtered));

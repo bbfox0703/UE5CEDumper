@@ -407,20 +407,20 @@ public class FieldValueConverterTests
         Assert.Contains("not editable", error);
     }
 
-    // ── audit #5 AE1: the enum path masked instead of refusing ───────────────
+    // ── the enum path refuses instead of masking ───────────────
     //
-    // TryConvertEnum wrote `(byte)(rawValue & 0xFF)` and reported success, so
-    // typing 9999 for a 1-byte enum put 15 in the game while LiveWalker's status
-    // line said "Written: Field = 9999". Every sibling converter in that file
-    // already refused out-of-range and named the range; the enum path did not.
+    // A TryConvertEnum that wrote `(byte)(rawValue & 0xFF)` and reported success
+    // would put 15 in the game for 9999 typed into a 1-byte enum, while
+    // LiveWalker's status line would say "Written: Field = 9999". Like every sibling
+    // converter in that file, the enum path refuses out-of-range and names the range.
 
     [Theory]
     [InlineData(1, "255", true)]
-    [InlineData(1, "-1", true)]      // 0xFF from the other direction — Y5's rule
+    [InlineData(1, "-1", true)]      // 0xFF from the other direction — either signedness fits
     [InlineData(1, "-128", true)]
     [InlineData(1, "0", true)]
     [InlineData(1, "256", false)]
-    [InlineData(1, "9999", false)]   // the reported case
+    [InlineData(1, "9999", false)]   // the masking case: 9999 & 0xFF == 15
     [InlineData(1, "-129", false)]
     [InlineData(2, "65535", true)]
     [InlineData(2, "65536", false)]
@@ -449,8 +449,8 @@ public class FieldValueConverterTests
     [Fact]
     public void TryConvert_EnumProperty_OutOfRange_DoesNotSilentlyTruncate()
     {
-        // The exact regression: 9999 & 0xFF == 15. If this ever returns ok with
-        // a 15 in it, the mask is back in front of the range check.
+        // 9999 & 0xFF == 15. If this ever returns ok with a 15 in it, a mask
+        // runs in front of the range check.
         var (ok, data, _) = FieldValueConverter.TryConvert(
             "EnumProperty", "9999", 1, Array.Empty<EnumEntryValue>());
 

@@ -8,10 +8,9 @@ namespace UE5DumpUI.Tests;
 /// [TEST-TEMP-HYGIENE-2026-11-11] Every run of this suite writes its scratch under one folder of its own, and none of
 /// it outlives the run.
 ///
-/// The suite used to leave about 220 folders straight in %TEMP% per run (2,743 there on 2026-11-11, ~120 MB in a day):
-/// each test class deleted its folder in Dispose and swallowed the failure, and the delete fails whenever
-/// Microsoft.Data.Sqlite's connection pool still holds the .db open. Fixing each Dispose would leave the next new test
-/// free to leak again, so the process's TEMP itself is moved: GetTempPath reads TMP / TEMP on every call, so every test,
+/// A test class that deletes its folder in Dispose and swallows the failure leaks that folder whenever
+/// Microsoft.Data.Sqlite's connection pool still holds the .db open, and a fix per Dispose would leave the next new test
+/// free to leak again. So the process's TEMP itself is moved: GetTempPath reads TMP / TEMP on every call, so every test,
 /// library and child process that asks for a temp folder gets this run's, with no test written for it.
 ///
 /// The run's folder goes when the test session ends (<see cref="EndRun"/>, called by <see cref="TestRunEnd"/>). A run
@@ -30,12 +29,12 @@ internal static class TestTempRoot
     // whose exit removed the file and not the rest. Only the second may go, and a start takes milliseconds.
     internal static readonly TimeSpan OwnerlessMinAge = TimeSpan.FromMinutes(10);
 
-    // Builds before this one wrote straight into %TEMP%. A folder of theirs lives for seconds, so one an hour old is
+    // An older checkout of this suite writes straight into %TEMP%. Its folders live for seconds, so one an hour old is
     // nobody's -- even with a run of an older checkout going on beside this one.
     internal static readonly TimeSpan LegacyMinAge = TimeSpan.FromHours(1);
 
-    // What those builds left: a test class's prefix and a {Guid:N} (one test's folder), or a fixed parent that every
-    // run of such a build shares, its tests' folders inside. Frozen: a test written since writes under the run's folder,
+    // What such a checkout leaves: a test class's prefix and a {Guid:N} (one test's folder), or a fixed parent that every
+    // run of such a checkout shares, its tests' folders inside. Frozen: a new test writes under the run's folder,
     // whatever name it picks.
     private static readonly Regex LegacyName = new(
         "^(?:UE5Dump(?:AobRows|ArrPivot|DiscTest|GroupTest|PivotTest|PivotVm|SnapTest|SnapVm|SpcGroupTest"
@@ -220,8 +219,8 @@ internal static class TestTempRoot
     }
 
     /// <summary>Clears read-only on every file and folder under <paramref name="dir"/> and never enters a reparse
-    /// point: a junction in a run's folder may point at another volume's ROOT (VolumeRootTests makes one). Measured: a
-    /// walk with SearchOption.AllDirectories goes through a junction and changes the files it points at.</summary>
+    /// point: a junction in a run's folder may point at another volume's ROOT (VolumeRootTests makes one), and a walk
+    /// with SearchOption.AllDirectories goes through a junction and changes the files it points at.</summary>
     internal static void ClearReadOnly(string dir)
     {
         foreach (var f in Directory.EnumerateFiles(dir))

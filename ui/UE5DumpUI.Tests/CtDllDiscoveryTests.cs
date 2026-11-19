@@ -8,13 +8,12 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Pins the shipped <c>scripts/UE5CEDumper.CT</c>'s "where is UE5Dumper.dll" block.
 ///
-/// <para>The bug being guarded (2026-08-04): a user opened the table from Cheat Engine's
-/// recent-files menu with the DLL in the same folder, and the script reported it missing.
-/// A CE table script cannot read its own <c>.CT</c> path — no such API exists — so the
-/// folder is inferred, and every source it used (the Open/Save dialog objects) is empty
-/// unless the table came through <c>File &gt; Open</c>. The script also told the user to
-/// "place UE5Dumper.dll in the same folder as this CT file", which is what they had
-/// already done.</para>
+/// <para>The case guarded: a table opened from Cheat Engine's recent-files menu, with the DLL in
+/// the same folder, must still find it. A CE table script cannot read its own <c>.CT</c>
+/// path — no such API exists — so the folder is inferred, and the Open/Save dialog objects
+/// are empty unless the table came through <c>File &gt; Open</c>, so they cannot be the only
+/// source. Nor may a miss tell the user to "place UE5Dumper.dll in the same folder as this
+/// CT file" when that is where it already is.</para>
 ///
 /// <para>None of this can be executed here — it is CE Lua — so these assertions are
 /// structural: the sources are present, the risky ones are guarded, the order puts
@@ -79,7 +78,7 @@ public class CtDllDiscoveryTests
     [Fact]
     public void Picks_the_MRU_entry_by_this_tables_own_filename()
     {
-        // Measured on a real machine: UE5CEDumper.CT was entry 2, not entry 1. Taking
+        // UE5CEDumper.CT need not be the most recent entry. Taking
         // entry[0] blindly would bind to an unrelated game's folder and could load a
         // stale UE5Dumper.dll sitting beside it.
         var s = Ct();
@@ -101,8 +100,8 @@ public class CtDllDiscoveryTests
     {
         // A UE5Dumper.dll in CE's own folder can only have been hand-placed, and is
         // most likely a stale build. Silently loading it is worse than failing.
-        var s = CodeOnly(Ct());   // (seventh review, R7-01) comments out: a commented-out call is not a call
-        int crumb = s.IndexOf("ue5_breadcrumbSlots(_appData)", StringComparison.Ordinal);   // the call (sixth review: a function)
+        var s = CodeOnly(Ct());   // comments out: a commented-out call is not a call
+        int crumb = s.IndexOf("ue5_breadcrumbSlots(_appData)", StringComparison.Ordinal);   // the call (ue5_breadcrumbSlots is a function)
         int ceDir = s.IndexOf("getCheatEngineDir", StringComparison.Ordinal);
         Assert.True(crumb > 0 && ceDir > 0);
         Assert.True(crumb < ceDir, "the UI breadcrumb must be probed before CE's install folder");
@@ -115,9 +114,9 @@ public class CtDllDiscoveryTests
     [Fact]
     public void A_miss_no_longer_aborts_the_whole_table_script()
     {
-        // The old code returned out of the [ENABLE] chunk, leaving ue5_inject /
-        // ue5_shutdown / ue5_log undefined — so the next tick failed with "attempt to
-        // call a nil value", a second error that looked unrelated to the first.
+        // A miss must not return out of the [ENABLE] chunk: that leaves ue5_inject /
+        // ue5_shutdown / ue5_log undefined, so the next tick fails with "attempt to
+        // call a nil value", a second error that looks unrelated to the first.
         var s = Ct();
         Assert.Contains("function ue5_renderDllSearch()", s, StringComparison.Ordinal);
         Assert.Contains("function ue5_pickDllManually()", s, StringComparison.Ordinal);
@@ -143,8 +142,8 @@ public class CtDllDiscoveryTests
     public void Every_undocumented_CE_probe_is_pcall_guarded()
     {
         // These are undocumented published components / optional APIs. An unguarded
-        // read that throws aborts the chunk — which is how the Save-dialog read used to
-        // kill the script before the log was even open.
+        // read that throws aborts the chunk — a bare Save-dialog read kills the script
+        // before the log is even open.
         // Comment lines mention these APIs deliberately, to explain why they are
         // guarded — match CODE only. And the guard is not always on the same line:
         // `pcall(function()` may open a block a few lines above, which is how the
@@ -173,9 +172,9 @@ public class CtDllDiscoveryTests
     }
 
     /// <summary>
-    /// B33 — the readiness poll must try BOTH symbol spellings, via the single shared
-    /// helper. Two hand-copied call sites is how the bare-only spelling survived here
-    /// while eight other places in the repo already tried both.
+    /// The readiness poll must try BOTH symbol spellings, via the single shared helper:
+    /// a hand-copied call site is where a bare-only spelling survives while the rest of
+    /// the repo tries both.
     /// </summary>
     [Fact]
     public void Mailbox_symbol_is_resolved_through_the_two_spelling_helper()
@@ -183,14 +182,14 @@ public class CtDllDiscoveryTests
         var code = CodeOnly(Ct());
         Assert.Contains("function ue5_findMailbox()", code, StringComparison.Ordinal);
         Assert.Contains("\"UE5Dumper.g_invokeMailbox\"", code, StringComparison.Ordinal);
-        // No call site may resolve the bare spelling on its own any more.
+        // No call site may resolve the bare spelling on its own.
         Assert.DoesNotContain("getAddress, \"g_invokeMailbox\"", code, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// B32 — a readiness field that NEVER left IDLE is an old DLL (offset 0x0C used to be
-    /// an <c>int32_t reserved</c> nothing wrote), not a wedged scan. Reporting it as a
-    /// timeout threw a modal error on a perfectly healthy injection, so the two outcomes
+    /// A readiness field that NEVER left IDLE is an old DLL (one whose offset 0x0C is an
+    /// <c>int32_t reserved</c> nothing writes), not a wedged scan. Reporting it as a
+    /// timeout throws a modal error on a perfectly healthy injection, so the two outcomes
     /// must be distinguished before the error branch is reached.
     /// </summary>
     [Fact]

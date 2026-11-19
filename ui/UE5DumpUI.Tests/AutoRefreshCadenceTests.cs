@@ -11,22 +11,20 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Live Walker auto-refresh cadence and suspend/resume lifecycle — `[AUTOREFRESH-2026-08-19]`.
 ///
-/// <para>Reported by the maintainer against dist <b>1.0.0.3262</b>: "Live Walker `Auto`
-/// refresh 無效，秒數數到0後就停在那" — the countdown runs down to 0 and stays there while
-/// nothing refreshes. The session's pipe log carries <b>zero</b> periodic walks over 21
-/// minutes and <b>zero</b> errors, so the panel really did nothing at all and said nothing
-/// about it.</para>
+/// <para>The symptom guarded here: the countdown runs down to 0 and stays there while
+/// nothing refreshes, with no periodic walk and no error in the pipe log — the panel does
+/// nothing at all and says nothing about it.</para>
 ///
-/// <para>Two independent defects sit behind that, and both are pinned here:</para>
+/// <para>Two independent hazards sit behind that, and both are pinned here:</para>
 /// <list type="number">
-/// <item><b>The countdown could freeze.</b> Its only reset lived inside the refresh tick,
-///   PAST the tick's early-return guard, so one permanently-skipping condition pinned the
-///   label at "0s" forever with the Auto toggle still reading ON. <c>RefreshAsync</c>
-///   catches every exception, so a *failing* refresh could not cause this — only a
-///   *skipped* one could.</item>
-/// <item><b>Nothing ever brought auto-refresh back.</b> Switching tabs stopped it, and (as
-///   of audit X5) so does a pipe disconnect — neither had a path back on, so Auto stayed
-///   silently off for the rest of the session.</item>
+/// <item><b>The countdown must not freeze.</b> A reset that lives only inside the refresh
+///   tick, PAST the tick's early-return guard, lets one permanently-skipping condition pin
+///   the label at "0s" forever with the Auto toggle still reading ON. <c>RefreshAsync</c>
+///   catches every exception, so a *failing* refresh cannot cause this — only a
+///   *skipped* one can.</item>
+/// <item><b>Something must bring auto-refresh back.</b> Switching tabs stops it, and so does
+///   a pipe disconnect — without a path back on, Auto stays silently off for the rest of
+///   the session.</item>
 /// </list>
 /// </summary>
 public class AutoRefreshCadenceTests
@@ -59,9 +57,9 @@ public class AutoRefreshCadenceTests
     }
 
     /// <summary>
-    /// The regression itself, with the shipped rule modelled alongside as a negative
+    /// The freeze itself, with a clamp-at-0 rule modelled alongside as a negative
     /// control: run both for four full intervals under a condition that never clears.
-    /// The 3262 rule ends pinned at 0; the fixed rule never can be.
+    /// The clamp rule ends pinned at 0; <c>AutoRefreshCadence.Step</c> never can be.
     /// </summary>
     [Theory]
     [InlineData(AutoRefreshSkip.Editing)]
@@ -70,7 +68,7 @@ public class AutoRefreshCadenceTests
     {
         const int interval = 10;
 
-        int shipped = interval;    // build 3262: decrement, clamp at 0, reset only after a refresh
+        int shipped = interval;    // the clamp rule: decrement, clamp at 0, reset only after a refresh
         int fixedRemaining = interval;
         string label = "";
 
@@ -83,8 +81,8 @@ public class AutoRefreshCadenceTests
             label = step.Label;
         }
 
-        Assert.Equal(0, shipped);                          // the defect, reproduced
-        Assert.InRange(fixedRemaining, 1, interval);       // the fix: it cannot stick
+        Assert.Equal(0, shipped);                          // the clamp rule freezes
+        Assert.InRange(fixedRemaining, 1, interval);       // Step cannot stick
         Assert.NotEqual("sec · 0s", label);
 
         // ...and it names the reason instead of showing a number that is not moving.
@@ -176,14 +174,14 @@ public class AutoRefreshCadenceTests
     [Fact]
     public async Task AutoRefreshComesBackAfterADisconnectAndAReRoot()
     {
-        // The maintainer's actual path: one UI session, connected to one game, the pipe
+        // The real-use path: one UI session, connected to one game, the pipe
         // drops, then it connects to a DIFFERENT game and the panel is re-rooted there.
         var vm = await ConnectedVmOn("0x1000");
         vm.IsAutoRefreshing = true;
         Assert.True(vm.IsAutoRefreshing);
 
         vm.ClearOnDisconnect();
-        // X5's stop is correct and must stay: a live timer would re-walk a dead pipe, and
+        // The disconnect's stop is correct and must stay: a live timer would re-walk a dead pipe, and
         // after reconnecting to another game it would walk the previous game's addresses.
         Assert.False(vm.IsAutoRefreshing);
         Assert.False(vm.HasData);
@@ -194,7 +192,7 @@ public class AutoRefreshCadenceTests
         await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
 
         Assert.True(vm.HasData);
-        Assert.True(vm.IsAutoRefreshing);     // fails before the fix: stayed off forever
+        Assert.True(vm.IsAutoRefreshing);     // without the resume, Auto stays off forever
     }
 
     [Fact]
@@ -229,7 +227,7 @@ public class AutoRefreshCadenceTests
     [Fact]
     public async Task ANavigationReRootStillTurnsAutoOffAndLeavesItOff()
     {
-        // Pre-existing behaviour that must NOT change: drilling elsewhere stops Auto, and
+        // Behaviour the resume must NOT change: drilling elsewhere stops Auto, and
         // the re-root's own UpdateDisplay must not sneak it back on.
         var vm = await ConnectedVmOn("0x1000");
         vm.IsAutoRefreshing = true;
@@ -245,7 +243,7 @@ public class AutoRefreshCadenceTests
     {
         // IsEditing is set from DataGridBeginningEditEventArgs and cleared only from
         // CellEditEnded — which Avalonia does NOT raise when it tears an edit down because
-        // the rows were replaced. A stranded `true` vetoed every auto-refresh tick from
+        // the rows were replaced. A stranded `true` vetoes every auto-refresh tick from
         // then on, silently and for the rest of the session.
         var vm = await ConnectedVmOn("0x1000");
         vm.IsEditing = true;

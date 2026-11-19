@@ -15,15 +15,15 @@ namespace UE5DumpUI.Tests;
 /// (<see cref="LiveFieldValue.CopyLiveValuesFrom"/>) instead of replacing them, which is what keeps
 /// the grid from drifting one row per refresh. But the members that copy does NOT take are
 /// <c>init</c>, so the branch is only correct when those members cannot have changed: the SAME
-/// object, with the SAME row layout. The branch used to check only the field count and
-/// <c>Fields[0].Name</c>, so:
+/// object, with the SAME row layout. A gate on the field count and <c>Fields[0].Name</c> alone
+/// lets through:
 /// <list type="bullet">
-/// <item>opening instance B of a class already on screen kept instance A's rows, with A's
-/// ABSOLUTE <c>StructDataAddr</c> — drilling B's struct walked A's memory, and an edit wrote into
-/// A in the running game;</item>
-/// <item>with Guess? on, guessed rows re-derived from the bytes could move while the count stayed
-/// equal, and every row between two gaps showed its neighbour's value and address under its own
-/// name, still editable.</item>
+/// <item>opening instance B of a class already on screen, which would keep instance A's rows, with
+/// A's ABSOLUTE <c>StructDataAddr</c> — drilling B's struct walks A's memory, and an edit writes
+/// into A in the running game;</item>
+/// <item>with Guess? on, guessed rows re-derived from the bytes moving while the count stays
+/// equal, so every row between two gaps would show its neighbour's value and address under its
+/// own name, still editable.</item>
 /// </list>
 /// Pure VM state — the stub dump service answers every walk, no running game needed.
 /// </summary>
@@ -65,13 +65,13 @@ public class LiveWalkerSameObjectGateTests
         var rowsOfA = vm.Fields.ToList();
         Assert.Equal("0x100020", vm.Fields[1].StructDataAddr);
 
-        // Same class, same count, same first name -- the old gate's three facts all match.
+        // Same class, same count, same first name -- a count-and-first-name gate's facts all match.
         await vm.NavigateToAddressCommand.ExecuteAsync(AddrB);
 
         Assert.Equal(AddrB, vm.CurrentAddress);
         Assert.Equal("40", vm.Fields[0].TypedValue);   // the copied member was right either way
-        // The member the copy does NOT take. Before the fix it stayed A's, so drilling "B > Stats"
-        // walked A's struct and an edit there wrote A's memory.
+        // The member the copy does NOT take. Left as A's, drilling "B > Stats" would walk A's struct
+        // and an edit there would write A's memory.
         Assert.Equal("0x200020", vm.Fields[1].StructDataAddr);
         // A different object gets its own rows, not A's rows repainted.
         for (int i = 0; i < rowsOfA.Count; i++)
@@ -125,7 +125,7 @@ public class LiveWalkerSameObjectGateTests
         await vm.NavigateToAddressCommand.ExecuteAsync(AddrA);
 
         // Same object, next walk: the gap at 0x14 read as padding this time, and a new guessed row
-        // appeared at 0x1C. Four rows, first name Health -- the old gate let this through.
+        // appeared at 0x1C. Four rows, first name Health -- a count-and-first-name gate lets this through.
         dump.RegisterStruct(AddrA, new InstanceWalkResult
         {
             Address = AddrA, Name = "Hero", ClassName = "BP_Hero_C", ClassAddr = "0x900000",
@@ -140,8 +140,8 @@ public class LiveWalkerSameObjectGateTests
 
         await vm.RefreshCommand.ExecuteAsync(null);
 
-        // Every row's address must be its OWN offset. Before the fix the row named Guess_0x14 held
-        // Mana's address and value, and the row named Mana held the new guess's -- editable.
+        // Every row's address must be its OWN offset. Repainted in place, the row named Guess_0x14
+        // would hold Mana's address and value, and the row named Mana the new guess's -- editable.
         foreach (var f in vm.Fields)
             Assert.Equal($"0x{0x100000UL + (ulong)f.Offset:X}", f.FieldAddress);
         var mana = Assert.Single(vm.Fields, f => f.Name == "Mana");
@@ -277,7 +277,7 @@ public class LiveWalkerSameObjectGateTests
     /// Real triggers: toggling Guess? when the only gap is after the last reflected field, and
     /// every refresh of a DataTable (its synthetic RowMap row is appended after the walk). Without
     /// the count check the in-place loop indexes past the end, <c>RefreshAsync</c> catches the
-    /// throw, and the grid silently keeps the old rows. Found by the gate's second review.</summary>
+    /// throw, and the grid silently keeps the old rows.</summary>
     [Theory]
     [InlineData(1)]
     [InlineData(-1)]
@@ -305,8 +305,7 @@ public class LiveWalkerSameObjectGateTests
     /// (<c>Ubel.cpp</c> <c>IsLikelyFloat</c>: "Float" only for a clean .0/.5 at or below 1000,
     /// "Float?" otherwise), while its Name (<c>?0x14_float</c>), Offset and Size stay put. That is
     /// not a layout change: a stat draining from 100.0 to 87.3 must not jump the grid to the top on
-    /// every Auto tick, which is the [LWREFRESH-2026-08-21] defect the in-place branch exists for.
-    /// Found by the gate's own adversarial review.</summary>
+    /// every Auto tick, which is what the in-place branch exists to prevent. [LWREFRESH-2026-08-21]</summary>
     [Theory]
     [InlineData("?0x10_float",  4, "Float",  "Float?")]
     [InlineData("?0x10_float",  4, "Float?", "Float")]

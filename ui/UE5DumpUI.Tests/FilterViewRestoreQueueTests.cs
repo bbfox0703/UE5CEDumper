@@ -5,11 +5,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [KEYWORD-BOX-VIEW-KEEP] A burst of keyword edits faster than the posted restores. Measured on
-/// build 3574 (Interesting Funcs): one row picked, "spawn act" typed and Ctrl+A, Delete sent at
-/// once -- the clear left the row at the bottom edge instead of the top, because every capture
-/// after the first read the detached, empty selection. The View itself needs a live check; this
-/// pins the scheduling it now relies on.
+/// [KEYWORD-BOX-VIEW-KEEP] A burst of keyword edits faster than the posted restores. On
+/// Interesting Funcs: one row picked, "spawn act" typed and Ctrl+A, Delete sent at once -- if
+/// every capture after the first read the detached, empty selection, the clear would leave the
+/// row at the bottom edge instead of the top. The View itself needs a live check; this pins the
+/// scheduling it relies on.
 /// </summary>
 public class FilterViewRestoreQueueTests
 {
@@ -69,7 +69,7 @@ public class FilterViewRestoreQueueTests
         Assert.False(q.IsNewest(first));                // so its posted scroll stands down
     }
 
-    // ── A selection the filter hides entirely is parked (the maintainer's call, 2026-09-27) ──
+    // ── A selection the filter hides entirely is parked ──
 
     [Fact]
     public void A_restore_that_found_none_of_its_selection_parks_it_for_the_next_empty_capture()
@@ -143,9 +143,9 @@ public class FilterViewRestoreQueueTests
         Assert.Equal(1, forgotten);
     }
 
-    /// <summary>Build 3576, measured: a row picked, a keyword that shows no rows, then the clear —
-    /// the row did not come back. Through the real keeper, with a fake View that settles each
-    /// restore the way the binding does.</summary>
+    /// <summary>A row picked, a keyword that shows no rows, then the clear — the row must come
+    /// back. Through the real keeper, with a fake View that settles each restore the way the
+    /// binding does.</summary>
     [Fact]
     public void A_pick_hidden_by_a_typo_comes_back_to_the_top_when_the_keyword_is_cleared()
     {
@@ -181,7 +181,7 @@ public class FilterViewRestoreQueueTests
         Assert.Equal(new object[] { "Spawn_Generation" }, selected);
     }
 
-    /// <summary>The measured burst, end to end through the real keeper: a fake View whose rebuild
+    /// <summary>The header's burst, end to end through the real keeper: a fake View whose rebuild
     /// detaches the selection and whose restores only run when the "dispatcher" drains.</summary>
     [Fact]
     public void A_clear_typed_before_the_restores_ran_brings_the_original_pick_to_the_top()

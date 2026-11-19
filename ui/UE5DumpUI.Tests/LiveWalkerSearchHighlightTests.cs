@@ -9,14 +9,14 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Live Walker field-search highlighting — audit #5 U1/V6.
+/// Live Walker field-search highlighting.
 ///
-/// The defect was not that the matcher was wrong; it was that a Refresh installed a
-/// brand-new set of <see cref="LiveFieldValue"/> rows (whose <c>IsSearchMatch</c>
-/// defaults to false) and never re-ran the matcher, so highlights vanished while
-/// <c>SearchMatchCount</c> and the ↑/↓ stepper kept advertising the previous walk's
-/// count. These tests pin the extracted matcher, including the property that makes
-/// the refresh path correct: marking a DIFFERENT list than the one on screen.
+/// The hazard is not a wrong matcher: a Refresh installs a brand-new set of
+/// <see cref="LiveFieldValue"/> rows (whose <c>IsSearchMatch</c> defaults to false), and
+/// unless it re-runs the matcher the highlights vanish while <c>SearchMatchCount</c> and
+/// the ↑/↓ stepper keep advertising the previous walk's count. These tests pin the
+/// extracted matcher, including the property that makes the refresh path correct:
+/// marking a DIFFERENT list than the one on screen.
 /// </summary>
 public class LiveWalkerSearchHighlightTests
 {
@@ -89,7 +89,7 @@ public class LiveWalkerSearchHighlightTests
     }
 
     /// <summary>
-    /// The V6 property itself: a refresh hands the matcher the NEW rows, before they are
+    /// The refresh property itself: a refresh hands the matcher the NEW rows, before they are
     /// installed into the bound collection. Marking a list the caller supplies — rather
     /// than an internal one — is what makes that possible, so pin it: the freshly walked
     /// rows come back marked, and the count matches, with the on-screen list untouched.
@@ -117,9 +117,9 @@ public class LiveWalkerSearchHighlightTests
         Assert.Equal(0, LiveWalkerViewModel.MarkSearchMatches(new List<LiveFieldValue>(), "health"));
     }
 
-    // ── The WIRING, which is what V6 actually broke ────────────────────────────
+    // ── The WIRING ───────────────────────────────────────────────────────────────
     //
-    // The tests above pin the matcher; the defect was that Refresh never called it.
+    // The tests above pin the matcher; these pin that Refresh calls it.
     // These drive the real RefreshCommand through a stub pipe, so reverting the
     // MarkSearchMatches call in UpdateDisplay turns them red.
 
@@ -149,8 +149,8 @@ public class LiveWalkerSearchHighlightTests
 
         // The keyword survives a refresh by design (clearFieldSearch: false)...
         Assert.Equal("health", vm.SearchText);
-        // ...and so must the highlights it stands for. Before the fix these rows were
-        // brand-new objects with IsSearchMatch == false while the count stayed at 2.
+        // ...and so must the highlights it stands for: these rows are brand-new objects,
+        // IsSearchMatch == false until re-marked, while the count stays at 2.
         Assert.Equal(2, vm.SearchMatchCount);
         Assert.True(vm.HasSearchResults);
         Assert.Equal(2, vm.Fields.Count(f => f.IsSearchMatch));

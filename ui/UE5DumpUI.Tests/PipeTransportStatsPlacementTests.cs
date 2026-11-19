@@ -8,45 +8,43 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// audit #5 AC13 — `PipeTransportStats` had NO test of any kind. This adds the half that
-/// can be tested deterministically, and records why the other half still cannot.
+/// `PipeTransportStats` placement: the half that can be tested deterministically, and why
+/// the other half cannot.
 ///
-/// <para><b>The defect AC13 fixed.</b> The `finally` that records a request's transport
-/// time used to sit around `await tcs.Task` ALONE, so the write-lock wait,
-/// `WriteLineAsync`, and every throw out of the IOException classifier bypassed it: a
-/// request that DIED IN THE WRITE contributed exactly 0 ms, and the IPC average flattered
-/// itself precisely when the pipe was misbehaving. The fix moved the body, not the
-/// comment.</para>
+/// <para><b>The placement.</b> The `finally` in `PipeClient.SendAsync` that records a
+/// request's transport time wraps the whole send, not only the await on the response: the
+/// write-lock wait, `WriteLineAsync` and every throw out of the IOException classifier
+/// count too. Without that, a request that DIED IN THE WRITE would contribute 0 ms, and
+/// the IPC average would flatter itself precisely when the pipe misbehaves.</para>
 ///
 /// <para><b>What this test pins.</b> The other half of the same intent, which is a real
 /// invariant and is deterministic: the not-connected guard sits ABOVE the timer on
 /// purpose — nothing was sent, so there is no transport time to attribute, and a 0 ms
-/// sample would deflate the average just as the missing write-failures inflated it. If
+/// sample would deflate the average just as dropped write-failures would inflate it. If
 /// the timer ever drifts above the guard, every refusal starts logging a 0 ms call and
 /// this test fails.</para>
 ///
-/// <para><b>⚠ What is NOT covered, and the attempt is recorded so it is not re-spent.</b>
+/// <para><b>⚠ What is NOT covered, and why a connected-pipe test is not here.</b>
 /// Testing the positive half — a request that fails BEFORE the response is still counted
 /// — needs `SendAsync` to get past `IsConnected` and a live `_writer`, i.e. a real
-/// connected pipe. That route was built and abandoned on 2026-08-23:</para>
+/// connected pipe, and that route does not work:</para>
 /// <list type="bullet">
 ///   <item>`Constants.PipeName` is a hardcoded `const`, so a test server would bind the
 ///     name a running game's DLL also serves — named pipes allow several server instances
 ///     per name, so the test's client can reach the DLL or the UI's client can reach the
 ///     test. That is the hazard behind CLAUDE.md's "never run pipe_client.py while the UI
-///     is connected". An injectable name was prototyped and reverted with the test.</item>
-///   <item>With an injectable name, `PipeClient.ConnectAsync` **reproducibly never
-///     completes** against an in-process `NamedPipeServerStream`, while a raw
-///     `NamedPipeClientStream` built with identical arguments connects in 0.15 s. Measured
-///     across four variations — `maxNumberOfServerInstances` 1 and 4, on and off the xUnit
-///     synchronization context — every one timed out at the harness bound with the
-///     server's own `WaitForConnectionAsync` reporting completed. Not diagnosed; it is not
-///     an AC13 defect, and it is not worth more time than it already cost.</item>
+///     is connected".</item>
+///   <item>With a test-only name, `PipeClient.ConnectAsync` **never completes**
+///     against an in-process `NamedPipeServerStream`, while a raw `NamedPipeClientStream`
+///     built with identical arguments connects — with `maxNumberOfServerInstances` 1 or
+///     4, on or off the xUnit synchronization context, and with the server's own
+///     `WaitForConnectionAsync` reporting completed. Not diagnosed; it is not a placement
+///     defect.</item>
 /// </list>
 ///
-/// <para>So AC13's placement remains covered only by the guard side. The honest next step
-/// is the one `[AC13-2026-08-22]` already recommends: surface the transport figure where a
-/// disconnect cannot destroy the observable, which makes the live row runnable again.</para>
+/// <para>So the placement is covered only on the guard side. `[AC13-2026-08-22]` names the
+/// next step: surface the transport figure where a disconnect cannot destroy the
+/// observable, which makes the live row runnable again.</para>
 /// </summary>
 public class PipeTransportStatsPlacementTests
 {

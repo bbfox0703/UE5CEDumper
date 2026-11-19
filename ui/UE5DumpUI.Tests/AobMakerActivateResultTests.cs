@@ -8,8 +8,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [AOBM-ACTIVATE-RESULT] SYM used to say "Registered" whenever the plugin replied <c>success</c>, which only ever
-/// meant the record exists. AOBMaker v20260930 (build 155) adds <c>activated</c> and <c>symbolRegistered</c>; an older
+/// [AOBM-ACTIVATE-RESULT] The plugin's <c>success</c> means only that the record exists, so SYM must not read it as
+/// "Registered". AOBMaker v20260930 (build 155) adds <c>activated</c> and <c>symbolRegistered</c>; an older
 /// plugin sends neither, so their absence is "not known", never success, and a reply that never came may still have
 /// left a record behind (AOBMaker reply §3 rule 8).
 /// </summary>

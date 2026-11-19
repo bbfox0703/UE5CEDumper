@@ -342,7 +342,7 @@ public class BookmarkTests
     [Fact]
     public async Task LoadBookmark_DeepCrumbAtWorldAddress_WalksInstance_NotActorList()
     {
-        // Regression: navigating PersistentLevel -> OwningWorld lands on a crumb
+        // Navigating PersistentLevel -> OwningWorld lands on a crumb
         // whose address equals the UWorld address. Loading that bookmark must walk
         // it as an instance, NOT swap in the GWorld actor-list view ("PLV_game").
         var dump = new StubDumpService();
@@ -615,7 +615,7 @@ public class BookmarkTests
         Assert.Contains("loaded", vm.StatusText);
     }
 
-    // Review round 2: a struct leaf has no name of its own -- an inline struct's is its crumb label, which the saved
+    // A struct leaf has no name of its own -- an inline struct's is its crumb label, which the saved
     // name always equals, and a DataTable row's is the DLL's guess over the row's bytes, which a changed row fails.
     // Its identity is the object holding it: the nearest object crumb above, whose label is that object's walked name.
 
@@ -941,7 +941,7 @@ public class BookmarkTests
         // The restored crumb has the in-session shape, so Refresh and Back treat it the same.
         Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);
         Assert.NotNull(vm.Breadcrumbs[^1].ContainerField);
-        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] review round 6: ...its RowMap field included, which a drill's carries
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] ...its RowMap field included, which a drill's carries
         // the RowMap's address (the table 0xDA7A + RowMapOffset 0x30).
         Assert.Equal("0xDAAA", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);
     }
@@ -968,8 +968,8 @@ public class BookmarkTests
     [InlineData(true)]    // the DLL refuses the address: it is not a DataTable any more
     public async Task DataTableViewBookmark_WhoseTableIsGone_IsNotReWalkedByRefresh(bool refuse)
     {
-        // Review of 34681166: the guard's reject left the file-shaped crumb (IsDataTableView, no rows) at the
-        // end of the spine, and Refresh's DataTable branch re-walked that address with NO row-struct check.
+        // The guard's reject leaves the file-shaped crumb (IsDataTableView, no rows) at the end of the spine,
+        // and Refresh's DataTable branch must not re-walk that address with NO row-struct check.
         var dump = new DataTableDump { RowStruct = "FOtherRow", Refuse = refuse };
         var vm = DataTableVm(dump);
         SetupViewModelWithData(vm, objectName: "Prev", className: "Actor", address: "0xBEEF");   // a prior view, so Refresh runs
@@ -1011,9 +1011,9 @@ public class BookmarkTests
     [Fact]
     public async Task BookmarkFile_OnARowWhoseBytesNameItDifferently_IsNotCalledStale()
     {
-        // Review round 2: a row's walked "name" is the DLL's guess over the row's bytes (the struct name, or a name
-        // read where a UObject keeps one), so a row whose leading bytes changed read "stale" while its table was the
-        // same. The row is checked through the table that holds it.
+        // A row's walked "name" is the DLL's guess over the row's bytes (the struct name, or a name read where a UObject
+        // keeps one), so checked by that name a row whose leading bytes changed would read "stale" while its table is
+        // the same. The row is checked through the table that holds it.
         var dump = new DataTableDump();
         dump.RegisterStruct("0xDA7A", new InstanceWalkResult
         {

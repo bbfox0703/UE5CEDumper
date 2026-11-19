@@ -510,8 +510,8 @@ public class TeleportViewModelTests
         ["time"] = d.GetTimeStateCalls, ["foreground"] = d.GetForegroundLockCalls, ["fly"] = d.FlyGetStateCalls,
     };
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: only God Mode's re-read was tested. Each card someone else holds is read
-    // again by its own read and by no other card's.
+    // [MCP-WRITE-GRANTS-2026-11-14] Every card, not only God Mode: each card someone else holds is read again by its own
+    // read and by no other card's.
     [Theory]
     [InlineData(Constants.HoldGodMode, "god")]
     [InlineData(Constants.HoldDebugCamera, "camera")]
@@ -593,7 +593,7 @@ public class TeleportViewModelTests
         Assert.Equal("Held by a program that has exited (pid 99)", vm.GodModeHolderText);
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: a pid Windows gives to a new process names that process, not the one that
+    // [MCP-WRITE-GRANTS-2026-11-14] A pid Windows gives to a new process names that process, not the one that
     // exited -- an AI session's MCP server among them.
     [Fact]
     public async Task AnExitedHoldersPid_ThatRunsAgain_IsNamedForWhatRunsNow()
@@ -614,8 +614,8 @@ public class TeleportViewModelTests
     {
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: a lookup lists every process and window; seven holds of one AI session
-    // made seven of them on the UI thread every two seconds.
+    // [MCP-WRITE-GRANTS-2026-11-14] A lookup lists every process and window, so one lookup per hold would run several on
+    // the UI thread every two seconds for the holds of one AI session.
     [Fact]
     public async Task EachHolderPid_IsLookedUpOncePerPoll_OffTheCallersThread()
     {
@@ -652,7 +652,7 @@ public class TeleportViewModelTests
         };
         await vm.DetectStealthMeterCommand.ExecuteAsync(null);
         // Matched whole and ordinally: a job on another spelling is another job, which this card's Reset does not end.
-        // Listed first, so a looser match would name it (review: listed second, nothing could tell).
+        // Listed first, so a looser match would name it (listed second, nothing could tell).
         var otherSpelling = HeldBy(Constants.HoldForceFieldPrefix + "bp_player_c" + Constants.HoldForceFieldSeparator
                                    + "Visibility", kind: "ce", pid: null, background: false);
         var longer = HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator
@@ -690,7 +690,7 @@ public class TeleportViewModelTests
         return (vm, dump);
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: the chip says the card's Reset takes the feature over and ends it.
+    // [MCP-WRITE-GRANTS-2026-11-14] The chip says the card's Reset takes the feature over and ends it.
     [Fact]
     public async Task TheStealthCardsReset_EndsTheJobItsChipNames()
     {
@@ -727,7 +727,7 @@ public class TeleportViewModelTests
         Assert.Equal(searches, dump.FindStealthCalls);         // the forced fields only: no search of the pawn
     }
 
-    // Review round 2: Solide keeps a job that matched no live instance (a menu, a level between); it holds nothing yet.
+    // Solide keeps a job that matched no live instance (a menu, a level between); it holds nothing yet.
     [Fact]
     public async Task AStealthJobHoldingNoInstance_ReadsArmed_NotHolding()
     {
@@ -762,7 +762,7 @@ public class TeleportViewModelTests
         Assert.Equal("Armed @0", vm.StealthState);
     }
 
-    // Review round 2: the badge followed the job and the readout kept "= 0 (held)" -- Off beside held, or a value the
+    // The readout follows the job as the badge does; kept at "= 0 (held)" it would read Off beside held, or a value the
     // holder no longer holds.
     [Fact]
     public async Task TheStealthReadout_FollowsTheJobSomeoneElseHolds()
@@ -849,7 +849,7 @@ public class TeleportViewModelTests
         Assert.Equal(0, dump.GetProtectStateCalls);
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: the read a card is owed once its holder lets go is made, whatever the
+    // [MCP-WRITE-GRANTS-2026-11-14] The read a card is owed once its holder lets go is made, whatever the
     // poll that saw the release met -- a command running, or a read that failed.
     [Fact]
     public async Task AHoldReleasedWhileACommandRuns_IsReadOnceTheCommandEnds()
@@ -913,7 +913,7 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.SeeThroughState);
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: get_debug_camera_state reads OFF until a queued ON's toggle runs, so a
+    // [MCP-WRITE-GRANTS-2026-11-14] get_debug_camera_state reads OFF until a queued ON's toggle runs, so a
     // read then would replace the card's "Queued" ([W3-DEBUGCAM-QUEUED]) with an OFF the game is about to undo.
     [Fact]
     public async Task ADebugCameraOnOnItsWay_IsShownQueued_AndReadOnceItRuns()
@@ -1038,7 +1038,7 @@ public class TeleportViewModelTests
         Assert.Equal("", vm.GodModeHolderText);
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: the case the generation check is for. The test above drops its reply through
+    // [MCP-WRITE-GRANTS-2026-11-14] The case the generation check is for. The test above drops its reply through
     // IsConnected alone; here the window is connected again, perhaps to another game, when the old reply lands.
     [Fact]
     public async Task AReplyFromBeforeAReconnect_IsDropped_AndLeavesTheNewStartItsBaseline()
@@ -1144,8 +1144,8 @@ public class TeleportViewModelTests
     [Fact]
     public async Task SaveMarker_FromAParentRelativeRead_SaysSo_InTheStatusAndTheRow()
     {
-        // The pose card warns "do not save these as a marker" -- and the save path had no way to know. A save
-        // from the degraded read now carries the flag, and the row and the status name it.
+        // The pose card warns "do not save these as a marker", so the save path must know too: a save from the
+        // degraded read carries the flag, and the row and the status name it.
         var fake = new FakeDumpService
         {
             NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", Source = "raw", ParentRelative = true },
@@ -1165,8 +1165,8 @@ public class TeleportViewModelTests
     [InlineData(true, false)]    // a healthy save switches a stale chip OFF
     public async Task SaveMarker_TheReplysFlagDrivesThePoseChip_ThoughItCarriesNoSource(bool chipBefore, bool parentRel)
     {
-        // Review 5 of 7490c24e: the save reply carries parent_relative but never 'source', and ApplyPose kept the chip
-        // for a source-less reply -- so a degraded save showed parent-relative numbers under a chip that stayed off.
+        // The save reply carries parent_relative but never 'source', so the reply's flag must drive the chip: keeping
+        // the chip for a source-less reply shows a degraded save's parent-relative numbers under a chip that stays off.
         var fake = new FakeDumpService
         {
             NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", SourceAbsent = true,
@@ -1480,10 +1480,9 @@ public class TeleportViewModelTests
         Assert.Equal("Holding @0", vm.StealthState);   // the hold itself still succeeded
     }
 
-    // Regression for audit #3 M9: turning the experimental gate OFF force-disabled
-    // Keep-Foreground / Fly / SeeThrough but NOT an active Solide stealth hold, so its
-    // re-assert worker kept writing after the (gated) Stealth card was hidden, with no
-    // visible way to stop it. The gate-off teardown now releases the hold too.
+    // Turning the experimental gate OFF force-disables Keep-Foreground / Fly / SeeThrough
+    // and must release an active Solide stealth hold too: otherwise its re-assert worker
+    // keeps writing after the (gated) Stealth card is hidden, with no visible way to stop it.
     [Fact]
     public async Task ExperimentalGateOff_releases_active_stealth_hold()
     {
@@ -1535,8 +1534,8 @@ public class TeleportViewModelTests
         Assert.Equal(0, fake.ResetFieldCalls);
     }
 
-    // Regression for audit #3 L13: SetConnected(false) reset every card badge EXCEPT the
-    // Stealth card, so a reconnect (possibly to a different game) showed a stale hold.
+    // SetConnected(false) resets every card badge, the Stealth card included, or a reconnect
+    // (possibly to a different game) shows a stale hold.
     [Fact]
     public async Task Disconnect_resets_stealth_card()
     {
@@ -1557,7 +1556,7 @@ public class TeleportViewModelTests
         vm.SetConnected(false);
 
         // [A4-STEALTH-PRIME] "Unknown", not "Off": the DLL's hold survives a PIPE drop for as long as the game lives, so
-        // "Off" was a claim nothing had checked. The connect prime settles it.
+        // "Off" would be a claim nothing has checked. The connect prime settles it.
         Assert.Equal("Unknown", vm.StealthState);
         Assert.Equal("—", vm.StealthFieldText);
     }
@@ -1583,8 +1582,8 @@ public class TeleportViewModelTests
         Assert.Equal("Holding @0", vm.StealthState);
     }
 
-    // [STEALTH-RESET-STALE-HELD] L58: after a primed hold, Reset released it and set the badge Off, but left the readout
-    // claiming "= 0 (held)" -- ResetStealthAsync never touched StealthFieldText.
+    // [STEALTH-RESET-STALE-HELD] After a primed hold, Reset releases it and sets the badge Off, and must drop the readout
+    // too: a StealthFieldText left alone keeps claiming "= 0 (held)".
     [Fact]
     public async Task Reset_after_a_primed_hold_drops_the_held_readout()
     {
@@ -1622,9 +1621,9 @@ public class TeleportViewModelTests
         Assert.Contains("no stealth meter", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
-    // [STEALTH-RESET-STALE-HELD] (review): a reconnect during a loading screen -- find_stealth_meter answers nothing, so
-    // the prime cannot match the forced field and the card shows Unknown with no meter. Reset then sent nothing, yet set
-    // the badge Off and said there was no hold to release, over a hold Solide may still run.
+    // [STEALTH-RESET-STALE-HELD] A reconnect during a loading screen -- find_stealth_meter answers nothing, so the prime
+    // cannot match the forced field and the card shows Unknown with no meter. Reset then sends nothing, and must not set
+    // the badge Off or say there is no hold to release, over a hold Solide may still run.
     [Fact]
     public async Task Reset_with_no_known_meter_claims_neither_Off_nor_an_absent_hold()
     {
@@ -1649,9 +1648,9 @@ public class TeleportViewModelTests
         Assert.Contains("Detect", vm.StatusText);   // what the user can do about it
     }
 
-    // [STEALTH-RESET-STALE-HELD] batch 2's review: the "Detect first" advice showed in every meter-less state, the Off one
-    // too, where the prime read every hold the DLL has and there was none. Following it (Detect, then Reset) sent
-    // reset_field for a job that never existed, which Solide answers OK, and the card said "Released".
+    // [STEALTH-RESET-STALE-HELD] The "Detect first" advice must not show in the Off state, where the prime read every hold
+    // the DLL has and there was none. Following it (Detect, then Reset) would send reset_field for a job that never
+    // existed, which Solide answers OK, and the card would say "Released".
     private static FakeDumpService NothingForcedFake() => new()
     {
         NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
@@ -1747,7 +1746,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task HoldStealth_zero_held_because_only_templates_exist_says_so()
     {
-        // [LISTINSTANCES-KEEPS-TEMPLATES] review 1: the Teleport card's twin of Property Search's note.
+        // [LISTINSTANCES-KEEPS-TEMPLATES] The Teleport card's twin of Property Search's note.
         var fake = new FakeDumpService
         {
             NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
@@ -1966,8 +1965,8 @@ public class TeleportViewModelTests
     }
 
     // ── [TELEPORT-RECALL-PARENTREL] a pose that is not world coordinates ───────────
-    // Marker Recall and Force, TP facing direction, Fill from current pos and the coordinate library each took a pose read
-    // from the parent-relative fallback for world coordinates. The DLL now refuses the jumps (-16); the UI refuses to
+    // Marker Recall and Force, TP facing direction, Fill from current pos and the coordinate library must not take a pose
+    // read from the parent-relative fallback for world coordinates. The DLL refuses the jumps (-16); the UI refuses to
     // store such numbers where nothing can carry the flag.
 
     [Theory]
@@ -2071,8 +2070,8 @@ public class TeleportViewModelTests
         Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
     }
 
-    /// <summary>Review of e6c2f841: the library's distance column measured from the live pose whatever it was, so a
-    /// parent-relative read was taken for world coordinates there too.</summary>
+    /// <summary>The library's distance column must not measure from a parent-relative pose: that read is not world
+    /// coordinates there either.</summary>
     [Fact]
     public async Task A_parent_relative_pose_gives_the_library_no_distance()
     {
@@ -2092,8 +2091,8 @@ public class TeleportViewModelTests
         Assert.False(vm.CoordResults[0].HasDistance);
     }
 
-    /// <summary>Review of 017e8a76: a jump whose position could not be read in world coordinates saves no undo point,
-    /// so the empty-slot texts no longer say every jump saves it.</summary>
+    /// <summary>A jump whose position could not be read in world coordinates saves no undo point, so the empty-slot
+    /// texts must not say every jump saves it.</summary>
     [Fact]
     public async Task RecallLast_on_an_empty_slot_does_not_claim_every_jump_saves_it()
     {
@@ -2277,23 +2276,23 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.FlyState);
     }
 
-    // ⛔ [SLICEB-FLY-2026-09-09] -- BOTH fly status lines were claims from the ATTEMPT.
+    // ⛔ [SLICEB-FLY-2026-09-09] -- neither fly status line may be a claim from the ATTEMPT.
     //
     // The DLL's SetEnabled writes one byte (UCharacterMovementComponent::MovementMode) and
     // that write IS the effect; everything else is bookkeeping. Macht::WriteBytes returns
-    // false when VirtualProtect refuses a freed page or the memcpy faults, and both call
-    // sites dropped it -- so the enable path returned 1 and logged "Fly: ENABLED" over a
-    // pawn that never left its old mode, and the disable path cleared `active` and logged
-    // "Fly: DISABLED" over a pawn still in MOVE_Flying with nothing tracking it.
+    // false when VirtualProtect refuses a freed page or the memcpy faults; a call site that
+    // drops it logs "Fly: ENABLED" over a pawn that never left its old mode, or clears
+    // `active` and logs "Fly: DISABLED" over a pawn still in MOVE_Flying with nothing
+    // tracking it.
     //
-    // ⭐ THE UI HALF IS SEPARATELY WRONG, which is why these are two tests and not one:
-    // ApplyFly keyed its "Fly ON" on st.HasCmc -- "a CharacterMovement was RESOLVED" -- and
-    // ResetFly said "Fly OFF." unconditionally. Both would have gone on lying even after the
-    // DLL started telling the truth. FlyStatus.State has carried the code all along.
+    // ⭐ THE UI HALF CAN BE WRONG ON ITS OWN, which is why these are two tests and not one:
+    // a "Fly ON" keyed on st.HasCmc -- "a CharacterMovement was RESOLVED" -- or a "Fly OFF."
+    // said unconditionally lies even while the DLL tells the truth. FlyStatus.State carries
+    // the code.
 
-    // [FLY-REPORTS-WISH] "Fly ON (noclip)" was built from the card's own checkbox, and the DLL's `noclip` key is the
-    // request: a game whose pawn class has no SetActorEnableCollision, or a call the game thread never ran, left the
-    // pawn colliding under a card that said noclip. The DLL now reads bActorEnableCollision on the pawn.
+    // [FLY-REPORTS-WISH] "Fly ON (noclip)" must not be built from the card's own checkbox, nor from the DLL's `noclip` key,
+    // which is the request: a game whose pawn class has no SetActorEnableCollision, or a call the game thread never ran,
+    // leaves the pawn colliding under a card that says noclip. The DLL reads bActorEnableCollision on the pawn.
 
     [Fact]
     public async Task Fly_noclip_with_collision_still_on_does_not_say_noclip()
@@ -2327,9 +2326,8 @@ public class TeleportViewModelTests
         Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
     }
 
-    // [FLY-REPORTS-WISH] review round 2: fly_set answers before the Fly worker's next tick applies noclip on the game
-    // thread, so its `collision` is always the one from before. Measured on build 3672, DumperTest Development: the reply
-    // said 1, and the pawn read 0 103 ms later. The card re-reads fly_get_state until what it reads agrees with what it
+    // [FLY-REPORTS-WISH] fly_set answers before the Fly worker's next tick applies noclip on the game thread, so its
+    // `collision` is always the one from before. The card re-reads fly_get_state until what it reads agrees with what it
     // asked for, or a bounded window ends; then it says what it read.
 
     [Fact]
@@ -2369,7 +2367,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task Fly_without_noclip_over_a_pawn_still_not_colliding_does_not_say_collision()
     {
-        // [FLY-REPORTS-WISH] review round 2: the other direction of the same report. A pawn left not colliding (an
+        // [FLY-REPORTS-WISH] The other direction of the same report. A pawn left not colliding (an
         // earlier noclip whose restore the game thread refused) under a Fly ON with noclip unticked.
         var fake = new FakeDumpService();
         var vm = CreateVm(fake, out _);
@@ -2569,10 +2567,9 @@ public class TeleportViewModelTests
 
     /// <summary>
     /// [QUERYPTR-LOG-ABSENT-LABEL] The global-pointer record reaches the clipboard on three different branches, and
-    /// the log has to say which. Measured in L80's run (2026-09-23): a second Get GWorld click takes the
-    /// already-pushed branch, where the push is never attempted -- and the log read only "was a push attempted", so
-    /// it wrote "(AOBMaker absent)" with the toolbar showing AOBMaker Connected. A reader chasing a failed push was
-    /// sent after a disconnect that never happened.
+    /// the log has to say which. A second Get GWorld click takes the already-pushed branch, where the push is never
+    /// attempted -- so a log that reads only "was a push attempted" writes "(AOBMaker absent)" with the toolbar showing
+    /// AOBMaker Connected, and sends a reader chasing a failed push after a disconnect that never happened.
     /// </summary>
     [Theory]
     [InlineData("already pushed", "(already pushed this session)")]
@@ -2606,7 +2603,8 @@ public class TeleportViewModelTests
     [Fact]
     public async Task ForceDebugCameraOn_whose_toggle_ran_on_the_class_default_object_says_so()
     {
-        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note (a DLL from builds 3676-3681).
+        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note (a DLL whose toggle ran on the
+        // class default object).
         var fake = new FakeDumpService { NextDebugCameraState = 0, NextDebugCameraOnTemplate = true };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
@@ -2711,7 +2709,7 @@ public class TeleportViewModelTests
     public async Task ForceDebugCamera_OFF_queued_does_not_promise_that_it_will_turn_the_camera_off()
     {
         // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): the Teleport card's twin of the Console's queued-OFF text -- and badge:
-        // (review) "Queued" read as an OFF on its way over a camera that stays on, so it reads ON.
+        // "Queued" would read as an OFF on its way over a camera that stays on, so it reads ON.
         var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
@@ -2730,7 +2728,7 @@ public class TeleportViewModelTests
     public async Task ForceDebugCamera_over_an_opposite_queued_toggle_says_it_was_not_sent(bool wantOn, string badge,
                                                                                            string says)
     {
-        // [DBGCAM-OFF-OVER-QUEUED-ON] review: the Teleport card's twin of the Console's -6 handling.
+        // [DBGCAM-OFF-OVER-QUEUED-ON] The Teleport card's twin of the Console's -6 handling.
         var fake = new FakeDumpService { NextDebugCameraState = -6 };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
@@ -2783,17 +2781,17 @@ public class TeleportViewModelTests
         Assert.Equal("Unknown", vm.GodModeState);
     }
 
-    // ══ Audit #5 AD4 — the God Mode badge told three different situations apart
-    // by collapsing them into one number, so it could not.
+    // ══ The God Mode badge tells three different situations apart, which one
+    // collapsed number cannot.
     //
-    // get_god_mode returns a single tri-state. get_protect_state has shipped in the
-    // DLL since build 1251 carrying want / live / resolvable separately, with zero
-    // clients. Each case below rendered as a flat "OFF" or "Unknown" before.
+    // get_god_mode returns a single tri-state. get_protect_state carries want /
+    // live / resolvable separately, and the badge reads it. Read through the
+    // tri-state, each case below would render as a flat "OFF" or "Unknown".
     // ═══════════════════════════════════════════════════════════════════
 
     /// <summary>Enabled, but nothing to write to yet — the hold is armed and will
-    /// engage when a pawn spawns. Used to read "Unknown", i.e. indistinguishable
-    /// from a broken connection.</summary>
+    /// engage when a pawn spawns. "Unknown" here would be indistinguishable from a
+    /// broken connection.</summary>
     [Fact]
     public async Task GodMode_wanted_but_unresolvable_reads_pending_not_unknown()
     {
@@ -2828,10 +2826,9 @@ public class TeleportViewModelTests
     }
 
     /// <summary>THE CELL THAT MATTERS. The hold is engaged and resolvable, and the
-    /// game just won the drift race — the re-assert worker will take it back. This
-    /// read "OFF", identical to never having enabled it, which is the exact
-    /// conflation the fix exists to remove. Omitting this case would have
-    /// reproduced the defect inside its own repair.</summary>
+    /// game just won the drift race — the re-assert worker will take it back.
+    /// Read as "OFF" it is identical to never having enabled it, the exact
+    /// conflation the badge exists to remove.</summary>
     [Fact]
     public async Task GodMode_engaged_but_drifted_reads_contested_not_off()
     {
@@ -3138,10 +3135,10 @@ public class TeleportViewModelTests
 
     // ---- [W2-GRAVDIR-VERDICT] a transient absence is not a verdict about the engine ----
     //
-    // The card said "needs UE5.4+ (no reflected GravityDirection)" and painted an amber Unavailable badge
-    // whenever a pawn / CMC did not resolve AT THAT INSTANT -- main menu, loading, cutscene, spectator,
-    // vehicle pawn -- on engines that fully support it. The apply status checked `resolved` first, and
-    // that comes from a fresh read which is false with no pawn as well.
+    // The card must not say "needs UE5.4+ (no reflected GravityDirection)" or paint an amber Unavailable badge
+    // whenever a pawn / CMC does not resolve AT THAT INSTANT -- main menu, loading, cutscene, spectator,
+    // vehicle pawn -- on engines that fully support it. `resolved` comes from a fresh read, which is false
+    // with no pawn as well, so it is no verdict about the engine.
 
     [Fact]
     public async Task GravDir_readout_without_a_pawn_is_Unknown_not_a_version_verdict()
@@ -3224,8 +3221,8 @@ public class TeleportViewModelTests
     [Fact]
     public async Task LocateGravDir_without_a_pawn_is_not_a_version_verdict()
     {
-        // The review of B21 found a third entrance: Locate re-read the params, painted the right
-        // Unknown badge, then overwrote the status with "needs UE5.4+".
+        // A third entrance: Locate re-reads the params and paints the right Unknown badge, and
+        // must not then overwrite the status with "needs UE5.4+".
         var fake = new FakeDumpService { NextMovementParams = new MovementParams { HasCmc = false } };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
@@ -3437,10 +3434,10 @@ public class TeleportViewModelTests
         var fake = new FakeDumpService { NextCursorState = 1 };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
-        // Connect now PRIMES every badge the disconnect branch resets, the cursor
+        // Connect PRIMES every badge the disconnect branch resets, the cursor
         // included ([BADGEPRIME]), so wait for that and start the count from
-        // zero. Asserting ">= 1" instead would have hidden the duplicate-call regression
-        // this test exists to catch.
+        // zero. Asserting ">= 1" instead would hide the duplicate call this test
+        // exists to catch.
         await vm.ConnectPrime;
         int before = fake.GetCursorCalls;
 
@@ -4459,7 +4456,7 @@ public class TeleportViewModelTests
     [Fact]
     public void CoordLibrary_pending_import_is_dropped_when_the_game_changes()
     {
-        // The diff was computed against the PREVIOUS game's library, so applying it
+        // The diff is computed against the PREVIOUS game's library, so applying it
         // after a game switch would write those rows into the new game's file. This
         // fires even while the card is hidden, so the stale preview is invisible.
         var vm = CreateVm(new FakeDumpService(), out _,
@@ -4538,8 +4535,9 @@ public class TeleportViewModelTests
     [Fact]
     public void AddCoordFromFields_reads_the_map_at_add_time()
     {
-        // The second entrance: nothing had read the pose yet (a fresh connect, or right after a
-        // directional teleport), so PoseMap was "" and the entry went to disk with map = "".
+        // The second entrance: nothing has read the pose yet (a fresh connect, or right after a
+        // directional teleport), so PoseMap is "" and, unless the add reads it, the entry goes
+        // to disk with map = "".
         var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
         var vm = CreateVm(fake, out _);
         vm.IsConnected = true;
@@ -4554,7 +4552,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task SaveCurrentPos_is_refused_while_the_library_is_unavailable()
     {
-        // [PATH-UI-LEGACY-QMARK] (skeptic T5) The save-pose path of the refusal, which no test reached.
+        // [PATH-UI-LEGACY-QMARK] The save-pose path of the refusal.
         string dir = Path.Combine(Path.GetTempPath(), "ue5-qmark-pose", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
@@ -4622,8 +4620,8 @@ public class TeleportViewModelTests
     }
 
     /// <summary>A narrowing rebuilds the rows; the view model re-selects the kept entry itself
-    /// (selecting runs the editor sync, B20) and the View is handed it to keep visible, keyed
-    /// on the uid because the row objects are new.</summary>
+    /// (selecting runs the editor sync, so an edit in progress must survive it) and the View is handed it to keep
+    /// visible, keyed on the uid because the row objects are new.</summary>
     [Fact]
     public async Task A_coord_narrowing_keeps_the_entry_selected_and_hands_it_to_the_View()
     {
@@ -4640,7 +4638,7 @@ public class TeleportViewModelTests
         vm.CoordFilterText = "cas";
 
         Assert.Equal(uid, vm.SelectedCoord?.Entry.Uid);
-        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);    // B20: not reverted
+        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);    // the edit in progress is not reverted
         var (row, mode) = Assert.Single(handed);
         Assert.Equal(UE5DumpUI.Helpers.FilterViewRestore.Narrowed, mode);
         Assert.Equal(uid, vm.CoordView.KeyOf!(row));
@@ -4651,7 +4649,7 @@ public class TeleportViewModelTests
         Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);
     }
 
-    /// <summary>[B21-CSV-QUOTE-HOLES] The maintainer's call (2026-10-28): a double quote typed into the label or
+    /// <summary>[B21-CSV-QUOTE-HOLES] A double quote typed into the label or
     /// the group is refused, not stored -- it is the one character a hand-edited CSV mis-splits on. Nothing
     /// changes, and the status says why.</summary>
     [Fact]
@@ -4675,9 +4673,9 @@ public class TeleportViewModelTests
         Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
     }
 
-    /// <summary>Review finding: the refusal tested the whole pre-filled label, so an entry that already held a
-    /// quote (imported, or typed before quotes were refused) could not even have its group changed. Only a quote
-    /// the edit ADDS is refused.</summary>
+    /// <summary>Only a quote the edit ADDS is refused: testing the whole pre-filled label would leave an entry that
+    /// already holds a quote (imported, or typed before quotes were refused) unable even to have its group
+    /// changed.</summary>
     [Fact]
     public async Task An_entry_that_already_holds_a_quote_can_still_be_edited()
     {
@@ -4692,9 +4690,9 @@ public class TeleportViewModelTests
         Assert.Equal("Bosses", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
     }
 
-    /// <summary>Review round 3: "unchanged" was judged after Normalize, which trims -- so a stored field cut at a
-    /// space by the import's length cap no longer matched itself, and its quote read as typed. The untouched field
-    /// is compared as the editor shows it.</summary>
+    /// <summary>The untouched field is compared as the editor shows it: judged after Normalize, which trims, a stored
+    /// field cut at a space by the import's length cap would no longer match itself, and its quote would read as
+    /// typed.</summary>
     [Fact]
     public async Task An_untouched_field_that_was_cut_at_a_space_is_still_unchanged()
     {
@@ -4703,7 +4701,7 @@ public class TeleportViewModelTests
         vm.BuildImportPreview(CoordCsvCodec.Parse($"label,group,map,x,y,z\nPlain,\"{group}\",M,7,8,9\n"), "t.csv");
         vm.ApplyCoordImportCommand.Execute(null);
         vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Plain");
-        Assert.EndsWith(" ", vm.SelectedCoord!.Entry.Group);   // the shape the finding needs
+        Assert.EndsWith(" ", vm.SelectedCoord!.Entry.Group);   // the shape this case needs
 
         vm.EditCoordLabel = "Plain renamed";
         vm.ApplyCoordEditCommand.Execute(null);
@@ -4711,7 +4709,7 @@ public class TeleportViewModelTests
         Assert.Contains(vm.CoordResults, r => r.Label == "Plain renamed");
     }
 
-    /// <summary>Review round 3: a changed field may not hold a quote even when the quote was already there (a
+    /// <summary>A changed field may not hold a quote even when the quote was already there (a
     /// case-only fix of an imported label) -- by design, but then the status must not say a quote was typed.</summary>
     [Fact]
     public async Task Changing_a_field_that_holds_a_quote_is_refused_without_claiming_one_was_typed()
@@ -4729,8 +4727,8 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("typed", vm.CoordStatus, StringComparison.Ordinal);
     }
 
-    /// <summary>Review round 2: counting quotes let a typed one through whenever the same edit deleted a stored
-    /// one. A field the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
+    /// <summary>Counting quotes would let a typed one through whenever the same edit deleted a stored one. A field
+    /// the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
     [Fact]
     public async Task A_quote_typed_while_deleting_a_stored_one_is_still_refused()
     {
@@ -4803,7 +4801,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task A_healthy_read_clears_the_parent_relative_state()
     {
-        // The control, green before and after (nothing set the state before the fix).
+        // The control: a healthy read must clear what a degraded one set.
         var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
         var vm = CreateVm(fake, out _);
         vm.IsConnected = true;
@@ -4950,9 +4948,9 @@ public class TeleportViewModelTests
     [Fact]
     public async Task A_push_that_finds_the_pipe_gone_reaches_the_toolbar_even_when_the_flag_already_said_so()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 3, F-A. The no-DLL push is gated on the BRIDGE, not this panel's flag,
-        // so the flag can already say "down" when the push learns the pipe is gone. Set directly, false -> false raised
-        // nothing, and the toolbar chip -- which mirrors a change -- kept saying "connected" over a dead pipe.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The no-DLL push is gated on the BRIDGE, not this panel's flag, so the flag can
+        // already say "down" when the push learns the pipe is gone. Set directly, false -> false raises nothing, and the
+        // toolbar chip -- which mirrors a change -- would keep saying "connected" over a dead pipe.
         var bridge = new ScriptedAobMakerBridge
         {
             Available = true, AaResult = false, AaDetail = new SymbolScriptResult(false, null, null, null),
@@ -5027,7 +5025,7 @@ public class TeleportViewModelTests
     {
         // [COORDPICK-TIMEDOUT-TEXT] A pipe another client holds fails the connect too, and the bridge records Busy.
         // Starting or checking Cheat Engine cannot help there ([W1-PIPEBUSY-STATUS]), so the line takes the bridge's
-        // own sentence, as the guard above this push already does (review of the final review's fixes).
+        // own sentence, as the guard above this push already does.
         var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null),
                                                 availableAfter: false, failure: AobMakerFailure.Busy);
 
@@ -5059,10 +5057,10 @@ public class TeleportViewModelTests
 
     /// <summary>
     /// [AOBM-TRAINER-SETUP-MODAL] The standalone trainer lands in CE with every entry unticked, Setup included. A
-    /// Setup that fails raises <c>showMessage</c>; activated by the push, that modal ran on CE's main thread while the
-    /// plugin's single bridge worker waited on it, so every bridge client stalled until the user closed it. Ticked by
+    /// Setup that fails raises <c>showMessage</c>; activated by the push, that modal would run on CE's main thread while
+    /// the plugin's single bridge worker waits on it, so every bridge client stalls until the user closes it. Ticked by
     /// the user, no bridge call waits on the activation and the bridge keeps serving other clients while the modal is
-    /// open (measured live 2026-09-29, build 3603) -- so the status has to tell the user to tick Setup.
+    /// open -- so the status has to tell the user to tick Setup.
     /// </summary>
     [Fact]
     public async Task Standalone_trainer_push_leaves_Setup_for_the_user_to_tick()
@@ -5164,19 +5162,17 @@ public class TeleportViewModelTests
     }
     /// <summary>
     /// [BADGEPRIME] — connect must PRIME every badge the disconnect branch
-    /// resets, not three of twelve.
+    /// resets, not only some of them.
     /// </summary>
     /// <remarks>
-    /// <para>Observed live on a Shipping fixture before the fix: Keep Foreground, Move
-    /// Speed, Debug Camera, Gravity, Super Jump and Fly all read "State: Unknown" while the
-    /// pipe answered <c>state: 0</c> / <c>has_cmc: true</c> for each — and God Mode and
-    /// Time Dilation showed real values, which were exactly the two that were primed. That
-    /// pairing is the control, and it is reproduced here: the assertion is that NO badge is
-    /// left Unknown, so a future card added to the reset list without a prime fails.</para>
+    /// <para>An unprimed badge reads "State: Unknown" while the pipe answers
+    /// <c>state: 0</c> / <c>has_cmc: true</c> for it, beside primed badges showing real
+    /// values. The assertion is that NO badge is left Unknown, so a card added to the reset
+    /// list without a prime fails.</para>
     ///
     /// <para>It matters because a DLL hold survives a UI reconnect for as long as the game
-    /// lives, so a still-active Fly or Move Speed hold showed "Unknown" and the user had no
-    /// sign the game was still modified.</para>
+    /// lives, so an unprimed still-active Fly or Move Speed hold would show "Unknown" and the
+    /// user would have no sign the game is still modified.</para>
     /// </remarks>
     [Fact]
     public async Task Connect_primes_every_badge_that_disconnect_resets()
@@ -5187,12 +5183,11 @@ public class TeleportViewModelTests
         vm.SetConnected(true);
         await vm.ConnectPrime;
 
-        // ⛔ ASSERT THAT CONNECT *ASKED*, NOT WHAT THE BADGE SAYS. A first version of this
-        // test compared badge text against "Unknown" and failed on DebugCamera, GodMode and
-        // ForegroundLock -- none of which was a product defect: those are FAKE defaults
-        // that legitimately mean unknown (GetForegroundLockAsync is not even overridden).
-        // Badge text conflates "the VM never asked" with "the fake had nothing to say",
-        // and only the first of those is the defect. The call counters separate them.
+        // ⛔ ASSERT THAT CONNECT *ASKED*, NOT WHAT THE BADGE SAYS. Badge text compared against
+        // "Unknown" fails on cards whose FAKE defaults legitimately mean unknown
+        // (GetForegroundLockAsync is not even overridden): it conflates "the VM never asked"
+        // with "the fake had nothing to say", and only the first of those is the defect. The
+        // call counters separate them.
         Assert.True(fake.GetProtectStateCalls >= 1, "connect did not read the God Mode hold");
         Assert.True(fake.GetDebugCameraCalls >= 1, "connect did not read the Debug Camera state");
         Assert.True(fake.GetCursorCalls >= 1, "connect did not read the mouse-cursor state");
@@ -5201,7 +5196,7 @@ public class TeleportViewModelTests
 
     /// <summary>The other half of the symmetry: a badge the prime DID light up goes back to
     /// Unknown on disconnect. Without this the test above could pass over a UI that lights
-    /// badges and never clears them, which is the B9/B17 defect in the other direction.</summary>
+    /// badges and never clears them, which is the stale-badge hazard in the other direction.</summary>
     [Fact]
     public async Task Disconnect_returns_a_primed_badge_to_Unknown()
     {
@@ -5244,13 +5239,12 @@ public class TeleportViewModelTests
     /// [POSEATTACH-2026-09-10] — a parent-relative fallback must SAY it is not world space.
     /// </summary>
     /// <remarks>
-    /// docs/teleport-spec.md:218-220 required this flag when the fallback was designed:
-    /// "return the raw values anyway with `source = raw` <b>and a warning flag</b>". The
-    /// fallback shipped in 2026-07; the flag did not. So a degraded attached-pawn read and
-    /// a healthy unattached one both arrived as <c>source = "raw"</c> — and the UI model's
-    /// own XML documented "raw" as MEANING not-attached. Those numbers were shown as world
-    /// coordinates, saved into a marker that passes the map guard, and later driven back
-    /// into the pawn as a world-space destination.
+    /// docs/teleport-spec.md requires this flag for the fallback: "return the raw values
+    /// anyway with `source = raw` <b>and a warning flag</b>". Without it a degraded
+    /// attached-pawn read and a healthy unattached one both arrive as <c>source = "raw"</c>,
+    /// which the UI model's XML documents as MEANING not-attached — so those numbers would be
+    /// shown as world coordinates, saved into a marker that passes the map guard, and later
+    /// driven back into the pawn as a world-space destination.
     /// </remarks>
     [Fact]
     public async Task Pose_read_that_degraded_to_parent_relative_warns_loudly()

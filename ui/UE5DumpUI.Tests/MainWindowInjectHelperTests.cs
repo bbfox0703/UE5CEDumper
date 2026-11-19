@@ -78,8 +78,8 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task InjectCeHelperLua_BridgeReturnsError_StatusSurfacesPluginMessage()
     {
-        // Plugin returned an explicit failure reason (e.g. real bug from
-        // pre-fix builds: "Stream size mismatch: wrote 10008, stream has 0").
+        // The plugin returns an explicit failure reason (e.g. a real plugin
+        // bug: "Stream size mismatch: wrote 10008, stream has 0").
         // The user can't tell "wrong CE state" apart from a real plugin
         // bug unless we actually surface the plugin's text.
         var bridge = new RecordingBridge
@@ -101,9 +101,9 @@ public class MainWindowInjectHelperTests
     // [W1-PIPEBUSY-STATUS] a BUSY pipe must not tell the user to open Cheat Engine
     // ------------------------------------------------------------------
     //
-    // 62f1596b made the bridge LOG a busy pipe as busy; the toolbar ⟳ still showed
-    // "open Cheat Engine with the AOBMaker plugin loaded" for it (live, L64,
-    // 2026-09-22). These go through the REAL bridge on its internal seam -- a pipe
+    // The bridge logs a busy pipe as busy, and the toolbar ⟳ must say so too rather
+    // than "open Cheat Engine with the AOBMaker plugin loaded".
+    // These go through the REAL bridge on its internal seam -- a pipe
     // name nobody serves, a 150 ms connect, and the existence probe answering for
     // "busy" -- so the whole chain from the timeout to the status line is exercised.
 
@@ -127,9 +127,9 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task RefreshAobMaker_ReasonChangesWhileOffline_TheSystemTabLineRepaints()
     {
-        // [R7-S7] The System tab's offline line is computed from the shared bridge's LastFailure, but the toolbar ⟳ only
-        // SET Pointers.IsAobMakerAvailable: false -> false raises nothing, so the line kept "not connected -- open Cheat
-        // Engine" after ⟳ had found the pipe busy. (true -> false raised nothing for it either: no change hook.)
+        // [R7-S7] The System tab's offline line is computed from the shared bridge's LastFailure, and a plain set of
+        // Pointers.IsAobMakerAvailable false -> false raises nothing, so unless ⟳ repaints the line it keeps "not
+        // connected -- open Cheat Engine" after ⟳ found the pipe busy.
         bool exists = false;
         using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
                                                      _ => exists);
@@ -150,9 +150,8 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task RefreshAobMaker_ReasonChangesWhileOffline_LiveWalkerAndTeleportNotesRepaint()
     {
-        // [R7-S12] Live Walker's note IS bound (LiveWalkerPanel.axaml) and, since R7-S7, reasoned -- but the toolbar ⟳
-        // still set its flag plainly, so false -> false with a new reason repainted nothing there; Teleport's note was
-        // never touched by ⟳ at all.
+        // [R7-S12] Live Walker's note IS bound (LiveWalkerPanel.axaml) and reasoned, and a plain false -> false set of
+        // its flag with a new reason repaints nothing; Teleport's note is in the same position. ⟳ must repaint both.
         bool exists = false;
         using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
                                                      _ => exists);
@@ -177,9 +176,9 @@ public class MainWindowInjectHelperTests
     // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Property Search's Freeze follows what the app knows about the plugin
     // ------------------------------------------------------------------
     //
-    // Measured on build 3682: AOBMaker connected while the Properties tab was open, the toolbar ⟳ said "AOBMaker
-    // plugin connected", and Freeze stayed disabled until a tab switch -- ⟳ repainted four panels by name and
-    // Property Search was not one of them. A disabled button cannot reach the probe its click would run.
+    // When AOBMaker connects while the Properties tab is open, the toolbar ⟳ that says "AOBMaker plugin connected"
+    // must enable Freeze there too, without waiting for a tab switch. A disabled button cannot reach the probe its
+    // click would run.
 
     [Fact]
     public async Task ToolbarRefresh_AfterThePluginConnects_EnablesPropertySearchFreeze()
@@ -221,7 +220,7 @@ public class MainWindowInjectHelperTests
         Assert.True(vm.AobMakerShared.IsAvailable);
         Assert.True(vm.IsAobMakerAvailable);
 
-        // A probe started from elsewhere (ProbeAsync, not the cooldown-bound refresh: they share one cooldown now).
+        // A probe started from elsewhere (ProbeAsync, not the cooldown-bound refresh: they share one cooldown).
         bridge.NextAvailability = false;
         await vm.AobMakerShared.ProbeAsync();
         Assert.False(vm.PropertySearch.IsAobMakerAvailable);
@@ -231,8 +230,8 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task PropertySearchAndTheSharedStatus_KeepOneCooldown()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 2. Two cooldowns cost a second pipe connect -- 2 s of the
-        // bridge's lock with CE absent -- when a Search was followed by a switch to a tab that probes the shared status.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Two cooldowns would cost a second pipe connect -- 2 s of the bridge's lock
+        // with CE absent -- when a Search is followed by a switch to a tab that probes the shared status.
         var bridge = new RecordingBridge { NextAvailability = true };
         var vm = BuildVm(aobMaker: bridge);
         await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();
@@ -245,9 +244,9 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task TeleportsAndInterestingFunctionsProbes_ReachTheToolbarAndPropertySearch()
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, F2. These two panels keep a flag of their own and probe on their
-        // own tab activation, but only Live Walker's and Pointers' flags were mirrored into the toolbar chip -- so what
-        // they learned reached neither the chip nor anything that follows the shared status.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] These two panels keep a flag of their own and probe on their own tab
+        // activation; unless their flags are mirrored into the toolbar chip, what they learn reaches neither the chip
+        // nor anything that follows the shared status.
         var bridge = new RecordingBridge { NextAvailability = true };
         var vm = BuildVm(aobMaker: bridge);
         await vm.Teleport.CheckAobMakerAsync();
@@ -279,10 +278,10 @@ public class MainWindowInjectHelperTests
     [InlineData("Teleport")]
     public async Task APanelsProbe_ThatConfirmsItsOwnFlag_StillReachesTheToolbar(string panel)
     {
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, F1. The chip mirrors a panel's flag on a CHANGE, and a probe
-        // that confirms what the flag already says raises none: Interesting Functions' flag starts "up", so its first
-        // probe after Cheat Engine came up reached nobody, and a "down" confirmed while the chip said "up" left the
-        // chip saying "connected" over a dead pipe.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The chip mirrors a panel's flag on a CHANGE, and a probe that confirms what
+        // the flag already says raises none: Interesting Functions' flag starts "up", so its first probe after Cheat
+        // Engine comes up would reach nobody, and a "down" confirmed while the chip says "up" would leave the chip
+        // saying "connected" over a dead pipe.
         var bridge = new RecordingBridge { NextAvailability = true };
         var vm = BuildVm(aobMaker: bridge);
         var (probe, setFlag) = FlagKeepingPanel(vm, panel);
@@ -304,7 +303,7 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task LiveWalkerProbe_ReasonChangesWhileOffline_TheNoteRepaints()
     {
-        // [R7-S12] ...and Live Walker's own tab-activation probe had the same false -> false gap.
+        // [R7-S12] ...and Live Walker's own tab-activation probe meets the same false -> false case.
         bool exists = false;
         using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
                                                      _ => exists);
@@ -336,7 +335,7 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task RefreshAobMaker_AbsentPipe_StillSaysOpenCheatEngine()
     {
-        // The control, green both ways: nothing listening keeps the old remedy.
+        // The control, green both ways: nothing listening keeps the "open Cheat Engine" remedy.
         using var bridge = SeamBridge(pipeExists: false);
         var vm = BuildVm(aobMaker: bridge);
 
@@ -386,8 +385,8 @@ public class MainWindowInjectHelperTests
     [Fact]
     public void A_Locate_an_older_DLL_missed_says_no_subclass_was_looked_for()
     {
-        // Review 3: the miss line takes the lookup's answer; dropping it at the call site compiled and said "or of a
-        // subclass" again.
+        // The miss line takes the lookup's answer; a call site that drops it still compiles and says "or of a
+        // subclass".
         var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
         var vm = BuildVm(aobMaker: null, dump: new LiveLookupDump { Answer = miss });
 
@@ -519,11 +518,9 @@ public class MainWindowInjectHelperTests
     /// <summary>
     /// Neither helper may reach CE with a CR in it. [FREEZEINJECT-CRLF-2026-08-20]
     ///
-    /// ⚠ The FREEZE half is the one that was reported, but the INVOKE half is the one
-    /// that matters for a fresh clone: both files are `i/lf` in the index with
-    /// core.autocrlf=true, so which of them arrives CRLF is a property of the CHECKOUT.
-    /// Today the freeze helper is CRLF here and the invoke helper is not — asserting only
-    /// the reported one would pass on this machine and miss the next.
+    /// ⚠ Both halves are asserted, FREEZE and INVOKE alike: both files are `i/lf` in the
+    /// index, so which of them arrives CRLF is a property of the CHECKOUT, not of the
+    /// repo — asserting only one would pass on one machine and miss the next.
     /// </summary>
     [Fact]
     public async Task InjectCeHelperLua_SendsLfOnly()

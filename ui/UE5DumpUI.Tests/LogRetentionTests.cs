@@ -4,12 +4,13 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Age-based log retention (replaces the old fixed generation shuffle).
+/// Age-based log retention.
 ///
-/// The generation scheme could not express "keep 15 days" at all: rotation ran on
-/// every startup, so a handful of restarts evicted everything before them no matter
-/// how recent. These cover the replacement and, specifically, the two collisions it
-/// created with code that was already there.
+/// A fixed generation count cannot express "keep N days": rotation runs on every
+/// startup, so a handful of restarts would evict everything before them no matter
+/// how recent. These cover the age rule and, specifically, its two hazards: two
+/// archives stamped in the same second, and the legacy daily-file cleanup taking an
+/// archive for a legacy file.
 /// </summary>
 public sealed class LogRetentionTests : IDisposable
 {
@@ -100,9 +101,9 @@ public sealed class LogRetentionTests : IDisposable
     }
 
     // ── [A1-LOG-RESUME] a rolled session's "-0_NNN.log" files are the previous session's too ──
-    // Serilog.Sinks.File (no checkpoint) RESUMES the highest-sequence file it finds, so once a category had rolled past
-    // 8 MB, every later session appended to the old "-0_NNN.log": "-0.log" was never created again, and no session was
-    // archived under its own date. Field shape: a 28-minute session on build 3262 logged into pipe-0_005/006.log.
+    // Serilog.Sinks.File (no checkpoint) RESUMES the highest-sequence file it finds, so once a category has rolled past
+    // 8 MB, every later session would append to the old "-0_NNN.log": "-0.log" would never be created again, and no
+    // session would be archived under its own date. The archive therefore takes the rolled files too.
 
     [Fact]
     public void Archive_TakesTheRolledFilesToo_SoTheNewSessionStartsAtSlotZero()
@@ -195,7 +196,7 @@ public sealed class LogRetentionTests : IDisposable
     [Fact]
     public void CleanupOldDailyLogs_KeepsArchives_RemovesLegacyDailyFiles()
     {
-        // The end-to-end version of the guard above — this is the regression that
+        // The end-to-end version of the guard above — this is the failure that
         // would silently empty the archive folder.
         Touch("UE5DumpUI-20260304-050607.log", DateTime.Now);  // archive: keep
         Touch("UE5DumpUI-0.log", DateTime.Now);                // live:    keep
@@ -211,20 +212,19 @@ public sealed class LogRetentionTests : IDisposable
     // ── the orphan sweep ─────────────────────────────────────────────────
     //
     // PruneAgedLogs globs "{prefix}-*.log" for the categories that exist TODAY, so
-    // a renamed or retired category's files match no glob and never age out. The UI
-    // folder really did still hold walk-0..3.log and ui-view-1.log from a 2026-03
-    // build five months later. PruneOrphanedLogs is the age-only backstop.
+    // a renamed or retired category's files match no glob and never age out.
+    // PruneOrphanedLogs is the age-only backstop.
 
     [Fact]
     public void PruneOrphanedLogs_SweepsRetiredCategories_ThatThePerCategoryPruneCannotSee()
     {
         var old = DateTime.Now.AddDays(-150);
         Touch("walk-0.log", old);       // retired UI category — and a "-0" name, so
-        Touch("walk-3.log", old);       // PruneAgedLogs' live-file guard shielded it too
+        Touch("walk-3.log", old);       // PruneAgedLogs' live-file guard shields it too
         Touch("ui-view-1.log", old);    // mirror prefix, which only belongs in a GAME folder
         Touch("view-0.log", DateTime.Now);
 
-        // The reason this was needed: the per-category prune leaves all of it.
+        // The per-category prune leaves all of it, which is why the orphan sweep exists.
         LoggingService.PruneAgedLogs(_dir, "view", 21);
         Assert.Equal(4, Names().Length);
 
@@ -285,9 +285,9 @@ public sealed class LogRetentionTests : IDisposable
     [Fact]
     public void ArchiveThenPrune_KeepsAWindowRegardlessOfLaunchCount()
     {
-        // The actual point of the change. Simulate 30 launches, one per day, with
-        // the two steps a real startup performs. The old 2-generation scheme would
-        // leave 2 files; this must leave a 15-day window.
+        // The point of age-based retention. Simulate 30 launches, one per day, with
+        // the two steps a real startup performs. A 2-generation count would leave
+        // 2 files; this must leave a 15-day window.
         for (int daysAgo = 29; daysAgo >= 0; daysAgo--)
         {
             Touch("init-0.log", DateTime.Now.AddDays(-daysAgo));

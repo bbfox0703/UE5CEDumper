@@ -184,7 +184,7 @@ public class CallTraceTreeTests
     [Fact]
     public void Export_marks_a_reused_address()
     {
-        // Review DLL-3: the calls at an address that held two functions during the recording.
+        // The calls at an address that held two functions during the recording.
         var t = CallTraceBuilder.Build(new[] { E(0, 1000, 0xA) }, new TraceInfo { QpcFreq = 1_000_000, Written = 1 },
             new[] { new TraceFuncName { Addr = 0xA, Live = true, Reused = true, ClassName = "WBP_Map_C", FuncName = "OnTile" } });
         var j = new StringWriter();
@@ -195,7 +195,7 @@ public class CallTraceTreeTests
         Assert.EndsWith(",false,true", c.ToString().Split("\r\n", StringSplitOptions.RemoveEmptyEntries)[1]);
     }
 
-    // ---- [LIVEFUNCS-STEP2] U14: the parameter snapshots in the exports ----
+    // ---- [LIVEFUNCS-STEP2] the parameter snapshots in the exports ----
 
     // The entry-record flags (pipe-protocol.md, "Entry-record flags"), spelled out so a test reads as the DLL wrote it.
     private const uint SnapTaken = 2, SnapLone = 4, SnapExcluded = 8, SnapBudget = 16;
@@ -310,7 +310,7 @@ public class CallTraceTreeTests
         Assert.Contains("\"ticked\":0,\"ticked_names\":1,\"scoped\":true,\"snapshots_only\":false,", head);   // scoped by name alone
         Assert.Contains("\"snapshot_skipped_budget\":1,\"snapshot_dropped_budget\":2,", head);
 
-        // A DLL from before names sends no scoped: its ticks said it.
+        // A DLL that predates names sends no scoped: its ticks say it.
         Assert.Contains("\"scoped\":true,", JsonlLines(Sample())[0]);
         Assert.Contains("\"scoped\":false,", JsonlLines(UnloadedSample())[0]);
         Assert.DoesNotContain("snapshot_skipped_budget", JsonlLines(Sample())[0]);   // no buffer, no budget keys
@@ -348,7 +348,7 @@ public class CallTraceTreeTests
         var calls = lines.Skip(4).Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement).ToArray();
         static string? S(System.Text.Json.JsonElement e, string k) => e.TryGetProperty(k, out var v) ? v.ToString() : null;
 
-        // The unchosen root's line is byte for byte what it was before snapshots.
+        // The unchosen root's line is byte for byte a call line with no snapshot key in it.
         Assert.Equal("{\"kind\":\"call\",\"seq\":0,\"t_ms\":0,\"dur_us\":1000,\"tid\":1,\"depth\":0,\"parent_seq\":null,"
                      + "\"class\":\"PlayerController\",\"func\":\"InputJump\",\"func_addr\":\"0xA\","
                      + "\"object\":\"PC_Hero_0\",\"object_class\":\"PC_Hero_C\",\"object_addr\":\"0x10\",\"object_live\":true,"

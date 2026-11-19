@@ -5,17 +5,16 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Property Search "Force → value…" literal handling — audit #5 AF6.
+/// Property Search "Force → value…" literal handling.
 ///
-/// The prompt used to return <c>double?</c>, so a value the Freeze dialog had already
-/// validated per-type but the caller could not convert came back as null — the same
-/// answer as pressing Cancel. Force then returned silently and the user was told
-/// nothing at all.
+/// The prompt's result tells a refused value apart from Cancel. Were a value the Freeze
+/// dialog validated per-type but the caller cannot convert to come back as a bare null
+/// — the same answer as pressing Cancel — Force would return silently and the user
+/// would be told nothing at all.
 ///
-/// The precision half is the more dangerous one and was not in the finding:
-/// <c>double.TryParse</c> SUCCEEDS on 9223372036854775807 and yields
-/// 9223372036854775808, so a wide Int64Property would have been held at a number the
-/// user never typed, indefinitely, by the re-assert worker.
+/// The precision half is the more dangerous one: <c>double.TryParse</c> SUCCEEDS on
+/// 9223372036854775807 and yields 9223372036854775808, so a wide Int64Property would be
+/// held at a number the user never typed, indefinitely, by the re-assert worker.
 /// </summary>
 public class ForceValuePromptTests
 {
@@ -82,8 +81,8 @@ public class ForceValuePromptTests
     }
 
     // NOT covered here on purpose: "12,34,56" is ACCEPTED as 123456. NumberStyles.Any
-    // includes AllowThousands, which is the behaviour this path has always had and is
-    // unchanged by AF6 — pinning it either way would be asserting a decision nobody made.
+    // includes AllowThousands, which nobody chose for this path deliberately — pinning it
+    // either way would be asserting a decision nobody made.
     [Theory]
     [InlineData("abc")]
     [InlineData("0x1F")]        // hex is not accepted by the numeric styles used here

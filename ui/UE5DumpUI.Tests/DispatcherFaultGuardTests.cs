@@ -42,9 +42,9 @@ public class DispatcherFaultGuardTests
     [Fact]
     public void BothOutcomes_GoToTheSameLogCategory()
     {
-        // They used to split across "view" (swallowed) and "init" (refused), so the
-        // guard's story needed two files to read and the documented verification step
-        // — grep view-0.log for the guard's lines — could only ever see half of it.
+        // Split across "view" (swallowed) and "init" (refused), the guard's story would
+        // need two files to read and the documented verification step — grep view-0.log
+        // for the guard's lines — could only ever see half of it.
         var log = new RecordingLog();
         var guard = new DispatcherFaultGuard(log);
 
@@ -104,11 +104,11 @@ public class DispatcherFaultGuardTests
     public void TheVerdictDoesNotDependOnTheLoggerBeingAlive()
     {
         // The guard OUTLIVES the logger: ShutdownRequested disposes the logging
-        // service, and a dispatcher fault can arrive after that. When classification
-        // and logging shared one try/catch, a dead logger silently flipped every
-        // swallow into a crash — whether a clipboard fault killed the app depended on
-        // how far through teardown the process happened to be. Same input, same
-        // answer, live logger or dead one.
+        // service, and a dispatcher fault can arrive after that. If classification and
+        // logging shared one try/catch, a dead logger would silently flip every swallow
+        // into a crash — whether a clipboard fault killed the app would depend on how
+        // far through teardown the process happened to be. Same input, same answer,
+        // live logger or dead one.
         var live = new DispatcherFaultGuard(new RecordingLog());
         var dead = new DispatcherFaultGuard(new ThrowingLog());
 
@@ -126,8 +126,8 @@ public class DispatcherFaultGuardTests
     [Fact]
     public void TheCounterNeverRunsAheadOfTheSwallowsThatHappened()
     {
-        // It used to increment BEFORE logging, inside the try — so a throwing logger
-        // left the count claiming a swallow that the catch then turned into a crash.
+        // An increment BEFORE logging, inside the try, would let a throwing logger
+        // leave the count claiming a swallow that the catch then turned into a crash.
         var dead = new DispatcherFaultGuard(new ThrowingLog());
         bool swallowed = dead.ShouldHandle(ClipboardFault());
 
@@ -153,7 +153,7 @@ public class DispatcherFaultGuardTests
     [Fact]
     public void AnAlreadyHandledFault_IsNeverUnHandled()
     {
-        // The regression this pins: `e.Handled = ShouldHandle(...)` writes the result
+        // The hazard this pins: `e.Handled = ShouldHandle(...)` writes the result
         // unconditionally, so a fault another subscriber had already claimed would be
         // silently un-claimed by us. The event is multicast and its invocation order
         // is nobody's contract, so this guard may only ever ADD a reason to swallow.

@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. What surrounds the MCP server: the reply-size cut, its log, and the
+/// [PIPE-PER-PROCESS-2026-11-06] What surrounds the MCP server: the reply-size cut, its log, and the
 /// properties of <c>UE5DumpUI.exe --mcp</c> that only the source shows -- the branch comes before the single-instance
 /// mutex, and nothing under Mcp/ writes to stdout, which carries the protocol.
 /// </summary>
@@ -120,8 +120,8 @@ public sealed class McpHostTests
     [InlineData("mcp__ue5cedumper__grant_movement_fly_teleport_may_kill_or_lose_pawn")]
     public void TheGuard_RefusesASubagentsWriteOrGrant(string tool)
     {
-        // Subagents and workflow agents share the session's server and its grants (Phase 0, M6), and a subagent's
-        // prompt looks like the main conversation's (M6b): only the main conversation may change the game.
+        // Subagents and workflow agents share the session's server and its grants, and a subagent's prompt looks like
+        // the main conversation's: only the main conversation may change the game.
         var output = Guard(new JsonObject { ["tool_name"] = tool, ["agent_id"] = "a1b2", ["agent_type"] = "x" }
             .ToJsonString());
         Assert.NotNull(output);
@@ -165,7 +165,7 @@ public sealed class McpHostTests
     [Fact]
     public void ThePublish_ShipsTheSetupGuide_BesideTheExe()
     {
-        // The maintainer (2026-11-11): the MCP setup document ships with every publish; release.yml zips dist\ whole.
+        // The MCP setup document ships with every publish; release.yml zips dist\ whole.
         string build = Source("build.ps1");
         int src = build.IndexOf("scripts\\MCP-Setup.html", StringComparison.Ordinal);
         Assert.True(src > 0, "build.ps1 does not copy scripts\\MCP-Setup.html");
@@ -189,10 +189,10 @@ public sealed class McpHostTests
         foreach (var name in named) Assert.True(catalog.Contains(name), $"MCP-Setup.html names {name}");
     }
 
-    /// <summary>[MCP-DOCS-OLDER-CC] Review wf_1b9e937b-a0d CON-2: both guides said the server lists its write tools
-    /// "only to Claude Code 2.1.246 or later", and the troubleshooting row blamed an older Claude Code for having none.
-    /// McpGrants.DecideFor gives an older Claude Code -- or one whose version is missing or unreadable -- every write tool,
-    /// asked before each call, and no grant.</summary>
+    /// <summary>[MCP-DOCS-OLDER-CC] McpGrants.DecideFor gives an older Claude Code -- or one whose version is missing or
+    /// unreadable -- every write tool, asked before each call, and no grant. Both guides say so: neither may claim the
+    /// server lists its write tools "only to Claude Code 2.1.246 or later", nor the troubleshooting row blame an older
+    /// Claude Code for having none.</summary>
     [Fact]
     public void TheGuides_SayWhatAnOlderClaudeCodeGets()
     {
@@ -210,7 +210,7 @@ public sealed class McpHostTests
         }
         Assert.DoesNotContain("| The AI has no `write_*` tools | Its client is not Claude Code 2.1.246 or later.",
             Source("docs/mcp.md"));
-        // Review wf_bbd1bbfe-20d U7-3: each cause gets its own remedy. Under --writes=off Claude Code reads only too
+        // Each cause gets its own remedy. Under --writes=off Claude Code reads only too
         // (DecideFor), and a second --writes= stops the server (TryParseArgs), so "add --writes=any-host" fixes neither.
         Assert.Equal(McpHostDecision.ReadOnly, McpGrants.DecideFor(McpWriteMode.Off, Constants.McpClaudeCodeClientName, "9.9.9"));
         string row = Source("docs/mcp.md").Split('\n').Single(l => l.StartsWith("| The AI has no `write_*` tools |"));
@@ -225,8 +225,8 @@ public sealed class McpHostTests
     public void TheInstructions_NameOnlyToolsTheirHostLists(McpHostDecision decision)
     {
         // Each decision's text describes its own host: a tool it names that the host does not list sends the model after
-        // a tool that is not there (the review of [MCP-WRITE-GRANTS-2026-11-14] Phase 2 found write_field named on a
-        // host that asks every call, which lists no grant and no granted tool).
+        // a tool that is not there (write_field, say, named on a host that asks every call, which lists no grant and no
+        // granted tool) [MCP-WRITE-GRANTS-2026-11-14].
         var listed = McpTools.Create(new NoGame(), new McpGrants())
             .Where(t => McpGrants.IsListed(t.EffectiveRole, decision)).Select(t => t.Name).ToHashSet();
         string text = McpServer.InstructionsFor(decision);
@@ -239,8 +239,8 @@ public sealed class McpHostTests
     [Fact]
     public void TheSetupGuide_KeepsTheSshServerCommandsMarkedAsReferenceOnly()
     {
-        // The maintainer (2026-11-11): the Windows 11 OpenSSH commands are for reference only, may not work on a given
-        // machine, and setting up an SSH server is outside this repository's scope.
+        // The Windows 11 OpenSSH commands are for reference only, may not work on a given machine, and setting up an SSH
+        // server is outside this repository's scope.
         string guide = Source("scripts/MCP-Setup.html");
         int commands = guide.IndexOf("Add-WindowsCapability", StringComparison.Ordinal);
         int disclaimer = guide.IndexOf("For reference only.", StringComparison.Ordinal);

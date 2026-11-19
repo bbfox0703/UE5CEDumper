@@ -9,9 +9,9 @@ using Xunit;
 namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
-/// [TEXTBOX-HOMEEND-CARET] on a real Avalonia TextBox. Measured on build 3574: a click on a
-/// keyword box's padding selects its text, End then put the caret at the START, and " act"
-/// typed after "spawn" made " actspawn". Each case runs twice where it matters — without the fix
+/// [TEXTBOX-HOMEEND-CARET] on a real Avalonia TextBox. The hazard: a click on a keyword box's
+/// padding selects its text, End then puts the caret at the START, and " act" typed after
+/// "spawn" makes " actspawn". Each case runs twice where it matters — without the fix
 /// (Avalonia's own behaviour, so a future Avalonia that fixes it shows up here) and with it.
 /// </summary>
 public class TextBoxHomeEndTests
@@ -184,7 +184,7 @@ public class TextBoxHomeEndTests
     [InlineData(true, 3)]       // with the fix: the start of line 2, where the caret shows (Windows too)
     public Task Ctrl_A_with_the_caret_at_the_start_of_line_2_then_Home(bool withFix, int expected) => Headless.Run(() =>
     {
-        // Keyboard only, found by review: Ctrl+A keeps CaretIndex where it was (3, the start of
+        // Keyboard only: Ctrl+A keeps CaretIndex where it was (3, the start of
         // line 2), which is exactly Home's target on that line -- so CaretIndex does not change
         // and ClearSelection sends the caret to SelectionStart.
         using var fix = withFix ? TextBoxHomeEndFix.Register() : null;
@@ -204,7 +204,7 @@ public class TextBoxHomeEndTests
     [InlineData(Key.PageUp)]
     public Task A_page_key_with_a_select_all_leaves_the_caret_on_the_active_end(Key key) => Headless.Run(() =>
     {
-        // Same sink as Home / End (found by review): the page moves only scroll, then
+        // Same sink as Home / End: the page moves only scroll, then
         // ClearSelection puts the caret at SelectionStart -- the start of a select-all.
         using var fix = TextBoxHomeEndFix.Register();
         var box = ShowBox("spawn");
@@ -232,7 +232,7 @@ public class TextBoxHomeEndTests
     [Fact]
     public Task An_AutoCompleteBox_focused_from_elsewhere_appends_after_End() => Headless.Run(() =>
     {
-        // The measured case end to end: the keyword box is an AutoCompleteBox, whose focus
+        // The class doc's hazard end to end: the keyword box is an AutoCompleteBox, whose focus
         // selects its text.
         using var fix = TextBoxHomeEndFix.Register();
         var other = new Button { Content = "grid" };

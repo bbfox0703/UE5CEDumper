@@ -621,8 +621,8 @@ public class SnapshotStoreTests : IDisposable
     }
 
     // [SNAPDIFF-SHADOWED-PROP] A class can carry two properties of one name at different offsets (a subclass shadowing
-    // a parent's, measured on DumperTest: PrerollTime at +196 and +296). The join keyed on the name alone, so the two
-    // collided in A's map: phantom "changed" rows, and a removed count of -1 ("−-1 removed").
+    // a parent's, as DumperTest's PrerollTime at +196 and +296). A join keyed on the name alone collides the two in A's
+    // map: phantom "changed" rows, and a removed count of -1 ("−-1 removed").
     private static SnapshotCapturedObject Shadowed(int index, string hex196, string hex296)
     {
         var o = MakeObject(index);
@@ -715,11 +715,11 @@ public class SnapshotStoreTests : IDisposable
         Assert.Single(await _store.ListSnapshotsAsync(ct));
     }
 
-    // Regression for the post-capture "Loading fields…" Not-Responding freeze: even when the
-    // capture stays UNDER quota (no eviction), EnforceQuota must fold the capture-grown WAL
-    // back into the .db. A bloated, un-checkpointed WAL left behind made the next reader (the
-    // Class Pivot field load) contend for the WAL read-mark lock and spin the -shm lock byte.
-    // Pre-fix the unlimited/under-quota path returned WITHOUT checkpointing, leaving -wal > 0.
+    // Guards the post-capture "Loading fields…" Not-Responding freeze: even when the capture
+    // stays UNDER quota (no eviction), EnforceQuota must fold the capture-grown WAL back into
+    // the .db. A bloated, un-checkpointed WAL left behind makes the next reader (the Class Pivot
+    // field load) contend for the WAL read-mark lock and spin the -shm lock byte, so the
+    // unlimited/under-quota path must checkpoint too, leaving -wal at 0.
     [Fact]
     public async Task EnforceQuota_FoldsWalEvenWhenUnderQuota()
     {
@@ -890,8 +890,8 @@ public class SnapshotStoreTests : IDisposable
         await _store.WriteChunkAsync(b, new[] { ShipWithCargo("5A000000", "50000000") }, ct);  // HP90, Fuel80
         await _store.FinalizeSnapshotAsync(b, 1, 3, ct);
 
-        // build 1203: the diff now INCLUDES struct-array-element rows (keyed by
-        // array_field + elem_index so distinct elements don't collide on prop_name).
+        // The diff INCLUDES struct-array-element rows (keyed by array_field +
+        // elem_index so distinct elements don't collide on prop_name).
         // HP (100->90) and Cargo[0].Quantity (Fuel 100->80) both changed; Cargo[1]
         // (Ore, 10->10) is unchanged and must not appear.
         var diff = await _store.DiffSnapshotsAsync(a, b, new SnapshotDiffFilter(), ct);
@@ -901,7 +901,7 @@ public class SnapshotStoreTests : IDisposable
         Assert.DoesNotContain(diff.Changed, r => r.PropName == "Cargo[1].Quantity");
     }
 
-    // build 1204 — deep nested array_field path (the DLL bakes the full path with
+    // A deep nested array_field path (the DLL bakes the full path with
     // outer indices into SnapshotArray.field) + a leaf-container element (TArray<int>,
     // empty inner prop). Verifies the diff keys distinct deep paths AND the display
     // renders "path[N]" (no trailing dot) for an empty inner prop.
@@ -1346,17 +1346,16 @@ public class SnapshotStoreTests : IDisposable
         Assert.Empty(await _store.ListPivotClassesAsync(b, ct));
     }
 
-    // Regression for the CI-only Capture_StreamsAllChunks flake: concurrent FIRST opens
-    // of the same brand-new DB used to race inside OpenAsync. SnapshotViewModel reaches
-    // this shape for real — SetEngineState ends with a fire-and-forget `_ = RefreshAsync()`
-    // (its own OpenAsync on a background thread) while the user can press Capture at once,
-    // whose CreateSnapshotAsync/BeginCaptureSessionAsync open the same file. Three distinct
-    // races lived in that window, all of which throw out of the capture BEFORE the first
-    // chunk fetch (the observed `LastGameOnly == null` shape):
-    //   1. `PRAGMA journal_mode=WAL` ran FIRST in the pragma batch — before busy_timeout
-    //      was set — so it hit the default 0 ms timeout and returned SQLITE_BUSY at once.
-    //   2. EnsureSchemaAsync read `user_version` then DROPped + re-CREATEd; two openers
-    //      both saw 0, so one could DROP the tables the other had just created.
+    // Concurrent FIRST opens of the same brand-new DB must not race inside OpenAsync.
+    // SnapshotViewModel reaches this shape for real — SetEngineState ends with a
+    // fire-and-forget `_ = RefreshAsync()` (its own OpenAsync on a background thread) while
+    // the user can press Capture at once, whose CreateSnapshotAsync/BeginCaptureSessionAsync
+    // open the same file. Three distinct races live in that window, each of which throws out
+    // of the capture BEFORE the first chunk fetch (a `LastGameOnly == null` shape):
+    //   1. `PRAGMA journal_mode=WAL` run before busy_timeout is set hits the default 0 ms
+    //      timeout and returns SQLITE_BUSY at once.
+    //   2. An EnsureSchemaAsync that reads `user_version` then DROPs + re-CREATEs lets two
+    //      openers both see 0, so one could DROP the tables the other had just created.
     //   3. AddColumnIfMissingAsync is read-then-ALTER: both see is_usable missing, both
     //      ALTER, and the loser gets "duplicate column name".
     // Fresh dir per iteration — the race only exists on the very first open of a file.

@@ -63,7 +63,7 @@ public class LiveWalkerExportCancelTests
         var dump = new WalkThrowStub();
         var vm = MakeVm(dump);
         // Simulate the user hitting Cancel mid-walk: cancel the export, then let the
-        // in-flight OCE surface — now cts.IsCancellationRequested is true.
+        // in-flight OCE surface — by then cts.IsCancellationRequested is true.
         dump.BeforeThrow = () => vm.CancelExportCommand.Execute(null);
 
         await vm.ExportCeXmlCommand.ExecuteAsync(null);
@@ -76,7 +76,7 @@ public class LiveWalkerExportCancelTests
     [Fact]
     public async Task ExportCeXml_PipeDisconnect_NotMislabeledAsCancel()
     {
-        // Regression (review 2026-07-07): a mid-export pipe disconnect surfaces as a BARE
+        // A mid-export pipe disconnect surfaces as a BARE
         // OperationCanceledException ("Pipe disconnected during send") that is NOT from the
         // export token. It must be reported as an error, never as a user cancellation.
         var dump = new WalkThrowStub { Make = () => new OperationCanceledException("Pipe disconnected during send") };
@@ -104,11 +104,11 @@ public class LiveWalkerExportCancelTests
         Assert.False(vm.IsExporting);
     }
 
-    // ── [LW-DISCONNECT-STALE-STATUS] review F3: a disconnect cancels the export through the SAME token ──
+    // ── [LW-DISCONNECT-STALE-STATUS] a disconnect cancels the export through the SAME token ──
     //
-    // ClearOnDisconnect cancels _exportCts and clears the status line; the export's guarded handler then saw its own
-    // token cancelled and wrote "Export cancelled." over the cleared line, logging "cancelled by user" -- the very
-    // mislabel that guard's comment says a mid-export disconnect must not get. Nobody pressed Cancel.
+    // ClearOnDisconnect cancels _exportCts and clears the status line; the export's guarded handler then sees its own
+    // token cancelled, and must not write "Export cancelled." over the cleared line or log "cancelled by user" -- the
+    // very mislabel that guard's comment says a mid-export disconnect must not get. Nobody pressed Cancel.
 
     /// <summary>A save dialog that answers a path, so Export CSX gets past it to the resolve.</summary>
     private sealed class SavePathPlatform : IPlatformService
@@ -177,7 +177,7 @@ public class LiveWalkerExportCancelTests
     [Fact]
     public async Task ExportCsx_UserCancel_StillReportsCancelled()
     {
-        // The other half: the fix must not swallow a cancel the user did press.
+        // The other half: telling a disconnect apart must not swallow a cancel the user did press.
         var dump = new WalkThrowStub();
         var vm = MakeVm(dump, platform: new SavePathPlatform());
         vm.HasData = true;

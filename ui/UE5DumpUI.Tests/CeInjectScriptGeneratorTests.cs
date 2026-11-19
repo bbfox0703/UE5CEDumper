@@ -7,8 +7,8 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// Locks the shape of the CE bootstrap record (<see cref="CeInjectScriptGenerator"/>) —
-/// the [ENABLE]/[DISABLE] script pushed into the user's ALREADY-OPEN CE table so the
-/// standalone UE5CEDumper.CT is no longer needed just to inject.
+/// the [ENABLE]/[DISABLE] script pushed into the user's ALREADY-OPEN CE table so
+/// injecting needs no standalone UE5CEDumper.CT.
 ///
 /// The invariants that matter: it polls the DLL's mailbox initState instead of
 /// sleeping a fixed budget, it never uses executeCodeEx on the START-UP path (games
@@ -60,7 +60,7 @@ public class CeInjectScriptGeneratorTests
         Assert.Contains("readInteger, mb + 0x0C", e);          // MailboxData.initState
         Assert.Contains($"sleep({CeReadinessLua.PollIntervalMs})", e);
         Assert.Contains($"while waited < {CeReadinessLua.ReadyTimeoutMs} do", e);
-        // The old .CT behaviour we are replacing must not reappear.
+        // No blind fixed wait, short or long.
         Assert.DoesNotContain("sleep(1000)", e);
         Assert.DoesNotContain("sleep(15000)", e);
     }
@@ -74,10 +74,9 @@ public class CeInjectScriptGeneratorTests
     [Fact]
     public void Enable_never_uses_executeCodeEx_on_the_startup_path()
     {
-        // NARROWED (audit #4 B1(b)), and the narrowing is the point: the original
-        // rule was "no executeCodeEx anywhere in [ENABLE]", justified by "start-up
-        // is exactly when games block CreateRemoteThread". That reason only covers
-        // the START-UP path. [ENABLE] now also has a revive path — the DLL is
+        // Scoped to the START-UP path, and the scope is the point: "start-up is
+        // exactly when games block CreateRemoteThread" covers only that path, not
+        // all of [ENABLE]. [ENABLE] also has a revive path — the DLL is
         // already mapped and parked because a previous disable ran UE5_Shutdown —
         // and reviving it REQUIRES a remote call: the mailbox poller is joined, so
         // there is no memory-write channel left to ask through.
@@ -94,12 +93,11 @@ public class CeInjectScriptGeneratorTests
     [Fact]
     public void Enable_only_reaches_the_target_through_the_shared_callDLL_helper()
     {
-        // The other half of the narrowing above. Any remote call in [ENABLE] must go
+        // The other half of the scoping above. Any remote call in [ENABLE] must go
         // through CeLuaHygiene's emitter, which is the one place that knows
         // executeCodeEx's real signature — (callmethod, timeout, address). Getting
         // those slots wrong is silent: CE returns nil WITHOUT raising, so a bare
-        // inline call reads as success while doing nothing (that is B1(a), which
-        // shipped for months in exactly this file).
+        // inline call reads as success while doing nothing.
         var code = CodeOnly(Enable(CeInjectScriptGenerator.Generate(Dll)));
         foreach (var idx in Occurrences(code, "executeCodeEx"))
         {
@@ -137,11 +135,10 @@ public class CeInjectScriptGeneratorTests
     }
 
     /// <summary>
-    /// B33 — lessons-learned.md mandates trying BOTH symbol spellings: depending on how
-    /// CE's symbol handler picked up the module, an export is reachable bare or only as
-    /// "&lt;module&gt;.&lt;name&gt;". Eight other sites in the repo obey it; this generator
-    /// was a holdout, and a single-spelling miss silently degrades the readiness poll
-    /// back to the blind fixed wait it was written to replace.
+    /// lessons-learned.md mandates trying BOTH symbol spellings: depending on how CE's
+    /// symbol handler picked up the module, an export is reachable bare or only as
+    /// "&lt;module&gt;.&lt;name&gt;". A single-spelling miss here silently degrades the
+    /// readiness poll to the blind fixed wait it exists to avoid.
     /// </summary>
     [Fact]
     public void Enable_tries_both_mailbox_symbol_spellings()
@@ -297,8 +294,8 @@ public class CeInjectScriptGeneratorTests
         Assert.DoesNotContain("g_invokeMailbox", s, StringComparison.Ordinal);
 
         // Both hazards, and the second is the surprising one: a timed-out command is not
-        // cancelled. Measured on DumperTest 2026-08-07 -- a teleport completed 35 s after
-        // it was sent, 25 s after the script had given up on it.
+        // cancelled -- a teleport can complete long after the script has given up on
+        // it.
         Assert.Contains("GAME THREAD", s, StringComparison.Ordinal);
         Assert.Contains("NOT cancelled", s, StringComparison.Ordinal);
 
@@ -308,8 +305,8 @@ public class CeInjectScriptGeneratorTests
         // the robust one is present.
         Assert.Contains("string.char(10)", s, StringComparison.Ordinal);
         // Built from char codes so the assertion itself cannot be mangled by escaping --
-        // which is precisely the failure mode it guards against, and which mangled an
-        // earlier attempt at this very line into a verbatim string holding a real newline.
+        // which is precisely the failure mode it guards against; written as an escape,
+        // this very line can end up a verbatim string holding a real newline.
         string backslashN = new string(new[] { (char)92, (char)110 });
         Assert.DoesNotContain(backslashN, s, StringComparison.Ordinal);
 
@@ -319,10 +316,9 @@ public class CeInjectScriptGeneratorTests
 
     // ────────────────────────────────────────────────────────────────────────
     // [B30-REOPEN] — the disable must tear down only what THIS record
-    // started. The original B30 fix guarded on "is a DLL loaded", which is not the
-    // same question: all four proxy .def files export UE5_StopPipeServer, so in the
-    // exact case B30 was filed about — a proxy already loaded and serving — the probe
-    // SUCCEEDED and UE5_Shutdown ran against a pipe this record never started.
+    // started. "Is a DLL loaded" is not the same question: all four proxy .def files
+    // export UE5_StopPipeServer, so with a proxy already loaded and serving, that probe
+    // succeeds and UE5_Shutdown would run against a pipe this record never started.
     // ────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -342,8 +338,8 @@ public class CeInjectScriptGeneratorTests
             "the ownership guard must precede callDLL('UE5_Shutdown'), not follow it");
 
         // The symbol probe stays: it answers a DIFFERENT question (nothing loaded at
-        // all) and it also stops a bare getAddress throwing. Losing it would be a
-        // regression of B40, so pin that both survive.
+        // all) and it also stops a bare getAddress throwing. Losing it would bring
+        // that throw back, so pin that both survive.
         Assert.Contains("UE5_StopPipeServer", d, StringComparison.Ordinal);
     }
 
@@ -386,7 +382,7 @@ public class CeInjectScriptGeneratorTests
     [Fact]
     public void Enable_clears_a_stale_ownership_flag_before_its_first_bailout()
     {
-        // [A3-B30-STALE-FLAG] review 4: File > Open is not the only stale origin. CE's process switch unticks every
+        // [A3-B30-STALE-FLAG] File > Open is not the only stale origin. CE's process switch unticks every
         // record WITHOUT running its disable block (MainUnit.pas: disableAllWithoutExecute), and the next tick can take
         // the PARKED branch, whose failed UE5_AutoStart defers an untick too. An enable runs only on an unticked
         // record, which owns nothing -- so the flag is cleared before the first bail-out of all.
@@ -408,7 +404,7 @@ public class CeInjectScriptGeneratorTests
     [Fact]
     public void Already_loaded_precheck_resolves_BOTH_mailbox_spellings()
     {
-        // [B33] — this site and the autorun twin were the last two holdouts. A
+        // [B33] — this site and the autorun twin try both spellings too. A
         // single-spelling miss leaves `pre` nil, so a SERVING DLL is misread as
         // "parked" and UE5_AutoStart is fired at a pipe that is already up.
         var e = Enable(CeInjectScriptGenerator.Generate(Dll));

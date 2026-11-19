@@ -13,7 +13,7 @@ namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
 /// [LIVEFUNCS-STEP3] Live Funcs' Stack? box on a real CheckBox: bound one way to <see cref="PeProfileEntry.IsStackChosen"/>,
-/// with the view model's ToggleStack as its command. Choosing a per-frame function asks first (T9.2), and a refusal
+/// with the view model's ToggleStack as its command. Choosing a per-frame function asks first, and a refusal
 /// leaves the value as it was. Avalonia 12.1.3 flips the box on the click, before the command runs, and an unchanged
 /// value raises nothing, so the box would show a choice never made. Pinned here: Avalonia's flip and when it happens,
 /// and that <see cref="PeProfileEntry.RaiseIsStackChosen"/> reads the unchanged value back into the box.

@@ -8,9 +8,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 AC1 — the deploy overwrite policy.
+/// The deploy overwrite policy.
 ///
-/// <para>Two policies used to share one <c>bool force</c>:</para>
+/// <para>Two policies that must never share one <c>bool force</c>:</para>
 /// <list type="number">
 /// <item>"redeploy over OUR proxy even at the same version" — benign,
 /// reversible, and the commoner reason a user ticks the box; <b>persisted</b>
@@ -20,7 +20,7 @@ namespace UE5DumpUI.Tests;
 /// owner, so nothing on screen or on disk records what was destroyed.</item>
 /// </list>
 ///
-/// <para>Because one flag armed both, consent given once for (1) became standing
+/// <para>With one flag arming both, consent given once for (1) becomes standing
 /// cross-session, cross-game authorisation for (2) — applied per game inside the
 /// deploy loop, over a Select All that can be an entire Steam library, with no
 /// confirmation anywhere on the path.</para>
@@ -33,14 +33,14 @@ namespace UE5DumpUI.Tests;
 ///
 /// <para><b>A green build is not the guard.</b> <see cref="DeployOptions"/> is a
 /// record struct with NAMED members precisely so that re-merging the two flags
-/// into one breaks compilation rather than quietly restoring the defect. If a
-/// future change makes these tests compile against a single bool again, that is
-/// the regression, not a refactor.</para>
+/// into one breaks compilation rather than quietly arming both. If a change
+/// makes these tests compile against a single bool, that is the hazard, not a
+/// refactor.</para>
 /// </summary>
 public class ProxyDeployPolicyTests
 {
     // ------------------------------------------------------------------
-    // The regression the whole fix exists for.
+    // The case the whole policy exists for.
     // ------------------------------------------------------------------
 
     /// <summary>ForceSameVersion must NEVER imply consent to destroy a third
@@ -158,10 +158,9 @@ public class ProxyDeployPolicyTests
     // ------------------------------------------------------------------
     // [PROXY-DOUBLE-GUARD] Deploy never adds a SECOND of our proxy types.
     // ------------------------------------------------------------------
-    // Maintainer request: a Select-All Deploy over games that already carry another of our proxies made doubles
-    // that then had to be fixed game by game -- and Undeploy removes both, so the user must remember which one
-    // worked. Neither Force Overwrite (same type, any version) nor foreign consent (another program's file) is a
-    // licence to add a second type.
+    // A Select-All Deploy over games that already carry another of our proxies would make doubles that must then
+    // be fixed game by game -- and Undeploy removes both, so the user must remember which one worked. Neither Force
+    // Overwrite (same type, any version) nor foreign consent (another program's file) is a licence to add a second type.
 
     [Theory]
     [InlineData(false, false)]
@@ -202,7 +201,7 @@ public class ProxyDeployPolicyTests
         {
             foreach (var n in new[] { "version.dll", "winmm.dll", "dxgi.dll", "other.dll" })
                 File.WriteAllBytes(Path.Combine(dir, n), new byte[] { 0x4D, 0x5A });
-            // dxgi.dll here is ANOTHER program's (ReShade, say): foreign files are AC1's business, not the guard's.
+            // dxgi.dll here is ANOTHER program's (ReShade, say): foreign files are the overwrite policy's business, not the guard's.
             var ours = ProxyDeployService.OursPresent(dir, p => !p.EndsWith("dxgi.dll", StringComparison.OrdinalIgnoreCase));
 
             Assert.Equal(new[] { "version.dll", "winmm.dll" }, ours.OrderBy(x => x, StringComparer.Ordinal));
@@ -282,13 +281,13 @@ public class ProxyDeployPolicyTests
         finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
     }
 
-    // ── the second skeptic review (wf_af037a8c-153) on the unreadable state ──
+    // ── the unreadable state ──────────────────────────────────────────────
 
     [Fact]
     public void ReadOwner_HeldByAWriterThatSharesRead_IsUnreadable()
     {
-        // (UNREAD-WRITER-SHARE, measured) The fallback open shared Write, so a proxy held by a writer that shares
-        // read (a hex editor, a mod manager, Python's open) opened fine and read as "another program's".
+        // A fallback open that shares Write would let a proxy held by a writer that shares read (a hex editor, a mod
+        // manager, Python's open) open fine and read as "another program's".
         string d = TempDir();
         try
         {
@@ -300,7 +299,7 @@ public class ProxyDeployPolicyTests
         finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
     }
 
-    // (third review, T3-READOWNER-NO-READER-CONTROL) The other side of the line: a plain concurrent READER (an AV scan,
+    // The other side of the line: a plain concurrent READER (an AV scan,
     // Explorer's property handler, another tool) must NOT make a file unreadable -- else a foreign proxy with no
     // ProductName reads as Unreadable while it is scanned, Deploy skips the folder and Undeploy reports a failure.
     [Theory]
@@ -324,7 +323,7 @@ public class ProxyDeployPolicyTests
     [InlineData(0, false)]
     public void Undeploy_LeavingAnUnreadableFile_IsNotASuccess(int removed, bool success)
     {
-        // (UNREAD-UNDEPLOY-NOTE-WIPED) A success let the view model's refresh wipe the 'Cannot read' note at once --
+        // A success would let the view model's refresh wipe the 'Cannot read' note at once --
         // and the contract is 'true when nothing of ours is left behind', which an unreadable file may be.
         var (status, message, ok) = ProxyDeployService.ResolveUndeployOutcome(
             removed, Array.Empty<string>(), Array.Empty<string>(), new[] { "winmm.dll" });
@@ -336,9 +335,8 @@ public class ProxyDeployPolicyTests
     [Fact]
     public async System.Threading.Tasks.Task Service_AnUnreadableFileAtAnotherName_IsReportedAndSkipped_AsUnreadable()
     {
-        // (UNREAD-REFRESH-OTHERNAME) The refresh showed a clean NotDeployed for a folder whose only proxy-named file
-        // could not be read -- the folder Deploy then skipped. (UNREAD-RESULTLINE-CLAIMS-OURS) The backstop called it
-        // DeployedOtherType, 'another of OUR types', for a file it cannot tell the owner of.
+        // A folder whose only proxy-named file cannot be read -- the folder Deploy skips -- must not refresh as a clean
+        // NotDeployed, nor be called DeployedOtherType, 'another of OUR types', for a file whose owner is unknown.
         string d = TempDir();
         try
         {
@@ -368,8 +366,8 @@ public class ProxyDeployPolicyTests
     [Fact]
     public void IsUnreadableDll_IsARequiredMember()
     {
-        // (UNREAD-DIM-DEFAULT-FALSE) A default returning false let a wrapper that forgot it silently disable every
-        // unreadable guard -- the fallback-to-default shape the first review flagged as T2.
+        // A default returning false would let a wrapper that forgot it silently disable every unreadable guard -- the
+        // fallback-to-default shape.
         Assert.True(typeof(UE5DumpUI.Core.IProxyDeployService).GetMethod(nameof(UE5DumpUI.Core.IProxyDeployService.IsUnreadableDll))!.IsAbstract);
     }
 
@@ -438,7 +436,8 @@ public class ProxyDeployPolicyTests
         }
     }
 
-    // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The row decides whether a note names the unreadable files.
+    // The row decides whether a note names the unreadable files: a row whose detail the refresh already wrote them into
+    // gets only the skip reason, not the same names twice.
     [Fact]
     public void DetailNamesUnreadable_ReadsWhatTheRefreshWrote()
     {
@@ -452,7 +451,7 @@ public class ProxyDeployPolicyTests
         // A preserved row: the failure names the file, but not as unreadable.
         Assert.False(ProxyDeployService.DetailNamesUnreadable("File locked (game running?): winmm.dll", new[] { "winmm.dll" }));
         Assert.False(ProxyDeployService.DetailNamesUnreadable(null, new[] { "winmm.dll" }));
-        // (fourth review, R4-UNREAD-PARSE-FIRST-SENTENCE-ONLY) Two SEPARATE sentences -- the refresh writes that when the
+        // Two SEPARATE sentences -- the refresh writes that when the
         // selected name and another are both unreadable -- are both read, not only the first.
         string separate = ProxyDeployService.DescribeUnreadable(new[] { "version.dll" }) + " "
                           + ProxyDeployService.DescribeUnreadable(new[] { "winmm.dll" });
@@ -460,9 +459,9 @@ public class ProxyDeployPolicyTests
         Assert.True(ProxyDeployService.DetailNamesUnreadable(separate, new[] { "version.dll", "winmm.dll" }));
     }
 
-    // [I18N-READINESS-2026-11-04] P3. The parse reads the sentence through the WRITER's own template, never anchors of
+    // [I18N-READINESS-2026-11-04] The parse reads the sentence through the WRITER's own template, never anchors of
     // its own: with two copies, a translation of one would leave the other English, the parse would stop matching, and
-    // the doubled note UNREAD-NOTE-DOUBLED-OTHERNAME removed would come back -- with nothing to say so.
+    // the note would be doubled again -- with nothing to say so.
     [Fact]
     public void DetailNamesUnreadable_ParsesTheTemplateDescribeUnreadableWrites()
     {

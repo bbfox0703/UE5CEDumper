@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. The words a gameplay card shows when someone other than this window holds its
+/// [MCP-WRITE-GRANTS-2026-11-14] The words a gameplay card shows when someone other than this window holds its
 /// feature, from get_holds (and See-through's claims). The text is en.axaml's, which the unit tests load.
 /// </summary>
 public sealed class HolderTextTests
@@ -56,9 +56,8 @@ public sealed class HolderTextTests
         Assert.Equal("Held by another program (pid 78)", HolderText.For(Hold("client", 78), pid => pid == 77));
     }
 
-    // [MCP-WRITE-GRANTS-2026-11-14] review: the DLL drops an ended AI session's ownership of the debug camera when its
-    // OFF has to wait for a stalled game thread, and says the release is owed (DLL 3707+). Nobody holds it: the camera
-    // is on its way off.
+    // [MCP-WRITE-GRANTS-2026-11-14] The DLL drops an ended AI session's ownership of the debug camera when its OFF has
+    // to wait for a stalled game thread, and says the release is owed. Nobody holds it: the camera is on its way off.
     [Fact]
     public void AnEndedAiSessionsCamera_ThatTheDllIsTurningOff_SaysSo()
     {
@@ -70,7 +69,7 @@ public sealed class HolderTextTests
         Assert.Equal(Res.Get(HolderText.KeyReleaseOwed), HolderText.For(owed, Running));
     }
 
-    // Review round 2: the DLL keeps the owed record until its next monitor tick, after someone else has taken the
+    // The DLL keeps the owed record until its next monitor tick, after someone else has taken the
     // camera (its OFF is then abandoned): the holder is named, not an ended session.
     [Theory]
     [InlineData("ce", null, false, false, "Held by Cheat Engine")]
@@ -105,7 +104,8 @@ public sealed class HolderTextTests
     [InlineData(true, 3, true, true, "Held by Cheat Engine and another program or AI session")]
     [InlineData(true, 4, true, true, "Held by Cheat Engine and 2 other programs or AI sessions")]
     [InlineData(true, 1, false, false, "Held by another program or AI session")]   // the window has none
-    // DLL 3698-3713 does not say whether the window holds one: never count its own claim as another's on a guess.
+    // A DLL that does not say whether the window holds one (You is null): never count its own claim as another's on
+    // a guess.
     [InlineData(true, 1, false, null, "")]
     [InlineData(true, 2, true, null, "Held by Cheat Engine")]
     public void SeeThrough_CountsTheClaimsThatAreNotThisWindows(bool active, int claims, bool ce, bool? you,

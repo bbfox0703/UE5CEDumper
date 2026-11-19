@@ -116,7 +116,7 @@ public class CallTraceViewModelTests
         }
 
         // [LIVEFUNCS-STEP3] The native stacks. Every reply carries every stack ring's window, and a page holds one
-        // index: a slot, or an orphan, whose page comes back empty yet moves on, as the DLL's does (review M1).
+        // index: a slot, or an orphan, whose page comes back empty yet moves on, as the DLL's does.
         public List<SnapRingInfo> StackRingList { get; } = new();
         public List<(int Ring, StackSlot Slot)> StackSlots { get; } = new();
         public HashSet<(int Ring, ulong Index)> StackOrphans { get; } = new();
@@ -218,7 +218,7 @@ public class CallTraceViewModelTests
         Assert.Equal(2, vm.Rows.Count);   // collapsed: the two roots
     }
 
-    // ---- [LIVEFUNCS-STEP2] U12: the snapshots, read before the release ----
+    // ---- [LIVEFUNCS-STEP2] the snapshots, read before the release ----
 
     private static FakeDumpService DumpWithSnapshots()
     {
@@ -282,7 +282,7 @@ public class CallTraceViewModelTests
         Assert.Null(vm.Trace!.Snapshots);
     }
 
-    // ---- [LIVEFUNCS-STEP2] U13: the Parameters tab ----
+    // ---- [LIVEFUNCS-STEP2] the Parameters tab ----
 
     // A(0) unchosen; B(1) taken, copies at and after the call; C(2) over the budget; D(5) taken, its arm never read;
     // E(8) lone and taken, but its slot overwritten since.
@@ -465,7 +465,7 @@ public class CallTraceViewModelTests
         Assert.False(vm.IsFiltered);
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U4: the native stacks, read before the release and joined apart from the parameters ----
+    // ---- [LIVEFUNCS-STEP3] the native stacks, read before the release and joined apart from the parameters ----
 
     private const uint StackTaken = StackInfo.TakenEntryFlag;
     private const uint Lone = 4;
@@ -626,7 +626,7 @@ public class CallTraceViewModelTests
     [Fact]
     public void The_summary_and_the_export_say_how_many_records_the_DLL_dropped()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_a193c703-fe8: the counts were computed and shown nowhere. Kept 10..16 (7 numbers),
+        // [TRACE-DROPPED-ENTRY] The dropped counts reach the summary and the export. Kept 10..16 (7 numbers),
         // six records sent: the entry at 11 is missing (its return at 12 is there) -- one entry dropped, no return.
         var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
         {
@@ -647,7 +647,7 @@ public class CallTraceViewModelTests
     [Fact]
     public void A_call_that_lost_both_records_is_not_described_as_one_of_two_cases()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_6ad0a6e1-ffa: B lost its start (11) AND its return (12) -- it returned before
+        // [TRACE-DROPPED-ENTRY] B lost its start (11) AND its return (12) -- it returned before
         // Stop and is simply absent. Neither "a return whose call shows as not returned" nor "a start of a call still
         // running" fits, so the status line may not claim the other records are each one of those two.
         var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
@@ -668,9 +668,9 @@ public class CallTraceViewModelTests
     [Fact]
     public void A_dropped_return_is_said_to_put_the_later_calls_of_its_thread_inside_its_call()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_1b9e937b-a0d R6-2: B's return (12) was dropped, so B stays open on thread 1 and C,
-        // which began after B returned, is drawn as B's child -- the tree's most visible effect, which the status line
-        // left out ("not returned, or be missing").
+        // [TRACE-DROPPED-ENTRY] B's return (12) was dropped, so B stays open on thread 1 and C, which began after B
+        // returned, is drawn as B's child -- the tree's most visible effect, which the status line must name, not only
+        // "not returned, or be missing".
         var t = UE5DumpUI.Services.CallTraceBuilder.Build(new[]
         {
             new TraceRecord(10, 100, 0xA, 0, 1, 0), new TraceRecord(11, 110, 0xB, 0, 1, 0),
@@ -688,9 +688,9 @@ public class CallTraceViewModelTests
     [Fact]
     public async Task A_call_whose_return_may_be_among_the_dropped_records_says_so()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_1b9e937b-a0d R6-3: the detail pane said a call with no return "did not return
-        // (still running at Stop, or unwound by an exception)". B returned; its record was left out as the buffer wrapped.
-        // A trace with records left out names that reason too; one with none keeps the two.
+        // [TRACE-DROPPED-ENTRY] A call with no return "did not return (still running at Stop, or unwound by an
+        // exception)" -- or, as B here, returned with its record left out as the buffer wrapped. A trace with records left
+        // out names that reason too; one with none keeps the two.
         var d = new FakeDumpService();
         d.Ring.AddRange(new[]
         {
@@ -715,7 +715,7 @@ public class CallTraceViewModelTests
     [Fact]
     public void A_dropped_start_of_a_call_still_running_is_not_called_a_return()
     {
-        // [TRACE-DROPPED-ENTRY] Review wf_53eabd00-f5e: a missing record that no return names can be a dropped RETURN or
+        // [TRACE-DROPPED-ENTRY] A missing record that no return names can be a dropped RETURN or
         // the dropped START of a call still running at Stop -- the records cannot tell them apart. Kept 10..12, the call
         // at 10 returned at 11, and 12 is missing: the start of a call that never returned. Nothing may claim a call
         // "shows as not returned", and the export must not file it as a return.
@@ -766,10 +766,10 @@ public class CallTraceViewModelTests
     [InlineData(true)]
     public async Task A_new_load_lets_go_of_the_trace_on_screen_before_it_reads(bool stackShown)
     {
-        // [TRACE-UI-LOAD-MEMORY] Live, build 3634: a 512 MB load after a 128 MB one peaked at 3.77 GB, the earlier
-        // trace still held beside the new window and columns. The new read starts without it: off the screen, and
+        // [TRACE-UI-LOAD-MEMORY] A large load after another would hold the earlier trace beside the new window and
+        // columns. The new read starts without it: off the screen, and
         // reachable from nothing the view model keeps -- a stack shown from it too, whose frames were named against
-        // that trace's functions (review U5-CODEINDEX-PINS-OLD-TRACE).
+        // that trace's functions.
         var dump = stackShown ? StackDump() : Dump();
         var (vm, _) = MakeVm(dump);
         await vm.LoadCommand.ExecuteAsync(null);
@@ -811,10 +811,10 @@ public class CallTraceViewModelTests
     [Fact]
     public async Task A_long_read_collects_the_pages_garbage_as_it_goes()
     {
-        // [TRACE-UI-LOAD-MEMORY] Live, build 3634, Avowed: a full 128 MB load still peaked at 1.27 GB working set. Each
-        // page leaves the pipe's line and its parsed document behind (~5 MB for a full page), and nothing collected
-        // them during a load of hundreds of pages. A collection at least every CollectEveryPages pages (no platform
-        // service: free memory unknown, so exactly that), and one before the build.
+        // [TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
+        // page), and a load of hundreds of pages piles them up unless something collects them as it goes. A collection
+        // at least every CollectEveryPages pages (no platform service: free memory unknown, so exactly that), and one
+        // before the build.
         int pages = 4 * CallTraceViewModel.CollectEveryPages;   // four collection periods, whatever the period
         var dump = new FakeDumpService
         {
@@ -830,7 +830,7 @@ public class CallTraceViewModelTests
         Assert.True(vm.CollectionsDuringLastLoad >= 4, $"{vm.CollectionsDuringLastLoad} collections over {pages} pages");
     }
 
-    // [TRACE-UI-LOAD-MEMORY] The maintainer, 2026-10-07: how often a load collects depends on the memory free now. The
+    // [TRACE-UI-LOAD-MEMORY] How often a load collects depends on the memory free now. The
     // pages' garbage between two collections may take 1/32 of it, at about 5 MB a page; never more than
     // CollectEveryPages pages, which the slider's estimate was calibrated on, and never less than one.
     [Theory]
@@ -880,11 +880,10 @@ public class CallTraceViewModelTests
     [Fact]
     public void A_page_reply_stays_short_enough_for_the_pipe_to_read_it_without_keeping_big_buffers()
     {
-        // [TRACE-UI-LOAD-MEMORY] Measured 2026-10-07: StreamReader.ReadLineAsync on 13 lines of 14 million chars -- a
-        // page of 262,144 records as base64 -- read from rotating pool threads, as PipeClient's loop is, kept 205 MB of
-        // pooled line buffers after a full collection; on 104 lines of 1.75 million chars, nothing. Live, the same
-        // retention held a full 128 MB load's working set ~0.3 GB above what the trace keeps. A page is read as one
-        // line: its base64 stays near 1.75 million chars.
+        // [TRACE-UI-LOAD-MEMORY] StreamReader.ReadLineAsync on lines of 14 million chars -- a page of 262,144 records
+        // as base64 -- read from rotating pool threads, as PipeClient's loop is, keeps a large pool of line buffers
+        // after a full collection; on lines of 1.75 million chars, nothing. A page is read as one line: its
+        // base64 stays near 1.75 million chars.
         long base64Chars = (long)CallTraceViewModel.PageRecords * 40 * 4 / 3;
         Assert.True(base64Chars <= 2_000_000, $"a page is {base64Chars:N0} chars of base64");
     }
@@ -892,8 +891,8 @@ public class CallTraceViewModelTests
     [Fact]
     public async Task Each_page_asks_no_more_than_the_window_has_left()
     {
-        // [TRACE-UI-LOAD-MEMORY] D2: a page is decoded into what is left of the window, so it must never be asked
-        // for more: the old read asked 262,144 records of every page and copied what fitted.
+        // [TRACE-UI-LOAD-MEMORY] A page is decoded into what is left of the window, so it must never be asked for
+        // more -- not a fixed 262,144 records of every page with only what fits copied.
         var dump = Dump();
         dump.PageMax = 4;
         var (vm, _) = MakeVm(dump);
@@ -1071,7 +1070,7 @@ public class CallTraceViewModelTests
     [Fact]
     public async Task The_parameters_csv_is_offered_only_for_a_trace_with_snapshots()
     {
-        // [LIVEFUNCS-STEP2] U14: a trace that took no copies has no rows for it.
+        // [LIVEFUNCS-STEP2] A trace that took no copies has no rows for it.
         var dump = DumpWithSnapshots();
         var (vm, _) = MakeVm(dump);
         var raised = new List<string?>();
@@ -1173,13 +1172,13 @@ public class CallTraceViewModelTests
         Assert.Equal("—", rows[4].DurationText);   // never returned
     }
 
-    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by every row, remembered ----
+    // ---- the list's widths ([LIVEFUNCS-STEP2]): dragged from the header, shared by every row, remembered ----
 
     [Fact]
     public void The_widths_start_at_the_old_fixed_layout_and_the_saved_defaults_are_the_same()
     {
-        // A file from before the widths were saved hydrates to the options' defaults, which must be what the tab
-        // showed before them: Time 96, Duration 88, Thread 64, Object 260, the detail pane 380.
+        // A file with no saved widths hydrates to the options' defaults, which must be the tab's fixed layout:
+        // Time 96, Duration 88, Thread 64, Object 260, the detail pane 380.
         var (vm, _) = MakeVm(Dump());
         var o = new CallTraceUiOptions();
         Assert.Equal((96.0, 88.0, 64.0, 260.0, 380.0),
@@ -1233,8 +1232,8 @@ public class CallTraceViewModelTests
     }
 
     // ---- [CT-DETAIL-COVERS-LIST] the remembered widths fitted to the room the panel has ----
-    // SplitWidth is the width the list and the detail pane share. The list's floor is 208, the maintainer's choice
-    // (2026-10-09): a row's item padding (24) and Time and Duration at their default widths (96 + 88), so a call can
+    // SplitWidth is the width the list and the detail pane share. The list's floor is 208: a row's item padding (24)
+    // and Time and Duration at their default widths (96 + 88), so a call can
     // always be clicked. A row's columns are fitted to a list of 512 or wider: the floor, Thread at its default (64),
     // Object at its floor (80) and 160 of Function.
 
@@ -1244,7 +1243,7 @@ public class CallTraceViewModelTests
     [Fact]
     public void The_pane_shows_its_remembered_width_where_the_list_keeps_its_floor_beside_it()
     {
-        // Build 3645: a remembered 766 in a narrower panel covered the whole list.
+        // A remembered 766 in a narrower panel must not cover the whole list.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);       // not laid out yet: nothing to fit it to
@@ -1494,7 +1493,7 @@ public class CallTraceViewModelTests
             Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
             Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
         }
-        // [LIVEFUNCS-STEP2] U13: the pane is a TabControl now (Call | Parameters); the width and its thumb are its.
+        // [LIVEFUNCS-STEP2] The pane is a TabControl (Call | Parameters); the width and its thumb are its.
         var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownDetailPaneWidth}");
         Assert.Contains(pane.Descendants(Av + "TextBox"),
                         e => (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
@@ -1504,9 +1503,8 @@ public class CallTraceViewModelTests
     [Fact]
     public void The_panels_thumbs_have_a_template_so_they_can_be_seen_and_dragged()
     {
-        // Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a Slider (read from its assembly,
-        // 2026-10-08), so a bare Thumb has no template and draws nothing: a handle no one can find. The panel styles
-        // its own; a column was dragged live with it on build 3640.
+        // Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a Slider (per its assembly), so a
+        // bare Thumb has no template and draws nothing: a handle no one can find. The panel styles its own.
         var doc = PanelAxaml();
         Assert.NotEmpty(doc.Descendants(Av + "Thumb"));
         var style = doc.Descendants(Av + "Style").SingleOrDefault(s => (string?)s.Attribute("Selector") == "Thumb");
@@ -1519,8 +1517,8 @@ public class CallTraceViewModelTests
     public void A_list_narrower_than_its_columns_cuts_them_at_its_edge_instead_of_overlapping_them()
     {
         // [CT-COLUMNS-OVERLAP] A DockPanel gives a cell that no longer fits only the width that is left, and Avalonia
-        // centres a fixed-width cell in a narrower slot, so the cell reached back over the column on its left
-        // ("ThreaObject" in the step-3 walkthrough). Aligned left, a cell keeps where it starts and its dragged width,
+        // centres a fixed-width cell in a narrower slot, so a centred cell reaches back over the column on its left
+        // ("ThreaObject"). Aligned left, a cell keeps where it starts and its dragged width,
         // and runs past the list's edge to be cut there. The layout itself is measured on real controls by the
         // headless project's CallTraceColumnsTests.
         var doc = PanelAxaml();
@@ -1537,13 +1535,13 @@ public class CallTraceViewModelTests
         var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownTimeColWidth}").Parent!;
         Assert.True((string?)headerRow.Attribute("ClipToBounds") == "True", "the header's row does not clip what overflows it");
         // A row is narrower than the list's viewport by the item's padding: a column the row places at its own edge
-        // would show there, over the column cut at that edge (measured with the list narrower than Time, Duration and
-        // Thread together).
+        // would show there, over the column cut at that edge (with the list narrower than Time, Duration and Thread
+        // together).
         var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ShownTimeColWidth}").Parent!;
         Assert.True((string?)rowPanel.Attribute("ClipToBounds") == "True", "a row does not clip what overflows it");
     }
 
-    // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
+    // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2]) ----
 
     /// <summary>The Object line names the object the function was called on (ProcessEvent's receiver, the record's
     /// object), never the code that called it, which a word like "calling" suggests: the callers are the tree's parents.</summary>
@@ -1629,7 +1627,7 @@ public class CallTraceViewModelTests
     [Fact]
     public void The_address_lines_say_whose_address_they_are()
     {
-        // Maintainer, build 3638: "UFunction: 0x..." reads as a call address, and pasted into CE's disassembler it shows
+        // "UFunction: 0x..." reads as a call address, and pasted into CE's disassembler it shows
         // garbage. It is the UFunction object's address (data), and the Object line's is the address of the object the
         // function was called on.
         Assert.Contains("UFunction object's address", En("str.CT.Detail.FuncAddr"), StringComparison.Ordinal);
@@ -1716,7 +1714,7 @@ public class CallTraceViewModelTests
         Assert.Equal(new ulong[] { 0x7FF6A0123456, 0, 0 }, page.Items.Select(f => f.CodeAddr).ToArray());
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U5: the Call stack tab (view A), and a frame to Cheat Engine (view D) ----
+    // ---- [LIVEFUNCS-STEP3] the Call stack tab, and a frame to Cheat Engine ----
 
     private const uint StackBudget = StackInfo.BudgetEntryFlag;
     private const uint Excluded = 8;
@@ -1748,7 +1746,7 @@ public class CallTraceViewModelTests
         Site(GameBase + 0x300100, "Game.exe", GameBase, fn: GameBase + 0x300000, known: "process_event"),
         Site(0x7FFB10001000, "version.dll", 0x7FFB10000000, fn: 0x7FFB10000F00, own: true), // #4 the hook, in its proxy
         Site(0x7FFC20000050, "ntdll.dll", 0x7FFC20000000, unwind: false),                  // #5 no unwind data
-        // #6 a name the UI machine's code page narrows: CE lists Café as Cafe (best fit, measured on ACP 950).
+        // #6 a name the UI machine's code page narrows: CE lists Café as Cafe (best fit, as under ACP 950).
         Site(0x7FFC30002000, "Café.dll", 0x7FFC30000000, fn: 0x7FFC30001F00, ceModule: "Cafe.dll"),
         Site(0x2A0000010, unwind: false),                                                   // #7 outside every module
     };
@@ -1858,7 +1856,7 @@ public class CallTraceViewModelTests
     [Fact]
     public async Task A_frame_the_trace_never_named_is_named_from_the_DLLs_index()
     {
-        // [LIVEFUNCS-STEP3] S3-A1: an exec thunk a Blueprint reached without ProcessEvent is in no traced function's
+        // [LIVEFUNCS-STEP3] An exec thunk a Blueprint reached without ProcessEvent is in no traced function's
         // code_addr, but the DLL's one pass over the object array names it.
         var vm = await StackVm(StackDump());
         var index = CallTraceViewModel.CodeIndex(vm.Trace!);
@@ -1994,7 +1992,7 @@ public class CallTraceViewModelTests
         var vm = await StackVm(StackDump(), aobMaker: new UE5DumpUI.Helpers.AobMakerStatus(bridge));
         vm.SelectedAddressFormatIndex = (int)AddressFormat.ModuleOffset;   // the setting does not change what is sent
         await vm.AsmFrameCommand.ExecuteAsync(GameRow());
-        Assert.Equal("140001234", bridge.LastAsm);   // the view sends 0x140001234; AobMakerActions strips the 0x (M2)
+        Assert.Equal("140001234", bridge.LastAsm);   // the view sends 0x140001234; AobMakerActions strips the 0x
         Assert.EndsWith("@ 0x140001234", vm.StatusText, StringComparison.Ordinal);
     }
 

@@ -9,22 +9,21 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Pins <c>executeCodeEx</c>'s call shape everywhere we emit or ship it.
 ///
-/// <para><b>Why this file exists (audit #4 B1).</b> CE's real signature is
+/// <para><b>Why this file exists.</b> CE's real signature is
 /// <c>executeCodeEx(callmethod, timeout, address, params...)</c> — <c>callmethod</c>
 /// 0=stdcall / 1=cdecl, <c>timeout</c> in ms, and <b>the address is argument 3</b>.
-/// Both script generators and the shipped <c>UE5CEDumper.CT</c> passed the address in
-/// slot 2 for months. The failure is completely silent: CE executes with
+/// Passing the address in slot 2 fails completely silently: CE executes with
 /// <c>address = nil</c> and returns <c>nil</c> <i>without raising</i>, so a
-/// <c>pcall</c> around it reports success. The observable result was a CE Disable
-/// that reported a clean teardown while <c>UE5_Shutdown</c> had never run.</para>
+/// <c>pcall</c> around it reports success, and a CE Disable reports a clean teardown
+/// although <c>UE5_Shutdown</c> never runs.</para>
 ///
-/// <para>Two traps in the fix itself, both pinned below: <c>timeout = nil</c>/<c>-1</c>
+/// <para>Two traps in the timeout, both pinned below: <c>timeout = nil</c>/<c>-1</c>
 /// waits forever (hanging CE's UI on a stalled game thread), and <c>timeout = 0</c>
 /// means "don't wait" AND never frees the call memory — CE's own <c>celua.txt</c>
 /// flags it as a leak.</para>
 ///
-/// <para>The <c>.CT</c> assertions are the first automated coverage of that file at
-/// all; it is hand-maintained and drifts from the generators exactly here.</para>
+/// <para>The <c>.CT</c> is hand-maintained and drifts from the generators exactly
+/// here, so its call sites are checked too.</para>
 /// </summary>
 public class CeExecuteCodeExArityTests
 {
@@ -61,8 +60,8 @@ public class CeExecuteCodeExArityTests
 
         // CE hands back a reason string as its SECOND return value, and the six
         // possible reasons point at six different problems. Printing a guessed
-        // message instead is the defect the build-2743 sweep fixed for the mailbox
-        // timeout; this pins that it does not come back here.
+        // message instead sends the user after the wrong one; this pins that CE's
+        // own reason is printed.
         Assert.Contains("local okCall, ret, why = pcall(executeCodeEx", lua, StringComparison.Ordinal);
         Assert.Contains("tostring(why)", lua, StringComparison.Ordinal);
     }
@@ -70,11 +69,11 @@ public class CeExecuteCodeExArityTests
     [Fact]
     public void Shipped_dissect_script_uses_a_finite_timeout_and_reports_CEs_reason()
     {
-        // ue5_dissect.lua was the one executeCodeEx call site with no coverage here,
-        // and it was the one still passing `nil`. A nil timeout is INFINITE, not
-        // "use a default" (LuaHandler.pas:11504-11505), and the wait pumps nothing —
-        // so a suspended target froze CE with no UI-level recovery, once per FIELD of
-        // a class walk. See docs/ce-plugin-sdk-notes.md §13.2-13.3.
+        // ue5_dissect.lua calls executeCodeEx too, and must pass a finite timeout.
+        // A nil timeout is INFINITE, not "use a default" (LuaHandler.pas:11504-11505),
+        // and the wait pumps nothing — so a suspended target would freeze CE with no
+        // UI-level recovery, once per FIELD of a class walk. See
+        // docs/ce-plugin-sdk-notes.md §13.2-13.3.
         var lua = FindRepoFile(Path.Combine("scripts", "ue5_dissect.lua"));
         Assert.NotNull(lua);   // shipped artifact — not finding it is a real failure
         var text = File.ReadAllText(lua!);
@@ -126,15 +125,15 @@ public class CeExecuteCodeExArityTests
         }
 
         Assert.Contains("local UE5_CALL_TIMEOUT_MS = ", text, StringComparison.Ordinal);
-        // The comment that caused the bug: callmethod is a calling convention, and
-        // reading it as a return type is what put the address in the timeout slot.
+        // callmethod is a calling convention; a comment that reads it as a return
+        // type invites a call that puts the address in the timeout slot.
         Assert.DoesNotContain("executeCodeEx: retType", text, StringComparison.Ordinal);
 
-        // CE's second return value names the failure. The old message guessed at a
-        // dead process, and four of the six reasons occur with a perfectly healthy
-        // one. Checked over CODE lines only: the comment above the fix quotes the old
-        // string deliberately, to say why it went — and a whole-text DoesNotContain
-        // matches that explanation and fails on the very fix it is guarding.
+        // CE's second return value names the failure. A message that guesses at a
+        // dead process is wrong for four of the six reasons, which occur with a
+        // perfectly healthy one. Checked over CODE lines only: a comment in the .CT
+        // quotes the guessed string deliberately, to explain it — and a whole-text
+        // DoesNotContain would match that explanation and fail a correct table.
         Assert.Contains("local result, why = executeCodeEx(", text, StringComparison.Ordinal);
         Assert.DoesNotContain("process alive?", string.Join("\n", CodeLines(text)),
             StringComparison.Ordinal);
@@ -146,8 +145,7 @@ public class CeExecuteCodeExArityTests
         // memrec only exists in the record's own chunk, so ue5_inject has to report
         // failure and the [ENABLE] block has to act on it. Without this, CE leaves the
         // record ticked after an "already loaded and serving" bail-out, and unticking
-        // then runs a real UE5_Shutdown against a proxy this script never injected
-        // (audit #4 B30).
+        // then runs a real UE5_Shutdown against a proxy this script never injected.
         var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
         Assert.NotNull(ct);
         var text = File.ReadAllText(ct!);
@@ -179,9 +177,9 @@ public class CeExecuteCodeExArityTests
     [Fact]
     public void Shipped_cheat_table_clears_a_stale_ownership_flag_before_its_first_bailout()
     {
-        // [A3-B30-STALE-FLAG] review 4: ue5_inject's DLL-not-found bail-out ran BEFORE the serving check. A cancelled
-        // file picker there returned false with the previous table's flag still true, and the untick then passed
-        // ue5_shutdown's guard and tore a serving pipe down. The clear leads the function.
+        // [A3-B30-STALE-FLAG] ue5_inject's DLL-not-found bail-out runs BEFORE the serving check. With the clear after
+        // it, a cancelled file picker there would return false with the previous table's flag still true, and the
+        // untick would then pass ue5_shutdown's guard and tear a serving pipe down. The clear leads the function.
         var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
         Assert.NotNull(ct);
         var text = File.ReadAllText(ct!);
@@ -203,13 +201,13 @@ public class CeExecuteCodeExArityTests
         // UE5_Shutdown IS s_pipeServer.Stop() plus everything else, and it runs that
         // Stop deliberately AFTER Stark::Shutdown so a pipe thread blocked in
         // EnqueueInvoke receives its -7 and unwinds. Calling UE5_StopPipeServer first
-        // inverted that ordering — and because the CE call times out at 5 s while the
-        // remote thread keeps running, it put a SECOND teardown into the game process
-        // concurrently with the first (measured on Elliot 2026-08-04).
+        // inverts that ordering — and because the CE call times out at 5 s while the
+        // remote thread keeps running, it puts a SECOND teardown into the game process
+        // concurrently with the first.
         //
         // The export stays (third-party CE scripts use it standalone) and the
         // getAddress PROBE stays (it is how the block detects "nothing was loaded").
-        // What must not come back is calling it.
+        // What must not appear is a call to it.
         var s = which == "inject"
             ? CeInjectScriptGenerator.Generate(Dll)
             : CeAutorunScriptGenerator.Generate(Dll);

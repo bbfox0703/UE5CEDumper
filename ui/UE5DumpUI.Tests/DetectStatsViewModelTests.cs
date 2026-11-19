@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// VM-level tests for the experimental "Detect Player Stats" panel (P4). Verifies
+/// VM-level tests for the experimental "Detect Player Stats" panel. Verifies
 /// the confirmation pipeline: scorer → per-class live-instance probe → live-value
 /// sanity → confidence ranking, plus one-probe-per-class batching and graceful
 /// snapshot-signal degradation. Uses a stub IDumpService scoped to this file.
@@ -162,11 +162,11 @@ public class DetectStatsViewModelTests
     }
 
     /// <summary>
-    /// Past the 30-class probe cap a row must say "not checked", not "guess" — audit #5 AF2.
+    /// Past the 30-class probe cap a row must say "not checked", not "guess".
     ///
     /// Every confirmation signal is false for an unprobed row for the same reason it is false
-    /// for a row the probe examined and rejected, so the two rendered identically and a real
-    /// stat at rank 31 was indistinguishable from a disproven one.
+    /// for a row the probe examined and rejected, so without the badge the two render
+    /// identically and a real stat at rank 31 is indistinguishable from a disproven one.
     /// </summary>
     [Fact]
     public async Task Detect_PastTheClassProbeCap_RowsSayNotChecked_NotGuess()
@@ -189,22 +189,22 @@ public class DetectStatsViewModelTests
         Assert.Equal(30, probed.Count);
         Assert.Equal(10, unprobed.Count);
 
-        // Neither group is confirmed — and that is exactly why they used to be
-        // indistinguishable. The badge is what has to separate them.
+        // Neither group is confirmed — so IsConfirmed alone cannot tell them apart.
+        // The badge is what has to separate them.
         Assert.All(vm.Results, r => Assert.False(r.IsConfirmed));
         Assert.All(probed,   r => Assert.Equal("· guess", r.ConfirmBadge));
         Assert.All(unprobed, r => Assert.Equal("? not checked", r.ConfirmBadge));
         Assert.All(unprobed, r => Assert.Contains("not live-probed", r.SignalSummary));
         Assert.All(probed,   r => Assert.DoesNotContain("not live-probed", r.SignalSummary));
 
-        // ...and the status line admits the second truncation, which was silent.
+        // ...and the status line admits the second truncation, which is otherwise silent.
         Assert.Contains("30 of 40 classes live-probed", vm.StatusText);
     }
 
     [Fact]
     public async Task Detect_WithinTheCap_SaysNothingAboutUnprobedClasses()
     {
-        // The other direction: the new suffix must not appear when every class WAS probed,
+        // The other direction: the suffix must not appear when every class WAS probed,
         // or it becomes a permanent warning nobody reads.
         var dump = new FakeDump();
         dump.Matches.Add(M("Health", "PlayerCharacter", "FloatProperty", 0x100));

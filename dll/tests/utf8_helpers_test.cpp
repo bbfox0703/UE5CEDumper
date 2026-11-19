@@ -40,9 +40,9 @@ static int g_fail = 0;
     } \
 } while (0)
 
-// [UBEL-ASCII-FIRSTCHAR] Six-plus Ubel guards refused a name whose first byte is not printable ASCII, so a property,
-// parameter or struct named in Japanese or Chinese was dropped on UE4 and UE5 alike. A name may open with any one
-// complete UTF-8 character that is not a control; garbage still fails.
+// [UBEL-ASCII-FIRSTCHAR] A guard that refuses a name whose first byte is not printable ASCII drops a property,
+// parameter or struct named in Japanese or Chinese, on UE4 and UE5 alike. A name may open with any one complete
+// UTF-8 character that is not a control; garbage still fails.
 static void Test_IsPlausibleNameStart() {
     using Utf8Helpers::IsPlausibleNameStart;
     EXPECT("ascii name", IsPlausibleNameStart("Health"));
@@ -93,7 +93,7 @@ static void Test_Sanitize_ValidMultiBytePassthrough() {
 }
 
 static void Test_Sanitize_RejectsLoneContinuation() {
-    // Lone 0xA0 (no leader) — this is THE Squad bug 0xA0 case
+    // Lone 0xA0 (no leader) — this is THE Squad 0xA0 case
     EXPECT_EQ_STR("lone 0xA0 → ?",
                   Utf8Helpers::Sanitize(std::string("\xA0", 1)), "?");
     // Multiple lone continuations
@@ -102,8 +102,8 @@ static void Test_Sanitize_RejectsLoneContinuation() {
 }
 
 static void Test_Sanitize_RejectsSurrogateEncodings() {
-    // CESU-8: U+D800 encoded as 0xED 0xA0 0x80 — what the broken Serie.cpp wide
-    // path used to produce on lone surrogates. nlohmann::json type_error.316.
+    // CESU-8: U+D800 encoded as 0xED 0xA0 0x80 — what a naive wide conversion
+    // produces for a lone surrogate. nlohmann::json type_error.316.
     EXPECT_EQ_STR("CESU-8 high surrogate",
                   Utf8Helpers::Sanitize("\xED\xA0\x80"), "?");
     // U+DFFF → 0xED 0xBF 0xBF
@@ -189,8 +189,8 @@ static void Test_EncodeUtf16_MultipleSurrogatePairs() {
 }
 
 static void Test_EncodeUtf16_LoneSurrogates() {
-    // The Squad 0xA0 bug: lone high surrogate, no low partner.
-    // Old code emitted 0xED 0xA0 0x80 (CESU-8). New code emits '?'.
+    // The Squad 0xA0 case: lone high surrogate, no low partner.
+    // It becomes '?', never 0xED 0xA0 0x80 (CESU-8).
     wchar_t loneHigh[] = { 0xD800 };
     EXPECT_EQ_STR("lone high surrogate → ?",
                   Utf8Helpers::EncodeUtf16(loneHigh, 1), "?");
@@ -225,14 +225,9 @@ static void Test_EncodeUtf16_OutputAlwaysValidUtf8() {
     // Any output from EncodeUtf16 must round-trip cleanly through Sanitize.
     // This is the invariant nlohmann::json relies on.
     //
-    // audit #5 AD26 — the input used to open `'A', 0xD800, 0xDE00` under the comment
-    // "ASCII + lone high + lone low (mixed)". It was neither: 0xD800 is a high
-    // surrogate and 0xDE00 is a LOW one, so those two units are a perfectly VALID
-    // pair and EncodeUtf16 combined them into U+10200. The array's only lone
-    // surrogate was the 0xDC00 near the end, so the "lone HIGH" branch
-    // (`ch` in D800..DBFF with a non-low successor) was never executed by the test
-    // that claims to be the pathological case. A lone high followed by ASCII is what
-    // actually reaches it.
+    // The "lone HIGH" branch (`ch` in D800..DBFF with a non-low successor) needs a
+    // lone high followed by something that is not a low surrogate — ASCII here. `0xD800, 0xDE00` would not reach it: 0xDE00 is a LOW surrogate, so those
+    // two units are a perfectly VALID pair that EncodeUtf16 combines into U+10200.
     wchar_t pathological[] = {
         'A',                        // ASCII
         0xD800, 'B',                // LONE HIGH — successor is not a low surrogate
@@ -398,15 +393,11 @@ static void Test_Decode_Utf8CjkWithTrailingHeapBytes() {
     // real dump bytes that follow (…7B 09 at [66,67]), so this is the realistic
     // shape of the read.
     //
-    // audit #5 AD27 — the comment here used to say the heap tail "must NOT put a NUL
-    // pair at the UTF-16 terminator position [66,67], or the UTF-16 hypothesis would
-    // false-fire", making those two bytes read as load-bearing setup. They are not,
-    // and Test_Decode_Utf8MultiByteBeatsZeroHeapTail below asserts the opposite as
-    // its whole point: DecodeFStringBuffer's Rule 2 returns on `utf8Ok &&
-    // utf8HasMultiByte` BEFORE the UTF-16 hypothesis is evaluated at all, so for a
-    // genuine multi-byte UTF-8 buffer the terminator position cannot matter. Two
-    // tests in one file disagreeing about the same rule is worse than either being
-    // wrong alone, so the claim is dropped and the tail is asserted inert instead.
+    // The bytes at the UTF-16 terminator position [66,67] are not load-bearing setup:
+    // DecodeFStringBuffer's Rule 2 returns on `utf8Ok && utf8HasMultiByte` BEFORE the
+    // UTF-16 hypothesis is evaluated at all, so for a genuine multi-byte UTF-8 buffer
+    // the terminator position cannot matter — Test_Decode_Utf8MultiByteBeatsZeroHeapTail
+    // below asserts the same rule. The tail is asserted inert.
     uint8_t buf[68];
     for (size_t i = 0; i < 34; ++i) buf[i] = kUtf8Cjk[i];
     for (size_t i = 34; i < 68; ++i) buf[i] = static_cast<uint8_t>(0x40 + (i & 0x1F));
@@ -415,8 +406,8 @@ static void Test_Decode_Utf8CjkWithTrailingHeapBytes() {
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 34),
                   kUtf8CjkExpected);
 
-    // The negative control for the sentence that was removed: zero exactly the pair
-    // the old comment said would break it. Same answer, because Rule 2 got there first.
+    // The control: zero exactly the pair at the UTF-16 terminator position. Same
+    // answer, because Rule 2 gets there first.
     buf[66] = 0x00; buf[67] = 0x00;
     EXPECT_EQ_STR("...and a NUL pair at the UTF-16 terminator changes nothing (Rule 2)",
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 34),
@@ -455,17 +446,17 @@ static void Test_Decode_Utf16AsciiEvenLenInteriorNull() {
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 4), "ABC");
 }
 
-// --- B28: UTF-16 CJK buffers the UTF-8 hypothesis used to swallow -----------
+// --- UTF-16 CJK buffers the UTF-8 hypothesis must not swallow ----------------
 //
 // Every case here has buf[n-1] == 0 for a reason INSIDE the string's own data — a
 // U+xx00 character's low byte, or an ASCII character's high byte — with no interior
-// zero before it. The old gate returned the n-byte prefix as UTF-8 and never reached
+// zero before it. A gate that returned the n-byte prefix as UTF-8 would never reach
 // the UTF-16 branch. These are ordinary Chinese, not adversarial input.
 static void Test_Decode_Utf16Cjk_TrailingZeroLowByte() {
     // 中文一二 : 4E2D 6587 4E00 4E8C + NUL → num = 5.
     // buf[4] = 0x00 is 一's LOW byte, and bytes 0..3 (2D 4E 87 65) have no zero.
     // The UTF-8 prefix "-N\x87e" is NOT well-formed UTF-8 — 0x87 is a continuation
-    // byte with no lead — which is what now rejects it. A replacement-ratio test
+    // byte with no lead — which is what rejects it. A replacement-ratio test
     // could not: Sanitize gives "-N?e", 1 bad of 4, comfortably inside any ratio.
     const uint8_t buf[] = { 0x2D,0x4E, 0x87,0x65, 0x00,0x4E, 0x8C,0x4E, 0x00,0x00 };
     EXPECT_EQ_STR("UTF-16 中文一二 (U+4E00 low byte at n-1)",
@@ -495,9 +486,9 @@ static void Test_Decode_Utf16Cjk_MixedAscii() {
 }
 
 static void Test_Decode_Utf8MultiByteBeatsZeroHeapTail() {
-    // The guard on the fix itself. A genuine UTF-8 CJK buffer whose adjacent heap
-    // happens to be 0x00 0x00 at exactly the UTF-16 terminator position [2n-2] —
-    // the regression the audit warned a naive "prefer UTF-16" would cause. 你好 is
+    // The guard on the UTF-16 preference itself. A genuine UTF-8 CJK buffer whose
+    // adjacent heap happens to be 0x00 0x00 at exactly the UTF-16 terminator position
+    // [2n-2] — what a naive "prefer UTF-16" would mis-decode. 你好 is
     // 6 UTF-8 bytes + NUL → num = 7, so the UTF-16 terminator would sit at [12].
     // Rule 2 (well-formed AND multi-byte ⇒ UTF-8) settles it before the UTF-16
     // hypothesis is even evaluated.
@@ -513,9 +504,9 @@ static void Test_Decode_Utf8MultiByteBeatsZeroHeapTail() {
 }
 
 // ============================================================
-// TruncateUtf8 — audit #5 U7
+// TruncateUtf8 — the property-search preview's cut
 //
-// The property-search preview used to cut with a bare s.resize(50). These tests
+// A bare s.resize(50) can split a multi-byte sequence. These tests
 // pin the property that actually matters: the RESULT is still well-formed UTF-8,
 // checked with IsWellFormedUtf8 rather than by comparing against a hand-written
 // expected string — a byte-exact expectation would pass for a helper that cut
@@ -559,8 +550,8 @@ static void Test_TruncateUtf8_NeverSplitsAMultiByteSequence() {
     }
     EXPECT("no limit produces invalid UTF-8", splitLimits == 0);
 
-    // The negative control this test exists for: the OLD behaviour, byte-exact
-    // resize, must be demonstrably detectable by the same check — otherwise the
+    // The negative control this test exists for: a byte-exact resize must be
+    // demonstrably detectable by the same check — otherwise the
     // check above proves nothing. 50 is the limit the shipped call site uses.
     std::string naive = cjk.substr(0, 50);
     naive += "\xe2\x80\xa6";
@@ -596,11 +587,11 @@ static void Test_TruncateUtf8_FourByteSequenceAndMalformedInput() {
 // PRIVATE to the module and is always "C". So the behaviour pinned below is not
 // host-dependent and cannot be changed by the game or by Cheat Engine.
 //
-// ⭐ THESE ARE THE ASSERTIONS THAT CAN FAIL. They pin the CRT behaviour the fix exists
-// to route around, not the fix's own output — which is what makes them a control
-// rather than a restatement. Measured live 2026-08-24: a real ReShade dxgi.dll under
-// `D:\測試\…` produced a COMPLETELY BLANK log record from Methode.cpp, while the same
-// DLL at an ASCII path logged perfectly.
+// ⭐ THESE ARE THE ASSERTIONS THAT CAN FAIL. They pin the CRT behaviour the logging
+// code routes around, not that code's own output — which is what makes them a control
+// rather than a restatement. A dxgi.dll under `D:\測試\…` whose path goes through %ls
+// leaves a COMPLETELY BLANK log record from Methode.cpp, while the same DLL at an ASCII
+// path logs perfectly.
 static void Test_NarrowVsnprintf_DropsWideNonAscii() {
     const wchar_t* wpath = L"D:\\\u6e2c\u8a66\\Game\\Binaries\\Win64\\dxgi.dll";
 
@@ -630,7 +621,7 @@ static void Test_NarrowVsnprintf_DropsWideNonAscii() {
            std::string(latin, static_cast<size_t>(k > 0 ? k : 0))
                .find(static_cast<char>(0xAE)) != std::string::npos);
 
-    // The replacement expression all four call sites now use.
+    // The expression the logging call sites use instead.
     EXPECT_EQ_STR("EncodeUtf16 renders the same path as valid UTF-8",
                   Utf8Helpers::EncodeUtf16(wpath, std::wcslen(wpath)),
                   "D:\\\xe6\xb8\xac\xe8\xa9\xa6\\Game\\Binaries\\Win64\\dxgi.dll");
@@ -651,13 +642,13 @@ static void Test_IsWellFormedUtf8() {
     EXPECT("lone continuation byte rejected",
            !Utf8Helpers::IsWellFormedUtf8(lone, 4, multi));
 
-    // audit #5 AD25 — the out-param must not contradict the return value.
+    // The out-param must not contradict the return value.
     //
     // A VALID multi-byte sequence followed by an INVALID one is the only input that
-    // can separate the two: the old code set hasMultiByte=true the instant it accepted
-    // 中, then returned false three bytes later, leaving the caller a true flag on a
+    // can separate the two: code that sets hasMultiByte=true the instant it accepts
+    // 中, then returns false three bytes later, leaves the caller a true flag on a
     // rejected buffer. Seeded true first, so "left untouched" fails the same as
-    // "wrongly set" — without the seed a fixed implementation and a no-op are
+    // "wrongly set" — without the seed a correct implementation and a no-op are
     // indistinguishable here, since `multi` happens to be true from the CJK case above.
     const uint8_t goodThenBad[] = { 0xE4,0xB8,0xAD, 0xFF };   // 中 then an invalid lead
     multi = true;
@@ -666,7 +657,7 @@ static void Test_IsWellFormedUtf8() {
     EXPECT("...and hasMultiByte is false on that rejection", !multi);
 
     // The mirror case: the flag must still be false after a failure that never saw a
-    // multi-byte sequence at all, so the fix cannot be "always clear at the top".
+    // multi-byte sequence at all, so the rule cannot be "always clear at the top".
     multi = true;
     const uint8_t asciiThenBad[] = { 'a', 0xFF };
     EXPECT("ASCII followed by garbage is rejected",
@@ -687,7 +678,7 @@ static void Test_IsWellFormedUtf8() {
     EXPECT("5-byte form rejected", !Utf8Helpers::IsWellFormedUtf8(fiveByte, 5, multi));
 }
 
-// --- AD5: the ASCII tie — an English FText stored as UTF-8, over zeroed slack ---
+// --- The ASCII tie — an English FText stored as UTF-8, over zeroed slack ---
 //
 // Production reads Num*2 bytes, so half the window is adjacent heap. When the heap is
 // ZERO-FILLED (the ordinary allocator state) a pure-ASCII UTF-8 string satisfies the
@@ -695,23 +686,23 @@ static void Test_IsWellFormedUtf8() {
 // becomes one BMP unit, and the result is valid CJK with ZERO replacement characters —
 // so LooksLikeDecodedText accepts it and the wrong hypothesis wins.
 //
-// The header used to argue this needed two independent coincidences. It needs one:
-// zeroed slack supplies both at once, and the mis-decode then fires every time.
+// This needs one coincidence, not two independent ones: zeroed slack supplies both at
+// once, and without Rule 3a the mis-decode then fires every time.
 //
 // Rule 3a settles it structurally — an FString's Num includes its terminator, so a
 // UTF-16 reading with an INTERIOR null unit is not an n-unit string.
 
 static void Test_Decode_Utf8AsciiOverZeroedSlack_Short() {
     // "OK" UTF-8 (3 bytes incl. NUL), read as Num*2 = 6 with zeroed heap.
-    // Before the fix this returned U+4B4F ("䭏"): 'O' | 'K'<<8.
+    // The UTF-16 reading would be U+4B4F ("䭏"): 'O' | 'K'<<8.
     const uint8_t buf[] = { 'O','K',0x00, 0x00,0x00,0x00 };
     EXPECT_EQ_STR("UTF-8 ASCII over zeroed slack (OK)",
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 3), "OK");
 }
 
 static void Test_Decode_Utf8AsciiOverZeroedSlack_Word() {
-    // "Continue" — the reported case. 9 bytes incl. NUL, read as 18.
-    // Before the fix: U+6F43 U+746E U+6E69 U+6575 ("潃湴極eu"-shaped mojibake).
+    // "Continue" — 9 bytes incl. NUL, read as 18.
+    // The UTF-16 reading: U+6F43 U+746E U+6E69 U+6575 ("潃湴極eu"-shaped mojibake).
     const uint8_t buf[] = {
         'C','o','n','t','i','n','u','e',0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
@@ -722,8 +713,8 @@ static void Test_Decode_Utf8AsciiOverZeroedSlack_Word() {
 
 static void Test_Decode_Utf8AsciiOverZeroedSlack_WithSpace() {
     // Odd byte count, and a space — LooksLikeDecodedText treats spaces as textual,
-    // so this is squarely the case the old "rejects a binary tail" defence claimed
-    // to cover. "Press Start" = 12 bytes incl. NUL, read as 24.
+    // so this is squarely a case a "rejects a binary tail" defence would seem to
+    // cover and does not. "Press Start" = 12 bytes incl. NUL, read as 24.
     const uint8_t buf[] = {
         'P','r','e','s','s',' ','S','t','a','r','t',0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
@@ -732,7 +723,7 @@ static void Test_Decode_Utf8AsciiOverZeroedSlack_WithSpace() {
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 12), "Press Start");
 }
 
-// --- AD5 controls: the tie-break must not reach anything that is not the tie ---
+// --- Controls: the tie-break must not reach anything that is not the tie ---
 
 static void Test_Decode_TieBreakDoesNotTouchGenuineUtf16() {
     // Genuine UTF-16 "OK": buf[n-1] = 'K' != 0, so the UTF-8 hypothesis never even
@@ -748,7 +739,7 @@ static void Test_Decode_TieBreakIsGatedOnUtf8Success() {
     // unit, where the UTF-8 hypothesis FAILS (0x87 is a lone continuation byte, so the
     // bytes are not well-formed UTF-8). An UNGATED interior-zero-unit rule would reject
     // this reading too and change the answer; because the rule is gated on utf8Ok it
-    // does not run, and the decode is byte-identical to before the fix.
+    // does not run, and the decode is what it would be without the rule.
     // 中<NUL>二 : 4E2D 0000 4E8C + NUL, with a non-UTF-8 first pair.
     const uint8_t buf[] = { 0x2D,0x4E, 0x00,0x00, 0x8C,0x4E, 0x00,0x00 };
     const std::string got = Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 4);
@@ -877,7 +868,7 @@ int main() {
     Test_Decode_Utf8Ascii();
     Test_Decode_Utf16AsciiEvenLenInteriorNull();
     Test_Decode_RejectsEmptyAndGarbage();
-    // B28 — UTF-16 CJK buffers the UTF-8 hypothesis used to swallow
+    // UTF-16 CJK buffers the UTF-8 hypothesis must not swallow
     Test_Decode_Utf16Cjk_TrailingZeroLowByte();
     Test_Decode_Utf16Cjk_AsciiLookingPrefix();
     Test_Decode_Utf16Cjk_MixedAscii();
@@ -892,7 +883,7 @@ int main() {
     Test_LooksLikeDecodedText();
     Test_IsPlausibleNameStart();   // [UBEL-ASCII-FIRSTCHAR]
 
-    // U7 — character-boundary truncation for the property-search preview
+    // Character-boundary truncation for the property-search preview
     Test_TruncateUtf8_ShorterThanLimitUntouched();
     Test_TruncateUtf8_AsciiCutsExactlyAtLimit();
     Test_TruncateUtf8_NeverSplitsAMultiByteSequence();

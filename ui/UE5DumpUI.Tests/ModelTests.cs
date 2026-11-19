@@ -201,7 +201,7 @@ public class ModelTests
             ArrayElemSize = 12,
         };
 
-        // Struct arrays don't have inline elements in Phase B
+        // Struct arrays carry no inline elements here
         Assert.Equal("[3 x FVector (12B)]", field.DisplayValue);
     }
 

@@ -8,8 +8,8 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [AOBM-EXPORT-GWORLD-AOB] On a modular build (Satisfactory) Genau finds GWorld and &amp;GEngine through their exports,
-/// so there is no AOB triple and SYM stayed disabled. The export is itself a restart- and patch-stable Cheat Engine
-/// symbol -- measured on Satisfactory with CE 7.7: CE lists it undecorated, <c>GWorld</c> /
+/// so there is no AOB triple for SYM to use. The export is itself a restart- and patch-stable Cheat Engine
+/// symbol -- CE 7.7 lists it undecorated on Satisfactory, <c>GWorld</c> /
 /// <c>FactoryGameSteam-Engine-Win64-Shipping.GWorld</c>, and never under its MSVC name -- so SYM registers
 /// <c>gworld_addr</c> / <c>gengine_addr</c> from it with a define + registersymbol script.
 /// </summary>
@@ -58,7 +58,7 @@ public class AobMakerExportSymbolTests
     [Fact]
     public void The_GWorld_and_GEngine_SYM_tips_say_an_export_is_used_when_the_pointer_came_from_one()
     {
-        // [UI-TEXT-AUDIT-2026-11-18] UT-12: both SYMs define the symbol from the export when the pointer has no AOB
+        // [UI-TEXT-AUDIT-2026-11-18] Both SYMs define the symbol from the export when the pointer has no AOB
         // triple (the tests below), as str.Pointers.RegisterGObjectsSymbolTip already says for GObjects.
         foreach (var key in new[] { "str.Pointers.RegisterSymbolTip", "str.Pointers.RegisterGEngineSymbolTip" })
             Assert.Contains("export", Res.Get(key), StringComparison.Ordinal);

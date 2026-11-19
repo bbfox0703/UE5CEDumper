@@ -75,17 +75,16 @@ public class StructReturnDecoderTests
     [Fact]
     public void CanDecode_KnownStruct_SizeContradictsTheDetectedVersion_ReturnsFalse()
     {
-        // audit #5 AC2. The engine says this param is 12 bytes; UE5's FVector layout
-        // is 24 (LWC turned the floats into doubles). They cannot both be right, and
-        // the ENGINE is ground truth — the layout is a guess keyed on a DETECTED
-        // version, and mis-detection plus licensee forks are both things this project
-        // has met. Decoding on the 24-byte layout would label every value with the
-        // wrong field at the wrong offset, silently.
+        // The engine says this param is 12 bytes; UE5's FVector layout is 24 (LWC
+        // turned the floats into doubles). They cannot both be right, and the ENGINE
+        // is ground truth — the layout is a guess keyed on a DETECTED version, and
+        // mis-detection plus licensee forks are both things this project has met.
+        // Decoding on the 24-byte layout would label every value with the wrong field
+        // at the wrong offset, silently.
         //
-        // This assertion used to read `Assert.True(... 505)` — it pinned the
-        // pre-Y7 behaviour on the RESULT path, which is precisely why AC2 survived:
-        // Y7 fixed the INPUT path in the dialog and a green test kept saying the
-        // result path was fine.
+        // This is the RESULT path's half of the rule the dialog's INPUT path keeps
+        // (InvokeParamDialogTests' ResolveTrustedLayout cases); an `Assert.True` here
+        // would pin the guess on this path while the input path refuses it.
         var p = MakeFVectorReturnParam();
         Assert.False(StructReturnDecoder.CanDecode(p, ueVersion: 505));
         Assert.Empty(StructReturnDecoder.Decode(new byte[64], p, ueVersion: 505));
@@ -153,7 +152,7 @@ public class StructReturnDecoderTests
     [Fact]
     public void Decode_DynamicFields_PackedBools_ReadTheirOwnBit()
     {
-        // [A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): the struct-return grid decoded a
+        // [A3-FIRE-STRUCT-BOOLMASK], the READ side: the struct-return grid must not decode a
         // packed bool as its whole byte. Two bits share one byte; only bit 1 is set.
         var p = new FunctionParamModel
         {
@@ -175,8 +174,8 @@ public class StructReturnDecoderTests
     [Fact]
     public void Decode_DynamicFields_PackedBools_AtANonZeroOffset()
     {
-        // Review of d5e9148d: the packed-bool case sat at offset 0, so a decoder reading
-        // buf[sf.Offset] instead of the absolute offset survived. Here buf[1] and buf[5] differ.
+        // A packed-bool case at offset 0 cannot catch a decoder reading buf[sf.Offset]
+        // instead of the absolute offset. Here buf[1] and buf[5] differ.
         var p = new FunctionParamModel
         {
             Name = "ReturnValue", TypeName = "StructProperty", StructName = "Mystery",

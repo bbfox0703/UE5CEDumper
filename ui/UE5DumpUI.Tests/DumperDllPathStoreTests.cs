@@ -12,10 +12,10 @@ namespace UE5DumpUI.Tests;
 ///
 /// <para>Context: a CE table script cannot read its own .CT path, so the .CT infers the
 /// folder from CE's Open/Save dialog objects. <c>File &gt; Open</c> fills those in; a
-/// double-click in Explorer does not — which is how a user hit "UE5Dumper.dll not found"
-/// with the DLL sitting in the same folder as the .CT (2026-08-04). This file is the one
-/// channel that depends on nothing Cheat Engine exposes, so it is also the only half of
-/// the fix that can be tested here at all.</para>
+/// double-click in Explorer does not — so a .CT opened that way reports "UE5Dumper.dll not
+/// found" with the DLL sitting in the same folder. This file is the one channel that
+/// depends on nothing Cheat Engine exposes, so it is also the half that can be tested
+/// here.</para>
 /// </summary>
 public class DumperDllPathStoreTests : IDisposable
 {
@@ -38,8 +38,8 @@ public class DumperDllPathStoreTests : IDisposable
     public void Lives_at_the_appdata_root_not_under_Logs()
     {
         // The log retention sweep walks the Logs directory and globs *.log. Putting the
-        // breadcrumb under Logs\ would make an age-based sweep delete it, silently
-        // regressing the fix months later.
+        // breadcrumb under Logs\ would make an age-based sweep delete it, silently,
+        // months later.
         Assert.Equal(Path.Combine(_dir, "UE5CEDumper", "dll-path.txt"), _store.FilePath);
         Assert.DoesNotContain($"{Path.DirectorySeparatorChar}Logs{Path.DirectorySeparatorChar}",
             _store.FilePath, StringComparison.OrdinalIgnoreCase);
@@ -111,8 +111,8 @@ public class DumperDllPathStoreTests : IDisposable
         Assert.Equal(new[] { @"D:\good" }, _store.Load().ToArray());
     }
 
-    // (fifth review, R5-04) A RELATIVE line -- an older UE5CEDumper.CT's self-heal could write one -- is neither read nor
-    // carried forward, and none is written: the .CT would probe it against Cheat Engine's current folder.
+    // A RELATIVE line -- an older UE5CEDumper.CT's self-heal could write one -- is neither read nor carried forward, and
+    // none is written: the .CT would probe it against Cheat Engine's current folder.
     [Fact]
     public void A_relative_line_is_not_read_and_not_carried_forward()
     {
@@ -125,16 +125,16 @@ public class DumperDllPathStoreTests : IDisposable
         Assert.Equal(new[] { @"D:\new", @"D:\old", @"\\srv\share" }, lines);
     }
 
-    // (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: Record trimmed 'E:\' to a bare 'E:', which Load
-    // then skipped as relative -- UE5DumpUI started from E:\ rewrote the file on every start, and the .CT ignored it.
+    // A DLL folder at a DRIVE ROOT: Record must keep 'E:\', not trim it to a bare 'E:' that Load then skips as relative
+    // -- UE5DumpUI started from E:\ would rewrite the file on every start, and the .CT would ignore it.
     [Theory]
     [InlineData(@"E:\")]
-    [InlineData(@"e:\")]      // (seventh review, R7-04) lower case: the .CT's rule agrees
+    [InlineData(@"e:\")]      // lower case: the .CT's rule agrees
     public void A_drive_root_round_trips_as_the_root(string root)
     {
         _store.Record(root);
-        // (seventh review, R7-03) The WRITER's half: the line on disk keeps its separator -- Load's own fix alone would
-        // pass a round trip with 'E:' written.
+        // The WRITER's half: the line on disk keeps its separator -- a Load that accepted 'E:' alone would pass a
+        // round trip with 'E:' written.
         Assert.Equal(new[] { root }, File.ReadAllLines(_store.FilePath).Where(l => l.Length > 0 && l[0] != '#').ToArray());
         Assert.Equal(new[] { root }, _store.Load());
         // Already the head: no rewrite. The stamp is moved back first, as the neighbouring test does, so a rewrite

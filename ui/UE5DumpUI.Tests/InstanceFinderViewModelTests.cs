@@ -10,16 +10,16 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 L8, findings Z6 / Z7 / Z12 on <see cref="InstanceFinderViewModel"/>.
+/// Three behaviours of <see cref="InstanceFinderViewModel"/>.
 ///
 /// <para>
-/// Z6 — a reverse-address lookup bumped the class-search generation without owning the
-/// flag that generation guards, stranding the panel's ProgressBar spinning forever.
-/// Z7 — the client-side filter promised to preserve the selection AND its loaded field
-/// grid, and did neither: it blanked the grid and re-issued a <c>walk_instance</c> for
-/// the address already loaded, twice per class-noise tick.
-/// Z12 — the "[scanned X/Y]" suffix that exists to separate a clean miss from a
-/// truncated scan is now built from the pass that actually ran.
+/// Whoever bumps the class-search generation takes over the flag that generation
+/// guards — otherwise a reverse-address lookup strands the panel's ProgressBar spinning
+/// forever.
+/// The client-side filter preserves the selection AND its loaded field grid: no blanked
+/// grid, and no re-issued <c>walk_instance</c> for the address already loaded.
+/// The "[scanned X/Y]" suffix that exists to separate a clean miss from a truncated scan
+/// is built from the pass that actually ran.
 /// </para>
 /// </summary>
 public class InstanceFinderViewModelTests
@@ -94,7 +94,7 @@ public class InstanceFinderViewModelTests
     private static InstanceFinderViewModel NewVm(FakeDump dump)
         => new(dump, new NoopLog(), new NoopPlatform());
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-31: a button that hands a class to this tab runs
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A button that hands a class to this tab runs
     /// <see cref="InstanceFinderViewModel.SearchForClassAsync"/>, a class-NAME match that keeps class default objects and
     /// templates, so its tooltip may not promise "live instances".</summary>
     [Theory]
@@ -127,17 +127,16 @@ public class InstanceFinderViewModelTests
     }
 
     // ==================================================================
-    // Z6 — whoever bumps the search generation takes over IsSearching.
+    // Whoever bumps the search generation takes over IsSearching.
     // ==================================================================
 
     /// <summary>
-    /// The exact stranding. A class search is in flight (IsSearching true). The user
-    /// runs a reverse-address lookup, which bumps <c>_searchGen</c> so the pending
-    /// response can't overwrite the single lookup result — but the lookup owns
-    /// <c>IsLookingUp</c>, not <c>IsSearching</c>. The superseded search's finally then
-    /// skips its own clear ("only the latest op owns the flag") and nothing else runs,
-    /// so the indeterminate ProgressBar animates for the rest of the session with
-    /// nothing in flight.
+    /// The stranding. A class search is in flight (IsSearching true). The user runs a
+    /// reverse-address lookup, which bumps <c>_searchGen</c> so the pending response can't
+    /// overwrite the single lookup result — but the lookup owns <c>IsLookingUp</c>, not
+    /// <c>IsSearching</c>. The superseded search's finally skips its own clear ("only the
+    /// latest op owns the flag"), so unless the lookup clears it, the indeterminate
+    /// ProgressBar animates for the rest of the session with nothing in flight.
     /// </summary>
     [Fact]
     public async Task LookupAddress_releases_the_search_spinner_it_supersedes()
@@ -151,7 +150,7 @@ public class InstanceFinderViewModelTests
         Assert.True(vm.IsSearching, "precondition: the class search owns the spinner");
 
         // Supersede it with a reverse-address lookup (which owns IsLookingUp, not
-        // IsSearching — that asymmetry is the whole finding).
+        // IsSearching — that asymmetry is the whole hazard).
         dump.SearchGate = null;
         vm.LookupAddress = "0x7FF700001000";
         await vm.LookupAddressCommand.ExecuteAsync(null);
@@ -189,7 +188,7 @@ public class InstanceFinderViewModelTests
     }
 
     /// <summary>Negative control: an ordinary search still clears its own flag, so the
-    /// fix above cannot be "IsSearching is never true".</summary>
+    /// test above cannot be satisfied by "IsSearching is never true".</summary>
     [Fact]
     public async Task An_uninterrupted_search_still_owns_and_clears_the_spinner()
     {
@@ -204,11 +203,11 @@ public class InstanceFinderViewModelTests
     }
 
     // ==================================================================
-    // Z7 — the filter must actually preserve the loaded field grid.
+    // The filter must actually preserve the loaded field grid.
     // ==================================================================
 
     /// <summary>[KEYWORD-BOX-VIEW-KEEP] A keyword edit that shows the same instances must not
-    /// re-set the grid at all: even with Z7's suppressed re-select, the Reset throws the grid
+    /// re-set the grid at all: even with the re-select suppressed, a Reset throws the grid
     /// to its first row.</summary>
     [Fact]
     public async Task A_keyword_edit_showing_the_same_instances_keeps_the_list()
@@ -270,8 +269,8 @@ public class InstanceFinderViewModelTests
         int walksAfterSelect = dump.WalkInstanceCalls;
         Assert.Equal(1, walksAfterSelect);
 
-        // Type a keyword the selection still matches. The old code cleared Fields on the
-        // detach and re-walked on the restore.
+        // Type a keyword the selection still matches: Fields must not be cleared on the
+        // detach nor re-walked on the restore.
         vm.InstanceFilterText = "Hero";
         vm.ApplyInstanceFilter();   // deterministic (bypass the 200 ms debounce)
 
@@ -283,8 +282,8 @@ public class InstanceFinderViewModelTests
 
     /// <summary>
     /// Negative control, and the half that must NOT change: when the selection is
-    /// filtered OUT it is genuinely gone, so the grid clears as before. Without this the
-    /// fix above could be "never clear anything", which would leave a stale field grid
+    /// filtered OUT it is genuinely gone, so the grid clears. Without this the tests above
+    /// could be satisfied by "never clear anything", which would leave a stale field grid
     /// attached to a row no longer on screen.
     /// </summary>
     [Fact]
@@ -306,8 +305,8 @@ public class InstanceFinderViewModelTests
         Assert.Empty(vm.Fields);
     }
 
-    /// <summary>Two filter passes over a surviving selection cost zero extra walks —
-    /// the "one class-noise tick costs TWO walks" half of Z7.</summary>
+    /// <summary>Two filter passes over a surviving selection cost zero extra walks — a
+    /// class-noise tick must not cost walks.</summary>
     [Fact]
     public async Task Repeated_filter_passes_over_a_surviving_selection_cost_no_extra_walks()
     {
@@ -331,7 +330,7 @@ public class InstanceFinderViewModelTests
     }
 
     // ==================================================================
-    // Z12 — the scan suffix reflects the pass that actually ran.
+    // The scan suffix reflects the pass that actually ran.
     // ==================================================================
 
     [Fact]

@@ -133,20 +133,19 @@ public class DiagnosticsProbeTests
         Assert.StartsWith("PERF Value Scan (First):", line, StringComparison.Ordinal);
         Assert.Contains("wall 2,000.0 ms", line, StringComparison.Ordinal);
         Assert.Contains("dispatcher busy 500.0 ms (25.0%)", line, StringComparison.Ordinal);
-        // ONE dispatch, not the three the global counter saw. This assertion used to
-        // say "3 dispatches" and was pinning the defect: the fixture's own numbers
-        // (TotalDispatches=3, one command call) are the inconsistency, and the test
-        // asserted the inconsistent half. See the sibling test below, which made
-        // exactly this correction for busyMs and stopped one field short.
+        // ONE dispatch, not the three the global counter saw. The fixture's own numbers
+        // (TotalDispatches=3, one command call) are inconsistent, and "3 dispatches"
+        // would pin the inconsistent half: the count comes from the per-command rows, as
+        // busyMs does in the sibling test below.
         Assert.Contains("1 dispatches", line, StringComparison.Ordinal);
         Assert.Contains("value_scan_begin 500.0ms/1x", line, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// The line must never invite arithmetic that does not work out. Every number on it
-    /// is over ONE denominator: the per-command rows. Reported from a live P3R session
-    /// (2026-08-26) where the line read "11 dispatches ... busy 15.2 ms ... per call:
-    /// dll 1.524" — and 15.2/11 is 1.38, because the divisor was really 10.
+    /// is over ONE denominator: the per-command rows. Mixed denominators make a line like
+    /// "11 dispatches ... busy 15.2 ms ... per call: dll 1.524" — and 15.2/11 is 1.38,
+    /// because the divisor is really 10.
     /// </summary>
     [Fact]
     public void Dispatch_count_shares_the_denominator_with_busy_and_per_call()
@@ -168,16 +167,16 @@ public class DiagnosticsProbeTests
         Assert.DoesNotContain("11 dispatches", line, StringComparison.Ordinal);
 
         // busy is 12.3 + 2.9 = 15.2, and 15.2 / 10 = 1.520 -- the arithmetic on the
-        // line now closes.
+        // line closes.
         Assert.Contains("dispatcher busy 15.2 ms", line, StringComparison.Ordinal);
         Assert.Contains("dll 1.520", line, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// MaxMs is a running high-water mark that cannot be differenced, so it is the worst
-    /// call SINCE THE LAST RESET, not the worst call in this operation. TopDeltas' own
-    /// comment said "let the label carry the caveat"; the label said "max". Two exports
-    /// minutes apart printed a byte-identical max while their totals moved.
+    /// call SINCE THE LAST RESET, not the worst call in this operation, and the label
+    /// carries that caveat: under a bare "max", two exports minutes apart print a
+    /// byte-identical max while their totals move.
     /// </summary>
     [Fact]
     public void The_high_water_mark_is_labelled_as_one()
@@ -189,17 +188,16 @@ public class DiagnosticsProbeTests
 
         Assert.Contains("peak 3.5ms", line, StringComparison.Ordinal);
         Assert.Contains("session high-water", line, StringComparison.Ordinal);
-        // The bare word that made it read as this operation's maximum.
+        // The bare word, which reads as this operation's maximum.
         Assert.DoesNotContain("max 3.5ms", line, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Busy_excludes_the_probes_own_call_so_short_ops_cannot_exceed_100pct()
     {
-        // The exact first-live-run failure: a 57.7 ms Copy CE Field reported
-        // "busy 93 ms (161.2%)" because the global total included the probe's own
-        // 93 ms opening get_diagnostics. Busy is now summed from the per-command
-        // deltas, which exclude it.
+        // Busy is summed from the per-command deltas, which exclude the probe's own
+        // 93 ms opening get_diagnostics: from the global total, a 57.7 ms Copy CE Field
+        // would report "busy 93 ms (161.2%)".
         var before = R(0, 0);
         var after  = R(130, 93, ("get_diagnostics", 1, 93, 93), ("walk_instance", 128, 20, 15));
 
@@ -277,11 +275,10 @@ public class DiagnosticsProbeTests
                                            R(1, 900, ("a", 1, 900, 900)),
                                            transportMs: 100.0, transportCalls: 1);
         Assert.Contains("ipc 0.0", line, StringComparison.Ordinal);
-        // The property is "no negative NUMBER", not "no hyphen". The old assertion used
-        // the second as a proxy for the first and the proxy broke the moment the line
-        // gained a hyphenated word ("session high-water") -- a test failing on prose is
-        // a test measuring the wrong thing. Check for a minus sign that actually
-        // precedes a digit.
+        // The property is "no negative NUMBER", not "no hyphen": the line carries a
+        // hyphenated word ("session high-water"), and a test failing on prose is a test
+        // measuring the wrong thing. Check for a minus sign that actually precedes a
+        // digit.
         for (int i = 0; i < line.Length - 1; i++)
             Assert.False(line[i] == '-' && char.IsDigit(line[i + 1]),
                          $"negative number at index {i}: {line}");

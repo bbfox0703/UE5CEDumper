@@ -50,9 +50,9 @@ public class DebugCameraScriptGeneratorTests
     [Fact]
     public void Is_self_contained_no_helper_file_dependency()
     {
-        // The fragile part of the old design was depending on the embedded
-        // ue5_invoke_helper.lua (which could be stale). The mailbox round-trip
-        // is inlined so the record works with just the DLL injected.
+        // No dependency on the embedded ue5_invoke_helper.lua, which can be
+        // stale: the mailbox round-trip is inlined so the record works with
+        // just the DLL injected.
         var s = DebugCameraScriptGenerator.Generate();
         Assert.DoesNotContain("findTableFile", s);
         Assert.Contains("g_invokeMailbox", s);
@@ -65,8 +65,8 @@ public class DebugCameraScriptGeneratorTests
     }
 
     // [W2-CEGEN-MODAL] Unticking must not put a modal over a fullscreen game (MailboxTimeout.SilentReturn's own doc).
-    // Both blocks came from one emitter, so every [ENABLE] bail -- the missing mailbox, the contract check (two
-    // messages), the idle wait, the timeout, the result check -- was a showMessage in [DISABLE] too.
+    // Both blocks come from one emitter, so an [ENABLE] bail's showMessage would reach [DISABLE] too unless the
+    // [DISABLE] side passes its own mode.
     [Fact]
     public void Disable_block_never_pops_a_modal()
     {
@@ -76,7 +76,7 @@ public class DebugCameraScriptGeneratorTests
         Assert.Contains("dbg('[DebugCamera]", disable);   // a DEBUG session still sees why it gave up
     }
 
-    // The control: ticking keeps every announced, unticking bail -- the fix is [DISABLE]-only.
+    // The control: ticking keeps every announced, unticking bail -- the silent mode is [DISABLE]-only.
     [Fact]
     public void Enable_block_still_announces_and_unticks_its_bails()
     {
@@ -86,11 +86,11 @@ public class DebugCameraScriptGeneratorTests
         Assert.Contains("memrec.Active = false", enable);
     }
 
-    // [W3-DEBUGCAM-QUEUED] -5: the toggle STAYS QUEUED and will run. Read as "state ~= 1", [ENABLE] said the game refused
-    // and UNTICKED -- and a second tick queued a second toggle behind the first. EveryEnableBailout's 8-line window cannot
-    // tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
+    // [W3-DEBUGCAM-QUEUED] -5: the toggle STAYS QUEUED and will run. Read as "state ~= 1", [ENABLE] would say the game
+    // refused and UNTICK -- and a second tick would queue a second toggle behind the first. EveryEnableBailout's 8-line
+    // window cannot tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
     // [DBGCAM-QUEUEDON-UNDO-TEXT] Its reason not to tick again must hold on every engine: what a second toggle does when it
-    // drains depends on the engine, so "a second toggle would undo it" was not the reason.
+    // drains depends on the engine, so "a second toggle would undo it" is not the reason.
     [Fact]
     public void A_queued_toggle_is_reported_and_never_unticks()
     {
@@ -113,9 +113,9 @@ public class DebugCameraScriptGeneratorTests
     }
 
     // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's CheatManager,
-    // which on stock UE 4.18-5.7 can only enable, so the camera stays ON. The untick used to dbg() "the toggle will run"
-    // -- silent by default -- and end UNTICKED over a camera still on. It now says so ungated, and RAISES: CE's
-    // TMemoryRecord.setActive sets fActive only when the script succeeds, so a raised [DISABLE] leaves the record ticked.
+    // which on stock UE 4.18-5.7 can only enable, so the camera stays ON. The untick must say so ungated (a dbg() line is
+    // silent by default) and RAISE rather than end UNTICKED over a camera still on: CE's TMemoryRecord.setActive sets
+    // fActive only when the script succeeds, so a raised [DISABLE] leaves the record ticked.
     [Fact]
     public void A_queued_OFF_says_so_and_leaves_the_record_ticked()
     {
@@ -134,9 +134,9 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);
     }
 
-    // [DBGCAM-OFF-OVER-QUEUED-ON] review: -6 is a toggle the DLL did NOT send, because an earlier one of the other
-    // direction is still queued. Read as "state ~= req", [DISABLE] unticked quietly while a queued ON still turns the
-    // camera on, and [ENABLE] blamed a missing CheatManager. Each branch says what happened, before the failure test.
+    // [DBGCAM-OFF-OVER-QUEUED-ON] -6 is a toggle the DLL did NOT send, because an earlier one of the other direction is
+    // still queued. Read as "state ~= req", [DISABLE] would untick quietly while a queued ON still turns the camera on,
+    // and [ENABLE] would blame a missing CheatManager. Each branch says what happened, before the failure test.
     [Fact]
     public void A_toggle_refused_over_an_opposite_queued_one_says_it_was_not_sent()
     {
@@ -162,8 +162,8 @@ public class DebugCameraScriptGeneratorTests
 
     // [DEBUGCAM-FORCEON-CDO] -17: the DLL refused the ON -- no CheatManager is live, and the toggle does nothing on its
     // class default object. The tick says so and unticks without [DISABLE] (nothing was applied, and [DISABLE] would
-    // send an OFF). [DISABLE] never gets -17: an OFF is never refused. The generic failure no longer names a missing
-    // CheatManager, which has its own code now.
+    // send an OFF). [DISABLE] never gets -17: an OFF is never refused. The generic failure does not name a missing
+    // CheatManager, which has its own code.
     [Fact]
     public void A_refused_ON_says_there_is_no_live_CheatManager_and_unticks_without_DISABLE()
     {
@@ -187,10 +187,10 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("'no live CheatManager, or the game refused", generic);
     }
 
-    // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] A tick that applied nothing unticked with `memrec.Active = false`,
-    // and CE runs [DISABLE] for that: it sent an OFF nobody asked for. Over a queued OFF (the -6 tick) that OFF answered
-    // -5, so [DISABLE] printed "OFF did not complete" and raised -- the record stayed ticked under a dialog that had said
-    // "Tick again" (measured live on build 3659). Both branches that applied nothing untick WITHOUT running [DISABLE].
+    // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] A plain `memrec.Active = false` makes CE run [DISABLE], which sends
+    // an OFF nobody asked for. Over a queued OFF (the -6 tick) that OFF answers -5, so [DISABLE] prints "OFF did not
+    // complete" and raises -- the record stays ticked under a dialog that said "Tick again". So both branches that apply
+    // nothing untick WITHOUT running [DISABLE].
     // Negative control: emit CeLuaHygiene.DeferredUntickLua in either branch and this fails.
     [Fact]
     public void A_tick_that_applied_nothing_unticks_without_running_DISABLE()
@@ -214,10 +214,9 @@ public class DebugCameraScriptGeneratorTests
         }
     }
 
-    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (review): ue5_invoke_helper.lua's copy-me Debug Camera example kept the old
-    // [DISABLE] -- pcall(setDebugCamera, 0), reporting only a failed pcall -- so a queued OFF unticked silently over a
-    // camera that stays on. scripts/tests/invoke_helper_test.lua RUNS the block; this pins its shape where no CE Lua
-    // host is built.
+    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] ue5_invoke_helper.lua's copy-me Debug Camera example must treat a queued OFF as the
+    // generator does: a [DISABLE] that reports only a failed pcall(setDebugCamera, 0) unticks silently over a camera that
+    // stays on. scripts/tests/invoke_helper_test.lua RUNS the block; this pins its shape where no CE Lua host is built.
     [Fact]
     public void Invoke_helper_example_disable_says_a_queued_OFF_and_keeps_the_record_ticked()
     {
@@ -237,9 +236,9 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
     }
 
-    // [DBGCAM-QUEUEDON-UNDO-TEXT] The copy-me example's [ENABLE] told the script author not to tick again because "a second
-    // toggle would undo the first" -- not what a second toggle does on stock UE 4.18-5.7. The advice stays, with a reason
-    // that holds on every engine.
+    // [DBGCAM-QUEUEDON-UNDO-TEXT] The copy-me example's [ENABLE] tells the script author not to tick again, and its reason
+    // must hold on every engine: "a second toggle would undo the first" is not what a second toggle does on stock UE
+    // 4.18-5.7.
     [Fact]
     public void Invoke_helper_example_enable_gives_a_reason_not_to_tick_again_that_holds_everywhere()
     {
@@ -256,9 +255,9 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("undo", queued);
     }
 
-    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] batch 2's review: the DLL's own -5 texts kept the old advice for both directions.
-    // The mailbox writes one of them into errorMsg, which a CE script renders verbatim (MB3), so a script that sent OFF
-    // read "it will run ... do not re-send" over a camera that stays on. Mimic.cpp is in no C++ test target.
+    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] The DLL's own -5 texts must give each direction its own advice. The mailbox writes
+    // one of them into errorMsg, which a CE script renders verbatim, so one shared "it will run ... do not re-send" would
+    // tell a script that sent OFF not to re-send over a camera that stays on. Mimic.cpp is in no C++ test target.
     [Fact]
     public void The_DLLs_queued_texts_tell_a_queued_OFF_to_be_sent_again_and_never_claim_a_second_toggle_undoes_the_first()
     {
@@ -279,10 +278,11 @@ public class DebugCameraScriptGeneratorTests
         }
     }
 
-    // [DBGCAM-OFF-OVER-QUEUED-ON] A Force OFF (or an untick) while a timed-out ON still sat in the game-thread queue read
-    // the camera OFF -- the ON had not run -- returned "already OFF", reported a clean OFF, and the queued ON then turned
-    // the camera on. UE5_SetDebugCamera must ask whether a queued ON has run BEFORE it reads the state, and record an ON
-    // it queues. Frieren.cpp and Stark.cpp are in no C++ test target (Stark::QueuedInvoke itself is tested in C++).
+    // [DBGCAM-OFF-OVER-QUEUED-ON] A Force OFF (or an untick) while a timed-out ON still sits in the game-thread queue reads
+    // the camera OFF -- the ON has not run -- so a check that reads first returns "already OFF", reports a clean OFF, and
+    // the queued ON then turns the camera on. UE5_SetDebugCamera must ask whether a queued ON has run BEFORE it reads the
+    // state, and record an ON it queues. Frieren.cpp and Stark.cpp are in no C++ test target (Stark::QueuedInvoke itself
+    // is tested in C++).
     [Fact]
     public void SetDebugCamera_asks_whether_a_queued_ON_has_run_before_it_reads_the_state_and_records_one_it_queues()
     {
@@ -296,18 +296,18 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(ask >= 0, "UE5_SetDebugCamera never asks whether a queued toggle has run");
         Assert.True(ask < read, "it asks only after reading a state the queued toggle will change");
         Assert.Contains("s_dbgCamQueued.Record(", body);
-        // Review of the fix: the dispatch must hand the slot over, and EnqueueInvoke fill it -- a revert of either kept
-        // the record empty with every other pin green.
+        // The dispatch must hand the slot over, and EnqueueInvoke fill it -- without either, the record stays empty with
+        // every other pin green.
         Assert.Contains("CallProcessEventRouted(cm, ufunc, 0, 0, false, &", body);
         Assert.Contains("if (queuedOut && !dropIfAbandoned) *queuedOut = future;", Src("dll/src/Stark.cpp"));
         // Both directions are tracked (a queued OFF does flip the camera on UE 5.8), and one being dispatched counts
-        // too: the lock is no longer held across the invoke wait, which pushed a CE untick past its 10 s deadline.
+        // too: no lock is held across the invoke wait, which would push a CE untick past its 10 s deadline.
         Assert.Contains("s_dbgCamInFlight", body);
         Assert.Contains("QueuedToggleAnswer(", body);
         Assert.DoesNotContain("s_dbgCamSetMutex", fr);
     }
 
-    // [DBGCAM-OFF-OVER-QUEUED-ON] review: a Set refused over an opposite queued toggle sent nothing; the mailbox says so
+    // [DBGCAM-OFF-OVER-QUEUED-ON] A Set refused over an opposite queued toggle sends nothing; the mailbox says so
     // in each direction, where a CE script shows it verbatim.
     [Fact]
     public void The_mailbox_says_a_toggle_refused_over_an_opposite_queued_one_was_not_sent()

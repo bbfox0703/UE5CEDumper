@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Tests for the deeply-nested container reach (build 1196): the
+/// Tests for the deeply-nested container reach: the
 /// <see cref="ContainerMatch"/> nested-chain model + display path, and the
 /// flattened drill path the Live Walker walks to land on a value buried in
 /// separately-allocated nested containers.
@@ -180,7 +180,7 @@ public class DeepContainerChainTests
     [Fact]
     public void TryParseContainerPath_LeafArrayElement_IsAContainerPath()
     {
-        // A bare leaf-array element ("Items[3]") IS now a drillable container path
+        // A bare leaf-array element ("Items[3]") IS a drillable container path
         // (the element itself is the value) — the multi-"[N]" drill handles it.
         Assert.True(LiveWalkerViewModel.TryParseContainerPath("Items[3]", out var segs));
         Assert.Single(segs);
@@ -252,7 +252,7 @@ public class DeepContainerChainTests
         // at owner+0x120 — inside the CurrentHealth StructProperty at 0x118, with no
         // top-level row at 0x120 — so it lands on CurrentHealth. A different struct's
         // inner value (MaximumHealth.CurrentValue at 0xD0) lands on MaximumHealth, so
-        // distinct slots reach distinct rows (the TQ2 "both land on the same object" fix).
+        // distinct slots reach distinct rows, never both the same one (a TQ2 shape).
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "MaximumHealth",         Offset = 0xC8 },

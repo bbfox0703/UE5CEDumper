@@ -373,8 +373,8 @@ public class LiveWalkerMultiSelectTests
     {
         // A GWorld-path hop through a TArray<ObjectProperty> element must expand
         // into TWO crumbs: the array field (deref TArray::Data) + the element
-        // (deref the pointer at index*8). Regression for the Locate-in-GWorld
-        // "[0] missing → wrong addresses downstream" Copy CE Field bug.
+        // (deref the pointer at index*8). Without the element crumb, a Locate-in-GWorld
+        // path loses its "[0]" and Copy CE Field gets wrong addresses downstream.
         var step = new GWorldPathStep
         {
             From = "0x3AB399520", To = "0x3AB399C40",
@@ -436,12 +436,11 @@ public class LiveWalkerMultiSelectTests
     [Fact]
     public void PathStepToBreadcrumbs_LevelActor_EmitsSingleNonDerefNavCrumb()
     {
-        // Audit #5 F8. The level -> actor hop is synthetic for the same reason the
+        // The level -> actor hop is synthetic for the same reason the
         // world -> level hop above is: ULevel::Actors is declared
         // `TArray<TObjectPtr<AActor>> Actors;` with NO UPROPERTY, so there is no
-        // reflected offset and no element index to publish. The lookup that used to
-        // produce them could not see the field at all -- which is why ok_via_level
-        // never fired -- and its fuzzy fallback could bind "Actors" to
+        // reflected offset and no element index to publish. A reflection lookup
+        // cannot see the field at all, and a fuzzy fallback could bind "Actors" to
         // DestroyedReplicatedStaticActors, which IS reflected, and scan the wrong
         // array.
         var step = new GWorldPathStep
@@ -777,14 +776,14 @@ public class LiveWalkerMultiSelectTests
         Assert.Equal(chain.Count, result.Count);
     }
 
-    // --- Back-nav re-hydration of path-synthetic container crumbs (follow-up b) ---
+    // --- Back-nav re-hydration of path-synthetic container crumbs ---
     //
     // PathStepToBreadcrumbs splits a Locate-in-GWorld object-pointer-array hop into a
     // container crumb whose ContainerField is null (the GWorld path step carries no
     // TArray::Data base / element count / resolved element list). Back-nav onto such a
     // crumb must LAZILY re-walk the parent object and re-populate the ARRAY ELEMENT
-    // view — not fall through to the parent object's field grid (the pre-fix
-    // mis-render). These tests drive that through the real Back-nav commands.
+    // view — not fall through to the parent object's field grid. These tests drive
+    // that through the real Back-nav commands.
 
     private const string SynthParentAddr = "0x1000";
     private const int SynthArrayOffset = 0x10A8;

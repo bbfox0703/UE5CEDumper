@@ -286,7 +286,7 @@ public class DumpDiffServiceTests
     [Fact]
     public async Task One_line_points_repository_users_at_the_command_line_script()
     {
-        // The maintainer's request (2026-10-06): diff_dumps.py is a CLI only a clone of the repository has.
+        // diff_dumps.py is a CLI only a clone of the repository has, so the line says where it lives and who has it.
         var html = DumpDiffHtmlRenderer.Render(await DiffCaseAsync("classes_self"), minimal: false);
         Assert.Contains("scripts/analysis/diff_dumps.py", html);
         Assert.Contains("clone of the repository", html);

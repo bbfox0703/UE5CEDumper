@@ -10,8 +10,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit V3 + V4 — Live Walker state written AFTER an await, against VM state that the
-/// user may have changed in the meantime.
+/// Live Walker state written AFTER an await, against VM state that the user may have
+/// changed in the meantime. Two cases, V3 and V4 below, each prefixing its tests' names.
 ///
 /// Both commands are long round-trips with nothing gating the panel while they run:
 /// `IsLoading` is bound only to a ProgressBar's IsVisible, never to IsEnabled, and
@@ -37,7 +37,7 @@ namespace UE5DumpUI.Tests;
 ///   * the re-rooting callers (Go box / bookmark / cross-tab handoff, and Game Engine
 ///     start) legitimately have NO parent — they Breadcrumbs.Clear() first. A guard that
 ///     demanded one would silently kill every one of those paths, which is the single
-///     biggest risk in this fix.
+///     biggest risk of such a guard.
 /// </summary>
 public class LiveWalkerNavRaceTests
 {
@@ -45,7 +45,7 @@ public class LiveWalkerNavRaceTests
     //
     // Gating is OPT-IN by address, following ClassStructViewModelConcurrencyTests: an
     // address nobody gated resolves immediately. That matters for the negative controls —
-    // against UNFIXED code the stale branch resolves instantly and the test fails on a
+    // against code without the guard the stale branch resolves instantly and the test fails on a
     // clean assertion instead of hanging on a gate nobody releases.
     private sealed class GatedDumpService : StubDumpService
     {
@@ -217,14 +217,14 @@ public class LiveWalkerNavRaceTests
     [Fact]
     public async Task V3_ContainerDrillDuringTheScan_IsAlsoCaught()
     {
-        // ⚠ THE CASE THAT KILLS THE OBVIOUS FIX. `if (result.QueryAddress != CurrentAddress)`
+        // ⚠ THE CASE THAT DEFEATS THE OBVIOUS GUARD. `if (result.QueryAddress != CurrentAddress)`
         // is tempting — the DLL already echoes QueryAddress and DumpService already parses
         // it — but a CONTAINER drill pushes a crumb and changes CurrentObjectName while
         // leaving CurrentAddress untouched. An address-only guard passes here and the
-        // "References to Items" mislabel lands anyway, which is the whole filed symptom.
+        // "References to Items" mislabel lands anyway, which is the whole symptom.
         //
-        // This test was added because reverting the guard to address-only left all the
-        // other V3 tests GREEN — the control found the hole, not review.
+        // An address-only guard leaves every other V3 test GREEN, so this is the test that
+        // tells the two guards apart.
         var dump = new GatedDumpService();
         var vm   = MakeVm(dump);
         await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");

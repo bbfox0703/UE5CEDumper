@@ -49,9 +49,9 @@ public sealed class PipePerProcessSourceTests
             .Select(p => (Path.GetFileName(p), File.ReadAllText(p).Replace("\r\n", "\n")));
     }
 
-    /// <summary>The protocol break is the decision: the DLL no longer serves the legacy name, so a UI that finds it
+    /// <summary>The protocol break is the decision: the DLL does not serve the legacy name, so a UI that finds it
     /// knows a game runs an old DLL. Any string in the DLL's code that names the pipe names the per-process form.
-    /// A message to the user counts too: telling them to connect to the old name would be wrong.</summary>
+    /// A message to the user counts too: telling them to connect to the legacy name would be wrong.</summary>
     [Fact]
     public void TheDllNamesNoLegacyPipe()
     {
@@ -96,8 +96,8 @@ public sealed class PipePerProcessSourceTests
         Assert.True(reads == waits, $"{file}: {waits} wait(s) but {reads} Voll::WaitSaysServed reading(s)");
     }
 
-    /// <summary>Stage C: the connection thread names every request through Voll::ExtractCmdName, which tolerates the
-    /// space Python's json.dumps writes after a colon -- the old inline match for `"cmd":"` named no rig's command. And
+    /// <summary>The connection thread names every request through Voll::ExtractCmdName, which tolerates the space
+    /// Python's json.dumps writes after a colon -- an inline match for `"cmd":"` would name no rig's command. And
     /// the name is written BEFORE inFlight goes up, so whoever sees a command in flight sees its name.</summary>
     [Fact]
     public void EveryRequestIsNamedWhateverItsJsonSpacing()
@@ -112,7 +112,7 @@ public sealed class PipePerProcessSourceTests
             "HandleConnection must write cmdName before it raises inFlight");
     }
 
-    /// <summary>Stage C, the maintainer's policy: no client is disconnected for idling, but who holds the connections
+    /// <summary>No client is disconnected for idling, but who holds the connections
     /// can be seen. The accept thread reads the client's pid BEFORE the connection is registered (so every reader
     /// that finds it in m_conns sees it), pipe_clients answers, and the at-capacity line -- what a client that
     /// cannot connect reads from the log -- carries the holders.</summary>
@@ -168,11 +168,10 @@ public sealed class PipePerProcessSourceTests
         Assert.Equal(dll.Groups[1].Value, py.Groups[1].Value);
     }
 
-    /// <summary>Stage B: six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane
-    /// reconnect whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES).
-    /// A name another copy created first keeps that copy's limit (measured 2026-11-10: a second create asking for 6
-    /// succeeds and GetNamedPipeInfo still reports 3), so the log states the limit in force, read from the
-    /// handle.</summary>
+    /// <summary>Six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane reconnect
+    /// whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES). A name another
+    /// copy created first keeps that copy's limit (a second create asking for 6 succeeds and GetNamedPipeInfo still
+    /// reports 3), so the log states the limit in force, read from the handle.</summary>
     [Fact]
     public void TheDllTakesSixClientsAndLogsTheLimitInForce()
     {
@@ -233,11 +232,11 @@ public sealed class PipePerProcessSourceTests
         return next.Success ? code.Substring(m.Index, m.Length + next.Index) : code[m.Index..];
     }
 
-    /// <summary>Stage C: what a client turns on is that client's. The last pipe client to leave used to turn
-    /// See-through off for everyone -- CE's record included, which then showed ticked over a feature that was off --
-    /// and to drop the LiveFuncs recording whoever started it, while a client that left with another still connected
-    /// left both running for nobody. A departing client process now releases what it owns; only caches and
-    /// diagnostics wait for the last client.</summary>
+    /// <summary>What a client turns on is that client's. A departing client process releases what it owns; only
+    /// caches and diagnostics wait for the last client. Tied to the last client instead, See-through would go off for
+    /// everyone -- CE's record included, which would then show ticked over a feature that is off -- and the LiveFuncs
+    /// recording would drop whoever started it, while a client that left with another still connected would leave
+    /// both running for nobody.</summary>
     [Fact]
     public void ADepartingClientReleasesOnlyWhatItTurnedOn()
     {
@@ -281,7 +280,7 @@ public sealed class PipePerProcessSourceTests
     }
 
     /// <summary>Starting a recording joins the old arm worker and installs a new one, and the pair is not atomic:
-    /// two clients starting at once destroyed a worker whose thread still ran. Every command that starts, stops or
+    /// two clients starting at once could destroy a worker whose thread still runs. Every command that starts, stops or
     /// frees the recording takes m_profileMu, and a start records who owns it.</summary>
     [Fact]
     public void TheRecordingHasOneOwnerAndOneWriterAtATime()
@@ -294,9 +293,9 @@ public sealed class PipePerProcessSourceTests
             Assert.Matches(@"std::lock_guard<std::mutex>\s+\w+\s*\(\s*m_profileMu\s*\)", CommandBranch(code, renge));
     }
 
-    /// <summary>Stage C: a scan session is the connection's that began it. Every use of a session names the
-    /// connection asking, a departing connection drops its own sessions whoever stays, and the last connection drops
-    /// none of anyone's -- its DropAll used to wipe a session a new client had just begun.</summary>
+    /// <summary>A scan session is the connection's that began it. Every use of a session names the connection asking,
+    /// a departing connection drops its own sessions whoever stays, and the last connection drops none of anyone's --
+    /// a DropAll there would wipe a session a new client had just begun.</summary>
     [Fact]
     public void AScanSessionIsItsConnections()
     {
@@ -357,9 +356,9 @@ public sealed class PipePerProcessSourceTests
         return code[open..(close + 1)];
     }
 
-    /// <summary>Stage C: a watch is its connection's. Watches were keyed by address alone, so another client's
-    /// unwatch stopped this one's and its watch replaced it -- and a replace racing a re-watch freed an entry whose
-    /// thread still ran.</summary>
+    /// <summary>A watch is its connection's. Were watches keyed by address alone, another client's unwatch would stop
+    /// this one's and its watch would replace it -- and a replace racing a re-watch could free an entry whose thread
+    /// still runs.</summary>
     [Fact]
     public void AWatchIsItsConnections()
     {
@@ -374,10 +373,10 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"Grimoire::PIPE_WATCH_MAX_TOTAL", start);
     }
 
-    /// <summary>Stage C (the maintainer's choice, 2026-11-10): the watch thread does no pipe I/O. It reads memory
-    /// and leaves the latest sample in its Kanne::WatchSlot; the owner's handler sends it after each command, on its
-    /// own thread, so no join can wait behind a write blocked by the owner's parked read, and an interval cannot make
-    /// a join wait (the old sleep could not be interrupted).</summary>
+    /// <summary>The watch thread does no pipe I/O. It reads memory and leaves the latest sample in its
+    /// Kanne::WatchSlot; the owner's handler sends it after each command, on its own thread, so no join can wait
+    /// behind a write blocked by the owner's parked read, and an interval cannot make a join wait (an uninterruptible
+    /// sleep would).</summary>
     [Fact]
     public void AWatchThreadNeverTouchesThePipe()
     {
@@ -404,7 +403,7 @@ public sealed class PipePerProcessSourceTests
         return code[start..CleanupEnd(code, start)];
     }
 
-    /// <summary>Where a connection's cleanup ends: its teardown count's release, or (before that guard) the notify.</summary>
+    /// <summary>Where a connection's cleanup ends: its teardown count's release, or, without that guard, the notify.</summary>
     private static int CleanupEnd(string code, int start)
     {
         int reset = code.IndexOf("teardown.reset()", start, StringComparison.Ordinal);
@@ -412,10 +411,10 @@ public sealed class PipePerProcessSourceTests
         return reset >= 0 && (notify < 0 || reset < notify) ? reset : notify;
     }
 
-    /// <summary>Stage C: trigger_scan and rescan start one job at a time. The old start read `running`, cleared caches
-    /// and reset results, then set it: two clients both passed, raced join/assign on one thread (the loser's thread
-    /// detached and Stop never joined it), and rescan's second reset wiped the first's results. The job also ran
-    /// unbound, so ANY client dying with a command in flight cancelled it.</summary>
+    /// <summary>trigger_scan and rescan start one job at a time. A start that read `running`, cleared caches and reset
+    /// results, then set it, would let two clients both pass, race join/assign on one thread (the loser's thread
+    /// detached and never joined by Stop), and rescan's second reset wipe the first's results. The job owns its
+    /// cancel: unbound, ANY client dying with a command in flight would cancel it.</summary>
     [Theory]
     [InlineData("CMD_TRIGGER_SCAN", "m_scan")]
     [InlineData("CMD_RESCAN", "m_rescan")]
@@ -425,13 +424,13 @@ public sealed class PipePerProcessSourceTests
         var branch = CommandBranch(code, renge);
         Assert.Matches($@"\b{state}\.job\.TryStart\s*\(\s*m_running\s*,", branch);
         Assert.DoesNotMatch($@"\b{state}\.running\b", branch);
-        // The maintainer's choice (2026-11-10): a scan another client started is in progress, not a failure.
+        // A scan another client started is in progress, not a failure.
         Assert.Contains("data[\"in_progress\"]", NoComments(DllSrc("Fern.cpp")));
         Assert.Matches(@"Start::AlreadyRunning", branch);
     }
 
-    /// <summary>Stop cancels each job through its own token and joins it -- and no longer clears `running` first,
-    /// which let a connection still dispatching during Stop start a job and join the same thread beside Stop.</summary>
+    /// <summary>Stop cancels each job through its own token and joins it -- and does not clear `running` first, which
+    /// would let a connection still dispatching during Stop start a job and join the same thread beside Stop.</summary>
     [Fact]
     public void StopCancelsAndJoinsEachJob()
     {
@@ -457,9 +456,9 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"\bg_initInProgress\b", rescan);
     }
 
-    /// <summary>Stage C: the hint cache is changed under one lock. Four writers each read the file, changed one record
-    /// and published the whole file, so two at once dropped one change -- while the reply to `persist` said it was
-    /// saved. One read-modify-write (UpdateCacheRecord) under a named mutex, which a second copy of the DLL and a second
+    /// <summary>The hint cache is changed under one lock. Writers that each read the file, change one record and
+    /// publish the whole file would, two at once, drop one change -- while the reply to `persist` says it was saved.
+    /// One read-modify-write (UpdateCacheRecord) under a named mutex, which a second copy of the DLL and a second
     /// game share; the reader takes it too, so its open handle cannot make a writer's rename fail.</summary>
     [Fact]
     public void TheHintCacheIsChangedUnderOneLock()
@@ -474,9 +473,9 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotMatch(@"data\[""persisted""\]\s*=\s*persist\s*;", NoComments(DllSrc("Fern.cpp")));
     }
 
-    /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
-    /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
-    /// drain waits for the teardowns too.</summary>
+    /// <summary>A connection erases itself from m_conns and only then releases what it owns, so a drain that waited
+    /// only for m_conns to empty could finish, and run its own resets, while that release still runs. The drain waits
+    /// for the teardowns too.</summary>
     [Fact]
     public void StopWaitsForTheTeardownsNotJustTheRegistry()
     {
@@ -488,23 +487,23 @@ public sealed class PipePerProcessSourceTests
         int release = cleanup.IndexOf("ReleaseOwnedBy(", StringComparison.Ordinal);
         Assert.True(up >= 0 && erase > up && release > erase,
             "the cleanup must count itself in (TeardownCount) before it erases, and release what it owned after");
-        // Review finding (2026-11-10): a bare decrement at the end was skipped by a throw in between, and every later
-        // Stop then waited out its full drain. The count goes out in TeardownCount's destructor, on every way out.
+        // A bare decrement at the end would be skipped by a throw in between, and every later Stop would then wait out
+        // its full drain. The count goes out in TeardownCount's destructor, on every way out.
         Assert.DoesNotMatch(@"--m_tearingDown", cleanup);
         var guard = FunctionBody(CodeOnly(DllSrc("Fern.h")), "~TeardownCount(");
         Assert.Matches(@"--\s*\w+\.m_tearingDown", guard);
         Assert.Matches(@"\bm_connCv\.notify_all\s*\(", guard);
     }
 
-    /// <summary>A Stop whose drain times out while a teardown is still releasing used to log "0 left" and name no
-    /// one. It says how many teardowns it waited for.</summary>
+    /// <summary>A Stop whose drain times out while a teardown is still releasing says how many teardowns it waited
+    /// for -- not "0 left", naming no one.</summary>
     [Fact]
     public void AStopThatTimesOutSaysWhatItWaitedFor()
         => Assert.Matches(@"\btearingLeft\s*=\s*m_tearingDown\b", CodeOnly(DllSrc("Fern.cpp")));
 
-    /// <summary>pipe_clients read a holder's command name, then its start time, then whether it was in flight: a
-    /// command starting in between was reported running under the previous command's name and age. The flag is read
-    /// first, as the writer raises it last. And `phase` is a short stable key, not Stop's diagnostic sentence.</summary>
+    /// <summary>Read in the order name, start time, in-flight flag, pipe_clients would report a command starting in
+    /// between as running under the previous command's name and age. The flag is read first, as the writer raises it
+    /// last. And `phase` is a short stable key, not Stop's diagnostic sentence.</summary>
     [Fact]
     public void AHolderIsReadInTheOrderItIsWritten()
     {
@@ -513,8 +512,8 @@ public sealed class PipePerProcessSourceTests
         int name = body.IndexOf("diagMutex", StringComparison.Ordinal);
         int start = body.IndexOf("cmdStartMs.load(", StringComparison.Ordinal);
         Assert.True(flag >= 0 && name > flag && start > flag, "SnapshotHolders must read inFlight before the name and time");
-        // Verification of the fix: the name and its start time were still two steps, so a command just begun could
-        // carry the previous command's age. Both are written and read under diagMutex.
+        // The name and its start time as two separate steps would let a command just begun carry the previous
+        // command's age. Both are written and read under diagMutex.
         var code = CodeOnly(DllSrc("Fern.cpp"));
         Assert.Matches(@"std::lock_guard<std::mutex>\s+dlk\s*\(\s*conn->diagMutex\s*\)\s*;\s*conn->cmdName\s*=\s*cmd\s*;\s*conn->cmdStartMs\.store\(", code);
         Assert.Matches(@"std::lock_guard<std::mutex>\s+dlk\s*\(\s*c->diagMutex\s*\)\s*;\s*h\.lastCmd\s*=\s*c->cmdName\s*;\s*started\s*=\s*c->cmdStartMs\.load\(", body);
@@ -578,7 +577,7 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotContain("persisted={persist}", ui);
     }
 
-    // ── Stage D2-1: who holds each gameplay hold ────────────────────────────────────────────────────────────────────
+    // ── who holds each gameplay hold ────────────────────────────────────────────────────────────────────────────────
     // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger. Fern.cpp and Mimic.cpp reach no test target,
     // so where they use it is pinned here.
 
@@ -611,7 +610,7 @@ public sealed class PipePerProcessSourceTests
         return fern[start..(close + 1)];
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a join belongs to set_debug_camera's own toggle. An
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A join belongs to set_debug_camera's own toggle. An
     /// invoke of the camera's functions sends none, and consuming another's would hand the camera it turned on to an
     /// old joiner (a CE record that joined the window's queued Force ON).</summary>
     [Fact]
@@ -622,9 +621,9 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"!invoke\s*&&[^;]*FrierenDebugCamera::ConsumeJoin\(", recorder);
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: an invoke's toggle queued behind a stalled game thread
-    /// leaves the camera off for now, and FrierenDebugCamera's pending state tracks set_debug_camera's toggles only. Named
-    /// nobody's, the camera it turns on later read as held by "a program that recorded no owner" -- the window's own.
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] An invoke's toggle queued behind a stalled game thread leaves the camera
+    /// off for now, and FrierenDebugCamera's pending state tracks set_debug_camera's toggles only. Named nobody's, the
+    /// camera it turns on later would read as held by "a program that recorded no owner" -- the window's own.
     /// An off hold reads as free whoever is named.</summary>
     [Fact]
     public void AnInvokesToggleThatLeavesTheCameraOff_NamesItsCaller()
@@ -668,10 +667,10 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::" + hold, body);
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 2: a CE record that runs the debug camera's own functions
-    /// (a Console row baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as
-    /// CMD_SET_DEBUG_CAMERA does. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI
-    /// session, whose end then turned it off.</summary>
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A CE record that runs the debug camera's own functions (a Console row
+    /// baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as CMD_SET_DEBUG_CAMERA does.
+    /// Unrecorded, the camera it turned on would stay named for whoever held it before -- an AI session, whose end
+    /// would then turn it off.</summary>
     [Fact]
     public void TheMailboxsInvokes_OfTheCamerasFunctions_ChangeItsHoldAsCe()
     {
@@ -686,10 +685,10 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("HandleInvoke();", held);
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 3: a pipe writer holds the camera's lock across its own
-    /// game-thread wait (up to the invoke timeout, 5 s by default, more by override), and the mailbox has one poller. A
-    /// CE invoke that waited for the lock and then for its own toggle passed CE's 10 s deadline, reporting "did not
-    /// finish" where it used to answer "queued". Busy, it runs unrecorded instead, as every mailbox invoke did before.
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A pipe writer holds the camera's lock across its own game-thread wait
+    /// (up to the invoke timeout, 5 s by default, more by override), and the mailbox has one poller. A CE invoke that
+    /// waited for the lock and then for its own toggle could pass CE's 10 s deadline, reporting "did not finish" where
+    /// the answer is "queued". Busy, it runs unrecorded instead.
     /// </summary>
     [Fact]
     public void TheMailboxsCameraInvoke_NeverWaitsForTheHoldsLock()
@@ -726,7 +725,7 @@ public sealed class PipePerProcessSourceTests
             Assert.Contains("= \"" + cmd + "\";", renge);
     }
 
-    // ── Stage D2-3: write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────
+    // ── write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────────────────
     // The pure rules are dll_helpers_test's (Lager::ClassifyWriteRegion, Stark::InvokeBlocks,
     // Voll::InvokeRefusedForBackground) and dll_core_test's (Macht::ClassifyWriteRange / WriteDataBytes on real pages).
     // Fern, Stark, Frieren and Mimic reach no test target, so where they use them, and in what order, is pinned here.
@@ -880,7 +879,7 @@ public sealed class PipePerProcessSourceTests
 
         string flatRelease = Flat(release);
         Assert.Contains("code == Stark::kInvokeTimedOutStillQueued) { s_cameraReleaseOwedBy.store(owner);", flatRelease);
-        // Review round 3: nothing owed crosses a stop. Once the DLL restarts, nobody can be named holder until the clients
+        // Nothing owed crosses a stop. Once the DLL restarts, nobody can be named holder until the clients
         // reconnect, so a record carried over would turn off a camera the user turned on meanwhile. Fern::Stop drops it.
         Assert.DoesNotContain("Tot::ShutdownRequested()", flatRelease);
         string stop = Flat(Between(fern, "void Fern::Stop(bool graceful) {", "Radar::SessionManager::Instance().DropAll();"));
@@ -909,7 +908,7 @@ public sealed class PipePerProcessSourceTests
         // wait). Who has it, an ON on its way, a toggle yet to run, a stall -- then, only if they leave it open, the
         // camera's state (a GObjects walk), then the OFF and what it answered. A Wait returns before the record clears;
         // a newer record is kept.
-        // Review round 2: nothing under shutdown (every read would give up and drop the record); the record re-read once
+        // Nothing under shutdown (every read would give up and drop the record); the record re-read once
         // the lock is held (every store is under it); "running" from the physical hook's own fire stamp, which a CE
         // Disable does not stop (GetGameThreadLiveness answers Unknown then, and an OFF sent blind would hold the monitor
         // for the invoke timeout); a fresh re-check just before the send; never a direct call when the hook is down; and
@@ -982,7 +981,7 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 1b. An invoke under a grant (`grant`, background clients only)
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] An invoke under a grant (`grant`, background clients only)
     /// is checked against the function the grant names (`expect_func_full`, the resolved full name), its parameters
     /// (Voll::InvokeParamIndirection under a grant, failing closed on a layout it cannot read) and a template, all
     /// before anything is allocated or queued; every background invoke's parameters are checked for a latent call.
@@ -1011,12 +1010,11 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
     }
 
-    /// <summary>[PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). The read loop notes what it reads
-    /// while g_initInProgress is up, logs it by the name the note shows, then dispatches it unconditionally, with nothing
-    /// in between that answers, refuses or skips it. Once per name per run is Voll::DuringInitNotes', pinned by behaviour
-    /// in dll_helpers_test; every raise of the flag, in any DLL source file, names its run with a fresh g_initRun. Reviews
-    /// wf_8f451d97-434 (A-PIN-WEAK) and wf_b0aa9098-dd5 (A-PIN-DISPATCH-GATE, A-PIN-SHOWN-UNUSED, A-PIN-RAISES-ONE-FILE)
-    /// each found a broken shape this pin let through.</summary>
+    /// <summary>[PIPE-WALK-DURING-INIT] Refuse nothing, log it. The read loop notes what it reads while
+    /// g_initInProgress is up, logs it by the name the note shows, then dispatches it unconditionally, with nothing in
+    /// between that answers, refuses or skips it. Once per name per run is Voll::DuringInitNotes', pinned by behaviour
+    /// in dll_helpers_test; every raise of the flag, in any DLL source file, names its run with a fresh g_initRun. The
+    /// assertions below shut broken shapes a looser pin would let through.</summary>
     [Fact]
     public void ACommandDuringInit_IsNotedBeforeDispatch_AndNeverRefused()
     {
@@ -1042,7 +1040,7 @@ public sealed class PipePerProcessSourceTests
         Assert.Single(Regex.Matches(between, "g_initInProgress"));
         // The dispatch at the note's own brace depth: an else-branch or any block around it would skip it on a condition
         // the flag count cannot see. And one note in the file: a second would take each name's first note, and the gated
-        // one would never log (review wf_2d9f83d5-21b, R3-PIN-UNCONDITIONAL-DEPTH, R3-PIN-SECOND-NOTE).
+        // one would never log.
         string upToDispatch = src[gate..dispatch];
         Assert.Equal(upToDispatch.Count(c => c == '{'), upToDispatch.Count(c => c == '}'));
         Assert.Single(Regex.Matches(src, @"s_duringInit\.Note\("));
@@ -1084,7 +1082,7 @@ public sealed class PipePerProcessSourceTests
         Assert.True(clear > preset && clear < error, "the refused preset clears the holds it would record");
     }
 
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 2. get_object names the DLL's template verdict, which write_field
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] get_object names the DLL's template verdict, which write_field
     /// refuses a class default and an archetype by (Constants.McpMinDllBuildForFieldWrites).</summary>
     [Fact]
     public void GetObject_NamesTheTemplateVerdict()
@@ -1131,7 +1129,7 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("data[\"invokes\"]", holds);
     }
 
-    // ── Stage D2-2: an AI's teleport leaves the user's undo point ───────────────────────────────────────────────────
+    // ── an AI's teleport leaves the user's undo point ───────────────────────────────────────────────────────────────
 
     /// <summary>The "last" slot is one for the whole process: an explicit-pose recall sent with keep_undo must reach
     /// Wirbel, and Wirbel must then skip the save, or an AI's jump overwrites where the user's Recall last returns.
@@ -1151,10 +1149,10 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Wirbel::RecallExplicit(p, hasRot, &tier, request.value(\"keep_undo\", false))", fern);
     }
 
-    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A queued invoke's waiter watched only its future, which on a stalled game thread
-    /// only Stark::Shutdown answers -- reached by UE5_Shutdown after joining the workers parked in such waits. Measured on
-    /// 3707: 11.3 s of a 15 s invoke timeout before the pipe server began to stop. The wait now runs in slices and ends
-    /// when a shutdown meets a game thread stalled past kInvokeShutdownStallMs; a cut is a timeout that ended early (-5,
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A queued invoke's waiter that watched only its future would, on a stalled game
+    /// thread, be answered only by Stark::Shutdown -- reached by UE5_Shutdown after joining the workers parked in such
+    /// waits, so most of an invoke timeout would pass before the pipe server began to stop. The wait runs in slices and
+    /// ends when a shutdown meets a game thread stalled past kInvokeShutdownStallMs; a cut is a timeout that ended early (-5,
     /// the request stays queued). Stark.cpp reaches no C++ test target, so its call is pinned here; the decision and the
     /// loop are unit-tested in dll_helpers_test.</summary>
     [Fact]
@@ -1168,10 +1166,10 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotMatch(@"\.wait_for\s*\(\s*std::chrono::milliseconds\s*\(\s*timeoutMs\s*\)\s*\)", body);
     }
 
-    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A cut makes a LineTrace or an un-hide that did not run likely, and both used to
-    /// cost See-through's record: a trace that did not run read as "nothing occludes", so the tick un-hid and dropped
-    /// every recorded actor; an un-hide that did not run dropped its actor anyway. The actor then stayed hidden with
-    /// nothing left to restore it. Schlacht.cpp reaches no C++ test target, so the calls are pinned here.</summary>
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A cut makes a LineTrace or an un-hide that did not run likely, and neither may
+    /// cost See-through's record: a trace that did not run, read as "nothing occludes", would make the tick un-hide and
+    /// drop every recorded actor; an un-hide that did not run would drop its actor anyway. The actor would then stay
+    /// hidden with nothing left to restore it. Schlacht.cpp reaches no C++ test target, so the calls are pinned here.</summary>
     [Fact]
     public void ATraceOrUnhideThatDidNotRunKeepsSeeThroughsRecord()
     {
@@ -1250,7 +1248,7 @@ public sealed class PipePerProcessSourceTests
     }
 
     /// <summary>[SHUTDOWN-SEETHRU-WAIT] The cut only sees a shutdown flag that is already up, so both teardowns must raise
-    /// it before anything they join or drain. Moving the latch below a join would silently undo the fix. Also UE5_Shutdown
+    /// it before anything they join or drain. Moving the latch below a join would silently disable the cut. Also UE5_Shutdown
     /// turns See-through off before Stark::Shutdown, so its un-hides can still dispatch on a live game.</summary>
     [Fact]
     public void TheShutdownFlagIsUpBeforeAnyJoin()

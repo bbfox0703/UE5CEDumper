@@ -11,25 +11,21 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// One rule, asserted once for every generator that talks to the Mimic mailbox —
-/// deliberately NOT six near-identical per-generator tests, because six copies of the
-/// rule is exactly how the defect got in.
+/// deliberately NOT one near-identical test per generator, because a per-generator copy
+/// of the rule is the copy that drifts.
 ///
 /// <para><b>The rule.</b> An <c>[ENABLE]</c> block that returns without applying anything
 /// MUST untick the record. Cheat Engine leaves the row ticked otherwise, so the user is
-/// told a cheat is active when nothing was set. Every generator got this right on the
-/// "mailbox not found" path and every one got it wrong on the "timeout" path and on the
-/// "the DLL answered with an error" path.</para>
+/// told a cheat is active when nothing was set. Every bail-out counts: "mailbox not
+/// found", the timeout, and "the DLL answered with an error" alike.</para>
 ///
-/// <para>Two more properties are pinned here because they were wrong in all seven
-/// hand-rolled copies of the wait loop:</para>
+/// <para>Two more properties of the wait loop are pinned here:</para>
 /// <list type="bullet">
-/// <item>the timeout must be a REAL deadline. The loop used to count <c>sleep(1)</c>
-/// iterations and bail at 10000, which is 10 s only if <c>sleep(1)</c> sleeps 1 ms —
-/// measured in CE's Lua Engine on 2026-08-06 it sleeps <b>15.47 ms</b>, so the real
-/// timeout was ~155 s of frozen Lua Engine.</item>
-/// <item>the message must READ the status rather than guess. "(DLL not responding?)" was
-/// a guess; a timeout with <c>status == 0</c> means the DLL never saw the command at all
-/// (measured on ES2 with the DLL's poller demonstrably alive at 1 ms).</item>
+/// <item>the timeout must be a REAL deadline. Counting <c>sleep(1)</c> iterations is not
+/// one: <c>sleep(1)</c> in CE's Lua Engine is nowhere near 1 ms, so 10000 iterations is
+/// minutes of frozen Lua Engine, not 10 s.</item>
+/// <item>the message must READ the status rather than guess ("DLL not responding?" is a
+/// guess): a timeout with <c>status == 0</c> means the DLL never saw the command at all.</item>
 /// </list>
 /// </summary>
 public class CeMailboxBailoutTests
@@ -61,12 +57,12 @@ public class CeMailboxBailoutTests
 
     // ── A write that failed but is held ─────────────────────────────────────
 
-    /// <summary>MOVE-TIME-WRITEFAIL-LEAVES-ACTIVE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]):
+    /// <summary>[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] A failed write that is held:
     /// Laufen::SetMultiplier / SetGravityDirection and Hemmung::SetDilation latch the override active, THEN try the
     /// raw write, and answer -10 when it fails while the worker keeps re-asserting it every tick. A tick answered -10
-    /// is therefore held, not "applied nothing": unticking it without [DISABLE] left a speed or time hack running under
-    /// an OFF row. The row stays ticked and says unticking releases it. Negative control: drop the -10 branch, or untick
-    /// in it, and its row fails.</summary>
+    /// is therefore held, not "applied nothing": unticking it without [DISABLE] would leave a speed or time hack running
+    /// under an OFF row. The row stays ticked and says unticking releases it. Negative control: drop the -10 branch, or
+    /// untick in it, and its row fails.</summary>
     public static IEnumerable<object[]> WriteRetryingScripts() => new List<object[]>
     {
         new object[] { "Movement.WalkSpeed",  MovementScriptGenerator.Generate(MovementScriptGenerator.Knob.WalkSpeed, 150) },
@@ -147,9 +143,8 @@ public class CeMailboxBailoutTests
 
     // ── [FREEZEUNTICK-2026-08-20] the untick must be DEFERRED ────────────────
     //
-    // Every assertion above checks that a bail-out unticks. None of them could tell an
-    // untick that WORKS from one that silently does nothing — and for two years every one
-    // of them was the latter.
+    // Every assertion above checks that a bail-out unticks. None of them can tell an
+    // untick that WORKS from one that silently does nothing.
     //
     // CE's TMemoryRecord.setActive (memoryrecordunit.pas) runs, in order:
     //     if state = fActive then exit;                 // (1)
@@ -159,10 +154,7 @@ public class CeMailboxBailoutTests
     // While the script is running at (3) fActive is still false, so an immediate
     // `memrec.Active = false` hits (1) with state = fActive = false and returns having done
     // nothing; (4) then ticks the row anyway. Only a timer that fires after (4) can untick.
-    //
-    // Measured in CE 7.7 before the source was read: a freeze record that bailed out with
-    // "helper not found" applied nothing (the frozen value kept ticking) and still reported
-    // Active=true from CE's own Lua Engine.
+    // In CE's own Lua Engine such a record reads Active=true with nothing applied.
 
     /// <summary>The discriminator: an ENABLE-side untick line must also create the timer.</summary>
     private static bool IsDeferredUntick(string line)
@@ -197,18 +189,16 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// The emitted line must actually be the shared emitter's, not a hand-rolled copy.
-    /// CLAUDE.md: "Hand-rolling any of these is how build 2743's three defects reached all
-    /// seven copies of the mailbox wait at once." This defect is the same story — 32 copies of
-    /// an untick that never worked.
+    /// The emitted line must actually be the shared emitter's, not a hand-rolled copy
+    /// (CLAUDE.md: never hand-roll the <c>CeLuaHygiene</c> emitters) — a hand-rolled untick is
+    /// copied from generator to generator, and a defect in it reaches every copy at once.
     /// </summary>
     /// <remarks>
     /// ⚠ Runs over EVERY generator, not just the mailbox ones, because this is what catches the
     /// splice hazard: <c>DeferredUntickLua()</c> ends in a <c>--</c> comment, so pasting it into
     /// <c>if X then showMessage(...); return end</c> comments out the <c>return end</c> and leaves
-    /// an unterminated <c>if</c>. Demonstrated, not hypothesised — doing exactly that to the Fly
-    /// guard made three generated scripts fail to parse with
-    /// <c>'end' expected (to close 'if' at line 11)</c>. Requiring the line to EQUAL the emitter's
+    /// an unterminated <c>if</c>: the generated script fails to parse with
+    /// <c>'end' expected (to close 'if' at line N)</c>. Requiring the line to EQUAL the emitter's
     /// text means nothing can be appended after the comment.
     /// </remarks>
     [Theory]
@@ -270,12 +260,12 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] (its review's wider scope) Every stateful mailbox toggle's own
+    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] Every stateful mailbox toggle's own
     /// bail-outs -- no mailbox, or a DLL answer that applied nothing -- untick WITHOUT running [DISABLE]. The plain
-    /// untick runs it, and each of these [DISABLE] blocks sends a real OFF / RESET: a failed CE tick turned off the
-    /// same feature a UI card was holding. The shared timeout after the command store keeps the plain untick: the
+    /// untick runs it, and each of these [DISABLE] blocks sends a real OFF / RESET: a failed CE tick would turn off the
+    /// same feature a UI card is holding. The shared timeout after the command store keeps the plain untick: the
     /// DLL may still apply the command, and [DISABLE] undoing it is then right. Negative control: emit
-    /// <c>CeLuaHygiene.DeferredUntickLua</c> at any of these sites again and its row fails.
+    /// <c>CeLuaHygiene.DeferredUntickLua</c> at any of these sites and its row fails.
     /// </summary>
     [Theory]
     [InlineData("DebugCameraScriptGenerator")]
@@ -293,12 +283,12 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]): the
-    /// shared bails a toggle passes BEFORE it stores its command -- the contract check and the wait for an idle mailbox --
-    /// applied nothing either, yet unticked the plain way. Its [DISABLE] then sent a real OFF / RESET, and a mailbox that
-    /// was only busy for a moment is idle 50 ms later, so the OFF went through and turned off a hold a UI card owned.
-    /// After the command store the timeout keeps the plain untick: the DLL may still apply the command. Negative
-    /// control: pass <c>MailboxTimeout.UntickAndReturn</c> to either pre-send bail again and its row fails.
+    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] The shared bails a toggle passes BEFORE it stores its command --
+    /// the contract check and the wait for an idle mailbox -- apply nothing either, so they too untick without running
+    /// [DISABLE]: a plain untick sends a real OFF / RESET, and a mailbox that was only busy for a moment is idle 50 ms
+    /// later, so the OFF goes through and turns off a hold a UI card owns. After the command store the timeout keeps the
+    /// plain untick: the DLL may still apply the command. Negative control: pass
+    /// <c>MailboxTimeout.UntickAndReturn</c> to either pre-send bail and its row fails.
     /// </summary>
     [Theory]
     [MemberData(nameof(MailboxScripts))]
@@ -329,20 +319,17 @@ public class CeMailboxBailoutTests
 
     // ── EVERY generator, not just the mailbox ones ───────────────────────────
     //
-    // ⚠ THE HOLE THIS CLOSES, and it was a real miss. The deferred-untick sweep classified
-    // call sites by reading the GENERATOR SOURCE top-to-bottom, tracking whether the last
-    // emitted literal was "[ENABLE]" or "[DISABLE]". That is wrong, because a private helper
+    // ⚠ Classifying call sites by reading the GENERATOR SOURCE top-to-bottom, tracking whether
+    // the last emitted literal was "[ENABLE]" or "[DISABLE]", is wrong: a private helper
     // method defined BELOW the [DISABLE] emission still emits into [ENABLE] when the ENABLE
     // path calls it. FreezeScriptGenerator.AppendHelperLoader is exactly that: it sits at the
-    // bottom of the file and was read as "[DISABLE], nothing to untick", so its two bail-outs
-    // kept the immediate untick — including `ue5_freeze_helper.lua not found in this table`,
-    // which is the precise path the defect was originally reported on.
+    // bottom of the file, so read that way its two bail-outs — `ue5_freeze_helper.lua not
+    // found in this table` among them — look like "[DISABLE], nothing to untick".
     //
-    // MailScripts() above did not catch it either, because Freeze is not in that list.
+    // MailboxScripts() above does not cover it either, because Freeze is not in that list.
     //
-    // So this test does neither of those things. It generates a script from EVERY generator
-    // that emits an [ENABLE] block and reads the OUTPUT — the only ground truth about which
-    // block a line lands in.
+    // So this test generates a script from EVERY generator that emits an [ENABLE] block and
+    // reads the OUTPUT — the only ground truth about which block a line lands in.
 
     public static IEnumerable<object[]> EveryEnableScript()
     {
@@ -365,12 +352,11 @@ public class CeMailboxBailoutTests
             new List<BakedParamValue>()) };
 
         // ⚠ The row above does NOT reach the contract check: BakedScriptGenerator emits
-        // AppendContractCheck only inside `if (verifyReturn)`. Measured — the script the row
-        // above produces contains zero contract-check text, so before this fixture existed the
-        // untick theories inspected only the two AppendHelperLoader bail-outs and the contract
-        // bail-out was covered by nothing at all. That is the same shape as
-        // [FREEZEUNTICK-2026-08-20], whose second round found two generators the first round's
-        // sweep had classified by READING the source rather than by generating the text.
+        // AppendContractCheck only inside `if (verifyReturn)`, so the script the row above
+        // produces contains no contract-check text. Without this row the untick theories would
+        // inspect only the two AppendHelperLoader bail-outs and the contract bail-out would be
+        // covered by nothing at all. Classify a generator by the text it GENERATES, never by
+        // READING its source ([FREEZEUNTICK-2026-08-20]).
         yield return new object[] { "Baked.Invoke.Verify", BakedScriptGenerator.Generate(
             "PlayerController", "ClientSetViewTarget", 24,
             new List<BakedParamValue>(),
@@ -445,12 +431,12 @@ public class CeMailboxBailoutTests
             .Select(r => (string)r[0])
             .ToList();
 
-        // ONE exemption, and it is a real design fact rather than a deferral: "Reminder" is an
-        // informational script. It applies nothing, so there is no cheat to untick and no claim to
+        // Each exemption is a real design fact rather than a deferral. "Reminder" is an
+        // informational script: it applies nothing, so there is no cheat to untick and no claim to
         // be wrong about.
         //
-        // ⚠ The "Trainer.*" exemption that used to sit here is GONE, because
-        // [TRAINERUNTICK-2026-08-21] is fixed. Do not reinstate it to make a red run green.
+        // ⚠ "Trainer.*" rows are NOT exempt ([TRAINERUNTICK-2026-08-21]). Do not exempt them to
+        // make a red run green.
         // A SECOND, narrower fact: a stateful toggle whose every bail-out RAISES. CE's
         // TMemoryRecord.setActive sets fActive only when autoassemble returns true, and an exception
         // leaves it false (MemoryRecordUnit.pas) -- the record is never ticked, so there is nothing
@@ -497,11 +483,9 @@ public class CeMailboxBailoutTests
     /// only on the paths that applied nothing, via the shared
     /// <c>CeLuaHygiene.DeferredUntickLua()</c>.</para>
     ///
-    /// <para>⚠ This is also the correction to how the defect was originally filed. It claimed the
-    /// generator "does not mention <c>memrec</c> even ONCE, so every failure path leaves the row
-    /// ticked" — a <c>memrec</c> grep used as the measurement. It was a PROXY, and it was wrong:
-    /// the TP rows already unticked without ever naming <c>memrec</c>. Assert on the two shapes,
-    /// never on that grep.</para>
+    /// <para>⚠ A <c>memrec</c> grep is a PROXY, and a wrong one: the TP rows untick without ever
+    /// naming <c>memrec</c>, so "the generator does not mention <c>memrec</c> even ONCE" proves
+    /// nothing about its failure paths. Assert on the two shapes, never on that grep.</para>
     /// </summary>
     [Fact]
     public void TheTrainerKeepsBothUntickShapes()
@@ -510,16 +494,16 @@ public class CeMailboxBailoutTests
             FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
 
         // The momentary shape for the two TP rows: armed once, after the row's one message
-        // ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]: armed above a modal, it fired inside it and did nothing).
+        // ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]: armed above a modal, it fires inside it and does nothing).
         Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
 
         // The stateful shape: one per bail-out that applies nothing. Ten of them —
         // Setup x4 (the 4th: no process opened, [PATH-CE-MODULE-VIEW]), Knob, Jump, GodMode x2, Fly x2.
         Assert.Equal(10, Regex.Matches(src, @"Line\(sb, CeLuaHygiene\.DeferredUntickLua\(").Count);
 
-        // And no bail-out may go back to returning silently. Every `return` inside a
+        // And no bail-out may return silently. Every `return` inside a
         // showMessage branch has to be preceded by one of the two shapes; the count check above
-        // is what pins that, so this only guards against the inline form creeping back in —
+        // is what pins that, so this only guards against the inline form —
         // splicing the comment-terminated emitter into `if X then …; return end` would comment
         // out the `return end` itself.
         Assert.DoesNotContain("DeferredUntickLua()); return end", src, StringComparison.Ordinal);
@@ -534,9 +518,8 @@ public class CeMailboxBailoutTests
     /// <c>getAddressList().getMemoryRecordByDescription(...)</c> and writes <c>mr.Active</c>,
     /// because its untick fires from a timer long after the enabling chunk has gone.</para>
     ///
-    /// <para>⚠ That second mechanism is exactly what made the original finding overstate itself: it
-    /// measured with a <c>memrec</c> grep and concluded the trainer never unticked at all, when its
-    /// two momentary rows always had.</para>
+    /// <para>⚠ That second mechanism is why a <c>memrec</c> grep is no measure of whether a script
+    /// unticks: the trainer's two momentary rows untick without naming <c>memrec</c>.</para>
     /// </summary>
     private static bool IsUntick(string line)
         => line.Contains("memrec.Active = false", StringComparison.Ordinal)
@@ -550,12 +533,12 @@ public class CeMailboxBailoutTests
     /// <list type="number">
     /// <item>the shared one-liner from <c>CeLuaHygiene.DeferredUntickLua</c>, where
     /// <c>createTimer</c> and the untick sit on the same line;</item>
-    /// <item>the older hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
+    /// <item>the hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
     /// created on one line and the untick sits several lines down inside the
     /// <c>OnTimer = function(...)</c> body.</item>
     /// </list>
-    /// <para>A line-only test flags the second as a defect — it did exactly that on
-    /// BakedScriptGenerator's perfectly correct self-untick timer. So an untick counts as deferred
+    /// <para>A line-only test flags the second as a defect — BakedScriptGenerator's correct
+    /// self-untick timer among them. So an untick counts as deferred
     /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
     /// </summary>
     private static List<string> ImmediateUnticksIn(string block)
@@ -623,15 +606,15 @@ public class CeMailboxBailoutTests
         // the target process is gone. It must be named first, because `nil == 0` is false in
         // Lua so it would otherwise fall into the catch-all and tell the user its status was
         // "nil". It must also short-circuit the deadline — waiting 10 s to report a process
-        // that already exited helps nobody. Found on Elliot 2026-08-07 by closing the game.
+        // that already exited helps nobody.
         Assert.Contains("if _st == nil then", enable, StringComparison.Ordinal);
         Assert.Contains("the mailbox could not be read", enable, StringComparison.Ordinal);
         Assert.Contains("if _st == nil then _over = true", enable, StringComparison.Ordinal);   // [A1-LUA-WAIT] shape
 
         // The contract check sits AHEAD of both wait loops, so its own unreadable case is
-        // the first thing a user hits — and it had the same defect: `nil ~= MAGIC` is true,
-        // so it reported "stale address" for a mailbox it simply could not read. Reading
-        // once into _cmagic is what lets the two be told apart.
+        // the first thing a user hits — and it has the same hazard: `nil ~= MAGIC` is true,
+        // so a direct comparison reports "stale address" for a mailbox it simply could not
+        // read. Reading once into _cmagic is what lets the two be told apart.
         Assert.Contains("local _cmagic = readInteger(_cv + ", enable, StringComparison.Ordinal);
         Assert.Contains("if _cmagic == nil then", enable, StringComparison.Ordinal);
         Assert.Contains("could not be READ", enable, StringComparison.Ordinal);
@@ -639,7 +622,7 @@ public class CeMailboxBailoutTests
         Assert.Contains("if _cur == nil or _min == nil then", enable, StringComparison.Ordinal);
 
         // Both waits must keep Cheat Engine's window alive. CE's Lua sleep is a bare Win32
-        // Sleep, so a 10 s timeout froze CE for 10 s -- reported from a live session. The
+        // Sleep, so a 10 s wait with no message pump freezes CE for 10 s. The
         // pump is FEATURE-TESTED, not version-gated: processMessagesPaintOnly is absent from
         // the whole 7.5 source tree yet present in the 7.7 binary, so the introducing
         // version is unknown, and CE's own docs prefer it because it ignores mouse and
@@ -650,11 +633,11 @@ public class CeMailboxBailoutTests
         // Teleport, not by the flat toggles this theory covers.
         Assert.Contains("_pump()", enable, StringComparison.Ordinal);
 
-        // The symbol-lookup branch sits above all of those and had the same defect in its
+        // The symbol-lookup branch sits above all of those, with the same hazard in its
         // strongest form: getAddressSafe returns nil for EVERY reason a symbol can fail to
-        // resolve, and the message asserted the rarest one. Verified 2026-08-07 against a
-        // DLL that exports g_mailboxContract (dumpbin ordinal 64) while CE sat on a stale
-        // PID -- the user was told to rebuild a DLL that was already correct.
+        // resolve, so the message must not assert the rarest one -- a DLL that exports
+        // g_mailboxContract still fails the lookup while CE sits on a stale PID, and "rebuild
+        // the DLL" would send the user after a DLL that is already correct.
         Assert.Contains("could not resolve g_mailboxContract", enable, StringComparison.Ordinal);
         // The self-heal is the point, not the message: CE snapshots the module list when it
         // OPENS a process, and "open the process, then inject" is the NORMAL flow (the
@@ -665,13 +648,13 @@ public class CeMailboxBailoutTests
         Assert.Contains("even after re-reading the module list", enable, StringComparison.Ordinal);
 
         // The result code is a SIGNED int32 and CE's readInteger defaults to UNSIGNED, so
-        // every `if state < 0 then` error branch in these scripts was DEAD CODE: -1 reads
-        // back as 4294967295 and a DLL-side failure was reported as success. Surfaced by a
-        // Coordinate Library teleport printing "code 4294967295" (2026-08-07); the display
-        // was the visible half, the dead branch was the dangerous one.
+        // an `if state < 0 then` error branch behind a plain read is DEAD CODE: -1 reads
+        // back as 4294967295 and a DLL-side failure reads as success. A "code 4294967295"
+        // in a message is the visible half; the dead branch is the dangerous one.
         Assert.DoesNotContain($"readInteger(mb + {CeMailboxLayout.OffResult})", enable,
             StringComparison.Ordinal);
-        // Negative control: the claim that was false must be gone, not merely reworded.
+        // Negative control: the "no contract symbol" claim, false whenever CE's symbol table is
+        // merely stale, must not appear.
         Assert.DoesNotContain("is older than this script (no contract symbol)", enable,
             StringComparison.Ordinal);
     }
@@ -680,13 +663,13 @@ public class CeMailboxBailoutTests
     [MemberData(nameof(MailboxScripts))]
     public void TheTimeoutIsARealDeadline_NotAnIterationCount(string name, string script)
     {
-        // getTickCount() was probed in CE's Lua Engine on 2026-08-06 and returns ms.
+        // getTickCount() in CE's Lua Engine returns ms.
         Assert.True(script.Contains("getTickCount", StringComparison.Ordinal),
             $"{name}: timeout is not measured against a real clock");
         Assert.Contains($"_t0 >= {CeMailboxLayout.MailboxPollTimeoutMs}", script, StringComparison.Ordinal);
 
-        // The pre-fix shape must not survive anywhere: `elapsed` counted sleep(1) calls
-        // and compared them to a millisecond constant.
+        // No iteration counter anywhere: an `elapsed` that counts sleep(1) calls and
+        // compares them to a millisecond constant is not a deadline.
         Assert.False(script.Contains("elapsed >= ", StringComparison.Ordinal),
             $"{name}: the pre-fix iteration counter survived");
     }
@@ -718,12 +701,12 @@ public class CeMailboxBailoutTests
     /// for the symbol, not by hand-listing, so a generator that grows one later is picked up
     /// without anyone remembering to come back here.
     ///
-    /// <para>⚠ This exists because <c>Baked.Invoke.Verify</c> was added to
-    /// <see cref="EveryEnableScript"/> specifically to cover the contract bail-out — its comment
-    /// there says the bail-out "was covered by nothing at all" — and then the three contract
-    /// theories below were left pointing at <see cref="MailboxScripts"/>, which does not contain
-    /// it. So the fixture covered the SHAPE theories and not the one theory whose whole subject is
-    /// the contract bail-out. Half-wired, and invisible because everything was green.</para>
+    /// <para>⚠ A hand-list is the hazard: <c>Baked.Invoke.Verify</c> is in
+    /// <see cref="EveryEnableScript"/> specifically to cover the contract bail-out, and it is not in
+    /// <see cref="MailboxScripts"/>. With the contract theories pointed at a hand-list such as
+    /// MailboxScripts, that fixture would be covered by the SHAPE theories and not by the one theory
+    /// whose whole subject is the contract bail-out — half-wired, and invisible because everything
+    /// stays green.</para>
     ///
     /// <para>Deriving is also what keeps <c>Baked.Invoke</c> (no <c>verifyReturn</c>, therefore no
     /// contract check) correctly OUT, without an exemption list: <c>AssertAFailedCheckUnticksTheRecord</c>
@@ -736,7 +719,7 @@ public class CeMailboxBailoutTests
 
     /// <summary>Anti-vacuity for the source above: a filter that silently matched nothing — or
     /// that lost the row this was built for — would make all three theories below pass by not
-    /// running. Pins the direction that matters (strictly more than the old hand-list) and the
+    /// running. Pins the direction that matters (strictly more than MailboxScripts) and the
     /// specific row, rather than a total that drifts with every new generator.</summary>
     [Fact]
     public void TheContractCheckingList_IsWiderThanTheOldHandList_AndKeepsTheBakedRow()
@@ -766,8 +749,8 @@ public class CeMailboxBailoutTests
         => AssertAFailedCheckUnticksTheRecord(name, script);
 
     // The three rules live in ONE place each, because the shapes below assert exactly the
-    // same three things about differently-shaped scripts and two copies of a rule is how
-    // this file's own header says the original defect got in.
+    // same three things about differently-shaped scripts, and two copies of a rule drift
+    // apart (this file's header).
 
     private static void AssertChecksTheContractBeforeWriting(string name, string script)
     {
@@ -782,7 +765,7 @@ public class CeMailboxBailoutTests
         //
         // Matched on the actual write CALLS, not on the substring "write": these scripts
         // carry header comments that use the word (e.g. "cmd (write LAST to trigger)"),
-        // and the first version of this test tripped on those instead of on real writes.
+        // and a substring match trips on those instead of on real writes.
         //
         // TEXTUAL position, deliberately, even though what matters is execution order. A
         // write inside a `local function` does not run when the definition is emitted —
@@ -801,14 +784,14 @@ public class CeMailboxBailoutTests
     private static void AssertNamesBothFailureDirections(string name, string script)
     {
         string enable = EnableBlock(script);
-        // The two directions need OPPOSITE advice, and today the second one is silent
+        // The two directions need OPPOSITE advice, and the second one, unchecked, is silent
         // corruption: a new .CT against an old DLL just writes nonsense.
         Assert.True(enable.Contains("too old for the DLL", StringComparison.Ordinal),
             $"{name}: does not tell the user to regenerate a too-old script");
         Assert.True(enable.Contains("DLL is older than this script", StringComparison.Ordinal),
             $"{name}: does not tell the user to update a too-old DLL");
-        // And the stale-symbol case, which is a measured failure mode rather than a
-        // theoretical one (2026-08-06: CE held a mailbox address the DLL no longer owned).
+        // And the stale-symbol case, a real failure mode rather than a theoretical one: CE
+        // can hold a mailbox address the DLL no longer owns.
         Assert.Contains("stale address", enable, StringComparison.Ordinal);
     }
 
@@ -821,14 +804,12 @@ public class CeMailboxBailoutTests
         Assert.True(check >= 0, $"{name}: no contract symbol — wrong data source for this theory");
 
         // ⚠ The window ENDS AT THE FIRST `return` after the check, and that bound is the whole
-        // point of this assertion. It used to be `IndexOf("memrec.Active = false", check)` with
-        // no upper bound, i.e. "an untick exists SOMEWHERE later" — which is not the claim.
-        // Measured 2026-08-24 on Baked.Invoke.Verify: its contract bail-outs sit at lines 54-81
-        // and a completely unrelated untick sits at line 132, inside the verify-mode OnTimer
-        // body. Break CeLuaHygiene.DeferredUntickLua() so every bail-out loses its untick and
-        // the unbounded search still found line 132 and passed — while the eleven MailboxScripts
-        // rows, which have no later untick to borrow, correctly went red. So the old form was
-        // discriminating only for scripts that happen to end without one.
+        // point of this assertion. `IndexOf("memrec.Active = false", check)` with no upper
+        // bound asks "an untick exists SOMEWHERE later" — which is not the claim. Baked.Invoke.Verify
+        // carries an unrelated untick after its contract bail-outs, inside the verify-mode OnTimer
+        // body, so with every bail-out's untick broken an unbounded search still finds that one
+        // and passes. Unbounded, the check discriminates only for scripts that happen to end
+        // without a later untick.
         //
         // The first bail-out after the check is the strictest case: it fires before any timer
         // this block installs later can help it, so if IT unticks, the shape is right.
@@ -857,9 +838,8 @@ public class CeMailboxBailoutTests
     // ── A THIRD shape: the round-trip lives inside a `local function` ────────
     //
     // PointerQuery's query(), CoordLibrary's call()/teleport(), Invoke's writeMbStr /
-    // waitDone. That is the whole reason build 2743's conversion skipped these three:
-    // the sweep looked for a wait loop in the block's own control flow and found none.
-    // The contract check has no such excuse — it runs at CHUNK level in all three,
+    // waitDone. A search for a wait loop in the block's own control flow finds none in
+    // these three. The contract check has no such excuse — it runs at CHUNK level in all three,
     // before the helper is even defined — so the same three rules apply verbatim.
     //
     // They are NOT in MailboxScripts because the BAIL-OUT theories above assume a flat
@@ -967,25 +947,19 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// [L11-7 / 2026-08-21] The Baked invoker's CONTRACT CHECK bail-outs, which until now were
-    /// covered by nothing at all.
+    /// [L11-7 / 2026-08-21] The Baked invoker's CONTRACT CHECK bail-outs.
     ///
     /// <para><c>BakedScriptGenerator</c> emits <c>AppendContractCheck</c> only inside
-    /// <c>if (verifyReturn)</c>, and every fixture in <see cref="EveryEnableScript"/> and
-    /// <see cref="MailboxScripts"/> either omits verify mode or is a different generator — so the
-    /// three contract bail-outs (symbol unresolvable / memory unreadable / wrong magic) had no
-    /// assertion on them. That is the same gap shape as
-    /// <c>[FREEZEUNTICK-2026-08-20]</c>, whose second round found two generators the first round
-    /// had classified by READING the source instead of by generating the text.</para>
+    /// <c>if (verifyReturn)</c>, so only a verify-mode script reaches the three contract bail-outs
+    /// (symbol unresolvable / memory unreadable / wrong magic). Classify a generator by the text it
+    /// GENERATES, never by READING its source (<c>[FREEZEUNTICK-2026-08-20]</c>).</para>
     ///
-    /// <para>⚠ Adding the verify-mode script to <see cref="EveryEnableScript"/> does NOT close
-    /// this, and a negative control is what showed it: the theories fed by that list check for the
-    /// ABSENCE of an immediate untick and for the deferred line's exact text, and neither can fail
-    /// when an untick is simply MISSING. Stripping <c>AppendBail</c>'s untick reddened 13 other
-    /// rows and left the new fixture green. The rule that catches a missing untick lives in
-    /// <see cref="EveryEnableBailout_UnticksTheRecord"/>, whose <c>MailboxScripts</c> source is the
-    /// eleven stateful toggles — so this asserts the same rule directly instead of widening a list
-    /// whose membership carries meaning.</para>
+    /// <para>⚠ The verify-mode row in <see cref="EveryEnableScript"/> does NOT cover this: the
+    /// theories fed by that list check for the ABSENCE of an immediate untick and for the deferred
+    /// line's exact text, and neither can fail when an untick is simply MISSING. The rule that
+    /// catches a missing untick lives in <see cref="EveryEnableBailout_UnticksTheRecord"/>, whose
+    /// <c>MailboxScripts</c> source is the stateful toggles — so this asserts the same rule directly
+    /// instead of widening a list whose membership carries meaning.</para>
     ///
     /// <para>Contract failure is <b>UntickAndReturn</b> whichever shape the script otherwise has:
     /// the check sits BEFORE the first mailbox write, so nothing was applied and no deferred timer
@@ -1008,8 +982,8 @@ public class CeMailboxBailoutTests
             StringComparison.Ordinal);
 
         // ⚠ The rule is "a branch that REPORTS a failure and then LEAVES must already have
-        // unticked" — and the two cheaper phrasings are both wrong here, which is worth recording
-        // because each looked obviously right first.
+        // unticked" — and the two cheaper phrasings are both wrong here, though each looks
+        // obviously right.
         //
         //   "every showMessage is followed by an untick" (copied from
         //   EveryEnableBailout_UnticksTheRecord) FAILS ON CORRECT CODE: the invoke-failure message
@@ -1020,7 +994,7 @@ public class CeMailboxBailoutTests
         //
         //   "every bare return must have unticked" ALSO fails on correct code: this generator
         //   defines a local `_dumpHex` helper whose early `return` exits the FUNCTION, not the
-        //   block. The toggle theory never met that because its scripts define no helpers.
+        //   block. The toggle theory never meets that because its scripts define no helpers.
         //
         // So: a return counts as a bail-out only when a showMessage precedes it closely.
         int guardedReturns = 0;
@@ -1047,7 +1021,7 @@ public class CeMailboxBailoutTests
     // Teleport's rows fire once and self-untick from a deferred timer that also
     // suppresses the success-close. Applying the toggles' fix here would BREAK it: an
     // early `return` would skip that timer and strand the record ticked — which is
-    // exactly what B15's comment in the generator warns about. So the shared emitter has
+    // exactly what the generator's own wait comment warns about. So the shared emitter has
     // a second mode, and these tests pin the difference rather than assuming it.
 
     public static IEnumerable<object[]> MomentaryScripts() => new List<object[]>
@@ -1089,12 +1063,12 @@ public class CeMailboxBailoutTests
         Assert.Contains("never saw this command", script, StringComparison.Ordinal);
     }
 
-    // ── The emitter is shared, so the text cannot drift again ────────────────
+    // ── The emitter is shared, so the text cannot drift ──────────────────────
 
     [Fact]
     public void AllGeneratorsEmitByteIdenticalWaitLoops_ApartFromTheirTag()
     {
-        // The whole point of moving this into CeLuaHygiene. Strip the bracketed tag and
+        // The whole point of a shared CeLuaHygiene emitter. Strip the bracketed tag and
         // every generator's loop must be the same text.
         var loops = MailboxScripts()
             .Select(row => (Name: (string)row[0], Loop: ExtractLoop((string)row[1])))
@@ -1137,8 +1111,8 @@ public class CeMailboxBailoutTests
             $"{name}: timeout is not measured against a real clock");
         Assert.Contains($"_t0 >= {CeMailboxLayout.MailboxPollTimeoutMs}", script, StringComparison.Ordinal);
 
-        // The pre-fix shape, in each of the three spellings these files used. sleep(1)
-        // costs 15.47 ms, so every one of them was a ~155 s timeout wearing a 10 s label.
+        // No iteration counter, in any of its three spellings: sleep(1) is nowhere near
+        // 1 ms, so each would be a timeout far longer than its 10 s label.
         Assert.False(script.Contains("elapsed >= ", StringComparison.Ordinal),
             $"{name}: InvokeScriptGenerator's iteration counter survived");
         Assert.False(script.Contains("waited >= ", StringComparison.Ordinal),
@@ -1157,7 +1131,7 @@ public class CeMailboxBailoutTests
             $"{name}: does not name the status-PROCESSING case (the DLL wedged)");
         Assert.False(script.Contains("(DLL not responding?)", StringComparison.Ordinal),
             $"{name}: still emits the guess that blamed a healthy DLL");
-        // Invoke's own flavour of the same mistake: on a TIMEOUT the DLL never wrote
+        // Invoke's own flavour of the same guess: on a TIMEOUT the DLL never writes
         // errorMsg, so that string is empty or stale from the previous command.
         Assert.False(script.Contains("Mailbox timeout: ' .. err", StringComparison.Ordinal),
             $"{name}: still reports a timeout from the mailbox's stale errorMsg string");
@@ -1181,7 +1155,7 @@ public class CeMailboxBailoutTests
     /// The statements the timeout runs after building <c>_msg</c>, up to and including
     /// the one that leaves the wait. Walked line by line rather than sliced by a
     /// hard-coded <c>"\n  end\n"</c>: generators emit this block at three different
-    /// indents, and an indent-sensitive slice silently ran past the end of Invoke's
+    /// indents, and an indent-sensitive slice silently runs past the end of Invoke's
     /// helper and into the NEXT bail-out's untick — reporting a violation in code the
     /// timeout never reaches.
     /// </summary>
@@ -1237,10 +1211,9 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// The reason table is ONE emitter for every shape. It used to be three inline
-    /// <c>showMessage</c> literals, which meant a by-value or by-raise mode would have
-    /// needed its own copy of "status 0 means X, 0xFF means Y" — and a second copy of
-    /// that rule is precisely how the original defect reached seven files at once.
+    /// The reason table is ONE emitter for every shape. With inline <c>showMessage</c>
+    /// literals, a by-value or by-raise mode would need its own copy of "status 0 means X,
+    /// 0xFF means Y" — and a second copy of that rule drifts from the first.
     /// </summary>
     [Fact]
     public void TheTimeoutReasonIsByteIdenticalAcrossEveryShape()
@@ -1285,9 +1258,8 @@ public class CeMailboxBailoutTests
     // dispatches it, `status` stays 0, and the wait times out reporting "the DLL never saw
     // this command" — technically true, and it sends the user to re-inject a healthy DLL.
     //
-    // The R3 bounded idle wait reached TeleportScriptGenerator, CoordLibraryScriptGenerator
-    // and PointerQueryScriptGenerator and never reached Invoke, which was the only mailbox
-    // generator writing `cmd` straight off a status poll.
+    // So Invoke, which writes `cmd` straight off a status poll, needs the bounded idle wait
+    // before each round-trip like every other generator that does.
 
     private static FunctionInfoModel NoParams() => new()
     {
@@ -1330,13 +1302,13 @@ public class CeMailboxBailoutTests
     {
         var lines = EnableBlock(script).Split('\n');
 
-        // Scan from the mailbox lookup. Everything above it is helper DEFINITIONS, and
-        // one of those bodies (`writeMbStr`) does write to `mb + offset` — but only when
-        // it is called, which is always inside a guarded window below.
-        // Anchored on the SYMBOL, not on the lookup function: the generator moved from
-        // getAddress to getAddressSafe (audit #5 Y8, since the bare form raises on the very
-        // case the block handles), and an anchor spelling one of them silently loses the
-        // window it is supposed to scan. This scan is about ORDER, so it must survive a change
+        // Scan from the mailbox lookup. The helper DEFINITIONS follow it, and one of those
+        // bodies (`writeMbStr`) does write to `mb + offset` — but only when it is called,
+        // which is always inside a guarded window below.
+        // Anchored on the SYMBOL, not on the lookup function: the generator uses
+        // getAddressSafe (the bare getAddress raises on the very case the block handles), and
+        // an anchor spelling one lookup function silently loses the window it is supposed to
+        // scan when the lookup changes. This scan is about ORDER, so it must survive a change
         // of lookup function.
         int start = Array.FindIndex(lines,
             l => l.Contains("g_invokeMailbox')", StringComparison.Ordinal));
@@ -1347,10 +1319,9 @@ public class CeMailboxBailoutTests
         int guards = 0, triggers = 0;
 
         // Skip `local function` BODIES. They are definitions: their writes happen when the
-        // helper is CALLED, and every call site is inside a guarded window below. This used
-        // to be handled by the anchor alone — everything above the mailbox lookup was a
-        // definition — but the contract check has to precede every write, so the lookup
-        // moved ABOVE the helpers and `writeMbStr`'s body came into range.
+        // helper is CALLED, and every call site is inside a guarded window below. The anchor
+        // alone cannot exclude them: the contract check has to precede every write, so the
+        // lookup sits ABOVE the helpers and `writeMbStr`'s body is in range.
         int defIndent = -1;
 
         for (int i = start; i < lines.Length; i++)
@@ -1435,10 +1406,10 @@ public class CeMailboxBailoutTests
     /// <para><c>readInteger(mb + 0)</c> returns <c>nil</c> when the target process is gone,
     /// and <c>nil ~= 0</c> is TRUE in Lua, so the idle loop spins to its deadline and then
     /// blames a mailbox that no longer exists. <c>AppendIdleWait</c> takes an
-    /// <c>onUnreadable</c> for exactly this; Invoke omitted it, so all four of its guards
-    /// printed "another CE script is still mid-command" over an exited game. Straight
+    /// <c>onUnreadable</c> for exactly this, and Invoke must pass it: without it every guard
+    /// prints "another CE script is still mid-command" over an exited game, straight
     /// against CLAUDE.md's CE-Lua rule: <i>never report a mailbox failure by guessing —
-    /// status already says which failure it is</i>. Blind-spot sweep round 2.</para>
+    /// status already says which failure it is</i>.</para>
     ///
     /// <para>⚠ The two <c>TeleportScriptGenerator</c> call sites omit <c>onUnreadable</c>
     /// too and are NOT defects: their <c>AppendContractCheck</c> is emitted immediately
@@ -1504,15 +1475,14 @@ public class CeMailboxBailoutTests
 
     /// <summary>
     /// The wait BODY is the shared emitter's, verbatim. That is the whole reason it lives
-    /// in <see cref="CeLuaHygiene"/>: three separate properties of the sibling wait loop
-    /// were wrong in all seven of its hand-rolled copies, and fixing them per-file only
-    /// drifts again.
+    /// in <see cref="CeLuaHygiene"/>: a hand-rolled copy per file drifts from the others,
+    /// and a fix made per file misses some of them.
     /// </summary>
     [Fact]
     public void TheIdleWaitBodyIsTheSharedEmittersVerbatim()
     {
-        // Same arguments InvokeScriptGenerator passes -- including onUnreadable, which it
-        // omitted until 2026-09-08 and which made a DEAD process report as a BUSY mailbox.
+        // Same arguments InvokeScriptGenerator passes -- including onUnreadable, without
+        // which a DEAD process reports as a BUSY mailbox.
         // Rebuilding the expectation from the real arguments is the point: this test exists
         // to catch a HAND-ROLLED copy of the loop, not to freeze one particular message.
         var expected = new System.Text.StringBuilder();
@@ -1526,17 +1496,15 @@ public class CeMailboxBailoutTests
             Assert.Contains(expected.ToString(), (string)row[1], StringComparison.Ordinal);
     }
 
-    /// <summary>ONE emitted helper, not one copy per call site. Four hand-placed copies of
-    /// a rule is the failure mode this area keeps hitting — R3 itself only reached three of
-    /// the four generators that needed it.</summary>
+    /// <summary>ONE emitted helper, not one copy per call site: a hand-placed copy of a rule
+    /// per call site is the copy a later fix misses.</summary>
     [Fact]
     public void TheIdleWaitIsEmittedOnce_NotOncePerCallSite()
     {
         foreach (var row in InvokeShapedScripts())
-            // Anchored on the SURVIVING emitter's text. Two branches fixed this area in
-            // parallel and shipped different locals; the one that landed is the
-            // _idle-prefixed set, because three generators emit both waits into one Lua
-            // scope and an unprefixed `waited` would collide with the status poll's.
+            // Anchored on the emitter's _idle-prefixed locals: some generators emit both
+            // waits into one Lua scope, and an unprefixed `waited` would collide with the
+            // status poll's.
             Assert.Equal(1, Count((string)row[1], "local _idleT0, _idleIters = "));
     }
 
@@ -1547,10 +1515,10 @@ public class CeMailboxBailoutTests
     // &GEngine slot to a UEngine* snapshot when no GEngine AOB validated, so a dialog
     // inside the wait would fire on the success path. That is MailboxTimeout.ReturnReason.
     //
-    // Until 2026-08-07 both of its loops were hand-rolled, and the status poll carried all
-    // three defects the shared emitter exists to fix: `elapsed >= 10000` counted sleep(1)
-    // iterations against a millisecond constant (~155 s of frozen Lua Engine), the message
-    // was the "(DLL not responding?)" guess, and the two statuses were never told apart.
+    // Both of its loops must be the shared emitter's, so they carry its three properties: a
+    // real-clock deadline (not `elapsed >= 10000` over sleep(1) iterations), a message that
+    // reads the status instead of the "(DLL not responding?)" guess, and the two statuses
+    // told apart.
 
     public static IEnumerable<object[]> HelperReturningScripts() => new List<object[]>
     {
@@ -1587,8 +1555,8 @@ public class CeMailboxBailoutTests
             $"{name}: the status poll is not CeLuaHygiene.AppendMailboxWait's output verbatim");
     }
 
-    /// <summary>The three fixes the hand-rolled poll was missing, asserted on the emitted
-    /// text rather than on "it calls the emitter" — a caller can always stop calling.</summary>
+    /// <summary>The shared poll's three properties, asserted on the emitted text rather
+    /// than on "it calls the emitter" — a caller can always stop calling.</summary>
     [Theory]
     [MemberData(nameof(HelperReturningScripts))]
     public void TheReturnedReasonCarriesTheSameThreeFixes(string name, string script)
@@ -1633,9 +1601,9 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// The contract check this generator was missing entirely. Same MUST rule as every
-    /// other mailbox script: read the DLL's published range BEFORE the first write, because
-    /// if the layout moved then a write lands on whatever now occupies those offsets.
+    /// The contract check, under the same MUST rule as every other mailbox script: read the
+    /// DLL's published range BEFORE the first write, because if the layout moved then a write
+    /// lands on whatever now occupies those offsets.
     /// </summary>
     [Theory]
     [MemberData(nameof(HelperReturningScripts))]
@@ -1662,8 +1630,8 @@ public class CeMailboxBailoutTests
             $"{name}: a failed contract check leaves the record ticked");
     }
 
-    /// <summary>Every ENABLE bail-out unticks — the file's original rule, now applied to
-    /// this generator too. Its <c>query</c> helper is exempt by construction: it returns
+    /// <summary>Every ENABLE bail-out unticks — the file's header rule, for this generator
+    /// too. Its <c>query</c> helper is exempt by construction: it returns
     /// <c>nil, reason</c> (never a bare <c>return</c>) precisely so it cannot untick.</summary>
     [Theory]
     [MemberData(nameof(HelperReturningScripts))]
@@ -1704,16 +1672,13 @@ public class CeMailboxBailoutTests
     }
 
     /// <summary>
-    /// params_data[1] and [2] are the base slot plus 8 and 16 (audit #5 AF14).
+    /// params_data[1] and [2] are the base slot plus 8 and 16.
     ///
-    /// <para>Five emitters wrote the FIRST operand through <c>OffParamsData</c> and the
-    /// next two as bare <c>0x330</c> / <c>0x338</c> literals in the same statement
-    /// group, so a future move of params_data would have split an FVector across the
-    /// old and new layouts — two of its components at the new base, one at the old.
-    /// They now go through named constants; this pins that the named constants are the
-    /// SAME BYTES the literals were, which is what makes the change a refactor and not
-    /// a contract move. (The generators' own tests assert the emitted text literally,
-    /// so together they prove the output is byte-identical.)</para>
+    /// <para>An operand written as a bare <c>0x330</c> / <c>0x338</c> literal beside a
+    /// write through <c>OffParamsData</c> would split an FVector across two layouts the
+    /// day params_data moves — two of its components at the new base, one at the old. So
+    /// the operands go through named constants, and this pins those constants' bytes.
+    /// (The generators' own tests assert the emitted text literally.)</para>
     /// </summary>
     [Fact]
     public void ParamsDataSlotsAreEightBytesApart()
@@ -1724,14 +1689,14 @@ public class CeMailboxBailoutTests
         Assert.Equal(p0 + 8,  H(CeMailboxLayout.OffParamsData1));
         Assert.Equal(p0 + 16, H(CeMailboxLayout.OffParamsData2));
 
-        // And the literal values the generators used before the refactor, so this fails
-        // loudly if someone edits a constant expecting the emitted Lua to follow — the
-        // DLL's MailboxData layout is the authority, not this file.
+        // And the literal values, so this fails loudly if someone edits a constant expecting
+        // the emitted Lua to follow — the DLL's MailboxData layout is the authority, not this
+        // file.
         Assert.Equal("0x328", CeMailboxLayout.OffParamsData);
         Assert.Equal("0x330", CeMailboxLayout.OffParamsData1);
         Assert.Equal("0x338", CeMailboxLayout.OffParamsData2);
     }
-    /// <summary>The [DISABLE] half — added 2026-09-10 because nothing tested it.</summary>
+    /// <summary>The [DISABLE] half.</summary>
     private static string DisableBlock(string script)
     {
         int a = script.IndexOf("[DISABLE]", StringComparison.Ordinal);
@@ -1742,15 +1707,12 @@ public class CeMailboxBailoutTests
     /// <summary>
     /// [R3-SEETHRU-2026-09-10] — a toggle's [DISABLE] block writes the mailbox exactly
     /// as its [ENABLE] does (operands, status clear, then the cmd store), so it needs the
-    /// same bounded wait-for-IDLE. SeeThrough's sat inside <c>if (enable)</c> and only
-    /// [ENABLE] got it; unticking wrote over a command that might still be in flight.
+    /// same bounded wait-for-IDLE; without it, unticking writes over a command that might
+    /// still be in flight.
     ///
-    /// <para>⛔ THIS TEST EXISTS BECAUSE ITS ABSENCE IS WHY THE DEFECT SURVIVED. Phase 1
-    /// of the audit-#4 assessment measured that no test fed ANY toggle generator's
-    /// [DISABLE] block through an idle-wait assertion — the suite checked the enable half
-    /// and stopped. So this is a Theory over the whole shared roster, not a SeeThrough
-    /// spot-check: fixing one generator while leaving the hole open is what let a
-    /// copy-paste reintroduce it in the first place.</para>
+    /// <para>⛔ A Theory over the whole shared roster, not a SeeThrough spot-check: a
+    /// [DISABLE] block that no test feeds through an idle-wait assertion is a hole a
+    /// copy-paste reopens, and pinning one generator leaves it open for the rest.</para>
     ///
     /// <para>The source-shape twin is gate <c>check_ce_idlewait_scope</c>; this one pins
     /// the EMITTED script, which is the actual contract with Cheat Engine.</para>
@@ -1767,7 +1729,7 @@ public class CeMailboxBailoutTests
 
         // ⭐ And it must come BEFORE the cmd store, not merely be present somewhere.
         // A wait emitted after the write would satisfy a bare Contains and still be the
-        // defect — the same anti-vacuity point as the ordering assertion in the B30 tests.
+        // defect — the same anti-vacuity point as NoMailboxWriteEscapesTheIdleWait's window scan.
         int wait = d.IndexOf("_idleCmd", StringComparison.Ordinal);
         int store = d.IndexOf($"writeInteger(mb + {CeMailboxLayout.OffCmd}", StringComparison.Ordinal);
         if (store >= 0)

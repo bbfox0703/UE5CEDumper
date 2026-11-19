@@ -11,14 +11,13 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 L9 (segment T1c) — the findings whose theme is "a signal the code already
-/// computed never reaches the user", plus the two window/selection races in the same
-/// batch. Grouped here because they share a vocabulary
+/// Disclosure: a signal the code already computed must reach the user — plus two
+/// window/selection races. Grouped here because they share a vocabulary
 /// (<see cref="PartialResultNotice"/>) rather than a file.
 ///
 /// <para>
 /// Each behavioural test has a stated negative control: what it asserts must be FALSE
-/// against the pre-fix code. Where the pre-fix behaviour is "the string simply is not
+/// when the signal is dropped. Where a dropped signal means "the string simply is not
 /// there", the control is the <c>DoesNotContain</c> half of a sibling assertion.
 /// </para>
 /// </summary>
@@ -39,7 +38,7 @@ public class AuditL9DisclosureTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // AE30 — ModuleOffset must not dress a heap address as an RVA
+    // ModuleOffset must not dress a heap address as an RVA
     // ══════════════════════════════════════════════════════════════════
 
     private const string Mod = "TQ2-Win64-Shipping.exe";
@@ -61,8 +60,8 @@ public class AuditL9DisclosureTests
     }
 
     /// <summary>
-    /// The defect. A UObject on the heap sits BELOW a 0x7FF7… image base, so the
-    /// unsigned subtraction wrapped and produced "…exe"+FFFF81EDA0608D40 — a string
+    /// The hazard. A UObject on the heap sits BELOW a 0x7FF7… image base, so an
+    /// unsigned subtraction wraps and produces "…exe"+FFFF81EDA0608D40 — a string
     /// that resolves correctly this run and to garbage after a relaunch, while looking
     /// exactly like the ASLR-stable form the user asked for.
     /// </summary>
@@ -70,7 +69,7 @@ public class AuditL9DisclosureTests
     public void AE30_heap_address_below_the_base_is_not_claimed_to_be_module_relative()
     {
         var s = AddressHelper.FormatAddress("0x1E55C298D40", Mod, Base, AddressFormat.ModuleOffset);
-        Assert.DoesNotContain(Mod, s);           // pre-fix: "TQ2-Win64-Shipping.exe"+FFFF...
+        Assert.DoesNotContain(Mod, s);           // not "TQ2-Win64-Shipping.exe"+FFFF...
         Assert.DoesNotContain("+", s);
         Assert.Equal("1E55C298D40", s);          // the honest absolute form
     }
@@ -89,7 +88,7 @@ public class AuditL9DisclosureTests
     [Fact]
     public void AE30_garbage_input_is_refused_rather_than_thrown()
     {
-        // Convert.ToUInt64 threw here; a clipboard format is not worth an exception
+        // Convert.ToUInt64 would throw here; a clipboard format is not worth an exception
         // out of a fire-and-forget command.
         Assert.False(AddressHelper.TryGetModuleRva("0xzzzz", Base, out _));
         Assert.False(AddressHelper.TryGetModuleRva("", Base, out _));
@@ -101,13 +100,13 @@ public class AuditL9DisclosureTests
     [Fact]
     public void AE30_missing_module_info_still_falls_back_exactly_as_before()
     {
-        // Control: the pre-existing fallback branch must not have moved.
+        // Control: with no module info, the plain absolute fallback still applies.
         Assert.Equal("1E55C298D40",
             AddressHelper.FormatAddress("0x1E55C298D40", null, null, AddressFormat.ModuleOffset));
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // The three new PartialResultNotice clauses share the class's rules:
+    // These PartialResultNotice clauses share the class's rules:
     // the marker is ⚠, the separator is an em dash, and the CAUSE is named
     // before the consequence.
     // ══════════════════════════════════════════════════════════════════
@@ -149,7 +148,7 @@ public class AuditL9DisclosureTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // AE15 — the suggestion dropdowns must admit they are a sample
+    // The suggestion dropdowns must admit they are a sample
     // ══════════════════════════════════════════════════════════════════
 
     private sealed class ClassListDump : StubDumpService
@@ -180,7 +179,7 @@ public class AuditL9DisclosureTests
         await vm.LoadCommand.ExecuteAsync(null);
 
         Assert.NotEmpty(vm.SuperSuggestions);          // the lists still populate
-        Assert.NotEqual("", vm.SuggestionsNote);       // ... and now say what they are
+        Assert.NotEqual("", vm.SuggestionsNote);       // ... and say what they are
         Assert.Contains("⚠", vm.SuggestionsNote);
         Assert.Contains("6,609", vm.SuggestionsNote);
     }
@@ -212,7 +211,7 @@ public class AuditL9DisclosureTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // AE21 — "Load More" must not page against a superseded window
+    // "Load More" must not page against a superseded window
     // ══════════════════════════════════════════════════════════════════
 
     private static ValueSearchViewModel.WindowQuery Q(string filter = "", string sort = "",
@@ -229,7 +228,7 @@ public class AuditL9DisclosureTests
     [Fact]
     public void AE21_a_page0_reload_in_flight_forces_a_reset()
     {
-        // The filed scenario: Load More CANCELS the in-flight reload and then derives
+        // The race: Load More CANCELS the in-flight reload and then derives
         // its offset from a Candidates list that reload was about to replace.
         Assert.True(ValueSearchViewModel.ShouldPromoteAppendToReset(
             resetInFlight: true, loaded: Q("hp"), current: Q("hp")));
@@ -266,7 +265,7 @@ public class AuditL9DisclosureTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // AE24 / AE13 — a refine must not look cleaner than its input
+    // A refine must not look cleaner than its input
     // ══════════════════════════════════════════════════════════════════
 
     private sealed class TruncatingScanDump : StubDumpService
@@ -306,8 +305,8 @@ public class AuditL9DisclosureTests
         Assert.True(vm.ClassFilter.CountsPartial);
 
         await vm.NextScanCommand.ExecuteAsync(null);
-        // Pre-fix: "Next Scan (Exact): 3 surviving candidates in 0 ms" — no ⚠ at all,
-        // and CountsPartial had been reset to false.
+        // Not "Next Scan (Exact): 3 surviving candidates in 0 ms" with no ⚠ at all and
+        // CountsPartial reset to false.
         Assert.Contains("TRUNCATED", vm.StatusText);
         Assert.True(vm.ClassFilter.CountsPartial);
     }
@@ -344,7 +343,7 @@ public class AuditL9DisclosureTests
         Assert.DoesNotContain("TRUNCATED", vm.StatusText);
     }
 
-    // AE13 — the group per-slot witness cap, end to end from the DTO.
+    // The group per-slot witness cap, end to end from the DTO.
 
     private sealed class CappedGroupDump : StubDumpService
     {
@@ -385,7 +384,7 @@ public class AuditL9DisclosureTests
         FillGroupInputs(vm);
 
         await vm.GroupFirstScanCommand.ExecuteAsync(null);
-        // Pre-fix this fact existed only as a LOG_WARN line inside the DLL.
+        // The cap reaches the status line, not only a LOG_WARN line inside the DLL.
         Assert.Contains("256", vm.StatusText);
         Assert.Contains("All fields", vm.StatusText);
 

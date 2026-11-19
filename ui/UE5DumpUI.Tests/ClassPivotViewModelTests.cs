@@ -57,9 +57,9 @@ public class ClassPivotViewModelTests : IDisposable
     }
 
     /// <summary>[CLASSPIVOT-DT-CONNECT-RACE] Connect, then let the snapshot-list refresh the connect starts, and the
-    /// class load it ends with, settle. The refresh runs on the thread pool: a test that went straight on raced it, and
-    /// when it landed after a DataTable was picked, its class reload replaced PendingLoad and, with a class still picked
-    /// from a snapshot source, cleared the table's fields (CI, and 4 of 6 runs of one such test alone).</summary>
+    /// class load it ends with, settle. The refresh runs on the thread pool: a test that went straight on would race it,
+    /// and if it landed after a DataTable was picked, its class reload would replace PendingLoad and, with a class still
+    /// picked from a snapshot source, clear the table's fields.</summary>
     private static async Task ConnectAsync(ClassPivotViewModel vm)
     {
         vm.SetEngineState(new EngineState());
@@ -173,7 +173,7 @@ public class ClassPivotViewModelTests : IDisposable
         vm.ClassFilter = "item";
         Assert.Single(vm.Classes);
         Assert.Equal("BP_Item_C", vm.Classes[0].ClassName);
-        Assert.Equal("BP_Item_C", vm.SelectedClass?.ClassName);   // survived the filter → kept (the anti-flicker fix)
+        Assert.Equal("BP_Item_C", vm.SelectedClass?.ClassName);   // survived the filter → kept (no flicker)
         Assert.Equal(calls, counting.FieldCalls);                 // re-select was a cache hit — zero DB
 
         // Filter that EXCLUDES the picked class → selection cleared, still no DB hit.
@@ -188,13 +188,13 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Equal(2, vm.Classes.Count);
     }
 
-    // Regression for the ~135 OpenAsync/sec DB storm: a SUPERSEDED-but-COMPLETED field load
-    // must still populate the (immutable-keyed) cache, so re-selecting that class is a cache
-    // hit instead of re-hitting the store. Pre-fix the supersession guard ran BEFORE the cache
-    // write, so the cache stayed empty and every re-fire re-opened the DB. Uses the GatedStore
-    // (its ListPivotFields ignores ct, so a held load completes via SetResult even after it is
-    // superseded — exactly the path the fix caches). The cache-hit apply is synchronous, so a
-    // miss leaves Fields stale at the assert — deterministic, no delays.
+    // Guards against a DB open storm: a SUPERSEDED-but-COMPLETED field load must still populate
+    // the (immutable-keyed) cache, so re-selecting that class is a cache hit instead of
+    // re-hitting the store. A supersession guard placed BEFORE the cache write would leave the
+    // cache empty, and every re-fire would re-open the DB. Uses the GatedStore (its
+    // ListPivotFields ignores ct, so a held load completes via SetResult even after it is
+    // superseded — exactly the path that must be cached). The cache-hit apply is synchronous, so
+    // a miss leaves Fields stale at the assert — deterministic, no delays.
     [Fact]
     public async Task FieldList_SupersededLoad_StillCaches_ReselectServesFromCache()
     {
@@ -214,16 +214,16 @@ public class ClassPivotViewModelTests : IDisposable
         var loadB = vm.PendingLoad!;
         await WaitForGate(store, "B");
 
-        // Complete B (applied), then the SUPERSEDED A. With the cache-before-guard fix A's
-        // completed result is cached even though its UI apply is skipped.
+        // Complete B (applied), then the SUPERSEDED A. With the cache written before the guard,
+        // A's completed result is cached even though its UI apply is skipped.
         store.Gates["B"].SetResult(new[] { Field("BetaField") });
         await loadB;
         store.Gates["A"].SetResult(new[] { Field("AlphaField") });
         await loadA;
         Assert.Equal("BetaField", Assert.Single(vm.Fields).Name);   // A's stale apply was skipped
 
-        // Re-select A: a synchronous CACHE HIT applies A's fields immediately. Pre-fix this was
-        // a cache MISS → async (re)load → Fields would still read "BetaField" at this point.
+        // Re-select A: a synchronous CACHE HIT applies A's fields immediately. A cache MISS
+        // → async (re)load would leave Fields still reading "BetaField" at this point.
         vm.SelectedClass = clsA;
         Assert.Equal("AlphaField", Assert.Single(vm.Fields).Name);
     }
@@ -304,11 +304,11 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains(vm.Results, r => r.KeyValue == "2 · 5");
     }
 
-    // ---- [SNAPDIFF-SHADOWED-PROP] review: Class Pivot keyed a shadowed property name by name alone ----
+    // ---- [SNAPDIFF-SHADOWED-PROP] Class Pivot keys a shadowed property name by name AND offset ----
     //
-    // Two properties of one name at different offsets were one picker entry, and the pivot folded each instance's rows
-    // by name (the last row won, in no defined order), so a value or a key could be either copy's. Each copy is now its
-    // own field, labelled with its offset in the picker and the results; a name used once keeps its bare label.
+    // Two properties of one name at different offsets must not be one picker entry: folding each instance's rows by
+    // name (the last row wins, in no defined order) would make a value or a key either copy's. Each copy is its own
+    // field, labelled with its offset in the picker and the results; a name used once keeps its bare label.
 
     private async Task<ClassPivotViewModel> ShadowedSectionVmAsync()
     {
@@ -466,7 +466,7 @@ public class ClassPivotViewModelTests : IDisposable
     // can complete an earlier (superseded) load AFTER a later one.
     private sealed class GatedStore : ISnapshotStore
     {
-        // Concurrent because the VM now invokes the store off the UI thread
+        // Concurrent because the VM invokes the store off the UI thread
         // (Task.Run), so gates are created on a thread-pool thread.
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<IReadOnlyList<PivotFieldInfo>>> Gates = new();
 
@@ -506,7 +506,7 @@ public class ClassPivotViewModelTests : IDisposable
         public Task<IReadOnlyList<PivotFieldInfo>> ListPivotArrayPropsAsync(long s, string c, string af, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<PivotResult> PivotArrayAsync(ArrayPivotQuery q, CancellationToken ct = default) => throw new NotImplementedException();
 
-        // N1: per-game, per-tab class denylist. The gated-class pivot test fleet
+        // Per-game, per-tab class denylist. The gated-class pivot test fleet
         // exercises the picker filter via Pivot scope, so back it with a real set.
         public readonly HashSet<string> PivotDenylist = new(StringComparer.Ordinal);
         public HashSet<string> GetClassDenylist(DenylistScope scope) =>
@@ -524,7 +524,7 @@ public class ClassPivotViewModelTests : IDisposable
     private static PivotFieldInfo Field(string name)
         => new() { Name = name, DeclaredType = "IntProperty", DistinctCount = 1, InstanceCount = 2 };
 
-    // ---- Phase C4: DataTable-native (zero-config) pivot source ----
+    // ---- DataTable-native (zero-config) pivot source ----
 
     /// <summary>Fake dump service serving one DataTable list + a 2-row walk.</summary>
     private sealed class DtDumpService : StubDumpService
@@ -574,7 +574,8 @@ public class ClassPivotViewModelTests : IDisposable
     public async Task DataTableSource_RestoredBeforeConnect_AsksNothing_AndShowsNoError()
     {
         // The window restores the last source from the UI options before any game is connected. Choosing "DataTable"
-        // then listed DataTables over a pipe that was not there, and wrote the failure to the log and the error line.
+        // then must not list DataTables over a pipe that is not there, nor write the failure to the log and the error
+        // line.
         var dump = new DisconnectedDump();
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, dump);
 
@@ -637,7 +638,7 @@ public class ClassPivotViewModelTests : IDisposable
 
         await vm.RunPivotCommand.ExecuteAsync(null);
 
-        Assert.Contains("showing 2 of 500", vm.StatusText);   // ...and the Run no longer overwrites it
+        Assert.Contains("showing 2 of 500", vm.StatusText);   // ...and the Run does not overwrite it
     }
 
     // ---- [P5-PIVOT-FETCHCAP] two caps, two sentences ----
@@ -744,10 +745,10 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task DataTableSource_NullSelection_SupersedesInflightWalk()
     {
-        // Regression: LoadDataTableFieldsAsync bumped the field-load guard AFTER the
-        // null-selection early-return, so a slow walk for the previously-selected
-        // DataTable could complete and repopulate Fields after the selection was
-        // cleared. Bumping at entry makes the null path supersede the in-flight walk.
+        // LoadDataTableFieldsAsync bumps the field-load guard at entry, before the
+        // null-selection early-return, so the null path supersedes the in-flight walk:
+        // bumped after it, a slow walk for the previously-selected DataTable could
+        // complete and repopulate Fields after the selection was cleared.
         var dump = new GatedDtDumpService();
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, dump);
         await ConnectAsync(vm);   // connected: the source lists DataTables
@@ -784,7 +785,7 @@ public class ClassPivotViewModelTests : IDisposable
             await Task.Delay(5, TestContext.Current.CancellationToken);
     }
 
-    // ---- C5: right-click "Pivot this property" handoff ----
+    // ---- right-click "Pivot this property" handoff ----
 
     [Fact]
     public async Task PivotForAsync_SelectsClass_AndTicksProperty()
@@ -815,9 +816,9 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_UnpivotableProperty_SaysSo_NotReady()
     {
-        // Review of 4920cb89: the shared helper ticks nothing for a prop that is not a captured numeric field
-        // (right-click hands off ANY field: an object, a string, an array), and "Ready" read like the handoff
-        // had worked -- Run then pivoted the unrelated pre-ticked fields.
+        // The shared helper ticks nothing for a prop that is not a captured numeric field (right-click hands off
+        // ANY field: an object, a string, an array), so "Ready" would read like the handoff had worked -- and Run
+        // would then pivot the unrelated pre-ticked fields.
         await SeedInventoryAsync();
         var vm = NewVm();
 
@@ -828,7 +829,7 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("not a pivotable field", vm.StatusText);
     }
 
-    // ---- the second review of 4880a779: the handoff's two remaining misses ----
+    // ---- a handoff into Identity mode, and onto a struct array ----
 
     // A class with no good key: no field scores >= 0.5 as one, so the field load opens it in Identity mode with
     // the key picker on its alphabetically FIRST field -- a field that then plays no part in grouping.
@@ -848,7 +849,7 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task AKeylessClass_OpensInIdentityMode_KeyedOnItsFirstField()
     {
-        // The control, green before and after -- and the precondition of the next test, kept apart so a fixture
+        // The control -- and the precondition of the next test, kept apart so a fixture
         // that stopped reaching Identity mode fails HERE instead of letting the next test pass for free.
         await SeedKeylessClassAsync();
         var vm = NewVm();
@@ -862,8 +863,8 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_InIdentityMode_TicksAPropThatHappensToBeTheKeyPick()
     {
-        // In Identity mode the key picker's field groups nothing, yet the handoff skipped ticking it and still
-        // said "Ready" -- the pivot then left the handed-off prop out entirely.
+        // In Identity mode the key picker's field groups nothing, so the handoff must still tick it: skipped under
+        // a "Ready", the pivot would leave the handed-off prop out entirely.
         await SeedKeylessClassAsync();
         var vm = NewVm();
 
@@ -875,7 +876,7 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_StructArrayField_PointsAtTheSnapshotArraySource()
     {
-        // "Only captured numeric fields can be pivoted" was false for a captured struct array: it pivots under
+        // "Only captured numeric fields can be pivoted" is false for a captured struct array: it pivots under
         // the Snapshot Array source, which the scalar field list never shows.
         var ct = TestContext.Current.CancellationToken;
         long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "ps" }, ct);
@@ -893,7 +894,7 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("Snapshot Array", vm.StatusText);
     }
 
-    // ---- review 3 of c294e314: two routes the struct-array redirect still missed ----
+    // ---- two more routes into the struct-array redirect ----
 
     private async Task SeedCargoAsync(string cls, bool withScalar)
     {
@@ -911,7 +912,7 @@ public class ClassPivotViewModelTests : IDisposable
     public async Task PivotForAsync_AStructArrayElementHandoff_PointsAtItsArray()
     {
         // Value Search hands off a struct-array inner value by its display name ("Cargo[0].Fuel", Radar's
-        // FieldDisplayName), which matched no array -- so the handoff still said "not a pivotable field".
+        // FieldDisplayName), which matches no array by name -- a name-only match would say "not a pivotable field".
         await SeedCargoAsync("PlayerState", withScalar: true);
         var vm = NewVm();
 
@@ -924,8 +925,8 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_AClassWithOnlyStructArrays_IsNotCalledMissing()
     {
-        // No scalar field means no row in the class list, so the helper said the class "is not in the selected
-        // snapshot" -- while its array pivots under Snapshot Array.
+        // No scalar field means no row in the class list, so the class list alone would say the class "is not in
+        // the selected snapshot" -- while its array pivots under Snapshot Array.
         await SeedCargoAsync("CargoHold", withScalar: false);
         var vm = NewVm();
 
@@ -935,7 +936,7 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("Snapshot Array", vm.StatusText);
     }
 
-    // ---- review 4 of c5511519: the arrays-only branch ignored the handed-off prop ----
+    // ---- the arrays-only branch follows the handed-off prop ----
 
     private async Task SeedHoldAsync()
     {
@@ -955,8 +956,8 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_ArraysOnlyClass_NamesTheHandedOffArray_NotTheFirst()
     {
-        // Value Search hands off ("CargoHold", "Cargo[3].Quantity"). The branch named the first array by name,
-        // "Ammo", and sent the user to the wrong one.
+        // Value Search hands off ("CargoHold", "Cargo[3].Quantity"). Naming the first array by name, "Ammo",
+        // would send the user to the wrong one.
         await SeedHoldAsync();
         var vm = NewVm();
 
@@ -969,8 +970,8 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_ArraysOnlyClass_APropThatIsNoArray_IsCalledNotPivotable()
     {
-        // A handed-off scalar that was never captured got the same "pivot them" line, and was never told that it
-        // is not pivotable itself.
+        // A handed-off scalar that was never captured is told that it is not pivotable itself, not handed the same
+        // "pivot them" line.
         await SeedHoldAsync();
         var vm = NewVm();
 
@@ -980,7 +981,7 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("Snapshot Array", vm.StatusText);   // ...and the class's arrays are still pointed at
     }
 
-    // ---- C3: change-driven discovery (the automatic front-door) ----
+    // ---- change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.
     private async Task SeedBeforeAfterAsync()
@@ -1147,7 +1148,7 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.False(vm.CanDiscover);
     }
 
-    // ---- C6: Snapshot Array source (inner-key pivot) ----
+    // ---- Snapshot Array source (inner-key pivot) ----
 
     private async Task SeedCargoAsync()
     {
@@ -1189,8 +1190,8 @@ public class ClassPivotViewModelTests : IDisposable
         vm.SelectedClass = vm.Classes.First(c => c.ClassName == "PlayerState");
         // [R7-X1] Not two fixed awaits: the array-field load clears SelectedArrayField (which can start a props load)
         // and then auto-selects one (which starts another), so how often PendingLoad is replaced, and when, is not
-        // fixed. Under full-suite load the second await caught the finished FIRST task and the assertions below ran
-        // before the props arrived. Settle the way the VM's own SettleLoadsAsync does.
+        // fixed. Under full-suite load a second await can catch the finished FIRST task and run the assertions below
+        // before the props arrive. Settle the way the VM's own SettleLoadsAsync does.
         await SettleLoadsAsync(vm);
 
         var cargo = Assert.Single(vm.ArrayFields);
@@ -1270,16 +1271,15 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
     {
-        // audit #5 AE10 — this used to assert the command was gated off when
-        // IsGWorldAvailable was false. That flag is EngineState.HasGWorld, i.e. "the
-        // AOB scan produced a non-zero &GWorld slot address", NOT "a live UWorld
-        // exists": the DLL has world-recovery fallbacks that work when the scan did
-        // not, so the gate disabled the button on games where locate worked. The DLL
+        // The command is NOT gated on IsGWorldAvailable. That flag is EngineState.HasGWorld,
+        // i.e. "the AOB scan produced a non-zero &GWorld slot address", NOT "a live UWorld
+        // exists": the DLL has world-recovery fallbacks that work when the scan did not, so
+        // such a gate would disable the button on games where locate works. The DLL
         // answers authoritatively; the client must not pre-refuse.
         //
-        // [W1-PIVOT-SESSION] The selection is no longer the ONLY precondition: the results must also
-        // belong to the running launch (the RowHandoffs_* tests below). This test keeps the AE10
-        // half, under a same-session connect whose EngineState.HasGWorld is false.
+        // [W1-PIVOT-SESSION] The selection is not the ONLY precondition: the results must also
+        // belong to the running launch (the RowHandoffs_* tests below). This test keeps the
+        // no-pre-refusal half, under a same-session connect whose EngineState.HasGWorld is false.
         await SeedSessionAsync("G-NEW");
         var vm = await PivotAfterConnectAsync("NEW");
         string? hit = null;
@@ -1364,8 +1364,9 @@ public class ClassPivotViewModelTests : IDisposable
 
     // ---- [PIVOT-ARRAY-LOADID] in Snapshot Array source, a class click must not supersede the class-list load ----
     //
-    // The array-field load took the class list's own counter, so a class picked from the still-visible old list made the
-    // NEW snapshot's class load fail its supersession check and the old list stayed. Snapshot 2's array classes are GATED.
+    // An array-field load that took the class list's own counter would let a class picked from the still-visible old list
+    // make the NEW snapshot's class load fail its supersession check, and the old list would stay. Snapshot 2's array
+    // classes are GATED.
 
     private sealed class ArrayClassGatedStore : ISnapshotStore
     {
@@ -1436,12 +1437,12 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.DoesNotContain(vm.Classes, c => c.ClassName == "A"); // and #1's is gone
     }
 
-    // ---- [PIVOT-ARRAY-LOADID] review: a source or snapshot switch supersedes an array-field load in flight ----
+    // ---- [PIVOT-ARRAY-LOADID] a source or snapshot switch supersedes an array-field load in flight ----
     //
-    // The array-field load's own counter is bumped only by the next array-field load, so a slow load for the old class
-    // still landed after the source moved on: it refilled ArrayFields and auto-picked a field, whose prop load cleared
-    // the new source's Fields and listed the old array's props for whatever class was now selected. Class A's array
-    // fields are GATED here, and so is snapshot 2's array-class list.
+    // The array-field load's own counter is bumped only by the next array-field load, so without the switch superseding
+    // it, a slow load for the old class would land after the source moved on: it would refill ArrayFields and auto-pick
+    // a field, whose prop load would clear the new source's Fields and list the old array's props for whatever class is
+    // now selected. Class A's array fields are GATED here, and so is snapshot 2's array-class list.
 
     private sealed class ArrayFieldGatedStore : ISnapshotStore
     {
@@ -1568,11 +1569,11 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains(vm.Classes, c => c.ClassName == "C");       // and #2's class list still applies
     }
 
-    // ---- [PIVOT-ARRAY-LOADID] batch 2's review: the SCALAR field load the other way round ----
+    // ---- [PIVOT-ARRAY-LOADID] the SCALAR field load the other way round ----
     //
-    // A source switch bumped only the array-field counter. A slow scalar field list for the class picked under the
-    // Snapshot source still landed after a switch: under Snapshot Array, with no array class picked, or under DataTable,
-    // where Run then projected the scalar class's names against the table's rows. S's fields are GATED here.
+    // A source switch that bumped only the array-field counter would let a slow scalar field list for the class picked
+    // under the Snapshot source land after a switch: under Snapshot Array, with no array class picked, or under DataTable,
+    // where Run would then project the scalar class's names against the table's rows. S's fields are GATED here.
 
     private sealed class ScalarFieldGatedStore : ISnapshotStore
     {
@@ -1666,10 +1667,10 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.DoesNotContain(vm.Fields, f => f.Name is "Health" or "Level");
     }
 
-    // ---- [SNAPDIFF-SHADOWED-PROP] batch 2's review: the label is what the picker shows and what the key names ----
+    // ---- [SNAPDIFF-SHADOWED-PROP] the label is what the picker shows and what the key names ----
     //
-    // The shadowed-name fixture's suggested key is RowIndex, used once, whose Label is its Name: a revert of the key
-    // suggestion or the pre-tick skip to Name kept every test green. Here the best key IS one copy of a shadowed name.
+    // The shadowed-name fixture's suggested key is RowIndex, used once, whose Label is its Name: keying the suggestion
+    // or the pre-tick skip on Name would keep every test there green. Here the best key IS one copy of a shadowed name.
 
     [Fact]
     public async Task ASuggestedKeyThatIsOneCopyOfAShadowedName_IsNamedByItsLabel_AndOnlyTheOtherCopyIsProjected()
@@ -1868,7 +1869,7 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task RowHandoffs_AreEnabled_ForTheCurrentLaunch()
     {
-        // The control, green before and after.
+        // The control: results from the running launch keep their handoffs.
         await SeedSessionAsync("G-NEW");
         var vm = await PivotAfterConnectAsync("NEW");
 
@@ -1894,7 +1895,7 @@ public class ClassPivotViewModelTests : IDisposable
     {
         // A DataTable run walks the LIVE process, so its rows belong to the running launch even while
         // the snapshot picker still shows an old one. A gate keyed on the picker would disable them;
-        // the gate follows the launch the RESULTS came from. Green before and after.
+        // the gate follows the launch the RESULTS came from.
         await SeedSessionAsync("G-OLD");
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
         vm.SetEngineState(Live("NEW"));
@@ -1973,9 +1974,9 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task CacheHit_DoesNotLetStaleInflightLoadClobberLatest()
     {
-        // Regression: the monotonic field-load guard was bumped only on the
-        // cache-MISS path, so a miss in flight (class A) that completed AFTER a
-        // switch to an already-CACHED class (B) overwrote B's fields with A's.
+        // The monotonic field-load guard is bumped on the cache-HIT path too: bumped
+        // only on a miss, a miss in flight (class A) that completed AFTER a switch to
+        // an already-CACHED class (B) would overwrite B's fields with A's.
         var store = new GatedStore();
         var vm = new ClassPivotViewModel(store, new MockLoggingService());
         await vm.RefreshAsync();
@@ -2015,14 +2016,14 @@ public class ClassPivotViewModelTests : IDisposable
     }
 
     // ==================================================================
-    // Audit #5 AF5 — a refresh must not discard the user's choices.
+    // A refresh must not discard the user's choices.
     //
-    // RefreshAsync rebuilds Snapshots through UiCollection.Reset, then used to
-    // hard-set SelectedSnapshot to Snapshots[0] and re-tick the two newest
-    // DiscoverPicks. Any deliberate pick was silently reverted. That made the
-    // bubbled-SelectionChanged bug (fixed by Helpers/TabActivation) destructive
-    // rather than merely wasteful: an ordinary in-tab ComboBox pick re-ran tab
-    // activation, which refreshed, which reset the very selection just made.
+    // RefreshAsync rebuilds Snapshots through UiCollection.Reset. Hard-setting
+    // SelectedSnapshot to Snapshots[0] and re-ticking the two newest DiscoverPicks
+    // after it would silently revert any deliberate pick — and an unguarded bubbled
+    // SelectionChanged (Helpers/TabActivation guards it) would make that
+    // destructive: an ordinary in-tab ComboBox pick would re-run tab activation,
+    // which refreshes, which would reset the very selection just made.
     //
     // Everything asserts BY Id — UiCollection.Reset repopulates with new
     // SnapshotMeta instances, so reference or index comparisons would pass for

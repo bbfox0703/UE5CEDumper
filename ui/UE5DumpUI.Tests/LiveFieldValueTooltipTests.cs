@@ -7,14 +7,14 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// <c>[V8PREVIEWCLIP-2026-08-23]</c> — the Live Walker's Value column is a fixed 200 px
 /// <c>TextBlock</c> with no trimming ellipsis, so a longer value is invisible and nothing
-/// on screen says so. The case that made it matter: a DataTable's pre-drill preview is
+/// on screen says so. The case that matters most: a DataTable's pre-drill preview is
 /// <c>{DataTable: 100 rows, &lt;struct&gt;}</c> with the <c>⚠ showing 64 of 100</c> badge
-/// appended LAST. The prefix alone overflows, so the one disclosure warning that the grid
-/// holds 64 of 100 rows could not be read at the default width — on any table, at any N.
+/// appended LAST. The prefix alone overflows, so without the tooltip the one disclosure
+/// warning that the grid holds 64 of 100 rows cannot be read at the default width — on any
+/// table, at any N.
 ///
-/// Found by looking at the screen. Every relevant ViewModel test passed throughout,
-/// because they assert strings and the strings were right. Same shape as
-/// <c>[PARAMSSORT-2026-08-22]</c>.
+/// A ViewModel test cannot see this: it asserts the string, and the string is right; only
+/// the screen shows the clip. Same shape as <c>[PARAMSSORT-2026-08-22]</c>.
 /// </summary>
 public class LiveFieldValueTooltipTests
 {
@@ -70,10 +70,10 @@ public class LiveFieldValueTooltipTests
     [Fact]
     public void EveryDisplayValueNotification_HasAMatchingValueTooltipNotification()
     {
-        // THIS is the test that stops the fix rotting. ValueTooltip is computed from
+        // THIS is the test that keeps the tooltip honest. ValueTooltip is computed from
         // DisplayValue, so a source property that invalidates one must invalidate the
         // other. If they drift, the visible text updates while the tooltip keeps showing
-        // the old value -- worse than the clipping it was added to fix, because a stale
+        // the old value -- worse than the clipping it exists for, because a stale
         // tooltip reads as authoritative.
         var root = FindRepoRoot();
         Assert.NotNull(root);
@@ -81,11 +81,10 @@ public class LiveFieldValueTooltipTests
         Assert.True(File.Exists(path), path);
         var src = File.ReadAllText(path);
 
-        // Count ATTRIBUTE LINES, not substring hits. The first version of this test
-        // used Split() over the whole file and immediately failed 10 vs 9 -- because
-        // the tenth "occurrence" was the attribute's name written inside a <c>...</c>
-        // in LiveFieldValue's own doc comment. A detector that cannot tell code from
-        // prose about code will fail the moment someone documents the rule it enforces.
+        // Count ATTRIBUTE LINES, not substring hits: LiveFieldValue's own doc comment
+        // names the attribute inside a <c>...</c>, and a substring count would take that
+        // prose for one more occurrence. A detector that cannot tell code from prose
+        // about code fails the moment someone documents the rule it enforces.
         static int CountAttributeLines(string text, string attr)
         {
             int n = 0;
@@ -136,9 +135,9 @@ public class LiveFieldValueTooltipTests
             "ToolTip.Tip=\"{Binding TypeTooltip}\" must sit on the same TextBlock as "
             + "Text=\"{Binding TypeName}\" in the Type column's CellTemplate.");
 
-        // Converting DataGridTextColumn -> DataGridTemplateColumn is what gave the cell
-        // an element to hang the tooltip on. Sorting came free with the text column and
-        // must not have been dropped in the conversion -- nothing else would notice.
+        // A DataGridTemplateColumn, not a DataGridTextColumn, is what gives the cell an
+        // element to hang the tooltip on. Sorting comes free only with the text column,
+        // so the template column must name its SortMemberPath -- nothing else would notice.
         Assert.Contains("SortMemberPath=\"TypeName\"", src);
     }
 
@@ -146,7 +145,7 @@ public class LiveFieldValueTooltipTests
     public void TheValueColumnActuallyBindsTheTooltip()
     {
         // The property can be perfect and the column can still not use it -- which is
-        // precisely the failure class this whole finding belongs to: correct code that
+        // precisely the failure class this whole file guards: correct code that
         // never reaches the pixels. Assert the XAML, since no test renders this grid.
         var root = FindRepoRoot();
         Assert.NotNull(root);

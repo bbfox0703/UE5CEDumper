@@ -51,7 +51,7 @@ public class LogCompressionPolicyTests
     public void Decide_AlreadyCompressed_IsSkipped()
     {
         // The signal that matters: LZX does NOT set FileAttributes.Compressed, so
-        // on-disk < length is the only cheap way to know. Real measured pair.
+        // on-disk < length is the only cheap way to know. A real pair of sizes.
         Assert.Equal(LogCompressionDecision.SkipAlreadyCompressed,
                      D(F("walk-a.log", 8_441_784, 335_872, 48)));
     }
@@ -116,8 +116,8 @@ public class LogCompressionPolicyTests
     [InlineData("mcp-20261111-140000-4242_001.log")]
     public void Decide_AnMcpServersLog_IsHeldToTheLiveFloor_ThoughItSitsInTheUisFolder(string name)
     {
-        // [PIPE-PER-PROCESS-2026-11-06] Stage D: an AI session's server writes it, so an hour idle does not make it
-        // finished; the UI's manual button (1 h) used to plan it and run compact.exe on a file still open for writing.
+        // [PIPE-PER-PROCESS-2026-11-06] An AI session's server writes it, so an hour idle does not make it finished;
+        // held to the UI's manual-button floor (1 h), compact.exe would run on a file still open for writing.
         Assert.Equal(LogCompressionDecision.SkipLive, D(F(name, 8_000_000, 8_000_000, 48, ours: true)));
         Assert.Equal(LogCompressionDecision.Compress,
                      D(F(name, 8_000_000, 8_000_000, Constants.LogCompressLiveFileMinAgeDays * 24 + 1, ours: true)));
@@ -186,7 +186,7 @@ public class LogCompressionPolicyTests
         Assert.Equal(3, plan.SkippedLive);
     }
 
-    // Review round 2: the UI writes a game's folder too while connected -- its mirror sinks, ui-{cat}-0.log, roll to
+    // The UI writes a game's folder too while connected -- its mirror sinks, ui-{cat}-0.log, roll to
     // ui-{cat}-0_NNN.log the same way -- and the DLL never writes a -0_NNN name (Sein archives as {cat}-{stamp}.log).
     // So in a game's folder the newest rolled file of a category is that folder's slot, held to the -0.log slot's idle
     // rule (LiveAge), and an older one is finished.

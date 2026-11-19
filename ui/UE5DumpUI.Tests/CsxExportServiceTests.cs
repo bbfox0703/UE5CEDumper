@@ -74,7 +74,7 @@ public class StubDumpService : IDumpService
     public virtual Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false) => throw new NotImplementedException();
     // virtual: ClassStructViewModelConcurrencyTests overrides this to gate the
     // metaclass lookup, which is the extra round-trip that makes an instance
-    // selection lose to a later class-like one (audit #5 AE2). Without the
+    // selection lose to a later class-like one. Without the
     // keyword that branch is unreachable from a test and its negative control
     // reports green against broken code.
     public virtual Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
@@ -112,7 +112,7 @@ public class StubDumpService : IDumpService
     public virtual Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FunctionPropRefsResult> WalkFunctionPropsAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
     // virtual: the USMAP exporter collects enums before it collects classes, so a test of
-    // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.
+    // the CLASS collector has to be able to answer this without throwing.
     public virtual Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default) => WalkFunctionsAsync(addr, ct);
@@ -352,7 +352,7 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_BoolProperty_Ce77Plus_NestedStruct_UsesAbsoluteByteOffset()
     {
-        // Regression guard: a bit-field bool inside a flattened StructProperty must use the
+        // A bit-field bool inside a flattened StructProperty must use the
         // ABSOLUTE byte (parent.Offset + inner.Offset + BoolByteOffset), not the struct-relative
         // inner.Offset. Using field.Offset here would emit the wrong byte.
         _dump.RegisterStruct("0x1000", new InstanceWalkResult
@@ -414,8 +414,8 @@ public class CsxExportServiceTests
         Assert.Contains("Description=\"PlayerName\"", csx);
         // Child structure with Unicode String
         Assert.Contains("Vartype=\"Unicode String\"", csx);
-        // [CSX-STRCHILD-BYTESIZE] was the literal 18 -- 9 wide characters for every string in
-        // every export. The window is the export's String Len now, defaulted like the CE XML path;
+        // [CSX-STRCHILD-BYTESIZE] not a literal (18 would be 9 wide characters for every string
+        // in every export): the window is the export's String Len, defaulted like the CE XML path;
         // [R7-C-02] String Len is CHARACTERS, and a Unicode String's Bytesize is BYTES, so it is doubled.
         Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength * 2}\"", csx);
         Assert.DoesNotContain("Bytesize=\"18\"", csx);
@@ -892,9 +892,8 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_ALongStringElement_KeepsTheStartOfItsText()
     {
-        // [CSX-LONG-ELEMENT-LABEL] A label was kept only up to 20 characters, and a longer one was dropped whole, so
-        // Arr_Str's 22-character element exported as a bare "[2]". It now keeps its first 20 characters and says it
-        // was cut; one of 20 or fewer is kept as it was.
+        // [CSX-LONG-ELEMENT-LABEL] A label longer than 20 characters keeps its first 20 and says it was cut, rather
+        // than being dropped whole (Arr_Str's 22-character element as a bare "[2]"); one of 20 or fewer is kept as is.
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Arr_Str", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
@@ -975,7 +974,7 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_ArrayProperty_StructInner_DrilldownOne_FlattenSubFields()
     {
-        // ArrayProperty with StructProperty inner type and Phase F sub-fields
+        // ArrayProperty with StructProperty inner type and struct sub-fields
         // e.g., MissionSaveState [2 x TaskSaveGameData (0x140)]
         var fields = new List<LiveFieldValue>
         {
@@ -1025,9 +1024,9 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_ArrayProperty_StringInner_ShowsElementsAsStrings()
     {
-        // [W5-STRARRAY-ELEMENTS] The DLL now sends a TArray<FString>'s elements. CSX's scalar-element path
-        // already types each one as the string's Data pointer with a string child -- a pin, green both
-        // ways, because until now no string array ever reached it WITH elements.
+        // [W5-STRARRAY-ELEMENTS] The DLL sends a TArray<FString>'s elements. CSX's scalar-element path
+        // types each one as the string's Data pointer with a string child -- a pin of a path that only
+        // a string array WITH elements reaches.
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Names", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
@@ -1171,7 +1170,7 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_ArrayProperty_StructInner_NoSubFields_EmitsRawBlock()
     {
-        // Struct array where Phase F sub-fields are not available → raw bytes blocks
+        // Struct array where struct sub-fields are not available → raw bytes blocks
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "History", TypeName = "ArrayProperty", Offset = 0x80, Size = 8,
@@ -1356,7 +1355,7 @@ public class CsxExportServiceTests
         Assert.DoesNotContain("Name=\"ItemRow\"", csx);
     }
 
-    // --- Phase G/H/I: Soft/Lazy/Interface array drilldown tests ---
+    // --- Soft/Lazy/Interface array drilldown tests ---
 
     [Fact]
     public async Task GenerateCsx_ArrayProperty_SoftObjectInner_DrilldownOne_ShowsAssetPaths()
@@ -1384,8 +1383,8 @@ public class CsxExportServiceTests
         Assert.Contains("Offset=\"40\"", csx);   // [1]: 1*40 = 40
         // The Vartype="Pointer" in this output comes from the OUTER ArrayProperty
         // element, not from the soft leaves — so Contains("Pointer") alone passes
-        // whatever the inner mapping is, and cannot fail if W9 is reverted. Audit #5
-        // W9: TSoftObjectPtr holds an FSoftObjectPath, not an address, so its elements
+        // whatever the inner mapping is, and cannot fail if the leaves become pointers.
+        // TSoftObjectPtr holds an FSoftObjectPath, not an address, so its elements
         // must be watchable 8-byte hex leaves. Assert BOTH, mirroring the Delegate
         // sibling test below.
         Assert.Contains("Vartype=\"Pointer\"", csx);    // the ArrayProperty parent
@@ -1416,14 +1415,14 @@ public class CsxExportServiceTests
         Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*32 = 0
         Assert.Contains("Offset=\"32\"", csx);   // [1]: 1*32 = 32
         // Same trap as the SoftObject sibling above: the Pointer comes from the OUTER
-        // ArrayProperty element. Audit #5 W9 — TLazyObjectPtr's first 8 bytes are an
+        // ArrayProperty element. TLazyObjectPtr's first 8 bytes are an
         // FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber }, not an address.
         Assert.Contains("Vartype=\"Pointer\"", csx);    // the ArrayProperty parent
         Assert.Contains("Vartype=\"8 Bytes\"", csx);    // the LazyObjectProperty leaves
     }
 
-    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's FAssetPtr (0x20: FWeakObjectPtr +0, the FString path +0x10) had no arm in
-    // MapCsxType, so it fell to the raw-byte fallback: a 32-byte "Array of byte" blob, not the weak pair's 8-byte hex
+    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's FAssetPtr (0x20: FWeakObjectPtr +0, the FString path +0x10) has its own arm
+    // in MapCsxType: the raw-byte fallback would make it a 32-byte "Array of byte" blob, not the weak pair's 8-byte hex
     // leaf the Soft* pointers get.
 
     [Theory]
@@ -1629,8 +1628,8 @@ public class CsxExportServiceTests
     [Fact]
     public async Task GenerateCsx_MulticastDelegate_ShippingBuild_DrillIsAPointerOnTheField()
     {
-        // No detector: the drill pointer sits on the field offset itself. Before the fix the child hung on the raw
-        // "Array of byte" block, which CE cannot expand (StructuresFrm2.pas: isPointer is vartype = vtPointer).
+        // No detector: the drill pointer sits on the field offset itself, not on the raw "Array of byte" block, which
+        // CE cannot expand (StructuresFrm2.pas: isPointer is vartype = vtPointer).
         var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
             new List<LiveFieldValue> { MulticastWithOneBinding(pad: 0) }, drilldownDepth: 1,
             ct: TestContext.Current.CancellationToken);
@@ -1708,7 +1707,7 @@ public class CsxExportServiceTests
         Assert.Contains("Vartype=\"Pointer\"", csx);
     }
 
-    // --- Phase B: container element STRUCT value expansion ---
+    // --- container element STRUCT value expansion ---
 
     [Fact]
     public async Task GenerateCsx_MapProperty_StructValue_DrilldownOne_FlattensValueFields()
@@ -1961,19 +1960,18 @@ public class CsxExportServiceTests
     }
 
     // ============================================================
-    // Audit #5 W9 — the CSX twin of W5's CE-XML guard.
+    // The CSX twin of the CE-XML non-pointer guard.
     //
-    // W5 stopped the CE-XML emitter dereferencing slots that hold no address; the same
-    // defect lived in CSX (Vartype="Pointer" + a child <Structure>) and that commit did
-    // not touch this file. These two theories are deliberately PAIRED: the negative one
+    // Neither emitter may dereference a slot that holds no address; in CSX that would be
+    // Vartype="Pointer" + a child <Structure>. These two theories are deliberately PAIRED: the negative one
     // pins the four weak-like types as watchable hex leaves, the positive one pins the
     // three real pointer slots as still drillable, so a predicate tightened too far
     // fails just as loudly as one left too broad. Mirrors
     // CeXmlExportServiceTests.DrillDown_NonPointerSlot_IsNotDereferenced / _RealPointerSlot_.
     //
-    // The pre-existing array tests above could not do this job: their
+    // The array tests above cannot do this job: their
     // Assert.Contains("Vartype=\"Pointer\"") is satisfied by the ArrayProperty PARENT,
-    // so they passed identically before and after W9.
+    // whatever the leaves are.
     // ============================================================
     private static async Task<string> DrillCsxFor(string typeName)
     {

@@ -11,10 +11,10 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [KEYWORD-BOX-VIEW-KEEP] Every client-side keyword box rebuilt its list on every edit, and
-/// the rebuild (a <c>Clear()</c> + re-add) throws the grid back to its first row and drops the
+/// [KEYWORD-BOX-VIEW-KEEP] A client-side keyword box must not rebuild its list on every edit:
+/// a rebuild (a <c>Clear()</c> + re-add) throws the grid back to its first row and drops the
 /// selection -- even when the edit shows exactly the rows already shown (a trailing space, one
-/// more letter of a name every row already matches). The maintainer's rules (2026-09-27):
+/// more letter of a name every row already matches). The rules:
 /// <list type="bullet">
 /// <item>rows that did not change are not rebuilt -- no <see cref="INotifyCollectionChanged"/>
 /// event, and the selected row still selected;</item>

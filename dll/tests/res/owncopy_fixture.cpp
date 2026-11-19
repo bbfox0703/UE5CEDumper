@@ -17,7 +17,7 @@ extern "C" __declspec(dllexport) __declspec(allocate(".ownfix")) const unsigned 
 };
 
 #if defined(OWNCOPY_FIXTURE_LEGACY)
-// The C ABI's init entry, exported by every build since the first; the contract only since 2026-08-06.
+// The C ABI's init entry, which every build exports, including the builds that predate the contract.
 extern "C" __declspec(dllexport) bool UE5_Init() { return false; }
 #elif defined(OWNCOPY_FIXTURE_IMPOSTOR)
 extern "C" __declspec(dllexport) Mimic::MailboxContract g_mailboxContract = {

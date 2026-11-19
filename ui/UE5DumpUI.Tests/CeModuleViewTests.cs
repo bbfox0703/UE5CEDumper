@@ -13,8 +13,8 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [PATH-CE-MODULE-VIEW] Cheat Engine never sees a module's Unicode name. Its symbol handler names a module
 /// <c>WinCPToUTF8(szModule)</c> from ANSI <c>Module32First</c>, and Lua <c>enumModules</c> / <c>process</c> hand
-/// out the raw ANSI bytes. Measured on this PC (ACP 950) against ANSI <c>Module32First</c> itself, which gives
-/// exactly <c>WideCharToMultiByte(CP_ACP, 0)</c>, best fit included: <c>遊戲-…</c> keeps its name (Big5 holds it),
+/// out the raw ANSI bytes. ANSI <c>Module32First</c> itself gives exactly <c>WideCharToMultiByte(CP_ACP, 0)</c>, best
+/// fit included; under ACP 950: <c>遊戲-…</c> keeps its name (Big5 holds it),
 /// <c>ゲーム-…</c> is <c>???-…</c>, <c>Game™-…</c> is <c>Game?-…</c>, <c>Café-…</c> is <c>Cafe-…</c>,
 /// <c>Game®-…</c> is <c>GameR-…</c>. Every string the UI hands to CE must use THAT name.
 /// </summary>
@@ -33,7 +33,7 @@ public class CeModuleViewTests
     [InlineData("Game™-Win64-Shipping.exe", 1252u, "Game™-Win64-Shipping.exe")] // and ™ (0x99)
     [InlineData("遊戲-Win64-Shipping.exe", 1252u, "??-Win64-Shipping.exe")]
     [InlineData("", 950u, "")]
-    // (skeptic MODVIEW-5C-TRAIL, measured) ANSI Module32First cuts the ANSI path at its LAST 0x5C byte, and a DBCS
+    // ANSI Module32First cuts the ANSI path at its LAST 0x5C byte, and a DBCS
     // character's trail byte can be 0x5C: Big5 功 = A5 5C, Shift-JIS ソ = 83 5C. CE never sees what precedes it.
     [InlineData("功夫-Win64-Shipping.exe", 950u, "夫-Win64-Shipping.exe")]
     [InlineData("ソード-Win64-Shipping.exe", 932u, "ード-Win64-Shipping.exe")]
@@ -63,8 +63,8 @@ public class CeModuleViewTests
     [Fact]
     public void DumpService_TheCodePageIsRequired_AndTheAppPassesTheSystemOne()
     {
-        // (skeptic T2) An OPTIONAL code page let a composition root forget it and silently fall back to identity --
-        // the Audit #4 B27 shape CompositionRootWiringTests exists for. Required: the compiler finds every site.
+        // An OPTIONAL code page would let a composition root forget it and silently fall back to identity -- the
+        // shape CompositionRootWiringTests exists for. Required: the compiler finds every site.
         var p = typeof(DumpService).GetConstructors().Single().GetParameters()
             .Single(x => x.ParameterType == typeof(ISystemCodePage));
         Assert.False(p.IsOptional);
@@ -114,7 +114,7 @@ public class CeModuleViewTests
             .ToList();
         Assert.Empty(offenders);
 
-        // (skeptic T10) The GWorld-walk export's module argument is unused -- its script scans CE's `process` --
+        // The GWorld-walk export's module argument is unused -- its script scans CE's `process` --
         // so it is not pinned here; its doc says so.
 
         string pointer = File.ReadAllText(Path.Combine(dir, "PointerPanelViewModel.cs"));
@@ -156,7 +156,7 @@ public class CeModuleViewTests
     [Fact]
     public async Task PointerPanel_SymbolScripts_HandAobMakerCesName()
     {
-        // (skeptic T8) Behavioural, where a negative text pin guarded it before.
+        // Behavioural, not a negative text pin.
         var bridge = new RecordingBridge();
         var vm = new PointerPanelViewModel(new MockPlatformService(Path.GetTempPath()), aobMaker: bridge)
             { IsAobMakerAvailable = true };
@@ -176,7 +176,7 @@ public class CeModuleViewTests
     [Fact]
     public void AobScanHelper_OnCesVm_MatchesTheAnsiBytesAndCesUtf8Name()
     {
-        // (skeptic T10) The either-encoding clause, RUN on CE's own Lua VM (skips where the host is not built).
+        // The either-encoding clause, RUN on CE's own Lua VM (skips where the host is not built).
         var setup = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
         {
             Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
@@ -213,7 +213,7 @@ public class CeModuleViewTests
     [Fact]
     public void FernSendsTheRealName_AndCesViewOnlyWhereCeResolvesIt()
     {
-        // (skeptic T3) No test target compiles Fern.cpp, so the red tests could only exercise the helpers. Pin that
+        // No test target compiles Fern.cpp, so the helper tests cannot reach its call sites. Pin that
         // the three sites USE them and that no '?' narrowing survives.
         string fern = File.ReadAllText(Path.Combine(RepoRoot(), "dll", "src", "Fern.cpp"));
         Assert.DoesNotContain("(wc < 128) ? static_cast<char>(wc) : '?'", fern);
@@ -226,9 +226,8 @@ public class CeModuleViewTests
     [Fact]
     public void TheRigsThatPrintModuleName_WriteUtf8()
     {
-        // (skeptic RIG-PRINT-NONASCII) With the real non-ASCII name, print() to a cp950 pipe raises
-        // UnicodeEncodeError. run_version_evidence.py and sweep_title.py already reconfigure stdout; dumpgate_case3.py
-        // did not.
+        // With the real non-ASCII name, print() to a cp950 pipe raises UnicodeEncodeError, so the rigs that print a
+        // module name reconfigure stdout to UTF-8.
         foreach (var rig in new[] { "run_version_evidence.py", "sweep_title.py", "dumpgate_case3.py" })
             Assert.Contains("sys.stdout.reconfigure(encoding=\"utf-8\"",
                 File.ReadAllText(Path.Combine(RepoRoot(), "tools", "verify", rig)));

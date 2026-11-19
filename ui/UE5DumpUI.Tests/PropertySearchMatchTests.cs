@@ -5,7 +5,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// Tests for the inheritance-aware computed properties on
-/// <see cref="PropertySearchMatch"/> (build 610+).
+/// <see cref="PropertySearchMatch"/>.
 ///
 /// The DLL-side dedup (defining-class resolution, count accumulation,
 /// preview-source selection) needs a live game to test end-to-end --
@@ -125,7 +125,7 @@ public class PropertySearchMatchTests
         Assert.Equal("FloatProperty", m.TypeDisplay);
     }
 
-    // === Deep / nested match gating (build 1222) ===
+    // === Deep / nested match gating ===
 
     [Fact]
     public void DirectField_NotNested_ShowsScalarActions_NoPathTooltip()

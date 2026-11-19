@@ -90,14 +90,13 @@ public class ProxyImportAnalyzerTests
 
     // ── [PROXYALTWINMM-2026-08-23] ──
     //
-    // DescribeImportable offered only dxgi and dinput8. winmm has been parsed since
-    // 2026-07-27 and is one of the four proxies we build, and the class's own remarks
-    // group dxgi+winmm as the PURE STATIC-IMPORT HIJACKS -- the deterministic pair.
-    // Measured over the 16 UE shipping .exes installed on this machine: 14 import winmm,
-    // 0 import dinput8. So the advisory listed the flavour nothing imports and hid the
-    // one almost everything does.
+    // DescribeImportable offers winmm beside dxgi and dinput8: winmm is one of the four
+    // proxies we build, and the class's own remarks group dxgi+winmm as the PURE
+    // STATIC-IMPORT HIJACKS -- the deterministic pair. Most UE shipping .exes import
+    // winmm and almost none import dinput8, so without it the advisory would list the
+    // flavour nothing imports and hide the one almost everything does.
     //
-    // ⚠ It survived because ImportsWinmm was APPENDED TO THE RECORD WITH A DEFAULT, so
+    // ⚠ ImportsWinmm is APPENDED TO THE RECORD WITH A DEFAULT, so
     // every test above constructs three positional args and silently asserts the
     // no-winmm case. That is why the guard below enumerates ProxyType instead of adding
     // one more hand-written case: a FIFTH flavour added the same way would be caught.
@@ -114,9 +113,9 @@ public class ProxyImportAnalyzerTests
     [Fact]
     public void Recommend_DxgiAndWinmm_ListsBoth_DeterministicFirst()
     {
-        // The real shape on this machine: Lushfoil, DQ7R, Avowed, Elliot, Geri, Manor
-        // Lords and eight others import dxgi AND winmm. Before the fix this read
-        // "alt: dxgi" and the user was never told winmm was equally available.
+        // A common real shape: Lushfoil, DQ7R, Avowed, Elliot, Geri, Manor Lords and
+        // others import dxgi AND winmm. "alt: dxgi" alone would never tell the user
+        // winmm is equally available.
         var imports = new ProxyImportAnalyzer.ProxyImportInfo(false, false, true, true);
         var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
         Assert.Equal("version · default · alt: dxgi, winmm", s.Display);
@@ -143,11 +142,10 @@ public class ProxyImportAnalyzerTests
             var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
             string name = t.ToString().ToLowerInvariant();
 
-            // ⚠ Match on the "alt:" LIST, not on the whole Display. The first draft of
-            // this guard asserted Display.Contains(name) and passed VACUOUSLY when winmm
-            // was dropped -- because the fallback sentence is "no dxgi/winmm/dinput8",
-            // which contains "winmm". The negative control (delete the winmm line and
-            // re-run) is the only reason that was caught.
+            // ⚠ Match on the "alt:" LIST, not on the whole Display: Display.Contains(name)
+            // passes VACUOUSLY when winmm is dropped, because the fallback sentence is
+            // "no dxgi/winmm/dinput8", which contains "winmm". Negative control: delete
+            // the winmm line and re-run.
             int at = s.Display.IndexOf("alt:", StringComparison.Ordinal);
             Assert.True(at >= 0,
                 $"a game importing only {t} was offered no alternative at all: \"{s.Display}\"");
@@ -160,7 +158,7 @@ public class ProxyImportAnalyzerTests
     [Fact]
     public void FromDllName_MapsProxyNames_NullForNonProxy()
     {
-        // The load_mode → ProxyType bridge used by the Phase 2 confirmation gate.
+        // The load_mode → ProxyType bridge used by the confirmation gate.
         Assert.Equal(ProxyType.Version, ProxyTypeExtensions.FromDllName("version.dll"));
         Assert.Equal(ProxyType.Dinput8, ProxyTypeExtensions.FromDllName("DINPUT8.DLL")); // case-insensitive
         Assert.Equal(ProxyType.Dxgi, ProxyTypeExtensions.FromDllName("dxgi.dll"));
@@ -434,11 +432,11 @@ public class ProxyImportAnalyzerTests
 
     // ── Load-risk advisory (pure) ──
     //
-    // These pin the REVERSAL of a rule that used to hard-refuse a deploy: "not in the import
-    // table" meant "would never load". It was false. 21 Steam UE games were measured on
-    // 2026-08-10 and 11 of them run a WORKING version.dll proxy whose .exe names version.dll
-    // in neither the import nor the delay-import directory (DQ7R self-confirmed the load).
-    // Every assertion below is "returns null" = "do not block, do not even warn".
+    // "Not in the import table" does not mean "would never load": many Steam UE games run a
+    // WORKING version.dll proxy whose .exe names version.dll in neither the import nor the
+    // delay-import directory (DQ7R self-confirms the load). So a missing import never
+    // refuses a deploy. Every assertion below is "returns null" = "do not block, do not
+    // even warn".
 
     [Fact]
     public void LoadsDynamically_VersionAndDinput8_Only()
@@ -454,9 +452,9 @@ public class ProxyImportAnalyzerTests
     [Fact]
     public void DescribeLoadRisk_VersionNotImported_IsSilent()
     {
-        // THE REGRESSION TEST. This exact shape — imports dxgi + winmm, not version — is
-        // DragonSword Awakening, DQ7R, P3R, Stray, Palworld and 6 more. The old rule refused
-        // the deploy outright; the row then read "NotDeployed" with a blank Error.
+        // THE KEY CASE. This exact shape — imports dxgi + winmm, not version — is
+        // DragonSword Awakening, DQ7R, P3R, Stray, Palworld and more. Refused outright, the
+        // deploy would leave the row reading "NotDeployed" with a blank Error.
         var imports = new ProxyImportAnalyzer.ProxyImportInfo(
             ImportsVersion: false, ImportsDinput8: false, ImportsDxgi: true, ImportsWinmm: true);
         Assert.Null(ProxyImportAnalyzer.DescribeLoadRisk(imports, ProxyType.Version));
@@ -513,7 +511,7 @@ public class ProxyImportAnalyzerTests
 
     // ── Import-bypass screening ([PROXYLOAD-2026-08-17]) ──
     //
-    // The counter-intuitive half of the finding: a flavour the .exe imports DIRECTLY may be
+    // The counter-intuitive half: a flavour the .exe imports DIRECTLY may be
     // PRE-EMPTED by an already-mapped System32 copy (OCTOPATH's version.dll proxy is silently
     // ignored). It is a HEURISTIC — warns, never blocks — and is the exact inverse condition of
     // DescribeLoadRisk (which fires when a static-only flavour is ABSENT).
@@ -532,7 +530,7 @@ public class ProxyImportAnalyzerTests
     [Fact]
     public void DescribeImportBypassRisk_FiresForEveryImportedFlavour()
     {
-        // The finding generalises across all four base names; screen them all.
+        // The pre-emption applies to all four base names; screen them all.
         Assert.NotNull(ProxyImportAnalyzer.DescribeImportBypassRisk(
             new ProxyImportAnalyzer.ProxyImportInfo(false, true, false, false), ProxyType.Dinput8));
         Assert.NotNull(ProxyImportAnalyzer.DescribeImportBypassRisk(
@@ -624,20 +622,20 @@ public class ProxyImportAnalyzerTests
     [Fact]
     public void ClassifyLoad_OldFolder_IsStale_AndNeverClaimsLoadedNow()
     {
-        // The finding's explicit warning: a leftover folder from a previous BUILD must not read as a
+        // A leftover folder from a previous BUILD must not read as a
         // current load. The date is always shown AND anything past the window is flagged stale.
         var now = new DateTime(2026, 8, 18);
         var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
         Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.ObservedStale, sig);
-        // (eighth review, R8-01) The mark LEADS: the Load column clips the END of its text (measured at Inter 15 px, a
-        // trailing "(stale)" never showed), so an old load read as a recent one.
+        // The mark LEADS: the Load column clips the END of its text (at Inter 15 px a trailing "(stale)" does not show),
+        // so a trailing mark would let an old load read as a recent one.
         Assert.Equal("stale · loaded 2026-07-19", disp);
     }
 
     /// <summary>
-    /// (ninth review, R9-02) The Load column must hold its LONGEST text: a shared folder whose newest log is stale,
-    /// "shared · stale · loaded 2026-07-19". Measured from the Inter Regular in Avalonia.Fonts.Inter 12.1.3 at the
-    /// cell's 15 px: ~248 px of text + 12 px margins each side = ~272 px, so the 240 px of R8-01 cut the date again.
+    /// The Load column must hold its LONGEST text: a shared folder whose newest log is stale,
+    /// "shared · stale · loaded 2026-07-19". In the Inter Regular of Avalonia.Fonts.Inter 12.1.3 at the cell's 15 px:
+    /// ~248 px of text + 12 px margins each side = ~272 px, so a 240 px column cuts the date.
     /// The exact string is pinned too: if the text grows, the width must be re-measured.
     /// </summary>
     [Fact]
@@ -689,7 +687,7 @@ public class ProxyImportAnalyzerTests
     }
 
     // [PATH-SEIN-TRAILING-SPACE] A stem ending in a space or dots: Win32 creates "Game" for "Game ", and a file INSIDE
-    // "Game " cannot be opened -- so the DLL's session went unlogged. The DLL now trims them (Sein::ProcessFolderName),
+    // "Game " cannot be opened -- so untrimmed, the DLL's session goes unlogged. The DLL trims them (Sein::ProcessFolderName),
     // and this key, which finds the DLL's folder for the Load column, must trim them identically.
     [Theory]
     [InlineData("Game .exe", "Game")]
@@ -713,8 +711,8 @@ public class ProxyImportAnalyzerTests
     [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]
     [InlineData(".exe", "unknown")]
     [InlineData("Octopath_Traveler-Win64-Shipping.exe", "Octopath_Traveler-Win64-Shipping")]
-    // (second review, MIRROR-WS-DIVERGE) A stem that is only Unicode white space is a legal folder name, and the DLL
-    // logs into it; the mirror's extra IsNullOrWhiteSpace -> "unknown" split the session across two folders.
+    // A stem that is only Unicode white space is a legal folder name, and the DLL logs into it; an extra
+    // IsNullOrWhiteSpace -> "unknown" in the mirror would split the session across two folders.
     [InlineData("\u3000.exe", "\u3000")]
     [InlineData("\u00A0.exe", "\u00A0")]
     [InlineData("", "unknown")]                                                // no name at all: never Logs\ itself

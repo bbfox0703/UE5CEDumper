@@ -2,17 +2,16 @@
 // UE5CEDumper — the first test target that compiles the DLL's CORE.
 //
 // WHY THIS EXISTS
-//   Until now no test target compiled Aura.cpp, Ubel.cpp, Genau.cpp, Macht.cpp or
-//   Serie.cpp — 23,000 lines holding every GObjects walk, the class walker and the
-//   offset finder. Findings were shipped unverifiable for exactly that reason, and A10
-//   was declined partly on it. `dll_helpers_test` deliberately stays a LEAF target
-//   (Radar + Denken only); this is the heavyweight sibling.
+//   It compiles the DLL's heavyweight sources -- Aura.cpp, Ubel.cpp, Genau.cpp, Macht.cpp
+//   and Serie.cpp among them: the GObjects walks, the class walker and the offset finder --
+//   so a change there can be verified without a game. `dll_helpers_test` deliberately stays a LEAF target; this
+//   is the heavyweight sibling.
 //
 // HOW IT WORKS, and why it needs no game
 //   Macht reads the CURRENT PROCESS. So a fake FUObjectArray built in this test's own
 //   memory is, to Aura, indistinguishable from a real one — Aura::Init points it at the
-//   fixture and every read lands on our bytes. That is the fixture the repo has wanted
-//   ("C1"): object-pool-shaped state that can be created on demand.
+//   fixture and every read lands on our bytes: object-pool-shaped state that can be
+//   created on demand.
 //
 // ⚠ THE LAYOUT IS FORCED, NOT DETECTED
 //   InitWithExtendedLayout pins {Objects@+0x10, MaxElements@+0x20, NumElements@+0x24,
@@ -164,8 +163,8 @@ static void ResetCancel() {
 }
 
 // [LIVEFUNCS-STEP3] S3-M1: a stack captured from a known frame. Not inlined, and every one stores its callee's result
-// to a volatile after the call, so no call is a tail call that the compiler could turn into a jump (the design review's
-// M5). Arithmetic is not enough: `n + 0 * x` folds to `n`, and the first green run lost S3Outer's frame to exactly that.
+// to a volatile after the call, so no call is a tail call that the compiler could turn into a jump. Arithmetic is not
+// enough: `n + 0 * x` folds to `n`, which is enough to lose S3Outer's frame.
 static volatile uint32_t g_s3Sink = 0;
 static __declspec(noinline) uint32_t S3CaptureFromHere(uint64_t* out, uint32_t max, uint16_t& fl, uint64_t& myRet) {
     myRet = reinterpret_cast<uint64_t>(_ReturnAddress());
@@ -400,8 +399,8 @@ int main() {
         v = DecideResourceVersion(0, false, "", 0);
         check("VER-410-GATE: no reading at all is tier 0", v.version == 0 && v.tier == 0);
 
-        // [VER-410-GATE] review: the tier-3 log lines said "PE VERSIONINFO says UE %u" of a CrashReportClient's reading
-        // too. The verdict now says whose reading it is.
+        // [VER-410-GATE] The verdict says whose reading it is, so a tier-3 log line does not say "PE VERSIONINFO says
+        // UE %u" of a CrashReportClient's reading.
         using Genau::VersionSource;
         check("VER-410-GATE source ⭐: a CrashReportClient's 410 beside an exe reading nothing is the CrashReportClient's",
               DecideResourceVersion(0, false, "", 410).source == VersionSource::Crc);
@@ -418,10 +417,10 @@ int main() {
         check("VER-410-GATE source: no reading has no source", DecideResourceVersion(0, false, "", 0).source == VersionSource::None);
     }
 
-    // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
-    // on, and the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a
-    // resource-only DLL beside this exe; the b25 rig's live marker exes carry some of the same scripts. Only the
-    // pure helpers were pinned before, and a refactor that dropped the string or the short-circuit stayed green.
+    // [VER-410-GATE] The same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed on, and
+    // the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a resource-only
+    // DLL beside this exe; the b25 rig's live marker exes carry some of the same scripts. Pinning the pure helpers
+    // alone would leave a refactor that dropped the string or the short-circuit green.
     {   blk("VER-410-GATE glue - the resource half of detection, run on built VERSIONINFO files");
         wchar_t self[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, self, MAX_PATH);
@@ -466,19 +465,19 @@ int main() {
         auto none = phase(dir + L"verres_absent.dll", L"");
         check("VER-410-GATE glue: a file that is not there reads nothing", !none.done && none.result.version == 0, gb);
 
-        // [VER-410-GATE] review (rev 9): an exe whose fixed fields carry the GAME's version, but whose ProductVersion
-        // string is the engine's own build string, used to read nothing -- the string fallback knew only the
-        // branch-first shape -- so a 4.10 title beside an agreeing CrashReportClient was scanned at tier 3, and a
-        // 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18. The string is now read, as a code
-        // that cannot corroborate itself: below the floor only an agreeing CrashReportClient makes it tier 1.
+        // [VER-410-GATE] (Genau.h rev 9): an exe whose fixed fields carry the GAME's version, but whose ProductVersion
+        // string is the engine's own build string, reads the engine version from that string -- otherwise a 4.10 title
+        // beside an agreeing CrashReportClient is scanned at tier 3, and a 4.11-4.17 title falls to the memory scan,
+        // whose needles floor at 4.18. The string is read as a code that cannot corroborate itself: below the floor
+        // only an agreeing CrashReportClient makes it tier 1.
         auto s10 = phase(gameBuild410, L"");
         check("VER-410-GATE rev 9 ⭐: game fixed fields + a 4.10 engine build string read 410, from the string",
               s10.exeVersion == 410 && !s10.exeReading.fromFixedField, gb);
         check("VER-410-GATE rev 9 ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
               !s10.done && s10.result.version == 410 && s10.result.tier == 3 && !s10.verdict.byBuildString, gb);
-        // [VER-410-GATE] second review: the line under "PE resource failed" told this reading that no engine build
-        // string corroborates it, two lines after the log said the reading IS the build string. A code read out of the
-        // string cannot corroborate itself, and the line says so now. The b25-judged Warn line is not this one.
+        // [VER-410-GATE]: the line under "PE resource failed", for a reading taken out of the build string, says the
+        // string cannot corroborate itself -- not that no engine build string corroborates it, which would contradict
+        // the log two lines above naming the build string as the source. The b25-judged Warn line is not this one.
         const std::string n10 = Genau::Tier3ResourceNote(s10);
         check("VER-410-GATE note ⭐: a reading out of the exe's build string says it cannot corroborate itself",
               n10.find("build string") != std::string::npos && n10.find("cannot corroborate") != std::string::npos
@@ -516,7 +515,7 @@ int main() {
         check("VER-410-GATE rev 9 control: a game version with no engine build string still reads nothing",
               !g0.done && g0.result.version == 0 && g0.exeVersion == 0, gb);
 
-        // [VER-410-GATE] second review: the paths production uses. It names no CrashReportClient -- Genau looks above
+        // [VER-410-GATE]: the paths production uses. It names no CrashReportClient -- Genau looks above
         // the exe -- and DetectVersionDetailed returns a decided verdict before any memory scan. dll/CMakeLists.txt lays
         // the fixtures out as an install: the 4.10 build-string exe under Game/Binaries/Win64 with a 4.10.2
         // CrashReportClient under Engine/Binaries/Win64, and the same exe with nothing above it.
@@ -618,7 +617,7 @@ int main() {
               bare.exeReading.fromFixedField && bare.exeVersion == 410 && bare.exeReading.overruledFixedCode == 0, gb);
         // The fixed FileVersion is the second fixed field read and takes the same rule: every fixture above carries its
         // game version in PRODUCTVERSION, so the FileVersion branch could take its fixed code unchecked with all of them
-        // green. [VER-410-FIXED-VS-STRING] review
+        // green. [VER-410-FIXED-VS-STRING]
         const std::wstring fileFixed405 = res(L"game_filefixed405_buildstring_415");
         check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
               GetFileAttributesW(fileFixed405.c_str()) != INVALID_FILE_ATTRIBUTES,
@@ -700,16 +699,12 @@ int main() {
     }
 
     {   blk("A7 (the REAL one) — FindByAddress honours the poll; the two blocks above do NOT cover it");
-        // ⛔ WHY THIS BLOCK EXISTS: A7 WAS RECORDED AS VERIFIED BY TESTS THAT DO NOT TOUCH IT.
-        // The two blocks above are labelled "A7" and drive `Aura::ForEach`. But ForEach ALREADY
-        // had its poll -- it is one of the SIBLINGS A7 was made to match. The audit row says so
-        // exactly (docs/audit-2026-08-13-early-code-findings.md:278): "FindByAddress is the ONLY
-        // full-GObjects walk in the file with neither a Tot::Requested() poll nor a deadline".
-        // And FindByAddress (Aura.cpp) hand-rolls `for (int32_t i = 0; i < count; ++i)` --
-        // it never calls ForEach. Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/`
-        // returned ZERO hits, so deleting A7's poll reddened nothing, while both
-        // verification-register.md and todo.md `[A7-CORETEST-2026-08-25]` said it was verified.
-        // A green claim computed by a different code path than the thing it claims about.
+        // ⛔ WHY THIS BLOCK EXISTS: THE TWO "A7" BLOCKS ABOVE DO NOT TOUCH FindByAddress.
+        // They drive `Aura::ForEach`, which has a poll of its own. FindByAddress (Aura.cpp)
+        // hand-rolls `for (int32_t i = 0; i < count; ++i)` -- it never calls ForEach -- so its
+        // Tot::Requested() poll is reached by this block and nothing above it. Deleting that poll
+        // must redden a check here; a green claim computed by a different code path than the
+        // thing it claims about proves nothing. [A7-CORETEST-2026-08-25]
         //
         // ⚠ ANTI-VACUITY, and it is why this is four checks and not one: an UNCANCELLED lookup of
         // an address that is not in the pool ALSO returns found == false. "Not found" therefore
@@ -721,7 +716,7 @@ int main() {
 
         // (a) POSITIVE CONTROL -- the address really is findable, and by the EXACT path.
         // Exactness matters: an exact hit returns at Aura.cpp `FindByAddress` and never enters the backward
-        // module scan, which the audit deliberately left unpolled.
+        // module scan, which is deliberately left unpolled.
         ResetCancel();
         auto hit = Aura::FindByAddress(objAddr);
         check("FindByAddress finds an in-pool object when not cancelled", hit.found == true);
@@ -747,15 +742,14 @@ int main() {
 
     // ── B18 — Extra Scan must bail on cancel, and say its results are partial ──────
     //
-    // B18 as filed: "Extra Scan is uncancellable under an unbounded join => CE UI freezes".
-    // Fixed in build 2603; VERIFYING it stayed blocked because on every title here the scan
-    // finishes faster than a person can cancel it.
+    // The hazard: an Extra Scan that cannot be cancelled under an unbounded join freezes the
+    // CE UI. A live title cannot show the poll working, because the scan finishes faster than
+    // a person can cancel it -- so it is forced here.
     //
     // The mechanism is a poll at a BATCH BOUNDARY inside Genau::ScanForTarget, and the
-    // (MA1) comment beside it explains why it is there and not inside Macht: the largest
-    // indivisible unit is one AOBScanBatch, measured at most 0.64 s on a 213 MB .text. So
-    // what to test is not a DURATION -- it is that the poll is consulted and that the
-    // report declares the results partial.
+    // comment beside it explains why it is there and not inside Macht: the largest
+    // indivisible unit is one AOBScanBatch. So what to test is not a DURATION -- it is that
+    // the poll is consulted and that the report declares the results partial.
     //
     // ScanForTarget is `static` in Genau.cpp; this TU includes that file, which is the only
     // way to reach it without widening the header for a test.
@@ -813,14 +807,12 @@ int main() {
 
     // ── A10 — IS THE RECYCLED-UClass* DEFECT REPRODUCIBLE AT ALL? ─────────────────
     //
-    // A10 was declined on 2026-08-24 with four reasons, and one of them was that nothing
-    // in the tree can recycle a UClass* on demand, so no fix could be shown to work and no
-    // test could be shown to fail. That reason was true when it was written. This target
-    // makes it checkable: the fixture's memory is OURS, so an address can be made to hold
-    // a different class simply by overwriting the bytes.
+    // Showing that a fix for this defect works, or that a test for it fails, needs a UClass*
+    // recycled on demand. This target makes it checkable: the fixture's memory is OURS, so an address
+    // can be made to hold a different class simply by overwriting the bytes.
     //
     // This case does NOT fix A10 and does not assert the code is correct. It answers the
-    // prior question the decision turned on: does the defect actually reproduce?
+    // prior question: does the defect actually reproduce?
     {
         blk("A10 - can a recycled class address be made to serve STALE metadata?");
 
@@ -829,7 +821,7 @@ int main() {
         // IsPlausiblePropertiesSize -- a range check. Name/super reads may fail harmlessly.
         // STATIC, never a heap buffer: this class stays in s_walkClassExCache for the rest of the
         // run, and a freed heap block's address is handed to the next same-sized allocation -- a
-        // later test's class then read THIS cached answer (SANEPROPS failed that way on 2026-09-27).
+        // later test's class would then read THIS cached answer.
         static uint8_t blob[0x200] = {};
         const uintptr_t X = reinterpret_cast<uintptr_t>(blob);
 
@@ -847,12 +839,10 @@ int main() {
         check("A10 fixture: the first walk was cached at all (else this proves nothing)",
               first == 100, std::to_string(first).c_str());
 
-        // ⚠ NOT an assertion that the code is right. Whichever way this lands it is
-        // information the A10 decision did not have:
+        // ⚠ NOT an assertion that the code is right: it reports which way the recycle lands.
         //   second == 100 -> the defect REPRODUCES: a recycled address serves the old class
         //   second == 200 -> it does not reproduce here, and the fixture is too weak to
-        //                    settle A10 -- which is itself worth knowing before anyone
-        //                    spends the ~36-call-site refactor.
+        //                    settle the question either way.
         printf("    [A10] after overwriting the class at the same address: "
                "PropertiesSize %d -> %d  (%s)\n",
                first, second,
@@ -860,20 +850,18 @@ int main() {
                                : "re-read — not reproduced by this fixture");
     }
 
-    // ⚠ THE SUMMARY USED TO BE PRINTED HERE, mid-main, and it UNDERCOUNTED SILENTLY.
-    // `check()` prints nothing on success, so the only visible evidence a block ran is its
-    // `blk()` label and the final tally. Every block appended after this point — SANEPROPS,
-    // and later the A1 lazy-stride block — executed and passed while the printed line still
-    // said "11 checks", i.e. the report and the reality were computed at different points in
-    // the same function. Moved to just before `return`, where it counts everything.
-    // (Found 2026-09-05 while adding the A1 block: its six checks were invisible.)
+    // ⚠ THE SUMMARY IS PRINTED JUST BEFORE `return`, NOT MID-MAIN, where it would UNDERCOUNT
+    // SILENTLY. `check()` prints nothing on success, so the only visible evidence a block ran is
+    // its `blk()` label and the final tally; a tally printed here would leave out every block
+    // appended below it -- the report and the reality computed at different points in the same
+    // function.
 
     // -- SANEPROPS-2026-08-26 -- a big class is not a recycled one -----------------
     //
-    // One constant answered two questions. P3R has two REAL classes at ~3.67 MB
-    // (XRD777SaveGame / AstreaSaveGame) that walk their fields cleanly; the old 1 MB
-    // bound declared them recycled, so WalkInstance zeroed propsSize and skipped the
-    // walk, and the UI told the user a live object had been freed.
+    // One constant must not answer two questions. P3R has two REAL classes at ~3.67 MB
+    // (XRD777SaveGame / AstreaSaveGame) that walk their fields cleanly; a 1 MB "recycled"
+    // bound would declare them recycled, so WalkInstance would zero propsSize and skip the
+    // walk, and the UI would tell the user a live object had been freed.
     //
     // Decided by ARITHMETIC on a class blob we own, so none of these can go green for
     // a heap-layout reason.
@@ -884,14 +872,11 @@ int main() {
         // by the class address (per family epoch) and NOTHING erases it (that unboundedness is exactly
         // why the plausibility ceiling has to stay a bound). Reusing one address makes
         // every case after the first read the FIRST case's memoised answer -- the A10
-        // defect the fixture above demonstrates, hit here by accident while writing
-        // this test.
+        // defect the fixture above demonstrates.
         // STATIC blobs, for the same reason one step further: a heap buffer can be handed the
         // address of a class an EARLIER test walked and freed, and then reads that test's memoised
-        // answer. 2026-09-27: A10's 0x200-byte class vector is freed right before this block; in one
-        // build.ps1 run "garbage 827 MB is STILL judged stale" failed -- what reading A10's cached
-        // small PropertiesSize would produce -- and it passed in three standalone reruns. The address
-        // reuse was inferred from that, not logged; static storage removes it either way.
+        // answer -- a small cached PropertiesSize would fail "garbage 827 MB is STILL judged stale"
+        // in one run and pass in the next. Static storage removes the address reuse.
         static uint8_t objBlob[0x200] = {};
         const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob);
         static uint8_t clsGarbage[0x200] = {}, clsEmpty[0x200] = {}, clsBig[0x200] = {};
@@ -930,23 +915,21 @@ int main() {
     }
 
     {   blk("A1 follow-up — sizeof(TLazyObjectPtr) is DERIVED, and is 0x20 in NO era");
-        // ⭐ WHY THIS TEST EXISTS, AND WHY IT IS OFFLINE. `ReadLazyObjectArrayElements` forced
-        // `elemSize = 0x20` — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 was
-        // written to delete — and `InferScalarSize` returned the same constant, while
-        // `ResolveInnerSize` consults InferScalarSize BEFORE it ever asks the engine, so nothing
-        // downstream could correct it. Two costs: every array element from index 1 drifted, and
+        // ⭐ WHY THIS TEST EXISTS, AND WHY IT IS OFFLINE. A 0x20 element size -- the
+        // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model -- coming out of `InferScalarSize` cannot
+        // be corrected downstream, because `ResolveInnerSize` consults InferScalarSize BEFORE it
+        // ever asks the engine. Two costs: every array element from index 1 drifts, and
         // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS — so the
         // `payload envelope measured` line could never be emitted from an array walk, and an
         // operator reaching lazy that way would score a CORRECT fix as FAILED.
         //
         // It is offline because no installed title has a TArray<TLazyObjectPtr> (OCTOPATH has 5
-        // scalar lazy properties and zero arrays), and because the 2026-09-05 batch spent itself
-        // believing "Ubel.cpp is in no test target" — it has been in THIS one since 2026-08-25.
+        // scalar lazy properties and zero arrays).
         //
         // The truth being pinned: FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so
         // there is no pad after the tag. 0x1C up to 5.2; 0x18 from 5.3, where TagAtLastTest was
-        // deleted. OCTOPATH reported ElementSize 0x1C live on 2026-09-05 — the same number from
-        // the engine's own side, which is what makes these constants a measurement and not a guess.
+        // deleted. OCTOPATH's live ElementSize is 0x1C — the same number from the engine's own
+        // side, which is what makes these constants a measurement and not a guess.
         const uint32_t savedVer   = g_cachedUEVersion;
         const int      savedLatch = DynOff::LAZYPTR_GUID;
         DynOff::LAZYPTR_GUID = -1;          // no latch, so the version fallback is what answers
@@ -971,7 +954,7 @@ int main() {
         const int32_t at508 = Ubel::InferScalarSize("LazyObjectProperty");
         check("UE 5.8 -> 0x18 as well", at508 == 0x18);
 
-        // THE REGRESSION GUARD, and it is the whole point: the old value must be unreachable.
+        // THE GUARD, and it is the whole point: 0x20 must be unreachable.
         check("...and 0x20 is returned by NO era",
               at502 != 0x20 && at418 != 0x20 && at503 != 0x20 && at508 != 0x20);
 
@@ -984,12 +967,11 @@ int main() {
     }
 
     {   blk("A1 follow-up (2) — ReadLazyObjectArrayElements itself, which the block above does NOT cover");
-        // ⛔ WHY THE BLOCK ABOVE IS NOT ENOUGH, and I am recording this because it is my own
-        // overstatement from earlier today. That block pins `InferScalarSize` — an arithmetic
-        // helper. The function the `elemSize = 0x20` bug actually lived in is
-        // `ReadLazyObjectArrayElements`, and it had ZERO coverage: grepping dll/tests/ and
-        // tools/verify/ for it returned nothing. Pinning the helper and calling the fix verified is
-        // the same mistake audit A7 made — a test that names a NEIGHBOUR of its subject (§1.12).
+        // ⛔ WHY THE BLOCK ABOVE IS NOT ENOUGH. That block pins `InferScalarSize` — an arithmetic
+        // helper. The function that walks a lazy array at that stride is
+        // `ReadLazyObjectArrayElements`, and this block is what reaches it. Pinning the helper and
+        // calling the walk verified would be a test that names a NEIGHBOUR of its subject
+        // (working-lessons §1.12).
         //
         // Offline because `Macht::ReadTArray` (Macht.h) only sanity-checks Count/Max, so a
         // { Data, Num, Max } triple in this process's own memory is a real TArray to it. No
@@ -1042,7 +1024,7 @@ int main() {
               "drift reads poison", allRight,
               firstWrong >= 0 ? ("first wrong element: " + std::to_string(firstWrong) + " got "
                                  + lr.elements[firstWrong].value).c_str() : nullptr);
-        // The one that fails first under the old bug: element 0 is read correctly by BOTH strides,
+        // The one that fails first at a 0x20 stride: element 0 is read correctly by BOTH strides,
         // so it is element 1 that discriminates. Asserted separately so the failure says so.
         if (lr.elements.size() > 1) {
             check("A1: ...element 1 specifically — the first index the 0x20 stride gets wrong",
@@ -1056,10 +1038,10 @@ int main() {
     }
 
     {   blk("G6 — the fork's tag→key table is TRI-state: a transient miss must not be cached");
-        // ⛔ WHAT G6 ACTUALLY ASSERTS, and why one bool cannot express it. The old code cached a
-        // permanent TAGKEY_MISS, so a single unlucky read — the fork grows this table WHILE the
-        // game runs — blanked every FName carrying that tag for the rest of the process, even
-        // though the fork's own lookup would have succeeded a millisecond later. The fix splits
+        // ⛔ WHAT G6 ACTUALLY ASSERTS, and why one bool cannot express it. A cached permanent
+        // TAGKEY_MISS would let a single unlucky read — the fork grows this table WHILE the
+        // game runs — blank every FName carrying that tag for the rest of the process, even
+        // though the fork's own lookup would succeed a millisecond later. So the lookup splits
         // "could not determine" from "determined: absent":
         //
         //   readError=true   no ctx / count==sentinel / idx>=count / a failed read
@@ -1068,15 +1050,14 @@ int main() {
         //                      -> the fork stores that block unXOR'd, so key 0 IS the answer.
         //                         Resolve to 0 and cache it.
         //
-        // The two misses must get OPPOSITE treatment. That opposition is the whole finding, so
-        // every check below is a PAIR: the same tag before and after the table settles.
+        // The two misses must get OPPOSITE treatment. That opposition is the whole point, so
+        // the checks below come in PAIRS: the same tag before and after the table settles.
         //
         // Offline because `Macht::ReadSafe` reads THIS process, so a std::vector shaped like the
         // fork's hash table is indistinguishable from the fork's own — the same trick the fake
-        // FUObjectArray above uses. G6's live host (MindsEye) is not installed and is not coming.
+        // FUObjectArray above uses. The fork's live host (MindsEye) is not installed.
         // ⚠ SCOPE: this pins the TRI-STATE LOGIC, not that the ctx offsets match MindsEye's real
-        // table. That half came from RE and can only ever be confirmed on the fork. G6 was filed
-        // as a logic defect, so the logic is the finding.
+        // table. That half came from RE and can only ever be confirmed on the fork.
         constexpr int32_t kCap = 16, kCountLow = 2, kCountAll = 8;
         std::vector<uint8_t> ctx(0x80, 0), entries(static_cast<size_t>(kCap) * 24, 0);
         std::vector<int32_t> buckets(kCap, -1);
@@ -1172,10 +1153,10 @@ int main() {
 
 
     {   blk("D3/D5 -- an UNREADABLE array element must not be published as a VALUE");
-        // Blind-spot sweep, 2026-09-08. Two array readers fabricated a plausible answer
-        // when the element read faulted: the multicast-delegate one published the
-        // affirmative "(0 bindings)" and the TLazyObjectPtr one an all-zero FGuid, both
-        // counted in readCount. Macht::ReadTArray (Macht.h) validates only Count
+        // Two array readers must not fabricate a plausible answer when the element read
+        // faults: the multicast-delegate one would publish the affirmative "(0 bindings)"
+        // and the TLazyObjectPtr one an all-zero FGuid, both counted in readCount.
+        // Macht::ReadTArray (Macht.h) validates only Count
         // and Max and NEVER probes Data, so a freed buffer reaches the element loop with
         // the header looking perfectly sane -- that is why the fault arm is reachable at
         // all, and it is what these cases pin.
@@ -1204,8 +1185,8 @@ int main() {
               lzHonest, lz.elements.empty() ? "(none)" : lz.elements[0].value.c_str());
 
         // ⭐ THE CONTROL THAT MAKES D5 MEAN ANYTHING. An all-zero FGuid is the LEGITIMATE
-        // value of an UNSET TLazyObjectPtr, so "print zeros differently" was never
-        // available -- the fix has to separate UNREAD from READ-AS-ZERO. Read a REAL
+        // value of an UNSET TLazyObjectPtr, so "print zeros differently" is not an
+        // option -- the reader has to separate UNREAD from READ-AS-ZERO. Read a REAL
         // buffer of zeroes and require the zeros back.
         alignas(16) uint8_t zeros[0x18 * 2] = {};
         FakeTArrayField live{ reinterpret_cast<uintptr_t>(zeros), 2, 2 };
@@ -1217,7 +1198,7 @@ int main() {
               zerosKept, lz0.elements.empty() ? "(none)" : lz0.elements[0].value.c_str());
 
         // And the multicast twin: a readable, genuinely-empty inner TArray must still say
-        // "(0 bindings)" -- otherwise the fix would have replaced one wrong answer with
+        // "(0 bindings)" -- otherwise the refusal would replace one wrong answer with
         // another.
         alignas(16) uint8_t emptyInner[16 * 2] = {};
         FakeTArrayField liveMc{ reinterpret_cast<uintptr_t>(emptyInner), 2, 2 };
@@ -1257,9 +1238,9 @@ int main() {
 
 
     {   blk("W3-BATCH-METHOD review -- an unreadable Script buffer is not \"bytecode\"");
-        // WalkFunctionPropertyRefs tagged a function "bytecode" BEFORE reading its Script buffer and
-        // returned empty refs when that read failed -- which the UI's batch rendered as a real "0"
-        // ("analysed, touches no class fields") for a function nobody scanned. Review of 0de62ec1.
+        // WalkFunctionPropertyRefs must not tag a function "bytecode" BEFORE reading its Script buffer
+        // and return empty refs when that read fails -- the UI's batch would render that as a real "0"
+        // ("analysed, touches no class fields") for a function nobody scanned.
         alignas(16) static uint8_t fn[0x400] = {};
         const uintptr_t fnAddr = reinterpret_cast<uintptr_t>(fn);
         *reinterpret_cast<uintptr_t*>(fn + DynOff::USTRUCT_SCRIPT)      = 0x1000;   // never mapped
@@ -1270,7 +1251,7 @@ int main() {
         check("...with no refs", dead.refs.empty());
 
         // ⭐ The control: a READABLE Script with no property opcode is genuinely analysed, and stays
-        // "bytecode" -- otherwise the fix would have relabelled every empty scan as unread.
+        // "bytecode" -- otherwise the refusal would relabel every empty scan as unread.
         alignas(16) static uint8_t script[16];
         memset(script, 0x0B, sizeof(script));   // 0x0B is none of the anchor opcodes
         *reinterpret_cast<uintptr_t*>(fn + DynOff::USTRUCT_SCRIPT) = reinterpret_cast<uintptr_t>(script);
@@ -1365,13 +1346,12 @@ int main() {
 
 
     {   blk("D2 -- a scan worker that THROWS must not report the run as COMPLETE");
-        // Blind-spot sweep, 2026-09-08. ParallelIndexRanges' catch(...) is the
-        // terminate-guard (an exception escaping a std::thread callable calls
-        // std::terminate in the host game) and has to stay -- but it swallowed the chunk
-        // while its comment claimed the outcome was "exactly like a deadline hit". It set
-        // no flag, so ScanForValue folded deadlineHit=false and Fern published
-        // data["deadline_hit"]=false: a value scan missing a whole index range rendered as
-        // a complete one, and the UI's truncation notice never fired.
+        // ParallelIndexRanges' catch(...) is the terminate-guard (an exception escaping a
+        // std::thread callable calls std::terminate in the host game) and has to stay --
+        // but it must not swallow the chunk silently. With no flag set, ScanForValue would
+        // fold deadlineHit=false and Fern publish data["deadline_hit"]=false: a value scan
+        // missing a whole index range would render as a complete one, and the UI's
+        // truncation notice would never fire.
         ResetCancel();
 
         // maxThreads=1 is what makes this DETERMINISTIC. ScanThreadCount picks the worker
@@ -1411,9 +1391,9 @@ int main() {
     }
 
     {   blk("[PIPE-PER-PROCESS-2026-11-06] C -- a walk's threads follow the CPU: performance cores less 2");
-        // The maintainer, 2026-11-10: logical processors less 2 used every physical core of a 16C32T PC, put 14
-        // threads on an 8-core 9800X3D's SMT siblings, and counted Intel's E-cores as cores. The game and background
-        // programs run meanwhile, and threads beyond the cores only switch context more often.
+        // The count is performance cores less 2, not logical processors less 2: the latter takes every physical core
+        // of a 16C32T PC, puts 14 threads on an 8-core 9800X3D's SMT siblings, and counts Intel's E-cores as cores.
+        // The game and background programs run meanwhile, and threads beyond the cores only switch context more often.
         auto cores = [](int n, uint8_t cls) { return std::vector<uint8_t>(static_cast<size_t>(n), cls); };
         auto hybrid = [](int p, int e) {
             std::vector<uint8_t> v(static_cast<size_t>(p), uint8_t{1});
@@ -1727,13 +1707,12 @@ int main() {
 
     // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------
     //
-    // [A3-BOOL-NATIVE-NOWRITE] / [A2-STRUCT-PREVIEW-BOOLMASK], the B05 review follow-up. B05's
-    // classifier required ByteMask 0xFF for a native bool, but every engine's SetBoolSize writes
-    // `ByteMask = true` (0x01) -- so on a real game NO bool classified native, every native-bool
-    // edit was refused, and the only test fed the classifier the same wrong tuple it was written
-    // from. These drive the PROBE with the bytes a real FBoolProperty presents at
-    // FBOOLPROP_FIELDSIZE, not the classifier's arguments. Pure (no name pool), so it sits above
-    // the pool-faking tail.
+    // [A3-BOOL-NATIVE-NOWRITE] / [A2-STRUCT-PREVIEW-BOOLMASK]. Every engine's SetBoolSize writes
+    // `ByteMask = true` (0x01) for a native bool, so a classifier wanting ByteMask 0xFF would find
+    // NO native bool on a real game and refuse every native-bool edit -- and a test that fed the
+    // classifier its own expected tuple could not see it. These drive the PROBE with the bytes a
+    // real FBoolProperty presents at FBOOLPROP_FIELDSIZE, not the classifier's arguments. Pure (no
+    // name pool), so it sits above the pool-faking tail.
     {
         blk("BOOLLAYOUT - the probe reads SetBoolSize's real bytes; the preview honours each mask");
 
@@ -1779,9 +1758,9 @@ int main() {
 
     // -- INT8-PREVIEW -- the struct preview reads an Int8Property signed ----------------------
     //
-    // [INT8-PREVIEW]. The struct preview decodes each member through Ubel::PreviewScalarValue, which read
-    // an Int8Property through uint8_t, so a member holding -1 previewed as 255. A ByteProperty beside it
-    // holds the same byte and is the unsigned type, so it must still read 255.
+    // [INT8-PREVIEW]. The struct preview decodes each member through Ubel::PreviewScalarValue, which must
+    // read an Int8Property signed -- through uint8_t a member holding -1 previews as 255. A ByteProperty
+    // beside it holds the same byte and is the unsigned type, so it must still read 255.
     {
         blk("INT8-PREVIEW - a struct's Int8 member previews signed, its Byte neighbour unsigned");
         ClassInfo si{};
@@ -1856,8 +1835,8 @@ int main() {
         check("UFUNCTAIL control: UE 5.5 reads as before",
               f505.numParms == 4 && f505.parmsSize == 0x40 && f505.returnValueOffset == 0x38);
 
-        // [UE-OVERRIDE-411] review. The version decides where ParmsSize is read, so a wrong one -- an override of 4.17
-        // on a 4.18 title, which the override now reaches -- reads the field next door. A K2_SetActorLocation-shaped
+        // [UE-OVERRIDE-411] The version decides where ParmsSize is read, so a wrong one -- an override of 4.17 on a
+        // 4.18 title, which the override reaches -- reads the field next door. A K2_SetActorLocation-shaped
         // 4.18 tail: NumParms 5, ParmsSize 0x9A, ReturnValueOffset 0x99 (bTeleport +0x98, the bool return +0x99).
         memset(fn, 0, sizeof(fn));
         memcpy(fn + 0x88, &flags, 4);
@@ -1899,7 +1878,7 @@ int main() {
         onlyReturn.params[0].isParm = false;
         check("PEBUF: a return entry counts even when its CPF_Parm bit did not read -- ProcessEvent writes it",
               Ubel::ParamBufferSize(onlyReturn) == 12, std::to_string(Ubel::ParamBufferSize(onlyReturn)).c_str());
-        // [UE-OVERRIDE-411] review 2: a list_all_functions row carries the chain's end beside the tail's ParmsSize, so
+        // [UE-OVERRIDE-411] A list_all_functions row carries the chain's end beside the tail's ParmsSize, so
         // a cheat-table row built from that list hands the CE helper the number that gates the mailbox slab.
         ClassInfo rowClass{};
         rowClass.Name = "Actor";
@@ -1959,11 +1938,11 @@ int main() {
 
     // -- GROUPREFINE-2026-09-11 -- a group refine keeps a width whose every value satisfies ----
     //
-    // [W2-ORDEN-FINDENTRY]. RefineGroupCandidates looked each targeted slot up with Find(), which
-    // hides audit #5 AB4's AlwaysTrue verdict, so a `Bigger -5` refine pruned every unsigned leaf
-    // -- and with it every candidate whose slot needed one. The single-value refine has used
-    // FindEntry since AB4. Pure: the leaves are this block's own statics, read through the same
-    // SEH-safe path as game memory, so it sits above the pool-faking tail.
+    // [W2-ORDEN-FINDENTRY]. RefineGroupCandidates looks each targeted slot up with FindEntry, as
+    // the single-value refine does: Find() hides the AlwaysTrue verdict, so a `Bigger -5` refine
+    // would prune every unsigned leaf -- and with it every candidate whose slot needed one. Pure:
+    // the leaves are this block's own statics, read through the same SEH-safe path as game
+    // memory, so it sits above the pool-faking tail.
     {
         blk("GROUPREFINE - a group refine honours the AlwaysTrue verdict");
         using ST = Radar::ScanType;
@@ -2010,7 +1989,7 @@ int main() {
         Aura::RefineGroupCandidates(slots2, c2, descs, insts);
         check("GROUPREFINE control: Refine(Bigger 70000) still drops an Int16-only slot", c2.empty());
 
-        // (review of aaf6a022) A refine that compared an AlwaysTrue entry's ZEROED bytes (the raw
+        // A refine that compared an AlwaysTrue entry's ZEROED bytes (the raw
         // overload) keeps the 3 above -- 3 > 0 -- so these two pin the verdict itself: an unsigned 0
         // under Bigger -5, and an Int16 32767 under Smaller 70000.
         static uint16_t zeroU16 = 0;
@@ -2038,18 +2017,17 @@ int main() {
     // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, LOCALPC, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
-    // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
-    // faulted read the addr stays 0, `ResolveElementAlignment` is then asked to align a
+    // THE HAZARD. `GetMapPairLayout` must not drop the `FStructProperty::Struct` reads' results.
+    // On a faulted read the addr stays 0, `ResolveElementAlignment` is then asked to align a
     // struct it cannot see, and whatever it guesses flows into pairAlign -> pairStride --
     // while the comment two lines under that block says out loud that "the stride must be a
-    // multiple of it, or every element after index 0 lands at a wrong address". The sweep
-    // filed this site as "the same question unanswered" and never answered it.
+    // multiple of it, or every element after index 0 lands at a wrong address".
     //
     // ⭐ WHY THIS NEEDS A PAGE BOUNDARY AND NOT A DEAD POINTER. The other fault fixtures in
     // this file point a Data pointer at 0x1000, so the whole target is unreadable. That does
     // NOT reach this arm: a wholly-unreadable property makes GetFieldTypeName return
     // "Unknown" and the function returns false long before the struct read -- the same
-    // outcome as the fix, for a different reason. The repair only matters for a PARTIAL
+    // outcome as the refusal, for a different reason. The refusal only matters for a PARTIAL
     // failure: the property readable at +0x08 and +0x3C, unreadable at +0x78. That is
     // manufactured here by committing ONE page of a two-page reservation and laying the
     // property across the edge.
@@ -2131,26 +2109,24 @@ int main() {
     // the pool with its OWN chunks, so it does not depend on TMAPGEOM's leftovers — but
     // nothing that needs the real (uninitialised) pool may be appended after it either.
     //
-    // THE DEFECT (slice C of the unadjudicated sweep claims, Ubel.cpp InterfaceProperty).
-    // Both FScriptInterface reads were discarded and the hex column was then built
-    // unconditionally, so an UNREADABLE interface rendered
+    // THE HAZARD (Ubel.cpp InterfaceProperty). A hex column built without checking both
+    // FScriptInterface reads renders an UNREADABLE interface as
     // "0000000000000000 0000000000000000" — an affirmative claim about memory nobody
     // could read, byte-identical to a genuinely NULL interface.
     //
-    // ⭐ WHY THE LIVE ARM COULD NOT SETTLE IT, WHICH IS WHY THIS FIXTURE EXISTS. The
-    // regression half ran on DumperTest and found GeometryCollectionComponent
-    // .CustomRenderer — a real, genuinely null interface — printing exactly those zeros.
-    // That shows the fix did not break the readable path, and NOTHING more: readable-null
-    // and unreadable are the two states the defect confuses, and a live game hands you
-    // only the first. Separating them takes a manufactured fault.
+    // ⭐ WHY A LIVE GAME CANNOT SETTLE IT, WHICH IS WHY THIS FIXTURE EXISTS. On DumperTest,
+    // GeometryCollectionComponent.CustomRenderer — a real, genuinely null interface —
+    // prints exactly those zeros. That shows the readable path works, and NOTHING more:
+    // readable-null and unreadable are the two states to tell apart, and a live game hands
+    // you only the first. Separating them takes a manufactured fault.
     //
     // ⭐ AND IT MUST BE A PARTIAL ONE. A wholly-unmapped instance never reaches this
     // branch — WalkInstance's IsAddrReadable gate bails first — so a dead-pointer fake
     // would go green for the wrong reason, the same trap TMAPGEOM documents. The arm is
     // built its way: one committed page of a two-page reservation, with the 16-byte
     // FScriptInterface laid ACROSS the edge, so ObjectPointer reads and InterfacePointer
-    // faults. That is the case the old code got wrong in its worst form — a REAL pointer
-    // followed by eight zero bytes it had never read.
+    // faults. That is the worst form of the hazard — a REAL pointer followed by eight zero
+    // bytes nobody read.
     {
         blk("IFACEREAD - a faulted FScriptInterface refuses, it does not publish zeros");
 
@@ -2229,12 +2205,12 @@ int main() {
               okF.typedValue.find("unreadable") == std::string::npos,
               okF.typedValue.c_str());
 
-        // ⭐ THE READABLE-NULL CONTROL -- the state the LIVE arm actually found, and the
-        // one the whole defect is about. GeometryCollectionComponent.CustomRenderer on
-        // DumperTest is a genuinely null interface, so it printed sixteen zero bytes; the
-        // pre-fix walker printed the SAME sixteen zero bytes for memory it could not read.
-        // A fix that suppressed the hex on both would "pass" every refusal check above
-        // while destroying real information, so this case must keep its zeros.
+        // ⭐ THE READABLE-NULL CONTROL -- the state a live game shows, and half of the pair
+        // this block is about. GeometryCollectionComponent.CustomRenderer on DumperTest is a
+        // genuinely null interface, so it prints sixteen zero bytes; memory nobody could read
+        // must not print the SAME sixteen zero bytes. Suppressing the hex on both would
+        // "pass" every refusal check above while destroying real information, so this case
+        // must keep its zeros.
         const auto nullF = ifaceField("readable-null",
             Ubel::WalkInstance(inst, makeClass(3, 0x200), 64, 2, false));
         check("IFACEREAD control: a readable NULL interface still reports its zeros",
@@ -2244,7 +2220,7 @@ int main() {
               nullF.typedValue.c_str());
 
         // ⭐ THE PARTIAL FAULT. ObjectPointer is the page's last 8 bytes; InterfacePointer
-        // is in the uncommitted page. Old behaviour: "1122334455667788 0000000000000000".
+        // is in the uncommitted page. The wrong output is "1122334455667788 0000000000000000".
         *reinterpret_cast<uintptr_t*>(ipage + 0xFF8) = 0x1122334455667788ull;
         const auto edgeF = ifaceField("half-unread",
             Ubel::WalkInstance(inst, makeClass(1, 0x0FF8), 64, 2, false));
@@ -2263,12 +2239,12 @@ int main() {
               deadF.typedValue.find("unreadable at +0x1000") != std::string::npos,
               deadF.typedValue.c_str());
 
-        // ⭐⭐ THE DISCRIMINATOR, and the single check that states the defect itself.
-        // Pre-fix, these two rendered BYTE-IDENTICALLY: a genuinely null interface and
-        // memory nobody could read both came out "0000000000000000 0000000000000000".
-        // Every other check here can be satisfied by some partial fix; this one cannot,
-        // because it asserts the two states are now TELLABLE APART -- which is the entire
-        // user-visible claim, and precisely what the live DumperTest run could not decide.
+        // ⭐⭐ THE DISCRIMINATOR, and the single check that states the hazard itself: a
+        // genuinely null interface and memory nobody could read must not both come out
+        // "0000000000000000 0000000000000000". Every other check here can be satisfied by
+        // some partial fix; this one cannot, because it asserts the two states are TELLABLE
+        // APART -- which is the entire user-visible claim, and precisely what a live
+        // DumperTest run cannot decide.
         check("IFACEREAD ⭐⭐: readable-NULL and UNREADABLE are no longer the same output",
               nullF.hexValue != deadF.hexValue,
               (nullF.hexValue + " vs " + deadF.hexValue).c_str());
@@ -2298,8 +2274,8 @@ int main() {
     // `BoolProperty`, three blocks above the enum handlers, has always had it right.
     //
     // ⭐ THE DISCRIMINATOR IS AGAIN WHAT MATTERS. Every refusal check below can be passed
-    // by a fix that simply blanks the field; what cannot is "a byte that genuinely holds 0
-    // still reports 0, and is no longer the same output as a byte we could not read". Each
+    // by code that simply blanks the field; what cannot is "a byte that genuinely holds 0
+    // still reports 0, and is not the same output as a byte we could not read". Each
     // family therefore gets a readable-ZERO case as well as a readable-nonzero one.
     {
         blk("UNREADVAL - a faulted enum / byte-enum / TOptional refuses, it does not publish 0");
@@ -2477,7 +2453,7 @@ int main() {
               opNull.typedValue != opDead.typedValue,
               (opNull.typedValue + " vs " + opDead.typedValue).c_str());
 
-        // Review of cc430176: the cases above are the INTRUSIVE shape (an 8-byte optional of an
+        // The cases above are the INTRUSIVE shape (an 8-byte optional of an
         // 8-byte object). Real object optionals are TRAILING-FLAG (16 bytes); their discriminator is
         // the flag byte at +8. Here the pointer is readable and the flag sits across the page edge.
         const auto opFlagDead = oneField("trailing-flag optional, flag unreadable", "OptionalProperty",
@@ -2495,11 +2471,11 @@ int main() {
     // `fi.TypeName`, so the walker must answer "BoolProperty" out of a fake pool. Own chunks and
     // own pool, installed first; nothing needing the real pool may follow.
     //
-    // [A3-BOOL-NATIVE-NOWRITE], the B05 review follow-up. Live Walker's rows come from
-    // WalkInstance's OWN probe loop, not ProbeBoolLayout, so BOOLLAYOUT above does not reach
-    // them. B05 shipped with every UI test injecting BoolNative directly and nothing asking the
-    // DLL whether it detects one -- which is how a classifier that recognised no real engine's
-    // native bool went green. One class blob per case (s_walkClassCache is keyed by address).
+    // [A3-BOOL-NATIVE-NOWRITE]. Live Walker's rows come from WalkInstance's OWN probe loop, not
+    // ProbeBoolLayout, so BOOLLAYOUT above does not reach them. UI tests inject BoolNative
+    // directly, so this is where the DLL is asked whether it detects one -- without it, a
+    // classifier that recognised no real engine's native bool would stay green. One class blob
+    // per case (s_walkClassCache is keyed by address).
     {
         blk("BOOLNATIVE - WalkInstance marks SetBoolSize's native layout native, and only it");
 
@@ -2677,9 +2653,9 @@ int main() {
                   p418[1].structType == "HitResult", p418[1].structType.c_str());
         }
 
-        // Review of 9abc03c8: FindFunctionsByClassParam's ParamTargetType is WalkFunctions' mirror
-        // ("Mirrors the param-type enrichment in Ubel::WalkFunctions") and kept the flat +0x2C, so
-        // at 4.15 it could not match a param's PropertyClass. The same fakes, asked through it.
+        // FindFunctionsByClassParam's ParamTargetType is WalkFunctions' mirror ("Mirrors the
+        // param-type enrichment in Ubel::WalkFunctions"); a flat +0x2C there would leave it unable to
+        // match a param's PropertyClass at 4.15. The same fakes, asked through it.
         bool retMatch = false;
         g_cachedUEVersion = 415; DynOff::UPROPERTY_OFFSET = 0x50;
         check("UFUNCWALK ⭐: FindFunctionsByClassParam matches the 4.15 ObjectProperty param",
@@ -2700,7 +2676,7 @@ int main() {
         put32(wfLocal, DynOff::UPROPERTY_OFFSET, 0x90);                       // past the parameter block
         put(wfLocal, 0x70, named(4));                                         // PropertyClass Actor, 4.18's slot
         put(wfStrP[1], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfLocal));
-        // Anti-vacuity (review of 987a0dab): the same entry flagged CPF_Parm IS counted, so the star check below
+        // Anti-vacuity: the same entry flagged CPF_Parm IS counted, so the star check below
         // fails for the flag and not because the local is unreachable.
         put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000280ull);
         check("UFUNCWALK control: the same entry, flagged CPF_Parm, is counted",
@@ -2710,8 +2686,8 @@ int main() {
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
         put(wfStrP[1], DynOff::UFIELD_NEXT, 0);
 
-        // [STRUCTPROBE-ANY-NAME] (review of build 3596): this UProperty param path took ANY named object as the
-        // param's struct / class -- and walked it as a struct. A named non-struct, non-class object in the slot:
+        // [STRUCTPROBE-ANY-NAME]: this UProperty param path must not take ANY named object as the param's struct /
+        // class -- and walk it as a struct. A named non-struct, non-class object in the slot:
         const auto pDecoy = paramsOf("a decoy in the slot", walkAt(2, 418, 0x44, 0x70, named(11), named(11)));
         if (pDecoy.size() == 2) {
             check("UFUNCWALK ⭐: a UProperty param's slot holding a named NON-class names no PropertyClass",
@@ -2720,9 +2696,9 @@ int main() {
                   pDecoy[1].structType.c_str());
         }
 
-        // [UPROP-SUBCLASS-SLOT] (review of build 3596): the start Genau RECORDED, not the version's -- a 4.15 layout
-        // labelled 4.22 (the version formula says 0x7C, the layout 0x78). Pins the WalkFunctions and the
-        // ParamTargetType sites, which a revert to the version formula left green.
+        // [UPROP-SUBCLASS-SLOT]: the start Genau RECORDED, not the version's -- a 4.15 layout labelled 4.22 (the
+        // version formula says 0x7C, the layout 0x78). Pins the WalkFunctions and the ParamTargetType sites: either one
+        // reading at the version formula's start fails here.
         DynOff::UPROPERTY_SUBCLASS_START = 0x78;
         const auto pMis = paramsOf("4.15 labelled 4.22", walkAt(3, 422, 0x50, 0x78));
         if (pMis.size() == 2) {
@@ -2774,7 +2750,7 @@ int main() {
         constexpr uint64_t kParm = 0x0080, kOut = 0x0100, kRet = 0x0400;
         // What a numeric property carries anyway: ZeroConstructor | IsPlainOldData | NoDestructor |
         // HasGetValueTypeHash. On every entry, so a local is never flags 0 and "any bit set" cannot pass for
-        // CPF_Parm (review of 0fa23e3f).
+        // CPF_Parm.
         constexpr uint64_t kPod = 0x0008001040000200ull;
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
@@ -2848,7 +2824,7 @@ int main() {
                   ps[0].isParm && ps[1].isParm);
             check(("UFUNCPARM ⭐: " + who + " -- the local after them is not").c_str(), !ps[2].isParm);
 
-            // [FUNCPARM-CONSUMERS] review: Mimic clears the return slot before an invoke, and the slot comes from
+            // [FUNCPARM-CONSUMERS] Mimic clears the return slot before an invoke, and the slot comes from
             // the chain's CPF_ReturnParm entry (ResolveFunctionInfo reads only the tail, which has no size).
             int32_t retOff = -1, retSize = 0;
             const bool hasRet = Ubel::ReadReturnSlot(reinterpret_cast<uintptr_t>(upFn[m]), retOff, retSize);
@@ -3038,8 +3014,8 @@ int main() {
         };
         check("OPTLAYOUT control: Find Refs sees a SET optional's pointer", hitsOf(cA2) == 1);
         check("OPTLAYOUT ⭐: Find Refs does NOT report a RESET optional's stale pointer", hitsOf(cA) == 0);
-        // Review of cc430176: the "unprovable layout is not bucketed" rule. Both candidate flag bytes
-        // are set, so a mutant treating Unknown as a trailing flag would find its gate open.
+        // The "unprovable layout is not bucketed" rule. Both candidate flag bytes are set, so code
+        // treating Unknown as a trailing flag would find its gate open.
         olObj[cF][kField + 8] = 1;
         olObj[cF][kField + 16] = 1;
         check("OPTLAYOUT: Find Refs does not bucket an optional whose layout it cannot prove",
@@ -3126,8 +3102,8 @@ int main() {
         check("OPTLAYOUT control: a MinAlignment that does not produce the size is refused",
               isRefusal(fVw.typedValue), fVw.typedValue.c_str());
 
-        // Review of cc430176: TOptional<TLazyObjectPtr> on 5.3+ is Align(0x18 + 1, 4) = 0x1C. With
-        // Scharf's old alignment of 8 it was "not recognised", and dropped from Find Refs.
+        // TOptional<TLazyObjectPtr> on 5.3+ is Align(0x18 + 1, 4) = 0x1C. Under an alignment of 8 it
+        // would be "not recognised", and dropped from Find Refs.
         const uintptr_t innerLazy = inner(7, 11, 0x18);
         const int cLu = makeCase(0x1C, innerLazy); olObj[cLu][kField + 0x18] = 0;
         const auto fLu = walk("unset lazy optional", cLu);
@@ -3164,8 +3140,8 @@ int main() {
 
         const int cSPu = makeCase(32, optPtrStruct); putP(olObj[cSPu], kField, stale); olObj[cSPu][kField + 24] = 0;
         const int cSPs = makeCase(32, optPtrStruct); putP(olObj[cSPs], kField, stale); olObj[cSPs][kField + 24] = 1;
-        // 28 fits neither Align(25, 8) = 32 nor 24: a layout nobody can prove. Its would-be flag byte is SET, so a
-        // mutant treating Unknown as a trailing flag would find its gate open.
+        // 28 fits neither Align(25, 8) = 32 nor 24: a layout nobody can prove. Its would-be flag byte is SET, so code
+        // treating Unknown as a trailing flag would find its gate open.
         const int cSPk = makeCase(28, optPtrStruct); putP(olObj[cSPk], kField, stale); olObj[cSPk][kField + 24] = 1;
         static uintptr_t olStaleArr[1] = {};
         olStaleArr[0] = stale;    // the destroyed array's buffer still holds its old element
@@ -3201,10 +3177,9 @@ int main() {
     // ⛔ POOL-FAKING BLOCK: it installs its OWN UE4 name pool, like IFACEREAD / UNREADVAL / OPTLAYOUT
     // above, and depends on nothing they leave behind.
     //
-    // [WALK-FIELDPATH-ARRAY-NOELEMS]. No phase claimed `FieldPathProperty`, so the walk sent such an
-    // array with its count and NOT ONE element -- the same hole `[W5-STRARRAY-ELEMENTS]` closed for
-    // strings. Found live 2026-09-16: the fixture's `Arr_FieldPath` read `num=2` on the wire with
-    // zero elements rendered.
+    // [WALK-FIELDPATH-ARRAY-NOELEMS]. A phase must claim `FieldPathProperty`, or the walk sends such an
+    // array with its count and NOT ONE element (the fixture's `Arr_FieldPath` would read `num=2` on the
+    // wire with zero elements rendered) -- the same rule `[W5-STRARRAY-ELEMENTS]` holds for strings.
     //
     // ⭐ THE STRIDE IS THE ENGINE'S, AND `Path` IS FOUND FROM IT. `InitialFieldClass` and
     // `FieldPathSerialNumber` are WITH_EDITORONLY_DATA (UE 5.4 FieldPath.h:56-63), so the same struct
@@ -3309,10 +3284,10 @@ int main() {
 
     // -- REFINEOPT-2026-09-12 -- a refine applies the same TOptional gate the first scan did -------
     //
-    // [A2-TOPTIONAL-REFINE] (adversarial review 6). The first scan skips a TOptional whose bIsSet byte is 0,
-    // but RefineCandidates re-reads every candidate by its stored ABSOLUTE address. UE's MarkUnset clears the
-    // flag and zeroes no bytes, so the value is still there: an Unchanged refine kept the row forever and the
-    // panel showed a value for a slot the engine considers empty.
+    // [A2-TOPTIONAL-REFINE]. The first scan skips a TOptional whose bIsSet byte is 0, but RefineCandidates
+    // re-reads every candidate by its stored ABSOLUTE address. UE's MarkUnset clears the flag and zeroes no
+    // bytes, so the value is still there: without the same gate, an Unchanged refine would keep the row forever
+    // and the panel would show a value for a slot the engine considers empty.
     //
     // No pool faking here: refine reads plain process memory through Macht's SEH-guarded readers, so a static
     // buffer IS the object. The session pools are built by hand, which is also the point -- it pins that the
@@ -3596,7 +3571,7 @@ int main() {
 
         // A PART as the target: its class has no fields, so it owns nothing, and the Class row refused at cap 1
         // is the ONLY refusal -- add() alone must record it. (With the Parts target the owned walk refuses a
-        // part too and sets the same flag, which hid a broken add(): the review mutant survived that way.)
+        // part too and sets the same flag, which would hide a broken add().)
         Aura::RelatedObjectsStats sOne;
         const auto one = Aura::GetRelatedObjects(reinterpret_cast<uintptr_t>(rsPart[0]), 1, &sOne, dflt);
         check("RELSTOPS ⭐: a refused hierarchy row (the Class) records the row cap too",
@@ -3632,11 +3607,11 @@ int main() {
               std::to_string(cx.size()).c_str());
         check("RELSTOPS ⭐: a cancel is its own cause, not a deadline", sCx.cancelled && !sCx.deadlineHit);
 
-        // Review 4 of d6a3af46: the caps are asked only of an object that QUALIFIES, so an edge that fails the filters
-        // AFTER the list is full is no refusal. The target above never produces one -- its parts own nothing and each
-        // of its edges qualifies -- so the old order passed every check here. A second holder's Parts array ends with
+        // The caps are asked only of an object that QUALIFIES, so an edge that fails the filters AFTER the list is full
+        // is no refusal. The target above never produces one -- its parts own nothing and each of its edges qualifies
+        // -- so a cap asked before the filters would pass every check above. A second holder's Parts array ends with
         // a fifth element it does NOT own (no Outer), enumerated after the four parts that fill the list. (Not a
-        // separate pointer field: the enumerator emits direct pointers before array elements, so it came first.)
+        // separate pointer field: the enumerator emits direct pointers before array elements, so it would come first.)
         static uint8_t rsHolder2Cls[0x100] = {};
         put32(rsHolder2Cls, DynOff::USTRUCT_PROPSSIZE, 0x100);
         putP(rsHolder2Cls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(rsProp));
@@ -3730,7 +3705,7 @@ int main() {
               strcmp(Aura::GetItemDetect(), "tentative") == 0 && Aura::GetItemDetectValidated() == 1,
               Aura::GetItemDetect());
 
-        // DEEP ([W4-STRIDE-TENTATIVE] review 4): the first 200 slots are null at every stride, so P1 finds nothing
+        // DEEP ([W4-STRIDE-TENTATIVE]): the first 200 slots are null at every stride, so P1 finds nothing
         // and P2-deep probes 100 items from item 1000 (x24). A pass won there must publish ITS probe count -- the
         // badge divides by it -- not P1's 200. Chunk and table are both 0x7000 bytes, so no phase reads past them.
         static uint8_t svDeepChunk[0x7000] = {};
@@ -3778,9 +3753,9 @@ int main() {
         check("STRIDEVERDICT ⭐: ...and publishes 0 probes, not the previous run's 100",
               Aura::GetItemDetectProbes() == 0, std::to_string(Aura::GetItemDetectProbes()).c_str());
 
-        // The rest of the reset ([W4-STRIDE-TENTATIVE] review 4). The runs above leave the stride at 16, the object
-        // offset at +0x00 and a validated count nothing reads -- the very values the reset writes -- so dropping any of
-        // those three resets passed. This fixture leaves all three unlike the defaults: five objects at stride 20
+        // The rest of the reset ([W4-STRIDE-TENTATIVE]). The runs above leave the stride at 16, the object offset at
+        // +0x00 and a validated count nothing reads -- the very values the reset writes -- so after them, dropping any
+        // of those three resets would pass. This fixture leaves all three unlike the defaults: five objects at stride 20
         // with the pointer at +0x08, which the classic pass cannot read and the +0x08 pass detects. Chunk and table
         // are both 0x7000 bytes, so no deep or flat phase of either pass reads past them.
         static uint8_t svOffChunk[0x7000] = {};
@@ -3808,9 +3783,9 @@ int main() {
 
     // -- STRARRAYSTRIDE-2026-09-12 -- a string array PUBLISHES the 16-byte stride its reader uses --------------
     //
-    // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. Review 3 of 6b48e776: the reader pinned the header
-    // stride, but the walk still published the inner's raw ELEMSIZE -- and the UI lays element rows out by
-    // that (Offset = i * ArrayElemSize) and hands it back to read_array_elements. [W5-STRARRAY-ELEMENTS]
+    // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. The reader reads at the header stride, and the walk must
+    // publish that same stride, not the inner's raw ELEMSIZE -- the UI lays element rows out by the published one
+    // (Offset = i * ArrayElemSize) and hands it back to read_array_elements. [W5-STRARRAY-ELEMENTS]
     {
         blk("STRARRAYSTRIDE - WalkInstance publishes a string array's 16-byte stride, whatever the inner says");
 
@@ -3958,11 +3933,11 @@ int main() {
               im >= 0 && F[im].keyEnumName == "EMyEnum" && F[im].valueEnumName.empty(),
               im >= 0 ? F[im].keyEnumName.c_str() : "(no field)");
 
-        // [WALKCLASS-MEMO-REUSE] Review wf_72c53295-04c F1 / WALKCLASS-REUSE-MEMO: WalkClassEx's memo is keyed by address
-        // and never erased, so a class freed by a level change and ANOTHER class allocated at its address got the old
-        // class's walk -- the old fields, the freed FProperty addresses. Here the "other class" is the same buffer with
-        // its property chain repointed: the memo must notice and walk it again, and the entry handed out before must
-        // stay readable (references into the memo are held by callers).
+        // [WALKCLASS-MEMO-REUSE]: WalkClassEx's memo is keyed by address and never erased, so a class freed by a level
+        // change and ANOTHER class allocated at its address must not get the first class's walk -- its fields, the
+        // freed FProperty addresses. Here the "other class" is the same buffer with its property chain repointed: the
+        // memo must notice and walk it again, and the entry handed out before must stay readable (references into the
+        // memo are held by callers).
         {
             static uint8_t ruP1[0x100] = {}, ruP2[0x100] = {};
             prop(ruP1, 6, 7, 0x30, 4, nullptr);       // IntProperty "Items"
@@ -3985,9 +3960,9 @@ int main() {
             check("control: the new walk is memoized in turn", &Ubel::WalkClassEx(X) == &after);
         }
 
-        // [WALKCLASS-MEMO-REUSE] Review wf_d3c2ec9a-d52 WITNESS-NO-IDENTITY: a data-only Blueprint adds no property and no
-        // function, so its chains are null, and two siblings share their super -- the pointers alone cannot tell them
-        // apart at one address. The witness carries the object's name (and Outer) too.
+        // [WALKCLASS-MEMO-REUSE]: a data-only Blueprint adds no property and no function, so its chains are null, and two
+        // siblings share their super -- the pointers alone cannot tell them apart at one address. The witness carries
+        // the object's name (and Outer) too.
         {
             static uint8_t idSuper[0x100] = {}, idCls[0x100] = {};
             put32(idCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
@@ -4003,18 +3978,18 @@ int main() {
                   second.Name == "Tags", second.Name.c_str());
         }
 
-        // [WALKCLASS-MEMO-REUSE] Review wf_d3c2ec9a-d52 PARK-CAP-REACHABLE: the bound on parked walks was one count for the
-        // whole process, so genuine reuse at 4,096 different addresses switched the check off everywhere. It is per
-        // address: an address whose witness keeps changing stops being checked, others are not affected.
+        // [WALKCLASS-MEMO-REUSE]: the bound on parked walks is per address, not one count for the whole process --
+        // with one count, genuine reuse at 4,096 different addresses would switch the check off everywhere. An address
+        // whose witness keeps changing stops being checked; others are not affected.
         {
             static uint8_t capCls[0x100] = {}, okCls[0x100] = {};
             put32(capCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
             put32(okCls, DynOff::USTRUCT_PROPSSIZE, 0x40);
             const uintptr_t C = reinterpret_cast<uintptr_t>(capCls), K = reinterpret_cast<uintptr_t>(okCls);
             // A re-walk publishes a NEW entry, so the entry's address changing is what counts one -- the answer's text
-            // can match a stale entry by coincidence on alternate turns. Review wf_a193c703-fe8: the stop must HOLD -- a
-            // match against the stopped entry (every other turn of an alternation) used to clear it, so the address went
-            // back to parking; over 40 turns exactly the bound's 8 re-walks, and one stopped address.
+            // can match a stale entry by coincidence on alternate turns. The stop must HOLD -- a match against the stopped
+            // entry (every other turn of an alternation) must not clear it and send the address back to parking; over 40
+            // turns exactly the bound's 8 re-walks, and one stopped address.
             size_t parked0 = 0, stopped0 = 0, parked1 = 0, stopped1 = 0;
             Ubel::GetParkedClassWalks(parked0, stopped0);
             int rewalks = 0;
@@ -4031,10 +4006,10 @@ int main() {
             check("* WALKCLASS-MEMO-REUSE: ...counted as ONE stopped address, with its 8 walks parked",
                   stopped1 - stopped0 == 1 && parked1 - parked0 == 8,
                   (std::to_string(stopped1 - stopped0) + " stopped, " + std::to_string(parked1 - parked0) + " parked").c_str());
-            // [WALKCLASS-STOP-EPOCH] Review wf_1b9e937b-a0d R6-6: the memo is keyed by (family epoch, address), and the
-            // stop was too, so an epoch bump (any re-init's offset validation) gave the stopped address a fresh count --
-            // 8 more re-walks and a second stop. The first call after the bump is a memo miss (one fresh walk); the stop
-            // then holds, and the address is still one stopped address.
+            // [WALKCLASS-STOP-EPOCH]: the memo is keyed by (family epoch, address), but the stop is not -- keyed by epoch,
+            // an epoch bump (any re-init's offset validation) would give the stopped address a fresh count, 8 more
+            // re-walks and a second stop. The first call after the bump is a memo miss (one fresh walk); the stop then
+            // holds, and the address is still one stopped address.
             DynOff::RetireFamilyEpoch();
             int afterBump = -1;   // the miss's fresh walk is not a re-walk
             last = nullptr;
@@ -4050,10 +4025,10 @@ int main() {
                   afterBump == 0, std::to_string(afterBump).c_str());
             check("* WALKCLASS-STOP-EPOCH: ...and is still ONE stopped address",
                   stopped2 == stopped1, (std::to_string(stopped2 - stopped1) + " more").c_str());
-            // [WALKCLASS-STOP-OFFSETS] Review wf_bbd1bbfe-20d D7-5: a stop reached while the witness read wrong offsets
-            // (a give-up's guesses) must not outlive their correction -- a later genuine reuse would be answered with
-            // the old walk. A re-init that re-derives the SAME offsets keeps it (above); one that changes a witness
-            // offset lifts it: the address is re-walked again up to the bound, and still counted once.
+            // [WALKCLASS-STOP-OFFSETS]: a stop reached while the witness read wrong offsets (a give-up's guesses) must
+            // not outlive their correction -- a later genuine reuse would be answered with the stale walk. A re-init
+            // that re-derives the SAME offsets keeps it (above); one that changes a witness offset lifts it: the
+            // address is re-walked again up to the bound, and still counted once.
             const int savedOuter = DynOff::UOBJECT_OUTER;
             DynOff::UOBJECT_OUTER = savedOuter + 8;
             int afterFix = 0;
@@ -4356,9 +4331,9 @@ int main() {
               fU && fU->TypeName == "ClassProperty", std::to_string(muInfo.Fields.size()).c_str());
         check("METACLASS ⭐: UProperty 4.18 reads MetaClass at the VERSION's slot + 8, not FSTRUCTPROP_STRUCT's",
               fU && fU->metaClassName == "Actor", s(fU, &FieldInfo::metaClassName));
-        // [SDK-METACLASS] review wf_63e981ac-5e4: obj_class came from FSTRUCTPROP_STRUCT, which on a UProperty engine
-        // sits one pointer past PropertyClass -- ON the MetaClass -- so the wire said obj_class == meta_class and the
-        // SDK export turned every TSubclassOf<X> into `class X*` (UE423_Flying: 0 of 160 ClassProperty rows right).
+        // [SDK-METACLASS]: obj_class must not come from FSTRUCTPROP_STRUCT, which on a UProperty engine sits one pointer
+        // past PropertyClass -- ON the MetaClass -- so the wire would say obj_class == meta_class and the SDK export
+        // would turn every TSubclassOf<X> into `class X*`.
         check("METACLASS ⭐: UProperty 4.18 publishes PropertyClass `Class` as obj_class, not the MetaClass beside it",
               fU && fU->objClassName == "Class", s(fU, &FieldInfo::objClassName));
 
@@ -4415,8 +4390,8 @@ int main() {
         check("GENAUABORT control: an uncancelled pointer scan records no abort", !Genau::s_gnamesReport.cancelled);
         Genau::s_gnamesReport = Genau::ScanReport{};
 
-        // Review 5 of 785b1730: the two sweeps above were checked only with a cancel pending, so a store hoisted above
-        // its poll -- set on EVERY call -- passed. On a real game that refuses the init latch on every scan.
+        // The two sweeps above, checked only with a cancel pending, would pass a store hoisted above the poll -- set on
+        // EVERY call. On a real game that refuses the init latch on every scan, so the uncancelled half is checked too.
         int gaStride3 = 0;
         bool gaStatic3 = false;
         Genau::FindGObjectsStaticStruct(&gaStride3, &gaStatic3);
@@ -4429,8 +4404,9 @@ int main() {
 
     // -- ENUMNAMESCANCEL-2026-09-12 -- a cancelled UEnum::Names search is not a FAILED one -------------------------
     //
-    // [P1-ENUMNAMES] DetectUEnumNames searches through Aura::ForEach, whose cancel was VOID: a cancelled search read as
-    // "no known enum here" and latched FAILED for the rest of the process. Re-inits Aura on the main pool first.
+    // [P1-ENUMNAMES] DetectUEnumNames searches through Aura::ForEach, which must report its cancel: otherwise a cancelled
+    // search reads as "no known enum here" and latches FAILED for the rest of the process. Re-inits Aura on the main pool
+    // first.
     {
         blk("ENUMNAMESCANCEL - ForEach reports its abort; a cancelled DetectUEnumNames does not latch FAILED");
         ResetCancel();
@@ -4453,15 +4429,15 @@ int main() {
         check("ENUMNAMESCANCEL ⭐: a CANCELLED search does not latch FAILED -- the next call retries",
               !enDet && !DynOff::bUEnumNamesFailed.load() && !DynOff::bUEnumNamesDetected.load());
 
-        // ...and the next call RETRIES. Before the fix the cancelled search latched FAILED -- and the FAILED latch also
-        // sets bUEnumNamesDetected ("prevent retry storm"), so this call returned true at its first line, searching
-        // nothing. Uncancelled, it searches the fake pool, which holds no known UEnum, and latches FAILED itself.
+        // ...and the next call RETRIES. A FAILED latch also sets bUEnumNamesDetected ("prevent retry storm"), so had the
+        // cancelled search latched it, this call would return true at its first line, searching nothing. Uncancelled,
+        // it searches the fake pool, which holds no known UEnum, and latches FAILED itself.
         const bool enDet2 = Genau::DetectUEnumNames();
         check("ENUMNAMESCANCEL ⭐: ...so the next, uncancelled search really runs -- and, finding nothing, latches FAILED",
               !enDet2 && DynOff::bUEnumNamesFailed.load());
 
-        // Review 5 of 7e5a71fc: a CANCELLED detection sets neither flag, and ResolveEnumValue read on regardless -- with
-        // the DEFAULT Names offset / format -- and cached that answer for the process. It must read and cache nothing.
+        // A CANCELLED detection sets neither flag, so ResolveEnumValue must not read on regardless -- with the DEFAULT
+        // Names offset / format -- and cache that answer for the process. It must read and cache nothing.
         static uint8_t enFake[0x100] = {};                       // readable, and nothing at the default Names offset
         const uintptr_t enAddr = reinterpret_cast<uintptr_t>(enFake);
         DynOff::bUEnumNamesDetected.store(false);
@@ -4628,10 +4604,10 @@ int main() {
 
     // -- FINDREFSPAD-2026-10-27 -- Find Refs reads a delegate field's payload past a checked build's detector ---------
     //
-    // ⛔ POOL-FAKING (own pool). [DELEGATE-PAD-ALIGN]'s second review: CollectRefMetaRecursive took a standalone
-    // DelegateProperty's weak pair and an inline multicast's TArray header at the FIELD offset, so on a UE 5.3+ checked
-    // build Find Refs read the access detector there and silently found nothing; and its TArray<FScriptDelegate> stride
-    // is the engine's element size, which only a 12- or 4-byte FName tells apart from base + pad.
+    // ⛔ POOL-FAKING (own pool). [DELEGATE-PAD-ALIGN]: CollectRefMetaRecursive must take a standalone DelegateProperty's
+    // weak pair and an inline multicast's TArray header past the pad, not at the FIELD offset -- on a UE 5.3+ checked
+    // build Find Refs would read the access detector there and silently find nothing; and its TArray<FScriptDelegate>
+    // stride is the engine's element size, which only a 12- or 4-byte FName tells apart from base + pad.
     {
         blk("FINDREFSPAD - Find Refs reads a delegate's payload past the detector, and steps a delegate array by its size");
         ResetCancel();
@@ -4858,10 +4834,10 @@ int main() {
 
     // -- SPARSEVALIDATE-2026-09-25 -- the sparse-storage validator accepts a vtable in ANY mapped module ---------------
     //
-    // [R7-X3] ValidateSparseDelegates' content check accepted a key only when its vtable lay inside the MAIN module.
-    // On a modular build (the UE 4.27 editor, measured 2026-09-25) every UObject vtable lives in a UE4Editor-*.dll,
-    // so the real storage was refused ("1 live element(s) but none has a UObject-shaped key") and sparse delegates
-    // went unread. kernel32's image stands in for the engine DLL; a VirtualAlloc page stands in for heap garbage.
+    // [R7-X3] ValidateSparseDelegates' content check must accept a key whose vtable lies in any mapped module, not only
+    // the MAIN one: on a modular build (the UE 4.27 editor) every UObject vtable lives in a UE4Editor-*.dll, so a
+    // main-module check refuses the real storage ("1 live element(s) but none has a UObject-shaped key") and sparse
+    // delegates go unread. kernel32's image stands in for the engine DLL; a VirtualAlloc page stands in for heap garbage.
     {
         blk("SPARSEVALIDATE - the sparse-storage validator accepts a vtable in any mapped module, not heap");
         const uintptr_t k32 = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"kernel32.dll"));
@@ -5013,9 +4989,8 @@ int main() {
               stH.sparseUnlocated == 0 && stH.sparseSkipped, std::to_string(stH.sparseUnlocated).c_str());
         memcpy(spOuter + 0x08, &svNumSp, 4);
 
-        // [R7-X2] The storage was never located (the AOB scan failed, or -- measured on the 4.27 editor -- the
-        // validator refused it): the pass cannot run, and "none found" is then not a negative. Before the fix the
-        // sweep said nothing, so the UI blamed the game.
+        // [R7-X2] The storage was never located (the AOB scan failed, or the validator refused it): the pass cannot
+        // run, and "none found" is then not a negative. The sweep must say so, or the UI blames the game.
         Genau::s_sparseDelegatesCache.store(0);
         Genau::s_sparseDelegatesScanned.store(true);
         Aura::ContainerScanStats stU;
@@ -5140,8 +5115,8 @@ int main() {
     // -- CDOSCOPE-2026-09-12 -- every preview class on the chain is credited; a nested row is never previewed --------
     {
         blk("CDOSCOPE - PreviewAncestorsOf credits every preview class above a class; nested rows get no preview");
-        // [A4-CDOSCOPE-ANCESTOR] The walk broke at the NEAREST preview class (and an exact hit skipped it), so an
-        // ancestor row read "(CDO default)" while Force / Freeze on it acted on live instances.
+        // [A4-CDOSCOPE-ANCESTOR] The walk must not break at the NEAREST preview class (nor skip an exact hit), or an
+        // ancestor row reads "(CDO default)" while Force / Freeze on it acts on live instances.
         // A <- B <- C (C's super is B, B's super is A); D's super is itself.
         const uintptr_t cA = 0xA000, cB = 0xB000, cC = 0xC000, cD = 0xD000;
         auto cdSuperOf = [&](uintptr_t c) -> uintptr_t {
@@ -5162,9 +5137,9 @@ int main() {
               upCa.size() == 1 && upCa[0] == cA);
         check("CDOSCOPE control: a self-looping chain terminates", Aura::PreviewAncestorsOf(cD, cdAll, cdSuperOf).empty());
 
-        // [A4-CDOSCOPE-NESTED-PREVIEW] A Deep search matching a direct field AND a nested leaf of the same class put that
+        // [A4-CDOSCOPE-NESTED-PREVIEW] A Deep search matching a direct field AND a nested leaf of the same class puts that
         // class in the preview map, and the nested row -- keyed by its root field's defining class, its offset
-        // informational only -- was previewed at inst + that offset: a UObject header word.
+        // informational only -- must not be previewed at inst + that offset: a UObject header word.
         alignas(8) static uint8_t cdInst[0x40] = {};
         const int32_t cdVal = 1234;
         memcpy(cdInst + 0x20, &cdVal, sizeof(cdVal));
@@ -5187,9 +5162,9 @@ int main() {
     // -- OFFSETS-UNMEASURED-2026-09-12 -- a give-up stores validated=false; the reset forgets; the verdict says why ------
     {
         blk("OFFSETS - a give-up stores validated=false; UE5_Shutdown's reset forgets the verdict; the reason text");
-        // [W5-OFFSETS-UNMEASURED] Both early returns relied on the flag's INITIAL false and never stored one, so a second
-        // UE5_Init (CE Disable -> Enable) taking one after a validated run kept the old TRUE -- "validated" beside a
-        // fallback reason, over default offsets. UE5_Shutdown reset none of the three either.
+        // [W5-OFFSETS-UNMEASURED] Both early returns store false rather than rely on the flag's INITIAL false: otherwise
+        // a second UE5_Init (CE Disable -> Enable) taking one after a validated run keeps the previous TRUE --
+        // "validated" beside a fallback reason, over default offsets. UE5_Shutdown resets the three as well.
         // A pool with no Guid / Vector struct, so the run takes the FIRST give-up. Every object points into zeroed bytes
         // with room past the deepest probe offset (+0x70), so no probe reads beyond them. UE 501 skips the version-default
         // block; the DynOff it writes that a later block could trip over are saved here (CPN / Outer, FProperty mode), and
@@ -5209,7 +5184,7 @@ int main() {
         DynOff::bOffsetsValidated.store(true);   // a PREVIOUS run measured everything
         DynOff::bOffsetsProbeRan.store(true);
         DynOff::g_offsetsFallbackReason = "";
-        // [DYNOFF-LATCH-STALE] review B-INIT-WINDOW: calibrated before the run, as a walk during it leaves the latch.
+        // [DYNOFF-LATCH-STALE] Calibrated before the run, as a walk during it leaves the latch.
         const bool ofSvLatch = Ubel::IsSubclassCalibrated();
         const int ofBase = DynOff::FSTRUCTPROP_STRUCT;
         const uint32_t ofEpoch = DynOff::g_propertyFamilyEpoch.load();
@@ -5225,9 +5200,9 @@ int main() {
               DynOff::bOffsetsProbeRan.load());
         // An init re-derives offsets outside the family as well (FPROPERTY_OFFSET, the FField layout), which the
         // family-keyed caches read. A run that leaves the base where it was -- or where a walk during the run had already
-        // corrected it to -- is no move, so nothing retired what was cached mid-run, and it was served for the session.
-        // Counted by g_offsetValidations, which a family move cannot bump: a move away and back would change the epoch too
-        // (review wf_2d9f83d5-21b, R3-UPROPSLOT-MOVE-NOT-EXCLUDED). One retire is two bumps of it (RetireFamilyEpoch).
+        // corrected it to -- is no move, so without a retire of its own what was cached mid-run would be served for the
+        // session. Counted by g_offsetValidations, which a family move cannot bump: a move away and back would change the
+        // epoch too. One retire is two bumps of it (RetireFamilyEpoch).
         check("OFFSETS ⭐: a run that leaves the family's base in place still retires its epoch, once",
               DynOff::FSTRUCTPROP_STRUCT == ofBase && DynOff::g_propertyFamilyEpoch.load() != ofEpoch
               && DynOff::g_offsetValidations.load() == ofRetires + 2,
@@ -5265,9 +5240,9 @@ int main() {
     // -- SEETHRU-PROBE-SUBSTRING-2026-09-23 -- the probe asks a CLASS found by path; internal lookups gate on derivation --
     //
     // ⛔ POOL-FAKING, like OFFSETS: own object pool AND own name pool, last. [SEETHRU-PROBE-SUBSTRING] See-through's
-    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- then a class-name SUBSTRING match that fell back
-    // to the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
-    // SetActorHiddenInGame, so See-through ON refused (-3) on a build that has it. Phase A is that pool: the first object
+    // producer probe must not resolve "Actor" by a class-name SUBSTRING match that falls back to the FIRST matching CDO:
+    // on DumperTest Shipping 5.4 that is Default__ActorChannel, a UChannel with no SetActorHiddenInGame, so See-through
+    // ON would refuse (-3) on a build that has it. Phase A is that pool: the first object
     // whose class name contains "actor" is ActorChannel's CDO, and nothing live matches. The CheatManager rows are the same
     // trap in the stock engine: UCheatManagerExtension (Engine) and GAS's UAbilitySystemCheatManagerExtension.
     {
@@ -5433,8 +5408,8 @@ int main() {
 
     // [DBGCAM-58-REENABLE] The Debug Camera's own CheatManager is never the one to toggle. ADebugCameraController::
     // AddCheats forces a CheatManager onto the DCC in non-Shipping builds, so after the first ON two are live, and
-    // GObjects slot reuse can put the DCC's BELOW the player's -- measured on DumperTest58 Development after three GCs:
-    // 34955 against 35796. The lowest-index pick then lands on the DCC's, and on UE 5.8 a ToggleDebugCamera there never
+    // GObjects slot reuse can put the DCC's BELOW the player's (DumperTest58 Development shows it after a few GCs). The
+    // lowest-index pick then lands on the DCC's, and on UE 5.8 a ToggleDebugCamera there never
     // enables the camera again: FDebugCameraManager::EnableDebugCamera returns at once, the DCC having no Player.
     {
         blk("DBGCAM58 - the Debug Camera's own CheatManager is skipped when one is chosen to toggle");
@@ -5630,7 +5605,7 @@ int main() {
         obj(bAbility1, bAbilityExt, nAbility1, bCheats0);   // ...and its extension
         obj(bGm0, bBPGameMode, nBPGameMode0, -1);
         obj(bChar0, bBPChar, nBPChar0, -1);
-        // Review of fbedfa9a: an actor the DCC spawns has the LEVEL as its outer and the DCC as its AActor::Owner.
+        // An actor the DCC spawns has the LEVEL as its outer and the DCC as its AActor::Owner.
         // Actor gets a reflected `Owner` ObjectProperty; the DCC's HUD sits below the player's.
         constexpr int32_t kOwnerOff = 0x100;
         static uint8_t upObjPropFC[0x20] = {}, upOwnerProp[0x100] = {};
@@ -5649,8 +5624,8 @@ int main() {
         obj(bHud0, bHud, nHud0, -1);
         putP(upB[bHud0], kOwnerOff, A(bPc0));             // the player's HUD
         // [INVOKE-NONSTATIC-ON-CDO] A class-default object's DEFAULT SUBOBJECT: its own name, the CDO as its outer,
-        // RF_ArchetypeObject in its flags -- the shape measured on DumperTest 5.4 (0x40021), where every component-class
-        // lookup landed on one. The live pawn's component of the same name sits higher.
+        // RF_ArchetypeObject in its flags -- the shape DumperTest 5.4 shows (0x40021), where a lowest-index
+        // component-class lookup lands on one. The live pawn's component of the same name sits higher.
         klass(bCmc, nCmc, bObject);
         obj(bCdoCmc, bCmc, nCdoCmc, bPkg);
         put32(upB[bCdoCmc], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
@@ -5661,7 +5636,7 @@ int main() {
         // class-default object above it).
         obj(bScsMove, bCmc, nCharMoveComp, bBPChar);
         put32(upB[bScsMove], Grimoire::OFF_UOBJECT_FLAGS, 0x20);
-        // Review 1: a second template under the same class default (flags 0, so only the memoized outer can tell) and
+        // A second template under the same class default (flags 0, so only the memoized outer can tell) and
         // a second live component under the same pawn -- both are memo HITS on their first outer.
         obj(bTplMove2, bCmc, nCharMoveComp, bCdoBPChar);
         obj(bLiveMove2, bCmc, nCharMoveComp, bChar0);
@@ -5769,12 +5744,12 @@ int main() {
         r = Aura::FindLiveInstanceOf("HUD");
         check("USERPICK NAVPICK control: an exact-class object over a subclass one the DCC owns",
               is(r, bHud0, Aura::UserPick::Live), nm(r.obj).c_str());
-        // Review 2: "exact first" must not outrank "the Debug Camera's last". The DCC's own CheatManager is of the class
+        // "Exact first" must not outrank "the Debug Camera's last". The DCC's own CheatManager is of the class
         // itself and sits below the player's, which is of a game subclass.
         r = Aura::FindLiveInstanceOf("CheatManager");
         check("USERPICK ⭐ NAVPICK: the DCC's own exact-class object ranks below the player's subclass object",
               is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
-        // Review 2: a destroyed SUBCLASS object (a BP_PlayerController_C destroyed in play, not yet collected) is passed
+        // A destroyed SUBCLASS object (a BP_PlayerController_C destroyed in play, not yet collected) is passed
         // over too -- not held as the subclass pick, nor as the Debug Camera's.
         slot(40, -1);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
@@ -5793,8 +5768,8 @@ int main() {
 
         // Phase B3 -- [INVOKE-PICK-GARBAGE] an invoke, and an internal state read, never take a destroyed object either:
         // an actor destroyed in play is marked garbage and stays in GObjects until the next collection (about a minute on
-        // a stock engine) -- an early, low-index one is met first. Up to review 1's checks, each ⭐ one failed before
-        // [INVOKE-PICK-GARBAGE]: the pick landed on the destroyed object.
+        // a stock engine) -- an early, low-index one is met first. Each ⭐ check fails if the pick lands on the
+        // destroyed object.
         put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage
         r = Aura::ResolveUserInstance("PlayerController");
         check("USERPICK ⭐ GARBAGE: an invoke passes over the destroyed player controller -- the DCC, said to be its",
@@ -5810,7 +5785,7 @@ int main() {
         check("USERPICK ⭐ GARBAGE: a partial name passes over a destroyed object too -- the first match stands in",
               is(r, bCdoBPChar, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
         put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0);
-        // Review 1: ...and not as the first match either, when no template sits below it. The player's controller is
+        // ...and not as the first match either, when no template sits below it. The player's controller is
         // the only object of the only class whose name holds "ThirdPersonPlayer".
         put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
         r = Aura::ResolveUserInstance("ThirdPersonPlayer");
@@ -5818,7 +5793,7 @@ int main() {
               r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
         put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
 
-        // Review 1: through the ITEM flags, which the walk reads by its own index. On UE 5.0-5.3 and UE4 a garbage
+        // Through the ITEM flags, which the walk reads by its own index. On UE 5.0-5.3 and UE4 a garbage
         // collection first marks every non-root object Unreachable (item bit 28) and clears it from the reachable ones;
         // a pick made in between must still take a live object. Bit 28 is no destroyed object; PendingKill (bit 29) is.
         uint8_t* pcItem = upPool.chunks[0].data() + static_cast<size_t>(10) * FakePool::kItemSize;   // bPc0's slot
@@ -5893,7 +5868,7 @@ int main() {
         check("USERPICK ⭐: with no flags read, a Default__ outer still makes it a template, owned by that outer",
               Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
               && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar));
-        // Review of 69f4fc42: the lookup and TemplateOf must agree -- one reply said `live` and `template` together.
+        // The lookup and TemplateOf must agree -- a reply must not say `live` and `template` together.
         r = Aura::ResolveUserInstance("CharacterMovementComponent");
         check("USERPICK ⭐: ...and the lookup passes it over too -- the class's own default object stands in",
               is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
@@ -5935,7 +5910,7 @@ int main() {
               rs.results.size() == 4 && rs.results[0].addr == A(bCdoCmc) && rs.results[1].addr == A(bTplMove)
               && rs.results[2].addr == A(bScsMove) && rs.results[3].addr == A(bLiveMove)
               && rs.classHistogram.size() == 1 && rs.classHistogram[0].second == 4, addrs(rs).c_str());
-        // Review 1: memo hits in both directions, and the count of templates passed over.
+        // Memo hits in both directions, and the count of templates passed over.
         slot(21, bTplMove2);
         slot(22, bLiveMove2);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
@@ -5977,7 +5952,7 @@ int main() {
         slot(20, -1);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
 
-        // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
+        // Phase D -- a walk cut short is not "not found", and no 100-match cap applies.
         Tot::g_perCommand.store(true);
         r = Aura::ResolveUserInstance("Actor");
         ResetCancel();
@@ -6146,7 +6121,7 @@ int main() {
               is(s, oFreeCam0, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
         check("LOCALPC ⭐: ...and it is recognised as a debug camera by derivation, with no word in its name",
               s.pc && Aura::ClassDerivesFromAny(Ubel::GetClass(s.pc), {Grimoire::AURA_USERPICK_DCC_CLASS}));
-        // Review 1: UEngine::LoadMap destroys the old PC and nulls LocalPlayer.PlayerController, but the destroyed PC keeps
+        // UEngine::LoadMap destroys the old PC and nulls LocalPlayer.PlayerController, but the destroyed PC keeps
         // Player = the local player until garbage collection -- exactly when every chain fails and falls back here.
         putP(lpB[oFreeCam0], kPlayerOff, 0);
         putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));
@@ -6163,7 +6138,7 @@ int main() {
         put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0);
         putP(lpB[oPcMain0], kPlayerOff, 0);
         slot(5, oPcMain1);
-        // [INVOKE-PICK-GARBAGE] Review 1: on UE 5.0-5.3 and UE4 a garbage collection first marks every non-root object
+        // [INVOKE-PICK-GARBAGE] On UE 5.0-5.3 and UE4 a garbage collection first marks every non-root object
         // Unreachable (item bit 28) and clears it from the reachable ones; the local player's PC is no destroyed one then.
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
         uint8_t* lpcItem = lpPool.chunks[0].data() + static_cast<size_t>(5) * FakePool::kItemSize;   // oPcMain1's slot
@@ -6183,7 +6158,7 @@ int main() {
         }
         putLpcItemFlags(0);
         g_cachedUEVersion = 508;
-        // Review 1: the Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
+        // The Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
         // a PlayerState-like member -- set only on the inactive debug camera here -- and take it as a Player.
         put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerState);
         DynOff::g_propertyFamilyEpoch.fetch_add(1);   // the class walks above cached the member's old name
@@ -6365,7 +6340,7 @@ int main() {
 
         // The Pathless shape.
         build(0x30);
-        DynOff::UFIELD_NEXT = 0x28;   // what FProperty mode used to leave in place
+        DynOff::UFIELD_NEXT = 0x28;   // the FProperty-mode default, unprobed
         const size_t atDefault = Ubel::WalkFunctions(A(bKsl)).size();
         check("UFIELDNEXT the defect: at the old default 0x28 the walk sees ONE function, not three",
               atDefault == 1, std::to_string(atDefault).c_str());
@@ -6394,10 +6369,10 @@ int main() {
 
     // -- UPROPNEXT-2026-11-03 -- the UProperty-mode Next probe never takes OuterPrivate ---------------------------------
     //
-    // ⛔ POOL-FAKING (own pool and names, like UFIELDNEXT above). [UE4-USTRUCT-GIVEUP-STATS] review round 2: on a
-    // case-preserving layout OuterPrivate sits at 0x28, a Next candidate, and an Inner property's Outer chain -- the
-    // Inner, its ArrayProperty, the Function that declares that -- is two UField hops. With the Inner sampled first and
-    // its own Next null, the probe took 0x28. UField::Next always lies past OuterPrivate.
+    // ⛔ POOL-FAKING (own pool and names, like UFIELDNEXT above). [UE4-USTRUCT-GIVEUP-STATS]: on a case-preserving
+    // layout OuterPrivate sits at 0x28, a Next candidate, and an Inner property's Outer chain -- the Inner, its
+    // ArrayProperty, the Function that declares that -- is two UField hops. With the Inner sampled first and its own
+    // Next null, a probe that accepted OuterPrivate would take 0x28. UField::Next always lies past OuterPrivate.
     {
         blk("UPROPNEXT - the UProperty-mode Next probe never takes OuterPrivate (case-preserving layout)");
         ResetCancel();
@@ -6463,7 +6438,7 @@ int main() {
         DynOff::UFIELD_NEXT         = svNextN;
     }
 
-    // -- [UE-OVERRIDE-411] review: an override is held to the UFunction tail the game has ------------------
+    // -- [UE-OVERRIDE-411] an override is held to the UFunction tail the game has ---------------------------
     //
     // ⛔ POOL-FAKING, like UFIELDNEXT: the vote samples GObjects for objects whose class is NAMED "Function". Own
     // pool and name pool; the main fixture goes back at the end.
@@ -6557,7 +6532,7 @@ int main() {
                      c.versionBase, c.measuredBase);
             return c;
         };
-        // [UE-OVERRIDE-411] review 2: what the readers take from the third function (three 4-byte parameters, no
+        // [UE-OVERRIDE-411] What the readers take from the third function (three 4-byte parameters, no
         // return), whatever version is cached.
         char rb[96];
         auto readOf = [&](int b) {
@@ -6604,9 +6579,8 @@ int main() {
               verdictOf(415).verdict == TailCheck::Agrees, ob);
         check("OVERRIDETAIL: 4.18 contradicts that tail", verdictOf(418).verdict == TailCheck::Contradicts, ob);
 
-        // [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed; the readers kept the
-        // version's shift, so under 4.18 this tail read RepOffset's byte for NumParms and NumParms for ParmsSize. The
-        // measurement now drives every tail reader, whatever the version.
+        // [UE-OVERRIDE-411] The measurement drives every tail reader, whatever the version: readers on the version's
+        // shift would read this tail under 4.18 with RepOffset's byte for NumParms and NumParms for ParmsSize.
         check("OVERRIDETAIL measured ⭐: a 4.15 tail read under 4.18 gives NumParms 3 and ParmsSize 12",
               readsRight(readOf(bFn0 + 2)), rb);
         const Ubel::FunctionCaptureSetup capB = Ubel::PrepareFunctionCapture();
@@ -6620,7 +6594,7 @@ int main() {
         check("OVERRIDETAIL measured ⭐: ...and the identity it captures carries NumParms 3 and ParmsSize 12",
               idB.numParms == 3 && idB.parmsSize == 12, rb);
 
-        // The review's second route: an override from the other side of 4.18, persisted by an earlier session, is
+        // A second route: an override from the other side of 4.18, persisted by an earlier session, is
         // applied before the scan, so the vote runs under it -- and under 4.17 it cannot find a 4.18 tail.
         build(0x88);
         resetVote();
@@ -6633,7 +6607,7 @@ int main() {
         check("OVERRIDETAIL measured ⭐: ...and the readers follow it: NumParms 3, ParmsSize 12",
               readsRight(readOf(bFn0 + 2)), rb);
 
-        // [UE-OVERRIDE-411] review 2: a tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
+        // [UE-OVERRIDE-411] A tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
         // UFUNCTION_TAIL_EXTRA, and the override check has to allow that extra in the version it judges: without it
         // every override on such a title is refused, the right one included. (It takes the extra the measurement
         // implies, not the vote's: OVERRIDEEXTRA below is why.)
@@ -6670,7 +6644,7 @@ int main() {
         check("OVERRIDETAIL: ...and that measurement is kept", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88);
 
         // A re-init clears the probe flag but keeps the measurement, which the same game's UFunctions still fit: until
-        // the new probe runs, the held one judges (the review's third route).
+        // the new probe runs, the held one judges.
         resetVote();
         DynOff::UFUNCTION_TAIL_MEASURED.store(0x88);
         DynOff::bOffsetsProbeRan.store(false);
@@ -6741,7 +6715,7 @@ int main() {
         DynOff::bOffsetsProbeRan.store(false);
         check("OVERRIDENOTE: before the offsets probe nothing is contradicted", !Ubel::OverrideInForceContradicted(417, true));
 
-        // [OVERRIDE-REVIEW2-LOWS] review: the note tells the user to choose a version that fits, so the one that fits
+        // [OVERRIDE-REVIEW2-LOWS] The note tells the user to choose a version that fits, so the one that fits
         // must be accepted. A persisted 4.17 on a +4 tail: the vote runs under 4.17, cannot find the tail, and latches
         // the primary with extra 0. The probe validated here, as on a real FProperty title, so FunctionFlags' primary
         // comes from PropertiesSize and is the same under every version (0x40 + 0x48 in UProperty mode = 0x88).
@@ -7086,7 +7060,7 @@ int main() {
         DynOff::FNAME_NUMBER        = svNumN;
     }
 
-    // -- [VND583-07, A9 steps 1 + 7] sizeof(FName) is MEASURED; the rule no longer overrides the engine -----------
+    // -- [VND583-07] sizeof(FName) is MEASURED; the rule does not override the engine ----------------------------
     // Built: a UClass "Thing" whose ChildProperties chain holds `nName` NameProperty FFields of ElementSize `es`
     // between two IntProperty FFields. The walk reads DynOff's own offsets, so nothing here is hardcoded.
     {
@@ -7178,7 +7152,7 @@ int main() {
     }
 
     // -- [VND583-07] SymbolCallFollow looks ONE CALL deep for the global it follows ---------------------------------
-    // The shape measured on UnrealEditor-Core.dll 5.4: the exported function has no RIP reference of its own; its
+    // The shape UnrealEditor-Core.dll 5.4 has: the exported function has no RIP reference of its own; its
     // first call's target has `lea rdi,[rip+X]` = the pool. Built in one RWX allocation: funcA at +0, funcB at +0x400
     // (past the body scan's 256-byte fallback, so only the call-follow can reach it), the "pool" at +0x800.
     {
@@ -7291,9 +7265,9 @@ int main() {
               p51 == "/Game/Pkg.Asset", p51.c_str());
 
         // [VND584-08] A 5.1 / 5.2 build with an outlined FName (UE_FNAME_OUTLINE_NUMBER: sizeof(FName) 4). Before the
-        // FName probe has run SizeofFName() answers the rule's 8, so the payload read 0x20 against a real 0x18, and a
-        // tagged soft pointer of 0x28 gave the 5.3+ envelope 0x08 -- accepted and latched -- where +0x10 is right. The
-        // struct's own PropertiesSize (0x18) is the measurement.
+        // FName probe has run SizeofFName() answers the rule's 8, so taken from it the payload reads 0x20 against a real
+        // 0x18, and a tagged soft pointer of 0x28 gives the 5.3+ envelope 0x08 -- accepted and latched -- where +0x10 is
+        // right. The struct's own PropertiesSize (0x18) is the measurement.
         {
             const int  svFn  = DynOff::FNAME_SIZE_MEASURED.load();
             const bool svCpn = DynOff::bCasePreservingName;
@@ -7629,10 +7603,10 @@ int main() {
                   score >= 32 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58, got.c_str());
         }
 
-        // ⭐ The decoy DumperTest58 (5.8 Shipping) handed the first cut of this fix, live: probed 0x10 BELOW
-        // a real 5.8 array, the 5.0-5.7 geometry finds the real Objects pointer at +0x10, and reads the
-        // 5.8 array's MaxChunks (33) at +0x24 as NumElements. 33 clean names cleared the early-exit bar
-        // of 32, so the true base, 0x10 higher, was never scored, and the pool held 33 objects. A 5.8
+        // ⭐ The DumperTest58 (5.8 Shipping) decoy: probed 0x10 BELOW a real 5.8 array, the 5.0-5.7
+        // geometry finds the real Objects pointer at +0x10, and reads the 5.8 array's MaxChunks (33) at
+        // +0x24 as NumElements. 33 clean names would clear the early-exit bar of 32, so the true base,
+        // 0x10 higher, would never be scored, and the pool would hold 33 objects. A 5.8
         // struct read through the 5.0-5.7 geometry is self-inconsistent -- "MaxElements" (+0x20 = the
         // 5.8 NumChunks, 1) is below "NumElements" (33) -- and must score 0.
         {
@@ -7648,10 +7622,10 @@ int main() {
     }
 
     // -- [VND583-05] a top-level WeakObjectProperty says null / stale / unreadable ---------------
-    // Its three siblings (struct member, array element, search preview) label a pointer that does
-    // not resolve; the top-level reader published only the raw index+serial hex, which the Live
-    // Walker then showed as the value. It also ignored both reads, so an UNREADABLE pointer
-    // printed "0000000000000000" -- the same bytes as a genuinely null one. Built like IFACEREAD:
+    // Like its three siblings (struct member, array element, search preview), the top-level reader
+    // labels a pointer that does not resolve, rather than publishing only the raw index+serial hex
+    // for the Live Walker to show as the value. It checks both reads, so an UNREADABLE pointer does
+    // not print "0000000000000000" -- the same bytes as a genuinely null one. Built like IFACEREAD:
     // two reserved pages, one committed, with the last case's FWeakObjectPtr across the edge.
     {
         blk("WEAKLABEL - a top-level FWeakObjectPtr is labelled null / null (stale) / unreadable");
@@ -7948,16 +7922,16 @@ int main() {
     }
 
     {   blk("SCAN-EARLY — AOBScanAll on a module that was unloaded after the module list was taken");
-        // [SCAN-EARLY-TRIGGER-CONTAINED] Measured on build 3555: a trigger_scan ~1 s after launch died with an
-        // uncaught non-standard exception in FindGObjects' multi-module fallback. AOBScanAllModules snapshots
-        // EnumProcessModules and then reads each module's headers and code with no guard; a DLL the booting engine
-        // frees in between is read after it is unmapped. This case frees a real module, then scans its old base.
+        // [SCAN-EARLY-TRIGGER-CONTAINED] A trigger_scan soon after launch must not die in FindGObjects' multi-module
+        // fallback. AOBScanAllModules snapshots EnumProcessModules and then reads each module's headers and code; a
+        // DLL the booting engine frees in between would be read after it is unmapped. This case frees a real module,
+        // then scans its old base.
         const wchar_t* candidates[] = { L"wtsapi32.dll", L"srvcli.dll", L"dsreg.dll", L"wevtapi.dll", L"mscms.dll" };
-        // (eleventh review, R11-04) The DLL is QUALIFIED with no scan at all: loaded and freed, it must unmap on its
-        // own. Only that is the environment's business; everything after it is the scan's. Before, a scan that leaked
-        // its reference made every candidate fail the "unmapped" filter here and read as "no usable DLL".
-        // (twelfth review, R12-03) Whether the DLL HAS a code section to cut a pattern from is the environment's too,
-        // so it is part of the qualification, as it was before R11-04 split this.
+        // The DLL is QUALIFIED with no scan at all: loaded and freed, it must unmap on its own. Only that is the
+        // environment's business; everything after it is the scan's -- qualified after a scan, a scan that leaked its
+        // reference would make every candidate fail the "unmapped" filter here and read as "no usable DLL".
+        // Whether the DLL HAS a code section to cut a pattern from is the environment's too, so it is part of the
+        // qualification.
         auto firstCode = [](uintptr_t b) -> const uint8_t* {
             auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
             auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
@@ -7992,7 +7966,7 @@ int main() {
         if (h) {
             base = reinterpret_cast<uintptr_t>(h);
             code = firstCode(base);
-            if (!code) { FreeLibrary(h); h = nullptr; }   // (R12-03) never leave the test's reference behind
+            if (!code) { FreeLibrary(h); h = nullptr; }   // never leave the test's reference behind
         }
         if (used)
             check("SCAN-EARLY precondition: it loads again and has a code section to cut a pattern from", h && code);
@@ -8001,10 +7975,10 @@ int main() {
             // it is loaded -- so a later "0 matches" means "gone", not "this scan never finds anything here".
             for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
             const size_t liveHits = Macht::AOBScanAll(pattern, base).size();
-            // (tenth review, R10-02) The scan released ONLY its own reference: the module is still ours to free.
+            // The scan released ONLY its own reference: the module is still ours to free.
             const bool stillLoadedAfterScan = GetModuleHandleW(used) == h;
             const bool ownFreeOk = FreeLibrary(h) != FALSE;
-            // (R11-04) ...and released it at ALL: after the owner's free nothing else holds it, so it unmaps.
+            // ...and released it at ALL: after the owner's free nothing else holds it, so it unmaps.
             MEMORY_BASIC_INFORMATION mbi{};
             const bool unmappedAfter = !GetModuleHandleW(used)
                 && VirtualQuery(reinterpret_cast<void*>(base), &mbi, sizeof(mbi)) == sizeof(mbi)
@@ -8020,8 +7994,8 @@ int main() {
             check("SCAN-EARLY ⭐ scanning a module that is gone does NOT fault", !faulted);
             check("SCAN-EARLY ⭐ ...and finds nothing there", !faulted && n == 0, std::to_string(n).c_str());
 
-            // (tenth review, R10-02) The race the fix is for, forced: the owner frees the module DURING the scan (the
-            // seam runs between the pin and the reads). The pin must keep the image mapped -- the scan neither faults
+            // The race the pin is for, forced: the owner frees the module DURING the scan (the seam runs between the
+            // pin and the reads). The pin must keep the image mapped -- the scan neither faults
             // nor misses -- and, released on return, must be the LAST reference, so the image is gone afterwards.
             HMODULE h2 = LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
             check("SCAN-EARLY R10-02 precondition: the DLL loads again", h2 != nullptr);
@@ -8043,9 +8017,9 @@ int main() {
         }
     }
 
-    // [AOB-SKIP-OWN-DLL] The multi-module walk on real images. On IS Defense GOBJ_V1 matched twice inside our own
-    // version.dll proxy, so every Pass 2 scan had the dumper as a source of false candidates. Two fixtures beside this
-    // exe (dll/tests/res/owncopy_fixture.cpp) carry one marker in an executable section above the walk's size floor;
+    // [AOB-SKIP-OWN-DLL] The multi-module walk on real images. A pattern such as GOBJ_V1 can match inside our own
+    // version.dll proxy, which would make the dumper a source of false candidates in every Pass 2 scan. Two fixtures
+    // beside this exe (dll/tests/res/owncopy_fixture.cpp) carry one marker in an executable section above the walk's size floor;
     // one exports the dumper's mailbox contract, the other the same name with a wrong magic. Here the dumper's own
     // image IS this exe, so the own-image arm is reached through the walk's seam with a fixture standing in for it.
     {   blk("AOB-SKIP-OWN-DLL - the multi-module walk leaves out every build of the dumper, and only those");
@@ -8055,7 +8029,7 @@ int main() {
         dir.resize(dir.find_last_of(L"\\/") + 1);
         HMODULE dumper   = LoadLibraryW((dir + L"owncopy_dumper.dll").c_str());
         HMODULE impostor = LoadLibraryW((dir + L"owncopy_impostor.dll").c_str());
-        // A build from before the mailbox contract (2026-08-06) exports UE5_Init and no contract; a stale proxy left
+        // A build that predates the mailbox contract exports UE5_Init and no contract; a stale proxy left
         // in a game folder beside a current one is that build.
         HMODULE legacy   = LoadLibraryW((dir + L"owncopy_legacy.dll").c_str());
         check("AOB-SKIP-OWN-DLL setup: both fixtures load from beside the test", dumper && impostor);
@@ -8121,11 +8095,11 @@ int main() {
 
     // -- UPROPSLOT-2026-09-27 -- a UProperty engine gets the property subclass family at ITS start -------------------
     //
-    // ⛔ POOL-FAKING (own GObjects, own name table; the LAST block, and it restores every DynOff Genau writes).
-    // [UPROP-SUBCLASS-SLOT] Genau's UProperty arm derived the bool slot alone, so FSTRUCTPROP_STRUCT and the rest of the
-    // family kept the FProperty default 0x78 -- past the end of a 4.23 UStructProperty / UObjectProperty and ON a
-    // UClassProperty's MetaClass. Measured on UE423_Flying, SDK export straight after connect: 2,624 of 2,624 struct
-    // members raw bytes, 1,038 of 1,038 object pointers UObject*. Only a later Live Walker struct probe corrected it.
+    // ⛔ POOL-FAKING (own GObjects, own name table; it restores every DynOff Genau writes).
+    // [UPROP-SUBCLASS-SLOT] Genau's UProperty arm derives the whole subclass family, not the bool slot alone: left at the
+    // FProperty default 0x78, FSTRUCTPROP_STRUCT and the rest of the family read past the end of a 4.23 UStructProperty /
+    // UObjectProperty and ON a UClassProperty's MetaClass, so an SDK export straight after connect gets struct members as
+    // raw bytes and object pointers as UObject*.
     {
         blk("UPROPSLOT - Genau publishes the UProperty subclass family at the version's start, and a walk reads it");
 
@@ -8210,10 +8184,10 @@ int main() {
         check("UPROPSLOT ⭐: 4.23 stock -- the whole family at 0x70, UEnumProperty::Enum at 0x78", famAt(0x70),
               fam().c_str());
 
-        // [DYNOFF-LATCH-STALE] Review wf_b0aa9098-dd5, B-R2-2: the retire on the MEASURED return, which the OFFSETS
-        // block's give-up does not reach. A second 4.23 run over the same layout starts where the first left the family,
-        // and its default and its measurement are both 0x70: no publish moves anything -- the shape of a run whose walks
-        // had already corrected the family to its final base.
+        // [DYNOFF-LATCH-STALE]: the retire on the MEASURED return, which the OFFSETS block's give-up does not reach. A
+        // second 4.23 run over the same layout starts where the first left the family, and its default and its
+        // measurement are both 0x70: no publish moves anything -- the shape of a run whose walks had already corrected
+        // the family to its final base.
         const bool upSvLatch = Ubel::IsSubclassCalibrated();
         const uint32_t upEpoch = DynOff::g_propertyFamilyEpoch.load();
         const uint32_t upRetires = DynOff::g_offsetValidations.load();
@@ -8230,8 +8204,8 @@ int main() {
         Ubel::s_subclassCalibratedAt.store(0);
         if (upSvLatch) Ubel::LatchSubclassCalibration(DynOff::g_propertyFamilyEpoch.load());
 
-        // A walk now reads a 4.23-sized UStructProperty's Struct at +0x70 -- and not the NAMED object behind it at +0x78,
-        // which the old 0x78 read took for the struct (a real neighbour UObject has a name too).
+        // A walk reads a 4.23-sized UStructProperty's Struct at +0x70 -- and not the NAMED object behind it at +0x78,
+        // which a read at 0x78 would take for the struct (a real neighbour UObject has a name too).
         static uint8_t upStructPropCls[0x100] = {}, upDecoy[0x100] = {}, upSP[0x100] = {}, upCls[0x100] = {};
         put32(upStructPropCls, Grimoire::OFF_UOBJECT_NAME, 8);
         put32(upDecoy, Grimoire::OFF_UOBJECT_NAME, 10);
@@ -8264,18 +8238,18 @@ int main() {
         runGenau(415);
         check("UPROPSLOT control: 4.15 stock -- the family at 0x78 (right before the fix by coincidence)",
               DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
-        // Review wf_b99fb861-680 (F1): the tail ORDER came from the version alone. A 4.11-4.17 title whose version
-        // detection fails is relabelled 422 (the TNameEntryArray rule), so the measured 0x50 got the 4.18+ tail and a
-        // misaligned 0x7C where this very layout's start is 0x78 -- worse than the untouched default it replaced. The
-        // measured layout says which order it is: Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from it.
+        // The tail ORDER comes from the measured layout, not the version alone. A 4.11-4.17 title whose version
+        // detection fails is relabelled 422 (the TNameEntryArray rule), so a version-chosen order would give the
+        // measured 0x50 the 4.18+ tail and a misaligned 0x7C where this very layout's start is 0x78 -- worse than the
+        // untouched default. The layout says which order it is: Offset_Internal - ElementSize is 0x1C before 4.18,
+        // 0x10 from it.
         layout(2, 0x28, 0x34, 0x50);
         runGenau(422);
         check("UPROPSLOT ⭐: a 4.15 layout running under a misdetected 4.22 still gets 0x78 -- the layout decides",
               DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
-        // ...and so does every reader that takes the UProperty start without the family (review of build 3594, LOW): the
-        // class-valued names, WalkFunctions' parameters and Aura's parameter matcher recomputed it from the VERSION,
-        // 0x7C here, where the family and the layout say 0x78. A TSubclassOf<APawn> UClassProperty, PropertyClass
-        // `Class` at 0x78 and MetaClass `Pawn` at 0x80, walked under the misdetected label:
+        // ...and so does a reader that takes the UProperty start without the family: recomputed from the VERSION it
+        // would be 0x7C here, where the family and the layout say 0x78. A TSubclassOf<APawn> UClassProperty,
+        // PropertyClass `Class` at 0x78 and MetaClass `Pawn` at 0x80, walked under the misdetected label:
         {
             static uint8_t upClassCls[0x100] = {}, upPawnCls[0x100] = {}, upClassPropCls[0x100] = {}, upCP[0x100] = {},
                            upCls2[0x100] = {};
@@ -8316,17 +8290,17 @@ int main() {
         runGenau(415);
         check("UPROPSLOT ⭐: a 4.15 give-up keeps 0x78 -- no default derived from the 4.18+ Offset_Internal",
               famAt(0x78), fam().c_str());
-        // ...and the readers outside the family take the same 0x78: with no start recorded, UPropertySubclassStart fell
-        // back to the version formula over that very 0x44 default -- 0x6C (review of build 3596, LOW).
+        // ...and the readers outside the family take the same 0x78: with no start recorded, UPropertySubclassStart must
+        // not fall back to the version formula over that very 0x44 default -- 0x6C.
         check("UPROPSLOT ⭐: ...and so do the readers outside the family (UPropertySubclassStart), not 0x6C",
               DynOff::UPropertySubclassStart(415) == 0x78, std::to_string(DynOff::UPropertySubclassStart(415)).c_str());
 
-        // [UE4-USTRUCT-GIVEUP] The same give-up shipped the 4.25+ UStruct head (Super 0x40, Children 0x48, PropertiesSize
-        // 0x58, Script 0x60) on a UProperty engine. Measured: 4.11-4.21 put SuperStruct right behind UField::Next (0x30 /
-        // 0x38 / 0x40 / 0x48 -- UE_4.18 Class.h, EVERSPACE's 4.20 PDB); 4.22-4.24 game builds add the 16-byte
+        // [UE4-USTRUCT-GIVEUP] The same give-up must not ship the 4.25+ UStruct head (Super 0x40, Children 0x48,
+        // PropertiesSize 0x58, Script 0x60) on a UProperty engine. 4.11-4.21 put SuperStruct right behind UField::Next
+        // (0x30 / 0x38 / 0x40 / 0x48 -- UE_4.18 Class.h, EVERSPACE's 4.20 PDB); 4.22-4.24 game builds add the 16-byte
         // FStructBaseChain base first (0x40 / 0x48 / 0x50 / 0x58 -- UE_4.23 Class.h, UE423_Flying's Shipping PDB), so
-        // there the old default read PropertiesSize from Script's data pointer. Each run starts from the load-time head,
-        // because the measured runs above left 4.23's real one behind.
+        // there the 4.25+ head would read PropertiesSize from Script's data pointer. Each run starts from the load-time
+        // head, because the measured runs above left 4.23's real one behind.
         {
             auto ustructAtLoad = [] {
                 DynOff::USTRUCT_SUPER = 0x40;      DynOff::USTRUCT_CHILDREN = 0x48;
@@ -8443,11 +8417,11 @@ int main() {
             }
         }
 
-        // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
-        // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
-        // ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe fails too, the run
-        // shipped the FProperty default 0x78 against the UProperty start 0x70. The fixture's UProperties are UObjects,
-        // so the FField scan fails and the fallback flips; their Offset_Internal values are all 0, so the probe fails.
+        // A 4.18-4.24 title labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 sets no
+        // UProperty family; the ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe
+        // fails too, the run must not ship the FProperty default 0x78 against the UProperty start 0x70. The fixture's
+        // UProperties are UObjects, so the FField scan fails and the fallback flips; their Offset_Internal values are all
+        // 0, so the probe fails.
         layout(2, 0x28, 0x34, 0x44);
         for (auto& pr : upProp) put32(pr, 0x44, 0);
         runGenau(427);
@@ -8770,10 +8744,10 @@ int main() {
 
     // -- FAMILYEPOCH-2026-09-28 -- a class walked before the family moves is walked again after it ----------------------
     //
-    // ⛔ OWN name table (after UPROPINNER). [FAMILY-EPOCH] The walk caches were keyed by class address alone, and two
-    // writers move the property family after init (CorrectSubclassOffsets, WalkInstance's struct probe) -- measured on
-    // UE423_Flying 0x78 -> 0x70, DQ XI S 0x78 -> 0x80, TQ2 0x74 -> 0x78. Every class cached before the move kept the
-    // answer its old slot gave for the rest of the session. A named object at each candidate slot tells which one a
+    // ⛔ OWN name table (after UPROPINNER). [FAMILY-EPOCH] Two writers move the property family after init
+    // (CorrectSubclassOffsets, WalkInstance's struct probe) -- UE423_Flying 0x78 -> 0x70, DQ XI S 0x78 -> 0x80, TQ2
+    // 0x74 -> 0x78 -- so walk caches keyed by class address alone would keep, for every class cached before the move,
+    // the answer its old slot gave for the rest of the session. A named object at each candidate slot tells which one a
     // walk read; the class has no StructProperty, so CorrectSubclassOffsets cannot move anything by itself here.
     {
         blk("FAMILYEPOCH - a family move makes the walk caches read again, and a same-value write does not");
@@ -8857,10 +8831,10 @@ int main() {
         check("FAMILYEPOCH control: re-publishing the same family is a cache HIT, not a new walk",
               &Ubel::WalkClassEx(A(feCls)) == &after);
 
-        // Review wf_b99fb861-680 (F4): every builder worked its key out AT PUBLISH, after its reads. A move made by
-        // another thread in between (a pipe lane's WalkInstance struct probe, a scan worker's CorrectSubclassOffsets)
-        // filed the old slot's answer under the NEW epoch, where every later lookup found it. Each builder's test seam
-        // moves the family 0x78 -> 0x70 at exactly that point, once; the next call must read the class again.
+        // A builder that worked its key out AT PUBLISH, after its reads, would let a move made by another thread in
+        // between (a pipe lane's WalkInstance struct probe, a scan worker's CorrectSubclassOffsets) file the old slot's
+        // answer under the NEW epoch, where every later lookup finds it. Each builder's test seam moves the family
+        // 0x78 -> 0x70 at exactly that point, once; the next call must read the class again.
         static const char* s_raceCache = nullptr;
         auto moveOnce = [](const char* cache) {
             if (s_raceCache && strcmp(cache, s_raceCache) == 0) {
@@ -8933,9 +8907,8 @@ int main() {
         check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
               &Aura::GetClassRefMeta(A(feRace[4])) == raceR2);
 
-        // [DYNOFF-LATCH-STALE] Review wf_b0aa9098-dd5, B-EX-STRADDLE: an offset validation that ends while a WalkClassEx
-        // is between its plain walk and its key. WalkClassEx takes its key late on purpose -- after CorrectSubclassOffsets,
-        // which may move the family -- so its plain walk read field offsets the validation was still deriving, and the
+        // [DYNOFF-LATCH-STALE]: an offset validation that ends while a WalkClassEx is between its plain walk and its
+        // key. WalkClassEx takes its key late on purpose -- after CorrectSubclassOffsets, which may move the family -- so its plain walk read field offsets the validation was still deriving, and the
         // retire at the validation's end must not let them be filed under the epoch the retire starts.
         static int s_measuredOff = 0;
         static bool s_retireArmed = false;
@@ -8963,8 +8936,8 @@ int main() {
         const bool fired6 = !s_retireArmed;
         const ClassInfo& straddleNext = Ubel::WalkClassEx(A(feStraddleCls));
         check("FAMILYEPOCH straddle setup: the retire fired inside the WalkClassEx's plain walk", fired6);
-        // The straddling call itself, not only the next one (review wf_2d9f83d5-21b, R3-STRADDLE-RETURN-UNPINNED): a
-        // refusal in place of the walk again leaves the cache right and hands every overlapping caller an empty class.
+        // The straddling call itself, not only the next one: a refusal in place of the walk again would leave the cache
+        // right and hand every overlapping caller an empty class.
         check("FAMILYEPOCH straddle ⭐: the straddling call gets the class walked under the settled offsets",
               straddleFirst.Address == A(feStraddleCls) && offsetOf(straddleFirst) == 0x40,
               std::to_string(offsetOf(straddleFirst)).c_str());
@@ -8972,7 +8945,7 @@ int main() {
               &straddleNext == &straddleFirst && offsetOf(straddleNext) == 0x40, std::to_string(offsetOf(straddleNext)).c_str());
         DynOff::FPROPERTY_OFFSET = svPropOff;
 
-        // Review wf_09b53b67-caf, B-R4-STRADDLE-PLAIN-HIT: a WalkClassEx that starts while a retire is between its two
+        // A WalkClassEx that starts while a retire is between its two
         // bumps -- the count already moved, the epoch not yet. The count it read is the one it compares after its key,
         // so it cannot see the retire, while its plain walk is keyed under the old epoch and may be served what was cached
         // mid-validation. It must wait the retire out. The retire's second half lands from another thread, with the
@@ -9215,9 +9188,9 @@ int main() {
     //
     // ⛔ OWN name table and OWN object array: re-initialises Aura, and puts the main pool back at the end.
     // [LISTCLASSES-METACLASS-CDO] A metaclass's CDO -- Default__Class, Default__BlueprintGeneratedClass, ... -- has that
-    // metaclass as its own class, so the class-like-meta test alone admitted it: with "Game classes only" unticked,
-    // UE423_Flying's class list carried its five metaclass CDOs as classes, and every enumerator counted five classes
-    // too many (review wf_b99fb861-680). [DUMPALL-METACLASS-CDO] fixed the same shape in Dump All.
+    // metaclass as its own class, so the class-like-meta test alone admits it: with "Game classes only" unticked, the
+    // class list would carry each metaclass CDO as a class, and every enumerator would count them as classes.
+    // [DUMPALL-METACLASS-CDO] guards the same shape in Dump All.
     {
         blk("LISTCLASSES - a metaclass's class-default object is not listed or counted as a class");
         ResetCancel();
@@ -9294,10 +9267,10 @@ int main() {
 
     // -- STRUCTENUM-2026-09-28 -- the struct-field cache keeps a ByteProperty's enum only if it IS a UEnum ------------------
     //
-    // ⛔ OWN name table (after LISTCLASSES). [STRUCTCACHE-ENUM-UNCHECKED] GetCachedStructFields stored whatever pointer sat
-    // in a ByteProperty's Enum slot, unchecked, for the session; ResolveEnumValue then parsed that object as a UEnum and
-    // printed its "enumerators" for a plain byte inside a struct array. The WalkInstance twin and the array reader both
-    // require the pointer's class to be Enum / UserDefinedEnum (review wf_63e981ac-5e4, S4).
+    // ⛔ OWN name table (after LISTCLASSES). [STRUCTCACHE-ENUM-UNCHECKED] GetCachedStructFields must not store whatever
+    // pointer sits in a ByteProperty's Enum slot, unchecked, for the session: ResolveEnumValue would then parse that object
+    // as a UEnum and print its "enumerators" for a plain byte inside a struct array. The WalkInstance twin and the array
+    // reader both require the pointer's class to be Enum / UserDefinedEnum.
     {
         blk("STRUCTENUM - a struct's ByteProperty caches its enum only when the pointer is a UEnum");
         const bool svFProp = DynOff::bUseFProperty;
@@ -9362,12 +9335,12 @@ int main() {
 
     // -- STRUCTPROBE-2026-09-28 -- a struct / class slot is accepted only when it holds a struct / a class ----------------
     //
-    // ⛔ OWN name table (after STRUCTENUM). [STRUCTPROBE-ANY-NAME] The subclass-slot readers accepted ANY object with a
-    // printable name. On a shifted layout the default slot holds another named object -- on DQ XI S a Blueprint-owned
-    // property's PostConstructLinkNext, a named UProperty -- and it passed: a struct member was typed as a property's
-    // name, and the WalkInstance probe stopped at delta 0 on it instead of finding the struct 8 bytes on (review
-    // wf_63e981ac-5e4, S2). A slot is accepted now only when the object's class chain reaches ScriptStruct (a struct)
-    // or Class (an object property's PropertyClass).
+    // ⛔ OWN name table (after STRUCTENUM). [STRUCTPROBE-ANY-NAME] A subclass-slot reader must not accept ANY object with
+    // a printable name. On a shifted layout the default slot holds another named object -- on DQ XI S a Blueprint-owned
+    // property's PostConstructLinkNext, a named UProperty -- and a name-only check passes it: a struct member is typed
+    // as a property's name, and the WalkInstance probe stops at delta 0 on it instead of finding the struct 8 bytes on.
+    // A slot is accepted only when the object's class chain reaches ScriptStruct (a struct) or Class (an object
+    // property's PropertyClass).
     {
         blk("STRUCTPROBE - a subclass slot is accepted only when it holds the kind of object it must");
         ResetCancel();
@@ -9477,11 +9450,11 @@ int main() {
 
     // -- ENUMSLOT-2026-09-28 -- an enum slot is accepted only when it holds a UEnum ------------------------------------------
     //
-    // ⛔ OWN name table (after STRUCTPROBE). [ENUMSLOT-ANY-NAME] [STRUCTPROBE-ANY-NAME] gave the struct and class slots a
-    // kind check; the ENUM slots kept the old one (review of builds 3594-3595): the enum-name readers accepted any
-    // printable name -- and those names go into the SDK and USMAP exports -- the EnumProperty pointer readers kept any
-    // pointer, and IsUEnumObject matched two exact class names, so a UEnum SUBCLASS was dropped where the struct and class
-    // checks walk the chain.
+    // ⛔ OWN name table (after STRUCTPROBE). [ENUMSLOT-ANY-NAME] The ENUM slots get the kind check [STRUCTPROBE-ANY-NAME]
+    // gives the struct and class slots: an enum-name reader must not accept any printable name -- those names go into the
+    // SDK and USMAP exports -- an EnumProperty pointer reader must not keep any pointer, and IsUEnumObject walks the class
+    // chain rather than matching two exact class names, so a UEnum SUBCLASS is kept as the struct and class checks keep
+    // theirs.
     {
         blk("ENUMSLOT - an enum slot is accepted only when it holds a UEnum (or a UEnum subclass)");
         ResetCancel();
@@ -9583,12 +9556,12 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
-    // -- OPTSTRUCT-2026-09-28 -- the two struct-slot readers [STRUCTPROBE-ANY-NAME] did not reach -------------------------
+    // -- OPTSTRUCT-2026-09-28 -- two more struct-slot readers take only a struct -------------------------------------------
     //
     // ⛔ OWN name table (after ENUMSLOT). [OPTSTRUCT-ANY-NAME] ResolveOptionalLayout's probe for a TOptional<FStruct>'s
-    // UScriptStruct still took the first NAMED object -- and then read that object's "MinAlignment", so the optional's
-    // layout (where bIsSet sits) came out wrong or Unknown -- and the struct-field cache named a nested struct by
-    // whatever object its slot held (review of builds 3594-3595, LOW + INFO).
+    // UScriptStruct must not take the first NAMED object -- it then reads that object's "MinAlignment", so the optional's
+    // layout (where bIsSet sits) comes out wrong or Unknown -- and the struct-field cache must not name a nested struct by
+    // whatever object its slot holds.
     {
         blk("OPTSTRUCT - the TOptional struct probe and the struct cache take only a struct");
         ResetCancel();
@@ -9665,11 +9638,11 @@ int main() {
 
     // -- KINDNAMES-2026-09-28 -- the engine's own metaclasses pass the kind checks without SuperStruct -------------------
     //
-    // ⛔ OWN name table (after OPTSTRUCT). [STRUCTPROBE-ANY-NAME] [ENUMSLOT-ANY-NAME] follow-up (review of build 3596,
-    // INFO): the kind checks walked the metaclass's SuperStruct chain even for UserDefinedStruct, BlueprintGeneratedClass
-    // and UserDefinedEnum, whose names already say what they are. A give-up session never measures USTRUCT_SUPER (its
-    // 0x40 default is wrong on 4.11-4.21), so there every Blueprint struct, class and enum was dropped -- where the
-    // name-only check before build 3595 kept them. Here the metaclasses have no SuperStruct at all.
+    // ⛔ OWN name table (after OPTSTRUCT). [STRUCTPROBE-ANY-NAME] [ENUMSLOT-ANY-NAME]: the kind checks pass
+    // UserDefinedStruct, BlueprintGeneratedClass and UserDefinedEnum by name, without walking the metaclass's SuperStruct
+    // chain -- their names already say what they are. A give-up session never measures USTRUCT_SUPER (its 0x40 default
+    // is wrong on 4.11-4.21), so a chain walk there would drop every Blueprint struct, class and enum. Here the
+    // metaclasses have no SuperStruct at all.
     {
         blk("KINDNAMES - a Blueprint struct, class and enum pass by their metaclass's name, with no SuperStruct");
         ResetCancel();
@@ -9751,9 +9724,9 @@ int main() {
 
     // -- STRUCTKIND-2026-11-18 -- what walk_class walks: a UStruct of some kind, not any live object ------------------
     //
-    // ⛔ OWN name table (after KINDNAMES). [WALKCLASS-NOT-STRUCT] Review wf_1b9e937b-a0d DLL-3: walk_class's liveness
-    // gate let any live object through, and a level travel can free a class and put an actor at its address -- walked as
-    // a class, that answered an empty or made-up class with no error. The engine's metaclasses pass by name (a give-up
+    // ⛔ OWN name table (after KINDNAMES). [WALKCLASS-NOT-STRUCT]: a liveness gate alone lets any live object through,
+    // and a level travel can free a class and put an actor at its address -- walked as a class, that would answer an
+    // empty or made-up class with no error. The engine's metaclasses pass by name (a give-up
     // session never measures USTRUCT_SUPER), any other subclass by its chain reaching Struct.
     {
         blk("STRUCTKIND - a class, a struct and a function are walkable; an actor, an enum and an asset are not");
@@ -9948,9 +9921,10 @@ int main() {
         check("PROBEOVERRUN ⭐: WalkInstance's struct in the slot is the proof", C(poNullNext) == 0,
               nm(C(poNullNext)).c_str());
 
-        // UProperty engines: Genau measures the family from the layout, and CorrectSubclassOffsets used to latch there
-        // without looking -- no UE4 session could ever be proven. It checks the slot now, and never moves a UProperty
-        // family. Called directly: a UProperty class is not walked through the FProperty chain these fixtures build.
+        // UProperty engines: Genau measures the family from the layout, and CorrectSubclassOffsets checks the slot there
+        // rather than latching without looking -- otherwise no UE4 session could ever be proven -- and never moves a
+        // UProperty family. Called directly: a UProperty class is not walked through the FProperty chain these fixtures
+        // build.
         DynOff::bUseFProperty = false;
         FieldInfo poFi{};
         poFi.Address = A(poPos);
@@ -10072,8 +10046,8 @@ int main() {
         check("an empty recording window: nothing is per-frame", !Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), 0));
         check("a span just under half the recording is NOT per-frame",
               !Linie::IsPerFrame(fs(299, 16.7, 298, 1000, 5999), W));
-        // Review of the first version: the span from the first fire to the last is not how long a function kept
-        // firing. Each of these spans more than half the recording with a frame-band mean, and fired for far less.
+        // The span from the first fire to the last is not how long a function kept firing. Each of these spans more
+        // than half the recording with a frame-band mean, and fired for far less.
         check("the action done twice (1 s of frames at t=1 s and t=7 s) is NOT per-frame",
               !Linie::IsPerFrame(fsa(240, 29.3, 239, 1000, 7992, 1990), W));
         check("four 1 s repetitions spread over the recording are NOT per-frame",
@@ -10330,7 +10304,7 @@ int main() {
               Linie::TraceDistinct(dfuncs, dobjs) && dfuncs == std::vector<uintptr_t>{ 0xF1, 0xF2 } &&
               dobjs == std::vector<uintptr_t>{ 0xB1, 0xB2 }, sz(dfuncs.size()).c_str());
 
-        // Review DLL-1: what the UI reads and releases belongs to one recording. The copy reports the state it copied
+        // What the UI reads and releases belongs to one recording. The copy reports the state it copied
         // under the same lock, the names say which recording they are, and a release names its recording.
         {
             const uint64_t gen = Linie::GetTraceInfo().gen;
@@ -10357,7 +10331,7 @@ int main() {
             Linie::StopTrace();
         }
 
-        // Review DLL-5: a recording that wrote nothing has nothing to read, and must not keep its ring in the game.
+        // A recording that wrote nothing has nothing to read, and must not keep its ring in the game.
         Linie::StartTrace(cfg(8));
         check("a running trace is never released as empty", !Linie::ReleaseIfEmpty() && Linie::IsTracing());
         Linie::StopTrace();
@@ -10414,7 +10388,7 @@ int main() {
         std::vector<Linie::TraceRecord> unread;
         check("a hook that never leaves its write: Stop gives up and the ring is not read",
               !info.quiesced && !Linie::CopyTrace(0, 10, unread));
-        // Review DLL-2: everything the hook reads stays as it was while it may still be inside -- the ring, its
+        // Everything the hook reads stays as it was while it may still be inside -- the ring, its
         // capacity, the sets -- so a Free leaves it all, and a Start is refused instead of re-arming under it.
         Linie::FreeTrace();
         info = Linie::GetTraceInfo();
@@ -10423,7 +10397,7 @@ int main() {
         check("...and a Start is refused as busy", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Busy);
         SetEvent(s_release);
         stuck.join();         // the hook finishes its write into the ring it was given: no fault
-        // Review DLL-3: once the hook has left, the next wait reaches zero and the ring is readable again.
+        // Once the hook has left, the next wait reaches zero and the ring is readable again.
         Linie::StopTrace();
         info = Linie::GetTraceInfo();
         check("once the hook has left, Stop finds it quiesced and the ring is read again",
@@ -10432,7 +10406,7 @@ int main() {
         Linie::FreeTrace();
         check("...and a Free then releases it", !Linie::GetTraceInfo().allocated);
 
-        // Review DLL-2: a fault inside the section (here a C++ throw from the clock; under the DLL's /EHa an SEH
+        // A fault inside the section (here a C++ throw from the clock; under the DLL's /EHa an SEH
         // fault unwinds the same way) must not leave the in-flight count up, or every later Stop waits it out.
         static std::atomic<int> s_throwNext{ 0 };
         Linie::SetTraceClockForTest([]() -> uint64_t {
@@ -10478,12 +10452,12 @@ int main() {
         check("threads: nothing is written once Stop returns", w1 == w2 && w1 > 0, sz(w2 - w1).c_str());
         // [LINIE-THREADS-FLAKE] CopyTrace LEAVES OUT a slot written out of turn: a writer that took its number, then lost
         // the slot to one a lap later (the ring laps many times in 30 ms of four writers), ends on its own stale number
-        // since [LINIE-SEQ-LAST] (the number stored last). This check demanded gap-free numbers and failed about one run
-        // in eight with 16,383 of 16,384 kept (measured 2026-11-18, two fails in sixteen runs, each one slot short). Kept
-        // slots are CopyTrace's own: inside the window, rising. What is checked is their CONTENT, record by record.
+        // under [LINIE-SEQ-LAST] (the number stored last). So gap-free numbers are not demanded -- a correct run can keep
+        // fewer slots than the window holds. Kept slots are CopyTrace's own: inside the window, rising. What is checked is
+        // their CONTENT, record by record.
         // Writing the number last NARROWS the lapped-writer race, it does not close it: two writers overlapping on one
-        // slot (each stalled inside a few stores) can still mix (review wf_d3c2ec9a-d52), so a mismatch is counted and
-        // a handful tolerated, rather than failing a correct run on a double stall.
+        // slot (each stalled inside a few stores) can still mix, so a mismatch is counted and a handful tolerated,
+        // rather than failing a correct run on a double stall.
         const bool copiedThreads = copyAll() && !recs.empty();
         size_t mixed = 0;
         for (size_t k = 0; copiedThreads && k < recs.size(); ++k) {
@@ -10505,11 +10479,10 @@ int main() {
               (sz(recs.size()) + " of " + sz(window)).c_str());
         Linie::FreeTrace();
 
-        // [LINIE-SEQ-LAST] Review wf_72c53295-04c F4: TraceEnter / TraceReturn stored the record's number FIRST and the
-        // payload after it, so a writer the ring lapped between those stores finished its payload over the newer
-        // record and CopyTrace kept that slot under the newer number with the late writer's content. Made deterministic
-        // here: TraceReturn reads the trace clock in the middle of its stores, and the clock below laps the 8-slot ring
-        // from inside that read (tid 2), so writer A (tid 1) resumes over the record that took its slot.
+        // [LINIE-SEQ-LAST]: TraceEnter / TraceReturn store the record's number LAST. Stored first, a writer the ring
+        // lapped between those stores would finish its payload over the newer record, and CopyTrace would keep that
+        // slot under the newer number with the late writer's content. Made deterministic here: TraceReturn reads the
+        // trace clock in the middle of its stores, and the clock below laps the 8-slot ring from inside that read (tid 2), so writer A (tid 1) resumes over the record that took its slot.
         {
             static std::atomic<int> s_lapArmed{ 0 };
             Linie::SetTraceClockForTest([]() -> uint64_t {
@@ -10538,10 +10511,10 @@ int main() {
             Linie::FreeTrace();
         }
 
-        // [LINIE-SEQ-LAST] Review wf_d3c2ec9a-d52 (LINIE-FLAGS-AFTER-SEQ): TraceEnter published the number, THEN copied the
-        // parameters (or walked the stack) and OR-ed kTraceSnapTaken / kTraceStackTaken into the record -- the slowest
-        // part of the write. A copy during which the ring laps puts that bit on the NEWER record, kept under its own
-        // number. Deterministic: the copier below laps an 8-slot ring from inside SnapWrite (tid 2, nothing chosen).
+        // [LINIE-SEQ-LAST]: TraceEnter copies the parameters (or walks the stack) -- the slowest part of the write -- and
+        // OR-s kTraceSnapTaken / kTraceStackTaken into the record after the number is published. A copy during which the
+        // ring laps must not put that bit on the NEWER record, kept under its own number. Deterministic: the copier
+        // below laps an 8-slot ring from inside SnapWrite (tid 2, nothing chosen).
         {
             static std::atomic<int> s_copyLaps{ 0 };
             Linie::Reset();
@@ -10576,9 +10549,9 @@ int main() {
                 if (r.tid == 2 && (r.flags & (Linie::kTraceSnapTaken | Linie::kTraceStackTaken))) ++falseClaims;
             check("* LINIE-SEQ-LAST: a copy the ring laps puts no taken flag on a record that took nothing",
                   copied && falseClaims == 0, (sz(falseClaims) + " of " + sz(got.size())).c_str());
-            // Review wf_a193c703-fe8: the late mark must first check the slot is still its own. Withdrawing the number of
-            // a slot the ring lapped destroyed the NEWER, whole record (and could put a bit into a newer writer that is
-            // itself between its write and its own mark). All 8 of the lap's records come back.
+            // The late mark must first check the slot is still its own: withdrawing the number of a slot the ring lapped
+            // would destroy the NEWER, whole record (and could put a bit into a newer writer that is itself between its
+            // write and its own mark). All 8 of the lap's records come back.
             check("* LINIE-SEQ-LAST: a late mark leaves a lapped slot alone -- the lap's 8 records are all kept",
                   copied && got.size() == 8, sz(got.size()).c_str());
             Linie::FreeTrace();
@@ -10587,8 +10560,8 @@ int main() {
         // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
         // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
         {
-            // ...so the benchmarks say which CPU they ran on: a nanosecond figure is that CPU's, and the two PCs this
-            // project is measured on differ (the maintainer, 2026-10-07).
+            // ...so the benchmarks say which CPU they ran on: a nanosecond figure is that CPU's, and the PCs this
+            // project is measured on differ.
             int regs[4] = {};
             char brand[49] = {};
             __cpuid(regs, static_cast<int>(0x80000000u));
@@ -10719,7 +10692,7 @@ int main() {
               di2.size() == 2 && di2[0].captured && di2[0].nameIndex == 0xA);
         Linie::Reset();
 
-        // Review DLL-3: a freed function's address taken by another that fires in the same recording. Each call checks
+        // A freed function's address taken by another that fires in the same recording. Each call checks
         // the function's key -- its FName and its Outer -- against what was read; another function is read again and
         // the entry marked reused: its count is both functions', and its name the one now there.
         static int32_t  s_occName  = 0x50;     // the function now at 0xF0
@@ -10764,7 +10737,7 @@ int main() {
         check("...and when the first one comes back", statOf(0xF0).ident.reused);
         Linie::Reset();
 
-        // Review UI-1: a tick is an address from an earlier fetch, and the function there may have been unloaded since
+        // A tick is an address from an earlier fetch, and the function there may have been unloaded since
         // without the UI learning it (its row cut by the fetch limit). pe_profile_start checks the ticks against the
         // previous recording's table -- still there, since StartRecording has not cleared it yet.
         Linie::StartRecording(stub);
@@ -10844,7 +10817,7 @@ int main() {
               Ubel::ClassifyFunctionState(true, true, same, sameCls, cap) == FS::Live);
         check("...still in its slot under another name -> recycled: another function took the address",
               Ubel::ClassifyFunctionState(true, true, other, sameCls, cap) == FS::Recycled);
-        // Review DLL-1: every Blueprint class has its own Construct, ReceiveBeginPlay..., all one FName.
+        // Every Blueprint class has its own Construct, ReceiveBeginPlay..., all one FName.
         check("...the same name in ANOTHER class -> recycled too",
               Ubel::ClassifyFunctionState(true, true, same, otherCls, cap) == FS::Recycled);
         check("...a class that cannot be read now, or was not read then, is not a difference",
@@ -10880,7 +10853,8 @@ int main() {
             for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
             QueryPerformanceCounter(&t1);
             const double withReader = nsPer(t0, t1, N);
-            // Review DLL-3's check on every call, through Ubel's readers on the fake function.
+            // The key check each call makes (its FName and Outer against what was read), through Ubel's readers on the
+            // fake function.
             Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey);
             QueryPerformanceCounter(&t0);
             for (int i = 0; i < N; ++i) Linie::RecordCall(at(fFn), 1000 + i);
@@ -11008,7 +10982,7 @@ int main() {
         check("a name nobody follows: a default hint", h.gen == 0 && h.ring == -1 && h.flags == 0);
         check("...and the log holds the two arms only", st->log.size() == 2, u(st->log.size()).c_str());
 
-        // The Linie review (tests): the hint's after and cut bits come from the table's read, not only from a test's
+        // The hint's after and cut bits come from the table's read, not only from a test's
         // hand-made hint.
         auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xE1, 0, 7, 0 }, false, 0, 64 },
                                           Linie::ArmSpec{ Linie::NameKey{ 0xE2, 0, 7, 0 }, false, 1, 64 },
@@ -11103,7 +11077,7 @@ int main() {
         Linie::RecordCall(0xF0, 1040, &h);
         check("its class's FName changed at the same address: read again, and disarmed",
               h.gen == 0 && h.ring == -1 && statOf(0xF0).ident.classIndex == 0xA0);
-        s_cls = 0x90;       // review R3: and the followed class comes back at the same addresses
+        s_cls = 0x90;       // and the followed class comes back at the same addresses
         Linie::RecordCall(0xF0, 1050, &h);
         check("...and when the followed class comes back there, armed again (review R3)",
               h.gen == 9 && h.ring == 0 && h.arm == 2 && st->log.size() == 3, u(st->log.size()).c_str());
@@ -11126,7 +11100,7 @@ int main() {
         check("...and the next call, read again, is armed as before", h.gen == 9 && h.ring == 0 && h.arm == 0 &&
               st->log.size() == 1);
 
-        // The Linie review (tests): the class read failing, and the full read failing after a key change.
+        // The class read failing, and the full read failing after a key change.
         s_clsFail = 1;
         Linie::RecordCall(0xF0, 3003, &h);
         check("a class that cannot be read: that call gets no hint", h.gen == 0 && h.ring == -1);
@@ -11191,7 +11165,7 @@ int main() {
         Linie::Reset();
         check("...and none once the recording is gone", Linie::ArmsSummary().empty());
 
-        // Review R4: two followed names taking turns at one address count it once each.
+        // Two followed names taking turns at one address count it once each.
         static int32_t s_turn = 0x77;
         auto turnReader = [](uintptr_t, Linie::FuncIdentity& out) -> bool {
             out.nameIndex = s_turn; out.classIndex = 7; out.outer = 0x7000 + s_turn; out.functionFlags = 0x400;
@@ -11260,7 +11234,7 @@ int main() {
         Linie::RecordCall(0xB4, 1003, &h);
         const auto p2 = Linie::TakePendingArms(*st, 1);
         check("...at most as many as asked, the oldest first", p2.size() == 1 && p2[0].index == 2, u(p2.size()).c_str());
-        const auto p3 = Linie::TakePendingArms(*st, SIZE_MAX);   // review R2: "all of them", twice
+        const auto p3 = Linie::TakePendingArms(*st, SIZE_MAX);   // "all of them", twice
         const auto p4 = Linie::TakePendingArms(*st, SIZE_MAX);
         check("...'all of them' takes the rest, and asked again takes nothing -- no wrap-around (review R2)",
               p3.size() == 1 && p3[0].index == 3 && p4.empty(), (u(p3.size()) + "/" + u(p4.size())).c_str());
@@ -11425,7 +11399,7 @@ int main() {
               Linie::StartTrace(cfg(128 + 8 * 104 - 1)) == Linie::TraceStartStatus::SnapTooSmall);
         check("...and the trace's own ring is freed too", !Linie::GetTraceInfo().allocated && !Linie::IsTracing());
         {
-            // The Linie review (tests): "freed" measured, not inferred -- the refused Start's own 256 MB ring is a local
+            // "Freed" measured, not inferred -- the refused Start's own 256 MB ring is a local
             // that the trace's state never saw. The process's committed private bytes come back.
             auto privateBytes = [] {
                 PROCESS_MEMORY_COUNTERS_EX pmc{};
@@ -11440,7 +11414,7 @@ int main() {
             const uint64_t after = privateBytes();
 #ifdef __SANITIZE_ADDRESS__
             // [CPP-HARDENING-2026-11-14] ASan keeps freed blocks in its quarantine, to catch a use after free, and adds
-            // shadow memory, so committed bytes do not come back by design (measured 65 MB here, 2026-11-15). The
+            // shadow memory, so committed bytes do not come back by design. The
             // refusal is still checked; the release is the plain build's to measure.
             static_cast<void>(before);
             static_cast<void>(after);
@@ -11765,7 +11739,7 @@ int main() {
               l0.traced && !l1.traced && info.written == 1 && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
               u(info.written).c_str());
 
-        // The Linie review (tests): a call over the budget owes no after copy -- the ring would fill at the full rate.
+        // A call over the budget owes no after copy -- the ring would fill at the full rate.
         info = start(1, 100, false);
         s_now = 40 * f;
         Linie::ArmHint owing = hintFor(info.gen, 0);
@@ -11915,7 +11889,7 @@ int main() {
               u(stop2).c_str());
         Linie::FreeTrace();
 
-        // Review (the Linie review, tr2): a copy that throws mid-call leaves a coherent trace. A ticked, chosen call
+        // A copy that throws mid-call leaves a coherent trace. A ticked, chosen call
         // opens its scope and its copy throws: its record says what it is without "taken", the token still owes the
         // return (which closes the scope), and its slot -- the ring's first, on the first lap -- is not handed out as
         // a copy that worked.
@@ -12008,7 +11982,7 @@ int main() {
               kept[0].entrySeq == 12 && Linie::GetTraceInfo().firstValid == 12, (u(kept.size()) + "/" + u(orphans)).c_str());
         Linie::FreeTrace();
 
-        // The Linie review (tests): a write that never finished is left out by its number. Eight whole writes fill
+        // A write that never finished is left out by its number. Eight whole writes fill
         // K = 8; the ninth takes slot 0 again and its copy throws, so slot 0 holds no whole write of index 8.
         {
             static int s_throwAt = 0;
@@ -12993,10 +12967,9 @@ int main() {
         const auto vc = Ubel::DecodeParamSnapshot(cpn, c, sizeof c, false, ctx12);
         check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
               vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
-        // Measured on DumperTest58 (2026-10-07): a soft pointer to an actor is its level's asset path plus a sub-path
-        // (":PersistentLevel.<actor>") in a string (an FUtf8String on 5.6+, an FString before) whose text is not in the
-        // copy. Shown without it, the actor's
-        // pointer read as the level's.
+        // A soft pointer to an actor is its level's asset path plus a sub-path (":PersistentLevel.<actor>") in a string
+        // (an FUtf8String on 5.6+, an FString before) whose text is not in the copy -- the shape DumperTest58 shows.
+        // Shown without the sub-path, the actor's pointer would read as the level's.
         alignas(8) uint8_t s2[0x50] = {};
         memcpy(s2, b + 0x28, 0x30);
         const int32_t subNum = 34;
@@ -13027,8 +13000,8 @@ int main() {
     {
         blk("CT-DELEGATE-PARAM-PAD: a delegate parameter's bound object is read past a checked build's access detector");
         // A standalone FScriptDelegate on a UE 5.3+ Debug / Development / DebugGame build carries an 8-byte detector in
-        // front (DynOff::kDelegateDetectorPad); its ElementSize says so (DelegatePadFromElementSize). Measured on
-        // DumperTest 5.4 Development, 2026-10-27: Del_Unicast is 24 bytes, +0 reads 0 and the weak pair is at +8.
+        // front (DynOff::kDelegateDetectorPad); its ElementSize says so (DelegatePadFromElementSize). On DumperTest 5.4
+        // Development, Del_Unicast is 24 bytes, +0 reads 0 and the weak pair is at +8.
         using SM = Ubel::SnapMark;
         auto field = [](const char* name, int32_t off, int32_t size) {
             Ubel::ParamField f; f.name = name; f.typeName = "DelegateProperty"; f.offset = off; f.size = size; return f;
@@ -13249,8 +13222,8 @@ int main() {
               Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(cls), oi, on) && oi == 22 && on == 0);
         check("...and an unreadable object is refused", !Ubel::ReadObjectNameKey(0x1000, oi, on));
 
-        // The UObject header of every engine the project supports (UE 4.11 - 4.27 and UE5; the maintainer, 2026-10-07:
-        // UE4 is covered here, not live). VTable, flags, index and class are fixed; NamePrivate is at 0x18 and its
+        // The UObject header of every engine the project supports (UE 4.11 - 4.27 and UE5; UE4 is covered here, not
+        // live). VTable, flags, index and class are fixed; NamePrivate is at 0x18 and its
         // ComparisonIndex first; what moves is the FName's size: standard, Number at +4 and Outer at 0x20; case-
         // preserving (a DisplayIndex added), Number at +4 or +8 and Outer at 0x28 (Grimoire.h, the UObject offsets).
         struct HeaderLayout { const char* name; bool cpn; int number; int outer; };
@@ -13290,8 +13263,8 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a chosen function's parameter layout -- its own chain, CPF_Parm only, both property models");
-        // docs/archive/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports (the
-        // maintainer, 2026-10-07: UE4 in the tests): FField on UE5 / 4.25+, standard and case-preserving headers;
+        // docs/archive/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports
+        // (UE4 is covered in the tests): FField on UE5 / 4.25+, standard and case-preserving headers;
         // UProperty on 4.15 (4.11-4.17: the first subclass field at +0x28) and 4.22 (4.18-4.24: +0x2C).
         static uint8_t plEntry[22][0x40] = {};
         static uintptr_t plChunk[23] = {};
@@ -13683,8 +13656,8 @@ int main() {
             chunk[6] = reinterpret_cast<uintptr_t>(e6);
         }
 
-        // [UE4-WIDE-FNAME] review: the narrow read asked for a fixed 255-byte window, so an ANSI name allocated within
-        // 255 bytes of an unreadable page failed whole and came back "". UnrealNames.cpp packs entries end to end in
+        // [UE4-WIDE-FNAME] The narrow read must not ask for a fixed 255-byte window: an ANSI name allocated within
+        // 255 bytes of an unreadable page would fail whole and come back "". UnrealNames.cpp packs entries end to end in
         // pools of 64 KB (4.10) / 256 KB (4.18) from FMemory::Malloc, so the last entry of each pool can sit right
         // before one. Six pages reserved, the first, third and fifth committed, one fixture at the end of each.
         uint8_t* npage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x6000, MEM_RESERVE, PAGE_READWRITE));
@@ -13812,7 +13785,7 @@ int main() {
         check("VND584-01 classify control: a lazy slot that is no object stays (nothing to refuse)",
               cls("LazyObjectProperty", 0x20, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
         // UHT gives a non-const `T&` CPF_OutParm alone (CPF_ReferenceParm only with const), so an in/out C++ reference
-        // reads as Out; a picked object there must reach the callee too (review R2).
+        // reads as Out; a picked object there must reach the callee too.
         check("VND584-01 classify ⭐: an out slot holding a picked object is converted (a non-const & reads as Out)",
               cls("SoftObjectProperty", 0x28, ParamKind::Out, obj, true) == ObjectParamAction::ConvertSoft);
         check("VND584-01 classify: ...a weak one too",
@@ -13961,10 +13934,10 @@ int main() {
         check("VND584-01 nested: a refusal names the member through its struct",
               !ok && why.find("Spec.Ref") != std::string::npos, why.c_str());
 
-        // The live-object probe reads value+0x0C. Every double, int64, FName and UObject* of a call used to be probed
-        // too -- 1000.0 is 0x408F400000000000, a non-canonical address, so each invoke with an FVector raised a
-        // first-chance access violation every vectored handler saw (review SAFE-2). Only a weak / soft / lazy slot in a
-        // caller's direction is probed now.
+        // The live-object probe reads value+0x0C, so only a weak / soft / lazy slot in a caller's direction is probed.
+        // Probing every double, int64, FName and UObject* of a call would fault -- 1000.0 is 0x408F400000000000, a
+        // non-canonical address, so each invoke with an FVector would raise a first-chance access violation every
+        // vectored handler sees.
         static int s_probes = 0;
         Ubel::ObjectParamOps counting = ops;
         counting.isLiveObject = [](uintptr_t a) { ++s_probes; return a == s_live; };
@@ -14103,7 +14076,7 @@ int main() {
         // The floor tells a count from half a pointer only while the chunk table sits below 16 TB (its high dword under
         // 0x1000). Above, the pointer's high dword passes it -- the AddressSanitizer build's heap, high dword 0x1222 --
         // and relaxed A/C refuses it as half of a chunk table pointer instead ([VND584-03-FLOOR-HIGH-HEAP]); this check
-        // used to SKIP there. The block below places a table above 16 TB in every build.
+        // runs there too. The block below places a table above 16 TB in every build.
         check("VND584-03 ⭐: with no strict row, the relaxed rows still reach every object",
               got == kCount, (std::to_string(got) + " objects, table high dword "
                               + std::to_string(static_cast<uint32_t>(table >> 32))).c_str());
@@ -14159,10 +14132,10 @@ int main() {
                       got == kCount && Aura::s_layout.objectsOffset == 0x00 && Aura::s_layout.numElementsOffset == 0x14,
                       (std::to_string(got) + " objects, objectsOffset " + std::to_string(Aura::s_layout.objectsOffset)).c_str());
 
-                // Review wf_8fb9838c-132, F1: a GENUINE A/C array whose Max / Num pair, read as one qword, lands on mapped
-                // memory holding a heap pointer -- possible below 32,768 objects in a process whose heap sits where Num x 4
-                // GB + Max points. Its own Objects slot holds its table, so it must still be taken; refused, it fell to
-                // relaxed D, which reads NumChunks as the count. Count 0x2000, Max 0x7FE00000: the pair is 0x20007FE00000.
+                // A GENUINE A/C array whose Max / Num pair, read as one qword, lands on mapped memory holding a heap
+                // pointer -- possible below 32,768 objects in a process whose heap sits where Num x 4 GB + Max points. Its
+                // own Objects slot holds its table, so it must still be taken; refused, it would fall to relaxed D, which
+                // reads NumChunks as the count. Count 0x2000, Max 0x7FE00000: the pair is 0x20007FE00000.
                 {
                     void* pairPage = VirtualAlloc(reinterpret_cast<void*>(0x000020007FE00000ull), 0x10000,
                                                   MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -14180,10 +14153,9 @@ int main() {
                     }
                 }
 
-                // Review wf_8fb9838c-132, F1-DEFAULT: A/C refused as half of a pointer and no later row fits. The default
-                // fallback is the Default preset, whose Objects slot is +0x00 and whose count is the refused +0x14 -- so it
-                // re-read the refused count through a slot that is no table. The table is at +0x10; that is where the
-                // fallback must read Objects.
+                // A/C refused as half of a pointer and no later row fits. The Default preset's Objects slot is +0x00 and
+                // its count the refused +0x14 -- as the fallback it would re-read the refused count through a slot that is
+                // no table. The table is at +0x10; that is where the fallback must read Objects.
                 memset(mist, 0, sizeof(mist));
                 putP(0x10, hiTable);
                 Aura::Init(reinterpret_cast<uintptr_t>(mist));
@@ -14211,17 +14183,17 @@ int main() {
                 put32(0x14, 123653);   // the Outer Worlds 2's count: the qword is past user space
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor one whose qword is past user space (Num 123,653)",
                       !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
-                // Each judgment of the first entry on its own (review wf_8fb9838c-132, F3): one readable but inside the
-                // module -- a vtable at the start of whatever a genuine pair lands on reads that way -- and one outside it
-                // but unmapped. A first entry of 0x1234 fails both, so it pinned neither.
+                // Each judgment of the first entry on its own: one readable but inside the module -- a vtable at the start
+                // of whatever a genuine pair lands on reads that way -- and one outside it but unmapped. A first entry of
+                // 0x1234 would fail both, so it would pin neither.
                 static const uint64_t inModule[2] = { 0, 0 };
                 static std::vector<uintptr_t> firstInModule(2, reinterpret_cast<uintptr_t>(inModule));
                 putP(0x10, reinterpret_cast<uintptr_t>(firstInModule.data()));
                 check("VND584-03-FLOOR-HIGH-HEAP control: ...nor a heap address whose first entry is a module address",
                       !Aura::CountIsHalfAChunkTablePointer(mistAddr, 0x14, 0x00));
                 // A reserved, no-access page, not a fixed address: under AddressSanitizer a fixed "unmapped" address can
-                // fall in its 16 TB shadow, which it commits on first touch, so the read would succeed with zeros (review
-                // wf_26ab4e6e-ff7, R2-ASAN-UNMAPPED-CONTROL). The OS places this page outside ASan's reservation.
+                // fall in its 16 TB shadow, which it commits on first touch, so the read would succeed with zeros. The OS
+                // places this page outside ASan's reservation.
                 void* noAccess = VirtualAlloc(nullptr, 0x10000, MEM_RESERVE, PAGE_NOACCESS);
                 static std::vector<uintptr_t> firstUnmapped(2, 0);
                 firstUnmapped[0] = reinterpret_cast<uintptr_t>(noAccess);
@@ -14289,9 +14261,8 @@ int main() {
             check("RELAXED-D-PREALLOC-HALF ⭐: PreAllocatedObjects above 16 TB is not read as Max / Num -- relaxed E reads it whole",
                   readByE(), layoutText().c_str());
 
-            // The ObjObjects-anchored shape (review wf_5226089b-636, PREALLOC-OBJOBJ-FLAT-UNPINNED): PreAllocatedObjects at
-            // +0x08, Max / Num at +0x10 / +0x14, NumChunks = MaxChunks = 33 as PreAllocate leaves them, which the strict
-            // Default row refuses. Here the strict FLAT row is the one that would read the block's halves; relaxed A/C
+            // The ObjObjects-anchored shape: PreAllocatedObjects at +0x08, Max / Num at +0x10 / +0x14, NumChunks =
+            // MaxChunks = 33 as PreAllocate leaves them, which the strict Default row refuses. Here the strict FLAT row is the one that would read the block's halves; relaxed A/C
             // reads the array right.
             memset(pa, 0, sizeof(pa));
             paTable[0] = reinterpret_cast<uintptr_t>(hiChunk);
@@ -14390,8 +14361,7 @@ int main() {
               layoutText().c_str());
 
         // gc.MaxObjectsInGame below 327,680 (the engine's Android and iOS configs ship 131,072): PreAllocate leaves
-        // MaxChunks 3 and MaxElements 0x30000, and the strict row wants at least 6 chunks (review wf_47eca989-bf9,
-        // UE58-TRIGGER-LIST-INCOMPLETE).
+        // MaxChunks 3 and MaxElements 0x30000, and the strict row wants at least 6 chunks.
         memset(u8, 0, sizeof(u8));
         for (auto& t : u8Table) t = poolChunk;
         putP(0x00, reinterpret_cast<uintptr_t>(u8Table.data()));
@@ -14473,10 +14443,10 @@ int main() {
         check("UE58-PREALLOC-NO-ROW ⭐: relaxed F takes no array whose Objects leads to no chunk",
               Aura::s_layout.numElementsOffset != 0x08, layoutText().c_str());
 
-        // Review wf_47eca989-bf9, UE58F-TARRAY-DECOY: a TArray<UObject*> in .data -- Data, ArrayNum 30,000, ArrayMax
-        // 40,321, zeros after, Data[0] a real object -- the decoy shape Genau's relaxed Flat row can hand over (the
-        // Avowed class). Every row refused it, so the count read 0 and Frieren's recoveries ran; a 5.8 reading must not
-        // take it either. Its chunk slots (+0x10 / +0x14) are zero.
+        // A TArray<UObject*> in .data -- Data, ArrayNum 30,000, ArrayMax 40,321, zeros after, Data[0] a real object --
+        // the decoy shape Genau's relaxed Flat row can hand over (the Avowed class). The other rows refuse it, so the
+        // count reads 0 and Frieren's recoveries run; a 5.8 reading must not take it either. Its chunk slots
+        // (+0x10 / +0x14) are zero.
         static std::vector<uintptr_t> tarrayData(4, 0);
         tarrayData[0] = reinterpret_cast<uintptr_t>(pool.objects.data());
         memset(u8, 0, sizeof(u8));
@@ -14508,9 +14478,9 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
-    // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Review wf_c87eff0e-53f DWS-DLL-2: bitfield bools
-    // packed into one byte share Offset_Internal, and the map kept the first one only -- a write to bCanBeDamaged was
-    // filed under whichever flag came first, and bCanBeDamaged had no row at all.
+    // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Bitfield bools packed into one byte share
+    // Offset_Internal, so each of them gets the byte's row -- a map that kept the first one only would file a write to
+    // bCanBeDamaged under whichever flag came first, and give bCanBeDamaged no row at all.
     {
         auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
             FieldInfo f{};
@@ -14556,13 +14526,13 @@ int main() {
     }
 
     // [GROUP-DEEP-INDEX-TWICE] A deep group leaf's field_name is FieldDisplayName(descriptor, elementIndex), the call
-    // GroupLeafToJson makes. Measured live 2026-11-17 (build 3732, A9's fixture): "Deep_Buckets[29].Subs[29].Leaves[26][26]"
-    // -- the descriptor already held the index and the display added it again; a struct element read
-    // "Items[3].Count[3]", which the UI's ParseElementIndexSuffix then took for an element row.
+    // GroupLeafToJson makes. The descriptor must not already hold the index, or the display adds it again --
+    // "Deep_Buckets[29].Subs[29].Leaves[26][26]" -- and a struct element reads "Items[3].Count[3]", which the UI's
+    // ParseElementIndexSuffix then takes for an element row.
     {
         // Through the two helpers the scan itself calls -- the deep visitor's meta fill (Aura::DeepGroupLeafMeta) and
         // emitGroupCandidate's slot match (Aura::GroupSlotMatchFromMeta) -- then FieldDisplayName on the slot's index, as
-        // GroupLeafToJson renders it. That the scan calls them is the code's, not this test's (review wf_d3c2ec9a-d52).
+        // GroupLeafToJson renders it. That the scan calls them is the code's, not this test's.
         auto shown = [](const std::string& arrayPath, int32_t idx, const std::string& leaf) {
             Aura::GroupLeafMeta m = Aura::DeepGroupLeafMeta(arrayPath, idx, leaf, "FloatProperty");
             const uint8_t bytes[8] = {};
@@ -14584,17 +14554,17 @@ int main() {
         check("control: a direct leaf keeps its name", Radar::FieldDisplayName(direct, -1) == "Stats.Str");
     }
 
-    // [GROUP-RAW-WIDTH-INTERN] Review wf_72c53295-04c GRP-RAW-INTERN-WIDTH: a native-C hole emits one leaf per width that
-    // satisfies a slot, all named "<raw@0xNN>" at one offset, and the descriptor intern key (class | name | offset) put
-    // them all on the FIRST width's descriptor -- so a 32-bit field matched as Int16 was refined and shown as Int16, and
-    // an Exact refine past Int16's range dropped it.
+    // [GROUP-RAW-WIDTH-INTERN]: a native-C hole emits one leaf per width that satisfies a slot, all named "<raw@0xNN>"
+    // at one offset, so the descriptor intern key carries the leaf's type too -- keyed on (class | name | offset) alone,
+    // they all land on the FIRST width's descriptor, a 32-bit field matched as Int16 is refined and shown as Int16, and
+    // an Exact refine past Int16's range drops it.
     {
         Aura::GroupLeafMeta i16, i32;
         i16.fieldName = i32.fieldName = "<raw@0x2A0>";
         i16.offset = i32.offset = 0x2A0;
         i16.fieldType = "Int16Property";
         i32.fieldType = "IntProperty";
-        // The key internDesc uses: this checks the key, not the scan's refine of a raw leaf (review wf_d3c2ec9a-d52).
+        // The key internDesc uses: this checks the key, not the scan's refine of a raw leaf.
         check("* GROUP-RAW-WIDTH-INTERN: two widths at one raw offset intern apart",
               Aura::GroupDescInternKey("BP_Hero_C", i16) != Aura::GroupDescInternKey("BP_Hero_C", i32));
         Aura::GroupLeafMeta otherOffset = i16;

@@ -239,7 +239,7 @@ public class LiveFuncsSnapshotTests
         vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(false); };
 
         await vm.StartCommand.ExecuteAsync(null);
-        Assert.Equal(0, asked);                 // T11: nothing ticked and something chosen is not T7's case
+        Assert.Equal(0, asked);                 // nothing ticked but something chosen: a scoped trace, so no trace-all question
         Assert.True(vm.IsRecording);
         var f = Assert.Single(dump.LastTrace!.Snapshots!.Funcs);
         Assert.Equal(new NameKey(5, 0, 9, 0), Assert.Single(f.Keys));
@@ -318,7 +318,7 @@ public class LiveFuncsSnapshotTests
         Assert.True(vm.SnapshotEstimateWarn);
     }
 
-    /// <summary>T13's orange compares the busiest choice with what the trace keeps, and the trace keeps less with a
+    /// <summary>The estimate's orange compares the busiest choice with what the trace keeps, and the trace keeps less with a
     /// smaller buffer or more ticked calls: either change can flip it, and a flip nobody raises leaves the line its old
     /// colour, and the folded summary disagreeing with it. Clearing the ticks is such a change too, and so is the buffer
     /// with Trace unticked: the estimate weighs them either way.</summary>
@@ -576,7 +576,7 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("o.LiveFuncs.SnapshotBufferExponent = LiveFuncs.SnapshotBufferExponent;", main, StringComparison.Ordinal);
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U2: the stack choice ----
+    // ---- [LIVEFUNCS-STEP3] the stack choice ----
 
     private static NamedFunction Named(string cls, string func, int idx = 1)
         => new() { ClassName = cls, FuncName = func, Keys = new[] { new NameKey(idx, 0, 9, 0) } };
@@ -657,12 +657,12 @@ public class LiveFuncsSnapshotTests
         vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(false); };
 
         await vm.StartCommand.ExecuteAsync(null);
-        Assert.Equal(0, asked);       // a stack choice scopes the trace as a parameter choice does (T11): not T7's case
+        Assert.Equal(0, asked);       // a stack choice scopes the trace as a parameter choice does: no trace-all question
         Assert.True(vm.IsRecording);
         var snaps = dump.LastTrace!.Snapshots;
         Assert.NotNull(snaps);
         Assert.Empty(snaps!.Funcs);
-        Assert.Equal(32L << 20, snaps.Bytes);       // stacks share the snapshot buffer (D4)
+        Assert.Equal(32L << 20, snaps.Bytes);       // stacks share the snapshot buffer
         var st = snaps.Stacks;
         Assert.NotNull(st);
         var f = Assert.Single(st!.Funcs);
@@ -690,7 +690,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(new ulong[] { 1 }, dump.Released);
         Assert.Equal(Line("str.LF.Stack.NotArmed"), vm.StatusText);
 
-        // Review M3: every stack choice refused is not an old DLL. The rest of the Start stands, and Refused names them.
+        // Every stack choice refused is not an old DLL: the rest of the Start stands, and Refused names them.
         dump.StacksUnknown = false;
         dump.StacksRefused = true;
         await vm.StartCommand.ExecuteAsync(null);
@@ -785,7 +785,7 @@ public class LiveFuncsSnapshotTests
         var five = Enumerable.Range(0, 5).Select(i => new LiveFuncsViewModel.SnapRate($"A::P{i}", 0, 64, 0x400)).ToList();
         Assert.Equal(45_099, LiveFuncsViewModel.EstimateSnapshots(five, 32L << 20, 1000, 10000, stackRings: 2).SlotsPerRing);
 
-        // Stacks alone have a K too, and the DLL refuses one below 8 (review L6).
+        // Stacks alone have a K too, and the DLL refuses one below 8.
         var none = Array.Empty<LiveFuncsViewModel.SnapRate>();
         var alone = LiveFuncsViewModel.EstimateSnapshots(none, 32L << 20, 1000, 10000, stackRings: 1);
         Assert.Equal((33_554_432L - 64) / 152, alone.SlotsPerRing);
@@ -804,7 +804,7 @@ public class LiveFuncsSnapshotTests
         var (vm, dump) = MakeVm();
         // P: 1,000 calls/s of a 2 KB block; 8 MB keeps ~1,900 of its calls, about 2 s. Alone in the scope, the trace keeps
         // 64 MB / (1,000 x 80 B/s) = ~840 s: orange. Hot, chosen for a stack, adds 1,000,000 calls/s to the scope, so
-        // the trace keeps under a second and P's 2 s is no longer short of it (review L6).
+        // the trace keeps under a second and P's 2 s is no longer short of it.
         dump.NextGet = ResultOf(10_000, Row("A", "P", "0x1", new NameKey(1, 0, 9, 0), count: 10_000, size: 2048),
                                 Row("A", "Hot", "0x2", new NameKey(2, 0, 9, 0), count: 10_000_000));
         await Fetch(vm);
@@ -864,7 +864,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(HeaderConst(linie, "kStackDefaultDepth"), defaults.Depth);
         Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec"), defaults.PerRingPerSec);
         Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec"), defaults.TotalPerSec);
-        // Review L8: the entry flags and the slot flags the Call Trace tab decodes.
+        // The entry flags and the slot flags the Call Trace tab decodes.
         Assert.Equal((long)StackInfo.TakenEntryFlag, HeaderConst(linie, "kTraceStackTaken"));
         Assert.Equal((long)StackInfo.BudgetEntryFlag, HeaderConst(linie, "kTraceStackBudget"));
         Assert.Equal((long)StackSlot.NoCapturer, HeaderConst(linie, "kSnapNoCapturer"));
@@ -875,7 +875,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal((long)StackSlot.LowStack, HeaderConst(macht, "kStackLowStack"));
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U3: the view ----
+    // ---- [LIVEFUNCS-STEP3] the view ----
 
     /// <summary>A DataGrid column is not in the visual tree, so the code-behind reveals the hidden ones by header. A
     /// hidden column that the loop never compares stays hidden for good, with nothing failing: so every header the axaml
@@ -930,7 +930,7 @@ public class LiveFuncsSnapshotTests
         // The choices row carries the stack count beside the parameters' count.
         Assert.Contains("{Binding StackCountText}", EnclosingStackPanel(axaml, "{Binding SnapshotCountText}"),
                         StringComparison.Ordinal);
-        // The estimate row: for stacks alone it still has the buffer's refusal to show (S3-U2), so it shows for
+        // The estimate row: for stacks alone it still has the buffer's refusal to show (the stack choice), so it shows for
         // either choice -- an OR, which an AND or a lone HasSnapshotChoices would silently hide.
         string estimateHead = OpeningOfEnclosingStackPanel(axaml, "{Binding SnapshotEstimate}");
         Assert.Contains("BoolConverters.Or", estimateHead, StringComparison.Ordinal);
@@ -938,7 +938,7 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("HasStackChoices", estimateHead, StringComparison.Ordinal);
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U8: the stack budget, Standard or Low, and the warning (T20) ----
+    // ---- [LIVEFUNCS-STEP3] the stack budget, Standard or Low, and the warning ----
 
     /// <summary>A view model with one function chosen for a stack, Trace on.</summary>
     private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump)> WithAStackChosen()
@@ -998,7 +998,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(HeaderConst(linie, "kStackLowPerRingPerSec"), low.PerRingPerSec);
         Assert.Equal(HeaderConst(linie, "kStackLowTotalPerSec"), low.TotalPerSec);
 
-        // str.LF.Stack.Warning says Low halves the budget: a re-weigh (D3) that moves one pair alone makes it wrong.
+        // str.LF.Stack.Warning says Low halves the budget: a re-weigh that moves one pair alone makes it wrong.
         // Halved and rounded down: a budget is a whole number of captures.
         Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec") / 2, HeaderConst(linie, "kStackLowPerRingPerSec"));
         Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec") / 2, HeaderConst(linie, "kStackLowTotalPerSec"));
@@ -1079,11 +1079,12 @@ public class LiveFuncsSnapshotTests
             Assert.Equal(Path.GetFileName(file) == "LiveFuncsPanel.axaml" ? 2 : 0, uses);
         }
 
-        // The warning's place, wrapping and colour moved with the estimate it now follows: S3-U7's view test.
+        // The warning's place, wrapping and colour follow the estimate's, pinned by
+        // The_estimate_sits_under_the_stack_budget_and_it_and_the_warning_turn_orange_together.
         Assert.True(Line("str.LF.Stack.Warning").Length > 0);
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U6: choosing a per-frame function's stack asks once (T9.2) ----
+    // ---- [LIVEFUNCS-STEP3] choosing a per-frame function's stack asks once ----
 
     /// <summary>A view model showing two per-frame functions and a plain one, Trace on, whose question records what it
     /// was asked and answers <paramref name="answer"/>.</summary>
@@ -1164,7 +1165,8 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(3, raised());
     }
 
-    /// <summary>A guard: no step-3 build has ever asked, so this holds before S3-U6 too.</summary>
+    /// <summary>A guard: the question is for a per-frame function only, so choosing the stack of a function that runs
+    /// every frame at none of its addresses never asks.</summary>
     [Fact]
     public async Task A_plain_row_never_asks()
     {
@@ -1179,7 +1181,7 @@ public class LiveFuncsSnapshotTests
         Assert.Empty(asked);
     }
 
-    /// <summary>Review S3U6-PERFRAME-BY-ROW: a stack is chosen by name, so a function that reloaded at a new address and
+    /// <summary>A stack is chosen by name, so a function that reloaded at a new address and
     /// runs every frame there is asked about from either of its rows: the plain row's box chooses the per-frame one too.</summary>
     [Fact]
     public async Task A_plain_row_of_a_function_per_frame_at_another_address_asks_too()
@@ -1297,7 +1299,7 @@ public class LiveFuncsSnapshotTests
         Assert.True(Line("str.LF.Stack.PerFrame.Title").Length > 0);
     }
 
-    // ---- [LIVEFUNCS-STEP3] S3-U7: the stack estimate line (T9.1) ----
+    // ---- [LIVEFUNCS-STEP3] the stack estimate line ----
 
     [Fact]
     public void The_stack_estimate_holds_each_function_to_its_budget_and_all_of_them_to_the_total()
@@ -1442,9 +1444,9 @@ public class LiveFuncsSnapshotTests
         Assert.False(vm.StackEstimateWarn);
     }
 
-    /// <summary>Review S3U7-HIDDEN-PERFRAME: Hide per-frame leaves a chosen per-frame function off the page, and the DLL
-    /// names its address among the ones it left out. It ran every frame, so it takes its whole budget: counted as not
-    /// called, the line said none was and stayed grey for the dearest choice there is.</summary>
+    /// <summary>Hide per-frame leaves a chosen per-frame function off the page, and the DLL names its address among the
+    /// ones it left out. It runs every frame, so it takes its whole budget: counted as not called, the line would say none
+    /// was and stay grey for the dearest choice there is.</summary>
     [Fact]
     public async Task A_chosen_per_frame_function_that_Hide_per_frame_left_out_takes_its_whole_budget()
     {
@@ -1475,7 +1477,7 @@ public class LiveFuncsSnapshotTests
         Assert.True(vm.StackEstimateWarn);
     }
 
-    /// <summary>Review S3U7-HIDDEN-PERFRAME: a page that did not show every function recorded cannot say a chosen
+    /// <summary>A page that did not show every function recorded cannot say a chosen
     /// function missing from it was not called -- the cut keeps the highest counts, and a rare one is what this panel
     /// is for. The line a binding reads when it is told of a change says the same.</summary>
     [Fact]
@@ -1586,7 +1588,7 @@ public class LiveFuncsSnapshotTests
         Assert.True(note.Success, "the panel's grey note moved");
         string grey = note.Groups["c"].Value;
 
-        // Each line twice, one TextBlock a colour, toggled by the estimate's bool: the D3 pattern.
+        // Each line twice, one TextBlock a colour, toggled by the estimate's bool: the calm / warn pair.
         var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
         foreach (var (text, calmColour) in new[] { ("{Binding StackEstimate}", (string?)null),
                                                    ("{StaticResource str.LF.Stack.Warning}", grey) })
@@ -1628,9 +1630,9 @@ public class LiveFuncsSnapshotTests
     // ---- [LF-COMPACT-TOP] the controls above the table, made smaller ----
 
     /// <summary>(1) The warning shows one line of its essentials and keeps the whole text one click away: the four-line
-    /// text was the biggest block above the table. The one line is still the warning, so it keeps the D3 pair (grey,
-    /// orange with the estimate) and wraps rather than clip in a narrow window; the whole text keeps every point the
-    /// maintainer asked the step-3 warning to make, and shows only while its Details toggle is down.</summary>
+    /// text would be the biggest block above the table. The one line is still the warning, so it keeps the calm / warn
+    /// pair (grey, orange with the estimate) and wraps rather than clip in a narrow window; the whole text keeps every
+    /// point the maintainer asked the step-3 warning to make, and shows only while its Details toggle is down.</summary>
     [Fact]
     public void The_stack_warning_is_one_line_of_essentials_and_Details_shows_the_whole_text()
     {
@@ -2001,7 +2003,8 @@ public class LiveFuncsSnapshotTests
     }
 
     /// <summary>(2) The section's fold, its summary and the header's buttons, as the view binds them: compiled bindings
-    /// only, the summary the D3 pair (calm, and the panel's orange when it warns), wrapping so a warning is never cut.</summary>
+    /// only, the summary the calm / warn pair (calm, and the panel's orange when it warns), wrapping so a warning is
+    /// never cut.</summary>
     [Fact]
     public void The_header_binds_the_fold_and_the_summary_and_the_section_folds_under_it()
     {
@@ -2060,8 +2063,8 @@ public class LiveFuncsSnapshotTests
 
     // ---- Clear choices: one clear for the three choice columns ----
 
-    /// <summary>The Parameters row's Clear empties the parameter and the stack choices, which share the snapshot buffer
-    /// (D4): its tooltip names both columns, and Clear choices' tooltip does not say each clear empties only its own.</summary>
+    /// <summary>The Parameters row's Clear empties the parameter and the stack choices, which share the snapshot buffer:
+    /// its tooltip names both columns, and Clear choices' tooltip does not say each clear empties only its own.</summary>
     [Fact]
     public void The_Parameters_Clear_has_a_tooltip_naming_both_columns_it_clears()
     {
@@ -2173,7 +2176,7 @@ public class LiveFuncsSnapshotTests
     }
 
     /// <summary>A guard: the two clears it joins keep their own scopes. Clear ticks drops the ticks alone; the
-    /// Parameters row's Clear drops the parameter and the stack choices, which fill the same buffer (D4).</summary>
+    /// Parameters row's Clear drops the parameter and the stack choices, which fill the same buffer.</summary>
     [Fact]
     public async Task Clear_ticks_and_the_Parameters_Clear_keep_their_own_scopes()
     {

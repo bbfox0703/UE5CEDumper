@@ -344,7 +344,7 @@ public class InputLayerFaultClassifierTests
         // The IL is kept because it is what makes this a decision. If Cut ever grows
         // a mutation whose undo is NOT a no-op, re-run the read and re-take it.
         //
-        // Re-read on Avalonia 12.1.3 (ninth review, R9-06): Cut / Copy / Paste now catch
+        // On Avalonia 12.1.3, Cut / Copy / Paste catch
         // ClipboardHelper.IsExpectedClipboardException (Timeout, OperationCanceled,
         // UnauthorizedAccess, COMException) themselves, log it and return. Cut still
         // snapshots undo before the await and returns before DeleteSelection, so the
@@ -461,10 +461,10 @@ public class InputLayerFaultClassifierTests
     public void GeneratedXamlFrameCountsAsOurCode_EvenUnderAClipboardStack()
     {
         // The hole this closes: rule 3 tests for the "UE5DumpUI." root namespace, but
-        // 47 types in the shipped assembly live outside it — 35 of them under
-        // CompiledAvaloniaXaml (the compiled-binding setters and trampolines, where a
-        // binding type mismatch raises InvalidCastException). Such a fault, arriving
-        // under a clipboard-topped stack, used to look like nobody's code.
+        // types in the shipped assembly live outside it — CompiledAvaloniaXaml among
+        // them (the compiled-binding setters and trampolines, where a binding type
+        // mismatch raises InvalidCastException). Such a fault, arriving under a
+        // clipboard-topped stack, would otherwise look like nobody's code.
         const string generated =
             "   at CompiledAvaloniaXaml.XamlIlTrampolines.Set_UE5DumpUI_ViewModels_X_Y(Object o, Object v)\n" +
             "   at Avalonia.Win32.ClipboardImpl.TryGetDataAsync()\n" +

@@ -265,7 +265,7 @@ public sealed class McpGrantsTests
     [Fact]
     public void EveryCallTheGrantLetsThrough_IsCounted_AndNothingElse()
     {
-        // [MCP-GRANT-USES-RELEASES] Found live (build 3714): uses counted an OFF and a reset that needed no grant.
+        // [MCP-GRANT-USES-RELEASES] uses must not count an OFF or a reset, which need no grant.
         var g = Decided();
         g.Grant(McpGrantKind.Movement, Ptrs(), out _);
         var fly = Req("""{"cmd":"fly_set","enable":true}""");
@@ -376,7 +376,7 @@ public sealed class McpGrantsTests
         Assert.Empty(g.List());
     }
 
-    // Review: a Blueprint function or custom event may be named with a space, '?' or '*' (UE's Blueprint name rules
+    // A Blueprint function or custom event may be named with a space, '?' or '*' (UE's Blueprint name rules
     // allow them), and the DLL compares full names ordinally, so none of them can stand for several functions.
     [Theory]
     [InlineData("//Game/Door/BP_Door/BP_Door_C.Open Door")]
@@ -596,8 +596,8 @@ public sealed class McpGrantsTests
     [InlineData("""{"cmd":"reset_field","class_name":"Pawn","field_name":"X","if_free":true}""", "force_field:Pawn::X")]
     public void AnOffOfWhatSomeoneElseHolds_IsRefusedNamingTheHolder_GrantOrNot(string request, string hold)
     {
-        // Found live (build 3714, mcp_client.py holdsmore): the refusal stopped naming the holder once the server, not
-        // the DLL's if_free, refused it. The DLL would refuse it anyway, so no grant is asked for.
+        // The refusal names the holder when the server, not the DLL's if_free, refuses it. The DLL would refuse it
+        // anyway, so no grant is asked for.
         var g = Decided();
         g.Grant(McpGrantKind.Toggles, Ptrs(), out _);
         var toggles = g.Admit(McpToolRole.GrantedWrite, McpGrantKind.Toggles, Ptrs(), out _);

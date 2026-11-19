@@ -16,15 +16,15 @@ namespace UE5DumpUI.Tests;
 /// Since [LWREFRESH-2026-08-21] a refresh copies values ONTO the surviving row
 /// (<see cref="LiveFieldValue.CopyLiveValuesFrom"/>), and since [P4-OTHER-INSTANCE] only for the
 /// same object with the same row layout. Some members can still change between two walks of that
-/// same object, and the copy did not take them:
+/// same object, and the copy must take them too:
 /// <list type="bullet">
 /// <item>the map/set element lists, and the stride / value offset that describe them;</item>
 /// <item>the container DATA addresses, which move when the container reallocates;</item>
 /// <item>a retargeted pointer's class address, which the exporters use as a walk override;</item>
-/// <item>and <c>ArrayElements</c>, which WAS copied, but is not observable and was assigned
-/// after <c>ArrayCount</c>, so the repaint either did not fire or fired over the old list.</item>
+/// <item>and <c>ArrayElements</c>, which is not observable: assigned after <c>ArrayCount</c>, the
+/// repaint either does not fire or fires over the old list.</item>
 /// </list>
-/// The container DRILL has the same staleness without any refresh: it built element addresses from
+/// The container DRILL has the same staleness hazard without any refresh: element addresses built from
 /// whatever the row held when the grid was last walked.
 /// Pure VM state — the stub dump service answers every walk, no running game needed.
 /// </summary>
@@ -176,7 +176,7 @@ public class LiveWalkerRefreshStalenessTests
     [Fact]
     public async Task Refresh_ArrayValuesChange_AtTheSameCount_Repaints()
     {
-        // ArrayElements WAS copied, but nothing raised: an unchanged count raises no notification.
+        // Copying ArrayElements is not enough: an unchanged count raises no notification.
         var dump = new StubDumpService();
         var vm = await OnA(dump, Walk(ArrayRow("0x500000", "1", "2", "3")));
         var row = vm.Fields[1];
@@ -192,8 +192,8 @@ public class LiveWalkerRefreshStalenessTests
     [Fact]
     public async Task Refresh_ArrayGrows_TheRepaintSeesTheNewList_NotTheOldOne()
     {
-        // ArrayCount used to be assigned first: its notification fired while the OLD list was
-        // still in place, and the later list assignment raised nothing.
+        // ArrayCount assigned first would fire its notification while the OLD list is still in
+        // place, and the later list assignment would raise nothing.
         var dump = new StubDumpService();
         var vm = await OnA(dump, Walk(ArrayRow("0x500000", "1", "2", "3")));
         var row = vm.Fields[1];
@@ -220,8 +220,8 @@ public class LiveWalkerRefreshStalenessTests
 
         await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields[1]);
 
-        // Element [2] at the LIVE buffer. Before the fix: current values next to addresses in the
-        // freed allocation, and an inline edit wrote into freed heap.
+        // Element [2] at the LIVE buffer. A stale address would put current values next to
+        // addresses in the freed allocation, and an inline edit would write into freed heap.
         var e2 = Assert.Single(vm.Fields, f => f.Name == "[2]");
         Assert.Equal("0x600008", e2.FieldAddress);
     }
@@ -231,8 +231,8 @@ public class LiveWalkerRefreshStalenessTests
     {
         // The trap recorded under [W1-CONTAINER-STALE]: stride and value offset are published only
         // when the map HAS elements (and this never-allocated empty map has no data address either).
-        // Fresh elements paired with the first walk's zero stride fall back to the client-side guess
-        // audit #5 V2 retired.
+        // Fresh elements paired with the first walk's zero stride would have no real geometry to be
+        // addressed by.
         var dump = new StubDumpService();
         var vm = await OnA(dump, Walk(MapRow(0, "")));
         var row = vm.Fields[1];
@@ -276,8 +276,8 @@ public class LiveWalkerRefreshStalenessTests
 
         Assert.Same(row, vm.Fields[0]);
         Assert.Equal("0xBBB000", row.PtrAddress);
-        // Both exporters pass this to walk_instance as the class override: the old one walked the
-        // car with the hero's class.
+        // Both exporters pass this to walk_instance as the class override: a stale one would walk
+        // the car with the hero's class.
         Assert.Equal("0x920000", row.PtrClassAddr);
     }
 
@@ -285,8 +285,8 @@ public class LiveWalkerRefreshStalenessTests
 
     /// <summary>[A3-PTR-NAV-REPAINT] A pointer that was null at the first walk gains a target on a
     /// same-object refresh: its name repaints (PtrName is observable), but the → button and the Ptr
-    /// copy column bind to IsPointerNavigation, which nothing raised, so the row could not be
-    /// drilled. The record put this in the same bundle as the IsContainerNavigable notifications.</summary>
+    /// copy column bind to IsPointerNavigation, which must be raised too, or the row cannot be
+    /// drilled. The same rule as the IsContainerNavigable notifications.</summary>
     [Fact]
     public async Task Refresh_PointerGainsATarget_ShowsTheDrillButton()
     {
@@ -406,7 +406,7 @@ public class LiveWalkerRefreshStalenessTests
         Assert.Contains("is empty now", vm.StatusText);
         Assert.Equal(crumbs, vm.Breadcrumbs.Count);
         Assert.Same(row, vm.Fields[1]);   // still on the parent grid
-        // The re-read used to blank this, and with it the row's Hex and +CE buttons.
+        // The re-read must not blank this, and with it the row's Hex and +CE buttons.
         Assert.Equal("0x100040", row.FieldAddress);
     }
 

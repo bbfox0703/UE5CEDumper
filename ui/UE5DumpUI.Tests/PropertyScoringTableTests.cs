@@ -47,9 +47,8 @@ public class PropertyScoringTableTests
     [InlineData("Friction",      "MovementSettings", PropertyCategory.Movement)]
     [InlineData("IsImmortal",    "BP_Player_C",      PropertyCategory.Utility)]
     [InlineData("bCanBeDamaged", "AActor",           PropertyCategory.Utility)]
-    // Build 678 — keywords added from 15-game cross-game analysis.
-    // Lock in category assignments so future bucket reshuffles don't
-    // silently regress.
+    // Keywords from a cross-game analysis. Lock in category assignments so
+    // future bucket reshuffles don't silently regress.
     [InlineData("DamageEffect",  "BP_Ability_C",     PropertyCategory.Combat)]
     [InlineData("AttackTarget",  "BP_Enemy_C",       PropertyCategory.Combat)]
     [InlineData("EffectRadius",  "BP_Spell_C",       PropertyCategory.Combat)]
@@ -58,8 +57,8 @@ public class PropertyScoringTableTests
     [InlineData("BuffDuration",  "BP_Effect_C",      PropertyCategory.Combat)]
     [InlineData("ItemCount",     "InventoryComponent", PropertyCategory.Resources)]
     [InlineData("ItemList",      "BP_Container_C",   PropertyCategory.Resources)]
-    // === L1 — Timing category (2026-07-13). BuffDuration above is the
-    // regression guard that the Timing-last tie-break keeps "Duration" in
+    // === Timing category. BuffDuration above is the
+    // guard that the Timing-last tie-break keeps "Duration" in
     // Combat; these confirm pure-timer names land in Timing. ===
     [InlineData("Cooldown",         "BP_Ability_C", PropertyCategory.Timing)]
     [InlineData("RemainingTime",    "BP_Spell_C",   PropertyCategory.Timing)]
@@ -78,9 +77,8 @@ public class PropertyScoringTableTests
     [Fact]
     public void Score_NoKeywordHits_ReturnsOther()
     {
-        // Sentinel must contain NO keyword token. (Was "ComponentTickInterval"
-        // pre-L1; "Interval" is now a Timing keyword, so a genuinely
-        // keyword-free name is used instead.)
+        // Sentinel must contain NO keyword token ("Interval", for one, is a
+        // Timing keyword), so a genuinely keyword-free name is used.
         var match = Make("MeshSectionIndex", "FrobnicatorComponent");
         var result = PropertyScoringTable.Score(match);
         Assert.Equal(PropertyCategory.Other, result.Category);
@@ -101,19 +99,19 @@ public class PropertyScoringTableTests
     [InlineData("UGameViewportClient",   true,  4)]
     [InlineData("BP_HUD_C",              true,  4)]
     [InlineData("FoobarComponent",       false, 0)]  // no match
-    // === Build 678 — class rules from 15-game cross-game analysis. ===
+    // === Class rules from a cross-game analysis. ===
     [InlineData("BP_Weapon_C",           false, 2)]  // Weapon class
     [InlineData("WeaponData",            false, 2)]  // Weapon-prefix struct
     [InlineData("BP_Projectile_C",       false, 2)]  // Projectile class
     [InlineData("BP_Battle_Manager_C",   false, 2)]  // Battle class
-    // === Build 686 — Phase 2 function-side analyzer surfaced Enemy. ===
+    // === Enemy classes. ===
     [InlineData("BP_Enemy_C",            false, 2)]  // Enemy class
     [InlineData("EnemyBase",             false, 2)]  // Enemy-prefix
-    // === 7-game cross-game analysis (2026-07-09): Health / Damage +2. ===
+    // === Health / Damage +2. ===
     [InlineData("BP_HealthComponent_C",  false, 2)]  // Health class
     [InlineData("UDamageDealer",         false, 2)]  // Damage class
     [InlineData("GrimAttributeSetHealth",false, 5)]  // AttributeSet(+3) + Health(+2) stack
-    // === L1 timer-home classes (2026-07-13): GameplayEffect / GameplayAbility
+    // === Timer-home classes: GameplayEffect / GameplayAbility
     // / WorldSettings +2. Clean tokens — verified none appear in the class
     // names of the locked rows above, so they add no new bonus there. ===
     [InlineData("BP_GameplayEffect_C",   false, 2)]  // GameplayEffect
@@ -127,14 +125,14 @@ public class PropertyScoringTableTests
         Assert.Equal(expectedBonus, bonus);
     }
 
-    // audit #5 AC9 — the table used to carry BOTH a "UCheatManager" row and a
-    // "CheatManager" row. UE reflection names carry no U/A prefix, so the first
-    // matched nothing a game emits; on the one input that COULD reach it, the two
-    // rows double-scored the same class at +8. NEGATIVE CONTROL: restore the
-    // "UCheatManager" row and the first case below goes back to 8.
+    // One "CheatManager" row, no "UCheatManager" row beside it. UE reflection names
+    // carry no U/A prefix, so a "UCheatManager" row matches nothing a game emits; on
+    // the one input that COULD reach it, the two rows would double-score the same
+    // class at +8. NEGATIVE CONTROL: add a "UCheatManager" row and the
+    // "UCheatManager" case below scores 8.
     [Theory]
     [InlineData("CheatManager")]           // the engine class, as GObjects reports it
-    [InlineData("UCheatManager")]          // C++-style name: matched twice before the fix
+    [InlineData("UCheatManager")]          // C++-style name: the one input both rows would match
     [InlineData("MyGameCheatManager")]     // game subclass — the case the row exists for
     [InlineData("BP_CheatManager_C")]      // Blueprint subclass
     public void PropertyBonus_CheatManager_ScoresOnceAtFour(string className)
@@ -145,10 +143,9 @@ public class PropertyScoringTableTests
     }
 
     // The scorer sees the CLASS NAME and nothing else, so no rule can be gated on
-    // the member name — four rule comments claimed a keyword gate that was never
-    // implemented (AC7/AC8). These pin the un-gated, stacking reality the class doc
-    // now states, including the case where the class name ALONE clears
-    // KeywordScoringTable.InterestingThreshold (5).
+    // the member name, whatever a rule's comment says. These pin the un-gated,
+    // stacking reality the class doc states, including the case where the class name
+    // ALONE clears KeywordScoringTable.InterestingThreshold (5).
     [Theory]
     [InlineData("PlayerController", 5)]    // PlayerController(+3) + Player(+2) — stacks
     [InlineData("PlayerCharacter",  5)]    // Player(+2) + Character(+3) = the threshold
@@ -199,13 +196,12 @@ public class PropertyScoringTableTests
     [Fact]
     public void Score_HealthOnAnimManPlayerC_NotPenalised_UserRegressionCase()
     {
-        // TowerOfMask regression: the game's player character is named
-        // "AnimMan_Player_C" — substring "Anim" used to apply a -2 penalty
-        // which made `Health @ AnimMan_Player_C` score Stats(5) - Anim(2)
-        // = 3, below the threshold of 4 — so it never surfaced in the
-        // Interesting Properties list. With surgical compound-name
-        // penalties on the Function side and zero penalty on the Property
-        // side, AnimMan_Player_C gets only the Player(+2) bonus.
+        // TowerOfMask's player character is named "AnimMan_Player_C". A
+        // substring "Anim" penalty of -2 would make `Health @ AnimMan_Player_C`
+        // score Stats(5) - Anim(2) = 3, below the threshold of 4 — so it would
+        // never surface in the Interesting Properties list. With surgical
+        // compound-name penalties on the Function side and zero penalty on the
+        // Property side, AnimMan_Player_C gets only the Player(+2) bonus.
         var match = Make("Health", "AnimMan_Player_C");
         var result = PropertyScoringTable.Score(match);
 
@@ -223,7 +219,7 @@ public class PropertyScoringTableTests
     [Fact]
     public void Score_ComponentName_DoesNotFalseMatchMP()
     {
-        // Build 609 lesson: "Component" contains "mp" as substring.
+        // "Component" contains "mp" as substring.
         // Token matching must NOT score this as a Stats hit.
         var match = Make("ComponentTickEnabled", "SomeComponent");
         var result = PropertyScoringTable.Score(match);
@@ -270,11 +266,11 @@ public class PropertyScoringTableTests
                                          // it's not a compound anim-framework name
     [InlineData("GameMode",         2)]
     [InlineData("FoobarComponent",  0)]
-    // === Build 686 — Phase 2 function-side data-driven adds. ===
+    // === Function-side data-driven classes. ===
     [InlineData("BP_Enemy_C",       2)]  // Enemy +2
     [InlineData("WeaponBase",       2)]  // Weapon +2 (mirror of property side)
     [InlineData("EnemyWeapon_C",    4)]  // both stack: Enemy(+2) + Weapon(+2)
-    // === 7-game cross-game analysis (2026-07-09): Health / Damage +2. ===
+    // === Health / Damage +2. ===
     [InlineData("HealthComponent",  2)]  // Health +2
     [InlineData("BP_DamageZone_C",  2)]  // Damage +2
     public void FunctionBonus_PreservesExistingContract(string className, int expected)
@@ -283,7 +279,7 @@ public class PropertyScoringTableTests
     }
 
     // ==================================================================
-    // Structural signals (P2a): GAS attribute + type prior + stat pairing.
+    // Structural signals: GAS attribute + type prior + stat pairing.
     // These use only PropType + StructType (already on PropertySearchMatch),
     // so they run with no new wire data.
     // ==================================================================
@@ -302,7 +298,7 @@ public class PropertyScoringTableTests
             PropertyFlags     = propertyFlags,
         };
 
-    // UE EPropertyFlags bits used by the P2b gating tests.
+    // UE EPropertyFlags bits used by the flag-gating tests.
     private const ulong CPF_BlueprintVisible = 0x0000000000000004UL;
     private const ulong CPF_SaveGame         = 0x0000000001000000UL;
     private const ulong CPF_EditorOnly       = 0x0000000800000000UL;
@@ -444,10 +440,10 @@ public class PropertyScoringTableTests
     public void Score_NumericValueType_StaysNeutral_RegressionGuard()
     {
         // The exact-score contract tests above rely on FloatProperty staying
-        // neutral (structuralBonus 0) so P2a doesn't shift historical scores.
+        // neutral (structuralBonus 0) so the structural signals don't shift them.
         var r = PropertyScoringTable.Score(Make("Health", "AnimMan_Player_C")); // FloatProperty
         Assert.Equal(0, r.StructuralBonus);
-        Assert.Equal(7, r.FinalScore); // Stats(5) + Player(2) — unchanged by P2a
+        Assert.Equal(7, r.FinalScore); // Stats(5) + Player(2) — no structural bonus
     }
 
     [Theory]
@@ -520,17 +516,17 @@ public class PropertyScoringTableTests
     }
 
     // ==================================================================
-    // Audit #5 Z3 — the fetch vocabulary (SeedQueries) and the score
-    // vocabulary (the *Keywords tables) must agree.
+    // The fetch vocabulary (SeedQueries) and the score vocabulary (the
+    // *Keywords tables) must agree.
     //
     // A property is only ever scored if round 1 fetched it, and round 1
     // fetches on SeedQueries alone. So a scored keyword that no seed can
     // reach is a dead scoring arm — the panel can never show the field
-    // however well it would rank. 58 of 123 keywords were in that state.
+    // however well it would rank.
     //
-    // The drift was procedural: the "Add a keyword" recipe at the top of
-    // PropertyScoringTable never mentions SeedQueries, which sits 460 lines
-    // below it. These tests make it structural instead.
+    // PropertyScoringTable's "Add a keyword" recipe never mentions
+    // SeedQueries, which sits far below it, so a keyword added by the recipe
+    // alone is never fetched. These tests make the agreement structural.
     // ==================================================================
 
     /// <summary>Every scored keyword must be reachable by some seed, or be
@@ -616,10 +612,9 @@ public class PropertyScoringTableTests
     /// TimeStamp / CastTime before ever reaching them. The same holds for
     /// "Damaged" beside "Damage" and "TimeDilation" beside "Time".
     ///
-    /// This is recorded because the check WAS written that way first and flagged
-    /// all three as waste; acting on it would have deleted three working
-    /// reservations to save work that the cap makes nearly free anyway (the
-    /// inner loop tests the cap before the substring search).
+    /// A check that flags such pairs as waste would delete working reservations
+    /// to save work that the cap makes nearly free anyway (the inner loop tests
+    /// the cap before the substring search).
     /// </summary>
     [Fact]
     public void SeedQueries_ContainNoExactDuplicates()

@@ -8,10 +8,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Log retention rules that had no test at all before audit #4 — which is how a
-/// count-based sweep came to rank folders by the one signal its own sibling
-/// documents as unusable (B37), and how an 8 MB "cap" turned out to be a kill
-/// switch rather than a rotation point (B31).
+/// Log retention rules: folders expire by AGE alone, and the 8 MB per-file cap is a
+/// rotation point, never a kill switch that silently ends the log mid-session.
 /// </summary>
 public class LoggingServiceRetentionTests : IDisposable
 {
@@ -28,17 +26,15 @@ public class LoggingServiceRetentionTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
-    // ----- AF9: AGE is the only folder-retention rule --------------------------
+    // ----- AGE is the only folder-retention rule --------------------------------
     //
-    // These replace the five B37 tests, which pinned the RANKING of a count-based cap
-    // (`SelectFoldersToEvict`, keep the newest 20). Audit #4 fixed that ranking and the
-    // tests were right about it; audit #5 found the cap itself contradicted CLAUDE.md's
-    // Log-output rule, had nothing to guard against (a folder is named after the GAME,
-    // so the count is "distinct games played"), and deleted RECURSIVELY — taking the
-    // DLL's five log categories with it, which Sein.cpp's age-only sweep had kept.
+    // No count-based cap: it contradicts CLAUDE.md's Log-output rule, has nothing to
+    // guard against (a folder is named after the GAME, so the count is "distinct games
+    // played"), and an eviction deletes RECURSIVELY — taking the DLL's five log
+    // categories with it, which Sein.cpp's age-only sweep keeps.
     //
     // Tested through the real service against real directories rather than through a
-    // pure helper, because what has to hold now is an ABSENCE — and the honest way to
+    // pure helper, because what has to hold is an ABSENCE — and the honest way to
     // pin "nothing deletes this" is to put a folder on disk and check it survives.
 
     private void MakeFolder(string name, int daysOld)
@@ -53,9 +49,9 @@ public class LoggingServiceRetentionTests : IDisposable
     [Fact]
     public void Far_more_than_twenty_recent_game_folders_all_survive()
     {
-        // The negative control for the removal: 30 games played inside the 21-day
-        // window. Under the old cap of 20, ten of these were deleted — recursively,
-        // including the DLL's own logs — and reported at Debug only.
+        // The negative control for a count cap: 30 games played inside the 21-day
+        // window. A cap of 20 would delete ten of these — recursively, including the
+        // DLL's own logs.
         for (int i = 0; i < 30; i++) MakeFolder($"Game{i:D2}", daysOld: 1);
 
         using (var log = new LoggingService(_dir))
@@ -84,7 +80,7 @@ public class LoggingServiceRetentionTests : IDisposable
     [Fact]
     public void The_UI_own_folder_survives_even_when_it_is_stale()
     {
-        // Carried over from B37: the UI folder is the one a user is asked to send when
+        // The UI folder is the one a user is asked to send when
         // something goes wrong, and the age sweep exempts it by identity.
         MakeFolder(UE5DumpUI.Constants.LogSubfolderName,
                    daysOld: UE5DumpUI.Constants.LogMaxAgeDays + 100);
@@ -95,7 +91,7 @@ public class LoggingServiceRetentionTests : IDisposable
             Path.Combine(_dir, UE5DumpUI.Constants.LogSubfolderName)));
     }
 
-    // ----- B31: the size cap must ROLL, not stop writing -----------------------
+    // ----- the size cap must ROLL, not stop writing ----------------------------
 
     [Fact]
     public void Crossing_the_size_cap_rolls_instead_of_silently_dropping_events()
@@ -134,9 +130,9 @@ public class LoggingServiceRetentionTests : IDisposable
     [Fact]
     public void A_logged_message_is_written_verbatim_braces_included()
     {
-        // [PATH-SERILOG-BRACES] Info/Warn/Error/Debug passed the text to Serilog as a message TEMPLATE, so a doubled
-        // brace in a folder name was logged single ("A{{B}}" -> "A{B}"), and the leftover finder, which recovers
-        // deploy paths from this log, then looked for a folder that does not exist.
+        // [PATH-SERILOG-BRACES] Info/Warn/Error/Debug must not pass the text to Serilog as a message TEMPLATE: a doubled
+        // brace in a folder name would be logged single ("A{{B}}" -> "A{B}"), and the leftover finder, which recovers
+        // deploy paths from this log, would look for a folder that does not exist.
         string[] texts =
         {
             @"Deployed version.dll to G: E:\Games\A{{B}}\Binaries\Win64\version.dll",

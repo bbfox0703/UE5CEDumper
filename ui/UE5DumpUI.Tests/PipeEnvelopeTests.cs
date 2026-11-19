@@ -5,14 +5,15 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [STALLDEFAULT-2026-08-26]. The DLL used to stamp
-/// <c>game_thread_stalled: false</c> on every success envelope by computing
-/// <c>!IsGameThreadResponsive()</c> — a GATE predicate that maps "no PE hook yet, so
-/// nothing was measured" to "responsive". So the wire asserted a healthy game thread
-/// on a fresh connection, which is exactly when nothing has been measured.
+/// [STALLDEFAULT-2026-08-26]. The DLL withholds <c>game_thread_stalled</c> when it
+/// cannot tell. <c>!IsGameThreadResponsive()</c> is a GATE predicate that maps "no PE
+/// hook yet, so nothing was measured" to "responsive", so stamping
+/// <c>game_thread_stalled: false</c> from it on every success envelope would assert a
+/// healthy game thread on a fresh connection, which is exactly when nothing has been
+/// measured.
 ///
-/// <para>It now withholds the key when it cannot tell. That makes ABSENCE meaningful,
-/// and this is where the meaning is decided.</para>
+/// <para>Withholding the key makes ABSENCE meaningful, and this is where the meaning
+/// is decided.</para>
 /// </summary>
 public class PipeEnvelopeTests
 {
@@ -40,8 +41,8 @@ public class PipeEnvelopeTests
     }
 
     /// <summary>
-    /// ⭐ The withdrawal, and the reason the DLL half and the client half had to ship in
-    /// one commit. The hook can go back DOWN mid-session (Frieren's validation-failure
+    /// ⭐ The withdrawal, and the reason the DLL half and the client half must change
+    /// together. The hook can go back DOWN mid-session (Frieren's validation-failure
     /// path calls <c>Stark::RemoveHook()</c>), which returns liveness to unknown. If a
     /// withheld key were simply ignored, a banner raised by a real measured stall would
     /// stay up for the rest of the session.

@@ -5,7 +5,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// The live "what will this actually match" preview shown after a Between / SPC
-/// absolute bound (build 1702). Verifies the user's driving example — Between
+/// absolute bound. Verifies the headline example — Between
 /// 11.5~13.2 under Round → integer fields match <c>12~13</c> while float fields
 /// keep <c>11.5~13.2</c> — plus the per-mode coercion, scope adaptivity, the
 /// whole-bound collapse, and the unparseable/empty fall-through to "".

@@ -37,9 +37,9 @@ public class SnapshotViewModelTests : IDisposable
     private MockLoggingService _lastLog = new();
 
     // `got` is object? (not int) so the pre-store asserts — which report a bool?/string —
-    // can route through the same diagnosis. Putting Diag ONLY on the persisted-count assert
-    // was not enough: the 2026-07-22 CI failure surfaced 8 lines earlier, at the first
-    // stub-recorded flag, and printed nothing.
+    // can route through the same diagnosis. Diag ONLY on the persisted-count assert is not
+    // enough: a failure can surface earlier, at the first stub-recorded flag, and print
+    // nothing.
     private string Diag(string what, object? got, SnapshotViewModel vm)
     {
         // ALL levels, not just WARN/ERROR: the INFO lines trace how far the capture got
@@ -261,12 +261,11 @@ public class SnapshotViewModelTests : IDisposable
         }
     }
 
-    // Regression for audit #3 H1: a pipe disconnect mid-capture used to be swallowed by
-    // the producer's unfiltered catch, so the half-captured snapshot was finalised
-    // is_usable=1 (the column default) and read downstream as a complete dataset. The
-    // fix filters that catch on lct.IsCancellationRequested, so a bare disconnect-OCE
-    // now faults the producer, CompleteSnapshotAsync is skipped, and the partial is
-    // deleted — never left usable.
+    // A pipe disconnect mid-capture must not be swallowed by the producer's catch: the
+    // half-captured snapshot would be finalised is_usable=1 (the column default) and read
+    // downstream as a complete dataset. The catch filters on lct.IsCancellationRequested,
+    // so a bare disconnect-OCE faults the producer, CompleteSnapshotAsync is skipped, and
+    // the partial is deleted — never left usable.
     [Fact]
     public async Task Capture_DisconnectMidStream_DoesNotSaveUsablePartial()
     {
@@ -282,7 +281,7 @@ public class SnapshotViewModelTests : IDisposable
 
         Assert.False(vm.IsCapturing);
         // No snapshot may survive as usable — the truncated partial is deleted, not
-        // finalised. (Before the fix this list held one usable, truncated snapshot.)
+        // finalised.
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
         // The list hides a capture in progress, so the delete itself shows only in the tables.
         Assert.Equal((0L, 0L), await RawRowsAsync(ct));
@@ -291,20 +290,18 @@ public class SnapshotViewModelTests : IDisposable
     // A disconnect BEFORE any snapshot row is created (bare OCE from BeginSnapshotAsync,
     // token uncancelled) — so there's no partial to delete/VACUUM and the auto-loop stops
     // deterministically without depending on SQLite reclaim timing (which is fast locally
-    // but slow under CI lock contention — that timing dependency flaked the earlier
-    // mid-stream variant).
+    // but slow under CI lock contention — a mid-stream variant flakes on that timing).
     private sealed class DisconnectOnBeginStub : StubDumpService
     {
         public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
             => Task.FromException<int>(new OperationCanceledException());
     }
 
-    // Regression for audit #3 M7: a pipe disconnect during an AUTO-snapshot capture used
-    // to be reported as CaptureOutcome.Cancelled, which the loop's `case Cancelled: return`
-    // handled by exiting WITHOUT StopAutoSnapshot() — leaving AutoSnapshotEnabled stuck
-    // true, _autoCts leaked, and manual capture disabled (wedged). A disconnect is now
-    // reported as Failed (our token isn't cancelled), so the loop stops cleanly via
-    // `case Failed`.
+    // A pipe disconnect during an AUTO-snapshot capture is reported as Failed (our token
+    // isn't cancelled), so the loop stops cleanly via `case Failed`. Reported as
+    // CaptureOutcome.Cancelled, the loop's `case Cancelled: return` would exit WITHOUT
+    // StopAutoSnapshot() — leaving AutoSnapshotEnabled stuck true, _autoCts leaked, and
+    // manual capture disabled (wedged).
     [Fact]
     public async Task AutoSnapshot_DisconnectMidCapture_StopsLoopWithoutWedge()
     {
@@ -331,10 +328,9 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Equal((0L, 0L), await RawRowsAsync(ct));
     }
 
-    // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown, and
-    // the loop left on OperationCanceledException without touching AutoStatusText, so the line
-    // stayed frozen on "Auto: next snapshot in Ns" -- a capture that would never come. (Measured
-    // on build 3566: frozen at 28 s, no capture 30 s later.)
+    // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown; a
+    // loop that left on OperationCanceledException without touching AutoStatusText would leave
+    // the line frozen on "Auto: next snapshot in Ns" -- a capture that will never come.
     [Fact]
     public async Task AutoSnapshot_StoppedByHand_DoesNotKeepPromisingTheNextSnapshot()
     {
@@ -389,8 +385,8 @@ public class SnapshotViewModelTests : IDisposable
         // These four are written by CaptureStub.SnapshotChunkAsync, so a NULL here means the
         // first chunk fetch never happened — the capture threw between BeginSnapshotAsync
         // (proven to have run by LastDataType above) and the producer's first fetch, i.e. in
-        // CreateSnapshotAsync / BeginCaptureSessionAsync. That is the shape the CI-only flake
-        // took on 2026-07-22, so these carry Diag() too — not just the store assert below.
+        // CreateSnapshotAsync / BeginCaptureSessionAsync. That is the shape a CI-only flake
+        // takes, so these carry Diag() too — not just the store assert below.
         Assert.True(dump.LastGameOnly, Diag("chunk fetch never ran (LastGameOnly)", dump.LastGameOnly, vm));
         Assert.False(dump.LastNativeC, Diag("Native-C default OFF (P3)", dump.LastNativeC, vm));
         Assert.True(dump.LastAutoSkipNoise, Diag("auto-skip noise default ON", dump.LastAutoSkipNoise, vm));
@@ -403,7 +399,7 @@ public class SnapshotViewModelTests : IDisposable
         var saved = list[0];
         Assert.Equal("run1", saved.Label);
         Assert.Equal("PEHASH", saved.PeHash);
-        // GameSessionId = PeHash-ProcessCreationTime (build 1227+); the per-launch
+        // GameSessionId = PeHash-ProcessCreationTime; the per-launch
         // process creation time replaces ModuleBase, which is constant on no-ASLR games.
         Assert.Equal("PEHASH-01D9ABCDEF012345", saved.GameSessionId);
         Assert.Equal(504, saved.UeVersion);
@@ -416,9 +412,9 @@ public class SnapshotViewModelTests : IDisposable
     }
 
     // [W1-SNAP-FAULT] The first chunk comes back with a DLL scan worker FAULT: part of its window
-    // was never walked, although Scanned still covers all of it. Before the fix that chunk was
-    // stored and the snapshot finalised as complete and USABLE -- no warning badge, and
-    // auto-selected as a Diff / Group / SPC / Pivot source.
+    // was never walked, although Scanned still covers all of it. Stored as is, the snapshot would
+    // be finalised as complete and USABLE -- no warning badge, and auto-selected as a Diff /
+    // Group / SPC / Pivot source.
     private sealed class FaultingCaptureStub : StubDumpService
     {
         public int ChunkCalls;
@@ -508,7 +504,7 @@ public class SnapshotViewModelTests : IDisposable
         {
             SelectedScope = "NumericNoByte",
             GameOnly = true,
-            IncludeNativeFields = true,   // P3 opt-in
+            IncludeNativeFields = true,   // opt-in
             Label = "native-run",
         };
         vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
@@ -673,8 +669,7 @@ public class SnapshotViewModelTests : IDisposable
     }
 
     // [R7-S8] The same poll can find the DRIVE low after that last write: nothing was cut short, so the snapshot is not
-    // a partial -- but the user must still hear it, because the next capture will be refused. Before R7-D-06 the line
-    // said "low disk ... kept partial"; after it, nothing at all.
+    // a partial -- but the user must still hear it, because the next capture will be refused.
     [Fact]
     public async Task Capture_ThatFetchedEveryChunk_StillWarnsWhenTheDriveRanLow()
     {
@@ -1050,7 +1045,7 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Null(navAddr);
     }
 
-    // ---- Snapshot Group Match (S3 UI) ----
+    // ---- Snapshot Group Match (UI) ----
 
     private static SnapshotCapturedObject GMakeObj(int idx, string cls,
         params (string n, string t, int off, string h)[] fields)
@@ -1115,7 +1110,7 @@ public class SnapshotViewModelTests : IDisposable
         await pending!;   // observe any fault it captured
     }
 
-    // ---- [W1-GROUP-DENYLIST] group mode applies the Diff denylist -- and now says so ----
+    // ---- [W1-GROUP-DENYLIST] group mode applies the Diff denylist -- and says so ----
 
     private async Task<SnapshotViewModel> GroupVmAsync(bool withDenylist, CancellationToken ct)
     {
@@ -1185,13 +1180,11 @@ public class SnapshotViewModelTests : IDisposable
     /// hardwired true; "no notice appeared" is satisfied by one hardwired false. Only the PAIR
     /// discriminates, and only if both arms return a real candidate so the difference between
     /// them is the sentence and nothing else. Arm C then ties the sentence to the truth: the
-    /// number it prints must equal the number of leaves actually kept. That is the failure this
-    /// project keeps finding — <c>[SOLIDEHELD-2026-08-21]</c> reported "held on 145 instances"
-    /// about a field it had not written, <c>[CADENCEGAP-2026-08-22]</c> reported a period twice
-    /// the truth beside a fire count that contradicted it — the report and the reality computed
-    /// by different code paths.</para>
+    /// number it prints must equal the number of leaves actually kept. That is the hazard
+    /// <c>[SOLIDEHELD-2026-08-21]</c> and <c>[CADENCEGAP-2026-08-22]</c> name — the report and the
+    /// reality computed by different code paths.</para>
     ///
-    /// <para>Arm D is the checklist's step 4: raising Value Search's per-slot cap must not move
+    /// <para>Arm D: raising Value Search's per-slot cap must not move
     /// the snapshot's. It is asserted structurally rather than by driving two view-models,
     /// because the guarantee IS structural — <c>SnapshotStore</c> calls
     /// <c>GroupMatch.Run</c> without a cap argument, so the default
@@ -1199,9 +1192,9 @@ public class SnapshotViewModelTests : IDisposable
     /// argument at either call site and this fails.</para>
     ///
     /// <para>⚠ What it does NOT cover: that the sentence is legible on screen. It is a VM
-    /// string here. <c>SnapshotPanel.axaml</c> renders it in a <c>WrapPanel</c> and until
-    /// 2026-08-22 gave it neither <c>TextWrapping</c> nor a <c>ToolTip</c>, so the notice about
-    /// truncation was itself truncated.</para>
+    /// string here. <c>SnapshotPanel.axaml</c> renders it in a <c>WrapPanel</c>, and without
+    /// <c>TextWrapping</c> or a <c>ToolTip</c> there the notice about truncation would itself
+    /// be truncated.</para>
     /// </summary>
     [Theory]
     [InlineData(0, false)]   // exactly at the cap  -> no notice   (the control)
@@ -1261,7 +1254,7 @@ public class SnapshotViewModelTests : IDisposable
     }
 
     /// <summary>
-    /// Step 4 of the checklist: the snapshot cap is fixed and does NOT follow Value Search's
+    /// The snapshot cap is fixed and does NOT follow Value Search's
     /// setting. Structural, because the guarantee is structural — nothing can reach the store
     /// to change it.
     /// </summary>

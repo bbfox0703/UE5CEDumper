@@ -373,7 +373,7 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
-    // ---- cross-game identity gate (build 2538) ----
+    // ---- cross-game identity gate ----
     //
     // The live match joins on bare class NAMES, and every UE title has Object / Actor /
     // Pawn / PlayerController. So loading game A's dump against game B does not fail — it
@@ -569,9 +569,9 @@ public class DumpExplorerTests
     }
 
     // ==================================================================
-    // [EXTPR-539-540-2026-10-02] The Explorer reads what Dump All writes since builds 3620-3622: struct lines,
-    // enum lines and each function's params. A struct and a class can share a short name, so the live match
-    // keys each kind apart (PR 539 put all three in one dictionary, last write wins); an enumerator has its own
+    // [EXTPR-539-540-2026-10-02] The Explorer reads what Dump All writes: struct lines, enum lines and each
+    // function's params. A struct and a class can share a short name, so the live match keys each kind apart
+    // (one dictionary for all three would let the last write win); an enumerator has its own
     // label; the category picker reaches every kind; Find Instances is for classes only.
     // ==================================================================
 
@@ -710,7 +710,7 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-40: the live match indexes class, struct and enum objects
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The live match indexes class, struct and enum objects
     /// (<c>LiveTypeKind</c>), so the status shown while that index is built names all three kinds, as the final status
     /// and the Re-check tooltip do.</summary>
     [Fact]
@@ -796,7 +796,7 @@ public class DumpExplorerTests
         Assert.DoesNotContain("Instance Finder", tip, StringComparison.Ordinal);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-37: 🔍 Instances hands the owning class to
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] 🔍 Instances hands the owning class to
     /// <see cref="InstanceFinderViewModel.SearchForClassAsync"/>, a class-name match that keeps class default objects and
     /// templates, so neither its tooltip nor the panel's note may promise a live instance of the class.</summary>
     [Fact]
@@ -833,7 +833,7 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
-    // ---- review of ea9c94fa ----
+    // ---- the reader on what Dump All writes ----
 
     [Fact]
     public async Task Reader_TheSummarysEnumFlags_ReachTheModel_AndNamelessEnumsSaySo()
@@ -888,7 +888,7 @@ public class DumpExplorerTests
             Assert.Equal("StructProperty<HitResult> ()", trace.TypeInfo);
             Assert.Contains("hitresult", trace.Haystack);
             Assert.Equal("ObjectProperty:Actor ()", model.Entries.Single(e => e.Name == "Owner").TypeInfo);
-            // The bool return without detail reads as before.
+            // A bool return, which carries no detail, keeps its plain form.
             Assert.StartsWith("BoolProperty (", model.Entries.Single(e => e.Name == "TryOpen").TypeInfo);
         }
         finally { File.Delete(path); }
@@ -897,7 +897,7 @@ public class DumpExplorerTests
     [Fact]
     public async Task Reader_DumpAllsObjectIndex_IsRecognised_NotReadAsAClassDump()
     {
-        // D4 writes <name>.objects.jsonl beside the class dump, and the open dialog's *.jsonl lists both.
+        // Dump All writes <name>.objects.jsonl beside the class dump, and the open dialog's *.jsonl lists both.
         var path = await WriteTempAsync(
             "{\"kind\":\"meta\",\"file\":\"objects\",\"module\":\"Game.exe\",\"class_dump\":\"game-dump.jsonl\"}\n" +
             "{\"kind\":\"object\",\"index\":0,\"addr\":\"0x1\",\"name\":\"A\",\"class\":\"Class\",\"outer\":\"\",\"path\":\"/Script/Game.A\"}\n" +
@@ -919,7 +919,7 @@ public class DumpExplorerTests
             await vm.LoadFromPathAsync(path);
 
             Assert.False(vm.HasFile);
-            // Live check, build 3625: the previous file's header and group counts stayed above the empty grids.
+            // The previous file's header and group counts must not stay above the empty grids.
             Assert.DoesNotContain("classes", vm.HeaderText);
             Assert.DoesNotContain("6", vm.UnmatchedHeader);
             Assert.Empty(vm.Unmatched);

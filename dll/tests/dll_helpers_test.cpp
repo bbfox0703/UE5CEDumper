@@ -5,40 +5,40 @@
 // helpers in Renge.h (TryStrToAddr) and Scharf.h (IsAlignmentSuspicious).
 // Same EXPECT-style harness as utf8_helpers_test.cpp; exit code = failure count.
 //
-// Why a separate exe? Both helpers used to be inlined into hot-path code
-// (Fern.cpp pipe handler and Ubel.cpp WalkInstance) where they couldn't be
-// exercised without a real game process. Extracting them to small headers
-// makes regressions catchable at build time.
+// Why a separate exe? The helpers live in small headers rather than inline in
+// hot-path code (Fern.cpp pipe handler and Ubel.cpp WalkInstance), so they can
+// be exercised without a real game process and a regression is catchable at
+// build time.
 //
-// Real-world cases driving these tests come from cross-game logs:
-//   - Renge: Squirrel With A Gun sent {"addr":"0x[ply_base]"} (unsubstituted
-//     CE placeholder), throwing std::invalid_argument and crashing the pipe
-//     command. TryStrToAddr now returns false on any non-hex input.
-//   - Scharf: Meltopia (UE 5.0.5) emitted ~75 "Misaligned field"
-//     warnings per session for legitimate uint8 EnumProperty / FName layouts.
-//     RequiredAlignment now consults ElemSize and CasePreservingName mode.
+// Real-world shapes behind these tests:
+//   - Renge: a client can send {"addr":"0x[ply_base]"} (an unsubstituted CE
+//     placeholder); a throwing parse would raise std::invalid_argument and crash
+//     the pipe command, so TryStrToAddr returns false on any non-hex input.
+//   - Scharf: legitimate uint8 EnumProperty / FName layouts (Meltopia, UE 5.0.5,
+//     has them) must not raise "Misaligned field" warnings, so
+//     RequiredAlignment consults ElemSize and CasePreservingName mode.
 // ============================================================
 
 #include "../src/Himmel.h"  // AobResolve + IsCeReplayableAob + the shipped pattern tables
 #include "../src/Renge.h"
 #include "../src/Scharf.h"
 #include "../src/Radar.h"
-#include "../src/Macht.h"   // ComputeSetElementStride / ComputeMapValueOffset (V1a geometry)
+#include "../src/Macht.h"   // ComputeSetElementStride / ComputeMapValueOffset (TSet / TMap geometry)
 #include "../src/Denken.h"
 #include "../src/Lineal.h"  // UE5.7+ packed FUObjectItem reconstruction (Reconstruct/Encode)
 #include "../src/Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
 #include "../src/GraphPath.h"   // Pure BFS shortest-path core ("Locate in GWorld")
-#include "../src/VersionNeedleScan.h"  // Gated UE-version needle sweep (audit #5 G2)
+#include "../src/VersionNeedleScan.h"  // Gated UE-version needle sweep
 #include "../src/Solitar.h"     // GodMode FBoolProperty bit write (ApplyBoolBit, header-inline)
 #include "../src/Grimoire.h"    // DynOff FFieldClass::Name probe (UE5.8 virtual-dtor shift)
 #include "../src/Solide.h"      // Force-field / stealth-meter matcher (MatchStealthField, header-inline)
 #include "../src/Orden.h"       // Multi-value group scan: source-agnostic SDR matcher (MatchGroup)
-#include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
-#include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
+#include "../src/Ubel.h"        // Native-C scan: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
+#include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here
 #include "../src/Aura.h"
 #include "../src/Utf8Helpers.h"   // EncodeUtf16 / IsImplausibleWideName: the decodes Aura::IsCleanFName is handed
 #include "../src/Dunste.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
-#include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
+#include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
@@ -138,7 +138,7 @@ struct FakeChain {
     }
 };
 
-// StaticMeshActor -> Actor -> Object, mirroring the reported repro.
+// StaticMeshActor -> Actor -> Object, a real game's chain.
 static FakeChain MakeActorChain() {
     FakeChain c;
     c.declared = {
@@ -176,7 +176,7 @@ static void Test_Ubel_ResolveFunctionInChain() {
     EXPECT("grandparent function resolves", Resolve(c, "ExecuteUbergraph", hit));
     EXPECT_EQ_U64("...to the grandparent's copy", hit.address, 0x30 * 0x100 + 1);
 
-    // A genuinely absent name must still fail — otherwise the fix would mask real errors.
+    // A genuinely absent name must still fail — otherwise climbing the chain would mask real errors.
     EXPECT("absent function still fails", !Resolve(c, "NoSuchFunction", hit));
 
     int levels = 0;
@@ -253,10 +253,10 @@ static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
 
 // ----- Aura::ChoosePreviewSource --------------------------------------------
 // [CDOSCOPE-2026-08-20] A Property Search row's Preview and the Force/Freeze ACTIONS on
-// that same row disagreed about what counts as "an instance of this class": the preview
-// wanted an EXACT class match and fell back to `(CDO default)`, while the actions hit the
-// class AND every subclass. So a row could say "nothing is live" and the action on it then
-// report `on 2 instance(s)` — measured on DumperTest with NiagaraComponent::WarmupTickCount.
+// that same row must agree about what counts as "an instance of this class": the actions
+// hit the class AND every subclass, so a preview that wanted an EXACT class match and fell
+// back to `(CDO default)` could say "nothing is live" while the action on the same row
+// reports `on 2 instance(s)`.
 //
 // The ordering rule lives in Aura.h so it can be compiled here; no test target builds
 // Aura.cpp, so a rule left in the walk itself would be unpinnable.
@@ -266,7 +266,7 @@ static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
 // The [TEXTEMPTY-2026-09-06] guard: a decode must account for the length its own FString header
 // claimed. See the header comment in Ubel.h for the derivation of the chars*4 + 8 bound.
 static void Test_Ubel_DecodedLengthMatchesFString() {
-    // ⭐ THE MEASURED DEFECT. FTextData+0x40 parsed as {num=4284}; a zero-filled heap page decoded
+    // ⭐ THE GARBAGE CASE. FTextData+0x40 parsed as {num=4284}; a zero-filled heap page decodes
     // to ONE character because EncodeUtf16 breaks at the first null unit. 1 vs 4283 claimed.
     EXPECT("the measured garbage is rejected (1 char vs 4283 claimed)",
            !Ubel::DecodedLengthMatchesFString("\xE0\xA3\xB3", 4284));
@@ -345,10 +345,10 @@ static void Test_Aura_PreviewSourceSuffix() {
 // ----- Voll::DecideStart ------------------------------------------------------
 // [RELAUNCHPIPE-2026-08-19] Who should own the pipe at startup.
 //
-// The old guard asked one question — does the pipe answer? — and skipped FOREVER on a yes.
-// On a self-relaunching title that is a race against the DYING first process: measured on
-// OCTOPATH TRAVELER 3 runs out of 3, the survivor ended up with the DLL mapped, the game
-// running, and no server at all. These pin the three-way decision that replaced it.
+// A guard that asks one question — does the pipe answer? — and skips FOREVER on a yes loses,
+// on a self-relaunching title (OCTOPATH TRAVELER is one), a race against the DYING first
+// process: the survivor ends up with the DLL mapped, the game running, and no server at all.
+// These pin the three-way decision instead.
 
 static void Test_Voll_DecideStart() {
     using SA = Voll::StartAction;
@@ -364,7 +364,7 @@ static void Test_Voll_DecideStart() {
     // Already ours: CE Lua can call the export by hand after auto-start already ran.
     EXPECT("our own pipe is a no-op", Voll::DecideStart(true, self, self) == SA::AlreadyOurs);
 
-    // Someone else's — defer, but the caller now WATCHES rather than giving up.
+    // Someone else's — defer, but the caller WATCHES rather than giving up.
     EXPECT("another process defers", Voll::DecideStart(true, 1234, self) == SA::DeferAndWatch);
 
     // ⚠ Unknown holder DEFERS, it does not start. Competing would put two servers on one
@@ -406,7 +406,7 @@ static void Test_Voll_ProbeFoundServer() {
 
 static void Test_Voll_WaitSaysServed() {
     EXPECT("an instance listens: served", Voll::WaitSaysServed(true, 0));
-    // A watcher that read busy as gone would start a second server beside a busy one: the bug the probe fix closed.
+    // A watcher that read busy as gone would start a second server beside a busy one.
     EXPECT("every instance busy (ERROR_SEM_TIMEOUT): served", Voll::WaitSaysServed(false, ERROR_SEM_TIMEOUT));
     EXPECT("ERROR_PIPE_BUSY: served", Voll::WaitSaysServed(false, ERROR_PIPE_BUSY));
     EXPECT("ERROR_ACCESS_DENIED: the name exists", Voll::WaitSaysServed(false, ERROR_ACCESS_DENIED));
@@ -416,8 +416,8 @@ static void Test_Voll_WaitSaysServed() {
 }
 
 static void Test_Voll_ExtractCmdName() {
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C. Python's json.dumps writes `"cmd": "x"` with a space; the old exact match
-    // for `"cmd":"` never named a rig's command, so the log, Stop's diagnostic and get_diagnostics were blind to it.
+    // [PIPE-PER-PROCESS-2026-11-06] Python's json.dumps writes `"cmd": "x"` with a space; an exact match for `"cmd":"`
+    // never names a rig's command, leaving the log, Stop's diagnostic and get_diagnostics blind to it.
     EXPECT_EQ_STR("compact JSON (the UI)", Voll::ExtractCmdName(R"({"id":1,"cmd":"get_pointers"})").c_str(),
                   "get_pointers");
     EXPECT_EQ_STR("a space after the colon (Python's json.dumps)",
@@ -434,7 +434,7 @@ static void Test_Voll_ExtractCmdName() {
 }
 
 static void Test_Land_SecondCopy() {
-    // [DUMPER-SECOND-COPY-AUTOSTART] (maintainer, 2026-11-17: the later copy takes over, whichever build is newer).
+    // [DUMPER-SECOND-COPY-AUTOSTART] The later copy takes over, whichever build is newer.
     Land::CopySeen c;
     c.contract = true; c.mailbox = true; c.current = Mimic::MAILBOX_CONTRACT;
     for (int32_t s : { Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_SKIPPED, Mimic::INIT_FAILED }) {
@@ -456,7 +456,7 @@ static void Test_Land_SecondCopy() {
     c.current = Mimic::MAILBOX_CONTRACT + 1;
     EXPECT("control: the contract NUMBER does not decide retirement", Land::Judge(c) == Land::Verdict::Retire);
 
-    // Review wf_67396083-685 MBX-1: one layout since contract 3, so an earlier copy whose accepted scripts this copy
+    // One layout since contract 3, so an earlier copy whose accepted scripts this copy
     // accepts too is served -- a stale contract-8 proxy beside a contract-9 injection is the likeliest double load.
     constexpr int32_t kCur = Mimic::MAILBOX_CONTRACT, kMin = Mimic::MAILBOX_CONTRACT_MIN, kLay = Mimic::MAILBOX_LAYOUT_SINCE;
     EXPECT("* : this build's own contract is served", Land::CanServeMailbox(kCur, kMin, kCur, kMin, kLay));
@@ -472,14 +472,14 @@ static void Test_Land_SecondCopy() {
            Land::CanServeMailbox(kCur, kMin + 1, kCur, kMin, kLay));
     static_assert(Mimic::MAILBOX_LAYOUT_SINCE <= Mimic::MAILBOX_CONTRACT, "the layout cannot postdate the contract");
 
-    // Review TEST-PUBLISHEDSTATE-SAMPLE: every state, both ways.
+    // Every state, both ways.
     for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
         EXPECT("* : served, the earlier mailbox says this copy's state, whatever it is",
                Land::PublishedState(true, st) == st);
         EXPECT("* : not served, it says SKIPPED whatever this copy's state", Land::PublishedState(false, st) == Mimic::INIT_SKIPPED);
     }
 
-    // Review wf_08585a12-ddf R2-OLD-COPY-DOUBLE-SERVE: a served copy that forwards says this copy's every state; one
+    // A served copy that forwards says this copy's every state; one
     // that cannot says only READY or SKIPPED, so no CE inject script starts it again beside this copy.
     for (int32_t st : { Mimic::INIT_IDLE, Mimic::INIT_RUNNING, Mimic::INIT_READY, Mimic::INIT_FAILED, Mimic::INIT_SKIPPED }) {
         EXPECT("* R2 : a copy that forwards mirrors this copy's state", Land::MirroredState(st, true) == st);
@@ -492,7 +492,7 @@ static void Test_Land_SecondCopy() {
     EXPECT("* R2 : ...SKIPPED once it stopped", Land::MirroredState(Mimic::INIT_IDLE, false) == Mimic::INIT_SKIPPED);
     static_assert(Mimic::MAILBOX_LAYOUT_SINCE == 3, "review R2-LAYOUT-SINCE-UNPINNED: the value Mimic.h's layout pin names");
 
-    // Review LAND-MUTUAL-YIELD-CYCLE / LAND-EARLIER-RETIRES-LATER: only an earlier copy is taken over, so of two copies
+    // Only an earlier copy is taken over, so of two copies
     // only one can take over from the other.
     EXPECT("* : a copy before this one in the module list is earlier", Land::IsEarlier(0, 1));
     EXPECT("* : a copy after this one is not earlier", !Land::IsEarlier(2, 1));
@@ -513,7 +513,7 @@ static void Test_Land_SecondCopy() {
            Land::ReplyToYield(YieldState::None, false) == Land::YIELD_NOT_LATER &&
            Land::ReplyToYield(YieldState::Yielded, false) == Land::YIELD_NOT_LATER);
 
-    // Review FWD-FALLTHROUGH / LAND-FWD-CYCLE: a yielded copy forwards, refuses when it cannot, never runs its body.
+    // A yielded copy forwards, refuses when it cannot, never runs its body.
     EXPECT("* : a copy that never yielded runs the call", Land::RouteCall(YieldState::None, true, 0) == Land::Route::Local);
     EXPECT("* : a yielding copy runs the call (its own teardown)",
            Land::RouteCall(YieldState::Yielding, true, 0) == Land::Route::Local);
@@ -539,21 +539,20 @@ static void Test_Land_SecondCopy() {
 }
 
 static void Test_Voll_DuringInitNotes() {
-    // [PIPE-WALK-DURING-INIT] (maintainer, 2026-11-17: refuse nothing, log it). Which commands read while an init or an
+    // [PIPE-WALK-DURING-INIT] Refuse nothing, log it. Which commands read while an init or an
     // apply_rescan holds g_initInProgress leave a trace: each name once per run, a run named by the serial its producer
-    // raised the flag with (g_initRun). Review wf_8f451d97-434 A-PIN-WEAK: the source pin alone passed with the log line
-    // deleted, the flag inverted and a refusal added, so the decision is pinned here by behaviour.
+    // raised the flag with (g_initRun). A source pin alone would pass with the log line deleted, the flag inverted and
+    // a refusal added, so the decision is pinned here by behaviour.
     Voll::DuringInitNotes n;
     EXPECT("no run in progress (serial 0): nothing is logged", !n.Note("walk_instance", 0));
     EXPECT("run 1: a name is logged the first time", n.Note("walk_instance", 1));
     EXPECT("run 1 * : ...and not again", !n.Note("walk_instance", 1));
     EXPECT("run 1: another name is logged", n.Note("get_object", 1));
-    // Two runs back to back with no command read between them -- a cancelled init's waiter, an apply after an init. The
-    // first note forgot its names only when a command found the flag down, so run 2 said nothing of run 1's names.
-    // (review A-RESET-BOUNDARY)
+    // Two runs back to back with no command read between them -- a cancelled init's waiter, an apply after an init. A
+    // note that forgot its names only when a command found the flag down would say nothing in run 2 of run 1's names.
     EXPECT("run 2 * : a name run 1 logged is logged again, with nothing read between the runs", n.Note("walk_instance", 2));
     EXPECT("run 2 * : ...once", !n.Note("walk_instance", 2));
-    // ExtractCmdName returns "" for a line with no readable "cmd" (review A-NAME-BEFORE-DISPATCH).
+    // ExtractCmdName returns "" for a line with no readable "cmd".
     EXPECT_EQ_STR("* : a line with no readable cmd logs as (unparsed), never as a blank name",
                   std::string(Voll::DuringInitNotes::Shown("")).c_str(), "(unparsed)");
     EXPECT_EQ_STR("a name logs as itself", std::string(Voll::DuringInitNotes::Shown("get_object")).c_str(), "get_object");
@@ -566,9 +565,8 @@ static void Test_Voll_DuringInitNotes() {
     EXPECT("* : a run keeps at most kMaxDuringInitNames names", logged == Voll::kMaxDuringInitNames);
     EXPECT("control: a new run starts a new list", cap.Note("c0", 8));
     // A connection that read the serial during run N and reaches the note after run N+1 began. Its older serial must not
-    // wipe N+1's list, which logged a name twice in one run (review wf_b0aa9098-dd5, A-RUN-REGRESS); and its command is
-    // dispatched during N+1, so it is noted in N+1's list rather than dropped, which left no trace of it
-    // (wf_2d9f83d5-21b, R3-LATE-NOTE-DROPPED).
+    // wipe N+1's list, which would log a name twice in one run; and its command is dispatched during N+1, so it is noted
+    // in N+1's list rather than dropped, which would leave no trace of it.
     Voll::DuringInitNotes late;
     EXPECT("late setup: run 2 logs a name", late.Note("get_pointers", 2));
     EXPECT("late * : a note under the older run 1 is logged, in run 2's list", late.Note("walk_class", 1));
@@ -578,7 +576,7 @@ static void Test_Voll_DuringInitNotes() {
 }
 
 static void Test_Voll_Holders() {
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the pipe's connections, for pipe_clients and the at-capacity
+    // [PIPE-PER-PROCESS-2026-11-06] Who holds the pipe's connections, for pipe_clients and the at-capacity
     // log line a client that cannot connect reads.
     EXPECT("TruncateUtf8: ASCII under the limit is kept", Voll::TruncateUtf8("game.exe", 64) == "game.exe");
     EXPECT("TruncateUtf8: ASCII over the limit is cut", Voll::TruncateUtf8(std::string(100, 'a'), 64).size() == 64);
@@ -731,7 +729,7 @@ static void Test_D23_InvokeOwnersAndDenyList() {
                           "CreateProxyObjectForInAppPurchaseRestoreOwnedProducts"})
         EXPECT((std::string("an online-service write is refused: ") + n).c_str(),
                !InvokeRefusedForBackground(n, 0).empty());
-    // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b's engine scan (UE 4.18-5.8 sources): names the list missed. UE4 and
+    // [MCP-WRITE-GRANTS-2026-11-14] From the UE 4.18-5.8 engine sources, names an obvious-name list misses. UE4 and
     // 5.0-5.6 write achievements through WriteAchievementProgress (WriteProgress is 5.5+); the save slot's
     // local-player twins; RemoteEvent calls any function by name on the level scripts; SetBind binds a key to any
     // console command; EditTextPropertySourceString and the timeline's AddInterp* write a property by name; a
@@ -741,7 +739,7 @@ static void Test_D23_InvokeOwnersAndDenyList() {
                           "AddInterpFloat", "AddInterpVector", "AddInterpLinearColor", "LoadStreamLevel",
                           "LoadStreamLevelBySoftObjectPtr", "UnloadStreamLevel", "UnloadStreamLevelBySoftObjectPtr"})
         EXPECT((std::string("phase 1b's scan: refused ") + n).c_str(), !InvokeRefusedForBackground(n, 0).empty());
-    // Review: the same level load and unload under other names (UE 5.8: CheatManager's exec trio, ULevelStreaming's
+    // The same level load and unload under other names (UE 5.8: CheatManager's exec trio, ULevelStreaming's
     // setters, ULevelStreamingDynamic's and ILevelInstanceInterface's level instances).
     for (const char* n : {"StreamLevelIn", "StreamLevelOut", "OnlyLoadLevel", "SetShouldBeLoaded",
                           "SetIsRequestingUnloadAndRemoval", "LoadLevelInstance", "LoadLevelInstanceBySoftObjectPtr",
@@ -764,7 +762,7 @@ static void Test_D23_InvokeOwnersAndDenyList() {
            && InvokeRefusedForBackground("GetObjectPropertyByNameCount", 0).empty());
 }
 
-// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: a parameter that hands the engine a function, an event or a property to reach
+// [MCP-WRITE-GRANTS-2026-11-14] A parameter that hands the engine a function, an event or a property to reach
 // by name. Fields in Ubel::ParamField's shape, as CaptureParamLayout reads them.
 static Ubel::ParamField PF(const char* name, const char* type, const char* structType = "", const char* objClass = "",
                            std::vector<Ubel::ParamField> sub = {}) {
@@ -811,7 +809,7 @@ static void Test_Voll_InvokeParamIndirection() {
            !InvokeParamIndirection(std::vector<Ubel::ParamField>{
                PF("Info", "StructProperty", "MyInfo", "", {PF("Inner", "StructProperty", "MyInner", "",
                                                                 {PF("EventName", "StrProperty")})})}, true).empty());
-    // Review: a struct that wraps a name (FGameplayTag EventTag: its one member is TagName) names an event by its
+    // A struct that wraps a name (FGameplayTag EventTag: its one member is TagName) names an event by its
     // parameter's name; SendGameplayEventToActor fires any gameplay event that way.
     EXPECT("params * : under a grant, a struct parameter named for an event is refused",
            !InvokeParamIndirection(std::vector<Ubel::ParamField>{
@@ -831,7 +829,7 @@ static void Test_Voll_InvokeParamIndirection() {
 }
 
 static void Test_Voll_HoldLedger() {
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: who holds each gameplay hold, so an AI working through the MCP server
+    // [PIPE-PER-PROCESS-2026-11-06] Who holds each gameplay hold, so an AI working through the MCP server
     // never replaces or ends the UI's.
     Voll::HoldLedger ledger;
     EXPECT("ledger: a hold nobody set has no owner", ledger.Owner("god_mode") == Voll::kHoldOwnerNone);
@@ -880,17 +878,17 @@ static void Test_Voll_HoldLedger() {
            == std::vector<std::string>({"force_field:A::x", "force_field:B::y"}));
     EXPECT("holds: a read changes none", changed(R"({"cmd":"get_protect_state"})").empty()
            && changed(R"({"cmd":"fly_get_state"})").empty());
-    // [MCP-WRITE-GRANTS-2026-11-14] review: the UI's Console panel runs ToggleDebugCamera through invoke_function. Missed
-    // by the ledger, the camera it turned on stayed named for whoever held it before -- an AI session, whose end then
-    // turned the user's camera off -- or for CE after CE's OFF.
+    // [MCP-WRITE-GRANTS-2026-11-14] The UI's Console panel runs ToggleDebugCamera through invoke_function. Missed
+    // by the ledger, the camera it turned on would stay named for whoever held it before -- an AI session, whose end
+    // would then turn the user's camera off -- or for CE after CE's OFF.
     const std::vector<std::string> camera{"debug_camera"};
     EXPECT("holds * : an invoke of the debug camera's own functions changes the camera, whatever the case",
            changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera"})") == camera
            && changed(R"({"cmd":"invoke_function","func_name":"enabledebugcamera"})") == camera
            && changed(R"({"cmd":"invoke_function","func_name":"DisableDebugCamera"})") == camera);
-    // Review round 2: a background client (the MCP server) is refused these before they run
-    // (InvokeRefusedForBackground, "use write_debug_camera"); as a hold change its if_free check answered first and
-    // the AI lost that pointer.
+    // A background client (the MCP server) is refused these before they run
+    // (InvokeRefusedForBackground, "use write_debug_camera"); counted as a hold change, its if_free check would answer
+    // first and the AI would lose that pointer.
     EXPECT("holds * : a background client's invoke of them names no hold: it never runs",
            changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":true})").empty()
            && changed(R"({"cmd":"invoke_function","func_name":"ToggleDebugCamera","background":false})") == camera);
@@ -924,7 +922,7 @@ static void Test_Voll_ClassifyFirstInstance() {
     EXPECT("a fresh name: sole", Voll::ClassifyFirstInstance(0, self, self) == FI::Sole);
     EXPECT("instances already there, all ours: shared in this process",
            Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, self, self) == FI::SharedInProcess);
-    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator (measured 2026-11-10).
+    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator.
     EXPECT("another process created the name first: foreign",
            Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, other, self) == FI::ForeignCreator);
     EXPECT("a foreign creator wins even without ERROR_ALREADY_EXISTS",
@@ -934,7 +932,7 @@ static void Test_Voll_ClassifyFirstInstance() {
     EXPECT("creator unknown, name fresh: sole", Voll::ClassifyFirstInstance(0, 0, self) == FI::Sole);
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: an owner is a client PROCESS.
+// [PIPE-PER-PROCESS-2026-11-06] An owner is a client PROCESS.
 static void Test_Voll_ClientOwnerKey() {
     EXPECT("two lanes of one process are one owner", Voll::ClientOwnerKey(4242, 1) == Voll::ClientOwnerKey(4242, 2));
     EXPECT("two processes are two owners", Voll::ClientOwnerKey(4242, 1) != Voll::ClientOwnerKey(77, 1));
@@ -946,12 +944,12 @@ static void Test_Voll_ClientOwnerKey() {
                       && Voll::ClientOwnerKey(0, 3) != Schlacht::kOwnerCe);
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: a departing client releases only its own claim on See-through.
-// [SEETHRU-HANDOFF-LEFTOVER] Review wf_1b9e937b-a0d DLL-2: a copy that handed over could never restore the actors its
-// shutdown's OFF left hidden on a stalled game thread. The later copy takes the record: every actor moves, in batches,
-// and an un-hide that may still run leaves the queued set with it.
-// [SEETHRU-HANDOFF-LEFTOVER] Review wf_bbd1bbfe-20d D7-2: a tick overwrote the record with its result, so actors adopted
-// while it waited on the game thread fell out of the record and stayed hidden with nothing tracking them.
+// [PIPE-PER-PROCESS-2026-11-06] A departing client releases only its own claim on See-through.
+// [SEETHRU-HANDOFF-LEFTOVER] A copy that handed over cannot restore the actors its shutdown's OFF left hidden on a
+// stalled game thread. The later copy takes the record: every actor moves, in batches, and an un-hide that may still
+// run leaves the queued set with it.
+// [SEETHRU-HANDOFF-LEFTOVER] A tick that overwrote the record with its result would drop the actors adopted while it
+// waited on the game thread, leaving them hidden with nothing tracking them.
 static void Test_Schlacht_TickKeepsWhatWasAdded() {
     std::printf("Test_Schlacht_TickKeepsWhatWasAdded\n");
     const std::unordered_set<uintptr_t> snapshot = { 0x1000, 0x2000 };
@@ -1065,7 +1063,7 @@ static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
            && !Schlacht::RehideOnTick(false, false));
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
+// [PIPE-PER-PROCESS-2026-11-06] A watch is its connection's, and its thread never touches the pipe.
 static void Test_Kanne_WatchKeyAndSlot() {
     using Kanne::WatchKey;
     struct Dummy { int v; };
@@ -1114,7 +1112,7 @@ static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
     using SA = Voll::StartAction;
     // Guard the guard: "holderPid == selfPid" must be a real comparison, not a stand-in for
     // "some pid is known". A different known pid has to reach a DIFFERENT answer, or
-    // AlreadyOurs would swallow every held pipe and re-create the original defect.
+    // AlreadyOurs would swallow every held pipe, leaving a held pipe unwatched.
     EXPECT("self and other differ", Voll::DecideStart(true, 100, 100) != Voll::DecideStart(true, 101, 100));
     EXPECT("self is AlreadyOurs", Voll::DecideStart(true, 100, 100) == SA::AlreadyOurs);
     EXPECT("other is DeferAndWatch", Voll::DecideStart(true, 101, 100) == SA::DeferAndWatch);
@@ -1226,9 +1224,8 @@ static void Test_Alignment_NameProperty_RespectsCpnMode() {
 
     // CPN: FName = 12 bytes, aligned 4 -- the SAME alignment as non-CPN. `class FName` has
     // no alignas, so case-preserving widens it without changing its alignment.
-    // (No known live CPN title: TQ2 was measured `votes standard=20, CPN=0`.)
     EXPECT("CPN FName @ 0x10 OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0x10, 12, true));
-    // INVERTED on purpose (A9): 0xC is a LEGAL offset for a 12-byte, 4-aligned FName. The UVTD
+    // OK on purpose: 0xC is a LEGAL offset for a 12-byte, 4-aligned FName. The UVTD
     // 4.27-CasePreserving template shows FField::NamePrivate=0x28 followed by FlagsPrivate=0x34,
     // i.e. a 4-aligned FName landing on a non-8-aligned offset. Calling that "suspicious" is
     // exactly the false warning this module exists to avoid.
@@ -1280,17 +1277,16 @@ static void Test_Alignment_WeakAndSparseDelegate() {
 
 // ----- Tot: when the per-command cancel is still owed ------------------------
 //
-// Audit #5 F2. The cancel latch cleared only when a session connected into an
-// EMPTY connection registry ("firstConn"). That was right when there was one
-// connection. With the two-lane split it is not: if the BULK lane drops
-// mid-scan while the LIGHT lane stays up, the registry is never empty, so the
-// latch is never cleared and every subsequent scan on the surviving lane aborts
-// instantly -- for the life of the process.
+// A cancel latch cleared only when a session connects into an EMPTY connection
+// registry ("firstConn") fits one connection, not the two-lane split: if the
+// BULK lane drops mid-scan while the LIGHT lane stays up, the registry is never
+// empty, so the latch is never cleared and every subsequent scan on the
+// surviving lane aborts instantly -- for the life of the process.
 //
 // Ownership is the right question, not emptiness.
 
 static void Test_Tot_PerCommandStillOwed() {
-    // The one that was broken. Lane 1 (bulk) raised the cancel and is gone;
+    // The two-lane case. Lane 1 (bulk) raised the cancel and is gone;
     // lane 2 (light) is still connected, so the registry is NOT empty -- but the
     // raiser is not in it, so the cancel is no longer owed.
     {
@@ -1322,8 +1318,8 @@ static void Test_Tot_PerCommandStillOwed() {
                !Tot::PerCommandStillOwed(owners, 2, none, 1));
     }
 
-    // The case the old firstConn rule DID handle -- an empty registry. The new
-    // rule must still catch it, or the fix is a regression on the path that worked.
+    // The case a firstConn rule DOES handle -- an empty registry. The ownership
+    // rule must still catch it.
     {
         const uint64_t owners[] = { 1, 2, 3 };
         EXPECT("empty registry -> NOT owed (subsumes the old firstConn rule)",
@@ -1350,16 +1346,15 @@ static void Test_Tot_PerCommandStillOwed() {
 
 // ----- Aura: which deep leaves the static scan index already covers -----------
 //
-// Audit #5 A4. Value Search's deep pass skipped on `depth < 2` alone -- "depth 1
-// is covered by the static paths". That is true only for ARRAYS:
-// collectStructArrayInner is reached solely from the ArrayProperty branch, so a
-// struct-sided TSet<FStruct> or TMap<K, FStruct> element was covered by NEITHER
-// the static index nor the deep pass. An everyday TMap<FName, FItemData>
-// inventory count was unfindable with Deep ON as well as OFF.
+// Value Search's deep pass cannot skip on `depth < 2` alone: "depth 1 is covered
+// by the static paths" is true only for ARRAYS. collectStructArrayInner is
+// reached solely from the ArrayProperty branch, so a skip on depth alone leaves a
+// struct-sided TSet<FStruct> or TMap<K, FStruct> element covered by NEITHER the
+// static index nor the deep pass -- an everyday TMap<FName, FItemData> inventory
+// count would be unfindable with Deep ON as well as OFF.
 //
-// The two sibling consumers of the same walker already had the right shape, and
-// that asymmetry is what made this visible: the snapshot path tests
-// `leafName.empty() && depth < 2`, the group scan uses `depth < 1`.
+// The two sibling consumers of the same walker carry their own leaf rule: the
+// snapshot path tests `leafName.empty() && depth < 2`, the group scan uses `depth < 1`.
 //
 // NOTE the rule is pinnable here; the WIRING is not -- no target compiles
 // Aura.cpp. The wiring is instead made a COMPILE error by placing
@@ -1399,7 +1394,7 @@ static void Test_Aura_DeepLeafCoverage() {
 
     // Unknown is the zero enumerator and must never read as "covered" -- a leaf
     // struct that forgets to set `kind` value-initialises to it, and answering
-    // "covered" there would silently reproduce A4.
+    // "covered" there would silently skip the struct-sided container leaves.
     EXPECT("Unknown at depth 1 is NOT covered",
            !DeepLeafCoveredByStaticScanIndex(1, K::Unknown, false));
     EXPECT("Unknown is the zero enumerator",
@@ -1410,12 +1405,10 @@ static void Test_Aura_DeepLeafCoverage() {
 
 // ----- Ubel: the class-walk cache bound -------------------------------------
 //
-// Audit #5 U5. The finding was re-filed FOUR times saying eviction is illegal
-// until WalkClassEx stops returning `const ClassInfo&`. That is right about the
-// ENRICHED cache and wrong about the plain one: WalkClass returns BY VALUE
+// Eviction is illegal in the ENRICHED cache while WalkClassEx returns
+// `const ClassInfo&`, but legal in the plain one: WalkClass returns BY VALUE
 // (Ubel.h) and every s_walkClassCache touch copies under the mutex, so bounding
-// it is legal today with zero call-site change. Half the bytes were reclaimable
-// the whole time.
+// it needs no call-site change.
 //
 // The LRU itself lives in Ubel.cpp, which no target compiles. What IS pinnable
 // is the sizing rule and the cap, and the cap is the number most likely to be
@@ -1460,7 +1453,7 @@ static void Test_Ubel_EstimateClassInfoBytes() {
 
 // ----- Stark: not re-entering our own ProcessEvent detour --------------------
 //
-// Audit #5 ST1. MinHook patches UObject::ProcessEvent's PROLOGUE, so a caller of
+// MinHook patches UObject::ProcessEvent's PROLOGUE, so a caller of
 // ours that resolves the address out of an instance's vtable and calls it lands
 // in HookedProcessEvent -- on whatever thread it happened to be on. The drain
 // there is gated only on "is the queue non-empty", so a pipe lane or the Mimic
@@ -1471,10 +1464,9 @@ static void Test_Ubel_EstimateClassInfoBytes() {
 // own parameter copy, expecting a later drain -- so after one timeout the window
 // is open indefinitely.
 //
-// The repair is not a thread-identity check. Nothing in this tree resolves the
-// game thread id, so any gate would be guessing, and a gate that guesses wrong
-// never drains -- which times out every game-thread invoke and is strictly worse
-// than the defect. We call the trampoline instead, as Grausam already does.
+// The guard is not a thread-identity check: a gate that guesses the game thread
+// wrong never drains, which times out every game-thread invoke. Our own callers
+// call the trampoline instead (ShouldUseTrampoline), as Grausam does.
 
 static void Test_Stark_ShouldUseTrampoline() {
     const uintptr_t kHooked = 0x7FF6'0000'1000ull;
@@ -1512,23 +1504,23 @@ static void Test_Stark_ShouldDrainQueue() {
     EXPECT("game entry with work drains",       Stark::ShouldDrainQueue(1, false));
     EXPECT("game entry with lots of work drains", Stark::ShouldDrainQueue(64, false));
 
-    // THE REGRESSION GUARD. The detour was re-entered by a nested dispatch
-    // underneath a call WE issued -- that is not a game-thread tick, and draining
-    // there runs queued work on our own caller's thread.
+    // THE GUARD. A detour re-entered by a nested dispatch underneath a call WE
+    // issued is not a game-thread tick, and draining there runs queued work on our
+    // own caller's thread.
     EXPECT("our own re-entry does NOT drain",  !Stark::ShouldDrainQueue(1, true));
     EXPECT("our own re-entry does NOT drain, whatever the depth",
            !Stark::ShouldDrainQueue(64, true));
 }
 
-// [STARK-DRAIN-OFF-GAME-THREAD] An engine WORKER thread calls ProcessEvent too, and the hook drained the queue there:
-// measured on DumperTest58 Development (UE 5.8), a queued ToggleDebugCamera hit BodyInstance.cpp's IsInGameThread
-// check (1 in ~50 toggles). The drain must run on the game thread only -- and the thread must be identified without a
+// [STARK-DRAIN-OFF-GAME-THREAD] An engine WORKER thread calls ProcessEvent too, and a drain there runs game-thread work
+// off the game thread (a queued ToggleDebugCamera can trip BodyInstance.cpp's IsInGameThread check on a UE 5.8
+// Development build). The drain must run on the game thread only -- and the thread must be identified without a
 // guess that, wrong, would never drain at all.
 static void Test_Stark_DrainOnGameThreadOnly() {
     using Stark::GameThreadIdSource;
     using Stark::ThreadInfo;
 
-    // The three-argument gate: the two-argument cases are unchanged on the game thread...
+    // The three-argument gate: the two-argument cases hold on the game thread...
     EXPECT("game-thread entry with work drains",          Stark::ShouldDrainQueue(1, false, true));
     EXPECT("empty queue never drains on the game thread", !Stark::ShouldDrainQueue(0, false, true));
     EXPECT("our own re-entry never drains, game thread or not", !Stark::ShouldDrainQueue(1, true, true));
@@ -1536,7 +1528,7 @@ static void Test_Stark_DrainOnGameThreadOnly() {
     EXPECT("a worker-thread entry does NOT drain",        !Stark::ShouldDrainQueue(1, false, false));
     EXPECT("a worker-thread entry does NOT drain, whatever the depth", !Stark::ShouldDrainQueue(64, false, false));
 
-    // Which entry is the game thread's. Unknown (0) keeps the old behaviour: every entry counts.
+    // Which entry is the game thread's. Unknown (0) keeps the ungated behaviour: every entry counts.
     EXPECT("the identified thread is the game thread",    Stark::IsGameThreadEntry(42, 42));
     EXPECT("another thread is not",                        !Stark::IsGameThreadEntry(43, 42));
     EXPECT("nothing identified: every entry counts, as before", Stark::IsGameThreadEntry(43, 0));
@@ -1561,7 +1553,7 @@ static void Test_Stark_DrainOnGameThreadOnly() {
     // The validator's verdict. A NAMED game thread is the engine's own and is kept even when it did not fire (a
     // paused game thread: invokes then wait, as on any paused game). The main-thread GUESS is given up when it did
     // not fire while other threads did -- a gate on the wrong thread never drains and times out every invoke, which
-    // is worse than the defect it fixes.
+    // is worse than no gate.
     EXPECT("named, fired: kept",                           Stark::KeepGameThreadGate(GameThreadIdSource::Description, 5, 100));
     EXPECT("named, silent while others fire: still kept",  Stark::KeepGameThreadGate(GameThreadIdSource::Description, 0, 100));
     EXPECT("main-thread guess, fired: kept",               Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 5, 100));
@@ -1573,8 +1565,8 @@ static void Test_Stark_DrainOnGameThreadOnly() {
 
     // What counts as "other threads fired". The validator's window opens inside the invoke that installed the hook,
     // and a direct call (UE5_CallProcessEventDirect, the mailbox's off-thread-safe path) re-enters the detour on OUR
-    // thread under InOwnPeCall. A game thread can make no ProcessEvent call for the whole window (Avowed, 2026-10-27:
-    // 0 fires in 1500 ms), so counting those re-entries could give a correct main-thread guess up on our own call alone.
+    // thread under InOwnPeCall. A game thread can make no ProcessEvent call for the whole window (on Avowed, none in
+    // 1500 ms), so counting those re-entries could give a correct main-thread guess up on our own call alone.
     EXPECT("an engine worker's entry counts against the guess",
            Stark::CountsAgainstGameThreadGuess(false, false));
     EXPECT("our own nested call off the game thread does NOT",
@@ -1640,9 +1632,9 @@ static void Test_Stark_ClaimRequest() {
            && Stark::kRequestRunning != Stark::kRequestAbandoned && Stark::kRequestQueued != Stark::kRequestAbandoned);
 }
 
-// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait ends early when a shutdown meets a stalled game thread. Measured on
-// 3707: a CE untick waited 11.3 s of a 15 s invoke timeout behind a See-through worker parked in a LineTrace, before the
-// pipe server even began to stop.
+// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait ends early when a shutdown meets a stalled game thread: otherwise a CE
+// untick can wait most of a 15 s invoke timeout behind a See-through worker parked in a LineTrace, before the pipe
+// server even begins to stop.
 static void Test_Stark_CutInvokeWait() {
     using L = Stark::GameThreadLiveness;
     EXPECT("CUT ⭐: a shutdown and a stalled game thread: cut", Stark::CutInvokeWait(true, L::Stalled));
@@ -1704,19 +1696,19 @@ static void Test_Stark_WaitQueuedInvoke() {
 
 // ----- Stark: ProcessEvent detection lifecycle ---------------------------------
 //
-// [PEHOOKONCE-2026-08-18]. The field defect: a detection that failed because there
-// was nothing to detect YET (proxy mode starts the pipe server only, so GObjects is
-// unset until a scan) stored the same -1 as a hard failure, and every retry path in
-// Frieren was gated against -1. One `pe_profile_start` before the scan therefore
-// poisoned the ProcessEvent hook for the entire process -- no invoke, no click and
-// no later scan could ever install it, and the message told the user to retry the
-// one thing that could not work.
+// [PEHOOKONCE-2026-08-18]. A detection that failed because there was nothing to
+// detect YET (proxy mode starts the pipe server only, so GObjects is unset until a
+// scan) must not store the same -1 as a hard failure, which every retry path in
+// Frieren is gated against: one `pe_profile_start` before the scan would then poison
+// the ProcessEvent hook for the entire process -- no invoke, no click and no later
+// scan could ever install it, and the message would tell the user to retry the one
+// thing that cannot work.
 //
 // These pin the SEPARATION. Frieren.cpp is not compiled by any test target, so the
 // rules live in Stark.h precisely so that this file can hold them still.
 
 static void Test_Stark_PeOffsetSentinels() {
-    // The two negatives are NOT interchangeable, which is the entire finding.
+    // The two negatives are NOT interchangeable, which is the entire point.
     EXPECT("a real offset is usable",        Stark::PeOffsetUsable(0x220));
     EXPECT("a real offset is not retryable", !Stark::PeOffsetRetryable(0x220));
 
@@ -1778,8 +1770,8 @@ static void Test_Stark_PeValidationFailureVerdict() {
     constexpr int kOffset = 0x220;
 
     // [PEHOOK-2026-08-17]: the version TABLE is a per-version guess with no evidence
-    // from the binary, and it is what produced the one measured mis-detection
-    // (DumperTest UE 5.4 Development, primary=0x220, hook fired 0 times).
+    // from the binary, so a table offset whose hook fires 0 times is acted on and
+    // re-arms detection.
     EXPECT("version-table zero-fires is acted on",
            Stark::ShouldActOnValidationFailure(true));
     EXPECT("version-table failure re-arms detection",
@@ -1813,14 +1805,13 @@ static void Test_Stark_PeValidationFailureVerdict() {
 
 // ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
 //
-// Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
-// `s_itemSize >= 24 ? 0x10 : 0x0C` -- a two-way split covering only strides 16
+// A two-way split such as `s_itemSize >= 24 ? 0x10 : 0x0C` covers only strides 16
 // and 24. The reachable stride set is {16, 20, 24, 32, 40}: Aura's auto-probe tries
 // {16, 24, 32, 20, 40} and UE5_InitWithExtendedLayout forces any of
-// {0x14, 0x18, 0x10, 0x20}. 40 joined the set with A5 -- a UE 5.7+ Test build puts
+// {0x14, 0x18, 0x10, 0x20}. 40 is a UE 5.7+ Test build, which puts
 // TStatId + StatIDStringStorage after ClusterRootIndex (24 + 8 + 8).
 //
-// At stride 20 the old expression returned 0x0C, which is ClusterRootIndex.
+// At stride 20 that split returns 0x0C, which is ClusterRootIndex.
 // Ubel::ResolveWeakObjectPtr then compares that against the stored serial with a
 // bare `if (actualSerial != serialNumber) return 0;` -- no fallback, no retry,
 // no log -- so EVERY weak reference reads as stale. That empties
@@ -1835,8 +1826,7 @@ static void Test_Lineal_StrideSweepRules() {
     using Lineal::PreferStride;
 
     // --- THE CANDIDATE SET ITSELF. Correct scoring rules are worthless if the true item
-    //     size is not probed at all, which is the whole of A5 and of its 2026-08-05
-    //     predecessor (16 accepted against a real 32: 12,588 of 25,175 named, 50.0%). ---
+    //     size is not probed at all (16 accepted against a real 32 names half the pool). ---
     {
         bool has16=false, has20=false, has24=false, has32=false, has40=false;
         for (int st : Lineal::kItemStrideCandidates) {
@@ -1866,15 +1856,15 @@ static void Test_Lineal_StrideSweepRules() {
         }
     }
 
-    // A5. UE 5.7.0's Build.h began defining ENABLE_STATNAMEDEVENTS_UOBJECT in the
+    // UE 5.7.0's Build.h defines ENABLE_STATNAMEDEVENTS_UOBJECT in the
     // UE_BUILD_TEST block, which appends TStatId + StatIDStringStorage to FUObjectItem:
     // 24 + 8 + 8 = 40, Object still at +0x08.
     //
     // gcd(40,20) = 20, so a stride-20 probe alternates between the real Object and StatID.
     // StatID is LAZILY NULL ("0 if nobody asked for it yet"), and Aura::ProbeStride counts
     // a zero as `null`, NOT `bad`. So the alias produces half the named count with ZERO bad
-    // -- which is why it sailed past `bestNamed > bestBad` and was logged as a confident
-    // success instead of a tentative one. Model that exact profile over 200 probes:
+    // -- so it passes `bestNamed > bestBad` and would be logged as a confident success
+    // instead of a tentative one. Model that exact profile over 200 probes:
     {
         const int realNamed = 200, realBad = 0;          // stride 40 on a real 40-byte item
         const int aliasNamed = 100, aliasBad = 0;        // stride 20: every other probe is a null StatID
@@ -1902,21 +1892,19 @@ static void Test_Lineal_StrideSweepRules() {
                PreferStride(score20, score40, 20, 40));
     }
 
-    // The same tie already existed for 16/32 before 40 was added, so this is not new
-    // behaviour introduced by A5 -- only newly explicit.
+    // The same tie holds for 16/32.
     EXPECT("A5: 16 beats 32 on a tie", PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 16, 32));
     EXPECT("A5: 32 does not beat 16 on a tie", !PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 32, 16));
 
     // First candidate always wins against the sentinel, whatever its score.
     EXPECT("A5: bestStride 0 means nothing chosen yet", PreferStride(-999, INT_MIN, 40, 0));
 
-    // ⚠ WHAT ACTUALLY SEPARATES THE TWO ALIAS SHAPES -- and it is NOT the score. My first
-    // draft of this test asserted the garbage alias scores negative; it does not
-    // (StrideScore(100,100,100) = 1000-300 = 700), and the suite caught it. Both aliases
-    // score positive. The gate they differ on is StrideQualityOk:
-    //   16 vs a real 32 (2026-08-05): lands on garbage, named ~= bad -> FAILS -> tentative
-    //   20 vs a real 40 (A5):         lands on a lazily-null StatID, bad == 0 -> PASSES
-    // which is why the older bug was merely wrong and this one was silent.
+    // ⚠ WHAT ACTUALLY SEPARATES THE TWO ALIAS SHAPES -- and it is NOT the score. The
+    // garbage alias does not score negative (StrideScore(100,100,100) = 1000-300 = 700):
+    // both aliases score positive. The gate they differ on is StrideQualityOk:
+    //   16 vs a real 32: lands on garbage, named ~= bad -> FAILS -> tentative
+    //   20 vs a real 40: lands on a lazily-null StatID, bad == 0 -> PASSES
+    // which is why the first alias is merely wrong and the second is silent.
     {
         EXPECT("A5: both alias shapes score POSITIVE -- the score never told them apart",
                StrideScore(100, 100, 100) > 0 && StrideScore(100, 100, 0) > 0);
@@ -1937,14 +1925,14 @@ static void Test_Lineal_SerialOffsetForLayout() {
     // the serial, which it does for every stride above 16.
     EXPECT("classic 16 -> 0x0C", SerialOffsetForLayout(M::Classic, 16, 0, 0x0C) == 0x0C);
 
-    // THE REGRESSION ROW. Avowed's packed 20-byte FUObjectItem:
+    // THE AVOWED ROW. Avowed's packed 20-byte FUObjectItem:
     // {Object@+0x00, Flags@+0x08, ClusterRoot@+0x0C, Serial@+0x10} -- from the
     // Ghidra decompilation of AllocateUObjectIndex in docs/avowed-gobjects-fix.md.
     EXPECT("classic 20 -> 0x10 (Avowed)", SerialOffsetForLayout(M::Classic, 20, 0, 0x0C) == 0x10);
 
     EXPECT("classic 24 -> 0x10", SerialOffsetForLayout(M::Classic, 24, 0, 0x0C) == 0x10);
     EXPECT("classic 32 -> 0x10", SerialOffsetForLayout(M::Classic, 32, 0, 0x0C) == 0x10);
-    // A5: UE 5.7+ Test build. The stat tail is APPENDED, so the serial does not move.
+    // UE 5.7+ Test build. The stat tail is APPENDED, so the serial does not move.
     EXPECT("classic 40 -> 0x10 (5.7+ Test, stat tail)",
            SerialOffsetForLayout(M::Classic, 40, 0, 0x0C) == 0x10);
 
@@ -1954,7 +1942,7 @@ static void Test_Lineal_SerialOffsetForLayout() {
            SerialOffsetForLayout(M::Unpacked57, 24, 0x08, 0x0C) == 0x10);
     EXPECT("unpacked57 objOff 16 -> 0x18",
            SerialOffsetForLayout(M::Unpacked57, 32, 0x10, 0x0C) == 0x18);
-    // A5: the 40-byte Test-build item keeps Object at +0x08, so the serial stays 0x10 --
+    // The 40-byte Test-build item keeps Object at +0x08, so the serial stays 0x10 --
     // the two extra fields sit AFTER ClusterRootIndex, not between Object and Serial.
     EXPECT("unpacked57 40 objOff 8 -> 0x10 (5.7+ Test)",
            SerialOffsetForLayout(M::Unpacked57, 40, 0x08, 0x0C) == 0x10);
@@ -1975,24 +1963,17 @@ static void Test_Lineal_SerialOffsetForLayout() {
 
 // ----- Mimic: the CE Lua <-> DLL mailbox LAYOUT --------------------------------
 //
-// What used to sit here was a poll-latency micro-benchmark that touched no Mimic
-// code at all (audit #5 AD6). It re-implemented EnsureWinmmResolved inside the
-// test process and then asserted a fact about THIS HOST -- that
-// timeBeginPeriod(1) makes 100 x Sleep(1) finish under 300 ms. True, occasionally
-// useful, and invariant to every line in dll/src: it passed with Mimic.cpp
-// deleted from the tree. Its own comment, and the CMakeLists comment justifying
-// why winmm is not linked, both claimed it "covers the actual mechanism".
-//
-// What replaces it is the thing that genuinely cannot be checked anywhere else.
 // `Mimic.cpp` is not compiled by any target, but `Mimic.h` is pure data, so its
 // layout IS reachable from here. And that layout is a published cross-language
 // contract: every offset below is baked as a literal into the emitted CE Lua
 // (`Services/CeMailboxLayout.cs`, whose comment reads "must match Mimic.h
-// MailboxData") and into scripts/UE5CEDumper.CT. Until now nothing enforced it
-// on either side -- `tools/check_mailbox_contract.py` hashes the comment-stripped
-// surface but never computes an offset, so it cannot tell a moved field from a
-// renamed one. A silent shift here does not fail a build; it makes every saved
-// .CT write to the wrong address.
+// MailboxData") and into scripts/UE5CEDumper.CT. `tools/check_mailbox_contract.py`
+// hashes the comment-stripped surface but never computes an offset, so it cannot
+// tell a moved field from a renamed one. A silent shift here does not fail a
+// build; it makes every saved .CT write to the wrong address.
+//
+// A check of THIS HOST's timer (timeBeginPeriod(1) and Sleep(1)) would pass with
+// Mimic.cpp deleted from the tree, so it has no place here.
 //
 // These numbers are deliberately spelled as literals rather than derived from
 // the struct: deriving them from the same declaration they are checking would
@@ -2128,17 +2109,17 @@ static void Test_Mimic_CommandNumbering() {
     EXPECT("contract magic value",    Mimic::MAILBOX_CONTRACT_MAGIC == 0x43354555u);
 }
 
-// ----- Mimic: CMD_INVOKE routing + the init gate (audit #5 MB1 / MB2) ----------
+// ----- Mimic: CMD_INVOKE routing + the init gate -----------------------------
 //
-// Both rules used to live inline in Mimic.cpp, which no target compiles — so the
-// only way to state them checkably was to move them into the header. They are the
-// two places a mailbox command can pick the WRONG behaviour without failing:
-// MB1 runs a stateful UFunction on the wrong thread, MB2 refuses a command that
-// would have worked.
+// Both rules live in the header because no target compiles Mimic.cpp, so the
+// header is the only place they can be stated checkably. They are the two places
+// a mailbox command can pick the WRONG behaviour without failing: a wrong route
+// runs a stateful UFunction on the wrong thread, a wrong init gate refuses a
+// command that would have worked.
 
 // [A3-MIMIC-INIT-FASTPATH] The mailbox's init fast path. UE5_Init publishes GObjects/GNames right after FindAll, before
-// Serie / Aura init, decoy recovery and ValidateAndFixOffsets -- so "both set" skipped B5's serialization for the last
-// 30-45% of every init, and a CE hotkey in that tail ran on unprobed DynOff with no "waiting" line.
+// Serie / Aura init, decoy recovery and ValidateAndFixOffsets -- so "both set" alone would skip the init serialization
+// for the tail of every init, and a CE hotkey in that tail would run on unprobed DynOff with no "waiting" line.
 static void Test_Mimic_InitFastPath() {
     EXPECT("INITFAST: both globals set and no init running takes the fast path",
            Mimic::InitFastPathOk(true, true, /*initInProgress=*/false));
@@ -2151,8 +2132,9 @@ static void Test_Mimic_InitFastPath() {
     static_assert(Mimic::InitFastPathOk(true, true, false), "InitFastPathOk must be constexpr-evaluable");
 }
 
-// [TELEPORT-BUGITGO-PARENTREL] BugItGo drove a BugIt taken from the parent-relative fallback (an attached pawn whose
-// world-space read failed) into the pawn as world coordinates; BugItSave reported the flag and nothing read it.
+// [TELEPORT-BUGITGO-PARENTREL] A BugIt taken from the parent-relative fallback (an attached pawn whose world-space read
+// failed) must not be driven into the pawn as world coordinates, so BugItGo refuses it on the parent-relative flag
+// BugItSave records.
 static void Test_Wirbel_BugItGoRefusal() {
     EXPECT("BUGITGO-PARENTREL: the refusal code is -16, clear of the mailbox's own -11..-15",
            Wirbel::TP_ERR_PARENT_RELATIVE == -16);
@@ -2223,7 +2205,7 @@ static void Test_Mimic_InvokeRouting() {
     EXPECT("extra flags keep queued",
            !Mimic::ShouldRouteDirectInvoke(N | 0x00000001u | 0x04000000u, true));
 
-    // THE MB1 RULE. `flagsResolved=false` is what the caller passes when it could
+    // THE UNRESOLVED RULE. `flagsResolved=false` is what the caller passes when it could
     // not re-read the UFunction — and it must beat any flag value, because the
     // alternative is trusting a mailbox field the previous command wrote. If this
     // assertion is dropped, a stale Native|Static routes a stateful actor
@@ -2247,9 +2229,9 @@ static void Test_Mimic_InvokeRouting() {
     EXPECT("page counts never look static-native", true);
 }
 
-// [UE-OVERRIDE-411] review 2: CMD_INVOKE hands ProcessEvent the fixed paramsData slab, and nothing compared it with
-// the function's own parameter chain. The only gate in front of it was the CE helper's `parmsSize > 1024`, on a
-// ParmsSize the tail read gave -- a few bytes when the version is from the wrong side of 4.18.
+// [UE-OVERRIDE-411] CMD_INVOKE hands ProcessEvent the fixed paramsData slab, so the function's own parameter chain must
+// be compared with it. The CE helper's `parmsSize > 1024` gate reads a ParmsSize the tail read gave -- a few bytes when
+// the version is from the wrong side of 4.18 -- so it cannot be the only gate.
 static void Test_Mimic_InvokeSlab() {
     constexpr uint32_t slab = sizeof(Mimic::MailboxData::paramsData);
     EXPECT("INVOKESLAB setup: the slab is paramsData's 1024 bytes", slab == 1024);
@@ -2259,7 +2241,7 @@ static void Test_Mimic_InvokeSlab() {
     EXPECT("INVOKESLAB control: a function with no parameters fits", Mimic::InvokeSlabRefusal(true, 0, slab) == 0);
     EXPECT("INVOKESLAB ⭐: a block one byte past the slab is refused",
            Mimic::InvokeSlabRefusal(true, slab + 1, slab) == Mimic::MB_ERR_INVOKE_TOO_LARGE);
-    // The review's shape: a 4.15 title read as 4.18 reads ParmsSize at the NumParms byte (3), while an
+    // The misread shape: a 4.15 title read as 4.18 reads ParmsSize at the NumParms byte (3), while an
     // FMinimalViewInfo-sized out parameter ends at 0x810. The buffer CMD_INVOKE sizes with is the chain's end.
     const uint32_t misread = DynOff::ProcessEventBufferBytes(3, 0x810);
     EXPECT("INVOKESLAB ⭐: a misread ParmsSize of 3 does not let a 0x810-byte block through",
@@ -2330,7 +2312,7 @@ static void Test_Mimic_CommandRequiresInit() {
     EXPECT("exactly two commands are init-exempt", exempt == 2);
 }
 
-// ----- Flamme: the hint-cache publish gate (audit #5 FL1) ----------------------
+// ----- Flamme: the hint-cache publish gate ------------------------------------
 //
 // The rule that decides whether a staged temp may be renamed over the real cache.
 // Getting it wrong in the permissive direction publishes a TRUNCATED JSON document
@@ -2387,14 +2369,14 @@ static void Test_ValueScan_DataTypeSizes() {
     EXPECT("SizeOf Float = 4",  Radar::SizeOf(Radar::DataType::Float)  == 4);
     EXPECT("SizeOf Double = 8", Radar::SizeOf(Radar::DataType::Double) == 8);
     EXPECT("SizeOf Bool = 1",   Radar::SizeOf(Radar::DataType::Bool)   == 1);
-    // Phase 2A: string types — variable length, signalled by SizeOf = 0.
+    // String types — variable length, signalled by SizeOf = 0.
     EXPECT("SizeOf FString = 0", Radar::SizeOf(Radar::DataType::FString) == 0);
     EXPECT("SizeOf FName = 0",   Radar::SizeOf(Radar::DataType::FName)   == 0);
     EXPECT("SizeOf FText = 0",   Radar::SizeOf(Radar::DataType::FText)   == 0);
-    // Phase 2B: vector types — VARIABLE width, signalled by SizeOf = 0 like the
+    // Vector types — VARIABLE width, signalled by SizeOf = 0 like the
     // string + multi-numeric families. UE5's LWC made "FVector" 3xdouble (24B)
     // while "FVector3f" stayed 3xfloat (12B), so no single constant is true;
-    // the per-field width lives in FieldDescriptor::vectorWidth. (audit #5 AB5)
+    // the per-field width lives in FieldDescriptor::vectorWidth.
     EXPECT("SizeOf FVector = 0 (variable)",    Radar::SizeOf(Radar::DataType::FVector)    == 0);
     EXPECT("SizeOf FRotator = 0 (variable)",   Radar::SizeOf(Radar::DataType::FRotator)   == 0);
     EXPECT("SizeOf FTransform = 0 (variable)", Radar::SizeOf(Radar::DataType::FTransform) == 0);
@@ -2410,7 +2392,7 @@ static void Test_ValueScan_ParseDataTypeRoundTrip() {
     EXPECT("parse Float",   Radar::TryParseDataType("Float",  got) && got == DT::Float);
     EXPECT("parse Bool",    Radar::TryParseDataType("Bool",   got) && got == DT::Bool);
     EXPECT("parse UInt64",  Radar::TryParseDataType("UInt64", got) && got == DT::UInt64);
-    // Phase 2 DataTypes — locks the wire-protocol shape.
+    // String / vector DataTypes — locks the wire-protocol shape.
     EXPECT("parse FString", Radar::TryParseDataType("FString", got) && got == DT::FString);
     EXPECT("parse FName",   Radar::TryParseDataType("FName",   got) && got == DT::FName);
     EXPECT("parse FText",   Radar::TryParseDataType("FText",   got) && got == DT::FText);
@@ -2437,7 +2419,7 @@ static void Test_ValueScan_ScanTypePartitioning() {
     // No overlap between first-scan and prev-value partitions:
     EXPECT("Exact is NOT prev-value",  !Radar::IsPrevValueScanType(ST::Exact));
     EXPECT("Changed is NOT first-scan", !Radar::IsFirstScanType(ST::Changed));
-    // Phase 2A: substring predicates are first-scan eligible.
+    // Substring predicates are first-scan eligible.
     EXPECT("Contains is first-scan",   Radar::IsFirstScanType(ST::Contains));
     EXPECT("StartsWith is first-scan", Radar::IsFirstScanType(ST::StartsWith));
     EXPECT("EndsWith is first-scan",   Radar::IsFirstScanType(ST::EndsWith));
@@ -2564,9 +2546,9 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
     // simply never feeds them in via its PropertyTypeNames union).
     EXPECT("ByteProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("ByteProperty", got) && got == DT::UInt8);
     EXPECT("Int8Property -> Int8",   Radar::TryDataTypeFromPropertyTypeName("Int8Property", got)  && got == DT::Int8);
-    // audit #5 AB14 — EnumProperty resolves to UInt8 (enums are 1-byte in the
-    // overwhelming majority). Before the fix this returned false and enum-backed
-    // state fields were invisible to every meta value scan.
+    // EnumProperty resolves to UInt8 (enums are 1-byte in the overwhelming
+    // majority); rejecting it would leave enum-backed state fields invisible to
+    // every meta value scan.
     EXPECT("EnumProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("EnumProperty", got) && got == DT::UInt8);
     // Bool + non-numeric still reject.
     EXPECT("BoolProperty rejected",  !Radar::TryDataTypeFromPropertyTypeName("BoolProperty", got));
@@ -2590,8 +2572,8 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
     const auto& noByteNames = Radar::PropertyTypeNames(DT::NumericNoByte);
     EXPECT("NumericNoByte has 8 property names", noByteNames.size() == 8);
     EXPECT("every NumericNoByte property name resolves", allResolve(noByteNames));
-    // audit #5 AB14 — EnumProperty joined NumericAll (11 now, was 10) but NOT
-    // NumericNoByte: it resolves to UInt8, a 1-byte width NumericNoByte excludes.
+    // EnumProperty is in NumericAll but NOT NumericNoByte: it resolves to UInt8,
+    // a 1-byte width NumericNoByte excludes.
     const auto& allNames = Radar::PropertyTypeNames(DT::NumericAll);
     EXPECT("NumericAll has 11 property names", allNames.size() == 11);
     EXPECT("every NumericAll property name resolves", allResolve(allNames));
@@ -2627,15 +2609,15 @@ static void Test_ValueScan_PropertyTypeNameOf_Inverse() {
 // Helper: does the set contain an entry for `dt`, and (optionally) does
 // it decode to the expected scalar value?
 // ============================================================
-// Macht::PatternScanRange — audit #5 MA2
+// Macht::PatternScanRange
 // ============================================================
-// The batch scanner guarded its scalar loops with `regionSize - patLen` as an
-// unsigned max-start, checked only against the batch's SHORTEST pattern. For any
-// pattern LONGER than the region that subtraction underflows to ~1.8e19 and the
-// `pos <= maxStart` loop walks off the end — in a function with no SEH.
+// A scalar loop bounded by `regionSize - patLen` as an unsigned max-start, checked
+// only against the batch's SHORTEST pattern, underflows to ~1.8e19 for any pattern
+// LONGER than the region, and the `pos <= maxStart` loop walks off the end — in a
+// function with no SEH.
 //
-// The bound now comes from one shared predicate, so the underflow is structurally
-// impossible in all four scan loops rather than guarded in three of them.
+// The bound comes from one shared predicate, so the underflow cannot come back in
+// one scan loop while the others stay guarded.
 static void Test_Macht_PatternScanRange() {
     size_t maxStart = 0;
 
@@ -2655,10 +2637,10 @@ static void Test_Macht_PatternScanRange() {
     EXPECT("MA2 refusal leaves maxStart untouched (no underflow leaks out)",
            maxStart == 12345);
 
-    // One byte too long — the boundary the old arithmetic turned into SIZE_MAX.
+    // One byte too long — the boundary unsigned `regionSize - patLen` turns into SIZE_MAX.
     EXPECT("MA2 one-byte-too-long is refused", !Macht::PatternScanRange(10, 11, maxStart));
 
-    // Empty pattern: the old arithmetic gave maxStart == regionSize, i.e. a
+    // Empty pattern: that subtraction gives maxStart == regionSize, i.e. a
     // reported match one past the end of the region.
     EXPECT("MA2 empty pattern is refused", !Macht::PatternScanRange(100, 0, maxStart));
 
@@ -2710,11 +2692,11 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("-5 has NO UInt32", ts.Find(DT::UInt32) == nullptr);
         EXPECT("-5 has NO UInt64", ts.Find(DT::UInt64) == nullptr);
     }
-    // ---- audit #5 AB4 -------------------------------------------------------
+    // ---- ordered predicates against a target outside a width's range ---------
     // "Does the target fit this width" is right for Exact and WRONG for the
     // ordered predicates. Every Int16 field is smaller than 70000, but 70000 has
-    // no int16 encoding, so the old set emitted no Int16 entry and the engines
-    // skipped every 2-byte field. The four directions are NOT symmetric.
+    // no int16 encoding, so a set built on "fits" emits no Int16 entry and the
+    // engines skip every 2-byte field. The four directions are NOT symmetric.
     {
         using ST = Radar::ScanType;
         using Fit = Radar::NumericTargetSet::Fit;
@@ -2736,7 +2718,7 @@ static void Test_ValueScan_BuildNumericTargets() {
                lo.FindEntry(DT::Int32) &&
                lo.FindEntry(DT::Int32)->fit == Fit::Encoded);
         // Find() must NOT hand out the zeroed buffer of an AlwaysTrue entry:
-        // comparing against 0 would be wrong in a quieter way than the bug.
+        // comparing against 0 would be wrong in a quieter way.
         EXPECT("AB4 Find() hides an AlwaysTrue entry", lo.Find(DT::Int16) == nullptr);
 
         // Bigger with the SAME value is the opposite answer: nothing 16-bit
@@ -2747,9 +2729,9 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("AB4 Bigger(70000) still drops Int16", hi.FindEntry(DT::Int16) == nullptr);
         EXPECT("AB4 Bigger(70000) still drops UInt16", hi.FindEntry(DT::UInt16) == nullptr);
 
-        // The sign leak the finding did not mention: a negative string suppresses
-        // the unsigned parse entirely, so `Bigger -5` used to drop every unsigned
-        // width. Every unsigned value IS bigger than -5.
+        // The sign leak: a negative string suppresses the unsigned parse entirely,
+        // so without a verdict `Bigger -5` would drop every unsigned width. Every
+        // unsigned value IS bigger than -5.
         Radar::NumericTargetSet neg;
         Radar::BuildNumericTargets(DT::NumericNoByte, "-5", neg,
                                    Radar::RoundMode::Round, ST::Bigger);
@@ -2765,7 +2747,7 @@ static void Test_ValueScan_BuildNumericTargets() {
                                    Radar::RoundMode::Round, ST::Smaller);
         EXPECT("AB4 Smaller(-5) still drops UInt16", neg2.FindEntry(DT::UInt16) == nullptr);
 
-        // Exact is the default and must be byte-identical to before: no verdicts.
+        // Exact is the default and carries no verdicts.
         Radar::NumericTargetSet ex;
         Radar::BuildNumericTargets(DT::NumericNoByte, "70000", ex);
         EXPECT("AB4 Exact(70000) unchanged: no Int16", ex.FindEntry(DT::Int16) == nullptr);
@@ -2801,9 +2783,9 @@ static void Test_ValueScan_BuildNumericTargets() {
                b16.FindEntry(DT::Int16) &&
                b16.FindEntry(DT::Int16)->fit == Fit::AlwaysTrue);
 
-        // [A4-AB4-UINT64] The 64-bit members got no verdict at all. The range table listed only
-        // 8/16/32-bit, on the premise that a string which parsed fits the 64-bit ones -- false for
-        // a negative string (never parsed as unsigned) and for one above INT64_MAX.
+        // [A4-AB4-UINT64] The 64-bit members need verdicts too. A range table of only 8/16/32-bit
+        // rests on the premise that a string which parsed fits the 64-bit ones -- false for a
+        // negative string (never parsed as unsigned) and for one above INT64_MAX.
         EXPECT("AB4-U64 ⭐ Bigger(-5) keeps UInt64 as AlwaysTrue",
                neg.FindEntry(DT::UInt64) &&
                neg.FindEntry(DT::UInt64)->fit == Fit::AlwaysTrue);
@@ -2845,10 +2827,9 @@ static void Test_ValueScan_BuildNumericTargets() {
         Radar::BuildNumericTargets(DT::NumericNoByte, "-5", exNeg);
         EXPECT("AB4-U64 control: Exact(-5) still has no UInt64", exNeg.FindEntry(DT::UInt64) == nullptr);
 
-        // (review of aaf6a022) A '-'-prefixed target whose integer value is 0 ("-0", or a negative
-        // fraction that rounds to 0) never got an unsigned reading: the sign CHARACTER suppressed the
-        // unsigned parse, so every unsigned width was dropped, even under Exact, while the snapshot
-        // matcher kept them.
+        // A '-'-prefixed target whose integer value is 0 ("-0", or a negative fraction that rounds
+        // to 0) gets an unsigned reading: a sign CHARACTER that suppressed the unsigned parse would
+        // drop every unsigned width, even under Exact, while the snapshot matcher keeps them.
         Radar::NumericTargetSet mz;
         Radar::BuildNumericTargets(DT::NumericNoByte, "-0", mz);
         EXPECT("AB4-SIGN ⭐ Exact(-0) has an encoded UInt16 target",
@@ -2867,8 +2848,8 @@ static void Test_ValueScan_BuildNumericTargets() {
     }
 
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
-    // are COERCED to the displayed integer via the rounding mode (build 1672) —
-    // default Round: round(100.5)=101 (half-away). So it now fits all 8 widths.
+    // are COERCED to the displayed integer via the rounding mode —
+    // default Round: round(100.5)=101 (half-away). So it fits all 8 widths.
     {
         Radar::NumericTargetSet ts;
         EXPECT("BuildNumericTargets(100.5) ok", Radar::BuildNumericTargets(DT::NumericNoByte, "100.5", ts));
@@ -2906,10 +2887,10 @@ static void Test_ValueScan_BuildNumericTargets() {
         const uint8_t* i = ts.Find(DT::Int32);
         if (i) { int32_t v; std::memcpy(&v, i, 4); EXPECT("0x10 Int32 == 16", v == 16); }
     }
-    // audit #5 AB15 — a LEADING ZERO must mean DECIMAL for every width, not octal
-    // for the integers and decimal for the floats. Before the fix, base-0 parsing
-    // read "010" as octal 8 for Int32/Int64/... while std::stod read it as 10.0 for
-    // Float/Double, so one meta scan gave the same string two different numbers.
+    // A LEADING ZERO must mean DECIMAL for every width, not octal for the
+    // integers and decimal for the floats: base-0 parsing reads "010" as octal 8
+    // for Int32/Int64/... while std::stod reads it as 10.0 for Float/Double, so
+    // one meta scan would give the same string two different numbers.
     {
         Radar::NumericTargetSet ts;
         EXPECT("BuildNumericTargets(010) ok", Radar::BuildNumericTargets(DT::NumericAll, "010", ts));
@@ -2921,7 +2902,7 @@ static void Test_ValueScan_BuildNumericTargets() {
         const uint8_t* f = ts.Find(DT::Float);
         EXPECT("010 Float present", f != nullptr);
         if (f) { float v; std::memcpy(&v, f, 4); EXPECT("010 Float == 10.0", v == 10.0f); }
-        // The integer and float interpretations now AGREE — the whole point.
+        // The integer and float interpretations AGREE — the whole point.
         if (i32 && f) {
             int32_t iv; std::memcpy(&iv, i32, 4);
             float   fv; std::memcpy(&fv, f, 4);
@@ -3030,7 +3011,7 @@ static void Test_ValueScan_Predicate_Int32() {
 }
 
 static void Test_ValueScan_Predicate_Int8Negative() {
-    // Regression for sign extension: Int8 must compare as signed even
+    // Sign extension: Int8 must compare as signed even
     // when the raw byte is 0xFF (which would be 255 as unsigned).
     using DT = Radar::DataType;
     using ST = Radar::ScanType;
@@ -3097,8 +3078,8 @@ static void Test_ValueScan_Predicate_UInt64_RangeBoundary() {
 
 // ----- Radar: Float/Double rounding mode (displayed-integer scan) -------
 //
-// Build 1672 replaced the implicit half-away round + the ± tolerance band with
-// an explicit RoundMode (Round/Trunc/Ceil): every Float/Double operand is
+// An explicit RoundMode (Round/Trunc/Ceil), not an implicit half-away round with
+// a ± tolerance band: every Float/Double operand is
 // reduced to the integer the game DISPLAYS before comparing. GAS use case: a
 // stored 513.36 shows as 513 (Round/Trunc) — scanning "513" Exact finds it; a
 // stored 99.6 shows as 100 (Round/Ceil). A FRACTIONAL target keeps exact-literal
@@ -3302,7 +3283,7 @@ static void Test_ValueScan_RoundMode_IntegerNoOp() {
            !Radar::ComparePredicate(DT::UInt64, ST::Exact, cur, tgt, nullptr, RM::Trunc));
 }
 
-// ----- Radar: CompareStringPredicate (Phase 2A) -------------------------
+// ----- Radar: CompareStringPredicate -------------------------------------
 
 static void Test_ValueScan_StringPredicate_Exact() {
     using ST = Radar::ScanType;
@@ -3379,10 +3360,10 @@ static void Test_ValueScan_StringPredicate_RejectsNumericOrdering() {
            !Radar::CompareStringPredicate(ST::Decreased, "A", "B", false));
 }
 
-// ----- Radar: CompareVectorPredicate (Phase 2B) -------------------------
+// ----- Radar: CompareVectorPredicate -------------------------------------
 
-// CompareVectorPredicate now takes DECODED triples (see Radar.h) — the raw
-// bytes no longer share a width between the field and the target once LWC is
+// CompareVectorPredicate takes DECODED triples (see Radar.h) — the raw
+// bytes do not share a width between the field and the target once LWC is
 // in play, so the decode happens at the call site.
 static void WriteVector(double v[3], double x, double y, double z) {
     v[0] = x; v[1] = y; v[2] = z;
@@ -3489,7 +3470,7 @@ static void Test_ValueScan_VectorPredicate_RejectsSubstring() {
            !Radar::CompareVectorPredicate(ST::EndsWith, cur, tgt));
 }
 
-// ----- Radar: LWC vector width (audit #5 AB3 / AB5) ------------------------
+// ----- Radar: LWC vector width ---------------------------------------------
 
 static void Test_ValueScan_VectorWidth_Accepted() {
     EXPECT("width 12 (3xfloat, UE4 / FVector3f) supported",
@@ -3550,10 +3531,10 @@ static void Test_ValueScan_StoreVectorCanonical() {
            sizeof(Radar::Candidate::prevValue) >= Radar::VECTOR_CANON_BYTES);
 }
 
-// THE negative control for AB5. A UE5 LWC field holds three DOUBLES; the scan
-// used to read a flat 12 bytes and reinterpret them as three floats, which is
-// the low half of X plus the low half of Y — a bit pattern that can never equal
-// the value the user typed. Reverting DecodeVectorBytes to a fixed 12-byte
+// THE negative control for the LWC width. A UE5 LWC field holds three DOUBLES;
+// a scan that read a flat 12 bytes and reinterpreted them as three floats would
+// get the low half of X plus the low half of Y — a bit pattern that can never
+// equal the value the user typed. Reverting DecodeVectorBytes to a fixed 12-byte
 // float read turns the second half of this test red.
 static void Test_ValueScan_LwcVectorIsNotReadAsFloats() {
     using ST = Radar::ScanType;
@@ -3572,7 +3553,7 @@ static void Test_ValueScan_LwcVectorIsNotReadAsFloats() {
     EXPECT("LWC field Exact-matches the typed target",
            Radar::CompareVectorPredicate(ST::Exact, cur, target));
 
-    // The pre-fix behaviour: same bytes, read as 3 floats. Whatever that
+    // The fixed-12 read: same bytes, read as 3 floats. Whatever that
     // produces, it is not the value the user typed.
     double asFloats[3] = {};
     EXPECT("same bytes also decode at width 12 (the old, wrong path)",
@@ -3590,7 +3571,7 @@ static void Test_ValueScan_LwcVectorIsNotReadAsFloats() {
            Radar::CompareVectorPredicate(ST::Exact, curF, target));
 }
 
-// ----- VectorStructNames (Phase 2B) ----------------------------------------
+// ----- VectorStructNames ---------------------------------------------------
 
 static void Test_ValueScan_VectorStructNames() {
     using DT = Radar::DataType;
@@ -3623,7 +3604,7 @@ static void Test_ValueScan_SessionLifecycle() {
     seed[1].addr = 0x2000;
     WriteLE<int32_t>(seed[1].prevValue, 200);
 
-    // Shared metadata pools the candidates index into (V3-A). Both
+    // Shared metadata pools the candidates index into. Both
     // candidates reference one descriptor + one instance to exercise the
     // dedup path.
     std::vector<FieldDescriptor> descriptors(1);
@@ -3674,7 +3655,7 @@ static void Test_ValueScan_SessionLifecycle() {
     EXPECT("RefineWith on missing does NOT invoke callback", !callbackRan);
 }
 
-// V3-A — FieldDisplayName reconstructs the candidate display name from the
+// FieldDisplayName reconstructs the candidate display name from the
 // interned descriptor + the candidate's element index: the base name for a
 // direct field (-1), and "base[idx]" for a TArray/container element.
 static void Test_ValueScan_FieldDisplayName() {
@@ -3694,7 +3675,7 @@ static void Test_ValueScan_FieldDisplayName() {
     EXPECT("Dotted nested base name preserved (-1)",
            FieldDisplayName(nested, -1) == "MaximumHealth.CurrentValue");
 
-    // V1a — TMap key/value scan fields carry a "Map.Key" / "Map.Value" base
+    // TMap key/value scan fields carry a "Map.Key" / "Map.Value" base
     // name (the per-pair half), so element rendering reads "Map.Key[idx]".
     FieldDescriptor mapKey;
     mapKey.fieldName = "Inventory.Key";
@@ -3705,7 +3686,7 @@ static void Test_ValueScan_FieldDisplayName() {
     EXPECT("Map value element renders Map.Value[idx]",
            FieldDisplayName(mapVal, 5) == "Inventory.Value[5]");
 
-    // build 1201 — struct-array-inner descriptors carry a "[]" placeholder so
+    // Struct-array-inner descriptors carry a "[]" placeholder so
     // the element index lands after the ARRAY name, not at the very end:
     // "SaveSlotList[].GP" -> "SaveSlotList[3].GP".
     FieldDescriptor structArr;
@@ -3720,12 +3701,12 @@ static void Test_ValueScan_FieldDisplayName() {
            FieldDisplayName(structArrNested, 1) == "SaveSlotList[1].MsTuneData.GP2");
 }
 
-// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c sized the TOptional flag with Radar::OptionalFlagOffset's loose "bigger than
-// T" rule and never gated an intrusive optional: on 5.5+ an unset FString / FName / FText optional was scanned as a
-// value, and its "flag" read from the neighbour's byte. The decision is now the resolved layout's.
+// [A2-TOPTIONAL-VALUESCAN] Value Scan sizes the TOptional flag from the resolved layout, not Radar::OptionalFlagOffset's
+// loose "bigger than T" rule, and gates an intrusive optional: otherwise on 5.5+ an unset FString / FName / FText
+// optional is scanned as a value, and its "flag" read from the neighbour's byte.
 // [VND9-04] UE 5.5's narrow strings in Value Scan. FUtf8String / FAnsiString come from FString's template (one
 // { Data, Num, Max } header, one unset state), so an FString scan takes them, an intrusive optional of one gates on
-// FString's sentinel, and the layout code aligns them like FString. Each knew "StrProperty" only.
+// FString's sentinel, and the layout code aligns them like FString -- none of them may know "StrProperty" alone.
 static void Test_ValueScan_NarrowStrings() {
     using Ubel::OptionalLayout;
     using Ubel::OptionalUnsetSentinel;
@@ -3816,8 +3797,8 @@ static void Test_Stark_StatefulToggleFailure() {
            Stark::StatefulToggleFailure(Stark::kInvokeNeedsGameThread) == Stark::kInvokeNeedsGameThread);
 }
 
-// [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set read the camera's state
-// before it ran -- an OFF read "already OFF" and reported a clean OFF -- and the queued ON then turned it on. The
+// [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set that read the camera's
+// state before it ran would see "already OFF", report a clean OFF, and the queued ON would then turn it on. The
 // record says whether that request has run, from the request's own promise.
 static void Test_Stark_QueuedInvoke() {
     Stark::QueuedInvoke q;
@@ -3839,7 +3820,7 @@ static void Test_Stark_QueuedInvoke() {
     EXPECT("QUEUEDINV a request that ran with an error is not queued either", !q.StillQueued());
 }
 
-// [DBGCAM-OFF-OVER-QUEUED-ON] review: while a toggle is still queued (or being dispatched), a Set sends nothing. The
+// [DBGCAM-OFF-OVER-QUEUED-ON] While a toggle is still queued (or being dispatched), a Set sends nothing. The
 // same direction is the caller's toggle, already queued: -5, do not re-send. The opposite direction sent NOTHING and
 // the state it would read is from before the queued toggle: a code of its own, so no caller describes it as a queued
 // toggle of its own direction.
@@ -3852,7 +3833,7 @@ static void Test_Stark_QueuedToggleAnswer() {
            Stark::kToggleBlockedByQueued != Stark::kInvokeTimedOutStillQueued);
 }
 
-// V3-C — server-side ordered view (filter + sort + window) over a candidate
+// Server-side ordered view (filter + sort + window) over a candidate
 // pool. The DLL owns the full set; the UI is a window. These pure helpers run
 // over the DLL's own pools (no game memory), so filter/sort never touch the
 // game thread. Builds a tiny synthetic pool and checks filter / sort / format.
@@ -3970,7 +3951,7 @@ static void Test_ValueScan_OrderedView() {
     EXPECT("parse 'offset'", TryParseSortKey("offset", k) && k == SortKey::Offset);
     EXPECT("parse unknown -> false", !TryParseSortKey("bogus", k));
 
-    // --- class-noise exclude (server-side, P2) ---
+    // --- class-noise exclude (server-side) ---
     {
         std::unordered_set<std::string> excl = { "BP_Enemy_C" };
         auto e = BuildOrderedView(cands, descs, insts, dt, "", SortKey::ScanOrder, false, excl);
@@ -4049,10 +4030,10 @@ static void Test_IsEnginePackage() {
 // CanonicalizeObjectPath / LooksLikeObjectPath / PathLeafName: the pure half of
 // find-object-by-path. THE case that matters is the cross-convention one — our own
 // Ubel::GetFullName emits "//Script/Engine/Actor" while every caller, doc and .CT
-// writes "/Script/Engine.Actor". Those two are the SAME object and compared unequal,
-// which is why find-by-path resolved nothing at all before build 3157 (measured on
-// Elliot: find_object "Actor" -> 0x7FF4DDE12068, find_object "/Script/Engine.Actor"
-// -> "Object not found").
+// writes "/Script/Engine.Actor". Those two are the SAME object, and compared as raw
+// strings they differ, so find-by-path would resolve nothing at all (find_object
+// "Actor" finds the class while find_object "/Script/Engine.Actor" says "Object not
+// found").
 static void Test_CanonicalizeObjectPath() {
     using Aura::CanonicalizeObjectPath;
     using Aura::LooksLikeObjectPath;
@@ -4060,7 +4041,7 @@ static void Test_CanonicalizeObjectPath() {
 
     const std::string kActor = "/Script/Engine/Actor";
 
-    // THE regression this exists for: all three spellings must agree.
+    // THE case this exists for: all three spellings must agree.
     EXPECT_EQ_STR("canon: GetFullName form", CanonicalizeObjectPath("//Script/Engine/Actor"), kActor);
     EXPECT_EQ_STR("canon: UE canonical form", CanonicalizeObjectPath("/Script/Engine.Actor"), kActor);
     EXPECT_EQ_STR("canon: class-qualified form",
@@ -4286,9 +4267,9 @@ static void Test_NumericFamily_Filter() {
     EXPECT("parse empty->Any",   ParseNumericFamily("")             == NumericFamily::Any);
 }
 
-// [GROUP-DEEP-INDEX-TWICE] Review wf_72c53295-04c F5: the witness picker's term match reads the DISPLAYED name. A deep
+// [GROUP-DEEP-INDEX-TWICE] The witness picker's term match reads the DISPLAYED name. A deep
 // leaf's descriptor is "...Leaves[]" and its slot match holds the index, so asking for "Leaves[26]" must pick the leaf
-// at element 26 -- against the raw name it matched nothing and fell to "any free leaf", the first one.
+// at element 26 -- against the raw name it would match nothing and fall to "any free leaf", the first one.
 static void Test_Radar_PickWitness_DeepDisplayedName() {
     using namespace Radar;
     FieldDescriptor d;
@@ -4317,11 +4298,11 @@ static void Test_Radar_PickWitness_DeepDisplayedName() {
 // Which leaf each slot DISPLAYS. Reproduces the DumperTest sample exactly: a
 // Changed + Unchanged refine where slot 0 kept {Health.CurrentValue, TickCount}
 // and slot 1 kept {PrimaryActorTick.TickInterval, Health.BaseValue, FrozenInt}.
-// Two valid assignments, one row — and for four separate reports the pair the
-// row did not pick was read as a missed match.
+// Two valid assignments, one row — and the pair the row did not pick reads as a
+// missed match.
 //
-// The rule used to live inside Fern.cpp's JSON builder where no test could reach
-// it, which is how it kept drifting away from the filter it must agree with.
+// The rule lives in Radar rather than Fern.cpp's JSON builder, where no test could
+// reach it and it could drift away from the filter it must agree with.
 static void Test_Radar_PickGroupWitnessAssignment() {
     using namespace Radar;
 
@@ -4354,7 +4335,7 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     slots[0].dt = DataType::Int32; slots[0].st = ScanType::Changed;
     slots[1].dt = DataType::Int32; slots[1].st = ScanType::Unchanged;
 
-    // The real offsets from the 2026-08-05 session: FrozenInt @0x51C == 1308.
+    // Real offsets from a live session: FrozenInt @0x51C == 1308.
     std::vector<std::vector<GroupSlotMatch>> sm = {
         { leaf(2, 1288, 19),  leaf(3, 1304, 101) },
         { leaf(0,   52,  0),  leaf(1, 1284, 100), leaf(4, 1308, 424242) },
@@ -4379,9 +4360,9 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     EXPECT("witness: slot0 -> Health.CurrentValue", plain.size() == 2 && plain[0] == 0);
     EXPECT("witness: slot1 prefers the same struct over the first free leaf", plain[1] == 1);
 
-    // Pass 3 skips a leading zero. Reproduces the default first-scan row that read
+    // Pass 3 skips a leading zero. Models a default first-scan row reading
     // `PrimaryActorTick.TickInterval=0, InitialLifeSpan=0` — a valid pairing and a
-    // useless one, while the same object's real fields had matched too.
+    // useless one, while the same object's real fields match too.
     std::vector<std::vector<GroupSlotMatch>> zeroFirst = {
         { leaf(0,   52,      0), leaf(3, 1304,    183) },   // TickInterval=0, TickCount=183
         { leaf(0, 1216,      0), leaf(4, 1308, 424242) },   // (zero), FrozenInt=424242
@@ -4414,8 +4395,8 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     auto byName = PickGroupWitnessAssignment(sm, slots, descs, SplitFilterTerms("tickcount"));
     EXPECT("witness: filter 'tickcount' -> slot0 shows TickCount", byName[0] == 1);
     // ...and the sibling rule then pairs it with the other field of the SAME
-    // class, which is exactly the TickCount/FrozenInt pairing that was reported
-    // missing while both had matched all along.
+    // class, which is exactly the TickCount/FrozenInt pairing a user looks for
+    // while both have matched all along.
     EXPECT("witness: and slot1 pairs it with FrozenInt (same defining class)", byName[1] == 2);
 
     // Filtering by VALUE goes through GroupSlotValueString — the same call the
@@ -4428,7 +4409,7 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     // leaves (2 x 36 in the real case) nothing in the data says which of the many
     // valid pairings you meant, so naming both fields is the request. Each term
     // must land in its OWN slot — one greedy slot taking both would put the second
-    // named field nowhere, which is the whole defect.
+    // named field nowhere, which is the whole hazard.
     auto twoTerms = PickGroupWitnessAssignment(
         sm, slots, descs, SplitFilterTerms("tickcount frozenint"));
     EXPECT("witness: 'tickcount frozenint' -> slot0 = TickCount", twoTerms[0] == 1);
@@ -4459,11 +4440,11 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     EXPECT("witness: no leaf is displayed by two slots",
            shared[0][distinct[0]].leafAddr != shared[1][distinct[1]].leafAddr);
 
-    // audit #5 AB18 — the case GREEDY ALONE gets wrong. slot0 has two options and
-    // slot1 has only the shared one; greedy seats slot0 on the shared leaf first and
-    // leaves slot1 nothing free, so it duplicated it — even though a distinct
-    // assignment plainly exists (slot0 -> unique, slot1 -> shared). The augmenting-
-    // path repair must recover it. This FAILS before the fix and passes after.
+    // The case GREEDY ALONE gets wrong. slot0 has two options and slot1 has only
+    // the shared one; greedy seats slot0 on the shared leaf first and leaves slot1
+    // nothing free, so it would duplicate it — even though a distinct assignment
+    // plainly exists (slot0 -> unique, slot1 -> shared). The augmenting-path repair
+    // must recover it; greedy alone FAILS this case.
     std::vector<std::vector<GroupSlotMatch>> forcedSwap = {
         { leaf(1, 1284, 100), leaf(2, 1288, 19) },   // slot0: two options
         { leaf(1, 1284, 100) },                       // slot1: only the shared leaf
@@ -4521,7 +4502,7 @@ static void Test_Radar_PickGroupWitnessAssignment() {
            seen.size() == 3 && seen[0] == 0 && seen[1] == 1 && seen[2] == 2);
 }
 
-// audit #5 AB16 — the server-side Value Search filter must cover the displayed
+// The server-side Value Search filter must cover the displayed
 // "Origin" column, so filtering for "native" hits rows that visibly read "Native-C".
 static void Test_Radar_FormatCandidateOrigin() {
     using namespace Radar;
@@ -4538,10 +4519,10 @@ static void Test_Radar_FormatCandidateOrigin() {
     EXPECT("origin: native without width", FormatCandidateOrigin(nativeNoWidth) == "Native-C");
 
     // The string exactly mirrors the C# ScanCandidate.Origin, so the server-side
-    // keyword filter now matches a column the user can see (the whole finding).
+    // keyword filter matches a column the user can see.
 }
 
-// audit #5 AB19 — a group session's leaf memory is candidates x slots x perSlotCap
+// A group session's leaf memory is candidates x slots x perSlotCap
 // GroupSlotMatch objects; only the last two are clamped. The pure helpers below let
 // GroupSessionManager::Begin bound the retained session by total leaves.
 static void Test_Radar_GroupLeafBudget() {
@@ -4584,13 +4565,13 @@ static void Test_Radar_GroupLeafBudget() {
            GroupCandidatesWithinLeafBudget(oneBig, 100) == 1);
 }
 
-// audit #5 AE13 — the per-slot cap verdict has to SURVIVE Begin.
+// The per-slot cap verdict has to SURVIVE Begin.
 //
-// Orden::MatchGroup reports truncation (Test_Orden_PerSlotCap above), and until this
-// fix the whole of its onward journey was a LOG_WARN inside ScanForValueGroup: no wire
-// key existed, so no DTO could carry it and the UI presented a capped witness list as
-// the complete set of matching fields. Refine cannot recompute it — it prunes the
-// stored pool and never calls the matcher again — and query is a pure window, so the
+// Orden::MatchGroup reports truncation (Test_Orden_PerSlotCap above). Kept only as a
+// LOG_WARN inside ScanForValueGroup, with no wire key, no DTO could carry it and the UI
+// would present a capped witness list as the complete set of matching fields. Refine
+// cannot recompute it — it prunes the stored pool and never calls the matcher again —
+// and query is a pure window, so the
 // verdict has to be carried on the SESSION or it is lost after the first response.
 //
 // NEGATIVE CONTROL: drop the two assignments from GroupSessionManager::Begin and both
@@ -4623,7 +4604,7 @@ static void Test_Radar_GroupSessionCarriesPerSlotCap() {
     mgr.End(owner, cleanId);
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: a scan session is the connection's that began it.
+// [PIPE-PER-PROCESS-2026-11-06] A scan session is the connection's that began it.
 static void Test_Radar_SessionsAreTheirConnections() {
     using namespace Radar;
     const uint64_t A = 0xA101, B = 0xA102;   // two connections, unique to this test
@@ -4672,8 +4653,8 @@ static void Test_Radar_SessionsAreTheirConnections() {
     }
 }
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage C: the idle sweep reaps only the sweeping owner's sessions -- with the clock passed
-// in, the case AB17 called untestable.
+// [PIPE-PER-PROCESS-2026-11-06] The idle sweep reaps only the sweeping owner's sessions -- with the clock passed
+// in, so the idle case is testable.
 static void Test_Radar_IdleSweepIsPerOwner() {
     using namespace Radar;
     using clock = std::chrono::steady_clock;
@@ -4707,12 +4688,13 @@ static void Test_Radar_IdleSweepIsPerOwner() {
     EXPECT("under the cap nothing goes", EvictOwnedBeyond(g, A, 3) == 0);
 }
 
-// The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
+// The grid must order by the leaf the ROW SHOWS.
 //
-// BuildGroupOrderedView's Value/Offset/ClassName keys read slotMatches[0][0], the first
-// leaf the scan happened to keep, while Fern renders slotMatches[0][picks[0]] from
-// PickGroupWitnessAssignment. With per_slot_cap at 256 a slot routinely keeps dozens, so
-// "sort by Value" produced an order with no visible relationship to the Value column.
+// Fern renders slotMatches[0][picks[0]] from PickGroupWitnessAssignment, so
+// BuildGroupOrderedView's Value/Offset/ClassName keys must read that leaf, not
+// slotMatches[0][0], the first leaf the scan happened to keep. With per_slot_cap at 256 a
+// slot routinely keeps dozens, so keyed on [0], "sort by Value" would produce an order
+// with no visible relationship to the Value column.
 //
 // The fixture is built so the two disagree: in each candidate the leaf at index 0 is
 // deliberately ranked in the OPPOSITE order to the leaf the witness picker chooses, so a
@@ -4888,11 +4870,10 @@ static void Test_GroupScan_ExcludeAndHistogram() {
     }
 }
 
-// V2 (build 950) — scaling smoke for the server-side ordered view. The cap
-// ceiling was raised to 1,000,000 now that the UI windows server-side (V3-C);
-// confirm a full filter + sort over a set that size stays well under a second
-// (it runs on every filter/sort change, debounced 250ms in the UI). Uses
-// QueryPerformanceCounter to match the poll-latency bench above.
+// Scaling smoke for the server-side ordered view. The cap ceiling is 1,000,000
+// because the UI windows server-side; confirm a full filter + sort over a set
+// that size stays well under a second (it runs on every filter/sort change,
+// debounced 250ms in the UI).
 static void Test_ValueScan_OrderedViewScale() {
     using namespace Radar;
     const int N = 1'000'000;
@@ -4946,12 +4927,11 @@ static void Test_ValueScan_OrderedViewScale() {
 
     // Generous bounds catch an O(n^2) regression; the printed numbers are far
     // lower. The filter is allocation-heavier than the sort (lowercases each
-    // displayed column) — if it ever creeps past this, the follow-up is the
-    // incremental/top-k path noted in todo V2.
+    // displayed column) — if it ever creeps past this, the follow-up is an
+    // incremental/top-k path.
 #ifdef __SANITIZE_ADDRESS__
-    // [CPP-HARDENING-2026-11-14] AddressSanitizer slows the allocation-heavy filter about 20x (measured 2026-11-15:
-    // 14.6 s against 0.73 s; the sort 3.1 s against 0.69 s). An O(n^2) regression at this N would still take hours,
-    // so the wider bound keeps catching it.
+    // [CPP-HARDENING-2026-11-14] AddressSanitizer slows the allocation-heavy filter about 20x. An O(n^2) regression
+    // at this N would still take hours, so the wider bound keeps catching it.
     constexpr double kScaleBoundMs = 60000.0;
 #else
     constexpr double kScaleBoundMs = 5000.0;
@@ -4962,11 +4942,11 @@ static void Test_ValueScan_OrderedViewScale() {
 
 // Macht::IsRipRelativeModRM — the x64 `[rip+disp32]` ModR/M test.
 //
-// Three of Genau's five hand-rolled RIP decode loops tested `(b & 0x07) == 0x05` only,
-// omitting the mod=00 half, so ordinary RBP/R13 addressing was decoded as RIP-relative and
-// the int32 read at instr+3 was a disp8 plus the NEXT instruction's bytes. The bytes below
-// are real encodings, and the REJECT cases are exactly the ones that used to slip through —
-// a test that only asserts the accept case would have passed before the fix too.
+// A decode that checks `(b & 0x07) == 0x05` alone omits the mod=00 half, so ordinary
+// RBP/R13 addressing decodes as RIP-relative and the int32 read at instr+3 is a disp8 plus
+// the NEXT instruction's bytes. The bytes below are real encodings, and the REJECT cases
+// are exactly the ones an r/m-only check lets through — a test that only asserts the
+// accept case would pass against an r/m-only check too.
 static void Test_Macht_IsRipRelativeModRM() {
     // ACCEPT — mod=00, r/m=101. reg field (bits 5:3) is the destination and must not matter.
     EXPECT("48 8D 0D  lea rcx,[rip+d32]  modrm=0x0D", Macht::IsRipRelativeModRM(0x0D));
@@ -4974,7 +4954,7 @@ static void Test_Macht_IsRipRelativeModRM() {
     EXPECT("4C 8B 25  mov r12,[rip+d32]  modrm=0x25", Macht::IsRipRelativeModRM(0x25));
     EXPECT("reg=111 still accepted        modrm=0x3D", Macht::IsRipRelativeModRM(0x3D));
 
-    // REJECT — r/m=101 but mod!=00. These are the regression cases.
+    // REJECT — r/m=101 but mod!=00. These are the cases an r/m-only check gets wrong.
     EXPECT("48 8B 4D F8  mov rcx,[rbp-8]   mod=01", !Macht::IsRipRelativeModRM(0x4D));
     EXPECT("48 8D 45 20  lea rax,[rbp+20]  mod=01", !Macht::IsRipRelativeModRM(0x45));
     EXPECT("mov rcx,[rbp+disp32]           mod=10", !Macht::IsRipRelativeModRM(0x8D));
@@ -4995,7 +4975,7 @@ static void Test_Macht_IsRipRelativeModRM() {
     EXPECT("exactly 8/256 ModR/M bytes are RIP-relative", n == 8);
 }
 
-// V1a — TSet / TMap sparse-container element geometry. ComputeSetElementStride
+// TSet / TMap sparse-container element geometry. ComputeSetElementStride
 // accounts for the TSetElement hash overhead (HashNextId + HashIndex, value
 // aligned to 4); ComputeMapValueOffset aligns the TPair value to its natural
 // alignment. These drive the slot addresses the container scan reads, so lock
@@ -5025,11 +5005,11 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<uint8,FName> WOULD be +8 w/o align",  Macht::ComputeMapValueOffset(1, 8)    == 8);
     EXPECT("Map<uint8,ptr> value at +8 (align 8)",    Macht::ComputeMapValueOffset(1, 8, 8) == 8);
 
-    // ---- Audit #5 D4a/MG1 — the COMPOSITE recipe, not the two halves ----
+    // ---- the COMPOSITE recipe, not the two halves ----
     // Real stride = Align(Align(unpaddedPair, alignof(TPair)) + 8, alignof(TPair)),
     // where alignof(TPair) == max(alignof(Key), alignof(Value)). Every case above
-    // happens to land on a multiple of 8, which is exactly why this survived: both
-    // helpers were tested separately and the composition never was.
+    // happens to land on a multiple of 8, so testing the two helpers separately
+    // cannot catch a wrong composition; these cases do not land on one.
     EXPECT("SanitizeAlign rejects 0",          Macht::SanitizeAlign(0)  == 0);
     EXPECT("SanitizeAlign rejects negative",   Macht::SanitizeAlign(-8) == 0);
     EXPECT("SanitizeAlign rejects non-pow2",   Macht::SanitizeAlign(12) == 0);
@@ -5052,10 +5032,10 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<ptr,uint8> stride 24",
            Macht::ComputeSetElementStride(8 + 1, 8) == 24);
 
-    // ---- Audit #5 D4a/MG3 — struct values must use MinAlignment, not a size guess ----
+    // ---- struct values must use MinAlignment, not a size guess ----
     // TMap<int32,FVector>: FVector is 12 bytes but 4-ALIGNED, so the value really
-    // sits at +4 and the pair is 16. The size guess ("8 or more => align 8") put it
-    // at +8 with a stride of 28, so even element 0 displayed a wrong vector.
+    // sits at +4 and the pair is 16. The size guess ("8 or more => align 8") puts it
+    // at +8 with a stride of 28, so even element 0 would display a wrong vector.
     EXPECT("Map<int32,FVector> value at +4 with real align",
            Macht::ComputeMapValueOffset(4, 12, 4) == 4);
     EXPECT("Map<int32,FVector> stride 24 with real align",
@@ -5081,8 +5061,8 @@ static void Test_ValueScan_SparseContainerGeometry() {
            Macht::ComputeSetElementStride(0x08 + 8, 8) == 24);
     EXPECT("DataTable RowMap stride 32 (CPN)",
            Macht::ComputeSetElementStride(0x10 + 8, 8) == 32);
-    // TSet<T> must be byte-identical to the pre-fix behaviour (elemSize is already
-    // a multiple of alignof(T), so the default align of 4 is correct there).
+    // TSet<T> keeps the default align of 4 (elemSize is already a multiple of
+    // alignof(T), so it is correct there).
     EXPECT("Set<FVector 12> unchanged at 20",  Macht::ComputeSetElementStride(12) == 20);
     EXPECT("Set<ptr 8> align 8 == align 4",
            Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
@@ -5120,7 +5100,7 @@ static void Test_ValueScan_SparseContainerGeometry() {
 
 // ----- main ------------------------------------------------------------------
 
-// Phase A1a — snapshot field selection: pick numeric scalar fields by scope,
+// Snapshot field selection: pick numeric scalar fields by scope,
 // preserving original field indices and resolving each to its concrete width.
 static void Test_ValueScan_SelectSnapshotNumericFields() {
     using DT = Radar::DataType;
@@ -5168,7 +5148,7 @@ static void Test_ValueScan_SelectSnapshotNumericFields() {
     }
 }
 
-// Phase A1b — struct-array inner-key selection.
+// Struct-array inner-key selection.
 static void Test_ValueScan_SelectArrayInnerKey() {
     // FCargoSlot { FName ItemID; int32 Quantity; } -> key = ItemID (index 0).
     EXPECT("FName ItemID is the key",
@@ -5308,7 +5288,7 @@ static void Test_Denken_KeepsWriteSites() {
     EXPECT("* WRITESITES: the body's own writes are through this", w && w->writeSitesViaThis == 2);
     EXPECT("* WRITESITES: ...and so is the followed impl's", w20 && w20->writeSitesViaThis == 1);
 
-    // Review wf_c87eff0e-53f DWS-DLL-1: a write through another base is kept, but after the ones through this, and
+    // A write through another base is kept, but after the ones through this, and
     // counted apart -- an exec thunk's FFrame store must not be the site a "high" row offers first.
     //   B0+0: mov [rdx+0x40], eax   89 42 40   write, base not this
     //   B0+3: mov [rcx+0x40], eax   89 41 40   write through this
@@ -5383,10 +5363,10 @@ static void Test_Denken_FollowsCallHandoff() {
 }
 
 static void Test_Denken_FollowedImplOutlivesItsAlias() {
-    // [W5-DENKEN-DEADGUARD] Denken.cpp's "bail to save budget in a followed impl" guard was dead: TryFollow counts the
-    // follow BEFORE recursing, so `callsFollowed == 0` never held at depth 1. The obvious repair -- drop that term --
-    // would make a followed impl stop the moment its this-alias dies, and lose everything after it. This pins the
-    // behaviour the code has always had: the impl is decoded to its end.
+    // [W5-DENKEN-DEADGUARD] A "bail to save budget in a followed impl" guard keyed on `callsFollowed == 0` cannot fire:
+    // TryFollow counts the follow BEFORE recursing, so that never holds at depth 1. Dropping that term would make a
+    // followed impl stop the moment its this-alias dies, and lose everything after it. This pins the behaviour: the
+    // impl is decoded to its end.
     // Thunk @ B0 (as FollowsCallHandoff): mov rbx, rcx ; mov rcx, rbx ; call impl ; ret
     // Impl  @ B1: mov ecx, 5    B9 05 00 00 00   the this-alias dies
     //             mov eax, [rdx+0x30]   8B 42 30   a low-confidence read AFTER it
@@ -5781,10 +5761,11 @@ static void Test_Solitar_ApplyBoolBit() {
 }
 
 // ----- Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue [SOLIDE-NATIVE-BOOL] ----
-// God Mode's targets and Force ON / OFF took a packed bitfield bool only, so a NATIVE bool -- every Blueprint bool,
-// SetBoolSize's {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} -- was refused (PR_ERR_REFLECT, 0 held).
-// It now resolves to the whole byte and is written 0x01 / 0x00; a packed bool resolves and writes exactly as before;
-// an unresolved layout stays refused ([A3-BOOL-NATIVE-NOWRITE]: a whole-byte write there corrupts 7 sibling bools).
+// God Mode's targets and Force ON / OFF take a NATIVE bool too -- every Blueprint bool, SetBoolSize's
+// {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} -- which a gate taking packed bitfield bools only refuses
+// (PR_ERR_REFLECT, 0 held). It resolves to the whole byte and is written 0x01 / 0x00; a packed bool resolves and writes
+// its own bit; an unresolved layout stays refused ([A3-BOOL-NATIVE-NOWRITE]: a whole-byte write there corrupts 7
+// sibling bools).
 
 static void Test_Solitar_BoolBits() {
     using Solitar::BoolBits;
@@ -5874,7 +5855,7 @@ static void Test_Solitar_BoolBits() {
 }
 
 // ----- Solitar::TrainerMaskFor (the mask get_trainer_offsets' god_bits bakes) -----
-// [SOLIDE-NATIVE-BOOL] review: since a native bool resolves, its mask reaches the standalone trainer, whose Lua does its
+// [SOLIDE-NATIVE-BOOL] A native bool resolves, so its mask reaches the standalone trainer, whose Lua does its
 // own single-bit arithmetic. setbit below is that Lua, step for step; CE's writeByte keeps the low 8 bits.
 static void Test_Solitar_TrainerMaskFor() {
     using Solitar::BoolBits;
@@ -5912,7 +5893,7 @@ static void Test_Solitar_TrainerMaskFor() {
     EXPECT("TRAINERMASK control: ...and the trainer writes it exactly as WriteBoolValue does", differ == 0);
 }
 
-// ----- Solitar::MatchProtectionBool (T2 generic invincibility-flag matcher) ---
+// ----- Solitar::MatchProtectionBool (generic invincibility-flag matcher) ---
 // Polarity is the bug-prone part: a wrong value would ENABLE damage. Lock the
 // keyword set + protect-value for each known flag, and confirm unrelated /
 // ambiguous names (deal-damage, visibility) are NOT matched.
@@ -5968,20 +5949,20 @@ static void Test_Solide_MatchStealthField() {
     EXPECT("position scores 0", MatchStealthField("position") == 0);
 }
 
-// ----- Solide::IntWidthOf / IntRangeOf (held-integer width + SIGN, AF8) -------
-// The bug this pins: Solide read Int8Property as UNSIGNED while writing it as
-// signed, so the re-assert worker's `read != target` drift check could never be
-// satisfied for a negative hold — it rewrote the same byte every tick, forever,
-// and told the user the game was fighting it. Nothing compiles Solide.cpp, so the
+// ----- Solide::IntWidthOf / IntRangeOf (held-integer width + SIGN) -----------
+// The hazard this pins: reading Int8Property as UNSIGNED while writing it as
+// signed means the re-assert worker's `read != target` drift check can never be
+// satisfied for a negative hold — it rewrites the same byte every tick, forever,
+// and tells the user the game is fighting it. Nothing compiles Solide.cpp, so the
 // rule lives in Solide.h and is tested here.
 static void Test_Solide_IntWidthAndRange() {
     using Solide::IntWidthOf;
     using Solide::IntRangeOf;
 
-    // THE defect: Int8Property is SIGNED and one byte wide.
+    // THE case: Int8Property is SIGNED and one byte wide.
     EXPECT("Int8Property is 1 byte",  IntWidthOf("Int8Property").bytes == 1);
     EXPECT("Int8Property is SIGNED",  IntWidthOf("Int8Property").isSigned);
-    // Its unsigned same-width siblings must NOT be dragged along by the fix.
+    // Its unsigned same-width siblings must NOT be dragged along with it.
     EXPECT("ByteProperty is 1 byte",  IntWidthOf("ByteProperty").bytes == 1);
     EXPECT("ByteProperty is unsigned", !IntWidthOf("ByteProperty").isSigned);
 
@@ -6019,8 +6000,8 @@ static void Test_Solide_IntWidthAndRange() {
     IntRangeOf(IntWidthOf("FloatProperty"), lo, hi);
     EXPECT("non-int range is empty", lo == 0.0 && hi == 0.0);
 
-    // The TYPE GATE and the width table are one list, not two that must agree — the
-    // shape of the original defect. A type IsIntType admits but IntWidthOf does not
+    // The TYPE GATE and the width table are one list, not two that must agree. A
+    // type IsIntType admits but IntWidthOf does not
     // know would be accepted by Force and then fail every read and write silently.
     EXPECT("gate admits Int8Property",    Solide::IsIntType("Int8Property"));
     EXPECT("gate admits ByteProperty",    Solide::IsIntType("ByteProperty"));
@@ -6119,18 +6100,14 @@ static void Test_Neu_Legacy_Basic() {
     EXPECT_EQ_U64("legacy build count", L2.count, 4);
 }
 
-// ⛔ THE TWO CasePreservingName ANSWERS ARE DIFFERENT NUMBERS AND WERE CONFUSED TWELVE TIMES.
-// `Grimoire.h` has stated the rule for a long time -- SLOT 0x10 for a TPair<FName, 8-aligned-T>
-// value offset, sizeof 0x0C for a step to an adjacent FName / an FScriptDelegate stride -- and
-// it was STILL copied wrongly into eight call sites, because both answers are spelled
-// `bCasePreservingName ? … : 0x08` and the expression does not say which question it answers.
-// Measured 2026-09-06: 12 raw ternaries, 4 right and 8 wrong, with `FindReferencesToUObject` (Aura.cpp) getting it
-// right four lines below one of the wrong ones and `LiveFieldValue`'s doc (Ubel.h) documenting 12 against writers
-// that set 0x10. All 20 sites now go through the two named helpers; this pins them.
+// ⛔ THE TWO CasePreservingName ANSWERS ARE DIFFERENT NUMBERS AND EASY TO CONFUSE.
+// `Grimoire.h` states the rule -- SLOT 0x10 for a TPair<FName, 8-aligned-T> value offset,
+// sizeof 0x0C for a step to an adjacent FName / an FScriptDelegate stride -- but both answers
+// are spelled `bCasePreservingName ? … : 0x08` and the expression does not say which question
+// it answers. The call sites go through the two named helpers instead; this pins the helpers.
 //
-// ⚠ Impact on every title measured to date is ZERO -- `bCasePreservingName` has two writers
-// inside a live 20-object vote, nothing can force it true, and 12 titles measured false. That is
-// precisely why it rotted: no test and no game could ever go red.
+// ⚠ `bCasePreservingName` has two writers inside a live 20-object vote and nothing can force it
+// true, so no game exercises the true branch: only a test can go red on it.
 static void Test_UeVersionCodeBounds() {
     // The mapping itself.
     EXPECT("UeVersionCode: 5.0 -> 500", Grimoire::UeVersionCode(5, 0) == 500);
@@ -6143,7 +6120,7 @@ static void Test_UeVersionCodeBounds() {
            Grimoire::UeVersionCode(4, 27) == 427);
 
     // ⭐ The bounds are the load-bearing half: they are what stops a GAME's version being read as
-    // an ENGINE version. Every literal below is a real ProductVersion measured on this machine.
+    // an ENGINE version. Every literal below is a real game's ProductVersion.
     EXPECT("UeVersionCode: OCTOPATH's 1.0 is NOT an engine version", Grimoire::UeVersionCode(1, 0) == 0);
     EXPECT("UeVersionCode: DQ7R's 1.1 is NOT an engine version", Grimoire::UeVersionCode(1, 1) == 0);
     EXPECT("UeVersionCode: Elliot's 1.2 is NOT an engine version", Grimoire::UeVersionCode(1, 2) == 0);
@@ -6206,7 +6183,7 @@ static void Test_EngineBuildStringCode() {
     EXPECT("EngineBuildString: a branch the game named (no UE4) is 0", EngineBuildStringCode("4.10.2-0+MyGame") == 0);
     EXPECT("EngineBuildString: a full branch naming another major is 0",
            EngineBuildStringCode("4.10.2-0+++depot+UE5-Releases+4.10") == 0);
-    // [VER-410-GATE] review: the release the full branch repeats must carry the leading MAJOR too, not just the minor.
+    // [VER-410-GATE] The release the full branch repeats must carry the leading MAJOR too, not just the minor.
     EXPECT("EngineBuildString: a full branch repeating 5.10 after 4.10.2 is 0",
            EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+5.10") == 0);
     EXPECT("EngineBuildString: a simplified branch naming another major is 0",
@@ -6227,7 +6204,7 @@ static void Test_EngineBuildStringCode() {
            EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10x") == 0);
     EXPECT("EngineBuildString: a trailing space after a simplified branch is 0",
            EngineBuildStringCode("4.11.0-0+UE4 ") == 0);
-    // [VER-410-GATE] review: the branch-first shape ends at its changelist, as the others end at their branch.
+    // [VER-410-GATE] The branch-first shape ends at its changelist, as the others end at their branch.
     EXPECT("EngineBuildString: trailing text after a branch-first changelist is 0",
            EngineBuildStringCode("++UE4+Release-4.15-CL-0x") == 0);
     EXPECT("EngineBuildString: a trailing space after a branch-first changelist is 0",
@@ -6342,8 +6319,8 @@ static void Test_Neu_Legacy_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{5,0},{6,1},{7,2}};
     // The WRITER still lays out the real padded pair: value @ +0x10, stride 0x18. The
-    // READER below is now handed only sizeof(FName)=0xC and must derive that padding
-    // itself -- which turns what used to be a tautology into an actual test.
+    // READER below is handed only sizeof(FName)=0xC and must derive that padding
+    // itself -- so this is a real test, not a tautology.
     NeuPutLegacy(fm, 0x10000000, 0x20000000, es, 0x10);
     auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
     Neu::EnumNamesLayout L;
@@ -6530,7 +6507,7 @@ static void Test_Neu_Edge() {
         Neu::EnumNamesLayout L3;
         EXPECT("edge unmapped arrays -> false", !Neu::DetectLayout(rd, 0x10000000, 8, 16384, L3));
     }
-    {   // audit #5 AF1 — the count is range-checked BEFORE the narrowing cast.
+    {   // the count is range-checked BEFORE the narrowing cast.
         //
         // The FNameData57 branch tested `static_cast<int32_t>(numNew) > maxCount`, so the
         // entire upper half of the uint32 range slipped past: 0x80000000 casts to
@@ -6614,10 +6591,9 @@ static Orden::Leaf OrdenLeafFloat(int32_t pos, float v) {
 
 static void Test_Orden_PerSlotCap() {
     // The cap decides what a LATER refine can re-read, and leaves arrive in field
-    // declaration order (base class first). A cap of 8 therefore stored only AActor's
-    // early fields for every DumperTestActor candidate, and a Changed refine pruned all
-    // 618 of them to zero -- which read as "group scan cannot see my property".
-    // Measured 2026-08-05; the diagnostic said `leaves entered=8 ... predicate-said-no=8`.
+    // declaration order (base class first). A cap of 8 therefore stores only AActor's
+    // early fields for every DumperTestActor candidate, and a Changed refine prunes every
+    // candidate to zero -- which reads as "group scan cannot see my property".
     std::vector<Orden::Leaf> leaves;
     for (int i = 0; i < 40; ++i) leaves.push_back(OrdenLeafI32(i * 4, 100 + i));
 
@@ -6750,7 +6726,7 @@ static void Test_Orden_ConvergenceAndAssignment() {
 }
 
 static void Test_Orden_OrderedFirstScan() {
-    // P2: per-slot ordered predicates on the FIRST scan (Bigger / Smaller),
+    // Per-slot ordered predicates on the FIRST scan (Bigger / Smaller),
     // routed through Radar::ComparePredicate by LeafSatisfiesSlot. Leaves at
     // Str 24, Def 10.
     std::vector<Orden::Leaf> leaves = {
@@ -6780,7 +6756,7 @@ static void Test_Orden_OrderedFirstScan() {
 }
 
 static void Test_Orden_BetweenFirstScan() {
-    // P2: per-slot Between (inclusive range) on the first scan — needs both the
+    // Per-slot Between (inclusive range) on the first scan — needs both the
     // lower (`targets`) and upper (`targets2`) bound. Leaves Str 24, Def 10.
     std::vector<Orden::Leaf> leaves = {
         OrdenLeafI32(0x10, 24), OrdenLeafI32(0x14, 10),
@@ -6823,10 +6799,10 @@ static void Test_ValueScan_BetweenTargets_ClampPerWidth() {
     using DT  = Radar::DataType;
     using ST  = Radar::ScanType;
     using Fit = Radar::NumericTargetSet::Fit;
-    // [A4-AB4-BETWEEN] Between's two bounds were built by two independent BuildNumericTargets calls, and every consumer
-    // needs BOTH encoded at a width -- so `Between -5 10` (no unsigned -5) skipped every UInt16 / UInt32 holding 0..10,
-    // and `Between 10 70000` (no int16 70000) every Int16 >= 10. Silently. Built jointly now: each bound CLAMPED into
-    // the width (Between is inclusive, so nothing is lost), a width the range misses skipped, on exact integers.
+    // [A4-AB4-BETWEEN] Every consumer needs BOTH of Between's bounds encoded at a width, so two independent
+    // BuildNumericTargets calls would make `Between -5 10` (no unsigned -5) skip every UInt16 / UInt32 holding 0..10,
+    // and `Between 10 70000` (no int16 70000) every Int16 >= 10. Silently. So they are built jointly: each bound CLAMPED
+    // into the width (Between is inclusive, so nothing is lost), a width the range misses skipped, on exact integers.
     auto sval = [](const Radar::NumericTargetSet& s, DT dt, int64_t& v) {
         const uint8_t* p = s.Find(dt);
         if (!p) return false;
@@ -6907,9 +6883,9 @@ static void Test_ValueScan_BetweenTargets_ClampPerWidth() {
 }
 
 static void Test_Orden_OrderedVerdictWidths() {
-    // [W2-ORDEN-FINDENTRY] LeafSatisfiesSlot looked the slot's target up with Find(), which hides
-    // an AlwaysTrue entry (audit #5 AB4: EVERY value of this width satisfies the predicate). So a
-    // Bigger/Smaller group slot skipped a whole width class the single-value scan keeps -- and a
+    // [W2-ORDEN-FINDENTRY] LeafSatisfiesSlot must not look the slot's target up with Find(), which
+    // hides an AlwaysTrue entry (EVERY value of this width satisfies the predicate): a
+    // Bigger/Smaller group slot would skip a whole width class the single-value scan keeps -- and a
     // group needs ALL slots at DISTINCT leaves, so one lost width drops the object. Fern builds a
     // group slot's targets with the slot's own predicate, so the verdict is there to read.
     using ST = Radar::ScanType;
@@ -7040,11 +7016,11 @@ static void Test_Orden_PrevValueRejectedOnFirstScan() {
     EXPECT("group prev-value slot0 collected zero leaves", out[0].leafIdx.empty());
 }
 
-// ----- Ubel: Native-C scan P0 — hole computation + type normalization --------
+// ----- Ubel: Native-C scan — hole computation + type normalization -----------
 //
 // Pure helpers (no game memory). ComputeHoles is the interval-complement core
 // shared by the Guess-What gap pass (WalkInstance) and the Native-C value scan;
-// ComputeClassHoles is the ArrayDim-aware class-level builder the scan will use;
+// ComputeClassHoles is the ArrayDim-aware class-level builder the scan uses;
 // NormalizeGuessedTypeToProperty maps Guess labels to canonical property strings.
 
 static void Test_Holes_ComputeHoles_Basic() {
@@ -7060,7 +7036,7 @@ static void Test_Holes_ComputeHoles_Basic() {
 }
 
 static void Test_Holes_LeadingGapSurvives() {
-    // Regression for commit 75ea723: a field at/after the first real offset must
+    // A field at/after the first real offset must
     // NOT swallow the [windowStart, firstField) leading region.
     std::vector<Ubel::Interval> occ = { {0x40, 0x44} };
     auto holes = Ubel::ComputeHoles(occ, 0x28, 0x80);
@@ -7145,9 +7121,9 @@ static void Test_CountContributingClasses() {
 static void Test_IsPlausiblePropertiesSize() {
     // Admission control for caches that are NEVER erased: a real
     // UStruct::PropertiesSize is non-negative and at most kMaxPlausiblePropertiesSize.
-    // Real-world trigger (Elliot, 2026-06-27 log): returning to Live Walker on a
-    // freed instance read class PropertiesSize=867763776 (~827 MB), one giant gap,
-    // GuessGapTypes spun ~8e8 SEH reads and blocked the single-threaded pipe.
+    // Real-world trigger (Elliot): returning to Live Walker on a freed instance can
+    // read class PropertiesSize=867763776 (~827 MB), one giant gap, and GuessGapTypes
+    // would spin ~8e8 SEH reads and block the single-threaded pipe.
     EXPECT("UWorld real size (2536) is plausible", Ubel::IsPlausiblePropertiesSize(2536));
     EXPECT("zero is plausible (a field-less UCLASS is legitimate)",
            Ubel::IsPlausiblePropertiesSize(0));
@@ -7159,9 +7135,9 @@ static void Test_IsPlausiblePropertiesSize() {
     EXPECT("the 827 MB garbage value is NOT plausible",
            !Ubel::IsPlausiblePropertiesSize(867763776));
 
-    // The rows the P3R log buys, and the whole reason the ceiling moved: both classes
-    // walk their fields cleanly and stay byte-stable for twelve minutes, and the old
-    // 1 MB bound declared both of them recycled. (SANEPROPS-2026-08-26)
+    // Real classes above 1 MB, from P3R: both walk their fields cleanly and stay
+    // byte-stable, so a 1 MB ceiling would declare both of them recycled.
+    // (SANEPROPS-2026-08-26)
     EXPECT("P3R XRD777SaveGame (3,671,800) IS plausible",
            Ubel::IsPlausiblePropertiesSize(3671800));
     EXPECT("P3R AstreaSaveGame (3,671,816) IS plausible",
@@ -7183,11 +7159,11 @@ static void Test_GapFillWorkCapIsADifferentQuestion() {
 }
 
 static void Test_ShouldPublishClassWalk() {
-    // audit #5 U4: the class caches are keyed by a raw UClass* the engine recycles
-    // and nothing in dll/src ever erases them, so one bad walk is served for the rest
-    // of the process. WalkInstance owned the identical predicate but ran it AFTER
-    // WalkClass had already published — and two shipped call sites hand in addresses
-    // that are not UStructs at all (WalkInstance's own pre-gate walk, and
+    // The class caches are keyed by a raw UClass* the engine recycles and nothing in
+    // dll/src ever erases them, so one bad walk is served for the rest of the process.
+    // The predicate has to run BEFORE WalkClass publishes, not after in WalkInstance —
+    // and call sites hand in addresses that are not UStructs at all (WalkInstance's own
+    // pre-gate walk, and
     // UE5_WalkClassBegin, which ue5_dissect.lua uses as its is-this-an-instance probe).
 
     // The read-ok term is the half IsPlausiblePropertiesSize cannot express: Macht::ReadSafe
@@ -7212,24 +7188,22 @@ static void Test_ShouldPublishClassWalk() {
            !Ubel::ShouldPublishClassWalk(true, 867763776));
 }
 
-// ── audit #5 G2: the gated version sweep must return EXACTLY what the naive one did ──
+// ── the gated version sweep must return EXACTLY what the naive one does ──
 //
-// The naive references below are transcribed from Genau.cpp as it stood BEFORE the gate
-// (pattern-major, unconditional memcmp at every offset, per-pattern break, no first-byte
-// reject). They are the oracle: the rewrite's whole safety argument is "same answers,
-// 29 s less work", and nothing else in this repo can check the first half — no test
-// target compiles Genau.cpp.
+// The naive references below model the sweep without the gate (pattern-major,
+// unconditional memcmp at every offset, per-pattern break, no first-byte reject). They
+// are the oracle: the gate's whole safety argument is "same answers, less work", and
+// these references are what checks the first half.
 
 struct NaiveResult { uint32_t value = 0; int tier = 0; };
 
-// Updated for G8 + G9 (build 3099). It still models the NAIVE shape — pattern-major, no
-// first-byte gate, unconditional memcmp at every offset — so it remains an independent
-// oracle for the gated implementation. What changed is the RULES it encodes:
-//   * Tier 2's context is a raw 16-byte clamped search, not an 8-byte strstr (G8), and it
-//     now requires the same UE anchor Tier 3 always did.
+// It models the NAIVE shape — pattern-major, no first-byte gate, unconditional memcmp at
+// every offset — so it is an independent oracle for the gated implementation, encoding the
+// same RULES:
+//   * Tier 2's context is a raw 16-byte clamped search, not an 8-byte strstr, and it
+//     requires the same UE anchor Tier 3 does.
 //   * a Tier 3 candidate records the pattern's first-T3 fact but does NOT retire it, so a
-//     later Tier 2 hit on the same needle is still found (G9).
-// The pre-fix reference is preserved in git history; the cases below pin the DIFFERENCE.
+//     later Tier 2 hit on the same needle is still found.
 static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
     bool     hasT2[Genau::kVersionNeedleCount] = {};
     bool     hasT3[Genau::kVersionNeedleCount] = {};
@@ -7237,9 +7211,9 @@ static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
         const char* needle = Genau::kVersionNeedles[k].needle;
         size_t needleLen = strlen(needle);
         for (size_t off = 0; off + needleLen + 10 < size; ++off) {
-            const size_t bareLen = needleLen - 1;             // G11: match the BARE needle
+            const size_t bareLen = needleLen - 1;             // match the BARE needle
             if (memcmp(scan + off, needle, bareLen) != 0) continue;
-            if (off > 0) {                                    // G11: guard hoisted out of Tier 3
+            if (off > 0) {                                    // the guard covers both tiers
                 uint8_t prev = scan[off - 1];
                 if ((prev >= '0' && prev <= '9') || prev == '.') continue;
             }
@@ -7253,7 +7227,7 @@ static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
             if (scan[off + bareLen] == '.' &&
                 scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                 if (!Genau::HasUEAnchorNearby(scan, size, off, 256)) continue;
-                hasT3[k] = true;                              // recorded, NOT retired (G9)
+                hasT3[k] = true;                              // recorded, NOT retired
             }
         }
     }
@@ -7371,8 +7345,8 @@ static void Test_VersionNeedleScan_Equivalence() {
     }
     {   // ⚠ Trailing bound edge. The needle must actually QUALIFY (digit after it, anchor
         // in window, no digit/dot before) or the bound difference is INVISIBLE and this
-        // case silently proves nothing — which is exactly what a first version of it did:
-        // tightening the walk bound to `off + 16` left it green.
+        // case silently proves nothing: tightening the walk bound to `off + 16` would
+        // leave it green.
         //
         // The naive 4-char bound is `off + 14 < size`; offsets size-16 and size-15 are
         // inside it and outside a `off + 16` bound, so those are the discriminating spots.
@@ -7419,7 +7393,7 @@ static void Test_VersionNeedleScan_Equivalence() {
         EXPECT("G2 equiv: Tier 1 utf16 finds 427", GatedValue(g) == 427 && g.tier == 1);
     }
     {   // deterministic pseudo-random fuzz over a biased alphabet that makes hits likely.
-        // NOTE: fuzz alone did NOT catch the address-order regression — the intra-group
+        // NOTE: fuzz alone does NOT catch an address-order regression — the intra-group
         // case above is what does. Kept for coverage breadth, not as the control.
         uint32_t seed = 0x5EED1234u;
         auto next = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 16; };
@@ -7464,18 +7438,18 @@ static void Test_VersionNeedleScan_GateStillGates() {
     // a planted needle MUST produce at least one compare, or the counter is measuring
     // a code path that never runs.
     std::vector<uint8_t> hit(4096, 'x');
-    Plant(hit, 900, "Unreal");                 // Tier 2 now requires an anchor too (G8)
+    Plant(hit, 900, "Unreal");                 // Tier 2 requires an anchor too
     Plant(hit, 1000, "Release-5.4.0");
     Genau::NeedleScanResult h = Genau::ScanVersionTier23(hit.data(), hit.size());
     EXPECT("G2 gate: a real hit still issues compares", h.needlesCompared > 0);
     EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
 }
 
-// ── audit #5 G8 + G9: the two Tier 2/3 rule defects, and what changed ────────
+// ── the Tier 2/3 rules: the context window and Tier 3 retirement ─────────────
 //
 // These assert ABSOLUTE answers, not just naive/gated agreement — the equivalence oracle
-// alone cannot see these fixes, because BOTH sides moved. Each case states what the
-// pre-fix code returned.
+// alone cannot see a rule that is wrong on BOTH sides. Each case states the wrong answer
+// the rule guards against.
 static void Test_VersionTierRules_G8_G9() {
     auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
     auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
@@ -7483,9 +7457,9 @@ static void Test_VersionTierRules_G8_G9() {
         return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
     };
 
-    // ── G8: the window was 8 bytes while its comment and buffer both said 16 ──
-    {   // "Release" separated by more than one byte. Pre-fix: Tier 3 (the "Release" ended
-        // more than 8 bytes before the needle, so the context test never saw it).
+    // ── the context window is 16 bytes ──
+    {   // "Release" separated by more than one byte. An 8-byte window says Tier 3 (the
+        // "Release" ends more than 8 bytes before the needle, so the context test never sees it).
         auto b = fresh(4096);
         Plant(b, 900, "Unreal");
         Plant(b, 1000, "Release v5.4.0");
@@ -7498,9 +7472,9 @@ static void Test_VersionTierRules_G8_G9() {
         auto r = tier23(b);
         EXPECT("G8: 'Release_Build_5.4.0' is now Tier 2", r.tier == 2 && val(r) == 504);
     }
-    {   // ⚠ NUL-IMMUNITY — the case that makes the naive `memcpy(...,16)+strstr` repair WRONG.
+    {   // ⚠ NUL-IMMUNITY — the case that makes a naive `memcpy(...,16)+strstr` WRONG.
         // A neighbouring string's terminator sits inside the wider window; strstr would stop
-        // there and LOSE a match the 8-byte window found. The raw search must still find it.
+        // there and LOSE a match an 8-byte window finds. The raw search must still find it.
         auto b = fresh(4096);
         Plant(b, 900, "Unreal");
         Plant(b, 1000, "AAAAAAA");
@@ -7510,16 +7484,16 @@ static void Test_VersionTierRules_G8_G9() {
         EXPECT("G8: a NUL in the wider window does not lose the hit", r.tier == 2 && val(r) == 504);
     }
     {   // ⚠ THE SAFETY HALF. Widening without an anchor gate manufactures a confident
-        // detection from ordinary text. Tier 2 had NO anchor requirement; it does now.
-        // Pre-fix (and with a naive widening): Tier 2 / 504 from a release-notes heading.
+        // detection from ordinary text, so Tier 2 requires an anchor: without one, a
+        // release-notes heading gives Tier 2 / 504.
         auto b = fresh(4096);
         Plant(b, 1000, "Release Notes 5.4.0");   // no Engine/Unreal/UE anywhere
         auto r = tier23(b);
         EXPECT("G8: anchorless 'Release Notes 5.4.0' is NOT detected", !r.found());
     }
 
-    // ── G9: a Tier 3 candidate retired the pattern before a later Tier 2 was seen ──
-    {   // Same needle: Tier 3 at a low offset, Tier 2 later. Pre-fix: 427 / Tier 3.
+    // ── a Tier 3 candidate does not retire the pattern before a later Tier 2 ──
+    {   // Same needle: Tier 3 at a low offset, Tier 2 later. Retiring on Tier 3 gives 427 / Tier 3.
         auto b = fresh(8192);
         Plant(b, 900, "Unreal");
         Plant(b, 1000, " 4.27.0 ");
@@ -7528,9 +7502,9 @@ static void Test_VersionTierRules_G8_G9() {
         auto r = tier23(b);
         EXPECT("G9: a later Tier 2 on the same needle now wins", r.tier == 2 && val(r) == 427);
     }
-    {   // ⚠ THE ONE THE DESIGN COMMENT PROMISES AND THE CODE DID NOT DELIVER: a stray SDK
-        // "5.5.0" near the start out-racing a real "Release-4.27" later in the module.
-        // Pre-fix: 505 / Tier 3 — the wrong VERSION, not merely the wrong confidence.
+    {   // ⚠ THE CASE THE DESIGN PROMISES: a stray SDK "5.5.0" near the start must not
+        // out-race a real "Release-4.27" later in the module. Retiring on Tier 3 gives
+        // 505 / Tier 3 — the wrong VERSION, not merely the wrong confidence.
         auto b = fresh(8192);
         Plant(b, 900, "Engine");
         Plant(b, 1000, " 5.5.0 ");            // bundled PhysX-style banner -> Tier 3
@@ -7539,7 +7513,7 @@ static void Test_VersionTierRules_G8_G9() {
         auto r = tier23(b);
         EXPECT("G9: a real Release-4.27 beats a stray 5.5.0 SDK string", r.tier == 2 && val(r) == 427);
     }
-    {   // REGRESSION RAIL: the canonical shape must be unaffected by either change.
+    {   // RAIL: the canonical shape is Tier 2 under both rules.
         auto b = fresh(4096);
         Plant(b, 900, "Unreal");
         Plant(b, 1000, "Release-5.4.0");
@@ -7548,14 +7522,11 @@ static void Test_VersionTierRules_G8_G9() {
     }
 }
 
-// ── audit #5 G11: Tier 2 required a THREE-component version, so it never fired ──
+// ── Tier 2 matches a TWO-component version ─────────────────────────────────
 //
-// MEASURED before and after over the 170 PE images in the local analyze corpus:
-// Tier 2 fired 0/170 before and 6/170 after, and on all six its answer AGREES EXACTLY
-// with the version Tier 1 independently reports (418/420/418/420/420/418) — two
-// detectors cross-validating. Tier 1 returns first on all six, so no effective verdict
-// changed on any binary we own; what changed is that Tier 2 now works as a fallback for
-// images where the full "++UEx+Release-" tag is stripped but "Release-X.Y" survives.
+// Tier 2 is the fallback for images where the full "++UEx+Release-" tag is stripped but
+// "Release-X.Y" survives, and UE's real tag is two-component; where Tier 1 also fires,
+// the two detectors cross-validate.
 static void Test_VersionTier2_BareNeedle_G11() {
     auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
     auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
@@ -7563,15 +7534,15 @@ static void Test_VersionTier2_BareNeedle_G11() {
         return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
     };
 
-    {   // THE WHOLE FINDING. UE's real tag is TWO-component: no trailing dot, so the
-        // needle "4.27." could never match it. Pre-G11 this was NOT detected at all.
+    {   // THE CORE CASE. UE's real tag is TWO-component: no trailing dot, so the
+        // needle "4.27." taken whole never matches it.
         auto b = fresh(4096);
         Plant(b, 900, "Unreal Engine");
         Plant(b, 1000, "Release-4.27");        // nothing after — two-component
         auto r = tier23(b);
         EXPECT("G11: two-component 'Release-4.27' is now Tier 2", r.tier == 2 && val(r) == 427);
     }
-    {   // REGRESSION RAIL: the three-component form must still work, unchanged.
+    {   // RAIL: the three-component form must still work.
         auto b = fresh(4096);
         Plant(b, 900, "Unreal Engine");
         Plant(b, 1000, "Release-5.4.2");
@@ -7587,8 +7558,8 @@ static void Test_VersionTier2_BareNeedle_G11() {
         auto r = tier23(b);
         EXPECT("G11: 'Release 5.40' does NOT match the bare 5.4 needle", !r.found());
     }
-    {   // ⚠ THE HOISTED GUARD. Tier 3 always rejected a preceding digit; Tier 2 never did,
-        // and needs it far more now that it matches the shorter bare form.
+    {   // ⚠ THE SHARED GUARD. Tier 2 rejects a preceding digit as Tier 3 does, and needs
+        // it far more, since it matches the shorter bare form.
         auto b = fresh(4096);
         Plant(b, 900, "Unreal Engine");
         Plant(b, 1000, "Release 15.4 patch");
@@ -7622,9 +7593,9 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // ── [GWT-BRANCH] Tier 1's second shape: a licensee's engine branch name ──────
 //
 // Ghostwire: Tokyo, a customized UE 4.27, carries no "++UE4+Release-4.27" anywhere. Its one engine tag is its own
-// branch, UTF-16 "++ue4+ue4_main+4.27", and its PE resource holds the game's 1.0, so detection fell through every tier
-// to the 504 default. These are absolute answers over the shapes measured in this machine's UE binaries: the two that
-// name an engine version are read, and the licensee branches that name a GAME version are refused.
+// branch, UTF-16 "++ue4+ue4_main+4.27", and its PE resource holds the game's 1.0, so without this shape detection falls
+// through every tier to the 504 default. These are absolute answers over the shapes found in real UE binaries: the two
+// that name an engine version are read, and the licensee branches that name a GAME version are refused.
 static void Test_VersionBranchName() {
     auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
     auto plantNarrow = [](std::vector<uint8_t>& b, size_t at, const char* s) {
@@ -7725,24 +7696,23 @@ static void Test_VersionBranchName() {
     }
 }
 
-// ── audit #5 G12: the sizeof(FProperty) family must move as ONE ─────────────
+// ── the sizeof(FProperty) family must move as ONE ──────────────────────────
 //
 // FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name the
 // same slot (the first subclass field, == sizeof(FProperty)); FENUMPROP_ENUM sits 8 bytes
 // later because FEnumProperty declares FNumericProperty* UnderlyingProp first.
 //
-// They had FOUR independent writers and one of them — Genau's Step 2.5 default block — set
-// only TWO members, leaving the other three at the UE5.0-era 0x78/0x78/0x80. Any run taking
-// a "keeping defaults" exit then shipped a SPLIT family for the whole session: TArray
-// element descriptors and every enum-name read 8 bytes off while struct reads were correct.
-// Deterministic, first run, no concurrency. docs/test-games.md records Solarpunk resolving
-// through exactly that heuristic fallback.
+// A writer that sets only some of them leaves the rest at the UE5.0-era 0x78/0x78/0x80, and
+// a run taking a "keeping defaults" exit would then ship a SPLIT family for the whole
+// session: TArray element descriptors and every enum-name read 8 bytes off while struct
+// reads are correct. Deterministic, first run, no concurrency. docs/test-games.md records
+// Solarpunk resolving through that heuristic fallback.
 //
 // This pins the INVARIANT. It cannot pin the wiring, which lives in Genau.cpp / Ubel.cpp and
 // reaches only dll_core_test, but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
 static void Test_SoftObjectPathSize() {
-    // A9: sizeof(FSoftObjectPath). The FName block pads UP to 8 before the trailing
+    // sizeof(FSoftObjectPath). The FName block pads UP to 8 before the trailing
     // FString, so under CasePreservingName the two engine eras want DIFFERENT constants
     // and neither a bare 0x10 nor a bare 0xC is right for both.
 
@@ -7764,7 +7734,7 @@ static void Test_SoftObjectPathSize() {
     EXPECT("A9: a naive bare-0xC would give 0x1C for CPN <=5.0; we must not",
            DynOff::FSoftObjectPathSizeFor(0x0C, false) != 0x1C);
 
-    // --- ⚠ THE REAL DAMAGE, end to end. With the old 0x30 payload, a CPN 5.1 TAGGED
+    // --- ⚠ THE REAL DAMAGE, end to end. With a 0x30 payload, a CPN 5.1 TAGGED
     //     pointer (true ElementSize 0x38) yields 0x08 -- ACCEPTED and LATCHED as a
     //     measurement, silently outranking the version fallback. With the correct
     //     payload the same input yields the true 0x10. ---
@@ -7809,10 +7779,10 @@ static void Test_FunctionFlagsOffset() {
             EXPECT("UFUNC-TAIL: the subclass start IS UBoolPropFieldSizeFor at every known version",
                    DynOff::UPropertySubclassStartFor(0x50, v, cpn) == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
 
-    // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
-    // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
-    // not retargeted, because 0xC0 is FirstPropertyToInit (an FProperty*) from UE 5.x.
-    // Both readers accept on `!= 0`, so a retarget would latch a pointer's low dword.
+    // No `>= 550 -> 0xC0` band. 550 is not producible (versions are major*100+minor,
+    // capped at 509), and the band must not be retargeted either, because 0xC0 is
+    // FirstPropertyToInit (an FProperty*) from UE 5.x. Both readers accept on `!= 0`, so
+    // a retarget would latch a pointer's low dword.
 
     // --- measured rows, from the 31 UVTD MemberVarLayout templates ---
     EXPECT("A3: 4.11 = 0x88", DynOff::FunctionFlagsOffsetFor(411, false) == 0x88);
@@ -7865,8 +7835,8 @@ static void Test_FunctionFlagsOffset() {
         }
     }
 
-    // --- 0xB8 must be tried BEFORE anything that is not a real FunctionFlags offset.
-    //     In the old sweep it was last, behind 0xC0 and 0xA8. ---
+    // --- 0xB8 must be tried BEFORE anything that is not a real FunctionFlags offset,
+    //     not left last behind 0xC0 and 0xA8. ---
     int idxB8 = -1, idxLast = -1, n = 0;
     for (int off : DynOff::FUNCTIONFLAGS_SWEEP) { if (off == 0xB8) idxB8 = n; idxLast = n; ++n; }
     EXPECT("A3: 0xB8 (the case-preserving 4.25+ value) is in the sweep", idxB8 >= 0);
@@ -7929,7 +7899,7 @@ static void Test_FunctionFlagsOffset() {
            !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
 }
 
-// [UE-OVERRIDE-411] review: a ProcessEvent buffer is never smaller than the function's own parameter chain, whatever
+// [UE-OVERRIDE-411] A ProcessEvent buffer is never smaller than the function's own parameter chain, whatever
 // ParmsSize the version's tail read gave. The block is K2_SetActorLocation-shaped on a 4.18 layout: NewLocation +0x0
 // (12), bSweep +0xC, SweepHitResult +0x10 (0x88), bTeleport +0x98, the bool return +0x99 -- ParmsSize 0x9A,
 // ReturnValueOffset 0x99.
@@ -7953,7 +7923,7 @@ static void Test_ProcessEventBufferBytes() {
     EXPECT("PEBuf: no ParmsSize and no chain is an empty buffer", ProcessEventBufferBytes(0, 0) == 0);
 }
 
-// [UE-OVERRIDE-411] review: an override must keep the readers on the tail the game's own UFunctions measure.
+// [UE-OVERRIDE-411] An override must keep the readers on the tail the game's own UFunctions measure.
 static void Test_CheckTailForVersion() {
     using DynOff::CheckTailForVersion;
     using DynOff::TailCheck;
@@ -7969,10 +7939,10 @@ static void Test_CheckTailForVersion() {
     // The inverse the widening lets a user correct: a 4.15 title (RepOffset first, base 0x8A) misdetected as 4.18+.
     EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0x8A) == TailCheck::Agrees);
     EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0x8A) == TailCheck::Contradicts);
-    // Split Fiction's tail sits +4 later on 5.x. [OVERRIDE-REVIEW2-LOWS] review: the extra is the one the measurement
+    // Split Fiction's tail sits +4 later on 5.x. [OVERRIDE-REVIEW2-LOWS] The extra is the one the measurement
     // implies, never the vote's latched one -- a vote run under a version from the wrong side of 4.18 decides nothing
-    // and latches 0, and judged with that 0 the version that fits was refused for the rest of the session (the live
-    // route is dll_core_test's OVERRIDEEXTRA).
+    // and latches 0, and judged with that 0 the version that fits would be refused for the rest of the session (the
+    // live route is dll_core_test's OVERRIDEEXTRA).
     EXPECT("TailCheck ⭐: a 5.x tail with the +4 extra agrees at 5.5, whatever the vote latched",
            CheckTailForVersion(505, 0xB0, 0xB4) == TailCheck::Agrees);
     EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 0xB4) == TailCheck::Contradicts);
@@ -7995,8 +7965,8 @@ static void Test_CheckTailForVersion() {
     EXPECT("TailCheck: no measured base fits both sides of 4.18", bothSides == 0);
 }
 
-// [OVERRIDE-REVIEW2-LOWS] An override persisted before [UE-OVERRIDE-411], or chosen before any scan, is applied at every
-// launch, and the vote that measured the contradiction said so in the log alone. get_pointers now says it, by the
+// [OVERRIDE-REVIEW2-LOWS] An override persisted by an older build, or chosen before any scan, is applied at every
+// launch, and the vote that measures the contradiction would say so in the log alone. get_pointers says it, by the
 // refusal's own verdict.
 static void Test_OverrideContradictsTail() {
     using DynOff::OverrideContradictsTail;
@@ -8024,9 +7994,9 @@ static void Test_OverrideContradictsTail() {
     EXPECT("OverrideTail: the note and the refusal give one verdict", disagree == 0);
 }
 
-// [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed in-process; a persisted override, a
-// pick made before any scan, or a misdetection reached the readers unchecked and moved every tail read by 2. The
-// measurement now drives the readers whatever the version.
+// [UE-OVERRIDE-411] A refusal alone holds only while a measurement exists in-process; a persisted override, a pick made
+// before any scan, or a misdetection would reach the readers unchecked and move every tail read by 2. So the
+// measurement drives the readers whatever the version.
 static void Test_FunctionTailReadBase() {
     using DynOff::FunctionTailReadBase;
     EXPECT("TailRead ⭐: a 4.15 tail measured at +0x8A is read there under 4.18",
@@ -8041,7 +8011,7 @@ static void Test_FunctionTailReadBase() {
     EXPECT("TailRead control: ...and the extra", FunctionTailReadBase(505, 0xB0, 4, -1) == 0xB4);
 }
 
-// [UE-OVERRIDE-411] review: the tail measurement's winner, at the FunctionFlags vote's own bar.
+// [UE-OVERRIDE-411] The tail measurement's winner, at the FunctionFlags vote's own bar.
 static void Test_PickMeasuredTailBase() {
     using DynOff::PickMeasuredTailBase;
     const int bases[] = { 0x88, 0x8A, 0x8C, 0x8E };
@@ -8066,11 +8036,11 @@ static void Test_PickMeasuredTailBase() {
     EXPECT("TailPick: no candidates is -1", PickMeasuredTailBase(bases, bases, 0, 10) == -1);
 }
 
-// [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
-// returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
-// whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
-// WalkFunctions then stepped the wrong member. The probe walks a UClass's Children chain at
-// each candidate and takes the FIRST candidate (default first) that chains >= 2 Function hops.
+// [VND583-02] UField::Next must be measured in FProperty mode (4.25+) too, not only FField::Next:
+// on a 4.25+ title whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30,
+// SuperStruct 0x48) an unmeasured UField::Next makes WalkFunctions step the wrong member. The
+// probe walks a UClass's Children chain at each candidate and takes the FIRST candidate
+// (default first) that chains >= 2 Function hops.
 static void Test_UFieldNextFProperty() {
     const int offs[] = { 0x28, 0x30, 0x20, 0x38, 0x40, 0x48 };
     {   const int hops[] = { 3, 0, 0, 0, 0, 0 };
@@ -8118,7 +8088,7 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
-// [VND583-07, A9 step 11] FName::Number is +8 only where the DisplayIndex sits at +4 (CPN UE4 / 5.0).
+// [VND583-07] FName::Number is +8 only where the DisplayIndex sits at +4 (CPN UE4 / 5.0).
 static void Test_FNameNumberOffset() {
     EXPECT("A9-11: a standard FName keeps Number at +4", DynOff::PickFNameNumberOffset(false, 100, 0) == 4);
     EXPECT("A9-11: CPN with the DisplayIndex at +4 (UE4 / 5.0) -> Number at +8", DynOff::PickFNameNumberOffset(true, 100, 0) == 8);
@@ -8126,7 +8096,7 @@ static void Test_FNameNumberOffset() {
     EXPECT("A9-11: CPN with no evidence keeps +4", DynOff::PickFNameNumberOffset(true, 0, 0) == 4);
 }
 
-// [VND583-07, A9 step 1] sizeof(FName) is measured from the engine's NameProperty ElementSize, within the family.
+// [VND583-07] sizeof(FName) is measured from the engine's NameProperty ElementSize, within the family.
 static void Test_FNameSizePick() {
     EXPECT("A9-1: case-preserving 5.4 editor, 12 on 331 of 331 -> 12", DynOff::PickFNameSize(true, 12, 331, 331) == 12);
     EXPECT("A9-1: standard, 8 on 64 of 64 -> 8", DynOff::PickFNameSize(false, 8, 64, 64) == 8);
@@ -8223,9 +8193,9 @@ static void Test_UnresolvedWeakLabel() {
     EXPECT("VND583-08: a negative index is null",           std::string(Ubel::UnresolvedWeakLabel(-1, 77)) == "null");
 }
 
-// [R7-X4] Which CharacterMovementComponent marker means which engine, as measured 2026-09-25 on stock builds: the
+// [R7-X4] Which CharacterMovementComponent marker means which engine on stock builds: the
 // reflected GravityDirection PROPERTY is already in 5.3 (Release-5.3-CL-29314046), the SetGravityDirection UFUNCTION
-// only from 5.4. The property alone used to raise a stock 5.3 title to 504.
+// only from 5.4. So the property alone must not raise a stock 5.3 title to 504.
 static void Test_CmcMarkerVersion() {
     std::printf("\n--- R7-X4: CMC version markers ---\n");
     using DynOff::CmcMarkerVersion;
@@ -8736,9 +8706,9 @@ static void Test_CachedDetectionRules() {
     EXPECT("TooOld: a user's override is never refused", !RefusedAsTooOld(410, true, false, true));
 }
 
-// [UE-OVERRIDE-HINT-AUTO] Auto chosen over an override used to clear only the flag, so the session kept the overridden
-// version and the UI showed it unbadged, as if detected. It now hands back the detection the next launch would start
-// from, or says the override's version holds until that launch.
+// [UE-OVERRIDE-HINT-AUTO] Auto chosen over an override must do more than clear the flag, or the session keeps the
+// overridden version and the UI shows it unbadged, as if detected. It hands back the detection the next launch would
+// start from, or says the override's version holds until that launch.
 static void Test_PlanAutoRestore() {
     std::printf("\n--- UE-OVERRIDE-HINT-AUTO: Auto chosen over an override ---\n");
     using Flamme::AutoRestore;
@@ -8864,9 +8834,9 @@ static void Test_WeakTargetGarbage() {
 }
 
 static void Test_ProcessEventVTableSlot() {
-    // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
-    // NOT a producible version -- versions are major*100+minor, capped at 509. So every
-    // UE5 game silently took 0x220. These assertions exist to make that class of defect
+    // A ladder such as `>= 550 -> 0x228 / >= 500 -> 0x220` is wrong silently: 550 is
+    // NOT a producible version -- versions are major*100+minor, capped at 509 -- so every
+    // UE5 game would take 0x220. These assertions exist to make that class of defect
     // loud rather than silent.
 
     // --- the six values this repo already had, from sources independent of the oracle ---
@@ -8884,16 +8854,16 @@ static void Test_ProcessEventVTableSlot() {
            DynOff::ProcessEventVTableSlotFor(508) == 0x250);
 
     // --- 0x218 is slot 67, OverridePerObjectConfigSection, one slot BEFORE
-    //     ProcessEvent on 4.27. Hooking it is the build-647 failure. No version may
+    //     ProcessEvent on 4.27, and hooking it fails. No version may
     //     resolve to it except 4.26, where it is genuinely correct. ---
     for (unsigned v = 411; v <= 509; ++v) {
         const int slot = DynOff::ProcessEventVTableSlotFor(v);
         EXPECT("A2: only 4.26 may resolve to 0x218", slot != 0x218 || v == 426);
     }
 
-    // --- THE DEFECT ITSELF, asserted as unreachable: no UE5 version may return the
-    //     0x220 the old table gave all of them, and none may return the 0x228 that
-    //     the unreachable >= 550 arm held (no engine version has that slot at all). ---
+    // --- THE BLANKET VALUE, asserted as unreachable: no UE5 version may return a
+    //     blanket 0x220, and none may return 0x228, which only an unreachable >= 550
+    //     arm could hold (no engine version has that slot at all). ---
     for (unsigned v = 500; v <= 509; ++v) {
         EXPECT("A2: no UE5 version resolves to the old blanket 0x220",
                DynOff::ProcessEventVTableSlotFor(v) != 0x220);
@@ -8901,16 +8871,15 @@ static void Test_ProcessEventVTableSlot() {
                DynOff::ProcessEventVTableSlotFor(v) != 0x228);
     }
 
-    // --- the rows A2's own first draft got WRONG. It proposed `>= 500 -> 0x268`,
-    //     which is right only for 5.2-5.4. These three are why the oracle was worth
-    //     reading instead of shipping the hand-derived ladder. ---
+    // --- the rows a hand-derived `>= 500 -> 0x268` gets WRONG: it is right only for
+    //     5.2-5.4. These three are why the slots come from the oracle, not a ladder. ---
     EXPECT("A2: 5.0 is 0x258, NOT 0x268", DynOff::ProcessEventVTableSlotFor(500) == 0x258);
     EXPECT("A2: 5.1 is 0x260, NOT 0x268", DynOff::ProcessEventVTableSlotFor(501) == 0x260);
     EXPECT("A2: 5.5 is 0x278, NOT 0x268 (5.5 inserts GetVersePath + CollectSaveOverrides)",
            DynOff::ProcessEventVTableSlotFor(505) == 0x278);
 
     // --- NON-MONOTONIC, in both directions. A `>=` ladder cannot express this, which
-    //     is exactly the "simplification" that would reintroduce the bug. ---
+    //     is exactly the "simplification" that would break these rows. ---
     EXPECT("A2: 4.21 is LOWER than 4.20 (0x200 < 0x208)",
            DynOff::ProcessEventVTableSlotFor(421) < DynOff::ProcessEventVTableSlotFor(420));
     EXPECT("A2: 5.6 is LOWER than 5.5 (0x260 < 0x278)",
@@ -8940,10 +8909,10 @@ static void Test_ProcessEventVTableSlot() {
 }
 
 static void Test_PersistentPtrEnvelope() {
-    // A1: UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest (present at
+    // UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest (present at
     // 5.2.1-release PersistentObjectPtr.h:243, absent at 5.3.2-release:228), so the
     // payload of a soft/lazy pointer moves up -- by 8 for an 8-aligned payload,
-    // by only 4 for a 4-aligned one. Both offsets were hardcoded 0x10 before this.
+    // by only 4 for a 4-aligned one. Neither offset is a fixed 0x10.
     //
     //   payload             align   <=5.2   >=5.3    sizeof <=5.2 / >=5.3
     //   FSoftObjectPath       8     0x10    0x08     0x30|0x28 / 0x28
@@ -8971,8 +8940,8 @@ static void Test_PersistentPtrEnvelope() {
            DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, UNMEASURED, 427) == 0x08);
 
     // --- lazy: FUniqueObjectGuid is a bare FGuid at alignof 4, so the tagged
-    //     envelope is 0x0C. 0x10 is correct in NO era, which is what made the
-    //     pre-fix code read 4 bytes into the GUID and 4 bytes past its end. ---
+    //     envelope is 0x0C. 0x10 is correct in NO era: it reads 4 bytes into the
+    //     GUID and 4 bytes past its end. ---
     EXPECT("A1: lazy <=5.2 tagged, elem 0x1C - guid 0x10 -> +0x0C",
            DynOff::PersistentPtrEnvelopeFor(0x1C, 0x10, 0x0C, UNMEASURED, 502) == 0x0C);
     EXPECT("A1: lazy >=5.3 untagged, elem 0x18 - guid 0x10 -> +0x08",
@@ -8984,14 +8953,14 @@ static void Test_PersistentPtrEnvelope() {
 
     // --- CasePreservingName widens both FNames, so the path grows and the
     //     envelope must NOT move with it (it is a property of the tag, not the payload) ---
-    // CPN payloads corrected by A9: sizeof(FName) is 0xC, so FTopLevelAssetPath is
-    // 2*0xC = 0x18 (already 8-aligned) + FString 0x10 = 0x28. The old 0x30 came from
+    // CPN payloads: sizeof(FName) is 0xC, so FTopLevelAssetPath is
+    // 2*0xC = 0x18 (already 8-aligned) + FString 0x10 = 0x28. A 0x30 comes from
     // reading the UObject Name->Outer SLOT as a sizeof.
     EXPECT("A1: soft CPN 5.1-5.2, elem 0x38 - path 0x28 -> +0x10",
            DynOff::PersistentPtrEnvelopeFor(0x38, 0x28, 0x10, UNMEASURED, 502) == 0x10);
     EXPECT("A1: soft CPN >=5.3, elem 0x30 - path 0x28 -> +0x08",
            DynOff::PersistentPtrEnvelopeFor(0x30, 0x28, 0x10, UNMEASURED, 508) == 0x08);
-    // ⚠ THE TRAP the A9 payload fix removes: with the old 0x30 payload, a CPN 5.1 TAGGED
+    // ⚠ THE TRAP of the slot-sized payload: with a 0x30 payload, a CPN 5.1 TAGGED
     // pointer (real ElementSize 0x38) yields 0x38-0x30 = 0x08, which this function ACCEPTS
     // and the caller LATCHES -- a bogus measurement that then outranks the version fallback.
     EXPECT("A9: the stale 0x30 CPN payload would have been accepted as a bogus 0x08",
@@ -9006,7 +8975,7 @@ static void Test_PersistentPtrEnvelope() {
            DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 502) == 0x10);
 
     // --- once latched, an unmeasurable call returns the LATCH, never the version
-    //     guess. This is the case the fix is really for: a misdetected version. ---
+    //     guess. This is the case the latch is really for: a misdetected version. ---
     EXPECT("A1: a latch beats the version fallback (misdetected version)",
            DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, 0x08, 427) == 0x08);
     EXPECT("A1: a latch beats the version fallback, the other way",
@@ -9025,16 +8994,16 @@ static void Test_PersistentPtrEnvelope() {
 static void Test_UBoolPropFieldSize() {
     using DynOff::UBoolPropFieldSizeFor;
 
-    // A6. UBOOLPROP_FIELDSIZE had ZERO writers against nine readers -- the FProperty arm of
-    // ValidateAndFixOffsets derived the whole subclass family and had no `else`, so every
-    // UE4 <4.25 game kept the 0x70 default no matter what its Offset_Internal probed to.
+    // UBOOLPROP_FIELDSIZE is derived from the probed Offset_Internal for UE4 <4.25
+    // (UProperty mode) too: without a writer on that arm, such a game keeps the 0x70
+    // default no matter what its Offset_Internal probes to.
 
     // --- the measured rows, from all 31 UVTD MemberVarLayout templates ---
     EXPECT("A6: 4.18-4.24 stock, 0x44 -> 0x70", UBoolPropFieldSizeFor(0x44, 422, false) == 0x70);
     EXPECT("A6: 4.11-4.17 stock, 0x50 -> 0x78", UBoolPropFieldSizeFor(0x50, 415, false) == 0x78);
     EXPECT("A6: 4.27 CasePreserving, 0x4C -> 0x80", UBoolPropFieldSizeFor(0x4C, 427, true) == 0x80);
 
-    // ⚠ THE ROW THE AUDIT WOULD HAVE GOT WRONG. It prescribed a flat `+ 0x2C`. The delta is
+    // ⚠ THE ROW A FLAT `+ 0x2C` GETS WRONG. The delta is
     // 0x28 for 4.11-4.17 because Offset_Internal and RepNotifyFunc are in the OPPOSITE order
     // there (4.11: RepNotifyFunc 0x48 then Offset_Internal 0x50, total 0x78; 4.18:
     // Offset_Internal 0x44 then RepNotifyFunc 0x48, total 0x70). Seven versions, all inside
@@ -9046,12 +9015,12 @@ static void Test_UBoolPropFieldSize() {
     EXPECT("A6: a flat +0x2C would be WRONG at 4.11-4.17",
            UBoolPropFieldSizeFor(0x50, 415, false) != 0x50 + 0x2C);
 
-    // --- THE REGRESSION ROW. DQ XI S (UE4.22, UProperty mode, a whole-layout +0x10 shift,
+    // --- THE DQ XI S ROW (UE4.22, UProperty mode, a whole-layout +0x10 shift,
     //     docs/test-games.md). Offset_Internal probes to 0x54, so the true FieldSize is
-    //     0x80 -- and the old default 0x70 plus Ubel's ±4/+8/-8 spread tops out at 0x78,
-    //     so NO probe could reach it. boolFieldMask stayed 0 and the reader fell back to
+    //     0x80 -- and a 0x70 default plus Ubel's ±4/+8/-8 spread tops out at 0x78, so NO
+    //     probe could reach it. boolFieldMask would stay 0 and the reader fall back to
     //     `byteVal != 0`, reporting a native bitfield bool as true whenever ANY sibling in
-    //     its byte was set. ---
+    //     its byte is set. ---
     EXPECT("A6: DQ XI S shifted 4.22, 0x54 -> 0x80", UBoolPropFieldSizeFor(0x54, 422, false) == 0x80);
     EXPECT("A6: ...which the old 0x70 default could not reach even with the ±8 spread",
            UBoolPropFieldSizeFor(0x54, 422, false) > 0x70 + 8);
@@ -9065,10 +9034,10 @@ static void Test_UBoolPropFieldSize() {
                UBoolPropFieldSizeFor(0x44 + shift, 422, false) == 0x70 + shift);
     }
 
-    // --- ⚠ WHY UBEL'S PROBE SPREAD MUST SURVIVE THIS FIX. The two live deltas differ by
-    //     exactly 4 and the CasePreserving case by 8, so a MISDETECTED version is still
-    //     rescued by the { base, ±4, +8, -8 } spread. Narrowing it "now that the base is
-    //     derived" would remove that net. ---
+    // --- ⚠ WHY UBEL'S PROBE SPREAD MUST STAY. The two live deltas differ by exactly 4
+    //     and the CasePreserving case by 8, so a MISDETECTED version is still rescued by
+    //     the { base, ±4, +8, -8 } spread. Narrowing it "because the base is derived"
+    //     would remove that net. ---
     {
         const int trueAt415 = UBoolPropFieldSizeFor(0x50, 415, false);
         const int guessAs420 = UBoolPropFieldSizeFor(0x50, 420, false);   // version misdetected high
@@ -9102,10 +9071,10 @@ static void Test_UBoolPropFieldSize() {
                (trueBoth - wrongBoth) != 0 && (trueBoth - wrongBoth) != 4
                && (trueBoth - wrongBoth) != -4 && (trueBoth - wrongBoth) != 8
                && (trueBoth - wrongBoth) != -8);
-        // The counter-case, so the claim above is not mistaken for "any two errors escape". It used a case-preserving
-        // 4.15 at Offset_Internal 0x50 with the +8, a layout no engine builds: before 4.18 the 12-byte FName moves
-        // Offset_Internal itself to 0x58 and adds nothing to the tail (review wf_b99fb861-680, F3). On the real layout
-        // a HIGH version miss that also misses CPN is off by 4 -- still inside.
+        // The counter-case, so the claim above is not mistaken for "any two errors escape". A case-preserving 4.15 at
+        // Offset_Internal 0x50 with the +8 is a layout no engine builds: before 4.18 the 12-byte FName moves
+        // Offset_Internal itself to 0x58 and adds nothing to the tail. On the real layout a HIGH version miss that
+        // also misses CPN is off by 4 -- still inside.
         const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x58, 420, false);
         const int trueLoCpn     = UBoolPropFieldSizeFor(0x58, 415, true);
         EXPECT("A6: a HIGH version miss with a missed CPN on real case-preserving 4.15 is off by 4 -- still inside",
@@ -9125,7 +9094,7 @@ static void Test_UBoolPropFieldSize() {
 // [FPROP-FAMILY-ALIGN] The FProperty family starts at sizeof(FProperty), which ends in pointers and so is always a
 // multiple of 8. A UE 5.7 build that keeps WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal
 // (UE_5.7 UnrealType.h), so Offset_Internal lands at 0x48 and Offset_Internal + 0x2C is 0x74 -- four short of the
-// real 0x78. TQ2 logged exactly that correction, `CorrectSubclassOffsets: delta=4, FSTRUCTPROP 0x74 -> 0x78`.
+// real 0x78 (on TQ2 the flat sum makes CorrectSubclassOffsets log `delta=4, FSTRUCTPROP 0x74 -> 0x78`).
 static void Test_PropertyFamilyForIsAligned() {
     using DynOff::PropertyFamilyFor;
     EXPECT("FPROPALIGN: a UE 5.7 editor-data build, Offset_Internal 0x48 -> the family at 0x78",
@@ -9133,10 +9102,10 @@ static void Test_PropertyFamilyForIsAligned() {
     EXPECT("FPROPALIGN control: UE 5.3+ stock, 0x44 -> 0x70", PropertyFamilyFor(0x44, false).structProp == 0x70);
     EXPECT("FPROPALIGN control: UE 4.25-5.2 stock, 0x4C -> 0x78", PropertyFamilyFor(0x4C, false).structProp == 0x78);
     EXPECT("FPROPALIGN control: 4.27 case-preserving, 0x4C -> 0x80", PropertyFamilyFor(0x4C, true).structProp == 0x80);
-    // Review wf_b99fb861-680 (F2): from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8
+    // From UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8
     // UnrealType.h), and 4.25-5.2 always put Offset_Internal at 4 mod 8, so an 8-aligned Offset_Internal is a 5.3+
     // editor-data layout: pointers first, then the FName, then sizeof rounds up to 8. Case-preserving at 0x48 is
-    // 0x50..0x70 + 0x70..0x7C -> 0x80 (this pin said 0x78 for a 4.25-5.2 order no engine builds at 0x48), and a
+    // 0x50..0x70 + 0x70..0x7C -> 0x80 (not the 0x78 of a 4.25-5.2 order, which no engine builds at 0x48), and a
     // 5.5+ editor at 0x50 (IndexInOwner) is 0x88. The plain round-up of Offset_Internal + 0x2C / + 0x34 is exact for
     // both orders at every stock value.
     EXPECT("FPROPALIGN: case-preserving with Offset_Internal 0x48 (5.3+ order) -> 0x80",
@@ -9162,13 +9131,13 @@ static void Test_UPropertyFamilyFor() {
     EXPECT("UPROPSLOT: DQ XI S's shifted 4.18, 0x54 -> 0x80", UPropertyFamilyFor(0x54, 418, false).structProp == 0x80);
     EXPECT("UPROPSLOT: 4.15 stock, 0x50 -> 0x78 (the 0x28 delta)", UPropertyFamilyFor(0x50, 415, false).structProp == 0x78);
     EXPECT("UPROPSLOT: case-preserving 4.23, 0x4C -> 0x80", UPropertyFamilyFor(0x4C, 423, true).structProp == 0x80);
-    // Review wf_b99fb861-680 (F3): before 4.18 the 12-byte FName sits BEFORE Offset_Internal and moves it (0x50 ->
+    // Before 4.18 the 12-byte FName sits BEFORE Offset_Internal and moves it (0x50 ->
     // 0x58); the tail stays 0x28. The +8 belongs to the 4.18+ order only. Case-preserving 4.15: start 0x80.
     EXPECT("UPROPSLOT: case-preserving 4.15, 0x58 -> 0x80 (no +8 before 4.18)",
            UPropertyFamilyFor(0x58, 415, true).structProp == 0x80);
     EXPECT("A6: case-preserving 4.15's bool slot is the same 0x80",
            DynOff::UBoolPropFieldSizeFor(0x58, 415, true) == 0x80);
-    // The layout decides the order (review F1): Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from 4.18.
+    // The layout decides the order: Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from 4.18.
     using DynOff::UPropertySubclassStartFromLayout;
     EXPECT("UPROPSLOT layout: 4.15 stock (0x50, ElementSize 0x34) -> 0x78, whatever the version says",
            UPropertySubclassStartFromLayout(0x50, 0x34, 422, false) == 0x78
@@ -9225,7 +9194,7 @@ static void Test_UPropertyUStructHeadFor() {
            is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
     EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.23, UE423_Flying's Development PDB head 48/50/58/60",
            is(UPropertyUStructHeadFor(0x30, 423), 0x48, 0x50, 0x58, 0x60));
-    // Case-preserving names move UField::Next to 0x30 the same way; DQ XI S's shifted 4.18 measured it at 0x38.
+    // Case-preserving names move UField::Next to 0x30 the same way; DQ XI S's shifted 4.18 has it at 0x38.
     EXPECT("USTRUCT-GIVEUP: a shifted 4.18 (Next 0x38) 40/48/50/58", is(UPropertyUStructHeadFor(0x38, 418), 0x40, 0x48, 0x50, 0x58));
     // An unknown version: 4.22-4.24's head, whose Super and Children are the 4.25+ default's.
     EXPECT("USTRUCT-GIVEUP: an unknown version gets 40/48/50/58", is(UPropertyUStructHeadFor(0x28, 0), 0x40, 0x48, 0x50, 0x58));
@@ -9239,8 +9208,8 @@ static void Test_UPropertyUStructHeadFor() {
 }
 
 // [CPP-HARDENING-2026-11-14] The five family members are corrected while other threads read them, so they are
-// RuntimeOffset (relaxed atomics), not plain ints: as ints the lazy corrections were a data race. No run-time test can
-// see that race (an aligned int never tears on x64), so the type is pinned here instead.
+// RuntimeOffset (relaxed atomics), not plain ints: as ints the lazy corrections would be a data race. No run-time test
+// can see that race (an aligned int never tears on x64), so the type is pinned here instead.
 static_assert(std::is_same_v<decltype(DynOff::FSTRUCTPROP_STRUCT), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FARRAYPROP_INNER), DynOff::RuntimeOffset>);
 static_assert(std::is_same_v<decltype(DynOff::FBOOLPROP_FIELDSIZE), DynOff::RuntimeOffset>);
@@ -9272,9 +9241,9 @@ static void Test_PropertyFamilyIsCoherent() {
     }
 
     // The two concrete layouts this repo actually ships against. 0x44 is the UE5.1.1+
-    // default Step 2.5 writes; 0x48 is TQ2's measured value. [FPROP-FAMILY-ALIGN] This pinned 0x74 --
-    // the flat +0x2C -- until TQ2's own log showed the struct at 0x78 (`CorrectSubclassOffsets: delta=4,
-    // FSTRUCTPROP 0x74 -> 0x78`): the link pointers are 8-aligned, so the pin had encoded the defect.
+    // default Step 2.5 writes; 0x48 is TQ2's value. [FPROP-FAMILY-ALIGN] Its struct slot is 0x78, not the flat
+    // +0x2C's 0x74: the link pointers are 8-aligned (TQ2's own log shows `CorrectSubclassOffsets: delta=4,
+    // FSTRUCTPROP 0x74 -> 0x78`).
     DynOff::PropertyFamily ue5 = DynOff::PropertyFamilyFor(0x44);
     EXPECT("G12: Offset_Internal 0x44 -> family base 0x70", ue5.structProp == 0x70);
     EXPECT("G12: Offset_Internal 0x44 -> EnumProperty 0x78", ue5.enumEnum == 0x78);
@@ -9297,9 +9266,9 @@ static void Test_PropertyFamilyIsCoherent() {
     EXPECT("G12: the two spellings agree",
            DynOff::PropertyFamilyAtBase(0x70).enumEnum == DynOff::PropertyFamilyFor(0x44).enumEnum);
 
-    // ⚠ THE HISTORICAL SPLIT, asserted as a shape that must never be producible: the shipped
-    // defect was STRUCT/BOOLSIZE at 0x70 with INNER/BYTEENUM at 0x78 and ENUMENUM at 0x80.
-    // No input may yield a family whose members disagree like that.
+    // ⚠ THE SPLIT SHAPE, asserted as never producible: STRUCT/BOOLSIZE at 0x70 with
+    // INNER/BYTEENUM at 0x78 and ENUMENUM at 0x80. No input may yield a family whose
+    // members disagree like that.
     for (int propOff : { 0x40, 0x44, 0x48, 0x4C, 0x50 }) {
         DynOff::PropertyFamily f = DynOff::PropertyFamilyFor(propOff);
         const bool splitShape = (f.arrayInner == f.structProp + 8) || (f.byteEnum == f.structProp + 8);
@@ -9308,15 +9277,15 @@ static void Test_PropertyFamilyIsCoherent() {
 }
 
 static void Test_ShouldPublishEnumTable() {
-    // audit #5, found while fixing U4: ResolveEnumValue's entry loop `break`s on a
-    // mid-table read failure and the PARTIAL vector was published unconditionally
-    // into a cache nothing in dll/src ever erases — permanently splitting one UEnum
-    // so values below the break point resolve and values above render as raw ints.
+    // ResolveEnumValue's entry loop `break`s on a mid-table read failure, and a PARTIAL
+    // vector published into a cache nothing in dll/src ever erases would permanently
+    // split one UEnum: values below the break point resolve and values above render as
+    // raw ints.
 
     // The distinction this predicate exists to hold: a FAILED BuildLayout is a
     // complete answer, a BROKEN loop is not. Getting these backwards is the easy
     // mistake, and it is wrong in both directions — refusing to cache a member-less
-    // UEnum re-probes on every lookup; caching a truncated one is the original bug.
+    // UEnum re-probes on every lookup; caching a truncated one splits the UEnum.
     EXPECT("BuildLayout failed -> publish (member-less UEnum / not a UEnum at all)",
            Ubel::ShouldPublishEnumTable(false, 0, 0));
     EXPECT("BuildLayout failed -> publish, whatever the count args say",
@@ -9329,24 +9298,24 @@ static void Test_ShouldPublishEnumTable() {
     EXPECT("truncated at the first entry is NOT published",
            !Ubel::ShouldPublishEnumTable(true, 12, 0));
 
-    // Neu range-checks count before the narrowing cast (its own AF1 fix), but this
+    // Neu range-checks count before the narrowing cast, but this
     // predicate must not sign-convert a negative into a huge size_t and call it equal.
     EXPECT("a negative intended count is never published",
            !Ubel::ShouldPublishEnumTable(true, -1, 0));
 }
 
 static void Test_NameWitness() {
-    // audit #5 U6 + F3's in-session half: the per-UObject name cache is keyed by an
-    // address UE recycles, so after a level change every name-bearing reply served the
-    // DESTROYED object's name while the class was read fresh — the two disagreed with
-    // no error anywhere, and only restarting the game cleared it.
+    // The per-UObject name cache is keyed by an address UE recycles, so without a
+    // witness, after a level change every name-bearing reply would serve the DESTROYED
+    // object's name while the class is read fresh — the two disagree with no error
+    // anywhere, and only restarting the game clears it.
     using Ubel::NameWitness;
 
     EXPECT("identical witnesses match", (NameWitness{1234, 0} == NameWitness{1234, 0}));
 
-    // `number` is load-bearing. Dropping it is exactly audit #5 U8, which shipped once
-    // and made Slot_1 / Slot_2 / Slot_3 all render as "Slot" — so a witness that
-    // ignored it would serve Slot_1's cached string for Slot_2 at a recycled address.
+    // `number` is load-bearing. Dropping it makes Slot_1 / Slot_2 / Slot_3 all render
+    // as "Slot" — so a witness that ignored it would serve Slot_1's cached string for
+    // Slot_2 at a recycled address.
     EXPECT("differing only in Number is NOT a match",
            (NameWitness{1234, 1} != NameWitness{1234, 2}));
     EXPECT("differing only in ComparisonIndex is NOT a match",
@@ -9399,13 +9368,13 @@ static bool PatMatchAt(const Macht::ParsedPattern& pat,
     return true;
 }
 
-// Routine::SafeThread — the fix for the fast-fail that TWO generations of exception
-// guards could not touch, because there was never an exception: `~std::thread()` on a
-// still-joinable thread calls std::terminate() DIRECTLY.
+// Routine::SafeThread — against a fast-fail no exception guard can touch, because there
+// is no exception: `~std::thread()` on a still-joinable thread calls std::terminate()
+// DIRECTLY.
 //
 // This test is its own negative control. Swap SafeThread back to std::thread and the
 // test EXECUTABLE dies with 0xC0000409 instead of failing an assertion — the same
-// fast-fail the game was taking. Verified that way before shipping.
+// fast-fail a game process takes.
 static void Test_Routine_SafeThread() {
     std::printf("Test_Routine_SafeThread\n");
 
@@ -9478,12 +9447,11 @@ static void Test_Routine_SafeThread() {
     EXPECT("the running thread actually started", ran->load() > 0);
 }
 
-// B34 — Cheat Engine must never be auto-scanned as if it were the game.
+// Cheat Engine must never be auto-scanned as if it were the game.
 //
-// The first version of this guard was an exact-name list and shipped "verified". A live
-// capture then showed the DLL scanning CE for 5.8 s and opening the game pipe inside it,
-// because the real executable is cheatengine-x86_64-SSE4-AVX2.exe — a CPU-feature variant
-// none of the three listed names matched. That exact string is the first assertion here.
+// An exact-name list is not enough: the real executable can be a CPU-feature variant such
+// as cheatengine-x86_64-SSE4-AVX2.exe, and a guard that misses it lets the DLL scan CE and
+// open the game pipe inside it. That exact string is the first assertion here.
 static void Test_Grimoire_IsCheatEngineExeName() {
     std::printf("Test_Grimoire_IsCheatEngineExeName\n");
 
@@ -9506,16 +9474,14 @@ static void Test_Grimoire_IsCheatEngineExeName() {
     EXPECT("null",                     !IsCheatEngineExeName(nullptr));
 }
 
-// AB1 (audit #5, HIGH) — DllMain started a 1 ms-poll thread in EVERY host including Cheat
-// Engine, and CE FreeLibrary's plugin DLLs (Settings->Plugins->Add does LoadLibrary ->
-// CEPlugin_GetVersion -> FreeLibrary; every CE exit unloads every plugin). A thread left
-// running in an unmapped image crashes CE.
+// DllMain must not start its 1 ms-poll thread in Cheat Engine: CE FreeLibrary's plugin
+// DLLs (Settings->Plugins->Add does LoadLibrary -> CEPlugin_GetVersion -> FreeLibrary;
+// every CE exit unloads every plugin), and a thread left running in an unmapped image
+// crashes CE.
 //
-// The guard EXISTED — IsCheatEngineExeName — and had exactly one call site, INSIDE the
-// thread it should have prevented from being created. The fix hoists the decision into
-// DllMain, and this test exists because DllMain itself is unreachable from any test: the
-// decision had to move somewhere a test can reach, taking the FULL path exactly as
-// GetModuleFileNameW(nullptr, ...) hands it over.
+// The decision belongs in DllMain, BEFORE the thread is created, not inside the thread.
+// DllMain itself is unreachable from any test, so the decision sits somewhere a test can
+// reach, taking the FULL path exactly as GetModuleFileNameW(nullptr, ...) hands it over.
 static void Test_Grimoire_HostAllowsBackgroundThreads() {
     std::printf("Test_Grimoire_HostAllowsBackgroundThreads\n");
 
@@ -9546,15 +9512,15 @@ static void Test_Grimoire_HostAllowsBackgroundThreads() {
            HostAllowsBackgroundThreads(L"C:\\Games\\MyCheatEngineClone.exe"));
 
     // FAILS OPEN. An unreadable host path must not silently disable the DLL for every
-    // game; the shipped behaviour for a non-CE host is what we preserve.
+    // game; a non-CE host keeps its background threads.
     EXPECT("empty path fails open", HostAllowsBackgroundThreads(L""));
     EXPECT("null path fails open",  HostAllowsBackgroundThreads(nullptr));
 }
 
 // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A PIPE dialog stays open across FIREs, holding the instance address it opened
 // with, and invoke_function finds the function by NAME on the class read at that address NOW. A slot freed and reused
-// by another class meanwhile ran that class's same-named function. The dialog now sends the class its function list
-// was read from, and the DLL refuses when the object there is of another class.
+// by another class meanwhile would run that class's same-named function. So the dialog sends the class its function
+// list was read from, and the DLL refuses when the object there is of another class.
 static void Test_Renge_InvokeTargetIsExpected() {
     std::printf("Test_Renge_InvokeTargetIsExpected\n");
     EXPECT("the same class: invoked",                   Renge::InvokeTargetIsExpected(0xC100, 0xC100));
@@ -9654,7 +9620,7 @@ static void Test_UserPick_WireAndTexts() {
            && nf.find("(class AbilitySystemCheatManagerExtension)") != std::string::npos);
 }
 
-// B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
+// TryHexToBytes can fail, so write_mem can report a bad pattern.
 static void Test_Renge_TryHexToBytes() {
     std::printf("Test_Renge_TryHexToBytes\n");
     std::vector<uint8_t> out;
@@ -9668,8 +9634,8 @@ static void Test_Renge_TryHexToBytes() {
     EXPECT("lowercase parses", Renge::TryHexToBytes("deadbeef", out));
     EXPECT("lowercase bytes", out.size() == 4 && out[0] == 0xDE && out[3] == 0xEF);
 
-    // The exact string from the finding. strtoul turned every non-hex char into 0x00,
-    // so this was WRITTEN INTO THE GAME as {DE,0A,0D,BE,0E} and answered ok:true.
+    // A spaced string. A strtoul parse turns every non-hex char into 0x00, so this would
+    // be WRITTEN INTO THE GAME as {DE,0A,0D,BE,0E} and answered ok:true.
     out.assign(1, 0xAA);
     EXPECT("spaced hex is REJECTED (not silently mangled)",
            !Renge::TryHexToBytes("DE AD BE EF", out));
@@ -9681,13 +9647,12 @@ static void Test_Renge_TryHexToBytes() {
     EXPECT("empty rejected",          !Renge::TryHexToBytes("", out));
 }
 
-// F5 — the response/event envelope must survive its payload.
+// The response/event envelope must survive its payload.
 //
-// MakeResponse / MakeEvent used to splice the handler payload on with nlohmann's
-// merge_patch (RFC 7386). Two of its behaviours are wrong for an envelope and neither is
-// what any call site meant: a NULL value in the patch DELETES the key rather than setting
-// it, and a NON-OBJECT patch replaces the whole target — which would drop "id"/"ok"
-// outright. Assignment has neither.
+// Splicing the handler payload on with nlohmann's merge_patch (RFC 7386) is wrong for an
+// envelope in two ways, neither of which any call site means: a NULL value in the patch
+// DELETES the key rather than setting it, and a NON-OBJECT patch replaces the whole target
+// — which would drop "id"/"ok" outright. Assignment has neither.
 //
 // The negative control is the merge_patch line itself: put it back in ApplyPayload and
 // the null case loses "value" while the non-object case loses "id" AND "ok".
@@ -9721,8 +9686,8 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
         EXPECT_EQ_STR("plain payload adds name", res["name"].get<std::string>(), "Actor");
     }
 
-    // 2. A NULL value must be SET, not delete the key. merge_patch removed it, so a
-    //    handler answering {"value": null} shipped a response with no "value" at all.
+    // 2. A NULL value must be SET, not delete the key. merge_patch removes it, so a
+    //    handler answering {"value": null} would send a response with no "value" at all.
     {
         nlohmann::json res = envelope();
         nlohmann::json data;
@@ -9779,8 +9744,8 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
     }
 
     // 7. The rvalue overload actually MOVES: the source array is left empty rather than
-    //    deep-copied. This is the half F5 was filed for (8192-object snapshot chunks
-    //    copied a second time inside the game process's heap).
+    //    deep-copied. This is the half that matters for cost: a copy would duplicate
+    //    8192-object snapshot chunks inside the game process's heap.
     {
         nlohmann::json res = envelope();
         nlohmann::json data;
@@ -9790,22 +9755,20 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
         // Deliberately NOT `is_array() && empty()`: a moved-from nlohmann value is left
         // as `null`, not as an empty array of its old type. Asserting "no longer holds
         // the four elements" detects the copy either way without pinning nlohmann's
-        // moved-from representation — the first draft of this line asserted the
-        // representation and failed against a working move.
+        // moved-from representation — asserting the representation would fail against
+        // a working move.
         EXPECT("payload was moved out of, not copied",
                !data["objects"].is_array() || data["objects"].empty());
     }
 }
 
-// audit #5 AD24 — the three ENVELOPE BUILDERS themselves had no test, and the reason
-// was real: "structurally UNLINKABLE from the only test target that includes it".
+// The three ENVELOPE BUILDERS themselves.
 //
-// My first pass called that premise false, reasoning that everything in Renge.h is
-// `inline` so there is nothing to link. THE LINKER DISAGREED, and it was right:
-// `MakeResponse` calls `Stark::IsGameThreadResponsive`, which is DECLARED in Stark.h but
-// DEFINED in Stark.cpp — and no test target compiles Stark.cpp. `inline` makes the
-// builder itself linkable; it does nothing for what the builder calls. MakeError and
-// MakeEvent were always testable (neither touches Stark); MakeResponse was not.
+// Everything in Renge.h is `inline`, but that does not make MakeResponse linkable here:
+// it calls `Stark::IsGameThreadResponsive`, which is DECLARED in Stark.h but DEFINED in
+// Stark.cpp — and no test target compiles Stark.cpp. `inline` makes the builder itself
+// linkable; it does nothing for what the builder calls. MakeError and MakeEvent touch
+// nothing of Stark's.
 //
 // The one dependency is supplied below rather than by adding Stark.cpp to the target,
 // which would drag in MinHook and the Win32 hook machinery for a JSON test. The stub is
@@ -9815,7 +9778,7 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
 // below pin the presence and type of `game_thread_stalled` and only assert its value in
 // the one case that is about precedence rather than about liveness.
 namespace Stark {
-// Settable, because the envelope's shape now DEPENDS on the verdict: an Unknown
+// Settable, because the envelope's shape DEPENDS on the verdict: an Unknown
 // liveness omits the key entirely rather than defaulting it to false.
 // (STALLDEFAULT-2026-08-26)
 GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
@@ -9823,23 +9786,23 @@ GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_tes
 }   // namespace Stark
 
 static void Test_Dunste_ShouldCommitCollision() {
-    // Blind-spot sweep D1. InvokeSetCollision discarded UE5_CallProcessEventEx's int32_t
-    // and returned "the setter was FOUND" -- which all three call sites read as "collision
-    // CHANGED". The repair is a TRI-state, and this rule is the load-bearing half of it:
-    // which outcomes may the caller commit s_state.collisionOff from.
+    // InvokeSetCollision must not discard UE5_CallProcessEventEx's int32_t and return "the
+    // setter was FOUND" -- a caller reads that as "collision CHANGED". The answer is a
+    // TRI-state, and this rule is the load-bearing half of it: which outcomes may the
+    // caller commit s_state.collisionOff from.
     using CA = Dunste::CollisionApply;
 
     EXPECT("D1: an APPLIED invoke commits", Dunste::ShouldCommitCollision(CA::Applied));
 
-    // The audit #4 B8 half, and it must survive: a pawn class with no
+    // The absent-setter half, and it must survive: a pawn class with no
     // SetActorEnableCollision is PERMANENT, so retrying cannot conjure a setter and the
     // caller must commit to stop re-emitting every tick. Collapsing this into "failure"
-    // would re-introduce the bug B8 fixed.
+    // would have the caller re-emit the call every tick.
     EXPECT("D1: an ABSENT setter still commits (B8 -- retrying cannot conjure one)",
            Dunste::ShouldCommitCollision(CA::Absent));
 
-    // The D1 half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
-    // -3 no usable PE offset -- and, since [W3-DUNSTE-QUEUED], NOT -5, which stays queued
+    // The refused half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
+    // -3 no usable PE offset -- and, under [W3-DUNSTE-QUEUED], NOT -5, which stays queued
     // and lands; see below): NOTHING reached the game, so committing records a disable
     // that never happened -- and on the restore path it wipes the record that keeps a
     // ghosted pawn tracked.
@@ -9847,8 +9810,8 @@ static void Test_Dunste_ShouldCommitCollision() {
            !Dunste::ShouldCommitCollision(CA::Refused));
 
     // [W3-DUNSTE-QUEUED] -5 is the dispatcher's "the game thread did not drain in time" -- and the request STAYS
-    // QUEUED and runs later (Frieren.h, Stark.cpp). Filed under Refused, a queued disable landed after the record
-    // said collision was ON, with nothing tracking it: the pawn fell through the world once Fly was off.
+    // QUEUED and runs later (Frieren.h, Stark.cpp). Filed under Refused, a queued disable would land after the record
+    // says collision is ON, with nothing tracking it: the pawn falls through the world once Fly is off.
     EXPECT("DUNSTE-QUEUED *: a -5 timeout is QUEUED, not refused",
            Dunste::CollisionApplyFromRc(-5) == CA::Queued);
     EXPECT("DUNSTE-QUEUED *: ...and a queued request commits the record (the next toggle emits the undo)",
@@ -9874,11 +9837,11 @@ static void Test_Dunste_ShouldCommitCollision() {
 }
 
 static void Test_Aura_DescribeSparseDelegateState() {
-    // Blind-spot sweep D4. A sparse delegate whose bIsBound byte READ 1, whose
-    // InvocationList header then faulted, used to render "(0 bindings, sparse)" — the code
-    // had positive evidence the delegate WAS bound and printed the opposite. The walker
-    // clamped an unreadable/implausible Num to 0 and the renderer could not tell that from
-    // a genuine zero. bIsBound == 1 is implied here: Ubel only calls this after rejecting
+    // A sparse delegate whose bIsBound byte READ 1, whose InvocationList header then
+    // faulted, must not render "(0 bindings, sparse)" — that is positive evidence the
+    // delegate WAS bound, printed as the opposite. A walker that clamps an
+    // unreadable/implausible Num to 0 leaves the renderer unable to tell that from a
+    // genuine zero. bIsBound == 1 is implied here: Ubel only calls this after rejecting
     // the unbound case.
     Aura::SparseDelegateResult sr;
     sr.resolved = sr.ownerFound = sr.nameFound = true;
@@ -9889,8 +9852,8 @@ static void Test_Aura_DescribeSparseDelegateState() {
                == "(sparse, bound — invocation list unreadable)");
 
     // ⭐ THE CONTROL. A delegate that IS bound and whose list was READ and is genuinely
-    // empty must still say "(0 bindings, sparse)" — otherwise the fix would have swapped
-    // one wrong answer for another.
+    // empty must still say "(0 bindings, sparse)" — otherwise one wrong answer would be
+    // swapped for another.
     sr.listRead = true;
     sr.listNum  = 0;
     EXPECT("D4 control: a READ, genuinely-empty list still says 0 bindings",
@@ -9911,14 +9874,13 @@ static void Test_Aura_DescribeSparseDelegateState() {
 }
 
 static void Test_Ubel_DescribeUnreadableField() {
-    // ⛔ THE OFFSET MUST BE HEX, AND THIS TEST IS THE ONLY THING THAT SAYS SO. The
-    // InterfaceProperty refusal first shipped as `"+0x" + std::to_string(fi.Offset)`:
-    // DECIMAL digits behind a hex prefix, so a field at 0xFF8 was announced as "+0x4088".
-    // The refusal exists to stop the walker making an unbacked claim about an ADDRESS --
-    // stating the wrong one inside it is the same class of defect it was written to remove.
-    // It was caught only because the page-edge fixture asserts the message names the offset
-    // the field is actually at; a test that grepped for "unreadable" would have gone green.
-    // Centralised here, and pinned here, so four call sites cannot drift apart.
+    // ⛔ THE OFFSET MUST BE HEX, AND THIS TEST IS THE ONLY THING THAT SAYS SO.
+    // `"+0x" + std::to_string(fi.Offset)` puts DECIMAL digits behind a hex prefix, so a
+    // field at 0xFF8 would be announced as "+0x4088". The refusal exists to stop the walker
+    // making an unbacked claim about an ADDRESS -- stating the wrong one inside it is the
+    // same class of defect it was written to remove. The assertion names the offset the
+    // field is actually at; a test that grepped for "unreadable" would stay green.
+    // Centralised here, and pinned here, so the call sites cannot drift apart.
     using Ubel::DescribeUnreadableField;
 
     // ⭐ THE ONE THIS EXISTS FOR: 0xFF8 == 4088 decimal, and the two must not be confused.
@@ -9948,11 +9910,11 @@ static void Test_Ubel_DescribeUnreadableField() {
 
 static void Test_Ubel_DescribeScriptDelegate() {
     // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- a target WAS bound and has since been collected.
-    // An UNTOUCHED FScriptDelegate must not make it. Five sites did, because they tested
-    // `!funcName.empty()` while an untouched slot has FunctionName == NAME_None, and
-    // Ubel::ReadFName resolves index 0 to the STRING "None". Found 2026-09-09 the moment
-    // Arr_Delegates gave ReadDelegateArrayElements its first fixture: element [0] rendered
-    // "(stale)::None" for a slot nothing had ever touched.
+    // An UNTOUCHED FScriptDelegate must not make it. A site that tests `!funcName.empty()`
+    // does, because an untouched slot has FunctionName == NAME_None and Ubel::ReadFName
+    // resolves index 0 to the STRING "None": on the Arr_Delegates fixture, element [0] of
+    // ReadDelegateArrayElements would render "(stale)::None" for a slot nothing has ever
+    // touched.
     using Ubel::DescribeScriptDelegate;
 
     // ⭐ THE ONE THIS EXISTS FOR.
@@ -9995,16 +9957,16 @@ static void Test_Ubel_DescribeScriptDelegate() {
 }
 
 static void Test_Delegate_AccessDetectorPad() {
-    // D4b / D3b, the defect UNDER D4's fix. UE 5.3+ gave TScriptDelegate and
-    // TMulticastScriptDelegate a TDelegateAccessHandlerBase base class. With DO_CHECK on
-    // (Development/Debug/DebugGame) it holds one std::atomic<uint64>, so every delegate
-    // payload starts 8 bytes late; with DO_CHECK off the base is empty and EBO applies.
-    // Measured on DumperTest Development (UE 5.4) 2026-09-09: the bound OnActorHit reads
-    // {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4} at +0/+8/+0x10/+0x14, and reading Num at
-    // the old +8 returned 0xF5BF5C40 -- the LOW HALF OF DATA.
+    // UE 5.3+ gives TScriptDelegate and TMulticastScriptDelegate a
+    // TDelegateAccessHandlerBase base class. With DO_CHECK on (Development/Debug/DebugGame)
+    // it holds one std::atomic<uint64>, so every delegate payload starts 8 bytes late; with
+    // DO_CHECK off the base is empty and EBO applies. On a UE 5.4 Development build the
+    // bound OnActorHit reads {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4} at
+    // +0/+8/+0x10/+0x14, and reading Num at an unpadded +8 returns 0xF5BF5C40 -- the LOW
+    // HALF OF DATA.
     //
-    // ⚠ Every one of the ~12 shipped titles measured in this repo is a Shipping build, i.e.
-    // the pad-free side. Nothing red could ever have appeared there.
+    // ⚠ Shipped titles are mostly Shipping builds, i.e. the pad-free side, so a game rarely
+    // goes red on this.
     constexpr int32_t kMcd = 16;              // sizeof(FMulticastScriptDelegate), unpadded
     // sizeof(FScriptDelegate) unpadded with an 8-byte FName. A literal, not 8 + SizeofFName(): with a 12- or 4-byte
     // FName "+ 8" is not the padded size ([DELEGATE-PAD-ALIGN]), so global FName state left by another test would turn
@@ -10021,9 +9983,9 @@ static void Test_Delegate_AccessDetectorPad() {
            DynOff::DelegatePadFromElementSize(kSd + 8, kSd) == 8);
 
     // ⭐ THE CONTROL THAT MATTERS. Anything else must be REFUSED, not rounded to the nearer
-    // candidate. `ReadMulticastDelegateArrayElements` used to hardcode 16 and ignore the
-    // engine's own ElementSize entirely; the replacement is only an improvement if an
-    // unrecognised size makes the reader say so instead of picking a stride. A wrong stride
+    // candidate. `ReadMulticastDelegateArrayElements` reads the engine's own ElementSize
+    // rather than a hardcoded 16, and that only helps if an unrecognised size makes the
+    // reader say so instead of picking a stride. A wrong stride
     // does not fail loudly -- it publishes confident "(N bindings)" strings read from the
     // middle of the previous element.
     EXPECT("pad: an unrecognised ElementSize is refused, not rounded",
@@ -10052,8 +10014,8 @@ static void Test_Delegate_AccessDetectorPad() {
 
 static void Test_Delegate_Hex() {
     // [D4B-DELEGATEPAD-2026-09-09] A delegate row names the value's own address and size, so its hex holds all of those
-    // bytes -- the detector included, set off by a space -- rather than only the payload 8 bytes in. The bytes are the
-    // bound OnActorHit measured on DumperTest Development: {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4}.
+    // bytes -- the detector included, set off by a space -- rather than only the payload 8 bytes in. The bytes are a
+    // bound OnActorHit on a Development build: {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4}.
     const uint8_t mcd[24] = { 0, 0, 0, 0, 0, 0, 0, 0,
                               0x40, 0x5C, 0xBF, 0xF5, 0xD5, 0x01, 0x00, 0x00,
                               0x01, 0, 0, 0, 0x04, 0, 0, 0 };
@@ -10150,10 +10112,10 @@ static void Test_Stark_ClassifyGameThreadLiveness() {
 static void Test_Stark_LivenessPreservesTheGateContract() {
     // The eight in-DLL gates (Dunste noclip, Schlacht see-through, Wirbel) ask "should
     // I attempt a game-thread invoke?", and unknown must keep meaning YES -- the
-    // attempt is what installs the hook. This asserts the refactor changed the REPORT
-    // and not the GATE, by re-deriving the pre-fix expression and comparing.
+    // attempt is what installs the hook. This asserts the three-state REPORT leaves the
+    // GATE exactly the boolean rule, by re-deriving that rule (`legacy` below) and comparing.
     //
-    // A regression control, NOT evidence the bug existed.
+    // A control that the gate did not move, NOT evidence of a defect.
     using L = Stark::GameThreadLiveness;
     const uint64_t thr = 500, now = 100000;
     struct V { bool active; uint64_t last; uint64_t inst; };
@@ -10199,9 +10161,9 @@ static void Test_Renge_EnvelopeBuilders() {
         EXPECT("...and the envelope is still exactly 3 keys", res.size() == 3);
     }
 
-    // ⭐ UNKNOWN omits the key. This is the assertion that goes RED on the old
-    // `res["game_thread_stalled"] = !IsGameThreadResponsive()`, which reported a
-    // healthy game thread nobody had measured. (STALLDEFAULT-2026-08-26)
+    // ⭐ UNKNOWN omits the key. This is the assertion that goes RED on
+    // `res["game_thread_stalled"] = !IsGameThreadResponsive()`, which reports a
+    // healthy game thread nobody has measured. (STALLDEFAULT-2026-08-26)
     {
         Stark::g_testLiveness = Stark::GameThreadLiveness::Unknown;
         nlohmann::json res = Renge::MakeResponse(11);
@@ -10281,9 +10243,9 @@ static void Test_Renge_EnvelopeBuilders() {
     }
 }
 
-// B4 — the mailbox poller needs immunity from the PER-COMMAND cancel WITHOUT being
-// classified a background worker. One flag used to answer both questions; this asserts
-// they are now genuinely independent. The second EXPECT in the poller block is the
+// The mailbox poller needs immunity from the PER-COMMAND cancel WITHOUT being
+// classified a background worker. Those are two questions, and one flag cannot answer
+// both; this asserts they are genuinely independent. The second EXPECT in the poller block is the
 // negative control for the tempting one-line "fix": calling MarkBackgroundWorker() on
 // the poller would satisfy the first assertion and break this one, which is what would
 // make UE5_CallProcessEventEx refuse (-8) the user's one-shot CE invokes.
@@ -10356,10 +10318,10 @@ static void Test_Tot_PerConnectionCancelAndContextPropagation() {
         Tot::ResetShutdown();
     }).join();
 
-    // ⛔ The unbound default MUST stay fail-safe. The rejected design made "unbound"
-    // identical to "immune", which silently un-cancels every thread that forgets to bind
-    // (Aura's parallel workers, RunScan/RunRescan, the CE remote thread). If this
-    // expectation ever flips to !Requested(), that regression has been reintroduced.
+    // ⛔ The unbound default MUST stay fail-safe. Making "unbound" identical to "immune"
+    // silently un-cancels every thread that forgets to bind (Aura's parallel workers,
+    // RunScan/RunRescan, the CE remote thread). If this expectation ever flips to
+    // !Requested(), "unbound" has become "immune".
     std::thread([] {
         EXPECT("unbound: still honours the global per-command", Tot::Requested());
     }).join();
@@ -10420,8 +10382,7 @@ static void Test_Sig_IsCeReplayableAob() {
     EXPECT("RipDirect replayable",        IsCeReplayableAob(AobResolve::RipDirect));
     EXPECT("RipBoth replayable (form)",   IsCeReplayableAob(AobResolve::RipBoth));
 
-    // ⚠ RipDeref is NOT replayable, and this assertion was INVERTED until build 3262
-    // (audit #5 AD10) — the test pinned the defect, which is why nothing caught it.
+    // ⚠ RipDeref is NOT replayable.
     // RipDeref's answer is one further load THROUGH the RIP target, and the triple has
     // no field in which to say so; a CE script built from it registers the
     // pointer-to-pointer slot as though it were the pointer.
@@ -10435,8 +10396,8 @@ static void Test_Sig_IsCeReplayableAob() {
     // Every GWorld entry is RipBoth, so that is the live path, not a hypothetical.
 
     // SymbolExport / SymbolCallFollow keep an MSVC MANGLED NAME in `pattern`. Publishing
-    // one made the UI's "an AOB is available" test (non-empty string) true, and every
-    // address in the exported CE table then resolved to `??` (audit #4 B2).
+    // one would make the UI's "an AOB is available" test (non-empty string) true, and every
+    // address in the exported CE table would then resolve to `??`.
     EXPECT("SymbolExport NOT replayable", !IsCeReplayableAob(AobResolve::SymbolExport));
     EXPECT("SymbolCallFollow NOT repl.",  !IsCeReplayableAob(AobResolve::SymbolCallFollow));
 
@@ -10476,14 +10437,15 @@ static void Test_Sig_IsCeReplayableAob() {
     EXPECT("tables still carry a CallFollow entry", checkedCallFollow > 0);
 }
 
-// audit #5 AA38 — the Pass-2 (multi-module) admission rule as a truth table.
+// The Pass-2 (multi-module) admission rule as a truth table.
 //
 // The whole legal space is 3 anchor states x 2 candidate placements x 2 producer
 // flags = 12 rows, and every one is asserted so the table cannot drift silently.
 // (The predicate deliberately does NOT take two booleans for the anchor: that shape
 // has 4 combinations of which 1 is unreachable, and the unreachable one is exactly
-// the "meaningless, pass false here" parameter the audit's own lesson forbids.)
-// audit #5 A11 — how refine treats a container-element candidate whose stored
+// a "meaningless, pass false here" parameter.)
+//
+// How refine treats a container-element candidate whose stored
 // ABSOLUTE address may no longer denote the element it was scanned from.
 //
 // Every case below maps to a mechanism in the vendored 5.8 engine source, and the
@@ -10566,10 +10528,10 @@ static void Test_Radar_RefineContainerAnchor() {
     // TArray::Empty()/Reset() releases the allocation and sets Data to nullptr.
     // Both callers `continue` on a failed header read BEFORE calling this, so
     // nowData == 0 here always means "read fine, and the buffer is gone".
-    // Until 2026-08-23 `!nowData` was OR-ed into the bookkeeping guard above and
-    // returned KeepAddress, jumping over both Drop rules below — so the candidate
-    // stayed pinned to freed memory, and freed memory that still holds the scanned
-    // value reads back as a live hit.
+    // `!nowData` OR-ed into the bookkeeping guard above would return KeepAddress,
+    // jumping over both Drop rules below — so the candidate would stay pinned to freed
+    // memory, and freed memory that still holds the scanned value reads back as a live
+    // hit.
     EXPECT("emptied container (Data=nullptr, Count=0) DROPS",
            V(ValueAnchor::ArrayElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/0, true)
                == RefineAnchorVerdict::Drop);
@@ -10598,7 +10560,7 @@ static void Test_Radar_RefineContainerAnchor() {
                   "RefineContainerAnchor must be constexpr-evaluable");
 }
 
-// audit #5 A12 — the group-scan half. The RULE is the same one above; what is new is
+// The group-scan half. The RULE is the same one above; what is new is
 // the anchor a deep leaf carries to reach it, and the two ways that wiring can be
 // silently wrong (the sparse count's UNIT, and the leaf-depth off-by-one).
 static void Test_Radar_LeafAnchor() {
@@ -10888,9 +10850,9 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
                   "AdmitMultiModuleCandidate must be constexpr-evaluable");
 }
 
-// [AOB-SKIP-OWN-DLL] Which modules the multi-module walk scans. On IS Defense (UE 4.10, through the version.dll proxy)
-// GOBJ_V1's three multi-module matches included two inside that proxy -- our own code -- so every Pass 2 scan had the
-// dumper as a source of false candidates. A second build of ours can be mapped too (two proxies in one game folder:
+// [AOB-SKIP-OWN-DLL] Which modules the multi-module walk scans. Through a version.dll proxy (as on IS Defense, UE 4.10)
+// GOBJ_V1's multi-module matches can land inside that proxy -- our own code -- making the dumper a source of false
+// candidates for every Pass 2 scan. A second build of ours can be mapped too (two proxies in one game folder:
 // the first-loaded-wins mutex idles the second but its image stays; or UE5Dumper.dll injected beside a proxy by a tool
 // that does not check, whose auto-start then scans as well), and its code is the same code.
 static void Test_Macht_ClassifyModuleForScan() {
@@ -11057,10 +11019,10 @@ static void Test_Himmel_GNames_NonShipping54() {
                        "IWB_1 on 5.8.3 Shipping -> NamePoolData (after -8)");
     EXPECT("IWB_1 keeps its -8", iwb->adjustment == -8);
 
-    // Priority (the maintainer's call, 2026-09-26): few games ship non-Shipping builds, so both
-    // sit BELOW the bands every 4.23+ Shipping build in the corpus resolves in (they end with
-    // GNAM_PS2 at 620) and only need to come before the V-series, whose ~1,200 decoys per
-    // pattern are what made non-Shipping expensive. Pre-4.23 titles cross them at zero hits:
+    // Priority: few games ship non-Shipping builds, so both sit BELOW the bands every 4.23+
+    // Shipping build in the corpus resolves in (they end with GNAM_PS2 at 620) and only need
+    // to come before the V-series, whose ~1,200 decoys per pattern are what make non-Shipping
+    // expensive. Pre-4.23 titles cross them at zero hits:
     // there is no FNamePool before 4.23.
     const AobSignature* ps2 = FindGNamesSig("GNAM_PS2");
     const AobSignature* v5  = FindGNamesSig("GNAM_V5");
@@ -11078,34 +11040,34 @@ static void Test_Himmel_GNames_NonShipping54() {
 // DynOff — FFieldClass::Name offset probe (the UE 5.8 drill-down fix)
 //
 // UE 5.8 made ~FFieldClass() virtual, inserting a vfptr at +0x00 and moving
-// FName Name from +0x00 to +0x08. This was the ONLY UE offset never probed, and
-// when wrong the damage is total but silent: the ChildProperties probe matches
+// FName Name from +0x00 to +0x08. When this offset is wrong the damage is total
+// but silent: the ChildProperties probe matches
 // nothing at any offset, validation gives up on defaults, and the walker types
 // every property as Scalar -> no drill-down in the Live Walker.
 //
 // The picker is reader-templated exactly so it can be tested here with no game.
 // ============================================================
 // ================================================================
-// Ubel::PreviewScalarValue — audit U17 (the layout half of U3)
+// Ubel::PreviewScalarValue — the layout half of the struct preview
 //
 // The byte-blind decoder cannot tell 3 doubles from 6 floats, because size does
 // not determine member width and neither does the engine version — one UE5 game
 // holds fields of both. The only thing that settles it is the property's OWN
-// declared width, which is what this reads. Everything below is the case U3's
-// test 6 had to leave asserted-as-broken.
+// declared width, which is what this reads. Everything below is the case the
+// byte-blind tests leave asserted as a known gap.
 // ================================================================
 // ================================================================
-// Ubel::ClassifyBoolLayout — [A3-BOOL-NATIVE-NOWRITE]. The DLL published a mask only for a single
-// bit, so a NATIVE bool (FieldMask 0xFF) arrived as "no mask", indistinguishable from a missed
-// probe, and the UI's write was a no-op that printed "Written".
+// Ubel::ClassifyBoolLayout — [A3-BOOL-NATIVE-NOWRITE]. A mask published only for a single bit
+// would deliver a NATIVE bool (FieldMask 0xFF) as "no mask", indistinguishable from a missed
+// probe, and the UI's write would be a no-op that printed "Written".
 // ================================================================
 static void Test_Ubel_ClassifyBoolLayout() {
     std::printf("Test_Ubel_ClassifyBoolLayout\n");
     using Ubel::BoolLayout;
     // The REAL native layout. Every engine's SetBoolSize (PropertyBool.cpp, 4.11 → 5.8, and the
     // UE4-era UBoolProperty) does `if (bIsNativeBool) { ByteMask = true; FieldMask = 255; }`, so
-    // ByteMask is 0x01, NOT 0xFF. The first version of this test pinned {1,0,FF,FF}, a tuple no
-    // engine writes, and the classifier then refused every native bool on a real game (B05 review).
+    // ByteMask is 0x01, NOT 0xFF. Pinning {1,0,FF,FF}, a tuple no engine writes, would have the
+    // classifier refuse every native bool on a real game.
     EXPECT("native: 1 / 0 / 01 / FF (SetBoolSize)", Ubel::ClassifyBoolLayout(1, 0, 0x01, 0xFF) == BoolLayout::Native);
     // ByteMask is held strict: an all-FF read is what a probe landing on 0xFF fill presents,
     // and no engine writes it for a bool.
@@ -11149,7 +11111,7 @@ static void Test_Ubel_ClassifyOptionalLayout() {
     EXPECT("a non-power-of-two alignment is refused",    ClassifyOptionalLayout(24, 16, 3) == OptionalLayout::Unknown);
     EXPECT("an unresolved value size is Unknown",        ClassifyOptionalLayout(16, 0, 8) == OptionalLayout::Unknown);
     EXPECT("a zero optional size is Unknown",            ClassifyOptionalLayout(0, 8, 8) == OptionalLayout::Unknown);
-    // Review of cc430176: TOptional<TLazyObjectPtr>. FLazyObjectPtr is FWeakObjectPtr {int32, int32}
+    // TOptional<TLazyObjectPtr>. FLazyObjectPtr is FWeakObjectPtr {int32, int32}
     // (+ the pre-5.3 int32 TagAtLastTest) + a bare FGuid -- alignof 4 in every era.
     EXPECT("TOptional<TLazyObjectPtr> 5.3+: Align(0x19,4) = 0x1C", ClassifyOptionalLayout(0x1C, 0x18, 4) == OptionalLayout::TrailingFlag);
     EXPECT("TOptional<TLazyObjectPtr> 5.2:  Align(0x1D,4) = 0x20", ClassifyOptionalLayout(0x20, 0x1C, 4) == OptionalLayout::TrailingFlag);
@@ -11166,7 +11128,7 @@ static void Test_Ubel_PreviewScalarValue() {
         uint8_t b[8]; memcpy(b, &d, 8);
         EXPECT("DoubleProperty reads all 8 bytes",
                Ubel::PreviewScalarValue("DoubleProperty", b, 8) == "1234.5");
-        // The SAME bytes as a float are the garbage the old path printed. Asserting
+        // The SAME bytes as a float are the garbage a byte-blind read prints. Asserting
         // this pins that width comes from the property, never from the buffer.
         EXPECT("FloatProperty at width 4 is a different, wrong reading",
                Ubel::PreviewScalarValue("FloatProperty", b, 4) != "1234.5");
@@ -11185,7 +11147,7 @@ static void Test_Ubel_PreviewScalarValue() {
     }
 
     // --- Integers, signed and unsigned, at their real widths. A UInt32 holding
-    //     0xFFFFFFFF must not print as -1: that is the sign-leak family AB4 was.
+    //     0xFFFFFFFF must not print as -1: that is a sign leak.
     {
         uint8_t b[8] = {};
         int32_t i = -42; memcpy(b, &i, 4);
@@ -11210,8 +11172,8 @@ static void Test_Ubel_PreviewScalarValue() {
     }
 
     // --- [INT8-PREVIEW] Int8Property is int8 in every engine, so its byte is SIGNED: the game holds
-    //     -1 as 0xFF. Read through uint8_t it previewed 255. ByteProperty is the unsigned one-byte type
-    //     and must stay so -- the fix is not "every one-byte value is signed".
+    //     -1 as 0xFF. Read through uint8_t it would preview 255. ByteProperty is the unsigned one-byte type
+    //     and must stay so -- the rule is not "every one-byte value is signed".
     {
         uint8_t b[1] = { 0xFF };
         EXPECT("Int8Property 0xFF is -1, not 255",  Ubel::PreviewScalarValue("Int8Property", b, 1) == "-1");
@@ -11265,25 +11227,24 @@ static void Test_Ubel_PreviewScalarValue() {
 }
 
 // ================================================================
-// Ubel::InterpretStructBytes / LooksLikeVtablePointer — audit U3
+// Ubel::InterpretStructBytes / LooksLikeVtablePointer
 //
-// The old branch skipped 8 bytes whenever size > 8, on the theory that structs
-// start with a vtable. True for FGameplayAttributeData (GAS declares a virtual
-// destructor), false for nearly every other USTRUCT — and the cost was a SILENT
-// DROP of leading members, which is worse than garbage because it looks right.
+// Skipping 8 bytes whenever size > 8, on the theory that structs start with a
+// vtable, is true for FGameplayAttributeData (GAS declares a virtual destructor),
+// false for nearly every other USTRUCT — and the cost is a SILENT DROP of leading
+// members, which is worse than garbage because it looks right.
 //
-// The four cases below each fail the OLD code differently, and that is the
-// point: a repair aimed at only one of them regresses another. In particular
-// "just delete the 8-byte skip" — which the filed finding's parenthetical
-// invites — passes the first two and BREAKS the third.
+// The four cases below each catch a different wrong rule, and that is the point:
+// a rule aimed at only one of them breaks another. In particular "just delete the
+// 8-byte skip" passes the first two and BREAKS the third.
 // ================================================================
 static void Test_Ubel_InterpretStructBytes() {
     std::printf("Test_Ubel_InterpretStructBytes\n");
 
     auto putF = [](uint8_t* p, int i, float v) { memcpy(p + i * 4, &v, 4); };
 
-    // --- 1. FVector3f: 12 B, 3 floats. The live-confirmed failure.
-    //     Old code: floatStart=8 -> ONE number, the LAST component.
+    // --- 1. FVector3f: 12 B, 3 floats.
+    //     An unconditional skip (floatStart=8) leaves ONE number, the LAST component.
     {
         uint8_t b[12];
         putF(b, 0, 1.0f); putF(b, 1, 2.0f); putF(b, 2, 6203.0f);
@@ -11291,7 +11252,7 @@ static void Test_Ubel_InterpretStructBytes() {
                Ubel::InterpretStructBytes(b, 12) == "f:[1.0000, 2.0000, 6203.0000]");
     }
 
-    // --- 2. FLinearColor: 16 B, 4 floats. Old code dropped R and G entirely.
+    // --- 2. FLinearColor: 16 B, 4 floats. An unconditional skip drops R and G entirely.
     {
         uint8_t b[16];
         putF(b, 0, 0.25f); putF(b, 1, 0.5f); putF(b, 2, 0.75f); putF(b, 3, 1.0f);
@@ -11299,10 +11260,10 @@ static void Test_Ubel_InterpretStructBytes() {
                Ubel::InterpretStructBytes(b, 16) == "f:[0.2500, 0.5000, 0.7500, 1.0000]");
     }
 
-    // --- 3. REGRESSION GUARD: FGameplayAttributeData really does carry a vtable.
+    // --- 3. THE GUARD: FGameplayAttributeData really does carry a vtable.
     //     If the skip is deleted outright this yields the two pointer halves
-    //     followed by the values, which is the fix that "looks" right on cases
-    //     1 and 2 and quietly ruins every GAS attribute preview.
+    //     followed by the values, which "looks" right on cases 1 and 2 and
+    //     quietly ruins every GAS attribute preview.
     {
         uint8_t b[16];
         uint64_t vt = 0x00007FF6A1B2C3D0ULL;   // module-range, 8-aligned
@@ -11350,7 +11311,7 @@ static void Test_Ubel_InterpretStructBytes() {
         EXPECT("beyond 16 floats yields no hint", Ubel::InterpretStructBytes(big, 128).empty());
     }
 
-    // --- 6. DOCUMENTED REMAINING GAP (U3 half 2), asserted so it cannot be
+    // --- 6. DOCUMENTED REMAINING GAP, asserted so it cannot be
     //     mistaken for fixed: a 24-byte LWC FVector is 3 doubles, but the bytes
     //     cannot say that, so this still decodes 6 floats. Only the reflected
     //     layout can settle 3-doubles vs 6-floats.
@@ -11360,7 +11321,7 @@ static void Test_Ubel_InterpretStructBytes() {
         memcpy(b, xyz, 24);
         std::string got = Ubel::InterpretStructBytes(b, 24);
         EXPECT("LWC vector no longer eats X (skip is gated)", !got.empty());
-        // Six values, not four: the leading double is no longer swallowed. Still
+        // Six values, not four: the leading double is not swallowed. Still
         // wrong values — that is the layout half, not this one.
         EXPECT("LWC still decodes as 6 floats (layout half outstanding)",
                std::count(got.begin(), got.end(), ',') == 5);
@@ -11368,17 +11329,17 @@ static void Test_Ubel_InterpretStructBytes() {
 }
 
 // ================================================================
-// Aura::StructPathGuard — audit A3
+// Aura::StructPathGuard
 //
-// ScanForValue's index builder threaded ONE unordered_set through the whole
-// per-class struct walk and never erased. That silently turned the cycle guard
-// into a global dedupe: only the FIRST field of a given UScriptStruct type in a
-// class contributed leaves, and every later one was dropped subtree and all,
-// ACROSS UNRELATED BRANCHES. An ordinary actor indexed `Location` but never
-// `Velocity` / `Scale3D` / `Extent`; inside one FTransform, `Translation`
-// blocked `Scale3D`. Value Search then reported "no match" for a field that was
-// right there — and Group Scan / Property-Search-Deep, which scope to the path,
-// found it, which is the observable tell.
+// ONE unordered_set threaded through ScanForValue's whole per-class struct walk
+// and never erased turns the cycle guard into a global dedupe: only the FIRST
+// field of a given UScriptStruct type in a class contributes leaves, and every
+// later one is dropped subtree and all, ACROSS UNRELATED BRANCHES. An ordinary
+// actor would index `Location` but never `Velocity` / `Scale3D` / `Extent`;
+// inside one FTransform, `Translation` would block `Scale3D`. Value Search would
+// then report "no match" for a field that is right there — while Group Scan /
+// Property-Search-Deep, which scope to the path, find it, which is the
+// observable tell.
 //
 // No target compiles Aura.cpp, so the semantics live in a header-inline RAII
 // type and are pinned here. The two cases below are the entire contract, and
@@ -11394,7 +11355,7 @@ static void Test_Aura_StructPathGuard() {
     std::unordered_set<uintptr_t> path;
 
     // --- 1. SIBLINGS: the same struct type twice, sequentially. Both must enter.
-    //     This is the A3 defect: with a whole-walk set the second one is refused.
+    //     This is the global-dedupe hazard: with a whole-walk set the second one is refused.
     {
         Aura::StructPathGuard g1(path, kVector);
         EXPECT("first FVector enters", g1.Entered());
@@ -11447,17 +11408,17 @@ static void Test_VersionMarkers() {
     using DynOff::IsReorderedFUObjectItem57;
     using DynOff::IsVirtualDtorFFieldClass58;
 
-    // A4. The raise-only ladder topped out at 507, so a string-stripped UE 5.8 title
-    // badged as 5.7 -- the 507 predicate is satisfied by a 5.8 binary too, because
-    // FUObjectItem is byte-identical between them.
+    // The raise-only ladder must reach past 507: a string-stripped UE 5.8 title would
+    // otherwise badge as 5.7 -- the 507 predicate is satisfied by a 5.8 binary too,
+    // because FUObjectItem is byte-identical between them.
 
     // --- 5.7 reorder: the OFFSET is the signal, the size is a sanity bound ---
     EXPECT("A4: 5.7 Shipping (24B @ +0x08)",     IsReorderedFUObjectItem57(0x08, 24));
     EXPECT("A4: 5.7 Development (32B @ +0x08)",  IsReorderedFUObjectItem57(0x08, 32));
     EXPECT("A4: 5.7 Test (40B @ +0x08)",         IsReorderedFUObjectItem57(0x08, 40));
 
-    // ⚠ THE GAP A5 EXPOSED. Pinning the size to ==24 silently excluded every stripped
-    // 5.7+ Development or Test build from the raise. Assert that both now qualify, and
+    // ⚠ THE SIZE GAP. Pinning the size to ==24 would silently exclude every stripped
+    // 5.7+ Development or Test build from the raise. Assert that both qualify, and
     // that they are exactly the sizes Lineal advertises for the reordered layout.
     for (int st : Lineal::kItemStrideCandidates) {
         if (st == 16 || st == 20) continue;   // pre-5.7 classic / Avowed packed
@@ -11468,7 +11429,7 @@ static void Test_VersionMarkers() {
     // --- what must NOT raise ---
     // Avowed: a CUSTOM 20-byte packed UE5.3 item. Object is at +0x00
     // (docs/avowed-gobjects-fix.md), so the offset test excludes it by itself -- the size
-    // guard was never the discriminator it was documented as.
+    // guard is not the discriminator.
     EXPECT("A4: Avowed 20B @ +0x00 is not a version signal",
            !IsReorderedFUObjectItem57(0x00, 20));
     EXPECT("A4: ...and would not be even if its size were 24",
@@ -11604,7 +11565,7 @@ static void Test_Voll_CapacityLoggingPolicy() {
     }
 }
 
-// audit #5 U9 — a byte-width enum member must read UNSIGNED so the UHT MAX=255 sentinel
+// A byte-width enum member must read UNSIGNED so the UHT MAX=255 sentinel
 // (and any enumerator >= 128) matches the UEnum table instead of sign-extending to a
 // negative int. Wider widths keep their natural signedness (matching the array-enum
 // sibling). Negative control: reverting ReadEnumRawValue's `case 1` to int8_t fails the
@@ -11630,9 +11591,9 @@ static void Test_Ubel_ReadEnumRawValue() {
     EXPECT_EQ_U64("size 3 -> 0", Ubel::ReadEnumRawValue(&b_ff, 3), 0);
 }
 
-// audit #5 U10 — the FString/FUtf8String count cap bounds a GARBAGE Count, not display
-// length: a realistic long string (a 400-char description that used to render as
-// "(empty)") is accepted, while empty/negative and garbage-huge counts are rejected.
+// The FString/FUtf8String count cap bounds a GARBAGE Count, not display length: a
+// realistic long string (a 400-char description, which a 256 cap renders as "(empty)")
+// is accepted, while empty/negative and garbage-huge counts are rejected.
 // Negative control: dropping kMaxFStringChars back to 256 fails the 400 / cap rows.
 static void Test_Ubel_IsPlausibleStringCount() {
     EXPECT("1 accepted",             Ubel::IsPlausibleStringCount(1));
@@ -11645,13 +11606,12 @@ static void Test_Ubel_IsPlausibleStringCount() {
     EXPECT("just over cap rejected", !Ubel::IsPlausibleStringCount(Ubel::kMaxFStringChars + 1));
 }
 
-// audit #5 G4 — the FNamePool block-offset-bits probe at testIdx=1 CANNOT distinguish 14
-// from 16 (both address chunk 0, offset 1*stride), which is why the old detector's
-// 14-bit arm was structurally unreachable while it logged the outcome as a measurement.
-// A block-boundary index DOES differ, but is unreliable for other reasons (see
-// DetectBlockOffsetBits) — so the honest fix keeps the stock width and this pins the
-// impossibility. Negative control: if ComputeBlockProbe stopped masking, the idx-1
-// indistinguishable assertion flips.
+// The FNamePool block-offset-bits probe at testIdx=1 CANNOT distinguish 14 from 16 (both
+// address chunk 0, offset 1*stride), so a detector built on it has a structurally
+// unreachable 14-bit arm while it logs the outcome as a measurement. A block-boundary
+// index DOES differ, but is unreliable for other reasons (see DetectBlockOffsetBits) —
+// so the stock width is kept and this pins the impossibility. Negative control: if
+// ComputeBlockProbe stopped masking, the idx-1 indistinguishable assertion flips.
 static void Test_Serie_BlockBitsProbe() {
     const int stride = 2;
     EXPECT("idx1 16 vs 14 indistinguishable",
@@ -11673,10 +11633,9 @@ static void Test_Serie_BlockBitsProbe() {
     EXPECT("idx 0x4000 @14 chunk 1",     b14.chunkIndex == 1);
     EXPECT_EQ_U64("idx 0x4000 @14 offset 0", b14.chunkOffset, 0);
 
-    // ⛔ REGRESSION GUARD. The probe was deleted (not moved) because moving it to the
-    // first REAL entry boundary would not measure the width either — index 3 is still
-    // indistinguishable — it would merely start succeeding, printing a "confirmation"
-    // beside a number nobody measured. That is the defect G4 removed, coming back.
+    // ⛔ THE GUARD. A probe at the first REAL entry boundary would not measure the width
+    // either — index 3 is still indistinguishable — it would merely start succeeding,
+    // printing a "confirmation" beside a number nobody measured.
     EXPECT("idx3 16 vs 14 ALSO indistinguishable",
            Serie::BlockBitsAreIndistinguishable(3, 16, 14, stride));
 }
@@ -11737,9 +11696,9 @@ static void Test_Serie_UE4EntryIsWide() {
 }
 
 // [UE4-WIDE-FNAME-CLEANCHECK] find_by_address's backward scan keeps a candidate only when its name and its class's name
-// read as genuine. The gate refused every non-ASCII byte, so since [UE4-WIDE-FNAME] decodes a pre-4.23 wide name whole
-// (it used to arrive cut to its first ASCII character, and pass), a Japanese-named sub-object went to 'nearest'. It now
-// accepts well-formed UTF-8 -- and must still refuse what the DQ3 HD-2D false positive decoded to.
+// read as genuine. [UE4-WIDE-FNAME] decodes a pre-4.23 wide name whole, so a gate that refused every non-ASCII byte
+// would send a Japanese-named sub-object to 'nearest'. It accepts well-formed UTF-8 -- and must still refuse what the
+// DQ3 HD-2D false positive decodes to.
 static void Test_Aura_IsCleanFName() {
     std::printf("Test_Aura_IsCleanFName\n");
     using Aura::IsCleanFName;
@@ -11755,8 +11714,8 @@ static void Test_Aura_IsCleanFName() {
     EXPECT("CLEANCHECK: a numbered wide name", IsCleanFName("\xE5\x89\xA3_1"));   // 剣_1
     EXPECT("CLEANCHECK: 256 bytes is the longest kept", IsCleanFName(std::string(256, 'A')));
 
-    // The DQ3 HD-2D case the gate was written against: a value in raw heap, a junk header 0x20 before it whose name
-    // decoded to 'Property??IntProperty' and whose ClassPrivate's name was an ASCII asset path read as UTF-16 -- 435
+    // The DQ3 HD-2D case the gate guards against: a value in raw heap, a junk header 0x20 before it whose name
+    // decodes to 'Property??IntProperty' and whose ClassPrivate's name is an ASCII asset path read as UTF-16 -- 435
     // characters of mojibake. Serie::GetString returns "" for that decode; at full length it is also far past the cap.
     EXPECT("CLEANCHECK DQ3 ⭐: the junk object's name is refused ('?')", !IsCleanFName("Property??IntProperty"));
     EXPECT("CLEANCHECK DQ3 ⭐: what Serie returns for the mojibake class (\"\") is refused", !IsCleanFName(""));
@@ -11787,10 +11746,10 @@ static void Test_Aura_IsCleanFName() {
     EXPECT("CLEANCHECK: a raw Latin-1 byte (an ANSI decode Serie would have dropped)", !IsCleanFName("Caf\xE9"));
 }
 
-// audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
+// The UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
 // (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
 // chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
-// only bounds chunkIndex (the old code) accepts -1 (chunkIndex 0).
+// only bounds chunkIndex accepts -1 (chunkIndex 0).
 static void Test_Serie_UE4NameIndexInBounds() {
     const int32_t chunkSize = 0x4000;   // UE4_CHUNK_SIZE
     const int32_t maxChunks = 256;      // UE4_NAME_MAX_CHUNKS
@@ -11798,7 +11757,7 @@ static void Test_Serie_UE4NameIndexInBounds() {
     EXPECT("index 1 ok",        Serie::UE4NameIndexInBounds(1, chunkSize, maxChunks));
     EXPECT("index 16383 ok",    Serie::UE4NameIndexInBounds(16383, chunkSize, maxChunks));
     EXPECT("last chunk ok",     Serie::UE4NameIndexInBounds(maxChunks * chunkSize, chunkSize, maxChunks));
-    // The defect: a negative index MUST be rejected (the old chunkIndex-only guard did not).
+    // The hazard: a negative index MUST be rejected (a chunkIndex-only guard does not).
     EXPECT("index -1 REJECTED",     !Serie::UE4NameIndexInBounds(-1, chunkSize, maxChunks));
     EXPECT("large negative rejected", !Serie::UE4NameIndexInBounds(-100000, chunkSize, maxChunks));
     EXPECT("past max chunks rejected",
@@ -12131,11 +12090,11 @@ static void Test_Lager_FormatWindowSummary() {
                   Lager::FindNextFreeRegion(empty, kFfrsPe, w.maxAddr, kLgGran));
 }
 
-// ----- Stark::DescribeHookAttempt ([MH-PRERESERVE-PROXY], B24's log line) ----------------------------------------
+// ----- Stark::DescribeHookAttempt ([MH-PRERESERVE-PROXY], the forced attempt's log line) -------------------------
 //
-// A forced install attempt (a feature switched on) is not counted against the automatic budget (B24). Its failure
-// line used to print the automatic counter as "attempt N/8" all the same, so on FINAL FANTASY RESONANCE DEMO each
-// failing Live Funcs Start logged the same "attempt N/8" twice: the counted automatic attempt and the forced one.
+// A forced install attempt (a feature switched on) is not counted against the automatic budget. A failure line that
+// printed the automatic counter as "attempt N/8" all the same would log the same "attempt N/8" twice for each failing
+// Live Funcs Start (FINAL FANTASY RESONANCE DEMO is one such game): the counted automatic attempt and the forced one.
 
 static void Test_Stark_DescribeHookAttempt() {
     EXPECT_EQ_STR("an automatic attempt is numbered against the budget",
@@ -12301,11 +12260,11 @@ static void Test_Lager_ClassifyWriteRegion() {
     EXPECT("own image: a range wrapping past the top still reaches an image above its start",
            RangeOverlapsImage(kImg - 0x10, ~static_cast<size_t>(0), kImg, kImgSize));
 
-    // [WRITEMEM-ANY-COPY] Review wf_1b9e937b-a0d DLL-1: a later copy that took over serves the earlier copy's CE
+    // [WRITEMEM-ANY-COPY] A later copy that took over serves the earlier copy's CE
     // mailbox, which lives in the EARLIER copy's image -- refused like this copy's own.
     constexpr uintptr_t kEarlier = 0x7FF700000000ull, kGameDll = 0x7FF800000000ull;
-    // Review wf_bbd1bbfe-20d D7-6: the module list comes back EMPTY when EnumProcessModules fails (a DLL loading or
-    // unloading), and the earlier copy's image then went unchecked. The region walk asks VirtualQuery instead.
+    // The module list comes back EMPTY when EnumProcessModules fails (a DLL loading or unloading), which would leave
+    // the earlier copy's image unchecked. The region walk asks VirtualQuery instead.
     struct Reg { uintptr_t base; size_t size; bool image; uintptr_t alloc; };
     const std::vector<Reg> regs = {
         {0x20000000ull, 0x10000, false, 0x20000000ull},                // heap
@@ -12378,8 +12337,8 @@ static void Test_Lager_HolderCandidateReadable() {
                                     kPageExecuteRead | kPageGuard));
 }
 
-// buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- a review found that moving a
-// `>=` to `>`, an `<=` to `<`, dropping a window guard or a clip all changed a live log line and no test noticed.
+// buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- moving a `>=` to `>`, an `<=`
+// to `<`, dropping a window guard or a clip each changes a live log line that a map off the boundary does not notice.
 static void Test_Lager_BufferCBoundaryRules() {
     using namespace Lager;
 
@@ -12466,13 +12425,14 @@ static void Test_Renge_CeModuleRelative_NeverTruncates() {
     EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
 }
 
-// [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrowed the long path with WC_NO_BEST_FIT_CHARS and
-// fell back to the 8.3 alias -- but re-narrowed THAT with flags 0 and no used-default check. On a volume without 8.3
-// names (D: here) GetShortPathNameW returns the long path, so a '?'-bearing string went to CE's InjectDLL
-// (LoadLibraryA) and the user saw the generic "32-bit / anti-cheat / administrator" failure.
-// [PATH-MODULE-NAME-UTF8] (skeptic MODVIEW-5C-TRAIL / T3) CE's own name for a module, as UTF-8: what ANSI Module32First
+// [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrows the long path with WC_NO_BEST_FIT_CHARS and
+// falls back to the 8.3 alias -- which must be narrowed under the same check. On a volume without 8.3 names
+// GetShortPathNameW returns the long path, so a re-narrowing with flags 0 and no used-default check would send a
+// '?'-bearing string to CE's InjectDLL (LoadLibraryA), and the user would see the generic "32-bit / anti-cheat /
+// administrator" failure.
+// [PATH-MODULE-NAME-UTF8] CE's own name for a module, as UTF-8: what ANSI Module32First
 // puts in szModule -- best fit, then cut after the ANSI path's last 0x5C byte (a DBCS trail byte can be 0x5C).
-// get_ce_pointer_info's ce_base is built from it. Was AnsiViewUtf8, file-static in Fern.cpp, untested.
+// get_ce_pointer_info's ce_base is built from it.
 static void Test_Methode_CeModuleNameUtf8() {
     auto n = [](const wchar_t* w, unsigned cp) { return Methode::CeModuleNameUtf8(w, std::wcslen(w), cp); };
     EXPECT_EQ_STR("kana on 950 -> ???", n(L"\u30B2\u30FC\u30E0-Win64-Shipping.exe", 950), "???-Win64-Shipping.exe");
@@ -12511,14 +12471,13 @@ static void Test_Methode_NarrowForAnsiLoad() {
                   "C:\\CE\\UE5Dumper.dll");
     EXPECT_EQ_STR("UTF-8 ANSI code page: UTF-8 as is",
                   Methode::NarrowForAnsiLoad(tm, tm, CP_UTF8), "D:\\Tools\\CE\xE2\x84\xA2\\UE5Dumper.dll");
-    // (skeptic CEINJ-4) An ASCII alias is preferred even when the long path narrows exactly: the bytes are made in
+    // An ASCII alias is preferred even when the long path narrows exactly: the bytes are made in
     // CE's code page but decoded in the GAME's (Locale Emulator gives it another).
     EXPECT_EQ_STR("ASCII alias preferred over an exact non-ASCII narrowing",
                   Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5Dumper.dll", 950), "D:\\5DE5~1\\UE5Dumper.dll");
-    // (second review, T-ALIAS-LEAF-PLUGIN, HIGH -- measured) A REAL 8.3 alias of the FILE shortens the leaf too
-    // (UE5DUM~1.DLL), and the game then maps our DLL under that name: the plugin's own post-inject name check missed
-    // it and called every successful inject a manual map. An ASCII path is never aliased; an alias whose leaf is not
-    // the DLL's own name is never used.
+    // A REAL 8.3 alias of the FILE shortens the leaf too (UE5DUM~1.DLL), and the game then maps our DLL under that
+    // name: the plugin's own post-inject name check misses it and calls every successful inject a manual map. An ASCII
+    // path is never aliased; an alias whose leaf is not the DLL's own name is never used.
     EXPECT_EQ_STR("an ASCII path is never aliased",
                   Methode::NarrowForAnsiLoad(L"C:\\Program Files\\CE\\UE5Dumper.dll",
                                              L"C:\\PROGRA~1\\CE\\UE5Dumper.dll", 950),
@@ -12530,9 +12489,9 @@ static void Test_Methode_NarrowForAnsiLoad() {
                   Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5DUM~1.DLL", 950), "");
 }
 
-// (third review, T3-METHODE-FOLDER-ALIAS-UNTESTED) The alias the plugin hands NarrowForAnsiLoad: the FOLDER's 8.3 form
-// plus the DLL's own long name. It was built inline in Methode.cpp, which no test target compiles, so a revert to the
-// FILE's alias (UE5DUM~1.DLL -- discarded by the leaf guard, which silently loses the CEINJ-4 ASCII alias) passed.
+// The alias the plugin hands NarrowForAnsiLoad: the FOLDER's 8.3 form plus the DLL's own long name, built by
+// Methode::FolderAliasOf so a test can reach it (no test target compiles Methode.cpp). The FILE's alias (UE5DUM~1.DLL)
+// would be discarded by the leaf guard, silently losing the preferred ASCII alias.
 // The maintainer's path shapes (tools/verify/path_shape_folders.py): a folder no ANSI code page holds is refused
 // without an alias and injects through an ASCII folder alias; CE's name for such an exe is its best-fit view.
 static void Test_Methode_MaintainersShapes() {
@@ -12575,8 +12534,8 @@ static void Test_Methode_FolderAliasOf() {
            a.size() > leaf.size() && a.compare(a.size() - leaf.size(), leaf.size(), leaf) == 0);
     EXPECT("  ...under a folder that exists",
            a.size() > leaf.size() && GetFileAttributesW(a.substr(0, a.size() - leaf.size()).c_str()) != INVALID_FILE_ATTRIBUTES);
-    // (fourth review, R4-SHORTDIROF-IDENTITY-PASSES) %TEMP% here is already 8.3-legal, so a ShortDirOf that returned its
-    // input passed the three checks above. A folder whose name is NOT 8.3-legal: where the volume keeps 8.3 names, the
+    // %TEMP% here is already 8.3-legal, so a ShortDirOf that returned its input would pass the three checks above.
+    // A folder whose name is NOT 8.3-legal: where the volume keeps 8.3 names, the
     // alias must be exactly the independent GetShortPathNameW answer plus the DLL's name.
     const std::wstring odd = dir + L"\\ue5 alias \U0001F600 " + std::to_wstring(GetCurrentProcessId());
     if (CreateDirectoryW(odd.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -12836,8 +12795,8 @@ static void Test_Falsch_ReadTarget() {
     VirtualFree(base, 0, MEM_RELEASE);
 }
 
-// Review round 1 ([MH-TRAMPOLINE-PREFLIGHT]): every vector here was measured against MinHook's real
-// CreateTrampolineFunction with both hde64 revisions, which answer the same for all of them.
+// [MH-TRAMPOLINE-PREFLIGHT] Every vector here agrees with MinHook's real CreateTrampolineFunction under both hde64
+// revisions, which answer the same for all of them.
 static void Test_Falsch_ReviewVectors() {
     using Falsch::Verdict;
     // A jump inside the patch is copied byte for byte. Back over a Jcc that MinHook rebuilt (2 bytes -> 16), it lands
@@ -13022,14 +12981,14 @@ int main() {
     RUN(Test_ValueScan_FloatRoundMode_Between);
     RUN(Test_ValueScan_RoundMode_IntegerNoOp);
 
-    // Phase 2A — string predicates + family predicates
+    // string predicates + family predicates
     RUN(Test_ValueScan_TypeFamilyPredicates);
     RUN(Test_ValueScan_IsScanTypeValidFor);
     RUN(Test_ValueScan_StringPredicate_Exact);
     RUN(Test_ValueScan_StringPredicate_Substring);
     RUN(Test_ValueScan_StringPredicate_PrevValue);
     RUN(Test_ValueScan_StringPredicate_RejectsNumericOrdering);
-    // Phase 2B — vector predicates
+    // vector predicates
     RUN(Test_ValueScan_VectorPredicate_Exact);
     RUN(Test_ValueScan_VectorPredicate_Ordering);
     RUN(Test_ValueScan_VectorPredicate_Between);
@@ -13040,15 +12999,15 @@ int main() {
     RUN(Test_ValueScan_StoreVectorCanonical);
     RUN(Test_ValueScan_LwcVectorIsNotReadAsFloats);
     RUN(Test_ValueScan_VectorStructNames);
-    // build 794 — multi-numeric (NumericNoByte) meta type
+    // multi-numeric (NumericNoByte) meta type
     RUN(Test_ValueScan_MultiNumericMembers);
     RUN(Test_ValueScan_DataTypeFromPropertyTypeName);
     RUN(Test_ValueScan_PropertyTypeNameOf_Inverse);
     RUN(Test_Macht_PatternScanRange);
     RUN(Test_ValueScan_BuildNumericTargets);
-    // Phase A1a — snapshot field selection
+    // snapshot field selection
     RUN(Test_ValueScan_SelectSnapshotNumericFields);
-    // Phase A1b — struct-array inner-key selection
+    // struct-array inner-key selection
     RUN(Test_ValueScan_SelectArrayInnerKey);
 
     RUN(Test_ValueScan_SessionLifecycle);
@@ -13144,7 +13103,7 @@ int main() {
     RUN(Test_Orden_RoundedFloatExact);
     RUN(Test_Orden_PrevValueRejectedOnFirstScan);
 
-    // Ubel — Native-C scan P0: hole computation + Guess-type normalization (pure)
+    // Ubel — Native-C scan: hole computation + Guess-type normalization (pure)
     RUN(Test_Holes_ComputeHoles_Basic);
     RUN(Test_Holes_LeadingGapSurvives);
     RUN(Test_Holes_FullyCovered);
@@ -13220,7 +13179,7 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_InvokeTargetIsExpected);
-    RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
     RUN(Test_Ubel_DescribeUnreadableField);   // [UNREADVAL-2026-09-09] hex, not decimal
@@ -13230,18 +13189,18 @@ int main() {
     RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
-    RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
+    RUN(Test_Renge_EnvelopeBuilders);            // MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_VersionMarkers);
     RUN(Test_FFieldClassName_Probe);
 
-    // Ubel — reflected struct preview: member width comes from the property (U17)
+    // Ubel — reflected struct preview: member width comes from the property
     RUN(Test_Ubel_PreviewScalarValue);
     RUN(Test_Ubel_ClassifyBoolLayout);
     RUN(Test_Ubel_ClassifyOptionalLayout);
 
-    // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
+    // Ubel — byte-blind struct preview: gate the vtable skip on evidence
     RUN(Test_Ubel_InterpretStructBytes);
 
     // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
@@ -13250,14 +13209,14 @@ int main() {
     // Voll — pipe-accept capacity logging: ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
     RUN(Test_Voll_CapacityLoggingPolicy);
 
-    // audit #5 L1 (D1/D2 DLL engine decode + safety)
-    RUN(Test_Ubel_ReadEnumRawValue);          // U9  — byte enums read unsigned
-    RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
-    RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
-    RUN(Test_Serie_FirstEntryAfterNone);      //     — idx 1 is INTERIOR to "None"; derive the boundary
+    // DLL engine decode + safety
+    RUN(Test_Ubel_ReadEnumRawValue);          // byte enums read unsigned
+    RUN(Test_Ubel_IsPlausibleStringCount);    // FString cap bounds a garbage Count
+    RUN(Test_Serie_BlockBitsProbe);           // idx-1 probe cannot distinguish 14 vs 16
+    RUN(Test_Serie_FirstEntryAfterNone);      // idx 1 is INTERIOR to "None"; derive the boundary
     RUN(Test_Serie_UE4EntryIsWide);           // [UE4-WIDE-FNAME] the pre-4.23 entry's wide bit, beside its own slot
     RUN(Test_Aura_IsCleanFName);              // [UE4-WIDE-FNAME-CLEANCHECK] the backward scan's name gate keeps wide names
-    RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
+    RUN(Test_Serie_UE4NameIndexInBounds);     // reject negative UE4 name index
 
     // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
     RUN(Test_Ubel_ResolveFunctionInChain);
@@ -13302,7 +13261,7 @@ int main() {
     RUN(Test_Lager_SummarizeWindow);
     RUN(Test_Lager_ParseImageLayout);
     RUN(Test_Lager_FormatWindowSummary);
-    RUN(Test_Stark_DescribeHookAttempt);       // B24's log line: a forced attempt says so
+    RUN(Test_Stark_DescribeHookAttempt);       // the log line: a forced attempt says so
     // [MH-PRERESERVE-PROXY] the held block: where it lands, whom it serves, which target may hold it
     RUN(Test_Lager_OriginsServedBy);
     RUN(Test_Lager_HeldBlockReachesProcessEvent);

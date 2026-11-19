@@ -9,19 +9,14 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [CLASSCAP] — the Classes tab's status line has always ended
-/// <c>"… ⚠ STOPPED at the 5,000-row cap — filter to narrow, or raise the cap"</c>, and there was
-/// no cap to raise: the toolbar had no numeric control and <c>ListClassesAsync</c> was called with
-/// no <c>limit</c>, so the wire default of 5,000 always won.
+/// [CLASSCAP] — the Classes tab's cap note may offer only a lever the user can reach: the status
+/// line says <c>"… ⚠ STOPPED at the N-row cap — filter to narrow"</c> and adds "or raise Max" only
+/// while Max can still go higher, and <c>ListClassesAsync</c> is called with the toolbar's
+/// <c>limit</c>, so the wire default of 5,000 does not silently win.
 ///
-/// <para>⭐ <b>Found by doing a live check, not by reading.</b> It surfaced while closing
-/// <c>[CLASSTOTAL-2026-08-18]</c> on Avowed, where the line read "5,000 classes shown of 7,409
-/// total … or raise the cap" with nothing on screen that could raise it. The pipe-level part of
-/// CLASSTOTAL had passed weeks earlier and could never have shown this — the numbers were right,
-/// the sentence beside them was not.</para>
-///
-/// <para>Third instance of the audit #5 <b>Z10</b> shape (never name a lever the user cannot
-/// reach), after Property Search. Same fix, same tests.</para>
+/// <para>⭐ The rule: never name a lever the user cannot reach (Property Search keeps it too). A
+/// pipe-level check of <c>[CLASSTOTAL-2026-08-18]</c> cannot see this — the numbers can be right
+/// while the sentence beside them is not — so the sentence is pinned here.</para>
 /// </summary>
 public class ClassListCapTests
 {
@@ -40,8 +35,8 @@ public class ClassListCapTests
     public void TheDefaultStaysAtFiveThousandAndIsThePersistedDefaultToo()
     {
         // 5,000 is the long-standing wire default and stays the default — a class row carries a
-        // walked property/function summary, so a bigger pool is not free. Avowed measures 7,409
-        // game classes (5,102 game-only), so real titles genuinely land past it.
+        // walked property/function summary, so a bigger pool is not free. Real titles genuinely
+        // land past it.
         Assert.Equal(5000, Constants.DefaultClassListCap);
         Assert.Equal(Constants.DefaultClassListCap, new GameClassFilterUiOptions().ClassListCap);
     }
@@ -74,15 +69,15 @@ public class ClassListCapTests
 
         Assert.Contains("if (limit < 1) limit = 1;", handler);
         Assert.Contains($"if (limit > {Constants.MaxSearchCap}) limit = {Constants.MaxSearchCap};", handler);
-        // ⚠ The WIRE default must stay 5000 even though the UI now always sends a limit.
+        // ⚠ The WIRE default must stay 5000 even though the UI always sends a limit.
         Assert.Contains($"request.value(\"limit\", {Constants.DefaultClassListCap})", handler);
     }
 
     [Fact]
     public void TheViewModelSourceActuallyPassesTheCap()
     {
-        // The defect was not a missing control — the panel never sent a limit, so the wire default
-        // won. A control bound to a property nothing reads looks like a fix and behaves like a bug.
+        // A control alone is not the fix — a panel that sends no limit lets the wire default win.
+        // A control bound to a property nothing reads looks like a fix and behaves like a bug.
         string vm = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs"));
         int at = vm.IndexOf("_dump.ListClassesAsync(", StringComparison.Ordinal);
         Assert.True(at > 0, "the ListClassesAsync call site was not found");
@@ -92,8 +87,8 @@ public class ClassListCapTests
     [Fact]
     public void TheCapNoteOffersMaxOnlyWhileRaisingItIsPossible()
     {
-        // Mirrors the VM rule. At the ceiling "raise Max" is the same lie Z10 removed, in a new
-        // place — which is the entire reason the old unconditional wording was a defect.
+        // Mirrors the VM rule. At the ceiling "raise Max" names a lever the user cannot reach,
+        // which is why the clause must be conditional.
         static string CapNote(int requestedLimit, int cap) =>
             "  ⚠ STOPPED at the " + requestedLimit.ToString("N0") + "-row cap — filter to narrow"
             + (cap < Constants.MaxSearchCap ? ", or raise Max above " + cap.ToString("N0") : "");
@@ -108,15 +103,15 @@ public class ClassListCapTests
     [Fact]
     public void TheOldUnconditionalWordingIsGoneFromTheSource()
     {
-        // The exact string that was the defect. Kept as its own assertion because the rule above
-        // is a reimplementation — if someone reverts the VM but leaves the helper, this catches it.
+        // The unconditional wording, asserted absent on its own because the rule above is a
+        // reimplementation — a VM that goes back to it while the helper stays is caught here.
         string vm = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs"));
         Assert.DoesNotContain("filter to narrow, or raise the cap", vm);
     }
 }
 
 /// <summary>
-/// The Z10 rule, in ONE place: <c>PartialResultNotice.RaiseMaxClause</c> holds the "or raise
+/// The reachable-lever rule, in ONE place: <c>PartialResultNotice.RaiseMaxClause</c> holds the "or raise
 /// Max" guard beside the sentence it guards rather than beside each control. These pin the
 /// clause, and that each panel listed below actually goes through it.
 /// </summary>
@@ -151,8 +146,8 @@ public class RaiseMaxClauseTests
     [Fact]
     public void EveryPanelThatOffersRaiseMaxGoesThroughIt()
     {
-        // ⚠ A panel that re-derives the rule inline is the defect returning: correct on the day
-        // it is written, drifting the next time the ceiling moves. Each panel listed here can
+        // ⚠ A panel that re-derives the rule inline is correct on the day it is written and
+        // drifts the next time the ceiling moves. Each panel listed here can
         // advise raising its Max, so each must build that clause through RaiseMaxClause, which
         // says nothing once the cap is at the ceiling.
         foreach (var vm in new[]
@@ -181,9 +176,8 @@ public class RaiseMaxClauseTests
 /// <summary>
 /// [W3-CAP-NOSAVE] Every option BuildOptions copies FROM a tracked view model must be in the persist set Track() wires for
 /// that view model -- otherwise changing it alone schedules no save, and the value reaches disk only if some OTHER option
-/// on the same panel happens to change too. Teleport's two dilation sliders were the first instance (X10); Property
-/// Search's and the Classes tab's Max caps, round-tripped by ApplyOptions/BuildOptions and in NEITHER set, the second and
-/// third. A symmetry pin rather than two more one-off asserts, so the next one fails here.
+/// on the same panel happens to change too. A symmetry pin rather than a one-off assert per option, so the next option
+/// missing from its set fails here.
 /// </summary>
 public class UiOptionsPersistSymmetryTests
 {
@@ -211,15 +205,15 @@ public class UiOptionsPersistSymmetryTests
     {
         string src = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\MainWindowViewModel.cs"));
         var (missing, checkedCount) = FindUnpersistedOptions(src);
-        // A pattern that silently stops matching would pass this test vacuously; 76 lines matched when it was written,
-        // 85 once the main window's own nine were counted [R7-D-05].
+        // A pattern that silently stops matching would pass this test vacuously, so the checked count has a floor
+        // (the main window's own options count too, [R7-D-05]).
         Assert.True(checkedCount >= 50, $"only {checkedCount} tracked options checked -- the BuildOptions pattern no longer matches");
         Assert.True(missing.Count == 0, "changing these alone schedules no save:\n  " + string.Join("\n  ", missing));
     }
 
     /// <summary>[R7-D-05] The checker must see the MAIN WINDOW's own options too: <c>Track(this, MainPersist)</c>, a
-    /// BuildOptions line with a bare right-hand side (<c>o.Main.X = X;</c>) and a set written as <c>nameof(X)</c>. It saw
-    /// none of the nine, so a new toolbar option missing from MainPersist -- the W3-CAP-NOSAVE shape -- passed.</summary>
+    /// BuildOptions line with a bare right-hand side (<c>o.Main.X = X;</c>) and a set written as <c>nameof(X)</c>. Blind
+    /// to them, it would pass a new toolbar option missing from MainPersist -- the [W3-CAP-NOSAVE] shape.</summary>
     [Fact]
     public void TheChecker_SeesAMainWindowOptionMissingFromMainPersist()
     {

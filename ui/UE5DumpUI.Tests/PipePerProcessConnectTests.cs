@@ -72,7 +72,7 @@ public sealed class PipePerProcessConnectTests
     public void The_plan_follows_the_listing(int[] pids, bool legacy, ConnectPlan plan)
         => Assert.Equal(plan, PipeTargets.Decide(new PipeScan(pids, legacy)));
 
-    // ── Who holds a full pipe (Stage C): the DLL's at-capacity line ─────────────────────────────────────────────
+    // ── Who holds a full pipe: the DLL's at-capacity line ─────────────────────────────────────────────────────
 
     private const string FullLine668 =
         "[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free slot -- "
@@ -174,9 +174,9 @@ public sealed class PipePerProcessConnectTests
 
     // ── [UI-ELEVATED-ACCESS-DENIED] Windows refusing the pipe ───────────────────────────────────────────────────────
     //
-    // Measured 2026-11-12 (verification-register.md [PIPE-PER-PROCESS-2026-11-06] item 4): a non-elevated UI connecting to
-    // a game that runs as administrator showed only "Access to the path is denied." -- the OS's words, naming neither
-    // the game nor a way out. The DLL keeps the pipe's default security, under which an elevated creator's owner is
+    // A non-elevated UI connecting to a game that runs as administrator gets only "Access to the path is denied." -- the
+    // OS's words, naming neither the game nor a way out (verification-register.md [PIPE-PER-PROCESS-2026-11-06] item 4).
+    // The DLL keeps the pipe's default security, under which an elevated creator's owner is
     // Administrators and everyone else may only read; an administrator is always let in.
 
     [Fact]
@@ -398,7 +398,7 @@ public sealed class PipePerProcessConnectTests
     [Fact]
     public async Task A_listed_game_whose_every_connection_is_taken_says_so()
     {
-        // Stage B: a DLL from before it takes 3 clients and the UI uses 2, so one rig fills it. Still listed when the
+        // An older DLL takes 3 clients and the UI uses 2, so one rig fills it. Still listed when the
         // connect times out: every connection is taken, or the game is not responding.
         var rig = new Rig("UE5DumpBfx_100");
         rig.Pipe.Busy = new HashSet<string> { "UE5DumpBfx_100" };
@@ -618,7 +618,7 @@ public sealed class PipePerProcessConnectTests
         /// <summary>Called with the name on every dial, before the connect resolves: the world changing meanwhile.</summary>
         public Action<string>? OnDial { get; set; }
         /// <summary>Names Windows refuses to open, as NamedPipeClientStream does for a game running as administrator:
-        /// the exception type and text measured live on 2026-11-12.</summary>
+        /// the exception type and text a live elevated game produces.</summary>
         public HashSet<string>? Refused { get; set; }
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
         public event Action<JsonObject>? EventReceived { add { } remove { } }

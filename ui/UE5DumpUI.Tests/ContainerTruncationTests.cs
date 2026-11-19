@@ -10,11 +10,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Finding <c>[CONTAINERCAP-2026-08-18]</c>: a container drill-down was capped at the Array Limit
-/// (default 128) but the panel said nothing, so a 199-entry TSet drilled to a grid whose last row
-/// was <c>[128]</c> looked identical to a complete 128-entry set. The DLL already sends BOTH the
+/// <c>[CONTAINERCAP-2026-08-18]</c>: a container drill-down is capped at the Array Limit
+/// (default 128), and the panel must say so: otherwise a 199-entry TSet drilled to a grid whose
+/// last row is <c>[128]</c> looks identical to a complete 128-entry set. The DLL sends BOTH the
 /// true total (<c>set_count</c>/<c>map_count</c>/array <c>count</c>) and the capped element list, so
-/// the fix is client-only: when the received element count is below the true total, badge the
+/// the rule is client-side: when the received element count is below the true total, badge the
 /// breadcrumb + header and surface a status line pointing at the Array Limit control.
 ///
 /// <para><b>Part A</b> tests the pure <see cref="ContainerTruncation"/> formatter. <b>Part B</b>
@@ -91,7 +91,7 @@ public class ContainerTruncationTests
     {
         // A real drill always has a walked parent instance; give it one so the container crumb
         // carries a genuine address (the log helper FormatBreadcrumbTrace reads Address[^4..]).
-        // Since [P4-CONTAINER-BASE] the drill also RE-READS that parent before opening the
+        // [P4-CONTAINER-BASE] The drill also RE-READS that parent before opening the
         // container, so the stub answers that walk with the same row.
         var dump = new StubDumpService();
         dump.RegisterStruct("0x10000000", new InstanceWalkResult
@@ -278,9 +278,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_PointerArray_OnLastRefreshValues_AtTheDllCap_DoesNotSendTheUserToTheSlider()
     {
-        // [R7-S10] The mirror case R7-D-07 opened: 10,000 elements, the slider at 16384, the preview DLL-capped at 4,096,
-        // and the re-read failed (plausibly a timeout -- a walk at 16384 is slow). `requested = elements.Count` made the
-        // status say "raise the Array Limit slider", which cannot raise a per-fetch cap: [A3-CONTAINER-4096-ADVICE].
+        // [R7-S10] The mirror case of [R7-D-07]: 10,000 elements, the slider at 16384, the preview DLL-capped at 4,096,
+        // and the re-read failed (plausibly a timeout -- a walk at 16384 is slow). `requested = elements.Count` would make
+        // the status say "raise the Array Limit slider", which cannot raise a per-fetch cap: [A3-CONTAINER-4096-ADVICE].
         var field = PtrArrayField(total: 10_000, loaded: 4_096);
         var dump = new StubDumpService();   // no parent registered: the re-read cannot land
         var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
@@ -311,8 +311,8 @@ public class ContainerTruncationTests
     // ---- [UE4-ASSETPTR-EXPORTS] a TArray<TAssetPtr> keeps the walk's paths ----
     //
     // The DLL fills a UE 4.11-4.17 asset-pointer array's inline elements with each path ([UE4-ASSETPTR-PROPS]);
-    // read_array_elements is scalar-only and answers raw bytes for that inner. The drill took the scalar re-read for
-    // any inner IsPointerOrStructArrayType did not name, so a capped preview was replaced by rows of hex.
+    // read_array_elements is scalar-only and answers raw bytes for that inner, so a drill taking the scalar re-read for
+    // any inner IsPointerOrStructArrayType does not name would replace a capped preview with rows of hex.
 
     /// <summary>Answers an element read as read_array_elements does for an inner it cannot decode: raw bytes only.</summary>
     private sealed class RawElementReadStub : StubDumpService
@@ -362,11 +362,10 @@ public class ContainerTruncationTests
 
     // ---- [WALK-REFRESH-SCALAR-SHRINK] a Refresh inside a container view agrees with the drill ----
     //
-    // Refresh's container branch re-walked the PARENT at the Array Limit and re-rendered the walk's inline preview: it
-    // never re-fetched a scalar array the way the drill does, and it re-derived neither the status line nor the crumb.
-    // Measured on DumperTest Shipping 5.4: Arr_Churn at 5,004 elements, drilled at Array Limit 16384, showed the first
-    // 4,096 ("capped at 4,096 per fetch"); moving the slider to 64 re-rendered 64 rows and cleared the status line, and
-    // the crumb still read "showing 4,096 of 5,004".
+    // Refresh's container branch re-fetches a scalar array the way the drill does, and re-derives the status line and
+    // the crumb; re-rendering the parent walk's inline preview alone would not. The case: Arr_Churn at 5,004 elements,
+    // drilled at Array Limit 16384, shows the first 4,096 ("capped at 4,096 per fetch"); moving the slider to 64 must
+    // not leave 64 rows under a cleared status line, with the crumb still reading "showing 4,096 of 5,004".
 
     /// <summary>Answers every walk with a FRESH row whose inline preview is cut where the DLL cuts it -- min(Array Limit,
     /// 4,096) -- and every element read at the same 4,096 per request. <see cref="Count"/> is the live element count.</summary>
@@ -444,7 +443,7 @@ public class ContainerTruncationTests
         Assert.Equal(4_096, vm.Fields.Count);                                // the precondition: the drill's view
         Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
 
-        await MoveArrayLimitAsync(vm, 64);                                   // the measured path
+        await MoveArrayLimitAsync(vm, 64);                                   // the section header's slider move
 
         Assert.Equal(4_096, vm.Fields.Count);
         Assert.Contains("showing 4,096 of 5,004", vm.CurrentObjectName);
@@ -462,7 +461,7 @@ public class ContainerTruncationTests
     public async Task Refresh_ScalarArrayBelowTheDllCap_ShowsEveryElement_AsTheDrillDid()
     {
         // 200 elements at Array Limit 64: the drill re-fetches all 200, and an element edit at [N >= 64] refreshes.
-        // Rendering the 64-element preview made the edited row vanish right after "Written: ...".
+        // Rendering the 64-element preview would make the edited row vanish right after "Written: ...".
         var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
         Assert.Equal(200, vm.Fields.Count);
 
@@ -527,9 +526,9 @@ public class ContainerTruncationTests
         Assert.Contains("Array Limit", vm.StatusText);
     }
 
-    // [WALK-REFRESH-SCALAR-SHRINK] review F2: the element read reports the array's count AT READ TIME (TotalCount), and
-    // the view took its total and its "asked for" from the WALK's count instead. An array that shrank between the two
-    // reads came back complete but short of the walk's count, and the view said "capped at N per fetch" over it.
+    // [WALK-REFRESH-SCALAR-SHRINK] The element read reports the array's count AT READ TIME (TotalCount), and the view must
+    // not take its total and its "asked for" from the WALK's count instead: an array that shrank between the two reads
+    // comes back complete but short of the walk's count, and would be called "capped at N per fetch".
 
     [Fact]
     public async Task Drill_ScalarArrayThatShrankBeforeTheRead_IsShownWhole_NotCalledCapped()
@@ -600,9 +599,9 @@ public class ContainerTruncationTests
         Assert.Contains("re-open", vm.StatusText);
     }
 
-    // [LW-EMPTIED-CONTAINER-REFRESH] RepopulateContainerView, and Refresh's re-derivation of the crumb, keyed the
-    // container kind on a count above zero: a container emptied since the drill matched no kind, so a Refresh left the
-    // old rows on screen (editable, at addresses the container no longer owns) under the old label.
+    // [LW-EMPTIED-CONTAINER-REFRESH] RepopulateContainerView, and Refresh's re-derivation of the crumb, must not key the
+    // container kind on a count above zero: a container emptied since the drill would match no kind, and a Refresh would
+    // leave the old rows on screen (editable, at addresses the container no longer owns) under the old label.
 
     [Theory]
     [InlineData("array", "[0 x IntProperty]")]
@@ -630,7 +629,7 @@ public class ContainerTruncationTests
     }
 
     // The wire's own shape for an empty array: Fern writes `elements` only when there are some, so the row arrives with
-    // ArrayElements null, not an empty list (review of batch 2). The rows above hand the view an empty list.
+    // ArrayElements null, not an empty list. The rows above hand the view an empty list.
     private static LiveFieldValue WireScalarRow(int count, int inline) => count == 0
         ? new LiveFieldValue
         {
@@ -655,8 +654,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Refresh_OfAnEmptiedArrayOfLargeStructs_ShowsItEmpty_WithoutAnElementRead()
     {
-        // [LW-EMPTIED-CONTAINER-REFRESH] An emptied struct array fell through to read_array_elements, which is scalar-only
-        // and refuses an element over 256 bytes: Refresh showed "DLL error: elem_size too large" over the OLD rows.
+        // [LW-EMPTIED-CONTAINER-REFRESH] An emptied struct array must not fall through to read_array_elements, which is
+        // scalar-only and refuses an element over 256 bytes: Refresh would show "DLL error: elem_size too large" over the
+        // OLD rows.
         var (vm, dump) = await DrillLiveAsync(WireBigStructRow, count: 3, arrayLimit: 64);
         Assert.NotEmpty(vm.Fields);                                          // the precondition: the drill's rows
         int reads = dump.ElementReads;
@@ -673,8 +673,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Refresh_OfAnArrayTheWalkSawEmpty_ShowsTheWalksCount_NotOneTheReadSawLater()
     {
-        // A read sent for a count of 0 asked for nothing, and answered with the count it found a moment later: the view
-        // read "[12 x IntProperty]" over an empty grid, with no badge or status. The walk's 0 is what the view shows.
+        // A read sent for a count of 0 asks for nothing, and answers with the count it finds a moment later: taken as the
+        // total, it would make the view read "[12 x IntProperty]" over an empty grid, with no badge or status. The walk's
+        // 0 is what the view shows.
         var (vm, dump) = await DrillLiveAsync(WireScalarRow, count: 200, arrayLimit: 64);
         dump.Count = 0;
         dump.ReadSees = 12;
@@ -686,9 +687,9 @@ public class ContainerTruncationTests
         Assert.Equal(0, vm.Breadcrumbs[^1].ContainerField!.ArrayCount);       // what Back and the exporters read
     }
 
-    // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
-    // parent that is gone (unreadable, no UObject header, stale) has no fields, so Refresh returned SILENTLY: a blank
-    // status over the old element rows, still editable, each FieldAddress pointing into memory the game had freed.
+    // [WALK-NULLCLASS-SILENT] A parent that is gone (unreadable, no UObject header, stale) has no fields, so a container
+    // branch that acts only when the parent walk finds the field again would return SILENTLY: a blank status over the
+    // old element rows, still editable, each FieldAddress pointing into memory the game has freed.
 
     [Theory]
     [InlineData("unreadable", "no longer readable")]

@@ -78,7 +78,7 @@ public class WalkClassBatchEquivalenceTests
     }
 
     /// <summary>Stub that throws on every WalkClassesBatchAsync call,
-    /// forcing the consumer's per-class fallback path. Used to prove
+    /// forcing the consumer's per-class fallback path, so a test can prove
     /// the fallback produces identical output to the batched path.</summary>
     private sealed class ForcedFallbackDump : StubDumpService
     {

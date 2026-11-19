@@ -143,8 +143,8 @@ public class ProxyOrphanScannerTests
     [InlineData("desktop.ini")]
     public void ClassifyLeaf_ForeignFilePresent_StillRecyclesOursButKeepsTheFolder(string foreign)
     {
-        // The behaviour the repo owner asked for explicitly: removing OUR DLL is unconditional, the
-        // FOLDER is what is negotiable. Refusing the whole row here used to leave our own litter on
+        // By design: removing OUR DLL is unconditional, the
+        // FOLDER is what is negotiable. Refusing the whole row here would leave our own litter on
         // disk forever whenever anything else shared the folder.
         var v = ProxyOrphanScanner.ClassifyLeaf(
             Dir(@"C:\x", files: new[] { "version.dll", foreign }), OursIf("version.dll"),
@@ -572,11 +572,11 @@ public class ProxyOrphanScannerTests
     }
 
     /// <summary>
-    /// B12 — the exact counts from the finding. <c>ProxyDeployService</c> counts a
-    /// vanished file into <c>allFilesGone</c> and then still prunes the chain, so this
-    /// combination is reachable: the file was already gone, and four directories really
-    /// were removed. The old wording put "Already gone — nothing left to remove." in
-    /// success green over a run that had just deleted four folders.
+    /// A reachable combination of counts. <c>ProxyDeployService</c> counts a
+    /// vanished file into <c>allFilesGone</c> and then still prunes the chain, so a run
+    /// can find the file already gone and still really remove four directories.
+    /// "Already gone — nothing left to remove." in success green would misreport a run
+    /// that had just deleted four folders.
     /// </summary>
     [Fact]
     public void ResolveRemovalOutcome_AlreadyGoneStillReportsFoldersThatWereRemoved()
@@ -591,7 +591,7 @@ public class ProxyOrphanScannerTests
         Assert.DoesNotContain("nothing left to remove", msg, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>The other half: with no directories removed the original wording is
+    /// <summary>The other half: with no directories removed the short wording is
     /// correct and must be kept.</summary>
     [Fact]
     public void ResolveRemovalOutcome_AlreadyGoneWithNoFoldersKeepsTheShortMessage()
@@ -789,8 +789,8 @@ public class ProxyOrphanScannerTests
     /// <summary>
     /// A CLEAN scan must still produce a report. Without the file, "scanned everything and
     /// found nothing" and "the scan never ran, or looked in the wrong place, or failed
-    /// silently" are indistinguishable a week later — and the VM used to make the empty text
-    /// unreachable by gating Report on `Orphans.Count > 0`.
+    /// silently" are indistinguishable a week later — and a VM that gated Report on
+    /// `Orphans.Count > 0` would make the empty text unreachable.
     /// </summary>
     [Fact]
     public void BuildReport_EmptyScanStillReportsWhatItExamined()
@@ -814,13 +814,13 @@ public class ProxyOrphanScannerTests
         Assert.DoesNotContain("folder(s) were examined", txt, StringComparison.Ordinal);
     }
 
-    // ── The Recycle-Bin refusal (B13/B41), measured end to end 2026-08-12 ─────
+    // ── The Recycle-Bin refusal ────────────────────────────────────────────────
     //
-    // The rig: a real UE game copied to a fixed 10 GB volume with NukeOnDelete=1, a proxy deployed
-    // to it, then the game deleted so only our version.dll survived. With the bin DISABLED the scan
-    // reported "No leftover proxy DLLs found (23 folder(s) examined)" while the file sat there; with
-    // ONLY that registry value flipped, the same folder surfaced as a row. Two separate defects made
-    // that happen, and both are pinned below.
+    // On a fixed volume whose Recycle Bin is disabled (NukeOnDelete=1), recycling our leftover DLL
+    // would delete it permanently, so the plan refuses it. The refusal must still reach the user as a
+    // row, or the scan says "No leftover proxy DLLs found" while the file sits there. Two rules make
+    // that hold, both pinned below: the recycler question is asked only after the folder is read,
+    // and the refusal verdict is surfaced though it authorises nothing.
 
     private static RecyclerProbe NoBin => _ => false;
     private static RecyclerProbe HasBin => _ => true;
@@ -859,9 +859,9 @@ public class ProxyOrphanScannerTests
     [Fact]
     public void PlanPrune_NoRecycleBin_FolderWithNothingOfOurs_IsNotARecyclerRefusal()
     {
-        // ORDERING. The recycler question used to be asked BEFORE the folder was even read, so a
-        // volume with no bin manufactured a refusal for folders this feature has no business in —
-        // and, after the surface fix, would have shown the user a row about someone else's DLL.
+        // ORDERING. The recycler question comes AFTER the folder is read: asked first, a volume with
+        // no bin would manufacture a refusal for folders this feature has no business in — and,
+        // since that refusal is surfaced, show the user a row about someone else's DLL.
         string leaf = Common + @"\SomeGame\Proj\Binaries\Win64";
         var probe = ProbeOf(Dir(leaf, files: new[] { "d3d12.dll" }));
 
@@ -898,14 +898,14 @@ public class ProxyOrphanScannerTests
         Assert.Equal(OrphanVerdict.Deletable, plan.Verdict);
     }
 
-    // ── The surface/actionable split — the defect the measurement exposed ─────
+    // ── The surface/actionable split ───────────────────────────────────────────
 
     [Fact]
     public void ShouldSurface_KeepsTheNoRecycleBinRefusal()
     {
-        // THE regression guard. Dropping this verdict is what made B13/B41's own PASS criterion
-        // unobservable: the refusal was computed, then discarded, and the user was told "No leftover
-        // proxy DLLs found" on the one kind of volume where a hand-delete cannot be undone.
+        // THE guard of the Recycle-Bin refusal. Without this verdict surfaced the refusal is computed,
+        // then discarded, and the user is told "No leftover proxy DLLs found" on the one kind of
+        // volume where a hand-delete cannot be undone.
         Assert.True(OrphanVerdictRules.ShouldSurface(OrphanVerdict.NotOnFixedDrive));
         Assert.False(OrphanVerdictRules.IsActionable(OrphanVerdict.NotOnFixedDrive));
     }

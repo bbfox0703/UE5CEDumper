@@ -4,11 +4,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the X7 fix: the "game thread paused" banner is now one combined latch fed
-/// by every per-response observation from both lanes, instead of two independent
-/// per-lane edge latches. The decisive test is the resume case that the old code
-/// got wrong — one lane sees the pause, then goes idle while the OTHER lane carries
-/// traffic after the game resumes.
+/// Pins that the "game thread paused" banner is one combined latch fed by every
+/// per-response observation from both lanes, not two independent per-lane edge
+/// latches. The decisive test is the resume case two per-lane latches get wrong —
+/// one lane sees the pause, then goes idle while the OTHER lane carries traffic
+/// after the game resumes.
 /// </summary>
 public class GameThreadStalledLevelTests
 {
@@ -21,9 +21,9 @@ public class GameThreadStalledLevelTests
         Assert.Equal((bool?)true, level.Observe(true));
 
         // Bulk goes idle. After the game resumes the interactive lane observes
-        // "not stalled". With two independent per-lane latches this never raised
-        // (the interactive lane's own last value was already false), so the banner
-        // stuck ON. One combined latch clears it.
+        // "not stalled". With two independent per-lane latches this would never raise
+        // (the interactive lane's own last value is already false), so the banner
+        // would stick ON. One combined latch clears it.
         Assert.Equal((bool?)false, level.Observe(false));
     }
 

@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// P3 CE-Lua export — docs/teleport-coord-library-spec.md §4 / §6.
+/// CE-Lua export — docs/teleport-coord-library-spec.md §4 / §6.
 /// The script cannot be executed here, so these assert the properties that would
 /// otherwise only fail in Cheat Engine: escaping, the marker grammar, hygiene, and
 /// the verified-API restriction.
@@ -214,16 +214,16 @@ public class CoordLibraryScriptTests
         Assert.Contains("BringToFront", s);
     }
 
-    // ── Regressions from the first in-game run (build 2269) ──────────────
+    // ── Close path and layout, as a real CE window behaves ───────────────
 
     [Fact]
     public void Generate_OnClose_DropsTheGlobalBeforeUntickingTheRecord()
     {
-        // Shipped broken: OnClose set memrec.Active = false, which runs the
-        // [DISABLE] block, which closed the form it could still see through the
-        // global -- re-entering OnClose and HANGING Cheat Engine. Nil-ing the
-        // global first makes [DISABLE]'s guard fail, so the close happens once. It
-        // also stops [DISABLE] touching a caFree'd form object afterwards.
+        // OnClose sets memrec.Active = false, which runs the [DISABLE] block, which
+        // would close the form it can still see through the global -- re-entering
+        // OnClose and HANGING Cheat Engine. Nil-ing the global first makes
+        // [DISABLE]'s guard fail, so the close happens once. It also stops
+        // [DISABLE] touching a caFree'd form object afterwards.
         var s = Gen(E("A"));
         int nilGlobal = s.IndexOf("UE5CD_form = nil", StringComparison.Ordinal);
         // Match the CODE line, not the explanatory comment above it (which also
@@ -246,15 +246,15 @@ public class CoordLibraryScriptTests
     [Fact]
     public void Generate_LaysOutFromClientWidthNotHardcodedPixels()
     {
-        // Shipped broken: control positions assumed the form got the 820px it asked
-        // for. It did not (a ~577px window), so the map selector was clipped. Every
-        // width is now a function of the REAL client width, which also survives a
+        // A form need not get the width it asks for (one asking for 820px can come up
+        // ~577px wide), so controls positioned for the requested width get clipped.
+        // Every width is a function of the REAL client width, which also survives a
         // user resize.
         var s = Gen(E("A", "Chest"));
         Assert.Contains("local CW = UE5CD_form.ClientWidth", s);
         Assert.Contains("bsSizeable", s);
         // No unverified control properties: CE Lua raises on an unknown one, which
-        // would take the whole script down. "Anchor" was tried and removed.
+        // would take the whole script down. "Anchor" is not a verified one.
         Assert.DoesNotContain(".Anchor", s);
         Assert.Contains("math.max(240, CW - 20)", s);      // radio groups
         Assert.Contains("math.max(120, CW - 70)", s);      // filter edit
@@ -265,7 +265,7 @@ public class CoordLibraryScriptTests
     public void Generate_UsesTheReferenceProvenRadioGroupHeight()
     {
         // 56 is the ONE height proven by the reference form (its group is always a
-        // single item row). Anything smaller clipped the caption and the buttons.
+        // single item row). Anything smaller clips the caption and the buttons.
         var s = Gen(E("A", "Chest"));
         Assert.Contains("rgMap.Height = 56", s);
         Assert.DoesNotContain("rgMap.Height = 40", s);
@@ -275,7 +275,7 @@ public class CoordLibraryScriptTests
     [Fact]
     public void Generate_ButtonsAreWideEnoughAndDoNotOverlap()
     {
-        // "Force teleport" at 130 rendered as "orce telepor". Widths are generous and
+        // "Force teleport" at 130 renders as "orce telepor". Widths are generous and
         // the Lefts are chained off them, so widening one can never overlap the next.
         var s = Gen(E("A"));
         Assert.Contains("btnForce.Width = 200", s);
@@ -297,8 +297,8 @@ public class CoordLibraryScriptTests
     [Fact]
     public void Generate_NoControlKeepsAHardcodedWidthWiderThanTheForm()
     {
-        // The specific clipping bug: a 790px-wide radio group inside a form that
-        // turned out to be ~577px. Nothing may assert a fixed width like that again.
+        // A 790px-wide radio group is clipped inside a form that comes up ~577px wide.
+        // No control may keep a fixed width like that.
         var s = Gen(E("A", "Chest"));
         foreach (var bad in new[] { ".Width = 790", ".Width = 300", ".Width = 260" })
             Assert.DoesNotContain(bad, s);
@@ -308,7 +308,7 @@ public class CoordLibraryScriptTests
     [Fact]
     public void Generate_UsesTheRealMailboxOffsets()
     {
-        // Hand-written offsets here were wrong once already; they must come from
+        // Hand-written offsets drift from the DLL; they must come from
         // CeMailboxLayout, which mirrors dll/src/Mimic.h.
         var s = Gen(E("A"));
         Assert.Contains($"{CeMailboxLayout.OffCmd}, {CeMailboxLayout.OffStatus}, {CeMailboxLayout.OffResult}", s);
@@ -335,8 +335,8 @@ public class CoordLibraryScriptTests
         Assert.Contains("return nil, _msg", s);
         Assert.Contains("if err ~= nil then showMessage('[Coordinate Library] ' .. err); return end", s);
 
-        // 'the DLL did not respond' was a GUESS, and the mailbox already distinguishes
-        // the two causes — which send the user to opposite places.
+        // 'the DLL did not respond' would be a GUESS: the mailbox distinguishes the
+        // two causes — which send the user to opposite places.
         Assert.DoesNotContain("did not respond", s);
         Assert.Contains("never saw this command", s);
         Assert.Contains("never finished it", s);

@@ -113,7 +113,7 @@ public class SdkHeaderDeclaratorTests
     }
 
     // ------------------------------------------------------------------
-    // Negative controls — the paths that were already correct must not move.
+    // Negative controls — the paths that resolve plainly must not move.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -139,8 +139,8 @@ public class SdkHeaderDeclaratorTests
     [Fact]
     public void PaddingDeclarationsAreByteIdenticalToBeforeTheFix()
     {
-        // 7,543 of these in the export that found the bug. They were the correct model for the
-        // fix, so a change here would mean the fix went the wrong way.
+        // Padding declarations are the correct model the other declarators follow, so a change
+        // here would mean a declarator change went the wrong way.
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 },
@@ -340,7 +340,7 @@ public class SdkHeaderDeclaratorTests
         };
 
         // A whole-pool export whose TYPE names collide or are not identifiers (SdkTypeNameTests has
-        // one case each): the AnimBlueprint pair that used to inherit from itself, a dash, a keyword,
+        // one case each): the AnimBlueprint pair that can come out inheriting from itself, a dash, a keyword,
         // and a type named like a header built-in. Listed supers-first, as GObjects has them, because
         // the export does not reorder. Its two include lines are dropped: this unit includes nothing.
         var pool = new SdkPoolDump()

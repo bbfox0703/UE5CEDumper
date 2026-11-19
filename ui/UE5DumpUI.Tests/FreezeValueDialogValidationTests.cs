@@ -121,7 +121,7 @@ public class FreezeValueDialogValidationTests
     }
 
     // ------------------------------------------------------------------
-    // Width enforcement (audit #5 Y9)
+    // Width enforcement
     //
     // Nothing downstream can report an over-wide value: ue5_freeze_helper.lua writes
     // `writeByte(addr, math.floor(v) % 256)` and Solide::WriteNumeric does
@@ -159,7 +159,7 @@ public class FreezeValueDialogValidationTests
     [Fact]
     public void Validate_NamesTheExactValueThatWouldHaveLanded()
     {
-        // The finding's own example. 9999 & 0xFF == 15 for uint8, and the int8
+        // The canonical example. 9999 & 0xFF == 15 for uint8, and the int8
         // sign-extension of the same byte is also 15 — this is the number the user
         // would otherwise be staring at in-game with no explanation.
         FreezeValueDialog.ValidateAndConvert("9999", "uint8", out var uerr);
@@ -268,14 +268,13 @@ public class FreezeValueDialogValidationTests
     }
 
     // ------------------------------------------------------------------
-    // Audit #5 Y15 — the dialog and the generated script must agree.
+    // The dialog and the generated script must agree.
     //
     // The dialog validates the typed value against the helper type it computes
     // from (PropType, PropSize); FreezeScriptGenerator writes with the helper type
     // it computes from the SAME pair. If those two calls ever diverge, the value
-    // is checked against one writer and handed to another — which is what this
-    // audit's recurring root cause looks like (the report and the reality computed
-    // by different code paths). These tests pin the pair together.
+    // is checked against one writer and handed to another — the report and the
+    // reality computed by different code paths. These tests pin the pair together.
     // ------------------------------------------------------------------
 
     [Theory]
@@ -300,9 +299,9 @@ public class FreezeValueDialogValidationTests
     [Fact]
     public void Validate_OneByteEnum_NamesTheValueThatWouldHaveLanded()
     {
-        // The whole point of Y15 + Y9 together: before the width was plumbed through,
-        // a 1-byte enum was validated as int32, so 9999 was ACCEPTED here and then
-        // written by a 4-byte writer over three neighbouring bytes.
+        // The width and the agreement together: without the width plumbed through, a
+        // 1-byte enum would be validated as int32, so 9999 would be ACCEPTED here and
+        // then written by a 4-byte writer over three neighbouring bytes.
         var helperType = FreezeScriptGenerator.MapToHelperType("EnumProperty", 1);
         var literal = FreezeValueDialog.ValidateAndConvert("9999", helperType, out var err);
 
@@ -319,8 +318,8 @@ public class FreezeValueDialogValidationTests
     [InlineData(0)]
     public void SuggestedDefault_ForEveryEnumWidth_SurvivesItsOwnValidator(int propSize)
     {
-        // Y9's lesson applied to the new types this fix can now select: tightening a
-        // validator without its pre-fill yields a dialog that rejects its own default.
+        // Every enum width the helper type can select: tightening a validator without
+        // its pre-fill yields a dialog that rejects its own default.
         var helperType = FreezeValueDialog.HelperTypeFor(MakeMatch("EnumProperty", propSize));
         var suggested = FreezeValueDialog.SuggestedDefault(helperType);
         Assert.NotNull(FreezeValueDialog.ValidateAndConvert(suggested, helperType, out var err));
@@ -339,7 +338,7 @@ public class FreezeValueDialogValidationTests
     [InlineData("EnumProperty",   2, "uint16")]
     [InlineData("EnumProperty",   4, "int32")]
     [InlineData("EnumProperty",   8, "int64")]
-    [InlineData("EnumProperty",   0, "int32")]   // size unreported → legacy default
+    [InlineData("EnumProperty",   0, "int32")]   // size unreported → int32 default
     [InlineData("ByteProperty",   1, "uint8")]
     [InlineData("FloatProperty",  4, "float")]
     [InlineData("BoolProperty",   1, "bool")]
@@ -396,8 +395,8 @@ public class FreezeValueDialogValidationTests
     public void ScopeSummary_UsesTheClassTheScriptWillActuallyBeKeyedOn()
     {
         // The row's Class column and the class the freeze targets are not the same
-        // field, and the dialog used to show the former while the generator used the
-        // latter. Both now come from FreezeScriptGenerator.HeldClassName.
+        // field; the dialog must show the one the generator uses. Both come from
+        // FreezeScriptGenerator.HeldClassName.
         var m = new PropertySearchMatch
         {
             ClassName = "BP_SpecificTeammate_C", DefiningClassName = "BP_Teammate_C",
@@ -434,10 +433,9 @@ public class FreezeValueDialogValidationTests
     }
 
     /// <summary>
-    /// The Force flow gets the SAME scope sentence and a DIFFERENT remedy (audit #5
-    /// AF22). Before the fix it got the Freeze remedy verbatim — "edit className in the
-    /// generated CFG block" — on a path that generates no script and therefore has no
-    /// CFG block: unreachable advice, the Z10 shape.
+    /// The Force flow gets the SAME scope sentence and a DIFFERENT remedy. The Freeze
+    /// remedy — "edit className in the generated CFG block" — is unreachable advice on a
+    /// path that generates no script and therefore has no CFG block.
     /// </summary>
     [Fact]
     public void ScopeWarning_CarriesTheHintOfTheFlowItWasAskedFor()
@@ -501,13 +499,12 @@ public class FreezeValueDialogValidationTests
         Assert.Contains("BP_Teammate_C", w);
     }
 
-    // ---- AF22, the half that had no test: key resolution -----------------------
+    // ---- Key resolution ---------------------------------------------------------
     //
-    // AF22 shipped the Force wording but resolved it with an interpolated key, so the
-    // Force-vs-Freeze choice happened in a string the compiler never saw and no test
-    // ever exercised (the pure ScopeWarning tests above take the hint as a PARAMETER,
-    // so they pass whichever hint the dialog actually picks). It also blinded
-    // tools/check_axaml_strings.py, which then reported all eight keys dead.
+    // Resolved through an interpolated key, the Force-vs-Freeze choice would happen in
+    // a string the compiler never sees and no test exercises (the pure ScopeWarning
+    // tests above take the hint as a PARAMETER, so they pass whichever hint the dialog
+    // actually picks), and tools/check_axaml_strings.py would report the keys dead.
     // KeyFor is that choice, extracted and pinned.
 
     /// <summary>
@@ -536,9 +533,9 @@ public class FreezeValueDialogValidationTests
     }
 
     /// <summary>
-    /// The AF22 invariant itself: no leaf may hand the Force flow the Freeze key. This is
-    /// what regressed silently before — reuse was the DEFAULT, so a new leaf that forgot
-    /// to branch simply showed freeze wording. Exhaustive over both enums, so a leaf added
+    /// The invariant itself: no leaf may hand the Force flow the Freeze key. With reuse as
+    /// the DEFAULT, a new leaf that forgot to branch would silently show freeze wording.
+    /// Exhaustive over both enums, so a leaf added
     /// later is covered without editing this test.
     /// </summary>
     [Fact]
@@ -561,7 +558,7 @@ public class FreezeValueDialogValidationTests
     }
 
     /// <summary>An undeclared enum value is refused, not quietly served the Freeze
-    /// wording. Falling back to Freeze is the defect AF22 fixed.</summary>
+    /// wording. Falling back to Freeze is exactly the hazard.</summary>
     [Fact]
     public void KeyFor_RefusesAnUndeclaredPurpose()
         => Assert.Throws<ArgumentOutOfRangeException>(
@@ -590,7 +587,7 @@ public class FreezeValueDialogValidationTests
     }
 
     /// <summary>
-    /// The wording behind the keys, which is what AF22 was actually about: the Force flow
+    /// The wording behind the keys, which is what matters to the user: the Force flow
     /// must not describe itself as a freeze, and must not offer the Freeze remedy (edit
     /// className in the generated CFG block) on a path that generates no script.
     /// </summary>
@@ -612,7 +609,7 @@ public class FreezeValueDialogValidationTests
             Assert.DoesNotContain("freeze", f, StringComparison.OrdinalIgnoreCase);
         }
 
-        // The two specifics the finding named.
+        // The two specifics of the Freeze remedy: neither "CFG block" nor "className".
         Assert.DoesNotContain("CFG block", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
                               StringComparison.Ordinal);
         Assert.DoesNotContain("className", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
@@ -628,8 +625,8 @@ public class FreezeValueDialogValidationTests
                         StringComparison.Ordinal);
 
         // The assertions above are all "Force is not Freeze". They would survive renaming the
-        // Force button to "Apply", which is not what the checklist row asks for — it names the
-        // words. Pin the MEANING rather than the literal, so copy can still be improved:
+        // Force button to "Apply", which loses the words that say what it does. Pin the
+        // MEANING rather than the literal, so copy can still be improved:
         // the Force flow holds a value through the DLL, it does not emit a script.
         Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.Title), StringComparison.Ordinal);
         Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.ValueLabel), StringComparison.Ordinal);

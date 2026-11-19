@@ -65,11 +65,11 @@ public class CeLuaHygieneTests
     }
 
     /// <summary>
-    /// The idle wait had the same defect as the status wait and outlived the fix: it
-    /// counted <c>sleep(1)</c> iterations against a millisecond constant, so the "100 ms"
-    /// its constant documented was really ~1.55 s. That one erred LONG, so nothing broke
-    /// — which is exactly why it survived. Both halves are pinned here: a real clock, and
-    /// a constant that now states the duration it actually produces.
+    /// The idle wait measures a real deadline, as the status wait does. Counting
+    /// <c>sleep(1)</c> iterations against a millisecond constant would make a "100 ms"
+    /// constant really ~1.55 s — an error in the LONG direction, which breaks nothing
+    /// visible and so goes unnoticed. Both halves are pinned here: a real clock, and a
+    /// constant that states the duration it actually produces.
     /// </summary>
     [Fact]
     public void IdleWait_measures_a_real_deadline_not_sleep_iterations()
@@ -84,19 +84,18 @@ public class CeLuaHygieneTests
         Assert.DoesNotContain("idleWaited", s);
         Assert.DoesNotContain("\r", s);
 
-        // The fallback count is what the deadline replaces, so the two must agree. At the
-        // measured 15.47 ms per sleep(1) they are within one tick of each other; a future
-        // edit to one alone would silently re-open the gap this test closed.
+        // The fallback count stands in for the deadline, so the two must agree. At the
+        // 15.47 ms a sleep(1) costs they are within one tick of each other; an edit to
+        // one alone would silently open a gap between them.
         double fallbackMs = CeMailboxLayout.MailboxIdleWaitIters * 15.47;
         Assert.InRange(fallbackMs, CeMailboxLayout.MailboxIdleWaitMs * 0.9,
                                    CeMailboxLayout.MailboxIdleWaitMs * 1.1);
     }
 
     // [A1-LUA-WAIT] EXACTLY one deadline governs. `tick and (elapsed >= Ms) or (iters >= N)` evaluates the iteration arm
-    // whenever the elapsed test is FALSE (Lua's `a and b or c` takes c when b is false), so both waits ran to
-    // min(real ms, N x sleep cost) -- up to ~15x short where sleep(1) is cheap. The two Lua helpers were fixed for exactly
-    // this (audit #5 AA29, e8893e5a); this emitter kept the idiom. There is no Lua runtime in this suite, so the pin is on
-    // the helpers' own SHAPE: the iteration count lives only in the `else` of the getTickCount branch.
+    // whenever the elapsed test is FALSE (Lua's `a and b or c` takes c when b is false), so a wait in that form runs to
+    // min(real ms, N x sleep cost) -- up to ~15x short where sleep(1) is cheap. There is no Lua runtime in this suite, so
+    // the pin is on the helpers' own SHAPE: the iteration count lives only in the `else` of the getTickCount branch.
     [Fact]
     public void Both_waits_have_one_deadline_the_iteration_count_only_without_getTickCount()
     {
@@ -125,8 +124,8 @@ public class CeLuaHygieneTests
     }
 
     // [A1-SLOTSYM-FAILED] CE runs [DISABLE] on the deferred untick after EVERY failed ENABLE, and every ENABLE bail returns
-    // BEFORE the register step -- so a bare refcount let a failed second "Get GWorld" record drop a LIVE record's symbol
-    // (measured by the refuter under real Lua: "A is still ticked but UE_GWorld is GONE"). Ownership is per RECORD: the
+    // BEFORE the register step -- so a bare refcount would let a failed second "Get GWorld" record drop a LIVE record's
+    // symbol (A still ticked, UE_GWorld gone). Ownership is per RECORD: the
     // release decrements only for a record that registered; the count stays the fallback when there is no memrec.
     [Fact]
     public void SlotSymbol_release_only_releases_what_this_record_registered()
@@ -165,22 +164,20 @@ public class CeLuaHygieneTests
     // The wait loops, checked STRUCTURALLY
     // ==================================================================
     //
-    // Build 2769 shipped an AppendMailboxWait whose `sleep(1); _pump(); _iters = _iters + 1`
-    // had been MOVED to above the `while`, and above the `local _t0, _iters` it increments.
-    // Both halves were broken and neither was catchable by the assertions that existed:
+    // An AppendMailboxWait whose `sleep(1); _pump(); _iters = _iters + 1` sits above the
+    // `while`, and above the `local _t0, _iters` it increments, breaks two ways at once:
     //
-    //   * `_iters` bound to a nil GLOBAL, so `_iters + 1` raised on the FIRST execution —
-    //     after the command had already been written to the mailbox, so the DLL ran it and
+    //   * `_iters` binds to a nil GLOBAL, so `_iters + 1` raises on the FIRST execution —
+    //     after the command is already written to the mailbox, so the DLL runs it and
     //     every statement after the wait (result read, state<0 diagnosis, untick,
-    //     auto-close) was skipped, in all 11 generators that call this.
-    //   * the loop body was then left with no sleep and no pump at all: a 100% CPU spin
-    //     that froze Cheat Engine for the whole deadline, i.e. the exact symptom the commit
-    //     was fixing.
+    //     auto-close) is skipped, in the generators that call this.
+    //   * the loop body is left with no sleep and no pump at all: a 100% CPU spin that
+    //     freezes Cheat Engine for the whole deadline.
     //
-    // Every assertion covering that line was `Assert.Contains("_pump()", …)`, and a
-    // substring is true no matter WHERE the line landed. These two read position instead:
-    // one says nothing may be used before it is declared, the other says the sleep and the
-    // pump belong to the loop BODY. Together they reject both halves of the defect.
+    // A check like `Assert.Contains("_pump()", …)` cannot see either: a substring is true
+    // no matter WHERE the line lands. These two read position instead: one says nothing
+    // may be used before it is declared, the other says the sleep and the pump belong to
+    // the loop BODY. Together they reject both halves.
 
     public static IEnumerable<object[]> WaitEmitters() => new List<object[]>
     {
@@ -341,9 +338,9 @@ public class CeLuaHygieneTests
         string.Join("\n", lines.Select((l, i) => $"{i + 1,3}: {l}"));
 
     /// <summary>
-    /// R2 — there is ONE Lua escape table. Three copies existed, one of them (Invoke's)
-    /// silently weaker: it handled backslash / quote / newline only, so CR, TAB and — the
-    /// one that matters — a closing long bracket passed through verbatim. AOBMaker wraps
+    /// There is ONE Lua escape table, so no copy can be silently weaker: one handling
+    /// backslash / quote / newline only would let CR, TAB and — the one that matters — a
+    /// closing long bracket through verbatim. AOBMaker wraps
     /// the WHOLE script in <c>[==[ … ]==]</c>, so that byte sequence must not appear
     /// anywhere in the emitted text. The public names remain as forwarders; this pins
     /// that they really do forward.
@@ -441,17 +438,16 @@ public class CeLuaHygieneTests
         // [DISABLE] also closes on a clean untick.
         Assert.Contains("if DEBUG == 0 then synchronize(function() getLuaEngine().Close() end) end", s);
         // ...but a [DISABLE] mailbox timeout must RETURN (error path), never fall
-        // through 'break' into the success-close. Both blocks use 'return' now.
+        // through 'break' into the success-close. Both blocks use 'return'.
         Assert.DoesNotContain("then break end", s);
         Assert.DoesNotContain("\r", s);
     }
 
     /// <summary>
-    /// B15 — the "a timeout is an error" rule, checked over EVERY generator instead of
-    /// Movement alone. Movement-only is how Teleport kept two bare
-    /// <c>if elapsed >= … then break end</c> sites: one fell straight into the
-    /// auto-close, so the Lua Engine window shut on the single outcome the user needed
-    /// to read, and the other generator had no <c>hadError</c> at all.
+    /// The "a timeout is an error" rule, checked over EVERY generator instead of
+    /// Movement alone. A bare <c>if elapsed >= … then break end</c> that falls straight
+    /// into the auto-close shuts the Lua Engine window on the single outcome the user
+    /// needs to read.
     ///
     /// <para>The assertion is deliberately about the EMITTED TEXT, not about intent: a
     /// bare <c>break</c> out of a mailbox wait is the exact shape CLAUDE.md forbids, and
@@ -531,7 +527,7 @@ public class CeLuaHygieneTests
     public void Teleport_pose_reading_actions_warn_on_a_parent_relative_pose(TeleportScriptGenerator.Action action)
     {
         // [W2-MARKER-PARENTREL] mailbox half: the pose block's flags byte (paramsData[178], contract 4) says the pose came
-        // from the raw parent-relative fallback. The pose card's "do not save these" never reached CE -- the record
+        // from the raw parent-relative fallback. The pose card's "do not save these" must reach CE too -- the record
         // must say so, and keep its window open like every other genuine problem.
         var s = TeleportScriptGenerator.Generate(action, 0);
         var read = s.IndexOf("readBytes(mb + 0x3DA, 1, true)", StringComparison.Ordinal);
@@ -545,7 +541,7 @@ public class CeLuaHygieneTests
     [Fact]
     public void Teleport_recall_does_not_read_the_pose_flags()
     {
-        // The control, green before and after: RECALL writes no pose block.
+        // The control: RECALL writes no pose block.
         Assert.DoesNotContain("0x3DA", TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.Recall, 0));
     }
 
@@ -556,9 +552,9 @@ public class CeLuaHygieneTests
 
         Assert.Contains("local DEBUG = UE5_DEBUG or 0", s);
         Assert.Contains("dbg('[Teleport] all markers cleared')", s);
-        // B15: the close was UNCONDITIONAL here — this generator had no hadError at all,
-        // so a mailbox timeout while clearing markers shut the window on its own error
-        // message. The success line is gated too: "all markers cleared" must not be
+        // The close is gated on hadError: unconditional, it would let a mailbox timeout
+        // while clearing markers shut the window on its own error message. The success
+        // line is gated too: "all markers cleared" must not be
         // printed by a run where one of the three slots timed out.
         Assert.Contains("if DEBUG == 0 and not hadError then " + CeLuaHygiene.CloseCall + " end", s);
         Assert.Contains("if not hadError then dbg('[Teleport] all markers cleared') end", s);
@@ -568,17 +564,16 @@ public class CeLuaHygieneTests
     [Fact]
     public void Teleport_clear_all_reads_the_RESULT_back_not_just_the_status()
     {
-        // ⛔ THE GAP THIS PINS, adjudicated 2026-09-09 as slice A of the unadjudicated sweep
-        // claims. The test above gates the success line on `hadError` — but `hadError` is set
-        // only by the shared wait's TIMEOUT/busy paths, and a command that FAILED does not time
-        // out. `Mimic.cpp`'s SetError writes the negative code to `result` and THEN sets
-        // `status = STATUS_DONE`, while `CeLuaHygiene.AppendMailboxWait` polls `OffStatus`
-        // only — so a rejected CMD_TELEPORT satisfied that wait exactly like a successful one,
-        // and this row auto-closed the Lua Engine window and unticked as if it had worked.
+        // ⛔ THE GAP THIS PINS. The test above gates the success line on `hadError` — but
+        // `hadError` is set only by the shared wait's TIMEOUT/busy paths, and a command that
+        // FAILED does not time out. `Mimic.cpp`'s SetError writes the negative code to `result`
+        // and THEN sets `status = STATUS_DONE`, while `CeLuaHygiene.AppendMailboxWait` polls
+        // `OffStatus` only — so a rejected CMD_TELEPORT satisfies that wait exactly like a
+        // successful one, and without the result read this row would auto-close the Lua Engine
+        // window and untick as if it had worked.
         //
-        // The single-op arm of this same generator has always re-read the result; only
-        // ClearAll did not. Asserting the READ, not the message, because the message was
-        // already correct while the defect was live.
+        // The single-op arm of this same generator re-reads the result too. Asserting the READ,
+        // not the message, because the message can be right while the read is missing.
         var s = TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.ClearAll);
 
         Assert.Contains("local code = readInteger(mb + " + CeMailboxLayout.OffResult + ", true)", s);
@@ -607,7 +602,7 @@ public class CeLuaHygieneTests
             new[] { new BakedParamValue("Amount", "IntProperty", 4, 0, "1000") });
 
         Assert.Contains("local DEBUG = UE5_DEBUG or 0", s);
-        // Silent-on-success close is now gated on DEBUG too -- and on no template warning ([INVOKE-NONSTATIC-ON-CDO]).
+        // Silent-on-success close is gated on DEBUG too -- and on no template warning ([INVOKE-NONSTATIC-ON-CDO]).
         Assert.Contains("if ok and not warn and DEBUG == 0 then", s);
         Assert.Contains(CeLuaHygiene.CloseCall, s);
     }
@@ -670,8 +665,8 @@ public class CeLuaHygieneTests
     }
 
     /// <summary>
-    /// The byte-count identity the defect was reported as. Guards the ARITHMETIC the
-    /// fix rests on, independently of what the checkout happened to produce.
+    /// The byte-count identity: one character fewer per CRLF. Guards the ARITHMETIC the
+    /// normalisation rests on, independently of what the checkout produces.
     /// </summary>
     [Fact]
     public void NormalizeTableFilePayload_LengthDropsByExactlyTheCrlfCount()
@@ -682,7 +677,7 @@ public class CeLuaHygieneTests
     }
 
     // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
-    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    // deferred untick (which runs [DISABLE]) shows no SECOND dialog.
     [Fact]
     public void SeeThrough_Disable_block_never_pops_a_modal()
     {
@@ -692,7 +687,7 @@ public class CeLuaHygieneTests
         Assert.Contains("dbg('[SeeThrough", disable);   // a DEBUG session still sees why it gave up
     }
 
-    // The control: ticking still announces and unticks its bails -- the fix is [DISABLE]-only.
+    // The control: ticking still announces and unticks its bails -- the quiet path is [DISABLE]-only.
     [Fact]
     public void SeeThrough_Enable_block_still_announces_and_unticks_its_bails()
     {

@@ -9,8 +9,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Tests for the Value Search feature (build 733+, port from
-/// discrete Phase 27b shape):
+/// Tests for the Value Search feature:
 ///
 /// - <see cref="DumpService"/>: JSON wire round-trips for the three
 ///   value-scan commands (begin / refine / end). Locks the field name
@@ -306,7 +305,7 @@ public class ValueSearchTests
         Assert.NotNull(captured);
         Assert.True(captured!.ContainsKey("rounding_mode"));
         Assert.Equal("Trunc", captured["rounding_mode"]?.GetValue<string>());
-        // The old tolerance field is gone from the wire entirely.
+        // No tolerance field on the wire at all.
         Assert.False(captured.ContainsKey("tolerance"));
     }
 
@@ -483,7 +482,7 @@ public class ValueSearchTests
     public async Task GroupFirstScan_StoppedByDeadlineOrCap_AdvisesOnlyWhatGroupModeCanReach()
     {
         // [P5-GROUP-ADVICE] A cap stop is not helped by a longer timeout (it re-scans into the same cap) nor by a refine
-        // (it prunes the capped set); raising Max, shown above both modes, is. Measured on DQ7R: a cap stop at 1,849 ms.
+        // (it prunes the capped set); raising Max, shown above both modes, is. A cap stop can come in under two seconds.
         var (vm, fake) = MakeVm();
         fake.NextGroupBeginResult = new GroupScanBeginResult
         {
@@ -515,7 +514,7 @@ public class ValueSearchTests
     [Fact]
     public async Task ClearOnDisconnect_ForgetsBothSessionsClientSide_WithoutAnEndPipeCall()
     {
-        // X5: on disconnect the panel must drop both live scan sessions so a
+        // On disconnect the panel must drop both live scan sessions so a
         // reconnect never acts on the previous game's candidate addresses — but the
         // pipe is gone, so it must NOT send end_value_scan / end_group_scan (the DLL
         // sessions die with the process and self-expire).
@@ -583,7 +582,7 @@ public class ValueSearchTests
     [InlineData(ValueScanType.Unchanged,  false, true)]
     [InlineData(ValueScanType.Increased,  false, true)]
     [InlineData(ValueScanType.Decreased,  false, true)]
-    // Phase 2A: substring predicates are first-scan eligible (used as
+    // Substring predicates are first-scan eligible (used as
     // narrowing predicates on the user's needle, like Exact).
     [InlineData(ValueScanType.Contains,   true,  false)]
     [InlineData(ValueScanType.StartsWith, true,  false)]
@@ -598,7 +597,7 @@ public class ValueSearchTests
     }
 
     // ------------------------------------------------------------------
-    // Phase 2: IsScanTypeValidFor partition (mirror of DLL contract).
+    // IsScanTypeValidFor partition (mirror of DLL contract).
     // String types: substring + Exact + Changed/Unchanged accept;
     //               numeric ordering predicates reject.
     // Vector / numeric types: substring predicates reject; ordering
@@ -731,7 +730,7 @@ public class ValueSearchTests
     }
 
     // ------------------------------------------------------------------
-    // build 794 — multi-numeric (NumericNoByte) meta type
+    // multi-numeric (NumericNoByte) meta type
     // ------------------------------------------------------------------
 
     [Fact]
@@ -856,7 +855,7 @@ public class ValueSearchTests
     }
 
     // ------------------------------------------------------------------
-    // build 796 — multi-numeric with-byte variant (NumericAll) + warning
+    // multi-numeric with-byte variant (NumericAll) + warning
     // ------------------------------------------------------------------
 
     [Fact]
@@ -956,7 +955,7 @@ public class ValueSearchTests
     }
 
     // ------------------------------------------------------------------
-    // Phase 2 wire-shape locks for DumpService
+    // Scan-type wire-shape locks for DumpService
     // ------------------------------------------------------------------
 
     [Fact]
@@ -1259,7 +1258,7 @@ public class ValueSearchTests
         public List<(ulong, int, int, string?, string?, bool)> Queries { get; } = new();
         public List<ulong> Ends { get; } = new();
 
-        // AE8: how many times DiagnosticsProbe reached the pipe. StubDumpService throws
+        // How many times DiagnosticsProbe reached the pipe. StubDumpService throws
         // NotImplementedException here and the probe swallows it, so counting is the only
         // way to see whether the probe was opened at all.
         public int DiagnosticsCalls { get; private set; }
@@ -1409,7 +1408,7 @@ public class ValueSearchTests
     }
 
     // ------------------------------------------------------------------
-    // Multiple values group scan (build 1276)
+    // Multiple values group scan
     // ------------------------------------------------------------------
 
     [Fact]
@@ -1538,7 +1537,7 @@ public class ValueSearchTests
         Assert.Equal(2, values.Count);
         Assert.Equal("24", values[0]!["value"]?.GetValue<string>());
         Assert.Equal("Exact", values[0]!["scan_type"]?.GetValue<string>());
-        Assert.Equal("Increased", values[1]!["scan_type"]?.GetValue<string>());  // per-slot predicate (P2)
+        Assert.Equal("Increased", values[1]!["scan_type"]?.GetValue<string>());  // per-slot predicate
     }
 
     [Fact]
@@ -1619,12 +1618,12 @@ public class ValueSearchTests
         Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));
     }
 
-    // ---- P2: per-slot prev-value/ordered scan types + locked-offset table ----
+    // ---- per-slot prev-value/ordered scan types + locked-offset table ----
 
     [Fact]
     public async Task GroupScanType_TipAndFirstScanRefusal_NameEveryFirstScanType()
     {
-        // [UI-TEXT-AUDIT-2026-11-18] UT-30: Between is offered and accepted on a group First Scan, so the tooltip and the
+        // [UI-TEXT-AUDIT-2026-11-18] Between is offered and accepted on a group First Scan, so the tooltip and the
         // prev-value refusal list it with the other first-scan types.
         var (vm, fake) = MakeVm();
         var firstScanTypes = vm.GroupScanTypeOptions.Where(t => !ValueSearchViewModel.IsPrevValueScanType(t)).ToList();
@@ -1720,8 +1719,8 @@ public class ValueSearchTests
     {
         // The "Matched values" master-row summary must show the ACTUAL current value
         // (LeafValue), not the query target / Between bound — a float that displays as
-        // an integer (513.36) was misleadingly summarized as the searched "513" / the
-        // lower bound "510". Parity with the SPC group display. (build 1678 fix.)
+        // an integer (513.36) must not be summarized as the searched "513" / the lower
+        // bound "510". Parity with the SPC group display.
         var gc = new GroupCandidate
         {
             Slots =
@@ -1742,11 +1741,11 @@ public class ValueSearchTests
     [Fact]
     public void GroupCandidate_SlotSummary_AnnotatesTheFieldsItIsNotShowing()
     {
-        // A row displays ONE assignment out of the many an object may satisfy. On
-        // the DumperTest sample slot 0 kept {Health.CurrentValue, TickCount} and
-        // slot 1 kept 36 leaves including FrozenInt; the row showed the Health pair
-        // and the TickCount/FrozenInt pair was reported as a missed match. The
-        // "(+N)" annotation is what stops a valid row reading as an exhaustive one.
+        // A row displays ONE assignment out of the many an object may satisfy. When
+        // slot 0 keeps {Health.CurrentValue, TickCount} and slot 1 keeps 36 leaves
+        // including FrozenInt, the row shows the Health pair, and without a mark the
+        // TickCount/FrozenInt pair reads as a missed match. The "(+N)" annotation is
+        // what stops a valid row reading as an exhaustive one.
         var gc = new GroupCandidate
         {
             Slots =
@@ -1767,8 +1766,7 @@ public class ValueSearchTests
 
         // The Snapshot / SPC shape: MatchCount stays 0 but MatchedOffsets carries one
         // entry per distinct matching field, so those panels get the SAME annotation.
-        // Fixing this in Value Search alone is what turned the last round into a
-        // second, separate report.
+        // Value Search alone would leave the same gap in those panels.
         var snapshotShape = new GroupCandidate
         {
             Slots = { new GroupSlotMatch { FieldName = "Hp",  LeafValue = "23",
@@ -1795,7 +1793,7 @@ public class ValueSearchTests
         // On the SNAPSHOT path the element's heap address was never captured and
         // `Addr` is the OWNING OBJECT's base. Printing it would name the UObject
         // header as the place the value lives — a plausible, copyable, wrong address.
-        // Say nothing instead. (Before the leaf-address flag existed this rendered
+        // Say nothing instead. (Without the leaf-address flag this would render
         // "→ 0x1F2A3B4C500", which is the defect this test exists to hold shut.)
         var snapshot = new GroupSlotMatch
         {
@@ -1819,9 +1817,9 @@ public class ValueSearchTests
     [Fact]
     public void GroupSlotMatch_DisplayLabel_UnlockedStillNamesTheDisplayedField()
     {
-        // Before: "= unchanged: 36 candidate offset(s)" — a count, no name. The
-        // expanded row was therefore no help at all in finding out that one of
-        // those 36 offsets was FrozenInt.
+        // Not "= unchanged: 36 candidate offset(s)" — a count, no name: such an
+        // expanded row is no help at all in finding out that one of those 36
+        // offsets is FrozenInt.
         var slot = new GroupSlotMatch
         {
             FieldName = "Health.BaseValue", FieldOffset = 0x504, FieldType = "FloatProperty",
@@ -1873,7 +1871,7 @@ public class ValueSearchTests
     public async Task LoadGroupSlotLeaves_SecondPressCollapses_WithoutAnotherRoundTrip()
     {
         // "All fields" is the only control for the list, so it has to close it too:
-        // two open slots run to dozens of rows and there was no way back.
+        // two open slots run to dozens of rows, with no other way back.
         var (vm, fake) = MakeVm();
         vm.GroupSessionId = 7;
         fake.NextSlotLeaves.Add(new GroupSlotMatch { FieldName = "TickCount", LeafValue = "219" });
@@ -1952,7 +1950,7 @@ public class ValueSearchTests
         Assert.False(captured.ContainsKey("limit"));
 
         Assert.Equal(2, leaves.Count);
-        // The leaf a row could never show, now named — this is the whole point.
+        // The leaf a count-only row cannot show, named — this is the whole point.
         Assert.Equal("FrozenInt", leaves[1].FieldName);
         Assert.Equal("424242", leaves[1].LeafValue);
         Assert.Equal(1308, leaves[1].FieldOffset);
@@ -2056,9 +2054,9 @@ public class ValueSearchTests
         Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));
     }
 
-    // ---- P4: cross-object (owned sub-objects) ----
+    // ---- cross-object (owned sub-objects) ----
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-87: the Classes tab logs a load with the Game classes only value the
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The Classes tab logs a load with the Game classes only value the
     /// load was sent with, not one the box was switched to while the load ran (the box stays clickable during a
     /// load).</summary>
     [Theory]
@@ -2093,7 +2091,7 @@ public class ValueSearchTests
         Assert.Contains($"(gameOnly={gameOnly},", line, StringComparison.Ordinal);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-86: a First Scan or Next Scan request is built from the scan type, data
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A First Scan or Next Scan request is built from the scan type, data
     /// type and values its own checks passed, not ones picked while the diagnostics probe opens between those checks
     /// and the send (the pickers and boxes stay editable then).</summary>
     [Theory]
@@ -2151,7 +2149,7 @@ public class ValueSearchTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-77: a Next Scan's status names the scan type the refine was sent with, not
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A Next Scan's status names the scan type the refine was sent with, not
     /// one picked while the refine ran (the Scan Type picker stays enabled during a refine).</summary>
     [Fact]
     public async Task NextScanStatus_NamesTheScanTypeTheRefineWasSent()
@@ -2182,7 +2180,7 @@ public class ValueSearchTests
         Assert.StartsWith($"Next Scan ({ValueScanType.Exact}):", vm.StatusText);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-75: an address Lookup's deep-descent caveat names the per-container element
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] An address Lookup's deep-descent caveat names the per-container element
     /// cap the lookup was sent with, not a cap the Options slider moved to while the lookup ran (the slider stays movable
     /// during a lookup).</summary>
     [Fact]
@@ -2223,7 +2221,7 @@ public class ValueSearchTests
         Assert.Contains($"probes at most {sent:N0} element(s) per container", vm.LookupStatusText);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-74: a capped Property Search's status line takes its [deep] tag and its
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A capped Property Search's status line takes its [deep] tag and its
     /// "Game classes only" advice from the values the search was sent with, not from the two check boxes as they stand
     /// when the search returns (both stay clickable during a search).</summary>
     [Theory]
@@ -2263,7 +2261,7 @@ public class ValueSearchTests
         else Assert.Contains("tick \"Game classes only\"", status);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-67: Instances, Properties and Classes build a capped result's note from the
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] Instances, Properties and Classes build a capped result's note from the
     /// Max the search was sent with, not a value typed into the Max box while the search ran (the box stays editable
     /// during a search).</summary>
     [Theory]
@@ -2315,7 +2313,7 @@ public class ValueSearchTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-66: a First Scan's truncation note, in either mode, names the deadline the
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A First Scan's truncation note, in either mode, names the deadline the
     /// scan was sent with, not a Timeout the slider was moved to while the scan ran (the slider stays movable during a
     /// scan).</summary>
     [Theory]
@@ -2358,7 +2356,7 @@ public class ValueSearchTests
         Assert.Contains($"truncated ({sentSeconds}s deadline / result cap)", vm.StatusText);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-56: a group First Scan's truncation note offers raising the Max that scan was
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A group First Scan's truncation note offers raising the Max that scan was
     /// sent with, not a value typed into the Max box while the scan ran (the box stays editable during a scan).</summary>
     [Fact]
     public async Task GroupTruncationNote_NamesTheMaxTheScanWasSent()
@@ -2396,7 +2394,7 @@ public class ValueSearchTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-42: a group First Scan stopped at its result cap offers raising Max, but
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] A group First Scan stopped at its result cap offers raising Max, but
     /// not once Max is at its box's Maximum, where it cannot go higher.</summary>
     [Fact]
     public async Task GroupTruncationNote_OffersRaiseMax_OnlyBelowTheMaxBoxCeiling()
@@ -2423,7 +2421,7 @@ public class ValueSearchTests
     [Fact]
     public void GroupFirstScan_GameOnlyAndMax_RenderInGroupMode()
     {
-        // [UI-TEXT-AUDIT-2026-11-18] UT-29: a group First Scan sends GameOnly and MaxResults, so neither control may sit
+        // [UI-TEXT-AUDIT-2026-11-18] A group First Scan sends GameOnly and MaxResults, so neither control may sit
         // inside a panel that only one mode shows.
         var doc = System.Xml.Linq.XDocument.Parse(ReadProjectFile(Path.Combine("Views", "ValueSearchPanel.axaml")));
         foreach (var (attr, binding) in new[] { ("IsChecked", "{Binding GameOnly}"), ("Value", "{Binding MaxResultsValue}") })
@@ -2555,15 +2553,15 @@ public class ValueSearchTests
     }
 
     // ---- Locate-in-GWorld handoff: the DLL decides, not the client ----
-    // (Gating the button on a C# flag that read false on TQ2 — proxy mode — silently
-    // disabled it even though GWorld was resolved; the DLL path search is the truth.)
+    // (Gating the button on a C# flag would silently disable it where that flag reads false
+    // — proxy mode, e.g. TQ2 — even though GWorld is resolved; the DLL path search is the truth.)
 
     [Fact]
     public void GroupLocate_InvokesEvenWhenGWorldFlagFalse()
     {
         var (vm, _) = MakeVm();
-        // No engine state set at all — and there is no longer a client-side GWorld
-        // flag to consult, so the handoff cannot be pre-refused (audit #5 AE10).
+        // No engine state set at all — and there is no client-side GWorld flag to
+        // consult, so the handoff cannot be pre-refused.
         string? located = null;
         vm.LocateInGWorld += (addr, _, _) => located = addr;
 
@@ -2850,7 +2848,7 @@ public class ValueSearchTests
     }
 
     /// <summary>
-    /// New Scan must reset the BOUND sort picker, not just the private key — audit #5 AE9.
+    /// New Scan must reset the BOUND sort picker, not just the private key.
     ///
     /// Assigning only the private key left the combo showing "Value" while the next scan ran
     /// in scan order, and re-selecting the option the combo already displays raises no change
@@ -2891,11 +2889,11 @@ public class ValueSearchTests
     }
 
     /// <summary>
-    /// A REJECTED scan click must not open the diagnostics probe — audit #5 AE8.
+    /// A REJECTED scan click must not open the diagnostics probe.
     ///
-    /// The probe sat above four early returns, so every invalid click cost two
-    /// get_diagnostics round-trips AND filed a "Value Scan (First)" measurement whose
-    /// duration was the validation, not a scan. The probe exists to accumulate evidence
+    /// The probe sits below the early returns: above them, every invalid click would cost
+    /// two get_diagnostics round-trips AND file a "Value Scan (First)" measurement whose
+    /// duration is the validation, not a scan. The probe exists to accumulate evidence
     /// about what heavy operations cost; samples from operations that never ran are worse
     /// than no samples.
     /// </summary>
@@ -2935,8 +2933,7 @@ public class ValueSearchTests
     [Fact]
     public async Task GroupNewScan_ResetsTheBoundGroupSortPicker()
     {
-        // The group mode carried the identical defect; the finding named only the single
-        // side, so this pins the twin found by grepping at fix time.
+        // The group mode's twin of the single-mode reset above.
         var (vm, _) = MakeVm();
         vm.SelectedGroupSortOption = vm.GroupSortOptions.First(o => o.Key == "value");
         vm.GroupSortDescending = true;
@@ -2947,7 +2944,7 @@ public class ValueSearchTests
         Assert.False(vm.GroupSortDescending);
     }
 
-    // --- V3-C: server-side window / filter / sort / paging ---
+    // --- server-side window / filter / sort / paging ---
 
     [Fact]
     public async Task QueryCandidatesAsync_BuildsRequest_AndParsesWindow()
@@ -3018,7 +3015,7 @@ public class ValueSearchTests
         Assert.False(captured.ContainsKey("exclude_classes"));
     }
 
-    // --- P2: class-noise filter (server-side histogram + exclude_classes) ---
+    // --- class-noise filter (server-side histogram + exclude_classes) ---
 
     [Fact]
     public async Task QueryCandidatesAsync_AttachesExcludeClasses()
@@ -3329,9 +3326,9 @@ public class ValueSearchTests
     }
 
     // ---- [W2-DEADSCAN-LOADMORE] a First Scan that fails (or is cancelled) has already retired the old session ----
-    // EndSessionIfAnyAsync zeroes the session before the new scan's await, so a failure left the previous rows on screen
-    // with a Load More whose load returned on !HasSession: no rows, no error, no log line. ⛔ The rows stay -- they are
-    // still valid, and blanking a 1,000-row result over a typo or a Cancel is the refuted fix. Only the dead lever goes.
+    // EndSessionIfAnyAsync zeroes the session before the new scan's await, so a failure leaves the previous rows on screen
+    // with a Load More whose load would return on !HasSession: no rows, no error, no log line. ⛔ The rows stay -- they
+    // are still valid, and blanking a 1,000-row result over a typo or a Cancel is wrong. Only the dead lever goes.
 
     [Fact]
     public async Task FirstScan_FailingAfterASession_KeepsTheRows_ButOffersNoDeadLoadMore()
@@ -3343,7 +3340,7 @@ public class ValueSearchTests
 
         await vm.FirstScanCommand.ExecuteAsync(null);
 
-        Assert.False(vm.HasSession);                               // the old session was retired before the scan
+        Assert.False(vm.HasSession);                               // the previous session is retired before the scan
         Assert.Single(vm.Candidates);                              // the rows stay
         Assert.False(vm.HasMore);                                  // ...but no Load More that loads nothing
         Assert.Contains("previous scan", vm.WindowStatus);

@@ -16,15 +16,14 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [CEXML-DEFINITION-VIEW-AS-DATA] A pointer whose target is a TYPE -- a DataTable's RowStruct, every ClassProperty /
 /// TSubclassOf -- walks as a DEFINITION view: <c>Ubel::WalkInstance</c> answers with the type's own member layout and
-/// reads no values, because those offsets describe instances of the type, not the UScriptStruct / UClass object. The
-/// exporters laid that layout out as data under the pointer, so CE read the type object's own memory at the row
-/// offsets (measured on Extinction's DT_LevelSelectData: <c>RowStruct (28) > World (20) > WeakPtr (0)</c> =
-/// <c>0000019F684E02C0</c>, its AssetPath garbage), and Live Walker / Instance Finder stamped addresses on a definition's
-/// rows, so edit, freeze, +CE and Copy CE XML targeted it too.
+/// reads no values, because those offsets describe instances of the type, not the UScriptStruct / UClass object. Laid
+/// out as data under the pointer, that layout would make CE read the type object's own memory at the row offsets (a
+/// DataTable's <c>RowStruct > World > WeakPtr</c> then reads garbage as its AssetPath), and an address stamped on a
+/// definition's rows in Live Walker / Instance Finder would aim edit, freeze, +CE and Copy CE XML at it too.
 ///
 /// <para>Negative controls: drop the IsDefinition check in a resolver and the walk-result facts fail; drop the
 /// metaclass pre-filter and the older-DLL facts fail (an older DLL's lean walk carries no flag); stamp FieldAddress on a
-/// definition view again and the Live Walker / Instance Finder facts fail.</para>
+/// definition view and the Live Walker / Instance Finder facts fail.</para>
 /// </summary>
 public class DefinitionViewExportTests
 {
@@ -297,9 +296,9 @@ public class DefinitionViewExportTests
         Assert.Null(platform.LastClipboard);
     }
 
-    // DEFVIEW-FLAG-STALE-IN-CONTAINER-VIEW (review): the container / DataTable views render without a walk, so nothing
-    // reset the definition flag there. Drill a TArray<TSubclassOf<>>, open an element (a definition), press Back: the
-    // container's rows have real addresses, and every action on them was refused as "a type definition".
+    // The container / DataTable views render without a walk, so no walk resets the definition flag there. Drill a
+    // TArray<TSubclassOf<>>, open an element (a definition), press Back: the container's rows have real addresses, and
+    // a stale flag would refuse every action on them as "a type definition".
     [Fact]
     public async Task LiveWalker_BackFromADefinition_IntoAContainer_ActsOnTheContainersRows()
     {
@@ -361,9 +360,9 @@ public class DefinitionViewExportTests
         => new(dump, new MockLoggingService(), platform ?? new MockPlatformService(Path.GetTempPath()),
                new AobMakerStatus(bridge ?? new ScriptedAobMakerBridge { Available = true }));
 
-    // IF-DEFVIEW-FIELDNAME-AS-ACTION (review): HEX and +CE on a definition row said "⚠ World: nothing done" -- the ROW's
-    // name where the refused action belongs -- because the refusal sat in FieldCeAddress, which knows no action. Each
-    // command now refuses itself, under its button's label; nothing reaches CE.
+    // HEX and +CE on a definition row: each command refuses itself, under its button's label, and nothing reaches CE.
+    // A refusal in FieldCeAddress, which knows no action, would put the ROW's name where the refused action belongs
+    // ("⚠ World: nothing done").
     [Fact]
     public async Task InstanceFinder_ADefinitionRow_RefusesHexAndAddToCe_UnderTheirButtonLabels()
     {
@@ -395,11 +394,10 @@ public class DefinitionViewExportTests
                 : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
     }
 
-    // DEFVIEW-IF-COPYADDR-GUARD-BYPASS (review): Copy Addr refused a definition row only while that definition was still
-    // the selection, and added the offset to the SELECTED instance's address. Pick another instance and, while its walk
-    // is in flight, the grid still shows the definition's rows -- Addr then copied the new instance plus a type-layout
-    // offset. A live instance's rows are the same case the other way round ([R7-S14]): they belong to the instance they
-    // were walked from, so the address is that one's.
+    // Copy Addr acts on the rows shown, not on the selection. Pick another instance and, while its walk is in flight,
+    // the grid still shows the definition's rows: a guard keyed on the selection would let Addr copy the new instance
+    // plus a type-layout offset. A live instance's rows are the same case the other way round ([R7-S14]): they belong
+    // to the instance they were walked from, so the address is that one's.
     [Fact]
     public async Task InstanceFinder_CopyAddr_ActsOnTheRowsShown_NotOnTheNewSelection()
     {
@@ -429,9 +427,9 @@ public class DefinitionViewExportTests
         Assert.Contains("2100", platform.LastClipboard);
     }
 
-    // DEFVIEW-IF-STATUS-STICKY (review): the definition notice stayed on the status line after a live instance's rows
-    // replaced the definition's -- telling the user that rows WITH addresses had none -- and after the selection was
-    // cleared. It leaves with the definition's rows and gives back the line it covered.
+    // The definition notice leaves the status line with the definition's rows -- when a live instance's rows replace
+    // them, and when the selection is cleared -- and gives back the line it covered. Left behind, it would tell the
+    // user that rows WITH addresses have none.
     [Fact]
     public void InstanceFinder_TheDefinitionNotice_LeavesWithTheDefinitionsRows()
     {
@@ -456,9 +454,9 @@ public class DefinitionViewExportTests
         Assert.Equal("Found 2 instances", vm.StatusText);
     }
 
-    // DEFVIEW-REFUSAL-LABELS (review): Live Walker's refusals named most actions with literals that repeated the buttons'
-    // labels by hand, so a relabelled button would refuse under its old name. Every refusal passes a label the button
-    // itself shows (an en.axaml key, or the bound label property). Negative control: pass a literal again.
+    // Live Walker's refusals pass a label the button itself shows (an en.axaml key, or the bound label property), never a
+    // literal repeating it by hand, which a relabelled button would leave refusing under its old name. Negative control:
+    // pass a literal.
     [Fact]
     public void LiveWalker_DefinitionRefusals_NameTheButtonsByTheirOwnLabels()
     {
@@ -467,8 +465,8 @@ public class DefinitionViewExportTests
         Assert.DoesNotMatch(@"RefuseOnDefinitionView\(\s*""", src);
     }
 
-    // DEFVIEW-REFUSAL-AA (review): AA Script was refused on a definition view, but it reads no row: it registers a symbol
-    // at the object's own address -- here the type object, which Instance Finder's AA Script registers as well.
+    // AA Script is not refused on a definition view: it reads no row, it registers a symbol at the object's own address
+    // -- here the type object, which Instance Finder's AA Script registers as well.
     [Fact]
     public async Task LiveWalker_ADefinitionView_StillBuildsTheAaScript()
     {
@@ -482,7 +480,7 @@ public class DefinitionViewExportTests
         Assert.DoesNotContain("type definition", vm.StatusText);
     }
 
-    // DEFVIEW-COPYCEFIELD-IF-HEX-UNTESTED (review), Live Walker's half: Copy CE Field had a refusal and no test.
+    // Live Walker's Copy CE Field refuses a definition row, under its button's label.
     [Fact]
     public async Task LiveWalker_ADefinitionView_RefusesCopyCeField()
     {

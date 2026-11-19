@@ -11,10 +11,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 AE14 — the Class/Struct field grid was rebuilt without detaching the
-/// selection first, the one panel of five missing the line its siblings carry verbatim.
-/// (AE20, filed in the same batch, is covered in ProxyOrphanDeleteRefreshTests, where
-/// the real scan-then-delete harness already lives.)
+/// The Class/Struct field grid detaches its selection before a rebuild, as its sibling
+/// panels do. (Cancelling the destructive orphan delete is covered in
+/// ProxyOrphanDeleteRefreshTests, where the real scan-then-delete harness lives.)
 /// </summary>
 public class AuditL9SelectionAndCancelTests
 {
@@ -33,7 +32,7 @@ public class AuditL9SelectionAndCancelTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // AE14 — Class/Struct was the one panel of five missing the detach
+    // Class/Struct detaches the selection before a rebuild
     // ══════════════════════════════════════════════════════════════════
 
     private sealed class FieldsDump : StubDumpService
@@ -61,9 +60,9 @@ public class AuditL9SelectionAndCancelTests
 
     /// <summary>
     /// Avalonia's DataGrid keeps <c>SelectedItem</c> pointing at a row that is no longer
-    /// in <c>ItemsSource</c>, so the xref context menu and the per-field "Find Funcs"
-    /// column went on acting on a field the grid had stopped showing. Every sibling
-    /// panel detaches first; this one did not.
+    /// in <c>ItemsSource</c>, so without the detach the xref context menu and the
+    /// per-field "Find Funcs" column would go on acting on a field the grid has stopped
+    /// showing. Every sibling panel detaches first too.
     ///
     /// NEGATIVE CONTROL: remove <c>SelectedField = null</c> from
     /// <c>ApplyFieldFilter</c> and this fails — the stale FieldInfoModel survives.
@@ -81,12 +80,11 @@ public class AuditL9SelectionAndCancelTests
     }
 
     /// <summary>A rebuild still detaches every row first, a SURVIVING one included — the
-    /// selection model needs that. What changed, deliberately ([KEYWORD-BOX-VIEW-KEEP], the
-    /// maintainer's call on 2026-09-27): the View is then handed the surviving row to
-    /// re-select. That is safe HERE because selecting a field starts nothing; Instance
-    /// Finder's survivor-preserving version needed a suppression flag (Z7) to stop the
-    /// restore re-issuing a pipe walk, and anything with such a side effect must re-select
-    /// in its view model instead.</summary>
+    /// selection model needs that. Deliberately ([KEYWORD-BOX-VIEW-KEEP]), the View is then
+    /// handed the surviving row to re-select. That is safe HERE because selecting a field
+    /// starts nothing; Instance Finder's survivor-preserving version needs a suppression
+    /// flag to stop the restore re-issuing a pipe walk, and anything with such a side
+    /// effect must re-select in its view model instead.</summary>
     [Fact]
     public async Task AE14_a_rebuild_detaches_a_surviving_row_and_hands_it_to_the_View()
     {

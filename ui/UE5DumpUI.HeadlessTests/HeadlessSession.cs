@@ -22,8 +22,8 @@ public sealed class HeadlessTestApp : Application
     /// [HEADLESS-AVARES-2026-11-11] Avalonia answers "which assembly is avares://UE5DumpUI/..." with the shortest
     /// LOADED module whose file name STARTS with "UE5DumpUI", and keeps that answer for the session. Until UE5DumpUI.dll
     /// is loaded, the module that matches is this test assembly, which has no compiled XAML, so every avares://UE5DumpUI
-    /// load for the rest of the run threw "No precompiled XAML found". Whichever test body reached the dispatcher first
-    /// decided it: one that loads en.axaml before touching any UE5DumpUI type failed the run (build 3705: 49 of 71).
+    /// load for the rest of the run would throw "No precompiled XAML found". Whichever test body reached the dispatcher
+    /// first would decide it: one that loads en.axaml before touching any UE5DumpUI type would fail the run.
     /// So the app's assembly is loaded, and the answer settled and checked, before any test body runs.
     /// </summary>
     private static void BindAppAssembly()

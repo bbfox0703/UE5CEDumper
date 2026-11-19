@@ -170,16 +170,15 @@ public class CoordLibraryNoDllScriptTests
                         CoordLibraryScriptGenerator.NoDllRecordDescription);
     }
 
-    // ── Regressions from the first in-game run (build 2269) ──────
+    // ── What an in-game run of the emitted scripts needs ──────
 
     [Fact]
     public void NoDllScript_SetupMessage_DoesNotBreakItsOwnLuaString()
     {
-        // Shipped broken: the C# source wrote the message inside a Lua SINGLE-quoted
-        // string while the message itself contains apostrophes. C# collapses its own
-        // \' escape to a bare quote, so the emitted Lua was an unterminated string and
-        // the whole script failed to compile in CE ("'end' expected"). The Lua literal
-        // must therefore be DOUBLE-quoted.
+        // The message contains apostrophes. Inside a Lua SINGLE-quoted string written
+        // from C#, C# collapses its own \' escape to a bare quote, so the emitted Lua is
+        // an unterminated string and the whole script fails to compile in CE ("'end'
+        // expected"). The Lua literal must therefore be DOUBLE-quoted.
         var s = NoDll(E("A"));
         Assert.Contains("\"enable 'UE5 Trainer: Setup' first\"", s);
         Assert.DoesNotContain("'enable 'UE5", s);
@@ -219,10 +218,10 @@ public class CoordLibraryNoDllScriptTests
     [Fact]
     public void BothFlavours_UseDifferentFormGlobals()
     {
-        // Shipped broken: both flavours emitted the SAME "UE5CD_form" global, so the
-        // re-open guard made whichever record was enabled SECOND just re-show the
-        // other flavour's window and return -- its own picker was never built. Both
-        // records were pushed in the reported session, so this was reachable.
+        // With the SAME "UE5CD_form" global in both flavours, the re-open guard makes
+        // whichever record is enabled SECOND just re-show the other flavour's window
+        // and return -- its own picker is never built. Both records can sit in one
+        // table, so this is reachable.
         var dllScript = Dll(E("A"));
         var noDllScript = NoDll(E("A"));
 
@@ -238,7 +237,7 @@ public class CoordLibraryNoDllScriptTests
     [InlineData(false)]
     public void BothFlavours_DisableBlockGuardsSyntaxCheck(bool dllFlavour)
     {
-        // The ENABLE block had the guard, DISABLE did not.
+        // The DISABLE block needs the guard as much as ENABLE does.
         var s = dllFlavour ? Dll(E("A")) : NoDll(E("A"));
         int disable = s.IndexOf("[DISABLE]", StringComparison.Ordinal);
         Assert.Contains("if syntaxcheck then return end", s[disable..]);
@@ -285,8 +284,8 @@ public class CoordLibraryNoDllScriptTests
     [Fact]
     public void BothFlavours_RereadTheMapAtTeleportTimeNotAtFormOpen()
     {
-        // The map was captured once when the window opened, so after the game
-        // changed level the guard compared against a map already left. There is no
+        // A map captured once when the window opens is stale after the game changes
+        // level: the guard would compare against a map already left, and there is no
         // UI poll behind the generated picker to fix it up.
         foreach (var s in new[] { Dll(E("A")), NoDll(E("A")) })
         {

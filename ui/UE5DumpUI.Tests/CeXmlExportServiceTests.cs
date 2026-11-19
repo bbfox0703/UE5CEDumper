@@ -944,11 +944,11 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateInstanceXml_ObjectProperty_EmitsLeafWith8BytesNotGroupHeader()
     {
-        // Regression: a single ObjectProperty field used to fall through to
-        // EmitNavigableField -> EmitGroupPlaceholder, producing a useless
-        // <GroupHeader>1</GroupHeader> entry with NO <VariableType> — CE
-        // rendered it as an empty folder. Now it must emit as a proper
-        // 8-byte ShowAsHex leaf so CE can read the pointer value.
+        // A single ObjectProperty field must emit as a proper 8-byte ShowAsHex
+        // leaf so CE can read the pointer value -- not fall through to
+        // EmitNavigableField -> EmitGroupPlaceholder, which produces a useless
+        // <GroupHeader>1</GroupHeader> entry with NO <VariableType> that CE
+        // renders as an empty folder.
         var fields = new[]
         {
             new LiveFieldValue
@@ -1140,8 +1140,7 @@ public class CeXmlExportServiceTests
         // "Next layer only": fabricate the SELECTED top-level array, but NOT arrays reached by
         // drilling THROUGH an object pointer. Otherwise a deep element template (an item's own
         // Mods/Attributes arrays) is fabricated to the target count at every nesting level,
-        // exploding the output (256 items × 256 mods × …). Regression for the in-game 500k-line
-        // Cargo blow-up.
+        // exploding the output (256 items × 256 mods × …).
         const string item0 = "0x1A000", mod0 = "0x1AAA0";
         var mods = new LiveFieldValue
         {
@@ -1233,8 +1232,8 @@ public class CeXmlExportServiceTests
         // Array<ObjectProperty> (e.g. SpawnedAttributes): exporting it with a
         // resolved element pointer must drill that element into a GroupHeader
         // (Offsets=[0] derefs the 8-byte element pointer) + the target's fields —
-        // not a flat 8-byte leaf. Regression for the "Copy CE Field doesn't drill
-        // an object-array element" bug.
+        // not a flat 8-byte leaf, or "Copy CE Field" does not drill an object-array
+        // element.
         const string elem2Ptr = "0x1E727ADC10";
         var field = new LiveFieldValue
         {
@@ -1321,7 +1320,7 @@ public class CeXmlExportServiceTests
     public void GenerateInstanceXml_ObjectProperty_NoMatchingResolvedInstance_FallsBackToFlatLeaf()
     {
         // resolvedInstances has different PtrAddress → no match → should fall
-        // through to the standard 8 Bytes leaf path (after the build 534 fix).
+        // through to the standard 8 Bytes leaf path.
         var fields = new[]
         {
             new LiveFieldValue
@@ -1398,13 +1397,12 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateInstanceXml_DrilledPointer_NestedStructProperty_ExpandsViaResolvedStructsCascade()
     {
-        // Reproduces the build-541 regression: drilling into ScalabilityModifiers
-        // (ObjectProperty -> MapScalabilityModifierComponent) the inner
-        // PrimaryComponentTick (StructProperty) used to render as an empty
-        // GroupHeader placeholder because resolvedStructs was keyed by Offset
-        // and only built for the root instance's struct fields. With the
-        // cascade fix, struct fields inside drilled targets share the same
-        // dict (keyed by StructDataAddr) and expand to real sub-fields.
+        // Drilling into ScalabilityModifiers (ObjectProperty ->
+        // MapScalabilityModifierComponent), the inner PrimaryComponentTick
+        // (StructProperty) must expand to real sub-fields, not an empty
+        // GroupHeader placeholder. Struct fields inside drilled targets share
+        // the root's dict, keyed by StructDataAddr -- a dict keyed by Offset and
+        // built only for the root instance's struct fields would miss them.
         const string ptrAddr = "0x7FF453509278";
         const string structDataAddr = "0x7FF4535092A8"; // PrimaryComponentTick within the target
         var fields = new[]
@@ -1456,8 +1454,8 @@ public class CeXmlExportServiceTests
         // Inner struct group exists (bare field name, no struct-type suffix)
         Assert.Contains("\"PrimaryComponentTick\"", xml);
         Assert.DoesNotContain("PrimaryComponentTick (ActorComponentTickFunction)", xml);
-        // Inner struct's sub-fields rendered as real leaves (regression: would
-        // have been a GroupHeader placeholder without the cascade fix)
+        // Inner struct's sub-fields rendered as real leaves, not a GroupHeader
+        // placeholder (the drilled target shares the root's struct dict)
         Assert.Contains("\"TickGroup\"", xml);
         Assert.Contains("\"TickInterval\"", xml);
         Assert.Contains("<VariableType>Byte</VariableType>", xml);
@@ -1544,7 +1542,7 @@ public class CeXmlExportServiceTests
             {
                 Name = "OptionalRef", TypeName = "ObjectProperty",
                 Offset = 0x80, Size = 8,
-                // No PtrAddress -> IsNavigable = false in the old code path
+                // No PtrAddress -> IsNavigable = false
             },
         };
 
@@ -3210,7 +3208,7 @@ public class CeXmlExportServiceTests
     {
         // Same map but no resolved value struct (depth 0 / walk failed): must not
         // throw and must still emit the map group + element (value as a bare folder),
-        // never the old whole-map placeholder.
+        // never a whole-map placeholder.
         var map = new LiveFieldValue
         {
             Name = "MissionInfoList", TypeName = "MapProperty", Offset = 0x2F8, Size = 0x50,
@@ -3541,7 +3539,7 @@ public class CeXmlExportServiceTests
 
     // ========================================
     // Container View CE XML tests
-    // (simulates the fix: container breadcrumb stripped, ContainerField as leaf)
+    // (as the ViewModel hands them over: the container breadcrumb stripped, the ContainerField as the leaf)
     // ========================================
 
     [Fact]
@@ -3549,7 +3547,7 @@ public class CeXmlExportServiceTests
     {
         // Simulates: GWorld -> OwningGameInstance (+1D8, deref) -> PlayerData (+1C0, deref)
         // ContainerField: AttributeAugmentLevels (MapProperty, offset 0x358)
-        // The container breadcrumb is NOT included (stripped by ViewModel fix).
+        // The container breadcrumb is NOT included (the ViewModel strips it).
         var breadcrumbs = new[]
         {
             MakeBc("0x1DF67CE0150", "GWorld"),
@@ -4400,7 +4398,7 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateAobWrappedXml_TheModuleArgument_IsNeverBaked()
     {
-        // (second review, T-WALKER-PIN-DROPPED) The script scans CE's own name for the main module (`process`: the
+        // The script scans CE's own name for the main module (`process`: the
         // ANSI bytes enumModules compares), so moduleName is deliberately unused -- a baked Unicode name is not what
         // CE knows for a non-ASCII exe ([PATH-CE-MODULE-VIEW]). If a change starts baking it, bake CE's view
         // (EngineState.CeModuleName) as escaped bytes, and replace this sentinel with a test of THAT.
@@ -4662,12 +4660,11 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateInstanceXml_SoftObjectArray_Ue53_LeafAndDropDownShareOneOffset()
     {
-        // ⚠ THE INVARIANT THE A1 FIX BROKE AND THEN RESTORED. The DLL reads the
-        // DropDownList keys (RawIntValue) at SoftArrayPathOffset, and the exporter emits the
-        // FName leaf at the SAME offset. A1's first pass moved the leaf to +8 on UE 5.3+ but
-        // left the key read on a literal +0x10, so every key in the DropDown described a
-        // DIFFERENT field than the leaf it was attached to -- strictly worse than the
-        // original bug, where both were 0x10 and at least agreed.
+        // ⚠ THE INVARIANT: the DLL reads the DropDownList keys (RawIntValue) at
+        // SoftArrayPathOffset, and the exporter emits the FName leaf at the SAME offset. A leaf
+        // moved to +8 on UE 5.3+ with the key read left on a literal +0x10 would make every key
+        // in the DropDown describe a DIFFERENT field than the leaf it is attached to -- worse
+        // than both being wrong at 0x10, where they at least agree.
         var fields = new[]
         {
             new LiveFieldValue
@@ -4758,7 +4755,7 @@ public class CeXmlExportServiceTests
     public void GenerateInstanceXml_SoftObjectArray_NoMetadata_FallsBackTo8ByteHex()
     {
         // Backwards-compat: legacy DLLs that don't emit SoftArrayFNameSize
-        // should still produce an exportable XML — falls through to the old
+        // should still produce an exportable XML — falls through to the
         // single 8B-hex-per-element path via MapInnerTypeToCeField.
         var fields = new[]
         {
@@ -5220,7 +5217,7 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateAobWrappedXml_FlattenChainOff_KeepsNestedChain()
     {
-        // Regression: default flattenChain=false preserves the per-breadcrumb nesting.
+        // The default flattenChain=false preserves the per-breadcrumb nesting.
         var bc = new List<BreadcrumbItem>
         {
             MakeBc("0x1000", "GWorld", isPointer: true),
@@ -5303,12 +5300,11 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateHierarchicalXml_MapValueStructCrumb_ChildOffsetsChainFromValueBase()
     {
-        // SEED repro: ... → MsTunes {Map<FName, LifeMsTuneDataRow>} (deref) →
-        // [0] MSB_STR00 (the map VALUE struct) → its fields. After the off-by-8
-        // fix the value crumb's FieldOffset includes valueOffset(8), so it
-        // resolves to the value base and WeaponTuneList @ +0x18 chains correctly
-        // (previously the value crumb sat at +0 = element base, dragging every
-        // child 8 bytes short → CE dereferenced garbage).
+        // The SEED shape: ... → MsTunes {Map<FName, LifeMsTuneDataRow>} (deref) →
+        // [0] MSB_STR00 (the map VALUE struct) → its fields. The value crumb's
+        // FieldOffset includes valueOffset(8), so it resolves to the value base and
+        // WeaponTuneList @ +0x18 chains correctly (a value crumb at +0 = element
+        // base would drag every child 8 bytes short → CE dereferences garbage).
         var breadcrumbs = new[]
         {
             MakeBc("0x1000", "GWorld"),
@@ -5491,11 +5487,11 @@ public class CeXmlExportServiceTests
         };
     }
 
-    // --- Enum element width follows the real element size (audit #5 W6) ---------
+    // --- Enum element width follows the real element size ---------------------------
     //
     // Element ADDRESSES are laid out with the DLL's element size, so a CE record wider than the
-    // stride makes every element swallow the next ones. The rule was already applied to struct
-    // sub-fields and to map keys/values; TArray and TSet were left out.
+    // stride makes every element swallow the next ones. The same rule holds for struct sub-fields
+    // and map keys/values; these pin it for TArray and TSet.
 
     [Fact]
     public void GenerateInstanceXml_ByteWideEnumArray_EmitsByteRecords()
@@ -5575,18 +5571,18 @@ public class CeXmlExportServiceTests
         Assert.DoesNotContain("<VariableType>4 Bytes</VariableType>", xml);
     }
 
-    // ── audit #5 W5: only a slot that HOLDS a UObject* may be dereferenced ────
+    // ── only a slot that HOLDS a UObject* may be dereferenced ──────────────────
     //
-    // The scalar pointer-drill branch gated on the broad IsObjectPropertyType, so
-    // it emitted GroupHeader + Offsets=[0] for Weak / Soft / Lazy slots too. Those
+    // The scalar pointer-drill branch must not gate on the broad IsObjectPropertyType,
+    // or it emits GroupHeader + Offsets=[0] for Weak / Soft / Lazy slots too. Those
     // are not pointers: FWeakObjectPtr is {int32 ObjectIndex, int32 SerialNumber},
     // FSoftObjectPath is a string-ish struct, FGuid is four ints. The DLL resolves
-    // all of them to a live UObject* and stamps PtrAddress, which is what made the
-    // bug both reachable and invisible — a target WAS resolved, so the branch
-    // fired, but CE then dereferenced an index+serial pair as an address.
+    // all of them to a live UObject* and stamps PtrAddress, which makes the
+    // hazard both reachable and invisible — a target IS resolved, so the branch
+    // fires, but CE then dereferences an index+serial pair as an address.
     //
-    // The array path has had the equivalent distinction (IsRawObjectPtrArrayInner)
-    // with a regression test since it was written; this is the scalar half.
+    // The array path makes the equivalent distinction (IsRawObjectPtrArrayInner);
+    // this is the scalar half.
 
     private static string DrillXmlFor(string typeName)
     {
@@ -5662,7 +5658,7 @@ public class CeXmlExportServiceTests
     {
         // The array element's group, for one field: the weak pair alone is UE4's reset value {INDEX_NONE, 0} or stale
         // for an unloaded asset -- TAssetPtr's usual state; Extinction's PreGameWorld read FFFFFFFF / 0 live -- so the
-        // FString path is the only readable name it has (batch 3's review, ASSETPTR-CEXML-SCALAR-NOPATH). The loaded
+        // FString path is the only readable name it has. The loaded
         // object is still not drilled: the slot holds no address.
         var fields = new[]
         {
@@ -5705,8 +5701,7 @@ public class CeXmlExportServiceTests
     }
 
     // [UE4-ASSETPTR-EXPORTS] A map side, a set element and a struct-array member each have their own emit path, apart
-    // from EmitFields; they get the same group as a single field, since an unloaded asset's weak pair names nothing
-    // (review of the final review's fixes, ASSETPTR-CEXML-CONTAINER-NOPATH).
+    // from EmitFields; they get the same group as a single field, since an unloaded asset's weak pair names nothing.
     private static void AssertAssetPtrGroup(System.Xml.Linq.XElement group)
     {
         Assert.Equal("1", (string?)group.Element("GroupHeader"));

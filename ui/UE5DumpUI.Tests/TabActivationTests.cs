@@ -4,16 +4,16 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Audit #5 AF5 — the tab-activation source guard.
+/// The tab-activation source guard.
 ///
 /// <para>Avalonia's <c>SelectionChanged</c> bubbles. A ComboBox or ListBox
 /// inside the selected tab raises it and it reaches the main TabControl, whose
-/// handler then re-runs the whole per-tab activation routine — cancelling
+/// handler would then re-run the whole per-tab activation routine — cancelling
 /// in-flight work and rebuilding lists — because the user picked an item in the
 /// tab they were already on.</para>
 ///
 /// <para><c>sender</c> cannot tell the two apart: it is the TabControl either
-/// way, which is precisely why the old code could not. <c>e.Source</c> can.</para>
+/// way. <c>e.Source</c> can.</para>
 ///
 /// <para>Pure by construction (both parameters are <c>object?</c>), so this
 /// needs no toolkit — the same shape as <see cref="LiveWalkerNavShortcuts"/>.</para>
@@ -31,7 +31,7 @@ public class TabActivationTests
         Assert.True(TabActivation.ShouldRunActivation(TabControl, TabControl));
     }
 
-    /// <summary>The regression this guard exists for: a ComboBox / ListBox inside
+    /// <summary>The case this guard exists for: a ComboBox / ListBox inside
     /// the current tab bubbling its own SelectionChanged up to the TabControl.</summary>
     [Fact]
     public void EventBubbledFromAChildSelector_IsNotATabSwitch()

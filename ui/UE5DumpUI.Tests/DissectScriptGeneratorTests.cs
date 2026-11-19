@@ -132,9 +132,9 @@ public class DissectScriptGeneratorTests
     [Fact]
     public void A_DLL_injected_after_CE_opened_the_game_is_found_before_any_verdict()
     {
-        // Measured 2026-09-29 on DumperTest: CE opened the game, then the DLL was injected; the pipe answered, and
-        // ticking this record said "UE5Dumper.dll is not loaded". CE lists modules when it opens a process, so the
-        // DLL's exports appear only after the symbol handler is re-enumerated -- which must come before the verdict.
+        // CE opens the game, then the DLL is injected: the pipe answers, yet without a re-enumeration this record
+        // would say "UE5Dumper.dll is not loaded". CE lists modules when it opens a process, so the DLL's exports
+        // appear only after the symbol handler is re-enumerated -- which must come before the verdict.
         var enable = EnableBlock;
         int firstProbe = enable.IndexOf("getAddressSafe('UE5_GetObjectClass')", StringComparison.Ordinal);
         int reinit = enable.IndexOf("reinitializeSymbolhandler()", StringComparison.Ordinal);

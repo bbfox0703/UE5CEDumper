@@ -67,9 +67,9 @@ public class Vnd584InvokeObjectParamTests
     [InlineData("AssetClassProperty", 0x20)]
     public void AfterTheCall_ASoftPointerWithAnUnsetWeakHalf_IsNotCalledNull(string type, int size)
     {
-        // Review R1: a soft / lazy pointer is null only when its PATH / GUID is (TPersistentObjectPtr::IsNull is
+        // A soft / lazy pointer is null only when its PATH / GUID is (TPersistentObjectPtr::IsNull is
         // !ObjectID.IsValid()). A soft reference to an asset not loaded yet -- the usual reason it is soft -- has the
-        // weak half {0, 0} and a valid path. Calling it "null" told the user a valid reference was nothing.
+        // weak half {0, 0} and a valid path. Calling it "null" would tell the user a valid reference was nothing.
         var buf = new byte[size];
         BitConverter.GetBytes(12).CopyTo(buf, 0);
         buf[0x10] = 0x5A;   // a path / GUID byte
@@ -77,7 +77,7 @@ public class Vnd584InvokeObjectParamTests
         Assert.Equal("{index 12, serial 0}", InvokeParamDialog.DecodeParamValue(buf, p));
     }
 
-    // ---- Review R5: the CE paths print the same pair FIRE does, not a pointer ----
+    // ---- the CE paths print the same pair FIRE does, not a pointer ----
 
     [Theory]
     [InlineData("WeakObjectProperty", 8)]
@@ -110,7 +110,7 @@ public class Vnd584InvokeObjectParamTests
         Assert.DoesNotContain("readUFunctionReturn(16, 'qword')", script);
     }
 
-    // ---- Review R6: Lazy says its own reason, and every path refuses a value in it ----
+    // ---- Lazy says its own reason, and every path refuses a value in it ----
 
     [Fact]
     public void Lazy_RefusalSaysWhy()
@@ -140,9 +140,10 @@ public class Vnd584InvokeObjectParamTests
         Assert.Equal("lazy", BakedScriptGenerator.MapToHelperType("LazyObjectProperty"));
     }
 
-    // [ASSETPTR-BAKED-TOKEN] An asset pointer (UE 4.11-4.17) fell to the int32 default: a hand-edited baked value was
-    // written over its weak index. Its path is an FString inside the game that the helper cannot build, so it has its
-    // own token, refused unless it is 0, as FIRE and the CE form already refuse it (ParamBufferBuilder.IsEmptyOnlyParam).
+    // [ASSETPTR-BAKED-TOKEN] An asset pointer (UE 4.11-4.17) must not fall to the int32 default, which writes a
+    // hand-edited baked value over its weak index. Its path is an FString inside the game that the helper cannot build,
+    // so it has its own token, refused unless it is 0, as FIRE and the CE form already refuse it
+    // (ParamBufferBuilder.IsEmptyOnlyParam).
     [Theory]
     [InlineData("AssetObjectProperty")]
     [InlineData("AssetClassProperty")]
@@ -152,7 +153,7 @@ public class Vnd584InvokeObjectParamTests
         Assert.Equal("0", BakedScriptGenerator.RenderLiteral(type, "0"));       // an empty slot renders as 0
     }
 
-    // ---- Review R3: the DLL wiring no test target compiles, pinned by its source order ----
+    // ---- the DLL wiring no test target compiles, pinned by its source order ----
 
     private static string Src(string rel) => File.ReadAllText(NumericInputCoercionTests.RepoFile(rel));
 
