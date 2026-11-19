@@ -122,16 +122,20 @@ public class SnapCopyKeeperTests
     }
 
     /// <summary>The measured case in small: a large struct parameter that does not change between calls. Without
-    /// sharing, 4,000 copies of 400 fields hold about 4,000 x 400 values (over 100 MB); shared, one tree.</summary>
+    /// sharing, 4,000 copies of 400 fields hold about 4,000 x 400 values; shared, every copy is the same tree and the same
+    /// bytes, and the count is one copy's. Checked by identity, not by the heap's size, which tests running beside this
+    /// one move.</summary>
     [Fact]
     public void Four_thousand_copies_of_an_unchanging_400_field_struct_hold_one_tree()
     {
-        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
-        long before = GC.GetTotalMemory(forceFullCollection: true);
         var k = new SnapCopyKeeper(long.MaxValue);
-        for (ulong s = 1; s <= 4000; s++) k.Add(Slot(s, new[] { Leaf("0.016"), Struct(400) }, len: 1984));
-        long held = GC.GetTotalMemory(forceFullCollection: true) - before;
-        GC.KeepAlive(k);
-        Assert.True(held < 16L << 20, $"4,000 copies hold {held >> 20} MB");
+        k.Add(Slot(1, new[] { Leaf("0.016"), Struct(400) }, len: 1984));
+        long one = k.DecodedBytes, raw = k.RawBytes;
+        for (ulong s = 2; s <= 4000; s++) k.Add(Slot(s, new[] { Leaf("0.016"), Struct(400) }, len: 1984));
+        var first = k.Slots[0];
+        Assert.All(k.Slots, s => Assert.Same(first.Values, s.Values));
+        Assert.All(k.Slots, s => Assert.Same(first.Data, s.Data));
+        Assert.Equal(one, k.DecodedBytes);
+        Assert.Equal(raw, k.RawBytes);
     }
 }
