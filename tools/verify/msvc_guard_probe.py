@@ -8,6 +8,7 @@ The acceptance test of the MSVC toolchain guards [MSVC-GUARD-2026-11-19].
     py tools/verify/msvc_guard_probe.py cxx-env       --cxx <non-MSVC C++ compiler>
     py tools/verify/msvc_guard_probe.py platform-env  [--platform x86]
     py tools/verify/msvc_guard_probe.py inherited-stripped --path "<dir>;<dir>"
+    py tools/verify/msvc_guard_probe.py inherited-stale-toolset [--fake-version 14.10.00000]
     py tools/verify/msvc_guard_probe.py aot-link      --prepend "<dir>;<dir>" [--direct]
 
 The foreign toolchain is always an argument: CI has no second toolchain, and a gate must not reach outside the repo.
@@ -27,13 +28,17 @@ stale-cache    plant build_asan/CMakeCache.txt naming that compiler, as a tree c
                UNINITIALIZED for one given with -D.
 cxx-env        remove build_asan/, then run `build.ps1 -Target AsanConfigure` with CXX / CC naming that compiler, which
                CMake takes before any PATH search. PASS: exit 0, and the new cache names MSVC's cl.exe.
-platform-env   run `build.ps1 -Target AsanConfigure` with Platform set, as every vcvarsall prompt sets it (x86 and arm64
-               ones go through the fresh DevShell path). PASS: exit 0 and the log says Platform was cleared -- MSBuild
-               would read it as a property and move the C# outputs to bin\\<platform>\\.
+platform-env   run `build.ps1 -Target AsanConfigure` with only Platform added to the environment, the variable every
+               vcvarsall prompt sets. PASS: exit 0 and the log says Platform was cleared. The scenario runs no dotnet,
+               so it shows the clear happens, not what MSBuild then receives.
 inherited-stripped  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment whose PATH
                was replaced by the given folders, as MSYS2's minimal PATH does: VSCMD_ARG_TGT_ARCH says x64, but no
                MSVC tool is on PATH. Include folders for Python, git and dotnet: build.ps1 checks for them first.
-               PASS: exit 0, and the new cache names MSVC's cl.exe.
+               PASS: exit 0, and the new cache names MSVC's cl.exe and link.exe.
+inherited-stale-toolset  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment in
+               which the toolset version is replaced by one that is not installed, everywhere it appears: a prompt
+               left open across a Visual Studio update that removed its toolset. PASS: exit 0, and the new cache names
+               the installed MSVC's cl.exe and link.exe.
 aot-link       run `build.ps1 -Mode Publish` in the inherited environment above. PASS: exit 0, and dist/UE5DumpUI.exe
                was written by this run and is the Native AOT size, not the ~107 MB self-contained one.
                --direct instead runs the `dotnet publish` build.ps1 runs, into out/, without build.ps1: what
@@ -199,6 +204,17 @@ def scenario_inherited_stripped(a) -> bool:
     return judge_cache(ASAN_DIR, want_linker=True) and rc == 0
 
 
+def scenario_inherited_stale_toolset(a) -> bool:
+    env = msvc_env(vcvars_path(a.vcvars))
+    real = env.get("VCTOOLSVERSION", "")
+    if not real or real == a.fake_version:
+        sys.exit("vcvars64 named no toolset version to replace")
+    env = {k: v.replace(real, a.fake_version) for k, v in env.items()}
+    shutil.rmtree(ASAN_DIR, ignore_errors=True)
+    rc = build_ps1(["-Target", "AsanConfigure"], env, "inherited_stale_toolset.log")
+    return judge_cache(ASAN_DIR, want_linker=True) and rc == 0
+
+
 def scenario_cxx_env(a) -> bool:
     env = plain_env()
     env["CXX"] = a.cxx
@@ -225,7 +241,8 @@ def scenario_aot_link(a) -> bool:
 
 SCENARIOS = {"cmake-guard": scenario_cmake_guard, "inherited-env": scenario_inherited_env,
              "stale-cache": scenario_stale_cache, "cxx-env": scenario_cxx_env, "platform-env": scenario_platform_env,
-             "inherited-stripped": scenario_inherited_stripped, "aot-link": scenario_aot_link}
+             "inherited-stripped": scenario_inherited_stripped,
+             "inherited-stale-toolset": scenario_inherited_stale_toolset, "aot-link": scenario_aot_link}
 
 
 def main() -> int:
@@ -238,6 +255,8 @@ def main() -> int:
                     help="stale-cache: the type of the planted compiler entries")
     ap.add_argument("--platform", default="x86", help="platform-env: the Platform value a vcvarsall prompt sets")
     ap.add_argument("--path", help="inherited-stripped: the whole PATH, ';'-separated")
+    ap.add_argument("--fake-version", default="14.10.00000",
+                    help="inherited-stale-toolset: the toolset version written in place of the installed one")
     ap.add_argument("--vcvars", help="vcvars64.bat to use (default: the newest VS with the C++ x64 tools)")
     a = ap.parse_args()
     if a.scenario in ("cmake-guard", "stale-cache", "cxx-env") and not (a.cxx and os.path.exists(a.cxx)):
