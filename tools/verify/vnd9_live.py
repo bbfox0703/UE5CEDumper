@@ -30,7 +30,7 @@ WHAT IT CHECKS, and the evidence each check needs:
       reads "RowStrAlpha", not "(str)". `Note` (an FText) is the control.
   P6  [VND9-04] DumperTest only, a NO-REGRESSION check: an FString value search still finds a direct field
       (`Str_Even2_OneNull`, CJK text; `PayloadString` is empty at rest), an array element (`Arr_Str[1]`) and a struct-array member (`Arr_StrRows[0].Text`), and a
-      next scan keeps each. These are the four string readers the fix rerouted through the type's own width; no
+      next scan keeps each. These are the four string readers that read through the type's own width; no
       fixture holds a UE 5.5 narrow string, so the narrow arm is unit-tested only.
 
 Exit 0 = every check that applies passed; 1 = a failure; 2 = the fixture is not in the state the checks need.

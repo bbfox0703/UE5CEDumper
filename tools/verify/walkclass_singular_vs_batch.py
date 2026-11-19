@@ -3,8 +3,8 @@
     py tools/verify/walkclass_singular_vs_batch.py              # 300 classes, singular before and after the batch
     py tools/verify/walkclass_singular_vs_batch.py --sample 1000
 
-Headless, through the pipe (the UI must NOT be connected). [LEAD-WALKCLASS-SINGULAR-ZERO]: on a UE 4.23 fixture a
-singular walk_class was once seen returning 0 fields for a class walk_class_batch walked to 76. Both handlers call
+Headless, through the pipe (the UI must NOT be connected). The lead, [LEAD-WALKCLASS-SINGULAR-ZERO]: a singular
+walk_class returning 0 fields on a UE 4.23 fixture for a class walk_class_batch walks to 76. Both handlers call
 the same Ubel::WalkClassEx, so a real difference would have to come from the call or from time: each class is walked
 singly FIRST (before anything else has walked it), then in batches, then singly again, and every count is compared.
 

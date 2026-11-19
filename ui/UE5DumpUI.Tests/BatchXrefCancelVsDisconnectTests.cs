@@ -253,9 +253,9 @@ public class BatchXrefCancelVsDisconnectTests
     /// <summary>
     /// Two of the DLL's four method tags mean nothing was analysed: "none" (the Func offset is
     /// unresolved on this build) and "blueprint_no_script" (refused: disassembling would read the shared
-    /// interpreter). The batch read Props and BudgetHit and never Method, so both wrote a bare "0" --
+    /// interpreter). A batch that reads Props and BudgetHit and never Method writes a bare "0" for both --
     /// "analysed, touches no class fields", the conclusion the user acts on. The single-function dialog
-    /// already says "NOTHING was analysed".
+    /// says "NOTHING was analysed", and the batch row must say no less.
     /// </summary>
     [Theory]
     [InlineData("none")]

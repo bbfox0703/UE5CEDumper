@@ -56,7 +56,7 @@ public class LiveFuncsClearChoicesTests
         Assert.True(box.Bottom <= gridTop, $"Clear choices is not above the table ({layout})");
     });
 
-    /// <summary>The line the button shares was there before it: taking the button out moves the table up by less than
+    /// <summary>The button shares a line that stands without it: taking the button out moves the table up by less than
     /// the button's height, where a line of its own would move it by at least that. Folded and unfolded alike.</summary>
     [Theory]
     [InlineData(false)]

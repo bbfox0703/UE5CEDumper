@@ -377,7 +377,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("CurrentValue", xml);
         Assert.DoesNotContain("#1", xml);
         Assert.DoesNotContain("#2", xml);
-        // Struct group description is now the bare field name (no struct-type suffix)
+        // Struct group description is the bare field name (no struct-type suffix)
         Assert.Contains("\"Attributes\"", xml);
         Assert.DoesNotContain("Attributes (FGameplayAttributeData)", xml);
         // Scalar field still works
@@ -797,9 +797,9 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateInstanceXml_FlattenLeafStructs_DoesNotFlattenRecordWithNameString()
     {
-        // REGRESSION: the OLD primitive-leaf toggle must NOT flatten a record carrying FName /
-        // FString fields — only the new leaf-records toggle widens the gate. Guards that the
-        // IsPrimitiveLeafField predicate stayed narrow.
+        // REGRESSION: the primitive-leaf toggle must NOT flatten a record carrying FName /
+        // FString fields — only the leaf-records toggle widens the gate. Guards that the
+        // IsPrimitiveLeafField predicate stays narrow.
         var sep = "▸";
         var (fields, structs) = BuildRecordStruct();
 
@@ -1068,7 +1068,7 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
             resolvedInstances: resolvedInstances);
 
-        // Locate the ScalabilityModifiers entry block (description is now the bare name)
+        // Locate the ScalabilityModifiers entry block (description is the bare name)
         var scStart = xml.IndexOf("\"ScalabilityModifiers\"",
             StringComparison.Ordinal);
         Assert.True(scStart >= 0, "Drilled ScalabilityModifiers entry missing");
@@ -1126,7 +1126,7 @@ public class CeXmlExportServiceTests
         // Extended past Num=2: element [4] exists at +20 (4 * 8).
         Assert.Contains("\"[4]\"", xml);
         Assert.Contains("<Address>+20</Address>", xml);
-        // Null slot [1] is no longer a flat 8-byte leaf — it got the template group.
+        // Null slot [1] is not a flat 8-byte leaf — it gets the template group.
         Assert.Contains("\"[1]\"", xml);
         // Every slot (real [0] + fabricated [1..4]) carries the template's fields → 5 each.
         int itemLevel = System.Text.RegularExpressions.Regex.Matches(xml, "\"ItemLevel\"").Count;
@@ -1261,7 +1261,7 @@ public class CeXmlExportServiceTests
             new[] { field }, resolvedInstances: resolvedInstances);
 
         // Element [2] must drill: GroupHeader + Address=+10 (index 2 * 8) + Offsets=[0].
-        // Description is now the bare index "[2]" (instance name AND class dropped).
+        // Description is the bare index "[2]" (no instance name or class).
         var elemStart = xml.IndexOf("\"[2]\"", StringComparison.Ordinal);
         Assert.True(elemStart >= 0, "Element [2] entry missing");
         var headerEnd = xml.IndexOf("<CheatEntries>", elemStart, StringComparison.Ordinal);
@@ -1270,7 +1270,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("<GroupHeader>1</GroupHeader>", headerBlock);
         Assert.Contains("<Address>+10</Address>", headerBlock);
         Assert.Contains("<Offset>0</Offset>", headerBlock);
-        // The instance name and class are no longer baked into the description.
+        // The instance name and class are not baked into the description.
         Assert.DoesNotContain("[2] CharacterAttributeSet", xml);
         // The target's child field appears at its natural offset within the element.
         Assert.Contains("\"HealthPoint\"", xml);
@@ -1448,7 +1448,7 @@ public class CeXmlExportServiceTests
             resolvedStructs: resolvedStructs,
             resolvedInstances: resolvedInstances);
 
-        // Drilled pointer group exists (description is now the bare field name)
+        // Drilled pointer group exists (description is the bare field name)
         Assert.Contains("\"ScalabilityModifiers\"", xml);
         Assert.DoesNotContain("ScalabilityModifiers (MapScalabilityModifierComponent)", xml);
         // Inner struct group exists (bare field name, no struct-type suffix)
@@ -1521,7 +1521,7 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
             resolvedStructs: resolvedStructs);
 
-        // Struct group description is now the bare field name (no struct-type suffix)
+        // Struct group description is the bare field name (no struct-type suffix)
         Assert.Contains("\"CellBounds\"", xml);
         Assert.DoesNotContain("CellBounds (Box)", xml);
         Assert.Contains("\"Min.X\"", xml);
@@ -1594,7 +1594,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("<Offset>0</Offset>", xml);
         // Struct Stats: Address=+20 (inline, no additional dereference)
         Assert.Contains("<Address>+20</Address>", xml);
-        // Struct group description is now the bare field name (no struct-type suffix)
+        // Struct group description is the bare field name (no struct-type suffix)
         Assert.Contains("\"Stats\"", xml);
         Assert.DoesNotContain("Stats (FStats)", xml);
         // Struct children: HP at +0, MP at +4 (relative to struct start)
@@ -1627,7 +1627,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Group header description is now the bare field name (no array descriptor)
+        // Group header description is the bare field name (no array descriptor)
         Assert.Contains("\"DamageMultipliers\"", xml);
         Assert.DoesNotContain("[3 x FloatProperty", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
@@ -1721,7 +1721,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Placeholder description is now the bare field name (no array descriptor)
+        // Placeholder description is the bare field name (no array descriptor)
         Assert.Contains("\"Levels\"", xml);
         Assert.DoesNotContain("[5 x ObjectProperty", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
@@ -1758,7 +1758,7 @@ public class CeXmlExportServiceTests
         // Breadcrumb m_pChild: Address=+100, Offsets=[0] (pointer dereference)
         Assert.Contains("<Address>+100</Address>", xml);
         // Array group Scores: Address=+30, Offsets=[0] (TArray.Data dereference)
-        // Description is now the bare field name (no array descriptor)
+        // Description is the bare field name (no array descriptor)
         Assert.Contains("\"Scores\"", xml);
         Assert.DoesNotContain("[2 x IntProperty", xml);
         Assert.Contains("<Address>+30</Address>", xml);
@@ -1794,7 +1794,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Header description is now the bare field name (full count no longer baked in)
+        // Header description is the bare field name (no full count baked in)
         Assert.Contains("\"BigArray\"", xml);
         Assert.DoesNotContain("[100 x FloatProperty", xml);
         // Only 3 element entries (capped by inline data)
@@ -1832,7 +1832,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Group header description is now the bare field name (no array descriptor)
+        // Group header description is the bare field name (no array descriptor)
         Assert.Contains("\"Levels\"", xml);
         Assert.DoesNotContain("[3 x ObjectProperty", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
@@ -1870,7 +1870,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Placeholder description is now the bare field name (no array descriptor)
+        // Placeholder description is the bare field name (no array descriptor)
         Assert.Contains("\"BigPtrArr\"", xml);
         Assert.DoesNotContain("[200 x ObjectProperty", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
@@ -1911,7 +1911,7 @@ public class CeXmlExportServiceTests
 
         // Breadcrumb m_pChild: pointer dereference
         Assert.Contains("<Address>+100</Address>", xml);
-        // Array group description is now the bare field name (no array descriptor)
+        // Array group description is the bare field name (no array descriptor)
         Assert.Contains("\"Components\"", xml);
         Assert.DoesNotContain("[2 x ObjectProperty", xml);
         Assert.Contains("<Address>+50</Address>", xml);
@@ -1946,14 +1946,14 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Group header description is now the bare field name (no array descriptor)
+        // Group header description is the bare field name (no array descriptor)
         Assert.Contains("\"WeakRefs\"", xml);
         Assert.DoesNotContain("[2 x WeakObjectProperty", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
         // Array group: Address=+90, Offsets=[0] (deref TArray.Data)
         Assert.Contains("<Address>+90</Address>", xml);
         Assert.Contains("<Offset>0</Offset>", xml);
-        // Elements: bare index only (resolved name dropped)
+        // Elements: bare index only (no resolved name)
         Assert.Contains("\"[0]\"", xml);
         Assert.Contains("\"[1]\"", xml); // stale, no name
         Assert.DoesNotContain("[0] PlayerChar", xml);
@@ -2004,7 +2004,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Array group header description is now the bare field name (no array descriptor)
+        // Array group header description is the bare field name (no array descriptor)
         Assert.Contains("\"Positions\"", xml);
         Assert.DoesNotContain("[2 x Vector", xml);
         Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
@@ -2033,7 +2033,7 @@ public class CeXmlExportServiceTests
     // ========================================
     //
     // A TArray element, a TMap key or value, or a struct-array element's member of the FString family
-    // was DROPPED -- an empty element folder or a placeholder -- while the same type exports as a working
+    // must not be DROPPED -- an empty element folder or a placeholder -- while the same type exports as a working
     // CE String everywhere else. They must take the CE String encoding (Length / Unicode / CodePage /
     // ZeroTerminate, one Data-pointer hop), never EmitLeaf, which cannot write those.
 
@@ -2456,10 +2456,10 @@ public class CeXmlExportServiceTests
         Assert.Contains("0:EShip::Scout", xml);
         Assert.Contains("1:EShip::SpecOps", xml);
         Assert.Contains("2:EShip::Gunship", xml);
-        // Parent description is now the bare field name (no array descriptor)
+        // Parent description is the bare field name (no array descriptor)
         Assert.Contains("\"ShipTypes\"", xml);
         Assert.DoesNotContain("[3 x ByteProperty", xml);
-        // Link key equals the (now bare) parent Description
+        // Link key equals the (bare) parent Description
         Assert.Contains("<DropDownListLink>ShipTypes</DropDownListLink>", xml);
         // Child descriptions are simplified to [N] only (no enum names)
         Assert.Contains("\"[0]\"", xml);
@@ -2517,7 +2517,7 @@ public class CeXmlExportServiceTests
         int listCount = CountOccurrences(xml, "<DropDownList ");
         Assert.Equal(1, listCount);
         // Second array's parent uses DropDownListLink to first array's parent Description
-        // (now the bare field name).
+        // (the bare field name).
         var firstParentDesc = "StarterShips";
         Assert.DoesNotContain("StarterShips [2 x ByteProperty", xml);
         Assert.Contains($"<DropDownListLink>{firstParentDesc}</DropDownListLink>", xml);
@@ -2553,11 +2553,11 @@ public class CeXmlExportServiceTests
         Assert.Contains("4660:S01L04", xml);   // 0x1234 = 4660 decimal
         Assert.Contains("22136:S01L08", xml);   // 0x5678 = 22136 decimal
         Assert.Contains("39612:S02L01", xml);   // 0x9ABC = 39612 decimal
-        // Parent description is now the bare field name (no array descriptor)
+        // Parent description is the bare field name (no array descriptor)
         var parentDesc = "Locations";
         Assert.Contains("\"Locations\"", xml);
         Assert.DoesNotContain("Locations [3 x NameProperty", xml);
-        // Link key equals the (now bare) parent Description
+        // Link key equals the (bare) parent Description
         Assert.Contains($"<DropDownListLink>{parentDesc}</DropDownListLink>", xml);
         // Child descriptions are simplified to [N] only (no name values)
         Assert.Contains("\"[0]\"", xml);
@@ -2602,7 +2602,7 @@ public class CeXmlExportServiceTests
         // Exactly 2 DropDownList entries (each NameProperty array gets its own, no sharing)
         int listCount = CountOccurrences(xml, "<DropDownList ");
         Assert.Equal(2, listCount);
-        // Descriptions are now the bare field name; the array descriptor is gone.
+        // Descriptions are the bare field name, with no array descriptor.
         Assert.DoesNotContain("Tags [2 x NameProperty", xml);
         // First array: bare name; second array: suffixed for uniqueness (collision)
         Assert.Contains("\"Tags\"", xml);
@@ -2651,12 +2651,12 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedStructs);
 
-        // Struct group exists; description is now the bare field name (no struct type)
+        // Struct group exists; description is the bare field name (no struct type)
         Assert.Contains("\"JobScore\"", xml);
         Assert.DoesNotContain("JobScore (FJobScore)", xml);
         Assert.Contains("CurrentRank", xml);
         // Array inside struct should be fully expanded (NOT a placeholder); the
-        // description is now the bare field name (no array descriptor).
+        // description is the bare field name (no array descriptor).
         Assert.Contains("\"ClaimedRewards\"", xml);
         Assert.DoesNotContain("[3 x IntProperty", xml);
         // Array elements should be present
@@ -2704,7 +2704,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedStructs);
 
-        // Struct group exists; description is now the bare field name (no struct type)
+        // Struct group exists; description is the bare field name (no struct type)
         Assert.Contains("\"Settings\"", xml);
         Assert.DoesNotContain("Settings (FSettings)", xml);
         // Array should have DropDownList from element enum names (fallback)
@@ -2898,7 +2898,7 @@ public class CeXmlExportServiceTests
 
         // Root group + array group + 3 element leaves = 5 CheatEntry nodes
         Assert.Equal(5, CountOccurrences(xml, "<CheatEntry>"));
-        // Array group description is now the bare field name (no array descriptor)
+        // Array group description is the bare field name (no array descriptor)
         Assert.Contains("\"Scores\"", xml);
         Assert.DoesNotContain("[3 x IntProperty", xml);
         Assert.Contains("\"[0]\"", xml);
@@ -2980,7 +2980,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Map group description is now the bare field name (no map descriptor)
+        // Map group description is the bare field name (no map descriptor)
         Assert.Contains("\"ScoreMap\"", xml);
         Assert.DoesNotContain("{Map: 2", xml);
         // Map group should have Offsets=[0] for TSparseArray.Data deref
@@ -3030,7 +3030,7 @@ public class CeXmlExportServiceTests
     [Fact]
     public void GenerateInstanceXml_NonScalarMapKey_StillExpandsScalarValue()
     {
-        // Map<Struct, Int>: a non-scalar KEY no longer collapses the whole map to a
+        // Map<Struct, Int>: a non-scalar KEY does not collapse the whole map to a
         // placeholder (docs/ce-export-drilldown-spec.md). The map derefs its Data and
         // the scalar VALUE expands; the struct key just isn't emitted as a Key leaf.
         var fields = new[]
@@ -3097,7 +3097,7 @@ public class CeXmlExportServiceTests
     {
         // Map<Name, Struct> (the MissionInfoList shape): when the value struct is
         // resolved, each element's value expands to the struct's fields — the core
-        // of the drilldown contract (was a placeholder before).
+        // of the drilldown contract (not a placeholder).
         var map = new LiveFieldValue
         {
             Name = "MissionInfoList", TypeName = "MapProperty", Offset = 0x2F8, Size = 0x50,
@@ -3124,7 +3124,7 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "Obj", "Cls",
             new List<LiveFieldValue> { map }, resolvedStructs);
 
-        // Map group description is now the bare field name (no map descriptor)
+        // Map group description is the bare field name (no map descriptor)
         Assert.Contains("\"MissionInfoList\"", xml);
         Assert.DoesNotContain("{Map: 1", xml);
         Assert.Contains("[0] mc1om_001", xml);   // scalar/string key kept
@@ -3678,7 +3678,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Set group description is now the bare field name (no set descriptor)
+        // Set group description is the bare field name (no set descriptor)
         Assert.Contains("\"TagSet\"", xml);
         Assert.DoesNotContain("{Set: 3", xml);
         // Set group should have Offsets=[0] for TSparseArray.Data deref
@@ -3761,7 +3761,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("<Address>+1C0</Address>", xml);
 
         // Map group: offset 0x358 with Offsets=[0] for TSparseArray.Data deref.
-        // Description is now the bare field name (no map descriptor).
+        // Description is the bare field name (no map descriptor).
         Assert.Contains("\"AttributeAugmentLevels\"", xml);
         Assert.DoesNotContain("{Map: 6", xml);
         Assert.Contains("<Address>+358</Address>", xml);
@@ -3820,7 +3820,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"game.exe\"+1000", "GWorld", breadcrumbs, fields);
 
-        // Array group at +468 with Offsets=[0]. Description is now the bare field name.
+        // Array group at +468 with Offsets=[0]. Description is the bare field name.
         Assert.Contains("\"Ships\"", xml);
         Assert.DoesNotContain("[2 x ShipData", xml);
         Assert.Contains("<Address>+468</Address>", xml);
@@ -3840,11 +3840,11 @@ public class CeXmlExportServiceTests
     [Fact]
     public void StructArray_EnumSubField_UsesRealByteWidth_NonScalarSurfaced_ElementCollapses()
     {
-        // Mirrors the SEED SaveSlotList[1] bug report: a struct array element
-        // under a pointer chain with (a) a 1-byte EnumProperty sub-field that was
-        // wrongly emitted as "4 Bytes" (CE then read the next field's bytes →
-        // 5376 instead of 0), (b) a non-scalar StructProperty sub-field that was
-        // silently dropped, and (c) an element folder [1] that did not collapse.
+        // The SEED SaveSlotList[1] shape: a struct array element under a pointer
+        // chain with (a) a 1-byte EnumProperty sub-field that must keep its real
+        // width, not "4 Bytes" (CE would read the next field's bytes → 5376
+        // instead of 0), (b) a non-scalar StructProperty sub-field that must be
+        // surfaced, not silently dropped, and (c) an element folder [1] that collapses.
         var breadcrumbs = new[]
         {
             MakeBc("0x1000", "GWorld"),
@@ -3948,7 +3948,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"game.exe\"+1000", "Root", breadcrumbs, fields);
 
-        // Map group description is now the bare field name (no map descriptor)
+        // Map group description is the bare field name (no map descriptor)
         Assert.Contains("\"Scores\"", xml);
         Assert.DoesNotContain("{Map: 10", xml);
         // But only 1 element is emitted (scalar/string key kept)
@@ -3992,7 +3992,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("\"Player\"", xml);
         Assert.Contains("<Address>+50</Address>", xml);
 
-        // Set group at +200 with Offsets=[0]. Description is now the bare field name.
+        // Set group at +200 with Offsets=[0]. Description is the bare field name.
         Assert.Contains("\"ActiveTags\"", xml);
         Assert.DoesNotContain("{Set: 2", xml);
         Assert.Contains("<Address>+200</Address>", xml);
@@ -4030,7 +4030,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"game.exe\"+1000", "MyLevel", "ULevel", fields);
 
-        // Array group description is now the bare field name (no array descriptor)
+        // Array group description is the bare field name (no array descriptor)
         Assert.Contains("\"StreamingTextureGuids\"", xml);
         Assert.DoesNotContain("[3 x Guid", xml);
         // CRITICAL: Must have Offsets=[0] to dereference TArray.Data pointer
@@ -4076,7 +4076,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("\"PersistentLevel\"", xml);
         Assert.Contains("<Address>+30</Address>", xml);
 
-        // Array group with Offsets=[0]. Description is now the bare field name.
+        // Array group with Offsets=[0]. Description is the bare field name.
         Assert.Contains("\"StreamingTextureGuids\"", xml);
         Assert.DoesNotContain("[78 x Guid", xml);
         Assert.Contains("<Address>+130</Address>", xml);
@@ -4106,7 +4106,7 @@ public class CeXmlExportServiceTests
             "\"game.exe\"+1000", "MyObj", "UMyClass", fields);
 
         // Should still emit with Offsets=[0] (not a placeholder without deref).
-        // Description is now the bare field name (no array descriptor).
+        // Description is the bare field name (no array descriptor).
         Assert.Contains("\"LargeStructArr\"", xml);
         Assert.DoesNotContain("[1000 x FData", xml);
         Assert.Contains("<Offset>0</Offset>", xml);
@@ -4274,7 +4274,7 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "DT_Recipes", "UDataTable", fields);
 
         // Level 1: RowMap group at +B0 with Offsets=[0] (deref TSparseArray.Data).
-        // Description is now the bare field name (no DataTable descriptor).
+        // Description is the bare field name (no DataTable descriptor).
         Assert.Contains("<Address>+B0</Address>", xml);
         Assert.Contains("<Offset>0</Offset>", xml);
         Assert.Contains("\"RowMap\"", xml);
@@ -4765,7 +4765,7 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
         // Outer array group header (Address=+100, Offsets=[0] derefs TArray.Data).
-        // Description is now the bare field name (no array descriptor).
+        // Description is the bare field name (no array descriptor).
         Assert.Contains("\"AssetRefs\"", xml);
         Assert.DoesNotContain("[2 x SoftObjectProperty", xml);
         Assert.Contains("<Address>+100</Address>", xml);
@@ -4823,7 +4823,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"Assets\"", xml);
         Assert.DoesNotContain("[1 x SoftObjectProperty", xml);
         Assert.Contains("[0] /Game/Boss.BossActor", xml);   // asset path kept
@@ -4922,7 +4922,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"ClassRefs\"", xml);
         Assert.DoesNotContain("[1 x SoftClassProperty", xml);
         // Soft-class element keeps its asset path (an asset identity, not an instance name)
@@ -4955,7 +4955,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"Legacy\"", xml);
         Assert.DoesNotContain("[1 x SoftObjectProperty", xml);
         // No per-element group; the 8B leaf path still produces a usable entry
@@ -4988,7 +4988,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"LazyRefs\"", xml);
         Assert.DoesNotContain("[2 x LazyObjectProperty", xml);
         Assert.Contains("<Address>+40</Address>", xml);
@@ -5029,11 +5029,11 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"DamageHandlers\"", xml);
         Assert.DoesNotContain("[3 x InterfaceProperty", xml);
         Assert.Contains("<Address>+60</Address>", xml);
-        // Element descriptions are now the bare index (resolved names dropped)
+        // Element descriptions are the bare index (no resolved names)
         Assert.Contains("\"[0]\"", xml);
         Assert.Contains("\"[1]\"", xml);
         Assert.DoesNotContain("[0] PlayerActor", xml);
@@ -5077,11 +5077,11 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"OnDeathHandlers\"", xml);
         Assert.DoesNotContain("[2 x DelegateProperty", xml);
         Assert.Contains("<Address>+A0</Address>", xml);
-        // Element descriptions are now the bare index (resolved name dropped)
+        // Element descriptions are the bare index (no resolved name)
         Assert.Contains("\"[0]\"", xml);
         Assert.DoesNotContain("[0] PlayerActor", xml);
         // Stride 16: [0] at +0, [1] at +10 (hex)
@@ -5148,7 +5148,7 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Container header description is now the bare field name (no array descriptor)
+        // Container header description is the bare field name (no array descriptor)
         Assert.Contains("\"Events\"", xml);
         Assert.DoesNotContain("[2 x MulticastInlineDelegateProperty", xml);
         Assert.Contains("<Address>+60</Address>", xml);
@@ -5194,13 +5194,13 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Group description is now the bare field name (no array descriptor)
+        // Group description is the bare field name (no array descriptor)
         Assert.Contains("\"m_OnPlayerPawnSetBlueprint\"", xml);
         Assert.DoesNotContain("[2 x DelegateProperty", xml);
         // Group at field offset, Offsets=[0] derefs InvocationList::Data
         Assert.Contains("<Address>+338</Address>", xml);
         Assert.Contains("<Offset>0</Offset>", xml);
-        // Per-binding leaf: stride 16; description is now the bare index (BP name dropped)
+        // Per-binding leaf: stride 16; description is the bare index (no BP name)
         Assert.Contains("\"[0]\"", xml);
         Assert.Contains("\"[1]\"", xml);
         Assert.DoesNotContain("[0] BP1", xml);
@@ -5360,7 +5360,7 @@ public class CeXmlExportServiceTests
             @"<Offset>710</Offset>\s*<Offset>7D0</Offset>\s*<Offset>2A8</Offset>", xml);
         // Joined spine description (decision #1).
         Assert.Contains("OwningGameInstance ▸ m_savedata ▸ SaveSlotList ▸ [1] ▸ OriginalPlayer", xml);
-        // Intermediate breadcrumbs are NO LONGER standalone group nodes.
+        // Intermediate breadcrumbs are NOT standalone group nodes.
         Assert.DoesNotContain("<Description>\"m_savedata\"</Description>", xml);
         Assert.DoesNotContain("<Description>\"OriginalPlayer\"</Description>", xml);
         // Leaf still emitted under the folded node.
@@ -5822,9 +5822,9 @@ public class CeXmlExportServiceTests
     // ── [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers ────────────────────
     //
     // FAssetPtr = FWeakObjectPtr +0, TagAtLastTest +8, the path as ONE FString at +0x10, 0x20 in all (the DLL's
-    // ASSETPTR_PATH / ASSETPTR_SIZE). MapCeField had no arm for AssetObject / AssetClass: an unloaded one was dropped
-    // from the export, a loaded one (the DLL resolves its weak half) became an empty folder with no VariableType, and a
-    // TArray<TAssetPtr> a bare placeholder, although the DLL sends every element's path.
+    // ASSETPTR_PATH / ASSETPTR_SIZE). MapCeField needs an arm for AssetObject / AssetClass: without one an unloaded one
+    // is dropped from the export, a loaded one (the DLL resolves its weak half) becomes an empty folder with no
+    // VariableType, and a TArray<TAssetPtr> a bare placeholder, although the DLL sends every element's path.
 
     private static System.Xml.Linq.XElement EntryNamed(string xml, string description) =>
         System.Xml.Linq.XDocument.Parse(xml).Descendants("CheatEntry")

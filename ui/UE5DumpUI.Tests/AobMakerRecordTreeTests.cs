@@ -234,7 +234,7 @@ public class AobMakerRecordTreeTests : IDisposable
     public async Task A_plugin_without_bits_closes_the_batch_before_any_record_exists()
     {
         // Build 153 and earlier: the tree, but no feature list. A Binary node there would be built without its bit
-        // and answer success -- the byte-instead-of-bit record this item removes, now hidden behind a "success".
+        // and answer success -- a byte-instead-of-bit record hidden behind a "success".
         const string begin153 = "{\"type\":\"CreateRecordTreeBeginResult\",\"success\":true,\"batchId\":\"batch_2\"}";
         const string end0 = "{\"type\":\"CreateRecordTreeEndResult\",\"success\":true,\"totalCreated\":0}";
 

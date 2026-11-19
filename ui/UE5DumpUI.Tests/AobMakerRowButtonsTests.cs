@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [AOBMAKER-EVAL-2026-09-29] The HEX / +CE / ASM / AA buttons the evaluation added to panels that only copied before:
+/// [AOBMAKER-EVAL-2026-09-29] The HEX / +CE / ASM / AA row buttons on panels that otherwise only copy:
 /// what each sends to the plugin, and which rows must send nothing. The session-gated panels (Snapshot, SPC) are the
 /// ones that matter most: an address from an earlier launch, or an array element's owner base, would land a record
 /// on bytes that are not the value.
@@ -373,7 +373,7 @@ public class AobMakerRowButtonsTests : IDisposable
         Assert.False(vm.IsAobMakerAvailable);
     }
 
-    // ---- [LEAD-LW-NULLROW-HEX] a row with no address of its own: HEX / +CE moved CE to 0x0 or did nothing silently ----
+    // ---- [LEAD-LW-NULLROW-HEX] a row with no address of its own: HEX / +CE must not move CE to 0x0 or go silent ----
 
     /// <summary>A DataTable row whose row pointer reads null: the DLL hands its address as "0x0".</summary>
     private static LiveFieldValue NullRow => new()
@@ -389,7 +389,7 @@ public class AobMakerRowButtonsTests : IDisposable
 
         await vm.HexFieldAddressCommand.ExecuteAsync(NullRow);
 
-        Assert.Null(bridge.LastHex);   // was "0": CE's hex view parked on address 0
+        Assert.Null(bridge.LastHex);   // not "0", which parks CE's hex view on address 0
         Assert.Equal(LiveWalkerViewModel.NoRowAddressText(LiveWalkerViewModel.HexLabel), vm.StatusText);
     }
 
@@ -401,7 +401,7 @@ public class AobMakerRowButtonsTests : IDisposable
 
         await vm.AddFieldToCeCommand.ExecuteAsync(NullRow);
 
-        Assert.Empty(bridge.Records);   // was a record at 0x0
+        Assert.Empty(bridge.Records);   // no record at 0x0
         Assert.Equal(LiveWalkerViewModel.NoRowAddressText(LiveWalkerViewModel.AddToCeLabel), vm.StatusText);
     }
 
@@ -426,7 +426,7 @@ public class AobMakerRowButtonsTests : IDisposable
 
         await vm.PushCeFieldToCeCommand.ExecuteAsync(null);
 
-        Assert.Empty(bridge.Records);   // was a record at 0x0
+        Assert.Empty(bridge.Records);   // no record at 0x0
         Assert.Equal("Added to CE: 0 record(s), 1 skipped", vm.StatusText);
     }
 }

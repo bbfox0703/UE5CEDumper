@@ -7,14 +7,13 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [R7-X6] The export's crash guard must hold inside EVERY container emitter, not only between fields. Found live:
-/// DumperTest's NestedBag (two 20,000-pair TMaps, the actor's LAST property) copied 98,890 entries at Array Limit 16384
-/// with LastExportTruncated false -- the map emitter never checked the budget, and nothing emitted after it could
-/// notice. Each case puts one container LAST, with more XML than the whole budget, so only a check inside its own
-/// element loop can stop it.
-/// <para>[CEXML-CAP-60K] The guard was a 60,000-ENTRY cap, and that same NestedBag export is a real table the cap cut
-/// short. It is now <see cref="CeXmlExportService.MaxEmitChars"/> characters of XML -- memory, not a count -- so the
-/// per-loop cases run under a lowered budget, and one case holds the old export whole at the real guard.</para>
+/// [R7-X6] The export's crash guard must hold inside EVERY container emitter, not only between fields: an emitter that
+/// never checks the budget runs past it with LastExportTruncated false, and nothing emitted after it can notice --
+/// DumperTest's NestedBag (two 20,000-pair TMaps, the actor's LAST property) has that shape. Each case puts one
+/// container LAST, with more XML than the whole budget, so only a check inside its own element loop can stop it.
+/// <para>[CEXML-CAP-60K] The guard is <see cref="CeXmlExportService.MaxEmitChars"/> characters of XML -- memory, not a
+/// count, because an entry cap cuts a real table such as that NestedBag export short -- so the per-loop cases run under
+/// a lowered budget, and one case holds that export whole at the real guard.</para>
 /// </summary>
 public class CeXmlExportCeilingTests
 {
@@ -109,8 +108,8 @@ public class CeXmlExportCeilingTests
         AssertStoppedAtTheGuard(xml);
     }
 
-    // The same invariant for every other element loop that had no check of its own. The guard is documented as a hard
-    // stop, so every loop honours it however the container got that big.
+    // The same invariant for every other element loop. The guard is documented as a hard stop, so every loop honours
+    // it however the container got that big.
 
     private static void AssertStopsAtTheCeiling(LiveFieldValue last) => AssertStoppedAtTheGuard(Export(last));
 
@@ -200,8 +199,8 @@ public class CeXmlExportCeilingTests
     [Fact]
     public void Map_OverTheOld60kEntryCap_IsExportedWhole_AtTheRealGuard()
     {
-        // [CEXML-CAP-60K] The NestedBag shape the old cap cut short: 33,000 pairs is 99,000 entries, about 30 M
-        // characters -- a real table, and a tenth of the guard.
+        // [CEXML-CAP-60K] The NestedBag shape a 60,000-entry cap would cut short: 33,000 pairs is 99,000 entries,
+        // about 30 M characters -- a real table, and a tenth of the guard.
         const int n = 33_000;
         var map = new LiveFieldValue
         {
@@ -224,8 +223,8 @@ public class CeXmlExportCeilingTests
     [Fact]
     public void TheGuard_IsACrashGuard_NotAProductLimit()
     {
-        // [CEXML-CAP-60K] Below the .NET string limit, so ToString of a guarded export cannot throw the way the runaway
-        // export did; and far above any table Cheat Engine pastes in reasonable time, so no real export meets it.
+        // [CEXML-CAP-60K] Below the .NET string limit, so ToString of a guarded export cannot throw the way a runaway
+        // export would; and far above any table Cheat Engine pastes in reasonable time, so no real export meets it.
         const int dotNetMaxStringLength = 0x3FFFFFDF;
         Assert.True(CeXmlExportService.MaxEmitChars + SlackChars < dotNetMaxStringLength);
         Assert.True(CeXmlExportService.MaxEmitChars >= 100 * 1024 * 1024,

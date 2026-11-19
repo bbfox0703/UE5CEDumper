@@ -61,8 +61,8 @@ public class AobMakerActivateResultTests
         var vm = Vm();
         vm.ReportSymbolRegistration(new SymbolScriptResult(true, true, true, null), "gworld_addr", "d");
 
-        // The sentence en.axaml holds, which the app shows. This pinned the C# fallback ("Registered CE symbol
-        // 'gworld_addr'.") while a test's Res answered "": a text the app never shows. [I18N-READINESS-2026-11-04]
+        // The sentence en.axaml holds, which the app shows -- not the C# fallback, a text the app never shows.
+        // [I18N-READINESS-2026-11-04]
         Assert.Equal("Registered CE symbol 'gworld_addr' — it re-scans on enable, so it survives a game restart.",
                      vm.SymbolStatusText);
         Assert.Null(vm.ErrorMessage);

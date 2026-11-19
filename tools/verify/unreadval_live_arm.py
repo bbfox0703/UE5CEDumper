@@ -3,8 +3,8 @@ r"""`[UNREADVAL-2026-09-09]` — the LIVE REGRESSION arm the manufactured fixtur
     py tools/verify/unreadval_live_arm.py                 # walk a broad sample, tally
     py tools/verify/unreadval_live_arm.py --limit 4000    # more objects
 
-⛔ WHAT THIS ARM IS FOR, AND WHAT IT CANNOT DECIDE — say both, because `[IFACEREAD]` had to.
-The fix makes three handlers REFUSE when the instance read faults: `EnumProperty`,
+⛔ WHAT THIS ARM IS FOR, AND WHAT IT CANNOT DECIDE — say both (see `[IFACEREAD]`).
+Three handlers REFUSE when the instance read faults: `EnumProperty`,
 `ByteProperty`-with-UEnum, and `OptionalProperty` publish
 `"(<kind> — unreadable at +0xN, not read)"` instead of dressing the un-set 0 up as a value
 (hex `"00"`, the NAME of enumerator 0, `"(unset)"`).
@@ -13,7 +13,7 @@ A live game cannot show that. A faulted instance read needs a PARTIAL fault, and
 `WalkInstance`'s `IsAddrReadable` gate bails on a wholly-dead pointer for a different reason —
 which is exactly why `dll_core_test`'s `UNREADVAL` block manufactures two pages with one
 committed. ⭐ **What a live game CAN decide is the other half, and it is the half a manufactured
-fixture is weakest on: did the new gate start refusing fields that are perfectly READABLE?** A
+fixture is weakest on: does the gate refuse fields that are perfectly READABLE?** A
 gate that fires spuriously would blank every enum in the game, and the fake-blob controls in
 `dll_core_test` prove only that it does not fire on three synthetic fields.
 
@@ -42,7 +42,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient          # noqa: E402
 
-# The three families this fix touched, by the type name the walker publishes.
+# The three families the gate covers, by the type name the walker publishes.
 FAMILIES = ("EnumProperty", "ByteProperty", "OptionalProperty")
 REFUSAL = re.compile(r"unreadable at \+0x", re.I)
 
@@ -126,7 +126,7 @@ def main() -> int:
                 #    ⚠ Counted, they show up as fields with "neither value nor hex", which reads
                 #    exactly like a walker declining silently. The tell is the ratio: most fields
                 #    of ONE such object valueless, across many type families beyond the three
-                #    this fix touched, says "branch", not "regression".
+                #    this gate covers, says "branch", not "regression".
                 if res.get("is_definition"):
                     definitions += 1
                     continue

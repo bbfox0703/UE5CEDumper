@@ -5,9 +5,9 @@
 THE ROW. `Ubel.cpp`'s map walker computes the pair stride from the key/value properties'
 `ElementSize`. If that value is garbage the stride is garbage, and the walker must take its
 degraded branch - `Sein::Warn("WALK:MapP", "Cannot read map elements for '%s': ...")`
-(Ubel.cpp:4573) - rather than read past the buffer or hang. The branch has never been
-exercised: the register records it as "🟡 PARTIAL ... the degraded branch itself is NOT
-TESTED and must not be recorded as passing".
+(in `WalkInstance`) - rather than read past the buffer or hang. No unit test exercises the
+branch, so only a live run can witness it; the register records that run under
+`[U1-ELEMSIZE-2026-11-17]`.
 
 WHY A POKE AND NOT A STAGED BUILD. Nothing in the source needs changing - the input is data.
 `mutate_guard.Mutation` captures the original bytes, restores them in a `finally` with a
@@ -26,9 +26,9 @@ Requiring BOTH sizes to match a value known from the type - rather than taking t
 plausible pointer - is what makes the identification a witness instead of a guess. The rig
 refuses to run if it cannot find exactly one such pair.
 
-⛔⛔ THE FIELD MUST HAVE A **STRUCT** VALUE. THE ROW WAS UNREACHABLE UNTIL 2026-09-06 BECAUSE
-THIS RIG USED `Map_NameToInt`, AND ITS int32 VALUE MAKES THE POKE A NO-OP.
-`ValidateArrayElemSize` (Ubel.cpp:1726) asks `InferScalarSize(typeName)` first; for
+⛔⛔ THE FIELD MUST HAVE A **STRUCT** VALUE. A SCALAR-VALUED FIELD SUCH AS `Map_NameToInt`
+MAKES THE POKE A NO-OP: ITS int32 VALUE NEVER LETS THE GARBAGE SIZE REACH THE BRANCH.
+`ValidateArrayElemSize` (Ubel.cpp) asks `InferScalarSize(typeName)` first; for
 `IntProperty` that returns 4, i.e. `expected > 0`, so the branch taken is
 
     if (readSize != expected) { ...  "overriding"; return expected; }
@@ -36,21 +36,21 @@ THIS RIG USED `Map_NameToInt`, AND ITS int32 VALUE MAKES THE POKE A NO-OP.
 - the garbage size is SILENTLY REPLACED BY THE RIGHT ONE and the degraded branch is never
 approached. Only when `InferScalarSize` returns 0 (StructProperty, and the other complex
 types) does control fall through to the `readSize > 65536` sanity cap that zeroes the size
-and produces `Cannot read map elements`. So the register's own suspicion - "it is entirely
-possible this branch is unreachable by data alone and needs a staged build" - was half right:
-unreachable through THAT field, reachable through a struct-valued one, and no staged build,
-no source change and no repackage are needed.
+and produces `Cannot read map elements`. So the branch is unreachable through a scalar-valued
+field and reachable through a struct-valued one, by data alone: no staged build, no source
+change and no repackage are needed.
 
-`FDumperTestVec3f` is three floats (DumperTestTypes.h:119), deliberately 4-aligned, and
-`Map_IntToVec3f` holds 3 entries seeded {6201,6202,6203} / {6211,...} / {6221,...}
-(DumperTestActor.cpp:131-133) - so the restore is verifiable by VALUE, not just by byte.
+`FDumperTestVec3f` is three floats (its declaration in DumperTestTypes.h), deliberately
+4-aligned, and `Map_IntToVec3f` holds 3 entries seeded {6201,6202,6203} / {6211,...} /
+{6221,...} (the `ADumperTestActor` constructor in DumperTestActor.cpp) - so the restore
+is verifiable by VALUE, not just by byte.
 
 ⚠ Do NOT "fix" this by poking a small wrong size such as 16. That is below the 65536 cap, so
 it is accepted, and the walker merely reads the 3 elements at the wrong stride: a silent
 mis-read, which is the opposite of the refusal this row exists to witness.
 
-⚠ `fproperty_elemsize` is read from `get_offsets` at RUNTIME (52 here), not from
-`Grimoire.h`'s 0x3C default - the two disagree on this build.
+⚠ `fproperty_elemsize` is read from `get_offsets` at RUNTIME, not from `Grimoire.h`'s
+0x3C default - the two can disagree.
 """
 from __future__ import annotations
 

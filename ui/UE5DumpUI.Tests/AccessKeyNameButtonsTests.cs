@@ -8,17 +8,16 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [LW-CRUMB-UNDERSCORE] A Button, ToggleButton, RadioButton or CheckBox whose Content is a bound STRING draws it
-/// through an access-key presenter, which drops the first <c>_</c>: a crumb read "DumperTestActor0" for
-/// <c>DumperTestActor_0</c>, and the noise-denylist chips did the same to class names like <c>BP_Enemy_C</c>, as did the
-/// Discover snapshot picks (user labels) and Proxy Deploy's drives (volume labels). A control that shows such a name
-/// puts a TextBlock in its content instead. Only bindings to the app's own labels, which carry no underscore, may stay.
-/// <c>CrumbUnderscoreTests</c> (headless) shows the crumb drawn whole.
+/// through an access-key presenter, which drops the first <c>_</c>: a crumb reads "DumperTestActor0" for
+/// <c>DumperTestActor_0</c>, and a class name like <c>BP_Enemy_C</c>, a user label or a volume label loses its first
+/// underscore the same way. A control that shows such a name puts a TextBlock in its content instead. Only bindings to
+/// the app's own labels, which carry no underscore, may stay. <c>CrumbUnderscoreTests</c> (headless) shows the crumb
+/// drawn whole.
 ///
-/// <para>The scan is wider than the four controls that went wrong (LW-PIN-NARROW, its review): every control whose
-/// template may present a string through an access key, the slots that take one (<c>Content</c>, <c>Header</c>,
-/// <c>OnContent</c>, <c>OffContent</c>), and every binding spelling -- <c>CompiledBinding</c>, <c>ReflectionBinding</c>,
-/// <c>Path=</c>, trailing options. Over-matching costs an allowlist entry; under-matching is how a name loses its
-/// underscore unseen.</para>
+/// <para>The scan is wider than the controls named above: every control whose template may present a string through
+/// an access key, the slots that take one (<c>Content</c>, <c>Header</c>, <c>OnContent</c>, <c>OffContent</c>), and
+/// every binding spelling -- <c>CompiledBinding</c>, <c>ReflectionBinding</c>, <c>Path=</c>, trailing options.
+/// Over-matching costs an allowlist entry; under-matching is how a name loses its underscore unseen.</para>
 /// </summary>
 public class AccessKeyNameButtonsTests
 {

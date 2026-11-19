@@ -5,18 +5,18 @@ container descent, so the live half of the row has a fixture list instead of a g
 
 WHAT Z12 NEEDS. Instance Finder's "Address -> Instance" reports a DEEP hit when the address it is
 given lives inside a container ELEMENT that is itself a struct holding a container — the
-`SaveSlotList[].MsTuneData...` shape the descent was written for. The deep-MISS caveat has been
-verified; the deep-HIT half has not, because staging one by hand means guessing which live object
-has that shape. This turns the guess into a shortlist, offline, from a complete census of the build.
+`SaveSlotList[].MsTuneData...` shape the descent is for. Staging a deep HIT by hand means guessing
+which live object has that shape. This turns the guess into a shortlist, offline, from a complete
+census of the build.
 
 WHY OFFLINE. The header is the same walk the DLL does, already done and written down. Zero pipe
 traffic, no game running, and it can be re-run after any rebuild.
 
 ⚠ THREE PARSING TRAPS, each of which silently under-reports rather than erroring:
 
-  1. **28.1% of structs have NO base** (2,215 of 7,886, measured). A pattern anchored as
+  1. **A large share of structs have NO base.** A pattern anchored as
      `^struct NAME ` with a trailing space matches only the `: public` form, so every base-less
-     struct reads as absent. `assert_parser_sane()` fails the run if that regression returns.
+     struct reads as absent. `assert_parser_sane()` fails the run if the pattern misses them.
   2. **The header stores STRIPPED names** — `Actor`, not `AActor`; `Object`, not `UObject`. A
      lookup written with UE's prefixes finds nothing and reports a clean, wrong zero.
   3. **A container-of-struct is not always one level deep.** A struct field can hold a struct that
@@ -96,7 +96,7 @@ def assert_parser_sane(structs, text):
     # and the naive pattern really does miss them (the control for the control).
     # ⚠ The trailing space must be a LITERAL space, not `\s+`: in Python `\s` matches the
     # NEWLINE, so `^struct NAME\s+` happily matches a base-less declaration too and the control
-    # silently stops discriminating. Caught by this very assertion on its first run.
+    # silently stops discriminating.
     naive_hits = len(re.findall("(?m)^struct [A-Za-z0-9_]+ ", text))
     anchored_hits = len(re.findall(r"(?m)^struct [A-Za-z0-9_]+", text))
     if naive_hits >= anchored_hits:

@@ -15,11 +15,10 @@ namespace UE5DumpUI.HeadlessTests;
 /// Walker's export options. Avalonia 12.1.3 flips IsChecked on the click and the binding writes it back.
 /// </summary>
 /// <remarks>
-/// Written after a false alarm on the build-3625 live check: clicks sent in a separate computer-use call AFTER the
-/// one that opened the flyout landed once the flyout had closed, so nothing ticked, and it read as Avalonia not
-/// toggling. Opening and clicking in one batch ticked it and saved the option. One real quirk, pinned below: when
-/// the flyout closes the item loses its DataContext and reads unchecked until it opens again, without writing that
-/// back.
+/// A click sent in a separate computer-use call AFTER the one that opened the flyout lands once the flyout has
+/// closed, so nothing ticks, and it reads as Avalonia not toggling; opening and clicking in one batch ticks it and
+/// saves the option. One real quirk, pinned below: when the flyout closes the item loses its DataContext and reads
+/// unchecked until it opens again, without writing that back.
 /// </remarks>
 public class MenuItemToggleTests
 {

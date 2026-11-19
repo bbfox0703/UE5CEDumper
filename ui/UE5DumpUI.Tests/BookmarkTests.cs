@@ -133,7 +133,8 @@ public class BookmarkTests
     public void SaveBookmarkToSlot_IntoAnOccupiedSlot_RefreshesTheTooltip()
     {
         // [P8-BOOKMARK-TIP] Save mode has no occupied-slot guard, so this is the normal re-save gesture. IsOccupied goes
-        // true -> true and raises nothing: the label repainted, the hover kept the PREVIOUS target, a click went to the new.
+        // true -> true and raises nothing, so unless the tooltip raises its own change the hover keeps the old target
+        // while a click goes to the new one.
         var vm = CreateViewModel();
         SetupViewModelWithData(vm, objectName: "FirstObject", address: "0x11111111");
         var slot = vm.BookmarkSlots[0];
@@ -563,9 +564,9 @@ public class BookmarkTests
         Assert.Equal("0xC0DE", vm.Breadcrumbs[^1].Address);
     }
 
-    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address (nothing re-anchored the spine), the class name alone let
-    // another instance of the same class -- one that took the address in a new launch, or after the saved object was
-    // freed -- load under the bookmark's name. The saved object name tells them apart.
+    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address (nothing re-anchored the spine), the class name alone
+    // would let another instance of the same class -- one that took the address in a new launch, or after the saved
+    // object was freed -- load under the bookmark's name. The saved object name tells them apart.
     private static (LiveWalkerViewModel vm, BookmarkSlot slot) AddressRootedBookmark(string nowAtAddress)
     {
         var dump = new StubDumpService();
@@ -839,10 +840,10 @@ public class BookmarkTests
 
     // --- [W4-BOOKMARK-DT] a bookmark saved on a DataTable row view ---
     //
-    // PersistedCrumb carried IsContainerView but not IsDataTableView, and a DataTable row view's rows
-    // (DataTableData) are live-only. A bookmark restored from the FILE therefore came back as a plain
-    // container crumb with nothing to show, fell through to an instance walk, failed the class check and
-    // reported "stale (game may have restarted)" -- blaming the session for a serialisation gap.
+    // A DataTable row view's rows (DataTableData) are live-only, so PersistedCrumb carries IsDataTableView beside
+    // IsContainerView. Without it a bookmark restored from the FILE comes back as a plain container crumb with
+    // nothing to show, falls through to an instance walk, fails the class check and reports "stale (game may
+    // have restarted)" -- blaming the session for a serialisation gap.
 
     /// <summary>Answers the DataTable row walk the restore now makes, and counts it.</summary>
     private sealed class DataTableDump : StubDumpService
@@ -985,10 +986,10 @@ public class BookmarkTests
         Assert.Contains("gone or has changed", vm.StatusText);
     }
 
-    // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A bookmark FILE saved BELOW a row view (a row's struct drilled from it)
-    // re-walked only the LAST crumb, so the row view's crumb kept no rows: Back found no reflected "RowMap" field to
-    // re-hydrate from and showed the table's own grid under the row view's label, and Refresh there said the view
-    // "did not restore" although nothing had refused it.
+    // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A bookmark FILE saved BELOW a row view (a row's struct drilled from it): a
+    // restore that re-walks only the LAST crumb leaves the row view's crumb with no rows, so Back finds no reflected
+    // "RowMap" field to re-hydrate from and shows the table's own grid under the row view's label, and Refresh there
+    // says the view "did not restore" although nothing refused it.
 
     /// <summary>The FILE shape of a bookmark on a row's struct, drilled from the row view of
     /// <see cref="FillDataTableSlot"/>'s table. The row crumb's class is the row struct the row view's table names.</summary>
@@ -1043,7 +1044,7 @@ public class BookmarkTests
 
         await vm.GoBackCommand.ExecuteAsync(null);
 
-        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));   // was the table's own grid
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));   // not the table's own grid
         Assert.Contains(vm.Fields, f => f.Name.Contains("Shield"));
         Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);             // the in-session shape
 

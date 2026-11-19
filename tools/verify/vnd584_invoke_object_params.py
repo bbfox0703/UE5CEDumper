@@ -17,7 +17,7 @@ THE CASES. Each starred case asks the ENGINE what it received, so a DLL without 
   * KismetSystemLibrary::IsValidSoftObjectReference(picked actor) must return true -- the PATH, not only the weak half;
   * KismetSystemLibrary::Conv_SoftClassReferenceToClass(the actor's class) must return the class;
   * DumperTestActor::Vnd584_EchoWeakRef(picked actor) / Vnd584_EchoSoftSpec({Icon = picked actor}) must return the
-    actor (fixtures packaged 2026-10-26 -- no engine library takes a weak parameter or a struct holding a soft one);
+    actor (DumperTest fixtures, because no engine library takes a weak parameter or a struct holding a soft one);
   * Vnd584_EchoWeak (BY VALUE): the slot must hold the engine's pair for the actor. Its return is not checked: before
     UE 5.8 the engine's own thunk loses a by-value weak pointer (CopyCompleteValueToScriptVM stores a raw UObject* in
     its TWeakObjectPtr local; fixed by 399f2949c408), so it returns null whatever the caller sends;

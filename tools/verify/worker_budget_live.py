@@ -77,7 +77,7 @@ def thread_count_toolhelp(pid: int) -> int:
 
 
 # NtQuerySystemInformation(SystemProcessInformation): one call lists every process with its thread count, far faster
-# than a Toolhelp thread snapshot (measured: 7 Toolhelp samples in 2.4 s). x64 SYSTEM_PROCESS_INFORMATION offsets:
+# than a Toolhelp thread snapshot. x64 SYSTEM_PROCESS_INFORMATION offsets:
 # NextEntryOffset 0x00, NumberOfThreads 0x04, NumberOfThreadsHighWatermark 0x14, UniqueProcessId 0x50.
 ntdll = ctypes.WinDLL("ntdll")
 ntdll.NtQuerySystemInformation.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,

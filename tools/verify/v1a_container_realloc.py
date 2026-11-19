@@ -32,9 +32,9 @@ THE TWO WAYS THIS RIG COULD LIE TO ITSELF, both closed:
 
   * "The candidate vanished, so the anchor logic dropped it." NOT NECESSARILY -- it
     may simply have failed the VALUE test because freed memory no longer reads 7001.
-    That is the allocator's luck, not our correctness, and the first run of this rig
-    hit exactly that and had to report INCONCLUSIVE.
-      The fix is to refine with a predicate that CANNOT eliminate anything:
+    That is the allocator's luck, not our correctness, and a value refine leaves the
+    rig nothing to report but INCONCLUSIVE.
+      So the rig refines with a predicate that CANNOT eliminate anything:
     `Between INT32_MIN..INT32_MAX` matches every possible int32. Under it the byte
     comparison is a tautology, so the only things left that can remove a candidate
     are the container-anchor rule and a failed SEH read. A candidate that survives a

@@ -379,9 +379,9 @@ public class AppDataFolderMaintenanceTests : IDisposable
     {
         // NTFS last-access updates are ENABLED by default on Windows (fsutil
         // DisableLastAccess = 2), so an antivirus scan / backup / indexer read refreshes
-        // it on files nobody has opened in months — measured on the maintainer's own
-        // folder, where every file read as "accessed today" against write times weeks
-        // old. Honouring it would make the sweep a permanent no-op.
+        // it on files nobody has opened in months, so every file can read as "accessed
+        // today" against write times weeks old. Honouring it would make the sweep a
+        // permanent no-op.
         var p = WriteAt(_dest, "snapshots.A.db", daysAgo: 100);
         File.SetLastAccessTimeUtc(p, DateTime.UtcNow);
 

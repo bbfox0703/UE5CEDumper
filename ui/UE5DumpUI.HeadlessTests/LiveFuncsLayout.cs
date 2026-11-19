@@ -206,7 +206,7 @@ internal static class LiveFuncsLayout
 
     /// <summary>The headless platform draws every glyph as wide as the font size (a hundred 'x' at 12 px measure
     /// 1,200 px), where the app's own font, Inter Regular, averages about 5.6 px a character of English text at 12 px
-    /// (its advance widths, read from the font Avalonia.Fonts.Inter embeds, 2026-10-08): a line the app shows on one
+    /// (its advance widths, read from the font Avalonia.Fonts.Inter embeds): a line the app shows on one
     /// line can take two here, and push what follows it in a WrapPanel onto the next. So "on one line in the app" is held
     /// as parts that need, unwrapped and side by side, less than 1.5 times the room here: under 0.7 of it in Inter.
     /// That room is the harness's, the panel alone in the window (<see cref="Laid"/>), which the app gives the panel only

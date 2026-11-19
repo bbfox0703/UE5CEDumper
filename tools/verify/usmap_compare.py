@@ -25,9 +25,9 @@ WHAT EACH SUBCOMMAND SETTLES
            ByteProperty inner would show a large A2 and an empty C, and that is a FAILURE.
   slots    which container ARM each enum inner sits in (Array / Set / MapKey / MapValue /
            Optional). The four arms are separate wire keys (`inner_enum` / `elem_enum` /
-           `key_enum` / `value_enum`, `Fern.cpp:2244-2247`), so a total hides which of them an
-           artifact never exercised: an export whose **Set or Optional count is 0** says
-           nothing about that arm.
+           `key_enum` / `value_enum`, `Fern.cpp`'s `EncodeClassInfoToJson`), so a total hides
+           which of them an artifact never exercised: an export whose **Set or Optional count
+           is 0** says nothing about that arm.
   schema   `[USMAP-INHERITED-DUPES]`: per struct, the record count and the schema index of
            each property against a reference writer. A child that repeats its super's
            properties shows a record count equal to its own PLUS its chain's, and every own

@@ -34,9 +34,8 @@ THE MODES, and what each one is for
   flipwidth  every container inner enum's declared UNDERLYING width becomes Int64Property;
              the type stays EnumProperty and the enum NAME is untouched. This is the CONTROL
              for `degrade`: `FEnumProperty::SerializeItem` writes an FName whenever
-             `Enum != nullptr`, so the declared width should change nothing. Measured
-             2026-09-16 on a commercial title: flipping all 535 inner widths changed 0 of
-             3,003 exports, over the very same packages where `degrade` changed 3.
+             `Enum != nullptr`, so the declared width should change nothing: over the very
+             same packages, this mode should change no export while `degrade` changes some.
   bytewidth  every TOP-LEVEL `EnumProperty`'s declared underlying width becomes Byte, and
              nothing else moves -- not the type, not the enum name, not one container
              inner. That is exactly the pre-`[A4-USMAP-ENUM-UNDERLYING]` shape: the old

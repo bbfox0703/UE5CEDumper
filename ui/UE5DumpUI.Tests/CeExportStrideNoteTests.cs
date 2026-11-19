@@ -232,7 +232,7 @@ public class CeExportStrideNoteTests
 
         await vm.ExportCeXmlCommand.ExecuteAsync(null);
 
-        Assert.Contains("<!-- Enum member names", platform.LastClipboard);   // was silent until a Refresh
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);   // said without waiting for a Refresh
     }
 
     [Fact]

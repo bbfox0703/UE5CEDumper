@@ -8,10 +8,10 @@ using static UE5DumpUI.HeadlessTests.LiveFuncsLayout;
 namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
-/// [LF-COMPACT-TOP] What sits above the Live Funcs table, measured: with a stack chosen it took over half the panel's
-/// height in the maintainer's window (the table's top at 490 of 868 px on the build before this item, measured here), and
-/// the four-line stack warning was the biggest block. The layout these tests read is the one the file names but only
-/// Avalonia decides: which lines wrap, what a hidden block gives back, where a control lands.
+/// [LF-COMPACT-TOP] What sits above the Live Funcs table, measured: with a stack chosen, the capture settings and the
+/// stack warning are the blocks that take the table's room, so each must be able to give it back. The layout these
+/// tests read is the one the file names but only Avalonia decides: which lines wrap, what a hidden block gives back,
+/// where a control lands.
 /// </summary>
 public class LiveFuncsTopAreaTests
 {
@@ -91,7 +91,7 @@ public class LiveFuncsTopAreaTests
 
     /// <summary>(2) Folded, the capture settings give their room to the table and the header sums them up; the Start row,
     /// the baseline row and the status line stay; unfolded, everything is back where it was. Measured with a stack chosen,
-    /// the case the maintainer found taking most of the panel: folded, the table starts in the window's top third.</summary>
+    /// the case where the settings take the most room: folded, the table starts in the window's top third.</summary>
     [Fact]
     public Task Folded_the_settings_give_their_room_to_the_table_and_the_header_sums_them_up() => Headless.Run(() =>
     {
@@ -207,8 +207,8 @@ public class LiveFuncsTopAreaTests
         Assert.True(Box(open, panel).Top < Box(FoldButton(panel, vm), panel).Bottom, "Open in Call Trace is not on the header's line");
     });
 
-    /// <summary>(1) The warning's one line turns orange with the estimate, as the four lines did: a capture measured at 100
-    /// µs makes A::F's 25 a second cost 2.5 ms of the game's time, above the 2 ms line.</summary>
+    /// <summary>(1) The warning's one line turns orange with the estimate: a capture measured at 100 µs makes A::F's 25
+    /// a second cost 2.5 ms of the game's time, above the 2 ms line.</summary>
     [Fact]
     public Task The_one_line_turns_orange_with_the_estimate() => Headless.Run(() =>
     {

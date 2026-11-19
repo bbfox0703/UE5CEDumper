@@ -176,7 +176,7 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFunctionsLoading,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.FunctionsLoadingText("A"), "A");
         // [LEAD-LW-NULLROW-HEX] [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] [CEXPORT-ENUMNAMES-NOTE] [LEAD-DT-EXPORT-64ROWS]
-        // [CEXPORT-NESTED-TRUNC-NOTE] the 2026-11-02 pass's words
+        // [CEXPORT-NESTED-TRUNC-NOTE] these tags' words
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNoRowAddress,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.NoRowAddressText("A"), "A");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDataTableNotRestored,
@@ -336,11 +336,10 @@ public class AobMakerWordingTests
     [Fact]
     public void Inv_tooltip_promises_no_clipboard_route_the_greyed_button_cannot_reach()
     {
-        // [INV-TOOLTIP-CLIPBOARD] Decided 2026-10-27 (the maintainer): (b), the tooltip is corrected and the button stays
-        // AOBMaker-only. The tip promised "push it to CE (or clipboard if AOBMaker is off)", but the button is IsEnabled
-        // only while AOBMaker is available, so with AOBMaker off it is greyed out (observed for the first half of L10)
-        // and that clipboard route cannot be reached from it. The two halves are pinned together: if the button ever
-        // gains a reachable clipboard route, this is the test to change along with the tip.
+        // [INV-TOOLTIP-CLIPBOARD] The button stays AOBMaker-only, so its tooltip promises no clipboard route: the
+        // button is IsEnabled only while AOBMaker is available, so with AOBMaker off it is greyed out and a clipboard
+        // route cannot be reached from it. The two halves are pinned together: if the button ever gains a reachable
+        // clipboard route, this is the test to change along with the tip.
         var axaml = ReadEnAxaml();
         const string open = "x:Key=\"str.Tip.LiveWalker.FuncGenScript\">";
         int start = axaml.IndexOf(open, StringComparison.Ordinal);
@@ -358,8 +357,8 @@ public class AobMakerWordingTests
         var element = panel[btn..panel.IndexOf("/>", btn, StringComparison.Ordinal)];
         Assert.Contains("IsEnabled=\"{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).IsAobMakerAvailable}\"",
                         element, StringComparison.Ordinal);
-        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to, so the tip that
-        // explains the grey button was never seen while AOBMaker is off -- the only time it says anything.
+        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to, so without this the
+        // tip that explains the grey button is never seen while AOBMaker is off -- the only time it says anything.
         Assert.Contains("ToolTip.ShowOnDisabled=\"True\"", element, StringComparison.Ordinal);
     }
 
@@ -376,7 +375,7 @@ public class AobMakerWordingTests
     private static string ReadEnAxaml()
         => File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-72: the property-xref / class-funcs dialog's Disassemble button stays off
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The property-xref / class-funcs dialog's Disassemble button stays off
     /// while its own push runs. SyncDisasmButton can run during a push, so the click handler raises an in-flight flag
     /// after its bridge-down guard and before its first await, lowers it in its finally before re-setting the button,
     /// and the button's enabling setter reads that flag. Pinned in source because no unit test here can open a
@@ -414,7 +413,7 @@ public class AobMakerWordingTests
         Assert.Contains($"!{flag}", setter.Groups[1].Value, StringComparison.Ordinal);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-65: each of the Props dialog's Cheat Engine buttons builds its tooltip
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] Each of the Props dialog's Cheat Engine buttons builds its tooltip
     /// from its own two en.axaml keys, each named by one const: the action text while the bridge is up, otherwise its
     /// Off template formatted with the bridge's sentence, which says what the button needs the plugin for and that
     /// reopening the dialog checks again. A tooltip that dropped or swapped a template fails here. Pinned in source
@@ -450,7 +449,7 @@ public class AobMakerWordingTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-64: the property-xref / class-funcs dialog's greyed Disassemble tooltip
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The property-xref / class-funcs dialog's greyed Disassemble tooltip
     /// is the en.axaml template str.Tip.Xref.DisasmOff, formatted with the bridge's own sentence as {0}, as the Props
     /// dialog's greyed tooltips are: none of its English stays in a C# literal, so a translation reaches it. Pinned in
     /// source because no unit test here can open a Window.</summary>
@@ -480,7 +479,7 @@ public class AobMakerWordingTests
         Assert.EndsWith("reopen the dialog once the plugin is reachable.", template, StringComparison.Ordinal);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-63: the Props dialog's two Cheat Engine buttons stay off while their own
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The Props dialog's two Cheat Engine buttons stay off while their own
     /// push runs. UpdateSelectionButtons can run during a push, so each click handler raises an in-flight flag before
     /// its first await and lowers it in its finally before re-setting the buttons, and the button's enabling setter
     /// reads that flag. Pinned in source because no unit test here can open a Window.</summary>
@@ -518,7 +517,7 @@ public class AobMakerWordingTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-52: the property-xref / class-funcs dialog re-sets its Disassemble button
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The property-xref / class-funcs dialog re-sets its Disassemble button
     /// at construction, so the tooltip exists before the first scan ends; after a push, in its finally; and in the click
     /// guard that finds the bridge's flag false, so neither a push nor that guard leaves an enabled button or the action
     /// text over a bridge that is down. Pinned in source because no unit test here can open a Window.</summary>
@@ -547,7 +546,7 @@ public class AobMakerWordingTests
         Assert.True(resync > guard && resync < bail, "the guard returns without re-setting the Disassemble button");
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-50: the two AOBMaker dialogs probe the bridge once as they open and then
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The two AOBMaker dialogs probe the bridge once as they open and then
     /// re-set their Cheat Engine buttons, and each greyed tooltip says reopening the dialog checks again: the modal
     /// dialog keeps the main window's refresh out of reach. Pinned in source because no unit test here can open a
     /// Window.</summary>
@@ -584,7 +583,7 @@ public class AobMakerWordingTests
             Assert.EndsWith(reopen, Res.Get(key), StringComparison.Ordinal);
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-49: the Props dialog's two Cheat Engine buttons, Disassemble in CE and
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The Props dialog's two Cheat Engine buttons, Disassemble in CE and
     /// Write site in CE, open their tooltips while greyed out, and while the plugin is out of reach each tooltip gives
     /// the bridge's own reason. One method sets each button's state and tooltip, and it runs at construction and after
     /// each push. Pinned in source because no unit test here can open a Window.</summary>
@@ -637,7 +636,7 @@ public class AobMakerWordingTests
             Assert.Matches(@"finally\s*\{\s*(?:_\w+ = false;\s*)?UpdateSelectionButtons\(\);\s*\}", Body(handler));
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-36: the "Disassemble in CE" button of the property-xref / class-funcs
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] The "Disassemble in CE" button of the property-xref / class-funcs
     /// dialog opens its tooltip while greyed out, and the tooltip gives the bridge's own reason (a busy or refused pipe
     /// is not a missing plugin). Pinned in source because no unit test here can open a Window.</summary>
     [Fact]

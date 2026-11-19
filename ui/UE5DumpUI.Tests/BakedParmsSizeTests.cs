@@ -8,11 +8,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [UE-OVERRIDE-411] review 2: the parmsSize a baked invoke carries gates the mailbox's 1024-byte paramsData slab in
-/// ue5_invoke_helper.lua (<c>parmsSize &gt; 1024</c> is refused) and bounds every write and the zero-fill. It was the
-/// ParmsSize the DLL read from the UFunction's tail, and on a 4.11-4.17 title read with a 4.18+ version that is the
-/// NumParms byte -- so a getter with a 2 KB out parameter passed the gate as "parmsSize 3" and ProcessEvent wrote past
-/// the slab. Every baked script now carries where the function's parameter chain ends.
+/// [UE-OVERRIDE-411] The parmsSize a baked invoke carries gates the mailbox's 1024-byte paramsData slab in
+/// ue5_invoke_helper.lua (<c>parmsSize &gt; 1024</c> is refused) and bounds every write and the zero-fill. So every
+/// baked script carries where the function's parameter chain ends, not the ParmsSize the DLL reads from the
+/// UFunction's tail: on a 4.11-4.17 title read with a 4.18+ version that is the NumParms byte, so a getter with a 2 KB
+/// out parameter would pass the gate as "parmsSize 3" and ProcessEvent would write past the slab.
 /// </summary>
 public class BakedParmsSizeTests
 {

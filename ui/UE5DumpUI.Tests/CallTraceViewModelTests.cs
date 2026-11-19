@@ -1346,7 +1346,7 @@ public class CallTraceViewModelTests
     {
         // [CT-FLOOR-208] A remembered width is what ui-options.json saves. A drag that leaves the pane where it was --
         // a press with only a vertical jiggle, or a push into the limit -- is not the user choosing the width shown:
-        // written, it replaced the 766 for good and a wider window gave back the narrower one.
+        // written, it would replace the 766 for good and a wider window would give back the narrower one.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
         vm.SplitWidth = 900;                                // shown as 692

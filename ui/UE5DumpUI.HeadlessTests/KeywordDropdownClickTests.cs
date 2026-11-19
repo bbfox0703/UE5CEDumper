@@ -46,7 +46,7 @@ public class KeywordDropdownClickTests
         window.MouseUp(p, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(1, clicks);             // was 0: the first click only closed the dropdown
+        Assert.Equal(1, clicks);             // the first click reaches the item, not only closes the dropdown
         Assert.False(auto.IsDropDownOpen);
     });
 }

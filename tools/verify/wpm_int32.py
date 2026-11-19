@@ -3,7 +3,7 @@ r"""Read, or write and read back, ONE int32 in a running process -- out of proce
     py tools/verify/wpm_int32.py <pid> <hexaddr>            # read only
     py tools/verify/wpm_int32.py <pid> <hexaddr> <value>    # write, then read back
 
-Why it exists (L46 step 2-UI, 2026-09-23): the UI holds both pipe lanes while it is
+Why it exists (L46 step 2-UI): the UI holds both pipe lanes while it is
 connected, and ⛔ pipe_client.py must never run beside it. A reflection poke that the UI has
 to RENDER -- e.g. an inner UProperty's ElementSize, whose address sw6_stride_refusal.py prints
 as "ElementSize at 0x… reads N" -- therefore has to be written from outside the pipe. The
