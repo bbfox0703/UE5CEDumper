@@ -4,11 +4,10 @@ r"""B5 mailbox flavour — make `Mimic::EnsureInitialized` the SECOND caller of 
     py tools/verify/b5_mailbox_race.py race      # run the race and score it
     py tools/verify/b5_mailbox_race.py clean
 
-THE ROW. B5's main half is closed (`[ELLIOT-B5-2026-08-18]`): three CE `createThread`s hit
-`UE5_Init` together and produced the full handshake. Its closing note says the row described the
-second caller as a **CE mailbox command** (`Mimic::EnsureInitialized`) whereas the run used a direct
-`UE5_Init` from CE Lua — *"same entry point, same guard — but the mailbox flavour specifically is
-still unexercised."* This exercises that flavour.
+THE ROW. B5's main half (`[ELLIOT-B5-2026-08-18]`) has three CE `createThread`s hit `UE5_Init`
+together, a direct `UE5_Init` from CE Lua. The row names the second caller as a **CE mailbox
+command** (`Mimic::EnsureInitialized`): same entry point, same guard, but a way in that the direct
+run does not exercise. This exercises that flavour.
 
 ⭐ NO CHEAT ENGINE. The classification filed this under "Cheat Engine sitting", but
 `mailbox_poke.py` drives the mailbox with `WriteProcessMemory` and nothing else, and
@@ -24,10 +23,9 @@ Inject-after-launch scans immediately, so there is no window to race into.
 
 ⚠⚠ THE THIRD OUTCOME, AND IT READS LIKE A PASS. If the poke lands AFTER the scan completes,
 `EnsureInitialized`'s `if (g_cachedGObjects && g_cachedGNames) return true;` early-returns, UE5_Init
-is never re-entered, and **no log lines appear at all**. That is a STAGING MISS, not a result. It has
-already happened twice on this row (a GUI attempt returned in 16 ms off the cached result; a 61-call
-loop produced one `Starting` line and no handshake). This rig therefore scores THREE outcomes, and
-refuses to call an empty log a pass.
+is never re-entered, and **no log lines appear at all**. That is a STAGING MISS, not a result, and
+the easy one to hit: a poke from the GUI returns off the cached result in milliseconds. This rig
+therefore scores THREE outcomes, and refuses to call an empty log a pass.
 
   PASS    exactly one "Starting initialization...", plus "init already in progress" and
           "resumed after waiting", and the mailbox command completes
@@ -85,7 +83,7 @@ def stage():
 def _fresh_log_marker():
     """Byte offsets of the live logs, so 'since launch' is exact.
 
-    ⚠ USELESS ACROSS A LAUNCH, and it cost a run: `<cat>-0.log` ROTATES on every process
+    ⚠ USELESS ACROSS A LAUNCH: `<cat>-0.log` ROTATES on every process
     start (the previous run is archived and a fresh file begins), so an offset taken
     BEFORE launching is larger than the new file and `txt[mark:]` comes back EMPTY. That
     reads as "the proxy line is missing" when the proxy was fine. Mark AFTER the process
@@ -124,8 +122,8 @@ def race():
     # ⚠ MARK ONLY NOW, NEVER BEFORE THE LAUNCH. `<cat>-0.log` rotates on process start, so a
     # pre-launch offset points into the PREVIOUS run's file: if the new file is shorter the
     # slice is empty, and if it is longer the slice silently DROPS this run's opening lines.
-    # The second shape is the nastier one — it cost a run here, reporting 0 "Starting
-    # initialization" lines while the raw log plainly had one. Marking after the process
+    # The second shape is the nastier one: it reports 0 "Starting initialization"
+    # lines while the raw log plainly has one. Marking after the process
     # exists means the file has already rotated and the offset is real.
     mark = {k: 0 for k in _fresh_log_marker()}      # this process's log IS the whole file
     txt = _since(mark)
@@ -140,13 +138,12 @@ def race():
 
     # ---- CONSTRUCT the race. All the slow parts happen BEFORE it ----
     #
-    # ⭐ This is the row's own lesson, applied: "Concurrency had to be constructed; it does
-    # not arise from doing things quickly." Two earlier attempts on the sibling row failed
-    # because the second caller arrived AFTER the scan. Spawning `mailbox_poke.py` as a
+    # ⭐ Concurrency has to be constructed; it does not arise from doing things quickly. A
+    # second caller that arrives AFTER the scan races nothing. Spawning `mailbox_poke.py` as a
     # PROCESS costs ~0.5-1.0 s of interpreter start plus a nested spawn for mailbox_addr —
-    # more than DumperTest's whole scan window (measured 1.57 s at 25,212 objects, vs
-    # Elliot's 3.3 s at 85,068). So resolve the mailbox HERE, before anything starts, and
-    # leave only the WriteProcessMemory inside the window.
+    # more than DumperTest's whole scan window (about 1.5 s at ~25k objects). So resolve the
+    # mailbox HERE, before anything starts, and leave only the WriteProcessMemory inside the
+    # window.
     #
     # ⚠ `call_export.py` cannot be the first caller in proxy mode: it looks for a module
     # named UE5Dumper.dll, and in proxy mode our code IS `VERSION.dll`. The pipe's

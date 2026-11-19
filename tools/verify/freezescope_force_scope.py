@@ -7,7 +7,7 @@ WHAT IT SETTLES
                       and carries the inheritor count the "+N inheritors" badge renders.
   FREEZESCOPE step 9  the cross-feature CONTROL: Force (Solide) on that same row must report an
                       instance count comparable to Freeze's derived sweep. "Force and Freeze sit on
-                      one row and must not scope oppositely" is what started the whole finding, so
+                      one row and must not scope oppositely" is the heart of the finding, so
                       this is the half that can be checked without Cheat Engine.
   Solide `capped`     the wire half of the long-tail row: on a base class with far more than 256
                       live instances, `force_field` must report `held == 256` AND `truncated == true`

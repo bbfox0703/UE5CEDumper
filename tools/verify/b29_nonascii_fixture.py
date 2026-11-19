@@ -6,13 +6,13 @@ r"""B29 step 3 — a UE game at a NON-ASCII path with a third-party wrapper load
     py tools/verify/b29_nonascii_fixture.py clean
 
 THE ROW (step 3): re-run step 2 *"再用一款路徑含非 ASCII 字元的遊戲"* and read the same message —
-`CEPlugin: '%ls' is loaded but is not ours (path=%ls)` (`Methode.cpp:255`). The path must appear
-intact rather than as `EVERSPACE? 2`. It was blocked as *"步驟 3（非 ASCII 路徑）仍缺樣本"* — no
-sample. This builds the sample.
+`CEPlugin: '%s' is loaded but is not ours (path=%s)` (`Methode.cpp` `IsAlreadyLoadedInTarget`). The
+path must appear intact rather than as `EVERSPACE? 2`. Step 3 needs a game at a non-ASCII path; this
+builds that sample.
 
-⛔ A JUNCTION DOES NOT WORK, AND THAT IS THE FIRST THING MEASURED HERE. `mklink /J` was the obvious
-cheap route — it is what closed `AC17`/`VOLUMEROOT`, where a cross-volume junction stood in for a
-real mount point. Here it is useless: launched through `D:\<CJK>\DumperTest`, the process reports
+⛔ A JUNCTION DOES NOT WORK. `mklink /J` is the obvious cheap route — in the `AC17`/`VOLUMEROOT`
+check a cross-volume junction stands in for a real mount point. Here it is useless: launched
+through `D:\<CJK>\DumperTest`, the process reports
 
     QueryFullProcessImageNameW -> D:\UE_Analyze_data\For Testing\...\DumperTest-Win64-Shipping.exe
 
@@ -29,11 +29,11 @@ which is the discriminator this rig exists to keep honest.
 nothing this fixture does can reach the maintainer's own ReShade install.
 
 ⛔ WHAT THIS RIG DOES **NOT** DO, AND WHY. The message is emitted only from `OnInjectAndConnect`
-(`Methode.cpp:291` / `:388`), the **CE plugin Type-5 menu callback**, and `Methode.cpp` is compiled
-into `UE5Dumper.dll` itself. So reading it requires **registering our DLL as a Cheat Engine plugin** —
-a persistent change to CE's configuration, and one that re-creates the very
-`UE5Dumper.dll`-under-CE's-folder condition `[STALEDLL-2026-08-18]`(a) was closed by *deleting*, a
-condition that blocks the `.CT DLL discovery` row. That is a maintainer decision, not a
+(through both of its `IsAlreadyLoadedInTarget` checks), the **CE plugin Type-5 menu callback**, and
+`Methode.cpp` is compiled into `UE5Dumper.dll` itself. So reading it requires **registering our DLL
+as a Cheat Engine plugin** — a persistent change to CE's configuration, and one that re-creates the
+`UE5Dumper.dll`-under-CE's-folder condition `[STALEDLL-2026-08-18]`(a) describes, a condition that
+blocks the `.CT DLL discovery` row. That is a maintainer decision, not a
 side effect of a verification run. This rig stops at the fixture and says so.
 """
 from __future__ import annotations

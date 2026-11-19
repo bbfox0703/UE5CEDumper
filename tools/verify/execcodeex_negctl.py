@@ -9,7 +9,7 @@ string. PASS is CE printing
 
     executeCodeEx failed for UE5_CallProcessEvent: Execution timeout
 
-⛔ SUSPENDING THE PROCESS CANNOT TEST THIS — do not go back to it. Suspending the whole PROCESS
+⛔ SUSPENDING THE PROCESS CANNOT TEST THIS — do not use it. Suspending the whole PROCESS
 (`NtSuspendProcess`) cannot make this fail: `executeCodeEx` runs the target on a **newly created
 remote thread**, and suspension only freezes threads that already exist, so a call issued in the
 middle of a suspension returns promptly. The dissect's exports are pure memory work needing no

@@ -2,21 +2,20 @@ r"""Genau RIP decode — the half `genau_rip_ab.py` could NOT reach: GObjects / 
 
     py tools/verify/genau_rip_recovery_ab.py
 
-WHAT WAS ALREADY SETTLED (`[GENAURIP-AB-2026-08-19]`). On notepad++, the fix's WIN was measured
-(candidates 4085 → 4083, reproduced on 4 runs) and the acceptance criterion was met **for GWorld
-only** — because on a non-UE host GObjects and GNames never resolve at all, so "the address did not
-move" was vacuous for two of the three the row names.
+WHAT A NON-UE HOST CANNOT SETTLE (`[GENAURIP-AB-2026-08-19]`). There the candidate count and
+GWorld are measurable, but GObjects and GNames never resolve at all, so "the address did not move"
+is vacuous for two of the three the row names.
 
-WHY A GAME COULDN'T CLOSE IT EITHER. All five call sites of `Macht::IsRipRelativeModRM` live in
+WHY A GAME CANNOT SETTLE IT EITHER. All five call sites of `Macht::IsRipRelativeModRM` live in
 RECOVERY paths (`DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `ResolveSymbolExport`,
 `FindGNamesByStringRef` ×2). On a healthy title the AOB wins on the first pattern and **not one of
 them runs**, so a game hands you two identical logs for the worst possible reason: the code under
-test never executed. That is the deadlock the row sat in.
+test never executed.
 
-⭐ THE WAY OUT IS THIS PROJECT'S OWN PRECEDENT. The `PEHOOK` rows staged their TABLE arm by
-*temporarily removing signatures so DumperTest mis-detects*. Same trick: force
-`ScanForTarget`'s result to 0 in `FindGObjects` and `FindGNames`, and the recovery paths run on a
-real UE host that actually HAS a GObjects and a GNames to find.
+⭐ THE WAY OUT IS STAGING, the way the `PEHOOK` rows stage their TABLE arm (*temporarily removing
+signatures so DumperTest mis-detects*): force `ScanForTarget`'s result to 0 in `FindGObjects` and
+`FindGNames`, and the recovery paths run on a real UE host that actually HAS a GObjects and a
+GNames to find.
 
 THE 2×2 THIS BUILDS AND RUNS — three DLLs from one tree in one session, differing only in the lines
 named:
@@ -26,20 +25,19 @@ named:
 
 and `dist`'s untouched DLL supplies the AOB-resolved baseline.
 
-WHAT IS ASSERTED — and this list was CORRECTED by the first run, which is the useful part:
+WHAT IS ASSERTED:
   1. the recovery path really RAN on both sides (the fallback log line is present)  — else vacuous
   2. GNames resolves identically on both sides AND matches the AOB baseline         — the row's
      criterion, closed for GNames
   3. the candidate count drops by a margin far larger than its run-to-run variance  — the win
   4. GObjects is REPORTED, not asserted. See below.
 
-⛔ GOBJECTS CANNOT BE AN ACCEPTANCE CRITERION HERE, AND THE STAGING IS WHAT REVEALED IT.
-Forced onto the data-scan fallback, DumperTest's `ValidateGObjects` accepts a FALSE POSITIVE: the
-run reports `UE5_Init: Complete` with an object count of 583 or 2,556,928 against a real 25,179,
-and the resolved address is on the HEAP, so it moves every launch anyway. Which false positive wins
-depends on live heap contents — measured: the post side picked the same instruction on all three
-runs, the pre side picked two different ones. So the two sides differ for a reason that is **not a
-regression**, and comparing the addresses would be reading noise as signal.
+⛔ GOBJECTS CANNOT BE AN ACCEPTANCE CRITERION HERE. Forced onto the data-scan fallback,
+DumperTest's `ValidateGObjects` accepts a FALSE POSITIVE: the run reports `UE5_Init: Complete`
+with an object count far from the real one (hundreds, or millions), and the resolved address is
+on the HEAP, so it moves every launch anyway. Which false positive wins depends on live heap
+contents, so the two sides can differ for a reason that is **not a regression**, and comparing the
+addresses would be reading noise as signal.
 
 ⭐ Staging a path makes it RUN; it does not make it MEANINGFUL. Closing the GObjects half still
 needs a UE title whose GObjects AOB genuinely fails AND whose data scan then finds the real pool.
@@ -143,12 +141,12 @@ def run_host(dll, label):
     if r.returncode != 0:
         say("   inject FAILED: %s" % (r.stdout or r.stderr or "")[-200:])
         return None, None, ""
-    # ⚠ POLL, do not sleep a constant. The PRE side is measurably SLOWER to become
-    # ready — the broken predicate hands the data scan ~1,500 more candidates and then
-    # validates a bogus 2.5M-object pool, so init runs long. A flat `sleep(2)` worked on
-    # the post side and failed on the pre side twice in a row, which reads as "the DLL
-    # crashed" and is not what happened. The wait is now a real deadline and the time is
-    # REPORTED, because the difference is itself a measurement.
+    # ⚠ POLL, do not sleep a constant. The PRE side is SLOWER to become ready — the
+    # broken predicate hands the data scan more candidates and then validates a bogus
+    # multi-million-object pool, so init runs long. A flat sleep that suits the post side
+    # times out on the pre side, which reads as "the DLL crashed" and is not what
+    # happened. So the wait is a real deadline and the time is REPORTED, because the
+    # difference is itself a measurement.
     t0 = time.time()
     p = None
     while time.time() - t0 < 180:

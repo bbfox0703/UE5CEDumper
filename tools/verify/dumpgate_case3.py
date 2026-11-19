@@ -3,11 +3,10 @@
     py dumpgate_case3.py livehash              # what pe_hash does the LIVE game report?
     py dumpgate_case3.py flip <dump.jsonl>     # write a case-(3) twin beside it
 
-WHY THIS IS NOT "wait for a DQ7R patch". The register bullet says case (3) "needs an
-actual DQ7R patch to come along, so it is opportunistic, not schedulable". That is
-wrong, and the gate's own source says why (DumpExplorerViewModel.cs:396-403): the
-tier-2 branch is three PLAIN STRING comparisons over `meta.module` and `meta.pe_hash`
-as read from the dump's first line. Nothing hashes the running exe at match time, so
+WHY THIS IS NOT "wait for a DQ7R patch". Case (3) needs no real patch, and the gate's
+own source says why (DumpExplorerViewModel.cs `JudgeIdentity`): the tier-2 branch is
+nothing but PLAIN STRING comparisons over `meta.module` and `meta.pe_hash` as read
+from the dump's first line. Nothing hashes the running exe at match time, so
 flipping one hex digit in that line manufactures a different build exactly as far as
 the gate can tell. A patch would be a slower way to produce the same two strings.
 

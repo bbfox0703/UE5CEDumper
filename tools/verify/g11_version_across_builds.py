@@ -4,14 +4,14 @@ r"""G11 step 1 — did version detection change across the build-3112 boundary?
     py tools/verify/g11_version_across_builds.py --all      # every record, not just spanning games
 
 ⭐ WHY THIS EXISTS. G11 step 1 asks for a **before/after**: record `ueVersion` / `versionDetected` /
-`lowConfidence` for a game on a build < 3112, upgrade, and check all three are unchanged. Elliot and
-DragonSword Awakening were done live. The trouble is that the "before" side cannot be produced any
-more — this machine is long past 3112 — so the row looked permanently blocked for every other title.
+`lowConfidence` for a game on a build < 3112, upgrade, and check all three are unchanged. A live
+"before" needs a build < 3112 running, which a machine past that build cannot produce, so a live
+run cannot cover a title that has no recorded "before".
 
-It is not. Every `scan-*.log` is **self-contained**: it opens with the `Logger started | build:`
-banner AND carries the `FindAll: UE Version` line, so an archived log from a pre-3112 run is a
-recorded "before" for whichever game wrote it. The archive on this machine goes back far enough to
-cover several titles, which turns a blocked live step into an offline measurement.
+It does not have to be live. Every `scan-*.log` is **self-contained**: it opens with the `Logger
+started | build:` banner AND carries the `FindAll: UE Version` line, so an archived log from a
+pre-3112 run is a recorded "before" for whichever game wrote it. An archive that goes back far
+enough covers several titles, which turns a blocked live step into an offline measurement.
 
 ⚠ TWO FORMAT STRINGS, and they spell the same field differently — grep for one and you silently
 lose half the corpus:

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Write a minidump of a HUNG process and print every thread's stack by module.
 
-Built for the build-3363 follow-up: with the dxgi proxy deployed, OCTOPATH TRAVELER stops
-crashing but never shows a window, and its UE5CEDumper log stops at
-`DllMain: auto-start thread created OK`. A thread created inside DllMain cannot start until
-the loader lock is released, so that log line not being followed by the auto-start thread's
-own first line means **the loader lock was never released**. This tool answers *which thread
-is holding it and where*, which is the part reasoning cannot supply.
+Built for a loader-lock wedge: a game with a proxy deployed never shows a window, and its
+UE5CEDumper log stops at `DllMain: auto-start thread created OK`. A thread created inside
+DllMain cannot start until the loader lock is released, so that log line not being followed by
+the auto-start thread's own first line means **the loader lock was never released**. This tool
+answers *which thread is holding it and where*, which is the part reasoning cannot supply.
 
     py tools/verify/hang_dump.py --wait-for Octopath_Traveler-Win64-Shipping.exe --after 25
 

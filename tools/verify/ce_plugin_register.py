@@ -9,9 +9,9 @@ r"""Register / unregister UE5Dumper.dll as a Cheat Engine plugin, reversibly.
 artifact under test, never a copy, and `unregister` removes it like any UE5Dumper.dll entry (it matches
 on the file name). Only one UE5Dumper.dll entry is ever allowed: register refuses while one exists.
 
-⚠⚠ A WRITE THAT READS BACK IS NOT A WRITE CE SEES (2026-09-26, working-lessons 3.wc). From the desktop app's shell
-this rig registered an entry, `status` showed it, and CE never loaded it: the shell's HKCU view of Plugins64 had
-diverged from the one CE and regedit read. After `register`, start CE and confirm in the DLL's own init log
+⚠⚠ A WRITE THAT READS BACK IS NOT A WRITE CE SEES (working-lessons 3.wc). From the desktop app's shell an entry
+this rig registers can show in `status` and never load in CE: the shell's HKCU view of Plugins64 can diverge
+from the one CE and regedit read. After `register`, start CE and confirm in the DLL's own init log
 (Logs\cheatengine-x86_64-SSE4-AVX2, "Module identity ... path:"). If it did not take, use CE's Settings > Plugins.
 
 WHY THIS EXISTS. Some rows can only be reached through the CE-plugin surface — the
@@ -22,20 +22,18 @@ WHY THIS EXISTS. Some rows can only be reached through the CE-plugin surface —
         "<8-digit index> A"  REG_SZ     path to the DLL
         "<8-digit index> B"  REG_DWORD  1 = enabled (ticked), 0 = disabled
 
-Format confirmed by reading the two entries CE already had
-(`.\plugins\AOBMaker_CEPlugin.dll` = 1, `.\plugins\CE-Handwire.dll` = 0), which matches
-the Settings→Plugins dialog exactly.
+The format is the one CE's own entries carry (e.g. `.\plugins\AOBMaker_CEPlugin.dll` = 1),
+which matches the Settings→Plugins dialog exactly.
 
 ⭐ AN ABSOLUTE PATH TO `dist\`, DELIBERATELY — NOT A COPY INTO CE's FOLDER.
 CE accepts either. Pointing at `dist\UE5Dumper.dll` is strictly better here:
 
   * `C:\Program Files\Cheat Engine\plugins\` is NOT writable non-elevated on this host
-    (measured: PermissionError), unlike `autorun\` which is — so a copy needs elevation;
+    (a write raises PermissionError), unlike `autorun\` which is — so a copy needs elevation;
   * more importantly, a copy is a SECOND artifact that goes stale the moment the DLL is
-    rebuilt. That is `[STALEDLL-2026-08-18]`(a) exactly: a February `UE5Dumper.dll` sat in
-    CE's install folder and silently answered the `.CT` DLL-discovery probe for months,
-    blocking that row until the maintainer deleted it. Referencing `dist\` means there is
-    only ever ONE copy and it is the one that was just built.
+    rebuilt. That is `[STALEDLL-2026-08-18]`(a) exactly: a stale `UE5Dumper.dll` in CE's
+    install folder silently answers the `.CT` DLL-discovery probe. Referencing `dist\`
+    means there is only ever ONE copy and it is the one that was just built.
 
 ⚠ THE COST OF THAT CHOICE, AND IT IS REAL: while CE is running with the plugin enabled it
 holds `dist\UE5Dumper.dll` open, so a rebuild (`build.ps1 -Target DLL`) will fail to write

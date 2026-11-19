@@ -3,9 +3,9 @@ r"""AC15 — an INDEPENDENT oracle for the Proxy Deploy *generic drive* scan.
     py tools/verify/ac15_drive_oracle.py D
     py tools/verify/ac15_drive_oracle.py D --verbose
 
-The sibling of `ac15_steam_oracle.py`, for the half that two earlier sessions left unrun: the
-non-Steam drive walk. Same purpose — a second witness written from the C# spec in another
-language, so a game the walk silently drops shows up as a disagreement rather than as nothing.
+The sibling of `ac15_steam_oracle.py`, for the row's other half: the non-Steam drive walk.
+Same purpose — a second witness written from the C# spec in another language, so a game the
+walk silently drops shows up as a disagreement rather than as nothing.
 
 The walk rules it mirrors (ProxyDeployService.cs `WalkDrive` / `LooksLikeUeGameRoot`):
 

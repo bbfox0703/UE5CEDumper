@@ -3,11 +3,11 @@
     py tools/verify/compile_sdk_header.py
 
 WHY THIS EXISTS
-  The SDK-header export shipped for months emitting `uint8_t[0x40] CellBounds;` for every
-  OptionalProperty and every unresolved StructProperty -- the array extent BEFORE the identifier,
-  which is not valid C++. A real 75,342-line export carried 5 of them, so the whole header was
-  uncompilable. The emitters were unit-covered the entire time; what no check in this repo did was
-  COMPILE the artifact. Reading a header only proves it parses the way you already assumed.
+  An emitter that writes `uint8_t[0x40] CellBounds;` for an OptionalProperty or an unresolved
+  StructProperty -- the array extent BEFORE the identifier, which is not valid C++ -- makes a whole
+  real export uncompilable with a single such line. Unit tests over the emitters do not see that;
+  only COMPILING the artifact does. Reading a header only proves it parses the way you already
+  assumed.
 
 WHAT IT COMPILES
   `out/sdk-smoke/sdk_smoke.cpp`, written by SdkHeaderDeclaratorTests during `dotnet test`. It is
@@ -33,9 +33,9 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 ARTIFACT = REPO / "out" / "sdk-smoke" / "sdk_smoke.cpp"
-# Every file whose edit changes the artifact. The type and member names moved out of the emitter
-# into their own services, and a guard that watched only the emitter compiled a stale artifact
-# after a naming edit and reported OK.
+# Every file whose edit changes the artifact. The type and member names live in their own
+# services, not the emitter, so a guard that watched only the emitter would compile a stale
+# artifact after a naming edit and report OK.
 INPUTS = [
     REPO / "ui" / "UE5DumpUI" / "Services" / "SdkExportService.cs",
     REPO / "ui" / "UE5DumpUI" / "Services" / "SdkTypeNames.cs",

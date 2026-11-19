@@ -155,8 +155,8 @@ def merge_oracle(existing, harvested):
 
     Returns (merged, added, updated, kept). An entry whose Editor is no longer installed is KEPT:
     that is the whole value of the oracle -- its hashes are unobtainable once the Editor is gone.
-    Overwriting (the old behaviour) silently dropped every such row; re-harvesting after the 5.8.2
-    Editor was upgraded in place to 5.8.3 would have deleted the 5.8.2 CRC hash.
+    Overwriting would silently drop every such row: re-harvesting after an Editor is upgraded in
+    place (5.8.2 to 5.8.3, say) would delete the 5.8.2 CRC hash.
     """
     merged = dict(existing)
     added, updated = [], []

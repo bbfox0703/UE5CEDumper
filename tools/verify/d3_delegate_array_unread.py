@@ -6,8 +6,8 @@ THE DEFECT. If `Ubel::ReadMulticastDelegateArrayElements` drops the `Macht::Read
 the element's inner `TArray<FScriptDelegate>` header, a faulted read leaves `innerData`/`innerCount`
 at 0, so the element is published as the AFFIRMATIVE `"(0 bindings)"` and counted in
 `readCount` — an assertion that a delegate provably has NO subscribers, made over memory
-nobody could read. `Macht::ReadTArray` validates only Count and Max and never probes Data
-(Macht.h:287-297), so a freed buffer reaches the element loop with a sane-looking header.
+nobody could read. `Macht::ReadTArray` (Macht.h) validates only Count and Max and never probes
+Data, so a freed buffer reaches the element loop with a sane-looking header.
 
 ⚠ THE FIXTURE. `Arr_MulticastDelegates` exists for exactly this row (see
 `tools/ue-sample/README.md`): a `DumperTestActor` ArrayProperty with a `Multicast*` inner.

@@ -7,19 +7,19 @@ THE ROW. "Call `walk_function_props` on a NATIVE (non-Blueprint) UFunction and c
 `budget_hit`. If it is true, the Props dialog's status turns amber and says 'hit its instruction
 budget', and Interesting Functions' Uses column shows `⚠ partial`."
 
-⚠ **"THE KEY EXISTS" IS ALMOST A TAUTOLOGY, AND THAT IS THE TRAP.** `Fern.cpp:4750` writes
-`data["budget_hit"] = res.budgetHit;` unconditionally, so *every* reply carries it — including
-replies from the **bytecode** path, where `budgetHit` is structurally always false because no
-disassembler ran. Asserting the key on a Blueprint function therefore proves nothing at all. The
-check only means something when `method == "disasm"`, i.e. Path 2 actually executed, so this rig
-refuses to pass on anything else.
+⚠ **"THE KEY EXISTS" IS ALMOST A TAUTOLOGY, AND THAT IS THE TRAP.** Fern's
+`CMD_WALK_FUNCTION_PROPS` handler writes `data["budget_hit"] = res.budgetHit;` unconditionally,
+so *every* reply carries it — including replies from the **bytecode** path, where `budgetHit` is
+structurally always false because no disassembler ran. Asserting the key on a Blueprint function
+therefore proves nothing at all. The check only means something when `method == "disasm"`, i.e.
+Path 2 actually executed, so this rig refuses to pass on anything else.
 
 WHAT IT REPORTS, in the order the row cares about:
   1. the key is present on a reply whose `method` is `disasm`      — the row's stated PASS
   2. the distribution of `method` across the native functions probed — so a host where Path 2 never
      runs cannot look like a pass
   3. whether any function on this host trips the budget at all (`kInstrBudget = 8192`,
-     `Denken.cpp:17`) — and if none does, it says so rather than implying the flag was exercised
+     `Denken.cpp`) — and if none does, it says so rather than implying the flag was exercised
 
 ⚠ **A `false` on every function is NOT evidence the flag works.** It is the value a hardwired
 `false` would also produce. Finding a `true` needs a native function big enough to decode 8192

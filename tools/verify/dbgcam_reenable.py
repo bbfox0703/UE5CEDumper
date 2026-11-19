@@ -1,4 +1,4 @@
-"""[DBGCAM-58-REENABLE] Debug Camera Force ON -> OFF -> ON on a live game, under the condition that broke it.
+"""[DBGCAM-58-REENABLE] Debug Camera Force ON -> OFF -> ON on a live game, under the condition that breaks it.
 
     py tools/verify/dbgcam_reenable.py              # 3 GCs, then ON/OFF/ON/OFF through set_debug_camera
     py tools/verify/dbgcam_reenable.py --gc 0       # no GC first (the ordering usually stays harmless)

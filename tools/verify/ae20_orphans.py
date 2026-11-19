@@ -31,7 +31,7 @@ WHY SYNTHETIC, AND WHY THAT IS NOT A COMPROMISE HERE
     so the interrupted row has recycled nothing and the tally matches the log — which a
     build without the fix would also report. A run only discriminates when a
     NON-SUCCESSFUL row has already recycled something, because that is the arithmetic
-    the fix moved out of `if (result.Success)`.
+    that must sit outside `if (result.Success)`.
 
     The deterministic way to get there is the sibling hole
     `APartlyLockedRow_AlsoCountsWhatItRecycled` pins: a row that recycles one of its DLLs
@@ -165,7 +165,7 @@ def readonly(tree, dll, on=True):
     A READ-ONLY file still OPENS, so it survives the re-plan and reaches the loop's own
     `(fi.Attributes & FileAttributes.ReadOnly) != 0 -> readOnly.Add(...); continue;` branch.
     `ResolveRemovalOutcome` then returns Success=false with `recycled >= 1` from the row's
-    OTHER DLL - which is precisely the accounting the fix moved out of `if (result.Success)`,
+    OTHER DLL - which is precisely the tally that must sit outside `if (result.Success)`,
     and the case `APartlyLockedRow_AlsoCountsWhatItRecycled` pins at the seam.
 
     Never clear it on a file we did not stage: `clean` would then leave it behind.
@@ -195,8 +195,8 @@ def lock(tree, dll, seconds):
 
     This is what makes a row PARTLY succeed: the service recycles the row's other DLL,
     then this one throws IOException 0x80070020 into the `locked` list -> Success=false
-    with recycled >= 1, which is the accounting case the fix moved out of the success
-    branch. `FileShare.None` is deliberate: FileShare.Delete would let the recycle through.
+    with recycled >= 1, which is the case the tally outside the success branch must
+    count. `FileShare.None` is deliberate: FileShare.Delete would let the recycle through.
     """
     path = bin_of(LIB / tree) / dll
     if not path.is_file():

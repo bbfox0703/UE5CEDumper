@@ -50,7 +50,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from build_dll import find_vcvars  # noqa: E402  (the same toolchain lookup build.ps1 uses)
 
 # A status line names folders, and a folder can hold a character the console's code page cannot print. Without this
-# a successful build died on its own success message when its output was captured, and exited 1.
+# a successful build dies on its own success message when its output is captured, and exits 1.
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 

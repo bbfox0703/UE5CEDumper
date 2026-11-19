@@ -15,7 +15,7 @@ Extinction / NEKOPALIVE are the other named candidates.
 WHAT IS ASSERTED, and why each half matters:
   * `flat_layout` is true and `packed_layout` is false — the right branch was taken;
   * `ce_offsets` is EXACTLY ONE hop and equals the requested `field_offset` — the
-    4-hop chunked chain is what produced the garbage address;
+    4-hop chunked chain is what produces the garbage address;
   * `ce_base` is the ABSOLUTE object address, i.e. the address asked about — not a
     GObjects-relative base;
   * a warning is present and says the address will not survive a restart. A silent

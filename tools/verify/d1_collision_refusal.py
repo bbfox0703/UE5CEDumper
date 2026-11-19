@@ -162,11 +162,11 @@ def arm(game_tid: int, hold_s: float, want: str, label: str) -> list[str]:
     tid("suspend-tid", game_tid)
     t0 = time.time()
     try:
-        # ⛔ THE SLEEP MUST COME BEFORE THE COMMAND, and the control is what proved it.
-        # IsGameThreadResponsive() is evaluated the moment the restore is handled, so a
-        # sleep placed AFTER the call changes nothing that is being measured: the first
-        # draft held the freeze for 1459 ms and still landed on arm 1, because the verdict
-        # had already been taken ~1 ms in. A control that cannot fail is not a control.
+        # ⛔ THE SLEEP MUST COME BEFORE THE COMMAND. IsGameThreadResponsive() is
+        # evaluated the moment the restore is handled, so a sleep placed AFTER the call
+        # changes nothing that is being measured: the verdict is taken ~1 ms in, and even
+        # a freeze held well past the threshold then lands on arm 1. A control that
+        # cannot fail is not a control.
         if hold_s:
             time.sleep(hold_s)
         call("fly_set", {"enable": False})

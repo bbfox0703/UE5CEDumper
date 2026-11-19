@@ -16,20 +16,20 @@ instead, and this tool asks exactly that:
 
     does the UN-SET OUT-PARAM go on to feed a COUNT, or a PUBLISHED field?
 
-Because that is the shape that has actually been confirmed here, four times over. On a faulted
-read the out-param keeps its initialised value — usually 0 — and 0 then means something
-affirmative downstream:
-  * `Ubel.cpp` delegate readers: objIdx/serial stay 0, the weak pointer resolves null, and the
-    element is published as "(unbound)" — an affirmative claim that nothing was ever bound;
-  * `GetMapPairLayout`: the struct addr stays 0, the alignment is guessed, and every pair after
-    the first is strided to a wrong address;
-  * `WalkInstance`'s two inlined map copies: the same, and silently;
-  * `Fern`'s `delegate_pad`: set but never emitted, so a CE record pointed at address 0.
+Because that is the shape a real defect of this kind takes. On a faulted read the out-param
+keeps its initialised value — usually 0 — and 0 then means something affirmative downstream.
+Left unchecked, for example:
+  * in a `Ubel.cpp` delegate reader, objIdx/serial stay 0, the weak pointer resolves null, and
+    the element is published as "(unbound)" — an affirmative claim that nothing was ever bound;
+  * in `GetMapPairLayout`, the struct addr stays 0, the alignment is guessed, and every pair
+    after the first is strided to a wrong address;
+  * in `WalkInstance`'s inlined map copies, the same, and silently;
+  * in `Fern`'s `delegate_pad`, a value set but never emitted points a CE record at address 0.
 
 ⚠ THIS IS A RANKER, NOT A VERDICT. It reports where the question is worth asking, ordered by how
 close the out-param gets to something a user reads. Every hit still needs a human or an
-adversarial agent to answer it, exactly as the four above did. A tool that called these defects
-would be the "blanket rule" this file exists to avoid.
+adversarial agent to answer it. A tool that called these defects would be the "blanket rule"
+this file exists to avoid.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ CONSUMED = re.compile(r"=|\breturn\b|\bif\s*\(|\bwhile\s*\(|&&|\|\||!|\?|\bEXPEC
 LASTARG = re.compile(r",\s*([A-Za-z_][A-Za-z0-9_.\[\]>-]*)\s*\)\s*;\s*$")
 
 # How close does that name then get to something a user reads? Highest first -- these are the
-# tiers the four confirmed defects fell into.
+# tiers the examples in the module docstring fall into.
 TIERS = [
     (40, "PUBLISHED", re.compile(r"\bfv\.|\bresult\.|\bdata\[|\bitem\[|\bj\[|\bout\.|"
                                  r"\belem\.|\bce\.|\bsf\.")),

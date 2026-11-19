@@ -10,8 +10,8 @@ B25 has two opposite branches and one exe cannot exercise both:
 
   A  `b25a_subfloor.exe` -- carries a PE VERSIONINFO whose PRODUCTVERSION is
      4.5.0.0. `Genau::DetectVersionFromPEResource`'s `major == 4` branch turns that
-     into 405, which is below `Grimoire::MIN_SUPPORTED_UE_VERSION` (411). The FIX
-     under test is that this no longer short-circuits as tier 1: it must log
+     into 405, which is below `Grimoire::MIN_SUPPORTED_UE_VERSION` (411). Under
+     test: this must NOT short-circuit as tier 1 -- it must log
      "below the 411 floor -- NOT accepting that on its own", drop to tier 3
      (= low confidence), and let the scan RUN.
      PASS = that line present AND no "SKIPPING the scan".
@@ -26,9 +26,9 @@ B25 has two opposite branches and one exe cannot exercise both:
   B is the direction that must still REFUSE. Testing only A would let a fix that
   disarmed the gate entirely pass, which is the whole reason the row names both.
 
-[VER-410-GATE] adds a pair of its own, because A's lesson ("one fixed field must not
-refuse") went one step too far: nothing below the floor could be confident, so the
-first genuine 4.10 title met (IS Defense, 4.10.2) was scanned instead of refused.
+[VER-410-GATE] adds a pair of its own, because A's rule ("one fixed field must not
+refuse") must not go so far that nothing below the floor can be confident: a genuine
+4.10 title (IS Defense, 4.10.2) must still be refused, not scanned.
 
   C  `b25c_corroborated.exe` -- FILEVERSION / PRODUCTVERSION 4,10,2,0 plus IS
      Defense's ProductVersion string, the engine's own build string
@@ -43,8 +43,8 @@ first genuine 4.10 title met (IS Defense, 4.10.2) was scanned instead of refused
      PASS = "below the 411 floor", "UE Version = 410 (tier=3", and no "SKIPPING the
      scan".
 
-  C without D would pass a gate that refuses every 4.10 reading again, which is the
-  B25 defect; D without C would pass today's broken build.
+  C without D would pass a gate that refuses every 4.10 reading, which is the B25
+  defect; D without C would pass a gate that refuses none.
 
 [VER-410-RIG-EF] adds the two shapes a CrashReportClient decides. Each exe is laid out
 as an install -- out/b25/<stem>_root/B25Game/Binaries/Win64/<stem>.exe, with a copy of
@@ -68,11 +68,11 @@ started from THERE, not from out/b25/. A-D have no CrashReportClient above them,
      "CrashReportClient says UE 410, below the <floor> floor, and the game exe's own PE
      VERSIONINFO read nothing usable", "PE resource failed", the note under it naming
      the CrashReportClient, "UE Version = 410 (tier=3", and no "SKIPPING the scan",
-     "CORROBORATED", "AGREE on" or "PE VERSIONINFO says UE 410" (its number in the
-     exe's mouth, the wording before the [VER-410-GATE] review).
+     "CORROBORATED", "AGREE on" or "PE VERSIONINFO says UE 410" (which would put the
+     CrashReportClient's number in the exe's mouth).
 
   E without F would pass a gate that lets one CrashReportClient refuse on its own; F
-  without E would pass rev 8, which read nothing out of E's string.
+  without E would pass a detector that reads nothing out of E's string (rev 8).
 
 RUNNING THEM is a live step this script does not take: start an exe, inject the DLL
 (tools/verify/inject.py, or CE + the .CT's init), and trigger the scan -- injection
@@ -81,11 +81,11 @@ Grimoire.h, never typed. ⚠ A, D and F are SAVED to the hint cache after their 
 second run of the same exe skips detection; `check` says so, and `build` mints a new PE
 hash. B, C and E are refused before the save, so they re-detect on every run.
 
-THE NEGATIVE CONTROL IS FREE AND ALREADY MEASURED. A stock `python.exe` reaches the
-identical terminal branch and logs "pre-UE4 markers 0/4, below the 2 needed" -- same
-code path, same host shape, markers absent. So B's 2/4 is a difference made by the
-two literals and nothing else. Re-run it with tools/verify/inject.py on a plain
-python sleeper if the control is ever wanted fresh.
+THE NEGATIVE CONTROL IS FREE. A stock `python.exe` reaches the identical terminal
+branch and logs "pre-UE4 markers 0/4, below the 2 needed" -- same code path, same
+host shape, markers absent. So B's 2/4 is a difference made by the two literals and
+nothing else. Run it with tools/verify/inject.py on a plain python sleeper when the
+control is wanted.
 
 Why compiled rather than a patched copy of a real exe: resource-patching a signed
 system binary is indistinguishable from what malware does, and this machine runs
@@ -571,9 +571,9 @@ def selftest():
             "DetectVersion: (the game exe's resource read nothing usable; CrashReportClient says UE 410, below the "
             f"{floor} floor, which alone does not corroborate a reading below it — the memory scan decides)\n"
             "FindAll: UE Version = 410 (tier=3, detected=yes)\n[GObjects] Batch 1/7\n")
-    # E before rev 9: the version-first string read nothing, so E's log was F's.
+    # E as a rev-8 detector logs it: the version-first string reads nothing, so E's log is F's.
     e_rev8 = f_ok
-    # F before the review: the CrashReportClient's 410 logged as the exe's own reading.
+    # F with the CrashReportClient's 410 logged as the exe's own reading.
     f_mouth = f_ok.replace("CrashReportClient says UE 410, below the "
                            f"{floor} floor, and the game exe's own PE VERSIONINFO read nothing usable",
                            f"PE VERSIONINFO says UE 410, below the {floor} floor")

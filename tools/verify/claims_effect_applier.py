@@ -19,13 +19,14 @@ WHAT THE SCORE SAYS:
     curated TSV plus a baseline file plus a gate, for that few, is the trade round 2 already
     refused.
   * adjudicated by hand (the VERDICTS table below), most of them are CLEAN, so a gate would
-    open with that many waivers — mostly false positives, the same shape that killed the design.
+    open with that many waivers — mostly false positives, the same shape that refutes the design.
 
 ⛔ A SCORER RE-RAISES REFUTED ROWS, AND THAT IS THE OTHER LESSON THIS FILE CARRIES. The
-`Wirbel.cpp` hit is on round 2's `Refuted (8) -- do not re-raise` list (as `:619`; line numbers
-move). A mechanical scorer surfaces refuted rows as fresh hits by construction, because the
-refutation lives in prose while the code still matches the pattern -- so the VERDICTS table below
-is not bookkeeping, it is the only thing standing between this script and re-opening settled rows.
+`Wirbel.cpp` hit is on round 2's `Refuted (8) -- do not re-raise` list (by a line number, and
+line numbers move). A mechanical scorer surfaces refuted rows as fresh hits by construction,
+because the refutation lives in prose while the code still matches the pattern -- so the VERDICTS
+table below is not bookkeeping, it is the only thing standing between this script and re-opening
+settled rows.
 
 ⚠ A REPAIRED SITE LEAVES THE POPULATION. Once its return is consumed it no longer matches, so
 the count this prints shrinks as sites are repaired; that is the script working. What remains
@@ -37,9 +38,9 @@ correct anyway, because the next thing it does is `Dunste::GetStatus(st)` and it
 `st`. That is this repo's actual rule — *report the EFFECT, not the ATTEMPT* — and a checker
 keyed on "the status was discarded" flags the file that follows it best.
 
-⚠ THE FOURTH was `Fern.cpp`'s last-client teardown calling `Schlacht::SetEnabled(false)`. Since
+⚠ THE FOURTH is the `Fern.cpp` `SetEnabled` verdict, for the last-client teardown. Under
 [PIPE-PER-PROCESS-2026-11-06] Stage C a departing client calls `Schlacht::Release`, which turns
-See-through off only when that client held the last claim; the population is unchanged.
+See-through off only when that client held the last claim, so that site does not match.
 
 ⚠ WHAT THIS SCRIPT IS NOT. It does not judge, it does not have a baseline, and it is not
 wired into `check_all.py`. Re-run it after adding a gameplay module to see whether the
@@ -84,9 +85,9 @@ CONSUMED = re.compile(r"=|\breturn\b|\bif\s*\(|\bwhile\s*\(|&&|\|\||!|\?|\bfor\s
 # The hand verdicts, so re-running this re-states them instead of re-opening them. A site
 # that drops off the list has moved; a site that appears without a verdict is NEW.
 VERDICTS = {
-    # The two repaired files are kept although they no longer MATCH: their returns are
-    # consumed now, so they have left the population. Listed so a regression that re-drops
-    # one comes back with its history attached instead of as a fresh unknown.
+    # Two entries are for files whose returns are consumed, so they do not MATCH and are
+    # outside the population. Listed so a regression that re-drops one comes back with its
+    # verdict attached instead of as a fresh unknown.
     ("dll/src/Dunste.cpp", "WriteBytes"):
         "FIXED 2026-09-09 -- both MovementMode writes now report their result",
     ("dll/src/Wirbel.cpp", "WriteBytes"):

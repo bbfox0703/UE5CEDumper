@@ -138,7 +138,7 @@ def main() -> int:
         #
         # ⚠ The log line is printed for the record but is NOT the assertion: its
         # "over N distinct class(es)" is `derivedCache.size()`, i.e. how many classes
-        # the derivation test was EVALUATED for (3941 = the whole pool), not how many
+        # the derivation test was EVALUATED for (typically the whole pool), not how many
         # matched. Read as a match count it would look like a catastrophic over-hold.
         line = _derived_line()
         print("detector (1) the DLL's own walk (for the record, not the assertion):")

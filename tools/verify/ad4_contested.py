@@ -71,9 +71,9 @@ POLL_HZ = 40.0
 
 def find_live_actor(c):
     # `limit` + `exact_match`, NOT `max_results` -- find_instances ignores the
-    # latter entirely (Fern.cpp reads request.value("limit", 500)), so every
-    # rig that passed max_results was silently running at the default 500 and
-    # matching class names by SUBSTRING. Harmless while the pool is two objects;
+    # latter entirely (Fern.cpp reads request.value("limit", 500)), so a rig
+    # that passes max_results silently runs at the default 500 and matches
+    # class names by SUBSTRING. Harmless while the pool is two objects;
     # not harmless once the spawner fixture puts 300 of them in it.
     r = c.request("find_instances", class_name=ACTOR_CLASS, limit=100, exact_match=True)
     c.check_complete(r)

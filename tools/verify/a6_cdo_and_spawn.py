@@ -21,8 +21,8 @@ Spawn source, selected with `--spawn`:
             and its components lazily on the first toggle, so this manufactures new
             UActorComponents without anyone playing the game. ⚠ It is ONE-SHOT per
             process: once those objects exist, cycling the camera off/on creates
-            nothing, so a second run in the same session cannot spawn (measured on
-            DumperTest 2026-08-22: 295 live objects before, 295 after).
+            nothing, so a second run in the same session cannot spawn (the live
+            object count before and after is the same).
 
   manual    Poll for new objects while a human — or computer-use — makes the game
             spawn them: walk into a battle, change map, reload a save. This is the

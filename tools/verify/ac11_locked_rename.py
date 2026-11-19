@@ -101,13 +101,13 @@ time.sleep(120)
 
 
 def direct_copy(src, target):
-    """the OLD publish: open the target for write."""
+    """the DIRECT publish shape: open the target for write."""
     ok = k32.CopyFileW(str(src), str(target), False)
     return 0 if ok else ctypes.get_last_error()
 
 
 def staged_publish(src, target):
-    """the NEW publish: copy to a sibling, then rename over the target.
+    """the STAGED publish shape: copy to a sibling, then rename over the target.
 
     The `finally { File.Delete(stagePath) }` of the real CopyProxyStaged is mirrored
     here on purpose. Without it this rig reports a `.ue5dump-stage` leftover that the

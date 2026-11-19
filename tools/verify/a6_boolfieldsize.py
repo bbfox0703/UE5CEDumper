@@ -19,12 +19,12 @@ to `byteVal != 0`, which reports a bool as **true whenever any sibling in its by
 
 ⛔ THE UI OBSERVABLE IS THE **LIVE WALKER**, NOT ClassStructPanel. The register row says
 "ClassStructPanel | two sibling bitfield bools showing DIFFERENT values". ClassStructPanel renders
-NO value column at all -- its DataGrid is Offset / Name / Type / Size / Address and nothing else
-(`ClassStructPanel.axaml:108-125`), so no bool value and no mask can ever appear there. What exists
-is `WalkInstance`'s value: `"%s (bit %d, mask 0x%02X)"` when the FieldSize probe landed
-(`Ubel.cpp:5162-5170`), and a bare `"true"`/`"false"` when it did not. That suffix is a DIRECT
-readout of whether the probe landed, so ONE field settles it -- the "two siblings with different
-values" construction is both harder to stage and weaker as evidence.
+NO value column at all -- its DataGrid is Offset / Name / Type / Size / Address and an xref button
+(`ClassStructPanel.axaml` `ClassFieldsGrid`), so no bool value and no mask can ever appear there.
+What exists is `WalkInstance`'s value: `"%s (bit %d, mask 0x%02X)"` when the FieldSize probe landed
+(`Ubel.cpp` `WalkInstance`, its BoolProperty branch), and a bare `"true"`/`"false"` when it did not.
+That suffix is a DIRECT readout of whether the probe landed, so ONE field settles it -- the "two
+siblings with different values" construction is both harder to stage and weaker as evidence.
 
 ⭐ THE STRONGEST FORM, and this rig looks for it: a native C++ bitfield packs siblings into one
 byte, so a landed probe yields masks marching `0x01, 0x02, 0x04 ... 0x80` across bits 0-7 on ONE
