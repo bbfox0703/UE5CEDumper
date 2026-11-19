@@ -8449,6 +8449,199 @@ int main() {
         g_cachedUEVersion = svVer;
     }
 
+    // -- VND10-A1-02 -- a licensee FFieldClass::Name is measured where the stock probes give up, never before ---------
+    //
+    // ⛔ POOL-FAKING (own GObjects, own name table; it restores every DynOff Genau writes).
+    // [VND10-A1] Phantom Blade Zero's FFieldClass holds ConstructFn at +0x00, ClassFlags at +0x08 and Name at +0x30, and
+    // its FField puts Next at +0x10 and Owner at +0x18. The shapes come from RE-UE4SS's MemberVariableLayout.ini for the
+    // game; nobody here owns it, so this block is its only test. Every stock shape runs in the same block and must latch
+    // what it latched before (working-lessons §7.3 #5).
+    {
+        blk("VND10-A1-02 - a licensee FFieldClass::Name is measured where the stock probes give up, never before");
+
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svOuter = DynOff::UOBJECT_OUTER;
+        const auto svFProp = DynOff::bUseFProperty;       const auto svUNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svChildProps = DynOff::USTRUCT_CHILDPROPS;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE; const auto svScript = DynOff::USTRUCT_SCRIPT;
+        const auto svFcName = DynOff::FFIELDCLASS_NAME;   const auto svFNext = DynOff::FFIELD_NEXT;
+        const auto svFName = DynOff::FFIELD_NAME;         const auto svTagged = DynOff::bTaggedFFieldVariant;
+        const auto svPOff = DynOff::FPROPERTY_OFFSET;     const auto svPElem = DynOff::FPROPERTY_ELEMSIZE;
+        const auto svPFlags = DynOff::FPROPERTY_FLAGS;    const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const auto svFNum = DynOff::FNAME_NUMBER;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        // A whole first chunk and every chunk slot, zeroed: the probes resolve pointer halves as name indices, and an
+        // index into a short table would read whatever static memory follows it.
+        static uint8_t lfEntry[8][0x40] = {};
+        const char* lfNames[8] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D" };
+        static uintptr_t lfChunk[0x4000] = {};
+        for (int i = 1; i < 8; ++i) {
+            memcpy(lfEntry[i] + 0x10, lfNames[i], strlen(lfNames[i]) + 1);
+            lfChunk[i] = A(lfEntry[i]);
+        }
+        static uintptr_t lfChunks[257] = {};
+        lfChunks[0] = A(reinterpret_cast<uint8_t*>(lfChunk));
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lfChunks), 0x10);
+
+        static uint8_t lfScriptStructCls[0x100] = {}, lfField[4][0x100] = {}, lfFc[0x80] = {}, lfZero[0x100] = {};
+        static uint8_t lfDecoy[0x100] = {}, lfDecoyFc[0x80] = {};
+        // One Guid per walked shape: the class-walk memo is keyed by address, not by the FField offsets.
+        static uint8_t lfGuid[6][0x200] = {};
+        constexpr uintptr_t kCodeLike = 0x00007FF6C166C147ull;   // a code address: its low dword is no name index
+
+        enum class Shape { Pbz, Stock57, Stock58, Stock50 };
+        // The Guid (a ScriptStruct) holds ChildProperties at +0x50 heading A -> B -> C -> D, four IntProperty fields.
+        auto build = [&](uint8_t* guid, Shape s) {
+            memset(guid, 0, 0x200);
+            memset(lfFc, 0, sizeof(lfFc));
+            for (auto& f : lfField) memset(f, 0, sizeof(f));
+            put32(lfScriptStructCls, Grimoire::OFF_UOBJECT_NAME, 1);
+            putP(guid, Grimoire::OFF_UOBJECT_CLASS, A(lfScriptStructCls));
+            put32(guid, Grimoire::OFF_UOBJECT_NAME, 2);
+            putP(guid, 0x50, A(lfField[0]));
+            int next = 0x18, owner = 0x10, name = 0x20, dim = 0x30, off = 0x44;
+            bool taggedOwner = true;
+            switch (s) {
+                case Shape::Pbz:      // ConstructFn, ClassFlags 0, CastFlags, Id, then Name at +0x30
+                    putP(lfFc, 0x00, kCodeLike); putP(lfFc, 0x10, 0x8); putP(lfFc, 0x18, 0x10); put32(lfFc, 0x30, 3);
+                    next = 0x10; owner = 0x18;
+                    break;
+                case Shape::Stock57:  // Name at +0x00, then the 64-bit Id
+                    put32(lfFc, 0x00, 3); putP(lfFc, 0x08, 0x2);
+                    break;
+                case Shape::Stock58:  // the virtual destructor's vfptr at +0x00, Name at +0x08
+                    putP(lfFc, 0x00, kCodeLike); put32(lfFc, 0x08, 3);
+                    break;
+                case Shape::Stock50:  // 5.0-5.2: a 16-byte FFieldVariant (pointer + bIsUObject), so all shifts +8
+                    put32(lfFc, 0x00, 3);
+                    next = 0x20; name = 0x28; dim = 0x38; off = 0x4C; taggedOwner = false;
+                    break;
+            }
+            for (int i = 0; i < 4; ++i) {
+                uint8_t* f = lfField[i];
+                putP(f, DynOff::FFIELD_CLASS, A(lfFc));
+                if (i < 3) putP(f, next, A(lfField[i + 1]));
+                putP(f, owner, taggedOwner ? (A(guid) | 1) : A(guid));
+                if (!taggedOwner) f[owner + 8] = 1;       // bIsUObject
+                put32(f, name, 4 + i);
+                put32(f, dim, 1);                          // ArrayDim
+                put32(f, dim + 4, 4);                      // ElementSize
+                put32(f, off, i * 4);                      // Offset_Internal
+            }
+        };
+
+        FakePool lfPool;
+        lfPool.Build(2);
+        auto pool2 = [&](uint8_t* guid) {
+            const uintptr_t objs[2] = { A(lfZero), A(guid) };
+            for (int i = 0; i < 2; ++i)
+                memcpy(lfPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &objs[i],
+                       sizeof(uintptr_t));
+            Aura::InitWithExtendedLayout(lfPool.Addr(), FakePool::kItemSize);
+        };
+        // Each run starts from the load-time FField defaults, as a fresh process would.
+        auto run = [&](uint8_t* guid, uint32_t ver) {
+            pool2(guid);
+            DynOff::FFIELDCLASS_NAME = 0x00; DynOff::FFIELD_NEXT = 0x20; DynOff::FFIELD_NAME = 0x28;
+            DynOff::FPROPERTY_ELEMSIZE = 0x3C; DynOff::FPROPERTY_FLAGS = 0x40; DynOff::FPROPERTY_OFFSET = 0x4C;
+            DynOff::bTaggedFFieldVariant = false;
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+            return Genau::ValidateAndFixOffsets(ver);
+        };
+        auto got = [] {
+            char b[160];
+            snprintf(b, sizeof b, "reason='%s' fcName=%02X next=%02X name=%02X cp=%02X off=%02X elem=%02X tagged=%d",
+                     DynOff::g_offsetsFallbackReason, DynOff::FFIELDCLASS_NAME, DynOff::FFIELD_NEXT,
+                     DynOff::FFIELD_NAME, DynOff::USTRUCT_CHILDPROPS, DynOff::FPROPERTY_OFFSET,
+                     DynOff::FPROPERTY_ELEMSIZE, DynOff::bTaggedFFieldVariant ? 1 : 0);
+            return std::string(b);
+        };
+        auto clean = [] { return std::string(DynOff::g_offsetsFallbackReason).empty(); };
+
+        // Stock shapes first: each latches exactly the stock answer.
+        build(lfGuid[0], Shape::Stock57);
+        const bool r57 = run(lfGuid[0], 507);
+        check("VND10-A1-02 control: stock 5.7 -- FFieldClass::Name +0x00, Next +0x18, measured",
+              r57 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x18
+              && DynOff::FFIELD_NAME == 0x20 && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FPROPERTY_OFFSET == 0x44,
+              got().c_str());
+        build(lfGuid[1], Shape::Stock58);
+        const bool r58 = run(lfGuid[1], 508);
+        check("VND10-A1-02 control: stock 5.8 -- FFieldClass::Name +0x08, Next +0x18, measured",
+              r58 && clean() && DynOff::FFIELDCLASS_NAME == 0x08 && DynOff::FFIELD_NEXT == 0x18
+              && DynOff::USTRUCT_CHILDPROPS == 0x50, got().c_str());
+        build(lfGuid[2], Shape::Stock50);
+        const bool r50 = run(lfGuid[2], 502);
+        check("VND10-A1-02 control: stock 5.0-5.2 -- Name +0x00, Next +0x20, FField::Name +0x28, untagged",
+              r50 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x20
+              && DynOff::FFIELD_NAME == 0x28 && DynOff::FPROPERTY_OFFSET == 0x4C && !DynOff::bTaggedFFieldVariant,
+              got().c_str());
+
+        // The ordering decoy: a stock 5.7 Guid whose earlier slot (+0x38, where a case-preserving build keeps its
+        // StructBaseChainArray) points at memory reading as an FField whose class names a *Property at +0x30 only. A
+        // licensee offset consulted per pointer would latch +0x38 / +0x30 there, before the real ChildProperties.
+        build(lfGuid[3], Shape::Stock57);
+        putP(lfDecoy, DynOff::FFIELD_CLASS, A(lfDecoyFc));
+        put32(lfDecoyFc, 0x00, 0x7FFFFFF0); put32(lfDecoyFc, 0x08, 0x00F00000); put32(lfDecoyFc, 0x30, 3);
+        putP(lfGuid[3], 0x38, A(lfDecoy));
+        const bool rDecoy = run(lfGuid[3], 507);
+        check("VND10-A1-02 control ⭐: a stock 5.7 Guid with a *Property at +0x30 behind an earlier slot keeps +0x50 / +0x00",
+              rDecoy && clean() && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
+
+        // Phantom Blade Zero.
+        build(lfGuid[4], Shape::Pbz);
+        const bool rPbz = run(lfGuid[4], 507);
+        check("VND10-A1-02 ⭐: PBZ is measured, not given up", rPbz && clean(), got().c_str());
+        check("VND10-A1-02 ⭐: PBZ latches FFieldClass::Name +0x30", DynOff::FFIELDCLASS_NAME == 0x30, got().c_str());
+        check("VND10-A1-02 ⭐: PBZ measures FField::Next +0x10, not the Owner at +0x18", DynOff::FFIELD_NEXT == 0x10,
+              got().c_str());
+        check("VND10-A1-02 ⭐: PBZ's ChildProperties, FField::Name and FProperty offsets are the stock ones",
+              DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELD_NAME == 0x20 && DynOff::FPROPERTY_OFFSET == 0x44
+              && DynOff::FPROPERTY_ELEMSIZE == 0x34, got().c_str());
+        {
+            const ClassInfo pbzWalk = Ubel::WalkClass(A(lfGuid[4]));
+            std::string seen;
+            bool typed = pbzWalk.Fields.size() == 4;
+            for (size_t i = 0; i < pbzWalk.Fields.size(); ++i) {
+                const auto& f = pbzWalk.Fields[i];
+                seen += f.Name + ":" + f.TypeName + "@" + std::to_string(f.Offset) + " ";
+                if (i < 4 && (f.Name != lfNames[4 + i] || f.TypeName != "IntProperty"
+                              || f.Offset != static_cast<int32_t>(i * 4)))
+                    typed = false;
+            }
+            check("VND10-A1-02 ⭐: a PBZ walk reads A, B, C, D as IntProperty at 0/4/8/12", typed, seen.c_str());
+        }
+
+        // A licensee reading needs a second field of the chain to agree: one *Property at +0x30 alone is not a chain.
+        build(lfGuid[5], Shape::Pbz);
+        memset(lfField[0] + 0x10, 0, 8);          // A's Next: the chain is A alone
+        const bool rOne = run(lfGuid[5], 507);
+        check("VND10-A1-02 control: a one-field PBZ chain is not corroborated and still gives up",
+              !rOne && std::string(DynOff::g_offsetsFallbackReason) == "childprops-probe-failed"
+              && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
+        DynOff::UFIELD_NEXT = svUNext;        DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::USTRUCT_CHILDPROPS = svChildProps;
+        DynOff::USTRUCT_PROPSSIZE = svPropsSize; DynOff::USTRUCT_SCRIPT = svScript;
+        DynOff::FFIELDCLASS_NAME = svFcName;  DynOff::FFIELD_NEXT = svFNext;     DynOff::FFIELD_NAME = svFName;
+        DynOff::bTaggedFFieldVariant = svTagged;
+        DynOff::FPROPERTY_OFFSET = svPOff;    DynOff::FPROPERTY_ELEMSIZE = svPElem; DynOff::FPROPERTY_FLAGS = svPFlags;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
+        DynOff::g_offsetsFallbackReason = "";
+        g_cachedUEVersion = svVer;
+    }
+
     // -- UPROPINNER-2026-09-27 -- a UProperty engine's container inners are named -------------------------------------
     //
     // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx must not type a container's inner / key /
