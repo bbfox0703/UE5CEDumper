@@ -2041,6 +2041,187 @@ public class CeXmlExportServiceTests
         System.Text.RegularExpressions.Regex.Matches(
             xml, System.Text.RegularExpressions.Regex.Escape(needle)).Count;
 
+
+    /// <summary>
+    /// [CEXML-STRING-CAPACITY] By default every exported FString-family record, scalar or container element, carries a
+    /// drop-down list that disallows user input and whose one entry is CE's "*" wildcard, which CE's value dialog never
+    /// offers, so CE's value editor has nothing to write; CE writes a typed string whole at the Data pointer whatever the
+    /// record's Length. DisplayValueAsItem and DescriptionOnly stay off, so the value column still shows the live
+    /// string, and the record links to no other list.
+    /// </summary>
+    [Theory]
+    [InlineData("StrProperty")]
+    [InlineData("Utf8StrProperty")]
+    [InlineData("AnsiStrProperty")]
+    public void StringLeaf_is_not_editable_from_CE(string typeName)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PlayerName", TypeName = typeName, Offset = 0x30, Size = 16 },
+            new()
+            {
+                Name = "Names", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 1, ArrayInnerType = typeName, ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue> { new() { Index = 0, Value = "Alice" } },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var strings = System.Xml.Linq.XDocument.Parse(xml).Descendants("CheatEntry")
+            .Where(e => (string?)e.Element("VariableType") == "String")
+            .ToList();
+        Assert.Equal(2, strings.Count);
+        foreach (var entry in strings)
+        {
+            var list = entry.Element("DropDownList");
+            Assert.NotNull(list);
+            Assert.Equal("1", (string?)list!.Attribute("ReadOnly"));
+            Assert.Null(list.Attribute("DisplayValueAsItem"));
+            Assert.Null(list.Attribute("DescriptionOnly"));
+            var rows = list.Value.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.Single(rows);
+            Assert.StartsWith("*:", rows[0]);
+            Assert.Null(entry.Element("DropDownListLink"));
+        }
+    }
+
+    /// <summary>
+    /// [CEXML-STRING-CAPACITY] The export's "Editable string records" option: each public CE XML generator takes it, off
+    /// by default. Off, every String record carries the read-only list; on, none does, and each String record is
+    /// otherwise the same, line for line.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(CeXmlExportService.GenerateInstanceXml))]
+    [InlineData(nameof(CeXmlExportService.GenerateHierarchicalXml))]
+    [InlineData(nameof(CeXmlExportService.GenerateAobWrappedXml))]
+    public void StringLeaf_stays_editable_when_the_export_option_is_on(string generator)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PlayerName", TypeName = "StrProperty", Offset = 0x30, Size = 16 },
+            new()
+            {
+                Name = "Names", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "Utf8StrProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue> { new() { Index = 0, Value = "Alice" } },
+            },
+        };
+        var crumbs = new List<BreadcrumbItem> { new() { Address = "0x1000", Label = "MyObj", FieldName = "MyObj" } };
+        System.Reflection.MethodInfo method = typeof(CeXmlExportService).GetMethod(generator)!;
+        System.Reflection.ParameterInfo[] parameters = method.GetParameters();
+        Assert.Contains(parameters, p => p.Name == "ceEditableStrings" && p.ParameterType == typeof(bool)
+                                         && p.HasDefaultValue && Equals(p.DefaultValue, false));
+
+        List<string> StringRecords(object? editable)
+        {
+            object? Arg(System.Reflection.ParameterInfo p) => p.Name switch
+            {
+                "rootAddress" => "\"Game.exe\"+1000",
+                "rootName" => "MyObj",
+                "className" => "UMyClass",
+                "breadcrumbs" => crumbs,
+                "fields" or "currentFields" => fields,
+                "aob" => "48 8B 1D ?? ?? ?? ??",
+                "aobPos" => 3,
+                "aobLen" => 7,
+                "moduleName" => "Game.exe",
+                "ceEditableStrings" => editable ?? p.DefaultValue,
+                _ => p.DefaultValue,
+            };
+            var xml = (string)method.Invoke(null, parameters.Select(Arg).ToArray())!;
+            return System.Text.RegularExpressions.Regex.Matches(xml, @"<CheatEntry>(?:(?!<CheatEntry>).)*?</CheatEntry>",
+                    System.Text.RegularExpressions.RegexOptions.Singleline)
+                .Select(m => m.Value)
+                .Where(e => e.Contains("<VariableType>String</VariableType>", StringComparison.Ordinal))
+                .ToList();
+        }
+
+        var byDefault = StringRecords(null);
+        var editableRecords = StringRecords(true);
+        Assert.Equal(2, byDefault.Count);
+        Assert.All(byDefault, e => Assert.Contains("<DropDownList ReadOnly=\"1\">*:", e, StringComparison.Ordinal));
+        Assert.Equal(2, editableRecords.Count);
+        Assert.All(editableRecords, e => Assert.DoesNotContain("<DropDownList", e, StringComparison.Ordinal));
+        Assert.Equal(byDefault.Select(e => System.Text.RegularExpressions.Regex.Replace(
+            e, @"\s*<DropDownList ReadOnly=""1"">[^<]*</DropDownList>", "")), editableRecords);
+    }
+
+    /// <summary>
+    /// [CEXML-STRING-CAPACITY] The Options flyout's "Editable string records" switch is off in a fresh window and in a
+    /// fresh settings model, reaches both panels that copy CE XML when it changes, is saved and applied again on the
+    /// next start, and each of those panels passes it to every CE XML generator call that takes String Len.
+    /// </summary>
+    [Fact]
+    public void Editable_string_records_option_is_off_by_default_persists_and_reaches_every_CE_XML_copy()
+    {
+        static System.Reflection.PropertyInfo Option(object owner)
+        {
+            var p = owner.GetType().GetProperty("CeEditableStrings");
+            Assert.True(p is not null && p.PropertyType == typeof(bool) && p.CanWrite,
+                $"{owner.GetType().Name} has no settable bool CeEditableStrings");
+            return p!;
+        }
+        static bool Read(object owner) => (bool)Option(owner).GetValue(owner)!;
+
+        var dir = Path.Combine(Path.GetTempPath(), $"UE5DumpEditableStrings_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var platform = new MockPlatformService(dir);
+            MainWindowViewModel Start()
+            {
+                var vm = new MainWindowViewModel(pipeClient: new MockPipeClient { IsConnected = false },
+                    dump: new StubDumpService(), log: new MockLoggingService(), platform: platform,
+                    experimentalGate: new ExperimentalGate(platform));
+                vm.InitializeOptionsPersistence(new UiOptionsStore(platform));
+                return vm;
+            }
+
+            Assert.False(Read(new UiOptionsSettings().Main));
+            var main = Start();
+            Assert.False(Read(main));
+            Assert.False(Read(main.LiveWalker));
+            Assert.False(Read(main.InstanceFinder));
+
+            Option(main).SetValue(main, true);
+            Assert.True(Read(main.LiveWalker));
+            Assert.True(Read(main.InstanceFinder));
+            main.FlushOptions();
+            Assert.True(Read(new UiOptionsStore(platform).Load().Main));
+
+            var restarted = Start();
+            Assert.True(Read(restarted));
+            Assert.True(Read(restarted.LiveWalker));
+            Assert.True(Read(restarted.InstanceFinder));
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ } }
+
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "build.ps1"))) root = root.Parent;
+        Assert.NotNull(root);
+        foreach (var panel in new[] { "LiveWalkerViewModel.cs", "InstanceFinderViewModel.cs" })
+        {
+            var src = File.ReadAllText(Path.Combine(root!.FullName, "ui", "UE5DumpUI", "ViewModels", panel));
+            var calls = System.Text.RegularExpressions.Regex.Matches(src,
+                @"CeXmlExportService\.Generate(?:Hierarchical|Instance|AobWrapped)Xml\(");
+            Assert.NotEmpty(calls);
+            foreach (System.Text.RegularExpressions.Match call in calls)
+            {
+                int depth = 0, end = call.Index + call.Length - 1;
+                for (; end < src.Length; end++)
+                {
+                    if (src[end] == '(') depth++;
+                    else if (src[end] == ')' && --depth == 0) break;
+                }
+                var callText = src[call.Index..end];
+                Assert.Contains("ceStringLength: CeStringLength", callText, StringComparison.Ordinal);
+                Assert.Contains("ceEditableStrings: CeEditableStrings", callText, StringComparison.Ordinal);
+            }
+        }
+    }
+
     [Theory]
     [InlineData("StrProperty",     1, 0)]   // FString:     UTF-16
     [InlineData("Utf8StrProperty", 0, 1)]   // FUtf8String: UTF-8 bytes (CodePage)
