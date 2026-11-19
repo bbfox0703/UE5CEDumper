@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — The XAML, scripts and tools comments cleaned and gated; build.ps1 heals a removed toolset; quiet log tests `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Comment scanners:** `tools/comment_lang.py` gives XAML, Lua (and the .CT), PowerShell and Python (docstrings
+  included) a comment scanner and a comment-free view of the code, each with self-test controls.
+  `check_comment_history` now also counts `ui/UE5DumpUI`'s .axaml, `scripts/` and `tools/`; `comment_only_diff`
+  compares those languages' code with comments removed (Python through its AST with docstrings blanked).
+- **Pass X:** the 537 lines it counted there, and the bare finding codes beside them, are rewritten in 241 files;
+  each verify rig's docstring keeps what the rig runs, compares and needs. The history baseline is 0 for the whole
+  repo. Comments only (241/241); C# 8510 passed (1 skipped), the headless tests build, the Lua suites pass; 40 gates.
+- **build.ps1:** a build dir whose CMakeCache.txt names a compiler, linker, mt or rc that no longer exists (a Visual
+  Studio update removed that toolset) is dropped before configure, so the configure runs fresh instead of every C++
+  step failing (seen on the second PC; proven on a simulated removed toolset; build 3748 is that run's number).
+- **Tests:** the log-rolling tests no longer echo megabytes of log lines to the test console (`LoggingService`
+  takes `writeToConsole`, default on for the app).
+
 ## 2026-11-19 (build 3747) — CE Lua hardening: Invoke numbers read in any locale, the scan module named without `process`, String records read-only by default `[CE-LUA-FLOAT-LOCALE]` `[CE76-PROCESS-GLOBAL]` `[CEXML-STRING-CAPACITY]`
 
 - **What changes:**
