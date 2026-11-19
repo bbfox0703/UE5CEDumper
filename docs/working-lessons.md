@@ -4192,6 +4192,17 @@ match exactly is a same-source rebuild, not an older build, and is left alone (Â
 *Why.* An old proxy owns the pipe at game start, so the row measures the old binary; asking first only
 cost a round trip.
 
+**5. A licensee layout never breaks the stock structure logic.** (2026-11-19)
+
+A game's custom layout (a reordered `TUObjectArray`, a moved `FFieldClass::Name`, fields shifted after
+`ChildProperties`) joins the detection as a candidate appended after the stock ones, so every stock engine
+(UE 4.18 to 5.8) latches exactly what it latched before. A game nobody here owns is covered by tests alone: a
+synthetic shape built from the layout's source (for Phantom Blade Zero, RE-UE4SS's `MemberVariableLayout.ini`),
+red first, and **in the same tests** the stock shapes, asserting that each still detects as before the change.
+
+*Why.* Every target shares the stock logic; a game-specific change that moved it would break games that work today
+to support one that nobody can check here.
+
 ## 8. Writing code comments
 
 `[COMMENT-INTEGRITY-2026-09-26]`, measured on build 3560 ([comment-integrity-eval.md](comment-integrity-eval.md)):
