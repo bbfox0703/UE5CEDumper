@@ -66,7 +66,8 @@ def vcvars_path(given: str | None) -> str:
 
 def msvc_env(vcvars: str) -> dict[str, str]:
     """The environment vcvars64.bat leaves behind, keys upper-cased so PATH is a single key."""
-    raw = subprocess.run(["cmd", "/d", "/c", f'call "{vcvars}" >nul && set'], capture_output=True).stdout
+    # One string, not a list: list2cmdline would escape the inner quotes, and cmd would then not find the .bat.
+    raw = subprocess.run(f'cmd /d /s /c "call "{vcvars}" >nul && set"', capture_output=True).stdout
     env = {}
     for line in raw.decode("mbcs", errors="replace").splitlines():
         key, sep, value = line.partition("=")
