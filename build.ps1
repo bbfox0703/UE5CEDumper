@@ -137,12 +137,12 @@ function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
 }
 
-# Every vcvarsall prompt (x64, x86, arm64) sets Platform to its target architecture, and MSBuild reads every
-# environment variable as a property: the C# projects would build into bin\<platform>\ rather than bin\, one level
+# Every vcvarsall prompt (x64, x86, arm64) sets Platform to its target architecture, some OEM Windows images set a
+# machine-wide one, and MSBuild reads every environment variable as a property: the C# projects would build into bin\<platform>\ rather than bin\, one level
 # deeper than the tests that find repository files by walking up from their output folder can reach. Nothing this
 # script runs needs it, so it goes before anything does, -Clean's dotnet clean included. [MSVC-GUARD-2026-11-19]
 if ($env:Platform) {
-    Write-Info "Platform=$($env:Platform) (set by a Visual Studio prompt) cleared so the C# outputs stay in bin\"
+    Write-Info "Platform=$($env:Platform) cleared: MSBuild would read it and move the C# outputs out of bin\"
     Remove-Item Env:Platform
 }
 
