@@ -30,8 +30,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(ROOT, "tools", "comment_history_baseline.json")
 SCOPES = [(os.path.join(ROOT, "dll", "src"), (".h", ".cpp")),
-          (os.path.join(ROOT, "ui", "UE5DumpUI"), (".cs",))]
-SKIP_DIRS = {"bin", "obj"}
+          (os.path.join(ROOT, "ui", "UE5DumpUI"), (".cs",)),
+          # The tests' comments too: a test's doc says what it pins, and the history behind it is the dev-log's.
+          (os.path.join(ROOT, "dll", "tests"), (".h", ".cpp")),
+          (os.path.join(ROOT, "ui", "UE5DumpUI.Tests"), (".cs",)),
+          (os.path.join(ROOT, "ui", "UE5DumpUI.HeadlessTests"), (".cs",))]
+SKIP_DIRS = {"bin", "obj", "TestResults"}
 
 HISTORY = [
     re.compile(r"\bwf_[0-9a-f]{8}-[0-9a-f]{3}\b"),                         # a review workflow's id
