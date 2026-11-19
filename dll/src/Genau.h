@@ -429,13 +429,6 @@ bool DetectUEnumNames(bool latchFailure = true);
 // Complements FindGObjectsByDataScan (which follows code references instead).
 uintptr_t ExtraScanGObjects();
 
-// [VND10-A1] Whether an Extra Scan looks for GObjects, and whether its answer replaces the published one: when none is
-// published, or when the published one reads no objects (a decoy that every recovery missed). A title whose GObjects
-// reads objects is never rescanned.
-constexpr bool RescanSeeksGObjects(bool published, int32_t objectCount) {
-    return !published || objectCount == 0;
-}
-
 // Collect GObjects candidates that pass structural validation, discovered via
 // the data-section RIP-relative pointer scan (same mechanism as the FindGObjects
 // data-scan fallback). Used by the post-init decoy-recovery path when the primary

@@ -10996,16 +10996,6 @@ static void Test_Genau_ProbeNamesIgnoreCase() {
            && !Genau::ProbeNameIs("A", "B"));
 }
 
-// [VND10-A1] The Extra Scan looks for GObjects when none is published or the published one reads no objects, and only
-// then may its answer replace the published one.
-static void Test_Genau_RescanSeeksGObjects() {
-    std::printf("Test_Genau_RescanSeeksGObjects\n");
-    EXPECT("rescan: nothing published -> look", Genau::RescanSeeksGObjects(false, 0));
-    EXPECT("rescan: a published decoy that reads 0 objects -> look", Genau::RescanSeeksGObjects(true, 0));
-    EXPECT("rescan: a published GObjects that reads objects -> leave it", !Genau::RescanSeeksGObjects(true, 153466));
-    EXPECT("rescan: ...even a small pool", !Genau::RescanSeeksGObjects(true, 1));
-}
-
 static void Test_Genau_AdmitMultiModuleCandidate() {
     std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
     using Genau::AnchorState;
@@ -13418,7 +13408,6 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
-    RUN(Test_Genau_RescanSeeksGObjects);
     RUN(Test_Genau_ProbeNamesIgnoreCase);
     RUN(Test_Ubel_IsClassInChain);
     RUN(Test_Ubel_Interfaces);

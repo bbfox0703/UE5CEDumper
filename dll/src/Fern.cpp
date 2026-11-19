@@ -7185,7 +7185,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
             }
 
-            bool needGObj = Genau::RescanSeeksGObjects(g_cachedGObjects != 0, Aura::GetCount());
+            bool needGObj = (g_cachedGObjects == 0);
             bool needGWld = (g_cachedGWorld == 0) && (g_cachedGObjects != 0) && (g_cachedGNames != 0);
 
             if (!needGObj && !needGWld) {
@@ -7290,7 +7290,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [PIPE-PER-PROCESS-2026-11-06]
             const RescanResult found = m_rescan.Results();
 
-            if (found.gobjects && Genau::RescanSeeksGObjects(g_cachedGObjects != 0, Aura::GetCount())) {
+            if (found.gobjects && g_cachedGObjects == 0) {
                 g_cachedGObjects = found.gobjects;
                 g_cachedGObjectsMethod = found.gobjectsMethod;
                 Aura::Init(g_cachedGObjects);
