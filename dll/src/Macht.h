@@ -607,4 +607,33 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out);
 inline constexpr uint32_t kChainMaxHops = 32;
 uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData);
 
+// [SCAN-LINKER-LOG-2026-11-19] Which linker built an image, from the PE alone. MSVC's link.exe writes a Rich header,
+// its own toolset minor (14.29, 14.38, ...) and VC_FEATURE / POGO debug entries; LLVM's lld-link (a clang build)
+// writes no Rich header, always says 14.00 and writes neither entry. A protector may strip the Rich header and Shipping
+// builds usually drop the debug directory, so the verdict weighs all three; tools/verify/linker_survey.py reads the same
+// three signals from a file on disk. The AOB sets are mined from MSVC builds, which is why a scan wants to know.
+enum class LinkerKind : uint8_t {
+    Unknown,      // not a 64-bit PE, or no MSVC mark and a linker version other than 14.xx
+    Msvc,         // a Rich header, an MSVC debug entry, or a 14.xx linker version other than 14.00
+    Lld,          // 14.00 and a debug directory with no MSVC entry
+    LldNoDebug,   // 14.00, no Rich header, no debug directory: lld, or VS 2015's link.exe with both marks stripped
+};
+struct LinkerVerdict {
+    LinkerKind kind = LinkerKind::Unknown;
+    bool     rich = false;
+    uint8_t  linkerMajor = 0;
+    uint8_t  linkerMinor = 0;
+    uint32_t debugEntries = 0;
+    bool     msvcDebugEntry = false;   // VC_FEATURE or POGO
+};
+// The debug directory's RVA and byte size, from the optional header in `headers` (the first bytes of a mapped image).
+// False when `headers` is not a 64-bit PE or names no debug directory.
+bool DebugDirectoryOf(const uint8_t* headers, size_t headerBytes, uint32_t& rva, uint32_t& bytes);
+// The verdict from an image's headers and its debug directory's entries (`debugDir`; null / 0 when it has none).
+LinkerVerdict ClassifyLinker(const uint8_t* headers, size_t headerBytes, const uint8_t* debugDir, size_t debugBytes);
+// "msvc", "lld", "lld*" (LldNoDebug) or "unknown".
+const char* LinkerKindName(LinkerKind kind);
+// The verdict for this process's main module, read through ReadBytesSafe.
+LinkerVerdict ClassifyMainModuleLinker();
+
 } // namespace Macht

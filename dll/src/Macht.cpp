@@ -1083,4 +1083,24 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     return true;
 }
 
+bool DebugDirectoryOf(const uint8_t* headers, size_t headerBytes, uint32_t& rva, uint32_t& bytes) {
+    rva = bytes = 0;
+    (void)headers; (void)headerBytes;
+    return false;
+}
+
+LinkerVerdict ClassifyLinker(const uint8_t* headers, size_t headerBytes, const uint8_t* debugDir, size_t debugBytes) {
+    (void)headers; (void)headerBytes; (void)debugDir; (void)debugBytes;
+    return {};
+}
+
+const char* LinkerKindName(LinkerKind kind) {
+    (void)kind;
+    return "unknown";
+}
+
+LinkerVerdict ClassifyMainModuleLinker() {
+    return {};
+}
+
 } // namespace Macht

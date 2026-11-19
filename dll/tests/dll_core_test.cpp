@@ -14579,6 +14579,86 @@ int main() {
               Aura::GroupDescInternKey("BP_Hero_C", i16) != Aura::GroupDescInternKey("BP_Hero_C", otherOffset));
     }
 
+    // [SCAN-LINKER-LOG-2026-11-19]: the linker verdict from a PE's headers and debug directory, on built headers, then
+    // on this test's own image, which MSVC's link.exe built.
+    {
+        blk("SCAN-LINKER-LOG - which linker built an image");
+        struct Pe {
+            std::vector<uint8_t> h = std::vector<uint8_t>(0x400, 0);
+            std::vector<uint8_t> dbg;
+            const uint32_t kLfanew = 0x100;   // a local class holds no static data member
+            const size_t kOpt = kLfanew + 24;
+            Pe(uint8_t major, uint8_t minor, bool rich, std::initializer_list<uint32_t> debugTypes,
+               uint32_t rvaSizes = 16) {
+                h[0] = 'M'; h[1] = 'Z';
+                memcpy(h.data() + 0x3C, &kLfanew, 4);
+                if (rich) memcpy(h.data() + 0xC0, "Rich", 4);
+                memcpy(h.data() + kLfanew, "PE\0\0", 4);
+                const uint16_t magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+                memcpy(h.data() + kOpt, &magic, 2);
+                h[kOpt + 2] = major;
+                h[kOpt + 3] = minor;
+                memcpy(h.data() + kOpt + offsetof(IMAGE_OPTIONAL_HEADER64, NumberOfRvaAndSizes), &rvaSizes, 4);
+                if (debugTypes.size() == 0) return;
+                const uint32_t rva = 0x2000;
+                const uint32_t bytes = static_cast<uint32_t>(debugTypes.size() * sizeof(IMAGE_DEBUG_DIRECTORY));
+                const size_t dir = kOpt + offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) +
+                                   IMAGE_DIRECTORY_ENTRY_DEBUG * sizeof(IMAGE_DATA_DIRECTORY);
+                memcpy(h.data() + dir, &rva, 4);
+                memcpy(h.data() + dir + 4, &bytes, 4);
+                for (const uint32_t t : debugTypes) {
+                    IMAGE_DEBUG_DIRECTORY e{};
+                    e.Type = t;
+                    const auto* p = reinterpret_cast<const uint8_t*>(&e);
+                    dbg.insert(dbg.end(), p, p + sizeof e);
+                }
+            }
+            Macht::LinkerVerdict Verdict() const {
+                return Macht::ClassifyLinker(h.data(), h.size(), dbg.data(), dbg.size());
+            }
+        };
+        auto name = [](const Macht::LinkerVerdict& v) { return std::string(Macht::LinkerKindName(v.kind)); };
+        const Pe msvc(14, 38, true, { 2, 12, 13, 16 });                 // CODEVIEW, VC_FEATURE, POGO, REPRO
+        const Pe avowed(14, 0, false, { 2, 16 });                       // CODEVIEW, REPRO: an lld build's shape
+        const Pe stripped(14, 0, false, {});
+        const Pe minorOnly(14, 38, false, {});                          // no Rich header, no debug directory
+        const Pe pogoOnly(14, 0, false, { 2, 13 });
+        const Pe gnu(2, 45, false, { 2 });
+        check("* a Rich header and VC_FEATURE / POGO entries: MSVC", msvc.Verdict().kind == Macht::LinkerKind::Msvc,
+              name(msvc.Verdict()).c_str());
+        check("* 14.00, no Rich header, a debug directory with no MSVC entry: lld",
+              avowed.Verdict().kind == Macht::LinkerKind::Lld, name(avowed.Verdict()).c_str());
+        check("* 14.00 with no Rich header and no debug directory: lld*",
+              stripped.Verdict().kind == Macht::LinkerKind::LldNoDebug, name(stripped.Verdict()).c_str());
+        check("* a toolset minor other than 00 is MSVC's mark on its own", minorOnly.Verdict().kind == Macht::LinkerKind::Msvc,
+              name(minorOnly.Verdict()).c_str());
+        check("* a POGO entry outweighs 14.00", pogoOnly.Verdict().kind == Macht::LinkerKind::Msvc,
+              name(pogoOnly.Verdict()).c_str());
+        check("* a linker that is not 14.xx and leaves no MSVC mark is unknown, not MSVC",
+              gnu.Verdict().kind == Macht::LinkerKind::Unknown, name(gnu.Verdict()).c_str());
+        const Macht::LinkerVerdict mv = msvc.Verdict();
+        check("* the verdict carries its signals", mv.rich && mv.linkerMajor == 14 && mv.linkerMinor == 38 &&
+              mv.debugEntries == 4 && mv.msvcDebugEntry);
+        uint32_t rva = 0, bytes = 0;
+        check("* DebugDirectoryOf reads the directory from the optional header",
+              Macht::DebugDirectoryOf(msvc.h.data(), msvc.h.size(), rva, bytes) && rva == 0x2000 &&
+              bytes == 4 * sizeof(IMAGE_DEBUG_DIRECTORY));
+        check("control: no debug directory, no range", !Macht::DebugDirectoryOf(stripped.h.data(), stripped.h.size(),
+                                                                                 rva, bytes));
+        const Pe shortDirs(14, 38, true, { 2 }, 5);   // NumberOfRvaAndSizes stops before the debug entry
+        check("control: a directory past NumberOfRvaAndSizes is not read",
+              !Macht::DebugDirectoryOf(shortDirs.h.data(), shortDirs.h.size(), rva, bytes));
+        std::vector<uint8_t> notPe(0x400, 0);
+        check("control: bytes that are not a PE are unknown",
+              Macht::ClassifyLinker(notPe.data(), notPe.size(), nullptr, 0).kind == Macht::LinkerKind::Unknown);
+        const Macht::LinkerVerdict self = Macht::ClassifyMainModuleLinker();
+        char got[96];
+        snprintf(got, sizeof got, "%s, Rich %d, linker %u.%02u, %u debug entries", Macht::LinkerKindName(self.kind),
+                 self.rich ? 1 : 0, self.linkerMajor, self.linkerMinor, self.debugEntries);
+        check("* this test's own image, linked by MSVC's link.exe, reads as MSVC with its Rich header",
+              self.kind == Macht::LinkerKind::Msvc && self.rich && self.linkerMajor == 14 && self.linkerMinor != 0, got);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
