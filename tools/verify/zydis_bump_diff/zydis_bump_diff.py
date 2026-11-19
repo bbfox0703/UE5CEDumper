@@ -15,9 +15,11 @@ WHAT IT DOES
        gitlink are never touched. zycore comes from the checkout, so a candidate whose zycore gitlink differs is
        refused: a bump must keep zycore at what zydis itself pins (sync_tools.ps1's submodule bump says why).
     2. Compiles Zydis decoder-only with the defines dll/CMakeLists.txt sets, plus /DNDEBUG like the Release DLL.
-    3. COMPILE CHECK: compiles the real dll/src/Denken.cpp against that revision's headers with the repo's flags.
-    4. Links denken_<tag>.exe (real Denken.cpp + that Zydis) and zproj_<tag>.dll (a version-neutral projection of one
-       decode: enum VALUES shift between revisions, so fields are compared as strings).
+    3. COMPILE CHECK: compiles the real dll/src/Denken.cpp and dll/src/Falsch.cpp against that revision's headers with
+       the repo's flags.
+    4. Links denken_<tag>.exe (real Denken.cpp + that Zydis), falsch_<tag>.exe (real Falsch.cpp + that Zydis + the
+       vendored hde64) and zproj_<tag>.dll (a version-neutral projection of one decode: enum VALUES shift between
+       revisions, so fields are compared as strings).
   Then per PE file (read from disk with a minimal loader; never mapped as an image, never executed):
     E2E      Denken::Analyze from every .pdata function start at both revisions; the two output files are compared by
              SHA-256. THIS is the deciding check: it is Denken's output, not a projection of what it might read.
@@ -34,8 +36,10 @@ WHAT IT DOES
 
 EXIT
   0  no visible change: E2E and FALSCH identical on every PE, CODE has no dk=1 row, no compile warning, control differs.
-  1  something needs reading: an E2E mismatch, a dk=1 CODE row, a compile warning, or a control that no longer differs
-     (the base has moved past the control's commits -- add bytes from the new delta to denken_run.cpp's RunControl).
+  1  something needs reading: an E2E or FALSCH mismatch, a dk=1 CODE row, a Denken.cpp or Falsch.cpp compile warning, a
+     candidate harness that fails where the base's completed on the same input (the bump crashes or breaks the code
+     under test), or no control case that differs (the base has moved past the control's commits -- add bytes from the
+     new delta to denken_run.cpp's RunControl).
   2  the rig itself failed (toolchain, git, a file it could not read).
 
 Rules it keeps: everything it writes goes under OUT (default out/zydis_bump_diff/, gitignored); binaries are arguments,
@@ -57,7 +61,6 @@ ROOT = HERE.parents[2]
 VZ = ROOT / "vendor" / "zydis"
 ZYCORE = VZ / "dependencies" / "zycore"
 sys.path.insert(0, str(ROOT / "tools" / "verify"))
-from build_dll import msvc_env  # noqa: E402
 
 # The Zydis sources dll/CMakeLists.txt's decoder-only build compiles (ENCODER and FORMATTER off).
 ZYDIS_SRC = ["MetaInfo.c", "Mnemonic.c", "Register.c", "SharedData.c", "String.c", "Utils.c", "Zydis.c",
@@ -162,7 +165,7 @@ def build(env, out, tag, rev):
          str(HERE / "falsch_run.cpp"), str(obj / "Falsch.obj"), str(hobj), str(lib), f"/Fe{fexe}", f"/Fo{obj}\\"],
         env, obj)
     return {"sha": sha, "dll": dll, "exe": exe, "falsch": fexe, "lib_bytes": lib.stat().st_size,
-            "warnings": len(warnings) + len(fwarn)}
+            "warnings": {"Denken.cpp": len(warnings), "Falsch.cpp": len(fwarn)}}
 
 
 def sha256(path):
@@ -176,8 +179,19 @@ def sha256(path):
 def run_exe(exe, *args):
     r = subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
-        raise RigError(f"{exe.name} {' '.join(map(str, args))[:200]} rc={r.returncode}: {(r.stdout + r.stderr)[-600:]}")
+        raise RigError(f"{exe.name} {' '.join(map(str, args))[:200]} rc={r.returncode & 0xFFFFFFFF:#x}: "
+                       f"{(r.stdout + r.stderr)[-600:]}")
     return r.stdout.strip()
+
+
+def run_candidate(exe, *args):
+    """Runs a candidate harness after the base's run on the same input completed. Its failure is then the bump's doing
+    (a crash, an assert in the code under test), so it is returned as a finding, not raised as the rig's own failure;
+    an exe that cannot even start still raises."""
+    try:
+        return run_exe(exe, *args), None
+    except RigError as e:
+        return None, str(e)
 
 
 def dk_rows(tsv):
@@ -202,6 +216,7 @@ def main():
         sys.stdout.reconfigure(errors="backslashreplace")
 
     try:
+        from build_dll import msvc_env   # inside the try: a failed import is the rig's failure (exit 2), too
         base = a.base or pinned_zydis()
         for p in a.pe:
             if not pathlib.Path(p).is_file():
@@ -231,36 +246,50 @@ def main():
             env, out)
 
         needs_reading = []
-        if b["warnings"] or c["warnings"]:
-            needs_reading.append("a Denken.cpp compile warning")
+        for src, n in b["warnings"].items():
+            if n or c["warnings"][src]:
+                needs_reading.append(f"a {src} compile warning (its COMPILE CHECK lines above)")
 
         ctl_b = run_exe(b["exe"], "--control").splitlines()
-        ctl_c = run_exe(c["exe"], "--control").splitlines()
-        differing = sum(1 for x, y in zip(ctl_b, ctl_c) if x != y)
-        print(f"CONTROL: {differing} of {len(ctl_b)} control case(s) differ between the revisions")
-        for x, y in zip(ctl_b, ctl_c):
-            if x != y:
-                print(f"    base:      {x}\n    candidate: {y}")
-        if differing == 0:
-            needs_reading.append("a positive control that no longer differs (add bytes from the new delta)")
+        ctl_out, ctl_err = run_candidate(c["exe"], "--control")
+        if ctl_err:
+            print(f"CONTROL: the candidate failed where the base completed: {ctl_err}")
+            needs_reading.append(f"the candidate's control run failed where the base's completed: {ctl_err}")
+        else:
+            ctl_c = ctl_out.splitlines()
+            differing = sum(1 for x, y in zip(ctl_b, ctl_c) if x != y)
+            print(f"CONTROL: {differing} of {len(ctl_b)} control case(s) differ between the revisions")
+            for x, y in zip(ctl_b, ctl_c):
+                if x != y:
+                    print(f"    base:      {x}\n    candidate: {y}")
+            if differing == 0:
+                needs_reading.append("no control case differs (add bytes from the new delta)")
 
         for i, pe in enumerate(a.pe):
             name = pathlib.Path(pe).name
             eb, ec = out / f"e2e_{i}_pin.txt", out / f"e2e_{i}_master.txt"
             sb = run_exe(b["exe"], pe, eb)
-            run_exe(c["exe"], pe, ec)
-            same = sha256(eb) == sha256(ec)
-            print(f"E2E  {name}: {sb} -> {'IDENTICAL' if same else 'DIFFERENT'} (sha256 {sha256(eb)[:12]})")
-            if not same:
-                needs_reading.append(f"an E2E difference on {name} ({eb.name} vs {ec.name})")
+            _, err = run_candidate(c["exe"], pe, ec)
+            if err:
+                print(f"E2E  {name}: {sb} -> the candidate FAILED where the base completed")
+                needs_reading.append(f"the candidate's Denken failed on {name} where the base's completed: {err}")
+            else:
+                same = sha256(eb) == sha256(ec)
+                print(f"E2E  {name}: {sb} -> {'IDENTICAL' if same else 'DIFFERENT'} (sha256 {sha256(eb)[:12]})")
+                if not same:
+                    needs_reading.append(f"an E2E difference on {name} ({eb.name} vs {ec.name})")
             fb, fc = out / f"falsch_{i}_pin.txt", out / f"falsch_{i}_master.txt"
             sf = run_exe(b["falsch"], pe, fb)
-            run_exe(c["falsch"], pe, fc)
-            fsame = sha256(fb) == sha256(fc)
-            print(f"FALSCH {name}: {sf} -> {'IDENTICAL' if fsame else 'DIFFERENT'} (sha256 {sha256(fb)[:12]})")
-            if not fsame:
-                needs_reading.append(f"a Falsch verdict difference on {name} ({fb.name} vs {fc.name}): a hook the "
-                                     "pre-flight allows or refuses would change")
+            _, err = run_candidate(c["falsch"], pe, fc)
+            if err:
+                print(f"FALSCH {name}: {sf} -> the candidate FAILED where the base completed")
+                needs_reading.append(f"the candidate's Falsch failed on {name} where the base's completed: {err}")
+            else:
+                fsame = sha256(fb) == sha256(fc)
+                print(f"FALSCH {name}: {sf} -> {'IDENTICAL' if fsame else 'DIFFERENT'} (sha256 {sha256(fb)[:12]})")
+                if not fsame:
+                    needs_reading.append(f"a Falsch verdict difference on {name} ({fb.name} vs {fc.name}): a hook "
+                                         "the pre-flight allows or refuses would change")
             modes = ["code"] + (["all"] if a.all_offsets else [])
             for mode in modes:
                 tsv = out / f"zd_{mode}_{i}.tsv"
@@ -274,8 +303,12 @@ def main():
     except RigError as e:
         print(f"RIG FAILED: {e}")
         return 2
+    except SystemExit as e:  # build_dll reports a toolchain it cannot load this way; uncaught, it would exit 1
+        print(f"RIG FAILED: {e.code}")
+        return 2
     except Exception:  # an unexpected failure is still the rig's, never a finding: exit 1 would read as one
-        traceback.print_exc()
+        sys.stdout.flush()
+        traceback.print_exc(file=sys.stdout)   # stdout: a log of stdout alone keeps the traceback, in order
         print("RIG FAILED: an unexpected error (traceback above)")
         return 2
 
