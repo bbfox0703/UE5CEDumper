@@ -1269,6 +1269,7 @@
     <sys:String x:Key="str.CT.Param.Lone">Recorded alone, for what it was chosen for: it was called outside every ticked scope, and opened none.</sys:String>
     <sys:String x:Key="str.CT.Param.Excluded">A per-frame function the trace leaves out, recorded here for what it was chosen for.</sys:String>
     <sys:String x:Key="str.CT.Param.Budget">Over the snapshot budget: this call was recorded without its parameters.</sys:String>
+    <sys:String x:Key="str.CT.Param.ValuesDropped">Its decoded values were not kept: past the {0} MB this UI holds of decoded parameters, the earliest calls keep only their raw copy (below, and on the Bytes tab).</sys:String>
     <sys:String x:Key="str.CT.Param.Overwritten">Its parameters were taken, but the snapshot ring has written over them since (it keeps the last calls).</sys:String>
     <sys:String x:Key="str.CT.Param.RawOnly">This load of the function has no layout ({0}{1}): only the raw bytes below.</sys:String>
     <sys:String x:Key="str.CT.Param.NullParams">The call had no parameter block.</sys:String>
