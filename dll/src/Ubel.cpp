@@ -1289,8 +1289,8 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
 
     // A FAULT here means uclassAddr is not mapped at all, which is a different fact
     // from "the value looks wrong": USTRUCT_PROPSSIZE is a small in-object offset
-    // (childPropsOff + 8), so even a mis-derived one still lands inside a mapped
-    // object. Only an unmapped page faults — and that verdict is offset-independent,
+    // (Genau measures it at or past ChildProperties + 8), so even a mis-derived one still
+    // lands inside a mapped object. Only an unmapped page faults — and that verdict is offset-independent,
     // which is why bailing on it is safe on a forked layout where the value test
     // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
     // FField chain. Falls through to the same un-memoized exit as the value gate.
@@ -1411,9 +1411,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // class FIRST and only then applies IsPlausiblePropertiesSize to decide the address is
     // recycled, and UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its
     // is-this-an-instance probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
-    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
-    // Genau), never independently probed, so on a forked layout a pre-walk bail would
-    // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
+    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is checked against Guid alone and
+    // derived as ChildProperties + 8 when only Vector is found, so on a forked layout a
+    // pre-walk bail would turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClass");
@@ -2092,7 +2092,7 @@ std::vector<int> FunctionFlagsCandidates(unsigned ver) {
     const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
     std::vector<int> cands{ DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
                                                             DynOff::USTRUCT_PROPSSIZE, measured,
-                                                            DynOff::bUseFProperty) };
+                                                            DynOff::bUseFProperty, DynOff::bPropsSizeLicensee) };
     auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
     addCand(DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName));
     for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
@@ -2212,7 +2212,7 @@ static int TailFlagsOffFor(unsigned ver, int decided) {
     return decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
 }
 
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
@@ -2269,7 +2269,7 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
         : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
                                           DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
 
     if (decided > 0) {
         Macht::ReadSafe<uint32_t>(funcAddr + decided, funcFlags);
@@ -2398,7 +2398,7 @@ FunctionCaptureSetup PrepareFunctionCapture() {
     const int primary = decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
     if (primary > 0) {
         s.flagsOffset = primary;
         s.tailOffset  = DynOff::FunctionTailReadBase(g_cachedUEVersion, primary,

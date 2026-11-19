@@ -7917,6 +7917,18 @@ static void Test_FunctionFlagsOffset() {
            DynOff::FunctionFlagsPrimaryFor(427, true, 0x58, false, true) == 0xB8);
     EXPECT("VND583-01: a nonsense PropertiesSize (0) is not trusted even if 'validated'",
            DynOff::FunctionFlagsPrimaryFor(425, false, 0, true, true) == 0xB0);
+    // [VND10-A1] Phantom Blade Zero: PropertiesSize 0xA8, found past ChildProperties + 8, gives FunctionFlags 0x100.
+    EXPECT("VND10-A1: a licensee PropertiesSize 0xA8 gives FunctionFlags 0x100",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, true, true, true) == 0x100);
+    EXPECT("VND10-A1: ...but 0xA8 without the licensee measurement keeps the table, as before",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, true, true) == 0xB0);
+    EXPECT("VND10-A1: ...and an unmeasured run keeps the table even with it",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, false, true, true) == 0xB0);
+    EXPECT("VND10-A1: a stock 0x58 answers the same with or without the licensee flag",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0x58, true, true, true) == 0xB0
+           && DynOff::FunctionFlagsPrimaryFor(507, false, 0x58, true, true) == 0xB0);
+    EXPECT("VND10-A1: the licensee ceiling still refuses a PropertiesSize past it",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0x108, true, true, true) == 0xB0);
 
     // The vote's per-sample rule: at the right offset, NumParms equals the function's own
     // CPF_Parm count and ParmsSize covers the last parameter (rounded up by at most 16).
@@ -8384,6 +8396,80 @@ static void Test_EnumPackageProbe() {
 // half of an int32 MinAlignment, 0; from 5.6 MinAlignment is int16 and StructStateFlags follows, which UStruct::Link sets
 // to PropertyDataAvailable (1). The fakes copy the fixture PDBs' UStruct: DumperTest (5.4) and DumperTest51 (5.1) put
 // an int32 MinAlignment at 0x5C, DumperTest56 (5.6) and DumperTest58 (5.8) an int16 at 0x5C and the flags at 0x5E.
+// [VND10-A1] UStruct::PropertiesSize, found on Guid: ChildProperties + 8 answers whenever it fits, and a licensee
+// insert behind it is found only when it does not.
+static void Test_PropertiesSizeProbe() {
+    std::printf("\n--- VND10-A1: DynOff::PickPropertiesSizeOffset ---\n");
+    struct Obj {
+        alignas(8) uint8_t b[0x180] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v)   { std::memcpy(b + off, &v, sizeof v); }
+        void u16(int off, uint16_t v)  { std::memcpy(b + off, &v, sizeof v); }
+        void ptr(int off, uintptr_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    const uintptr_t head = 0x0000020012345670ull;   // the ChildProperties head; never dereferenced here
+    // A Guid tail at `ps`: size 16, alignment 4 (int16 + StructStateFlags 1 on 5.6+, int32 before), PropertyLink 0x18 on.
+    auto tail = [&](Obj& o, int ps, bool int16Align) {
+        o.i32(ps, 16);
+        if (int16Align) { o.u16(ps + 4, 4); o.u16(ps + 6, 1); } else o.i32(ps + 4, 4);
+        o.ptr(ps + 0x18, head);
+    };
+    auto pick = [&](Obj& o, int cp) { return DynOff::PickPropertiesSizeOffset(o.at(), head, cp, read); };
+
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true);
+        EXPECT("PropsSize: stock 5.6+ answers ChildProperties + 8", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, false);
+        EXPECT("PropsSize: stock 5.5 (an int32 MinAlignment) answers +8 too", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x58, head); tail(o, 0x60, false);
+        EXPECT("PropsSize: case-preserving 4.27 (ChildProperties 0x58) answers 0x60", pick(o, 0x58) == 0x60);
+    }
+    {
+        Obj o; o.ptr(0x50, head);
+        o.i32(0x88, 16); o.i32(0x8C, 4);           // a size-and-alignment look-alike inside the insert, no PropertyLink
+        tail(o, 0xA8, true);
+        EXPECT("PropsSize ⭐: Phantom Blade Zero's 0x50 insert -> 0xA8", pick(o, 0x50) == 0xA8);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true); tail(o, 0xA8, true);
+        EXPECT("PropsSize ⭐: a fitting stock offset wins over a PBZ-shaped one behind it", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head);
+        EXPECT("PropsSize: nothing fits -> ChildProperties + 8, today's answer", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); o.i32(0x88, 16); o.i32(0x8C, 4);
+        EXPECT("PropsSize: size and alignment without PropertyLink is not a fit", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true);
+        o.i32(0x58, 0x2C);                          // not a Guid's size: an ordinary struct's
+        tail(o, 0xA8, true);
+        EXPECT("PropsSize: a stock slot with the wrong size lets the search run", pick(o, 0x50) == 0xA8);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0xA8, true);
+        refuse = o.at(0xAC);                        // MinAlignment unreadable
+        EXPECT("PropsSize: an unreadable MinAlignment is not a fit", pick(o, 0x50) == 0x58);
+        refuse = 0;
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58 + DynOff::kPropsSizeLicenseeSpan + 8, true);
+        EXPECT("PropsSize: a fit past the span is not searched", pick(o, 0x50) == 0x58);
+    }
+}
+
 static void Test_StructStateProbe() {
     std::printf("\n--- VER-MARKERS-PAST-504: the 5.6 rung's UStruct::StructStateFlags probe ---\n");
     using DynOff::StructStateTally;
@@ -13198,6 +13284,7 @@ int main() {
     RUN(Test_CmcMarkerVersion);
     RUN(Test_EnumPackageProbe);      // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
     RUN(Test_StructStateProbe);      // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
+    RUN(Test_PropertiesSizeProbe);   // [VND10-A1] PropertiesSize past a licensee insert
     RUN(Test_VersionLadder);        // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits

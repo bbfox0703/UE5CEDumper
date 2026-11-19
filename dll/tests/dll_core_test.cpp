@@ -8468,7 +8468,7 @@ int main() {
         const auto svFName = DynOff::FFIELD_NAME;         const auto svTagged = DynOff::bTaggedFFieldVariant;
         const auto svPOff = DynOff::FPROPERTY_OFFSET;     const auto svPElem = DynOff::FPROPERTY_ELEMSIZE;
         const auto svPFlags = DynOff::FPROPERTY_FLAGS;    const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
-        const auto svFNum = DynOff::FNAME_NUMBER;
+        const auto svFNum = DynOff::FNAME_NUMBER;         const auto svLicensee = DynOff::bPropsSizeLicensee;
         const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
                                                DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
         const uint32_t svVer = g_cachedUEVersion;
@@ -8750,6 +8750,7 @@ int main() {
         DynOff::bTaggedFFieldVariant = svTagged;
         DynOff::FPROPERTY_OFFSET = svPOff;    DynOff::FPROPERTY_ELEMSIZE = svPElem; DynOff::FPROPERTY_FLAGS = svPFlags;
         DynOff::UPROPERTY_SUBCLASS_START = svUStart; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::bPropsSizeLicensee = svLicensee;
         DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
         DynOff::g_offsetsFallbackReason = "";
         g_cachedUEVersion = svVer;

@@ -3900,6 +3900,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // Step 2.5: Set version-based defaults BEFORE probing (so if probing fails, we have sane values)
     // These serve as the fallback if Guid/Vector structs can't be found.
     DynOff::UPROPERTY_SUBCLASS_START = 0;   // none derived yet: a re-run must not keep the last run's
+    DynOff::bPropsSizeLicensee = false;     // likewise: only this run's PropertiesSize measurement may set it
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
             // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
@@ -4729,7 +4730,17 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // UStruct offsets derived from ChildProperties position
     if (DynOff::bUseFProperty) {
-        DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
+        // [VND10-A1] PropertiesSize is found on Guid, whose size and alignment are fixed; Vector's vary with LWC, so a
+        // Vector-only run keeps ChildProperties + 8.
+        DynOff::USTRUCT_PROPSSIZE = guidStruct
+            ? DynOff::PickPropertiesSizeOffset(guidStruct, childProps, childPropsOff,
+                                               [](uintptr_t a, void* d, size_t n) { return Macht::ReadBytesSafe(a, d, n); })
+            : childPropsOff + 8;
+        DynOff::bPropsSizeLicensee = DynOff::USTRUCT_PROPSSIZE != childPropsOff + 8;
+        if (DynOff::bPropsSizeLicensee)
+            Sein::Info("DYNO", "ValidateAndFixOffsets: UStruct::PropertiesSize at +0x%02X, past ChildProperties + 8 "
+                       "(a licensee insert of 0x%02X bytes)", DynOff::USTRUCT_PROPSSIZE,
+                       DynOff::USTRUCT_PROPSSIZE - (childPropsOff + 8));
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
         // [VND583-02] UField::Next is only used by function walks here, and the steps above

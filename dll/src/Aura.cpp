@@ -7089,7 +7089,7 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
     const int primary = DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
                                                         DynOff::USTRUCT_PROPSSIZE,
                                                         DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                                        DynOff::bUseFProperty);
+                                                        DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, flags) && flags != 0) return flags;
     for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
         if (tryOff == primary) continue;

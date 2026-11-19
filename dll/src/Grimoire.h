@@ -691,14 +691,48 @@ constexpr int FunctionFlagsFromPropsSize(int propsSizeOff, bool fproperty) {
     return propsSizeOff + (fproperty ? 0x58 : 0x48);
 }
 
+// [VND10-A1] How far past ChildProperties + 8 a licensee's UStruct insert is looked for, and the highest PropertiesSize
+// the FunctionFlags relation is trusted for when that search found it (Phantom Blade Zero: 0x50 inserted, PropertiesSize
+// 0xA8, FunctionFlags 0x100).
+inline constexpr int kPropsSizeLicenseeSpan    = 0xB0;
+inline constexpr int kPropsSizeLicenseeCeiling = 0x100;
+
+// True when PickPropertiesSizeOffset found PropertiesSize past ChildProperties + 8, i.e. on a licensee layout. A stock
+// engine never sets it, so whatever it gates is unreachable there.
+inline bool bPropsSizeLicensee = false;
+
 // The primary a reader starts from before -- or without -- the vote in Ubel: the measured
-// relation when the offsets probe VALIDATED (PropertiesSize is ChildProperties + 8, measured)
-// and the value is plausible, else the version table. `measured` is DynOff::bOffsetsValidated.
+// relation when the offsets probe VALIDATED and the value is plausible, else the version table.
+// `measured` is DynOff::bOffsetsValidated; `licensee` is bPropsSizeLicensee, which alone lets a
+// PropertiesSize above the stock window through.
 constexpr int FunctionFlagsPrimaryFor(unsigned ueVersion, bool casePreservingName, int propsSizeOff,
-                                      bool measured, bool fproperty) {
-    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= 0x80)
+                                      bool measured, bool fproperty, bool licensee = false) {
+    const int ceiling = licensee ? kPropsSizeLicenseeCeiling : 0x80;
+    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= ceiling)
         return FunctionFlagsFromPropsSize(propsSizeOff, fproperty);
     return FunctionFlagsOffsetFor(ueVersion, casePreservingName);
+}
+
+// [VND10-A1] UStruct::PropertiesSize, found on Guid in FProperty mode. A Guid reads PropertiesSize 16 (sizeof FGuid),
+// MinAlignment 4 (compared as int16: 5.6+ keeps StructStateFlags right after it), and PropertyLink 0x18 later, which for
+// a struct with no super heads the same chain as ChildProperties. ChildProperties + 8 is tried first and, when it fits,
+// answers, so a stock engine keeps its stock offset; only when it does not fit is the span behind it searched. When
+// nothing fits the answer is ChildProperties + 8 all the same. `read(addr, dst, n)` returns false on a fault.
+template <class ReadMem>
+inline int PickPropertiesSizeOffset(uintptr_t guid, uintptr_t childPropsHead, int childPropsOff, ReadMem&& read) {
+    auto fits = [&](int off) {
+        int32_t size = 0;
+        int16_t align = 0;
+        uintptr_t link = 0;
+        return read(guid + off, &size, sizeof size) && size == 16
+            && read(guid + off + 4, &align, sizeof align) && align == 4
+            && read(guid + off + 0x18, &link, sizeof link) && link == childPropsHead;
+    };
+    const int stock = childPropsOff + 8;
+    if (fits(stock)) return stock;
+    for (int off = stock + 8; off <= stock + kPropsSizeLicenseeSpan; off += 8)
+        if (fits(off)) return off;
+    return stock;
 }
 
 // The vote's per-sample rule (Ubel::EnsureFunctionFlagsOffset). At the right offset, NumParms
