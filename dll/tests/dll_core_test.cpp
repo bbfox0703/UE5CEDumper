@@ -15015,6 +15015,196 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // -- UE58-ADJ10 -- 0x10 below a UE 5.8 FUObjectArray is not GObjects; every shape validates as before around it ----
+    //
+    // [UE58-ADJ10-WRONG-ANCHOR] UE 5.8 puts ObjObjects at the FUObjectArray base: Objects +0x00, NumElements +0x08,
+    // MaxElements +0x0C, NumChunks +0x10, MaxChunks +0x14, PreAllocatedObjects +0x18, ObjFirstGCIndex +0x20,
+    // ObjLastNonGCIndex +0x24. A GObjects row whose adjustment is -0x10 anchors ObjObjects.Objects, so on 5.8 it offers
+    // base-0x10 first, and TryResolveMatch hands over the first candidate that validates. There relaxed D reads
+    // MaxElements as its count, NumElements as its max and the real chunk table as its Objects; Aura's relaxed D refuses
+    // a count above its max, falls to the default layout and reads a small non-zero count, so Frieren's Count == 0
+    // recovery never runs. Every shape in the sweep below must validate as before at every offset (working-lessons §7.3
+    // #5): the masks are what each shape validates at today, the 5.8 ones less base-0x10.
+    {
+        blk("UE58-ADJ10 - a -0x10 GObjects row on UE 5.8 hands over the base, not base-0x10; every shape as before");
+        // The table, the chunks and the objects sit at a fixed address whose halves no count slot can take: a high dword
+        // under the relaxed rows' 0x1000 floor and a low dword above their 0x400000 ceiling, so the masks below do not
+        // depend on where the heap put the fixture.
+        uint8_t* region = nullptr;
+        for (uint32_t hi : { 0x00F1u, 0x00E1u, 0x00D1u, 0x00C1u }) {
+            region = static_cast<uint8_t*>(VirtualAlloc(
+                reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x10000000u), 0x10000,
+                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (region) break;
+        }
+        check("UE58-ADJ10 setup: a fixture region at 0x000000X1_10000000", region != nullptr);
+        if (region) {
+            // 64 objects whose ClassPrivate is a UClass that is its own class (Genau's cyclic chain), and one chunk of
+            // 64 FUObjectItems of 24 bytes for each item shape: UObject* at +0x00, and at +0x08 behind UE 5.7+'s
+            // FlagsAndRefCount.
+            uint8_t* objs = region;
+            uint8_t* cls = region + 0x1000;
+            const uintptr_t clsAddr = reinterpret_cast<uintptr_t>(cls);
+            memcpy(cls + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+            uint8_t* chunkAt[2] = { region + 0x1100, region + 0x1800 };
+            for (int i = 0; i < 64; ++i) {
+                uint8_t* o = objs + i * 0x40;
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+                const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+                memcpy(chunkAt[0] + i * 24, &oa, 8);
+                memcpy(chunkAt[1] + i * 24 + 8, &oa, 8);
+            }
+            auto* table = reinterpret_cast<uintptr_t*>(region + 0x2000);   // room for 0x300 chunk pointers
+            const uintptr_t tableAddr = reinterpret_cast<uintptr_t>(table);
+
+            alignas(16) static uint8_t hdr[0x100] = {};
+            constexpr int kBase = 0x40;   // the FUObjectArray base inside hdr
+            const uintptr_t B = reinterpret_cast<uintptr_t>(hdr) + kBase;
+
+            // Offsets from the FUObjectArray base; -1 where the layout has no such field (or none known here). `at`: the
+            // addresses ValidateGObjects takes around the array, one string per number set below (in its order) and the
+            // same for both item shapes. Pinned, not a goal: they are what each shape validated at before the
+            // UE58-ADJ10 guard, less 5.8's base-0x10, so a change that moves one must do it on purpose. Among them, 5.8's
+            // preallocated base+0x08 is `[UE58-ADJ14-PREALLOC]`, open.
+            struct Shape { const char* name; int obj, maxE, num, maxC, numC, preAlloc, gc; const char* at[4]; };
+            const Shape shapes[] = {
+                { "UE 4.20-5.7",        0x10, 0x20, 0x24, 0x28, 0x2C, 0x18, 0x00,
+                  { "+00 +10",         "+00 +08 +10 +18", "+00 +10",         "+00 +10" } },
+                { "UE 5.8",             0x00, 0x0C, 0x08, 0x14, 0x10, 0x18, 0x20,
+                  { "+00",             "+00 +08 +18",     "+00",             "+00"     } },
+                { "UE4-Extended",       0x10, 0x18, 0x1C, 0x20, 0x24,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "+00"     } },
+                { "flat 4.11-4.19",     0x10, 0x18, 0x1C,   -1,   -1,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "+00 +10" } },
+                { "Back4Blood",         0x20, 0x10, 0x14, 0x18, 0x1C,   -1, 0x00,
+                  { "+10",             "+10",             "+10",             "+10"     } },
+                { "Multiversus",        0x28, 0x20, 0x10, 0x24, 0x30,   -1, 0x00,
+                  { "+10",             "+10",             "+10",             "none"    } },
+                { "MindsEye",           0x28, 0x10, 0x24, 0x20, 0x14,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "none"    } },
+                { "UE5.7-Mistfall",     0x10, 0x20, 0x24, 0x04, 0x08, 0x18,   -1,
+                  { "+00 +10",         "+00 +08 +10 +18", "+00 +10",         "+00 +10" } },
+                { "Phantom Blade Zero", 0x18, 0x24, 0x20, 0x10, 0x14, 0x28, 0x00,
+                  { "+00 +08 +10 +18", "+08 +18",         "+00 +08 +10 +18", "+18"     } },
+            };
+            // MaxElements is MaxChunks whole chunks, as FUObjectArray::AllocateObjectPool leaves it.
+            struct Numbers { const char* what; int32_t maxChunks, numChunks, num; bool prealloc; };
+            const Numbers sets[] = {
+                { "default, 33 chunks, 2 in use",            33,  2, 0x14000, false },
+                { "preallocated, 33 of 33 chunks",           33, 33, 0x14000, true  },
+                { "6 chunks, 1 in use",                       6,  1, 0x04000, false },
+                { "768 chunks, past the strict max ceiling", 768,  4, 0x30000, false },
+            };
+            auto build = [&](const Shape& s, const Numbers& n, int item) {
+                memset(hdr, 0, sizeof hdr);
+                memset(table, 0, 0x300 * sizeof(uintptr_t));
+                const uintptr_t chunk = reinterpret_cast<uintptr_t>(chunkAt[item]);
+                for (int i = 0; i < n.numChunks; ++i) table[i] = chunk;
+                auto p32 = [&](int at, int32_t v) { memcpy(hdr + kBase + at, &v, 4); };
+                auto pP = [&](int at, uintptr_t v) { memcpy(hdr + kBase + at, &v, 8); };
+                // ObjFirstGCIndex, ObjLastNonGCIndex once the disregard-for-GC set closes; on a pre-5.8 base, then
+                // MaxObjectsNotConsideredByGC and the OpenForDisregardForGC bool. The layout's own fields go on top.
+                if (s.gc >= 0) { p32(s.gc, 0x8001); p32(s.gc + 4, 0x8000); }
+                if (s.gc == 0) { p32(0x08, 0x8001); p32(0x0C, 0); }
+                const bool flat = s.maxC < 0;
+                pP(s.obj, flat ? chunk : tableAddr);
+                p32(s.maxE, n.maxChunks * Grimoire::OBJECTS_PER_CHUNK);
+                p32(s.num, n.num);
+                if (!flat) { p32(s.maxC, n.maxChunks); p32(s.numC, n.numChunks); }
+                if (s.preAlloc >= 0 && n.prealloc) pP(s.preAlloc, chunk);
+            };
+            // Which addresses from base-0x20 to base+0x40, every 4 bytes, ValidateGObjects takes: "-10 +00" and so on.
+            auto sweep = [&] {
+                std::string got;
+                for (int off = -0x20; off <= 0x40; off += 4) {
+                    if (!Genau::ValidateGObjects(B + off)) continue;
+                    char b[8];
+                    snprintf(b, sizeof b, "%s%c%02X", got.empty() ? "" : " ", off < 0 ? '-' : '+', off < 0 ? -off : off);
+                    got += b;
+                }
+                return got.empty() ? std::string("none") : got;
+            };
+
+            // A GObjects row whose RIP target is `target`, through TryResolveMatch -- the adjusted candidate first, then
+            // the target -- as a scan that matched it would resolve it.
+            static uint8_t code[0x40] = {};
+            auto viaRow = [&](const AobSignature& sig, uintptr_t target) {
+                memset(code, 0x90, sizeof code);
+                const uintptr_t instr = reinterpret_cast<uintptr_t>(code) + sig.instrOffset;
+                const int32_t rel = static_cast<int32_t>(static_cast<intptr_t>(target)
+                                                         - static_cast<intptr_t>(instr + sig.totalLen));
+                memcpy(code + sig.instrOffset + sig.opcodeLen, &rel, 4);
+                return Genau::TryResolveMatch(reinterpret_cast<uintptr_t>(code), sig, Genau::ValidateGObjects);
+            };
+            auto fromBase = [&](uintptr_t got) {
+                char b[32];
+                snprintf(b, sizeof b, "base%+lld", static_cast<long long>(static_cast<intptr_t>(got - B)));
+                return got ? std::string(b) : std::string("0");
+            };
+
+            // The finding: on a 5.8 array, 0x10 below the base is not GObjects, and each -0x10 row, whose RIP target
+            // is ObjObjects.Objects -- the base itself on 5.8 -- resolves the base.
+            const Shape& s58 = shapes[1];
+            for (const Numbers& n : { sets[0], sets[1] }) {
+                for (int item = 0; item < 2; ++item) {
+                    const std::string tag = std::string(" (") + n.what + (item ? ", UObject* at +0x08)" : ")");
+                    build(s58, n, item);
+                    check(("UE58-ADJ10 control: a 5.8 array validates at its base" + tag).c_str(),
+                          Genau::ValidateGObjects(B));
+                    check(("UE58-ADJ10 ⭐: 0x10 below a 5.8 array is not GObjects" + tag).c_str(),
+                          !Genau::ValidateGObjects(B - 0x10));
+                    int rows = 0;
+                    for (const AobSignature& sig : Sig::GOBJECTS_PATTERNS) {
+                        if (sig.adjustment != -0x10) continue;
+                        ++rows;
+                        const uintptr_t got = viaRow(sig, B);
+                        check(("UE58-ADJ10 ⭐: " + std::string(sig.id) + " resolves a 5.8 array to its base" + tag).c_str(),
+                              got == B, fromBase(got).c_str());
+                    }
+                    check("UE58-ADJ10 setup: the -0x10 GObjects rows are there to try", rows >= 5);
+                    // The other adjusted rows, pinned as they resolve today. -0x14 targets ObjObjects.NumElements, which
+                    // 5.8 moved to +0x08: the adjusted candidate (base-0x0C) misses, and the target itself validates
+                    // on a preallocated array (`[UE58-ADJ14-PREALLOC]`, open). +0x0C targets ObjLastNonGCIndex, at
+                    // +0x24 on 5.8: both candidates miss.
+                    for (const AobSignature& sig : Sig::GOBJECTS_PATTERNS) {
+                        if (sig.adjustment != -0x14 && sig.adjustment != 0x0C) continue;
+                        const bool adj14 = sig.adjustment == -0x14;
+                        const uintptr_t got = viaRow(sig, B + (adj14 ? 0x08 : 0x24));
+                        const uintptr_t want = adj14 && n.prealloc ? B + 0x08 : 0;
+                        check(("UE58-ADJ10 pin: " + std::string(sig.id) + " on a 5.8 array resolves "
+                               + (want ? "base+0x08" : "nothing") + tag).c_str(),
+                              got == want, fromBase(got).c_str());
+                    }
+                    // Why Genau must refuse it: Aura reads base-0x10 with a non-zero count that is not the array's, so
+                    // nothing downstream notices. Pinned, not a goal.
+                    Aura::Init(B - 0x10);
+                    check(("UE58-ADJ10 pin: Aura reads 0x10 below a 5.8 array with a wrong non-zero count" + tag).c_str(),
+                          Aura::GetCount() != 0 && Aura::GetCount() != n.num,
+                          ("count " + std::to_string(Aura::GetCount())).c_str());
+                }
+            }
+
+            // Every shape, every number set, both item shapes: the addresses it validated at, the one change being 5.8's
+            // base-0x10.
+            static_assert(sizeof(sets) / sizeof(sets[0]) == sizeof(Shape::at) / sizeof(Shape::at[0]),
+                          "one pinned string per number set");
+            for (const Shape& s : shapes) {
+                for (size_t k = 0; k < std::size(sets); ++k) {
+                    for (int item = 0; item < 2; ++item) {
+                        build(s, sets[k], item);
+                        const std::string got = sweep();
+                        check(("UE58-ADJ10 control: " + std::string(s.name) + ", " + sets[k].what
+                               + (item ? ", UObject* at +0x08" : "") + " -- validates where it did").c_str(),
+                              got == s.at[k], got.c_str());
+                    }
+                }
+            }
+            VirtualFree(region, 0, MEM_RELEASE);
+        }
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Bitfield bools packed into one byte share
     // Offset_Internal, so each of them gets the byte's row -- a map that kept the first one only would file a write to
     // bCanBeDamaged under whichever flag came first, and give bCanBeDamaged no row at all.
