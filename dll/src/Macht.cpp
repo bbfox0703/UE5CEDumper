@@ -1083,24 +1083,89 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     return true;
 }
 
+// The offset of a 64-bit PE's optional header in `headers`, or 0 when the bytes are no such image.
+static size_t OptionalHeader64(const uint8_t* headers, size_t headerBytes) {
+    if (!headers || headerBytes < sizeof(IMAGE_DOS_HEADER) || headers[0] != 'M' || headers[1] != 'Z') return 0;
+    uint32_t lfanew = 0;
+    memcpy(&lfanew, headers + offsetof(IMAGE_DOS_HEADER, e_lfanew), sizeof lfanew);
+    const size_t opt = static_cast<size_t>(lfanew) + offsetof(IMAGE_NT_HEADERS64, OptionalHeader);
+    if (lfanew < sizeof(IMAGE_DOS_HEADER) || opt + sizeof(IMAGE_OPTIONAL_HEADER64) > headerBytes ||
+        memcmp(headers + lfanew, "PE\0\0", 4) != 0) {
+        return 0;
+    }
+    uint16_t magic = 0;
+    memcpy(&magic, headers + opt, sizeof magic);
+    return magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? opt : 0;
+}
+
 bool DebugDirectoryOf(const uint8_t* headers, size_t headerBytes, uint32_t& rva, uint32_t& bytes) {
     rva = bytes = 0;
-    (void)headers; (void)headerBytes;
-    return false;
+    const size_t opt = OptionalHeader64(headers, headerBytes);
+    if (!opt) return false;
+    uint32_t dirs = 0;
+    memcpy(&dirs, headers + opt + offsetof(IMAGE_OPTIONAL_HEADER64, NumberOfRvaAndSizes), sizeof dirs);
+    if (dirs <= IMAGE_DIRECTORY_ENTRY_DEBUG) return false;
+    IMAGE_DATA_DIRECTORY dir{};
+    memcpy(&dir, headers + opt + offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory) +
+                     IMAGE_DIRECTORY_ENTRY_DEBUG * sizeof(IMAGE_DATA_DIRECTORY), sizeof dir);
+    rva = dir.VirtualAddress;
+    bytes = dir.Size;
+    return rva != 0 && bytes != 0;
 }
 
 LinkerVerdict ClassifyLinker(const uint8_t* headers, size_t headerBytes, const uint8_t* debugDir, size_t debugBytes) {
-    (void)headers; (void)headerBytes; (void)debugDir; (void)debugBytes;
-    return {};
+    LinkerVerdict v;
+    const size_t opt = OptionalHeader64(headers, headerBytes);
+    if (!opt) return v;
+    v.linkerMajor = headers[opt + offsetof(IMAGE_OPTIONAL_HEADER64, MajorLinkerVersion)];
+    v.linkerMinor = headers[opt + offsetof(IMAGE_OPTIONAL_HEADER64, MinorLinkerVersion)];
+    // The Rich header lives in the DOS stub, between the DOS header and the PE signature.
+    const size_t peSig = opt - offsetof(IMAGE_NT_HEADERS64, OptionalHeader);
+    for (size_t i = sizeof(IMAGE_DOS_HEADER); i + 4 <= peSig; ++i) {
+        if (memcmp(headers + i, "Rich", 4) == 0) {
+            v.rich = true;
+            break;
+        }
+    }
+    constexpr DWORD kVcFeature = 12;   // IMAGE_DEBUG_TYPE_VC_FEATURE
+    constexpr DWORD kPogo = 13;        // IMAGE_DEBUG_TYPE_POGO
+    v.debugEntries = debugDir ? static_cast<uint32_t>(debugBytes / sizeof(IMAGE_DEBUG_DIRECTORY)) : 0;
+    for (uint32_t i = 0; i < v.debugEntries; ++i) {
+        DWORD type = 0;
+        memcpy(&type, debugDir + i * sizeof(IMAGE_DEBUG_DIRECTORY) + offsetof(IMAGE_DEBUG_DIRECTORY, Type), sizeof type);
+        if (type == kVcFeature || type == kPogo) v.msvcDebugEntry = true;
+    }
+    const bool v14 = v.linkerMajor == 14;
+    if (v.rich || v.msvcDebugEntry || (v14 && v.linkerMinor != 0)) {
+        v.kind = LinkerKind::Msvc;
+    } else if (v14) {
+        v.kind = v.debugEntries ? LinkerKind::Lld : LinkerKind::LldNoDebug;
+    }
+    return v;
 }
 
 const char* LinkerKindName(LinkerKind kind) {
-    (void)kind;
-    return "unknown";
+    switch (kind) {
+        case LinkerKind::Msvc:       return "msvc";
+        case LinkerKind::Lld:        return "lld";
+        case LinkerKind::LldNoDebug: return "lld*";
+        default:                     return "unknown";
+    }
 }
 
 LinkerVerdict ClassifyMainModuleLinker() {
-    return {};
+    const uintptr_t base = GetModuleBase(nullptr);
+    uint8_t headers[0x1000];
+    if (!base || !ReadBytesSafe(base, headers, sizeof headers)) return {};
+    uint32_t rva = 0, bytes = 0;
+    std::vector<uint8_t> debugDir;
+    if (DebugDirectoryOf(headers, sizeof headers, rva, bytes)) {
+        // A real directory holds a handful of entries; a corrupt size must not become a huge read.
+        bytes = (std::min)(bytes, static_cast<uint32_t>(64 * sizeof(IMAGE_DEBUG_DIRECTORY)));
+        debugDir.resize(bytes);
+        if (!ReadBytesSafe(base + rva, debugDir.data(), bytes)) debugDir.clear();
+    }
+    return ClassifyLinker(headers, sizeof headers, debugDir.empty() ? nullptr : debugDir.data(), debugDir.size());
 }
 
 } // namespace Macht
