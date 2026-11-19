@@ -8479,10 +8479,10 @@ int main() {
 
         // A whole first chunk and every chunk slot, zeroed: the probes resolve pointer halves as name indices, and an
         // index into a short table would read whatever static memory follows it.
-        static uint8_t lfEntry[8][0x40] = {};
-        const char* lfNames[8] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D" };
+        static uint8_t lfEntry[10][0x40] = {};
+        const char* lfNames[10] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D", "Class", "Function" };
         static uintptr_t lfChunk[0x4000] = {};
-        for (int i = 1; i < 8; ++i) {
+        for (int i = 1; i < 10; ++i) {
             memcpy(lfEntry[i] + 0x10, lfNames[i], strlen(lfNames[i]) + 1);
             lfChunk[i] = A(lfEntry[i]);
         }
@@ -8497,8 +8497,18 @@ int main() {
         constexpr uintptr_t kCodeLike = 0x00007FF6C166C147ull;   // a code address: its low dword is no name index
 
         enum class Shape { Pbz, Stock57, Stock58, Stock50 };
+        auto put16 = [](uint8_t* b, int off, uint16_t v) { memcpy(b + off, &v, sizeof(v)); };
+        // The UStruct tail behind ChildProperties: PropertiesSize 16 (sizeof FGuid), MinAlignment 4, then PropertyLink
+        // 0x18 on, which for a struct with no super heads the same chain as ChildProperties.
+        auto putTail = [&](uint8_t* guid, int ps, bool int16Align) {
+            put32(guid, ps, 16);
+            if (int16Align) { put16(guid, ps + 4, 4); put16(guid, ps + 6, 1); }   // 5.6+: StructStateFlags beside it
+            else            put32(guid, ps + 4, 4);
+            putP(guid, ps + 0x18, A(lfField[0]));
+        };
         // The Guid (a ScriptStruct) holds ChildProperties at +0x50 heading A -> B -> C -> D, four IntProperty fields.
-        auto build = [&](uint8_t* guid, Shape s) {
+        // `tail` false leaves the UStruct tail zero, so no PropertiesSize reading fits.
+        auto build = [&](uint8_t* guid, Shape s, bool tail = true) {
             memset(guid, 0, 0x200);
             memset(lfFc, 0, sizeof(lfFc));
             for (auto& f : lfField) memset(f, 0, sizeof(f));
@@ -8535,6 +8545,16 @@ int main() {
                 put32(f, dim + 4, 4);                      // ElementSize
                 put32(f, off, i * 4);                      // Offset_Internal
             }
+            if (!tail) return;
+            if (s == Shape::Pbz) {
+                // PBZ inserts 0x50 bytes after ChildProperties (a hash map; empty here, so its Data pointer at +0x58 is
+                // null). Inside it, a size-and-alignment look-alike at +0x88 whose PropertyLink slot holds nothing.
+                putP(guid, 0x60, 0x0000000300000005ull);
+                put32(guid, 0x88, 16); put32(guid, 0x8C, 4);
+                putTail(guid, 0xA8, true);
+            } else {
+                putTail(guid, 0x58, s != Shape::Stock50);
+            }
         };
 
         FakePool lfPool;
@@ -8565,35 +8585,113 @@ int main() {
         };
         auto clean = [] { return std::string(DynOff::g_offsetsFallbackReason).empty(); };
 
+        auto ustruct = [] {
+            char b[64];
+            snprintf(b, sizeof b, "propsSize=%02X script=%02X", DynOff::USTRUCT_PROPSSIZE, DynOff::USTRUCT_SCRIPT);
+            return std::string(b);
+        };
+        auto stockTail = [] { return DynOff::USTRUCT_PROPSSIZE == 0x58 && DynOff::USTRUCT_SCRIPT == 0x60; };
+
+        // [VND10-A1] -03: the FunctionFlags vote over ten built UFunctions, one to three 4-byte FProperty parameters
+        // each, FunctionFlags at `flagsOff`, NumParms / ParmsSize behind it. A pointer sits where PBZ keeps
+        // UStruct::Script (+0xB0), the slot a stock relation would read flags from.
+        enum : int32_t { nClass = 8, nFunction = 9 };
+        constexpr int kLfFns = 10;
+        static uint8_t lfMeta[0x100] = {}, lfFnCls[0x100] = {}, lfFn[kLfFns][0x200] = {}, lfParm[kLfFns][3][0x100] = {};
+        FakePool lfFnPool;
+        lfFnPool.Build(3 + kLfFns);
+        auto vote = [&](int flagsOff, int nextOff) {
+            memset(lfFn, 0, sizeof(lfFn)); memset(lfParm, 0, sizeof(lfParm));
+            putP(lfMeta, Grimoire::OFF_UOBJECT_CLASS, A(lfMeta));   put32(lfMeta, Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(lfFnCls, Grimoire::OFF_UOBJECT_CLASS, A(lfMeta));  put32(lfFnCls, Grimoire::OFF_UOBJECT_NAME, nFunction);
+            for (int i = 0; i < kLfFns; ++i) {
+                uint8_t* f = lfFn[i];
+                const int count = i % 3 + 1;
+                putP(f, Grimoire::OFF_UOBJECT_CLASS, A(lfFnCls));
+                if (flagsOff != 0xB0) putP(f, 0xB0, A(lfZero));
+                put32(f, flagsOff, 0x00080401);                         // FunctionFlags
+                f[flagsOff + 4] = static_cast<uint8_t>(count);         // NumParms
+                put16(f, flagsOff + 6, static_cast<uint16_t>(4 * count)); // ParmsSize
+                put16(f, flagsOff + 8, 0xFFFF);                        // ReturnValueOffset: none
+                putP(f, 0x50, A(lfParm[i][0]));                        // ChildProperties
+                for (int j = 0; j < count; ++j) {
+                    uint8_t* p = lfParm[i][j];
+                    putP(p, DynOff::FFIELD_CLASS, A(lfFc));
+                    if (j + 1 < count) putP(p, nextOff, A(lfParm[i][j + 1]));
+                    put32(p, DynOff::FFIELD_NAME, 4 + j);
+                    const uint64_t parm = 0x0080;                       // CPF_Parm
+                    memcpy(p + DynOff::FPROPERTY_FLAGS, &parm, sizeof(parm));
+                    put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+                    put32(p, DynOff::FPROPERTY_ELEMSIZE, 4);
+                    put32(p, DynOff::FPROPERTY_OFFSET, 4 * j);
+                }
+            }
+            const uintptr_t head[3] = { A(lfZero), A(lfMeta), A(lfFnCls) };
+            for (int i = 0; i < 3 + kLfFns; ++i) {
+                const uintptr_t o = i < 3 ? head[i] : A(lfFn[i - 3]);
+                memcpy(lfFnPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+            }
+            Aura::InitWithExtendedLayout(lfFnPool.Addr(), FakePool::kItemSize);
+            DynOff::bUFunctionFlagsDetected.store(false);
+            DynOff::UFUNCTION_FLAGS = 0; DynOff::UFUNCTION_TAIL_EXTRA = 0; DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+            return Ubel::FunctionFlagsOffset();
+        };
+        auto readsThree = [&](std::string& why) {
+            FunctionInfo fi{};
+            const bool ok = Ubel::ResolveFunctionInfo(A(lfFn[2]), fi);
+            why = "ok " + std::to_string(ok) + " numParms " + std::to_string(fi.numParms) + " parmsSize "
+                + std::to_string(fi.parmsSize);
+            return ok && fi.numParms == 3 && fi.parmsSize == 12 && fi.returnValueOffset == 0xFFFF;
+        };
+        const bool svFnDet = DynOff::bUFunctionFlagsDetected.load();
+        const int svFnFlags = DynOff::UFUNCTION_FLAGS, svFnExtra = DynOff::UFUNCTION_TAIL_EXTRA;
+        const int svFnMeas = DynOff::UFUNCTION_TAIL_MEASURED.load();
+
         // Stock shapes first: each latches exactly the stock answer.
-        build(lfGuid[0], Shape::Stock57);
+        build(lfGuid[0], Shape::Stock57, false);
         const bool r57 = run(lfGuid[0], 507);
         check("VND10-A1-02 control: stock 5.7 -- FFieldClass::Name +0x00, Next +0x18, measured",
               r57 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x18
               && DynOff::FFIELD_NAME == 0x20 && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FPROPERTY_OFFSET == 0x44,
               got().c_str());
+        check("VND10-A1-03 control: a stock 5.7 Guid whose tail fits nowhere keeps ChildProperties + 8", stockTail(),
+              ustruct().c_str());
+        {
+            const int voted = vote(0xB0, 0x18);
+            std::string why;
+            check("VND10-A1-03 control: the stock 5.7 vote keeps FunctionFlags +0xB0",
+                  voted == 0xB0 && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0xB0 && readsThree(why),
+                  (std::to_string(voted) + " " + why).c_str());
+        }
         build(lfGuid[1], Shape::Stock58);
         const bool r58 = run(lfGuid[1], 508);
         check("VND10-A1-02 control: stock 5.8 -- FFieldClass::Name +0x08, Next +0x18, measured",
               r58 && clean() && DynOff::FFIELDCLASS_NAME == 0x08 && DynOff::FFIELD_NEXT == 0x18
               && DynOff::USTRUCT_CHILDPROPS == 0x50, got().c_str());
+        check("VND10-A1-03 control: stock 5.8 -- PropertiesSize +0x58, Script +0x60", stockTail(), ustruct().c_str());
         build(lfGuid[2], Shape::Stock50);
         const bool r50 = run(lfGuid[2], 502);
         check("VND10-A1-02 control: stock 5.0-5.2 -- Name +0x00, Next +0x20, FField::Name +0x28, untagged",
               r50 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x20
               && DynOff::FFIELD_NAME == 0x28 && DynOff::FPROPERTY_OFFSET == 0x4C && !DynOff::bTaggedFFieldVariant,
               got().c_str());
+        check("VND10-A1-03 control: stock 5.0-5.2 (an int32 MinAlignment) -- PropertiesSize +0x58", stockTail(),
+              ustruct().c_str());
 
         // The ordering decoy: a stock 5.7 Guid whose earlier slot (+0x38, where a case-preserving build keeps its
         // StructBaseChainArray) points at memory reading as an FField whose class names a *Property at +0x30 only. A
-        // licensee offset consulted per pointer would latch +0x38 / +0x30 there, before the real ChildProperties.
+        // licensee offset consulted per pointer would latch +0x38 / +0x30 there, before the real ChildProperties. Its
+        // tail also carries a PBZ-shaped PropertiesSize at +0xA8 behind the stock one.
         build(lfGuid[3], Shape::Stock57);
         putP(lfDecoy, DynOff::FFIELD_CLASS, A(lfDecoyFc));
         put32(lfDecoyFc, 0x00, 0x7FFFFFF0); put32(lfDecoyFc, 0x08, 0x00F00000); put32(lfDecoyFc, 0x30, 3);
         putP(lfGuid[3], 0x38, A(lfDecoy));
+        putTail(lfGuid[3], 0xA8, true);
         const bool rDecoy = run(lfGuid[3], 507);
         check("VND10-A1-02 control ⭐: a stock 5.7 Guid with a *Property at +0x30 behind an earlier slot keeps +0x50 / +0x00",
               rDecoy && clean() && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
+        check("VND10-A1-03 control ⭐: a fitting stock PropertiesSize wins over a PBZ-shaped one behind it", stockTail(),
+              ustruct().c_str());
 
         // Phantom Blade Zero.
         build(lfGuid[4], Shape::Pbz);
@@ -8618,6 +8716,18 @@ int main() {
             }
             check("VND10-A1-02 ⭐: a PBZ walk reads A, B, C, D as IntProperty at 0/4/8/12", typed, seen.c_str());
         }
+        check("VND10-A1-03 ⭐: PBZ's PropertiesSize is measured at +0xA8 and Script follows at +0xB0, past its 0x50 insert",
+              DynOff::USTRUCT_PROPSSIZE == 0xA8 && DynOff::USTRUCT_SCRIPT == 0xB0, ustruct().c_str());
+        {
+            const int voted = vote(0x100, 0x10);
+            std::string why;
+            const bool three = readsThree(why);
+            check("VND10-A1-03 ⭐: the PBZ vote decides FunctionFlags +0x100, not Script's +0xB0", voted == 0x100,
+                  std::to_string(voted).c_str());
+            check("VND10-A1-03 ⭐: ...measures its tail there, and a function reads 3 parameters, 12 bytes",
+                  DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x100 && three,
+                  (std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()) + " " + why).c_str());
+        }
 
         // A licensee reading needs a second field of the chain to agree: one *Property at +0x30 alone is not a chain.
         build(lfGuid[5], Shape::Pbz);
@@ -8628,6 +8738,9 @@ int main() {
               && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
 
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::bUFunctionFlagsDetected.store(svFnDet);
+        DynOff::UFUNCTION_FLAGS = svFnFlags; DynOff::UFUNCTION_TAIL_EXTRA = svFnExtra;
+        DynOff::UFUNCTION_TAIL_MEASURED.store(svFnMeas);
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
         DynOff::UFIELD_NEXT = svUNext;        DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_SUPER = svSuper;
