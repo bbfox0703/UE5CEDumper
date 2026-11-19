@@ -404,7 +404,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         "UE 4.18", "UE 4.19", "UE 4.20", "UE 4.21", "UE 4.22", "UE 4.23",
         "UE 4.24", "UE 4.25", "UE 4.26", "UE 4.27",
         "UE 5.0", "UE 5.1", "UE 5.2", "UE 5.3", "UE 5.4",
-        "UE 5.5", "UE 5.6", "UE 5.7", "UE 5.8",
+        "UE 5.5", "UE 5.6", "UE 5.7", "UE 5.8", "UE 5.9",
     };
 
     // A REFUSED engine (IsVersionTooOld) silences every per-pointer failure line below. Nothing
