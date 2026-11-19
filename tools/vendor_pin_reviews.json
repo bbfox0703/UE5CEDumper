@@ -9,8 +9,8 @@
   },
   "zydis": {
     "pin": "a95bb71013436547f689fc0b380f48edf663066e",
-    "reviewed_upstream": "fcc63c635889d800c9a08ea72482fa3344327732",
-    "reviewed_on": "2026-11-06",
+    "reviewed_upstream": "4b31c345c9ada8c34d0a7a1d789c0f08f844d851",
+    "reviewed_on": "2026-11-19",
     "verdict": "HOLD",
     "record": "docs/vendor-pin-reviews.md#zydis"
   }

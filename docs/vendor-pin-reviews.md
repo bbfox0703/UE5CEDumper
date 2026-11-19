@@ -31,6 +31,26 @@ and, since 2026-11-06, Falsch (the MinHook trampoline pre-flight, `[MH-TRAMPOLIN
 users. Falsch reads fields Denken does not: length, encoding, opcode map and opcode, relative operands, the raw
 displacement, and absolute branch targets. A review must therefore check both; the rig's E2E and FALSCH lines do.
 
+### 2026-11-19 — reviewed up to `4b31c345c9ad` (origin/master, 2026-11-14): **HOLD**
+
+Vendor audit #10 ([audit-2026-11-19-vendor-delta10.md](audit-2026-11-19-vendor-delta10.md), `ZYD10-*`). The 10 commits
+after `fcc63c6` change nothing Denken or Falsch gets: the rig, from the pin to `4b31c34`, on DumperTest Shipping (5.4),
+DumperTest58 Shipping, UE427_3rdPerson Shipping and Nekopara (1,269,946 `.pdata` starts) gives byte-identical E2E and
+FALSCH output, 0 Denken-visible CODE rows, 0 OK→FAIL and 0 length changes, and exits 0.
+
+| Commit | What it changes | Does Denken / Falsch see it? |
+|---|---|---|
+| `e3c4994` (#662) | Multi-byte NOPs report one operand (action NONE); the encoder emits `0F 1F /0` | No: the dropped operand was a read register |
+| `a71cb7f` (#663) | Address-only and hint memory operands (prefetch, hint-NOP, cldemote, invlpg) report action NONE | No: Denken reads only the write bit (0 at both); Falsch reads `mem.type`, never actions |
+| `7254d2c` (#669) | PTWRITE with a 66H prefix is rejected (DECODING_ERROR) | The delta's only visible decode change: #UD on hardware, 0 occurrences |
+| `b2c1ddb` (#668) | Decoder-table accessors inlined; the tables get external linkage | No: no symbol clash in our link |
+| `2b58885`, `f366677`, `257283c`, `676ca0f`, `f55ea30`, `4b31c34` | Tests, the formatter's APX hooks, a build fix with AVX-512 / KNC off, the amalgamation | Not compiled into the DLL |
+
+A delta-only run (`--base fcc63c6`) exits 1 only because none of the five control cases covers this delta; `7254d2c`'s
+bytes (`66 F3 0F AE 20`) would make one. The rig does not print `[DENKEN-WRITE-SITES]`' fields (`VND10-A4`): when it
+does, its E2E hashes change format, so the next entry records the new ones. Reopen triggers: those of 2026-11-06, plus
+commits after `4b31c34`.
+
 ### 2026-11-06 — reviewed up to `fcc63c635889` (origin/master, 2026-11-03): **HOLD**
 
 **The deciding fact:** the real `dll/src/Denken.cpp` produces **byte-identical output** linked against `a95bb71` and
