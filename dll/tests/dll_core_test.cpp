@@ -561,6 +561,9 @@ int main() {
               dBranch.version == 427 && dBranch.tier == 1, gb);
         // Ghostwire is cached as the 504 default under rev 10, and the cache-reuse branch would restore that for ever.
         check("GWT-BRANCH: the detection logic rev was bumped (10 -> 11)", Genau::kVersionDetectLogicRev >= 11);
+        // [VND9-05] A "5.9." needle changes what a 5.9 title reads (509, not the ladder's 508); a rev-11 cache keeps 508.
+        check("VND9-05: the detection logic rev was bumped for the 5.9 needle (11 -> 12)",
+              Genau::kVersionDetectLogicRev >= 12);
 
         // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
         // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.

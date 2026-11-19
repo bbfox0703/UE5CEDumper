@@ -7446,6 +7446,37 @@ static void Test_VersionNeedleScan_GateStillGates() {
     EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
 }
 
+// [VND9-05] UE 5.9 reads as 509 at every tier, and as the newest row it outranks a 5.8 string beside it. Without the
+// row, a 5.9 title read as 508 through the structural ladder: right offsets, but the logs and the UI said 5.8.
+static void Test_VersionNeedle_UE59() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    {
+        auto b = fresh(4096); Plant(b, 1500, "++UE5+Release-5.9");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("VND9-05: Tier 1 ascii ++UE5+Release-5.9 reads 509", GatedValue(g) == 509 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096);
+        const char* tag = "++UE5+Release-5.9";
+        for (size_t i = 0; tag[i]; ++i) { b[1500 + i * 2] = (uint8_t)tag[i]; b[1500 + i * 2 + 1] = 0; }
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("VND9-05: Tier 1 utf16 ++UE5+Release-5.9 reads 509", GatedValue(g) == 509 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096); Plant(b, 900, "Unreal"); Plant(b, 1000, "Release-5.9.0");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+        EXPECT("VND9-05: Tier 2 Release-5.9.0 reads 509", GatedValue(g) == 509 && g.tier == 2);
+        ExpectEquivalent23("VND9-05: Tier 2 5.9 matches the naive reference", b);
+    }
+    {
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal"); Plant(b, 1000, "Release-5.8.4");
+        Plant(b, 2900, "Unreal"); Plant(b, 3000, "Release-5.9.0");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+        EXPECT("VND9-05: 5.9 at a higher address than 5.8 still wins by table order", GatedValue(g) == 509);
+    }
+}
+
 // ── the Tier 2/3 rules: the context window and Tier 3 retirement ─────────────
 //
 // These assert ABSOLUTE answers, not just naive/gated agreement — the equivalence oracle
@@ -13117,6 +13148,7 @@ int main() {
     RUN(Test_ShouldPublishEnumTable);
     RUN(Test_VersionNeedleScan_Equivalence);
     RUN(Test_VersionNeedleScan_GateStillGates);
+    RUN(Test_VersionNeedle_UE59);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_VersionBranchName);
