@@ -7449,8 +7449,9 @@ static void Test_VersionNeedleScan_GateStillGates() {
     EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
 }
 
-// [VND9-05] UE 5.9 reads as 509 at every tier, and as the newest row it outranks a 5.8 string beside it. Without the
-// row, a 5.9 title read as 508 through the structural ladder: right offsets, but the logs and the UI said 5.8.
+// [VND9-05] UE 5.9 reads as 509 at every string tier, and as the newest row it outranks a 5.8 string beside it.
+// Without the row, a 5.9 title whose PE version resource does not answer read as 508 through the structural ladder:
+// right offsets, but the logs and the UI said 5.8.
 static void Test_VersionNeedle_UE59() {
     auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
     {
