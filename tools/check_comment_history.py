@@ -78,6 +78,9 @@ HISTORY = [
     re.compile(r"\baudit (?:fix(?:es)?|finding) #\d+", re.IGNORECASE),        # "Audit fix #10:", "audit finding #2"
     re.compile(r"\baudit [A-Z]{1,3}\d+[a-z]?\b", re.IGNORECASE),             # "(audit U17)", "Audit PX1"
     re.compile(r"\b[Rr]eview [A-Z]{1,3}\d+[a-z]?\b"),                         # "(review F4)"
+    # A dated event with no preposition ("Found 2026-09-06.", "Added 2026-09-09."); the project's own years only.
+    re.compile(r"\b(?:[Ff]ound|[Ss]een|[Oo]bserved|[Rr]eported|[Rr]eproduced|[Mm]easured|[Cc]onfirmed|[Vv]erified|"
+               r"[Ff]ixed|[Aa]dded|[Ss]hipped|[Ll]anded)\s+(?:on\s+)?202[6-9]-\d\d-\d\d\b"),
 ]
 
 
@@ -189,6 +192,9 @@ SELFTEST = [
     ("// shared with the reflected-struct preview (audit U17).", 1),
     ("// wraps to about 1.8e15 ms (review F4).", 1),
     ("// the audit log records every write", 0),                        # a feature, not a finding
+    ("// Found 2026-09-06 in the archive, which had carried it", 1),
+    ("// Added 2026-09-09. The widening and its control", 1),
+    ("// the record was found in 2026-09 by its owner", 0),             # no date-shaped event
 ]
 
 

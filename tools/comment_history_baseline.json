@@ -1,1 +1,10 @@
-{}
+{
+  "tools/check_ce_untick_placement.py": 1,
+  "tools/check_clipboard_delivery.py": 1,
+  "tools/check_no_local_paths.py": 1,
+  "tools/ghidra/reimport_verify.py": 1,
+  "tools/llm/ollama_local.py": 1,
+  "tools/ue-sample/capture_package_identity.py": 1,
+  "tools/verify/l4_mb1_stale_flags.py": 1,
+  "ui/UE5DumpUI.Tests/DataTemplateRecyclingTests.cs": 1
+}
