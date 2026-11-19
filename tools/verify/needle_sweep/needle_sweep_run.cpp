@@ -4,6 +4,7 @@
 // A value is the kVersionNeedles row's code (0: no hit). The DLL scans the mapped image; the strings these tiers read
 // sit in .rdata, whose bytes the file holds as they are.
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -20,7 +21,8 @@ int main() {
     std::string path;
     while (std::getline(std::cin, path)) {
         if (path.empty()) continue;
-        std::ifstream in(path, std::ios::binary);
+        // The path arrives as UTF-8; a narrow open would read it in the ANSI code page and miss a non-ASCII name.
+        std::ifstream in(std::filesystem::path(reinterpret_cast<const char8_t*>(path.c_str())), std::ios::binary);
         if (!in) {
             std::printf("%s\tERROR\n", path.c_str());
             continue;
