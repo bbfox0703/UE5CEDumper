@@ -470,3 +470,139 @@ Unlike the groups above, this one **does** run on every path we emit: `scripts/u
 > default" (`:11504-11505`), and the wait pumps no messages — so `executeCodeEx(1, nil, fn, ...)`
 > can freeze CE's GUI permanently with no UI-level recovery. That one is ours to fix at the call
 > site, not CE's; see ce-plugin-sdk-notes.md §13.3 and [todo.md](todo.md).
+
+### Measured in CE 7.7 by the AOBMaker project (added 2026-11-19)
+
+These four groups come from outside this repo. AOBMaker, a Cheat Engine plugin project, measured
+them in CE **7.7.0.10568**, driven headless through real enables and real `reassemble()` output
+(x64 and x86 unless a row says otherwise), and read the causes in the 7.5 source. They differ from
+the groups above in two ways. **No reference doc here owns them**, so these rows are the only copy.
+And the first three sit on paths **UE5CEDumper does not use**: every AA script we emit is `{$lua}`
+blocks plus, in one register-symbol script, `define` / `registersymbol`, so CE's assembler never
+assembles an instruction of ours, directly or through AOBMaker. Each group says whether it can
+still reach us.
+
+**Seen** column: **7.7** = measured in 7.7; **7.6** = measured in 7.6; **7.5 src** = read in the
+7.5-195 source only, never measured. A 7.5 line beside a 7.7 measurement is where the source
+*explains* it; by the box at the top of this file it does not prove the 7.7 binary. Every CE line
+below was re-read at 7.5-195 on 2026-11-19.
+
+**AutoAssembler `reassemble()`** — owner: none here. **Bites us: no.** No generator
+(`Services/*ScriptGenerator.cs`, `CeXmlExportService.cs`, `CeLuaHygiene.cs`) and nothing in
+`scripts/*.lua` or `scripts/UE5CEDumper.CT` emits `reassemble(` or a copied original instruction.
+`reassemble(addr)` copies no bytes: its handler (`autoassembler.pas:2502-2559`) calls
+`GetOriginalInstruction` (`frmautoinjectunit.pas:1117-1277`), which disassembles the instruction and
+hands the **text** back to the assembler. An instruction whose text does not survive that round trip
+is rejected, silently changed, or stripped of its prefix.
+
+*Rejected with "Failure assembling ..."*
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| `popcnt`, every form | 7.7 | `Assemblerunit.pas:1268-1269` (the only `POPCNT` entries) |
+| `andn` with a register third operand | 7.7 | `Assemblerunit.pas:222` (third operand `par_m32` only) |
+| VEX `vcvtsi2sd`, every form (printed `vcvtsi2sd xmm0,eax,[rbx+10]`); VEX `vcvtsi2ss` with W1 (r/m64) | 7.7 | `Assemblerunit.pas:1829-1830` (`par_rm32` only) |
+| `vdivsd`, register and memory: printed as `divsd x,y,z` | 7.7 | — |
+| `vpermilps` / `vpermilpd`, every form | 7.7 | `Assemblerunit.pas:2290-2297` (first operand `par_m128` / `par_m256`) |
+| `pextrw` to a register (`66 0F C5`, MMX `0F C5`, the `66 0F 3A 15` register form) prints `pextrw ecxxmm6,04`; VEX `vpextrw` (C5) fails "Invalid register". The `66 0F 3A 15` store to memory is byte-identical | 7.7 | — |
+| VEX `vcmpss` with a memory operand: the m32 operand prints as `dqword ptr` | 7.7 | `Assemblerunit.pas:1796` (`par_xmm_m64`) |
+| Reserved NOPs `0F 18 /4-7` and `0F 19`–`0F 1E` print no text, so the error names nothing (memory and register forms, with or without `67`). `0F 1F` nop is fine | 7.7 | `disassembler.pas:2892-2945` (cases only for `0F 18 /0-3` and `0F 1F /0`) |
+| `shld` / `shrd` with the count in `cl` (16/32/64-bit, memory and register), and 16-bit `shrd` imm8 (`66 0F AC`). `shld` imm8 and 32/64-bit `shrd` imm8 are fine | 7.7 | — |
+| `prefetcht0/t1/t2/nta` (`0F 18 /0-3`): no spelling tried assembles, typed text included, and t0 prints as `prefetchto`. The t1/t2 RIP-relative forms were inferred, not measured; `prefetchw` is fine | 7.7 | `disassembler.pas:2903` (`prefetchto`); the 7.5 table names them `PREFETCH0/1/2` and `PREFETCHA` (`Assemblerunit.pas:1279-1282`) |
+
+*Silently assembles a different instruction* (x64 unless the row says otherwise)
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| `D3 /0-7` (rol ror rcl rcr shl shr sal sar) dword/qword `[m],cl` → byte `D2` (16 x64 rows, 8 x86 rows). Word and register forms are fine | 7.7 | — |
+| `48 C1 /0-7` qword `[m],imm8` → dword | 7.7 | — |
+| `48 F7 /2-7` (not neg mul imul div idiv) qword `[m]` → dword | 7.7 | — |
+| `FE /1` `dec byte [m]` → dword: it prints `dec [rbx+20]` with no size. x64 and x86 | 7.7 | — |
+| `C0 /6` (the SAL imm8 alias) prints as `rol` and assembles ROL (`D0`/`D1`/`D2`/`C1 /6` become SHL, the same operation) | 7.7 | — |
+| `crc32 r,m16/m32/m64` → the m8 form (printed with no size). Register forms are fine | 7.7 | — |
+| `cvtsi2sd xmm,qword [m]` → dword (printed with no size). `cvtsi2ss` prints the size and keeps REX.W | 7.7 | — |
+| `andn r,r,[m]` → `F2 C4 E2 78 41 10`: the table's `F2` comes out as a prefix | 7.7 | `Assemblerunit.pas:222` (`bt1:$f2`) |
+| x86 `retf` → `ret` | 7.7 | — |
+
+*Prefixes dropped*
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| `lock`, `rep` and `repe`/`repne` vanish (`lock xadd`/`cmpxchg`/`add`/`inc`, also after a REX; `rep movsd`/`stosq`/`stosd`; `repne scasb`; `repe cmpsb`): the lock is gone and the rep form runs once | 7.7 | opcode + parameters only (`frmautoinjectunit.pas:1274`); the prefix sits in `LastDisassembleData.prefix` (`disassembler.pas:1902-1922`), which this path never reads; the version that carried it is commented out (`autoassembler.pas:2546-2556`) |
+| String instructions print the mnemonic only, so `fs:`/`gs:` (the source becomes DS, base 0) and `67` (`[esi]`/`[edi]` → `[rsi]`/`[rdi]`) are lost | 7.5 src | `disassembler.pas:12576-12701` |
+| The implicit `[edi]` of `maskmovq`/`maskmovdqu`/`vmaskmovdqu` loses its `67` the same way | 7.5 src | `disassembler.pas:10145-10167` |
+
+Unaffected (7.7): mandatory `F2`/`F3`/`66` on `0F`-map opcodes; `pause` (prints `nop 2`, reassembles
+to `66 90`, still a NOP hint); `rep ret`, `bnd`, branch hints; ModRM and moffs `fs:`/`gs:` (printed
+and kept).
+
+*x64 RIP-relative rewrite.* The handler passes `is64Bit` as `farjmp` (`autoassembler.pas:2523`),
+so every RIP-relative instruction is rewritten through a borrowed register
+(`frmautoinjectunit.pas:1145-1272`).
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| Two operands with a 32/64-bit GPR destination → `mov <dest64>,address` + `op dest,[dest64]`: right when the instruction only writes dest (mov, movzx, movsxd, cvttss2si), wrong when it reads it (add, cmp, `imul r,m`, crc32) or writes it conditionally (cmovcc, bsf, lar), because the address becomes the operand | 7.7 | `frmautoinjectunit.pas:1172-1176`, register test `:1015` |
+| Anything else → `push rax / mov rax,address / op …[rax]… / pop rax` (rbx, rcx, rdx or r8 when the text names the rax family): wrong when the instruction uses rax implicitly (`imul`/`mul`/`div m`, cmpxchg: the pop overwrites the result) or the stack (`push`/`pop [rip]`) | 7.7 | `frmautoinjectunit.pas:1181-1248` |
+| In that fallback, text naming `rsp` emits only the original-code comment, so the instruction vanishes from the cave: the register picks are one if/else chain and `usedreg2` is never set | 7.5 src | comment `frmautoinjectunit.pas:1150`; picks `:1186-1239`; rsp branch `:1250-1270` |
+
+On a real fixture (7.7, 3/3 runs each), add/cmp 32/64-bit, `cmovne r64`, `imul m32`,
+`mul dword ptr [rip]` and `lock add [rip],eax` ran wrong or faulted. Correct: `lea` (rewritten to
+`mov r,address`, `frmautoinjectunit.pas:1165-1169`), the other 81 read/write forms, and `jmp`/`call qword ptr [rip+X]`
+near and far, which 7.7 routes through a slot of its own
+(`push rax / mov rax,[slot] / mov [own slot],rax / pop rax / jmp qword ptr [own slot]`), not the way
+the 7.5 source reads.
+
+*x86 (32-bit code)*
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| 16-bit addressing (`67` in 32-bit code) prints an empty operand | 7.5 src | `disassembler.pas:840-845` |
+| `jecxz` / `loop` lose their `67`: the `E0`–`E3` block never tests it (`E3` tests `66` only), and JECXZ assembles as bare `E3` | 7.5 src | `disassembler.pas:14858-14958` (the `66` test `:14929`); `Assemblerunit.pas:729` |
+
+**Far caves and the syntax check** — owner: none here. **Bites us: no.** Nothing we emit has an
+`alloc(`, with or without a near address, a `readmem(`, or any instruction text.
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| RIP-relative text in a far cave (`alloc(newmem,$1000)`, no near address), e.g. `mov ecx,[game.exe+X]`, is refused at enable: `Failure assembling mov ecx,[...] at <far cave>`. No automatic absolute rewrite; only the accumulator moffs form `mov [addr],eax` enables (24 + 16 fixture rows) | 7.7 | — |
+| The syntax check (`autoAssembleCheck`) cannot see copy lines: it accepts `reassemble(INJECT)`, `readmem(...)` and RIP text in a far alloc, which a real enable treats differently or rejects. Only a real enable tests them | 7.7 | aobscan symbols become `DEFINE(x, 00000000)` (`autoassembler.pas:1070`, `:1135`, `:1209`, `:1263`), `readmem` reads nothing (`:2448-2451`, `:2466-2470`), the check returns before allocating (`:3297-3298`). The `reassemble()` part is 7.7 only: the 7.5 handler raises on address 0 (`:2517-2518`) |
+
+**Disassembler text** — owner: none here. **Bites us: no.** Nothing we emit calls CE's disassembler
+or parses its text; the DLL's own disassembly is Zydis (`Denken`).
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| x86: a redundant `36` on an ebp/esp operand prints `ss:`; a `3E` on an ebp base (not redundant there: ebp defaults to SS) prints nothing | 7.7 | `getsegmentoverride`, `disassembler.pas:718-727` |
+| `cs:`/`es:`/`ss:` overrides print in 64-bit code, where they do nothing and a 64-bit formatter prints none | 7.7 | the same function: no 64-bit test |
+| The m32 operand of `vcmpss`/`vcmpnless` prints as `dqword ptr` (why its memory form fails to reassemble, above) | 7.7 | — |
+| `prefetcht0` prints as `prefetchto` | 7.7 | `disassembler.pas:2903` |
+| No EVEX: `62` always prints as `bound` | 7.5 src; not re-measured in 7.7 | `disassembler.pas:10933-10940` |
+| No `endbr64`: there is no `0F 1E` case | 7.5 src; not re-measured in 7.7 | `disassembler.pas:2892-2945` |
+
+**CE Lua** — owner: none here. **Bites us: two rows can, conditionally** (listed after the table).
+
+| Defect | Seen | Where |
+|--------|------|-------|
+| `tonumber` follows the C runtime's numeric locale: after `os.setlocale` sets a comma decimal, `tonumber("3.14")` is nil and `tonumber("1,000")` is 1. Later Lua 5.3 releases retry with the locale's decimal point; CE's copy does not | 7.7 | `lobject.c:239-250` in the 7.5 tree's `lua53` copy (Lua 5.3.0), whose `l_str2d` has no retry |
+| `memrec.Value = s` with `s` longer than the field writes all of `s` plus a NUL past it | 7.7 | `MemoryRecordUnit.pas:3537-3543` |
+| …and it grows `String.Size` even when the write fits, because the test compares a length in characters with a UTF-8 byte count: a 3-character CJK string (9 bytes) into a Unicode `String[4]` leaves Size 9, and the next write overruns | 7.7 | `MemoryRecordUnit.pas:3537` |
+| An Array of Byte record can write up to 4 bytes past the field without growing | 7.7 | — |
+| `(X)` in a non-string value is replaced by record X's value before conversion | 7.7 | `MemoryRecordUnit.pas:3255-3361` (numeric types anywhere in the text, `:3275-3324`; the others as the whole value, `:3348-3358`) |
+| A UTF-8 BOM on a `.CT` makes `loadTable` fail with "data error" | 7.7 | — |
+| Registering a custom type clobbers the `process` global (it becomes `cheatengine-x86_64.exe`) | 7.6; 7.7 is fine | — |
+
+Not a defect, recorded with them: `processMessagesPaintOnly` already exists in 7.6 (it is absent
+from the 7.5 source), so `CeLuaHygiene.cs`'s fallback to `processMessages` serves only older builds.
+
+Where the Lua group can reach us:
+- **`tonumber`**: the Invoke form (`InvokeScriptGenerator.cs`) reads a typed float parameter with
+  `tonumber(text) or 0.0`, so in a CE session where another script switched to a comma locale,
+  `3.14` would be sent as 0. We never call `os.setlocale`; our other `tonumber` calls take base-16
+  or integer text, which does not consult the locale.
+- **`process`**: the AOB-scan scripts take the module name from `process` (`CeXmlExportService.cs`,
+  `StandaloneTrainerScriptGenerator.cs`). We register no custom type, but on 7.6 any table that
+  does would point those scans at CE's own exe.
+- Not reached: no emitted Lua writes `memrec.Value`, and our exported String records meet that
+  write path only when a user types into the cell. We never call `loadTable`, both `.CT` writers
+  save UTF-8 without a BOM, and `scripts/UE5CEDumper.CT` has none.
