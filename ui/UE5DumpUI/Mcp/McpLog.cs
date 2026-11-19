@@ -7,9 +7,9 @@ namespace UE5DumpUI.Mcp;
 /// [PIPE-PER-PROCESS-2026-11-06] The MCP server's log: one file per process in the UI's log folder, and
 /// nothing on stdout or stderr.
 ///
-/// The UI's <see cref="Services.LoggingService"/> cannot serve here, for two reasons. It adds a Console sink, which
-/// writes to stdout, and stdout carries the JSON-RPC stream. And on construction it archives the UI's own -0.log
-/// files, which a running UI holds open. Several AI sessions each start a server of their own, so each process takes
+/// The UI's <see cref="Services.LoggingService"/> cannot serve here: on construction it archives the UI's own -0.log
+/// files, which a running UI holds open. (Its Console sink, which would write to stdout where the JSON-RPC stream
+/// runs, can be turned off; the archiving cannot.) Several AI sessions each start a server of their own, so each process takes
 /// a file named for its start time and pid.
 ///
 /// Retention is the folder's age rule (<see cref="Constants.LogMaxAgeDays"/>): the UI's orphan sweep already deletes
