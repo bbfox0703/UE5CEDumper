@@ -113,10 +113,9 @@ def collect_fields(root):
 
     The RAW members matter as much as the reflected ones: they are the deliberate
     non-UPROPERTY holes that "Guess What" and the Native-C scan have to find, so the
-    README documents them and this gate must recognise them as real fields. The first
-    version of this check knew only about UPROPERTY and reported RawInt/RawFloat/
-    RawDouble as phantom README rows -- flagging the sample's most deliberate feature
-    as a typo.
+    README documents them and this gate must recognise them as real fields. A check
+    that knew only about UPROPERTY would report RawInt/RawFloat/RawDouble as phantom
+    README rows -- flagging the sample's most deliberate feature as a typo.
     """
     fields = {}
     for src, hdr in ([(SRC, h) for h in HEADERS]

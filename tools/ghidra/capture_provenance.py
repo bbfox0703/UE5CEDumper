@@ -1,19 +1,19 @@
 """One-shot: snapshot the corpus's BUILD IDENTITY before build_corpus_manifest.py can null it.
 
 Why this is not just a manifest re-run: the generator deliberately NULLS steam_buildid / size /
-sha256 on any row whose on-disk bytes are no longer the corpus bytes (build_corpus_manifest.py
-:360). That is right — it must never assert the wrong build — but it means the buildid pointing at
-the SteamDB build a .rep was made from is DESTROYED the first time that game patches. Palworld
-drifted on 2026-07-29, so its 24181527 was live-but-doomed.
+sha256 on any row whose on-disk bytes are no longer the corpus bytes (build_corpus_manifest.py's
+BUILD IDENTITY block). That is right — it must never assert the wrong build — but it means the
+buildid pointing at the SteamDB build a .rep was made from is DESTROYED the first time that game
+patches.
 
 Three identity sources, strongest first:
   1. sku.sis depot MANIFEST ids from X:\\SteamLibrary backup - EXACT, and they survive the game
      being uninstalled or even delisted (`steamcmd +download_depot <app> <depot> <manifest>`).
   2. steam_buildid - exact via SteamDB app -> Builds, but nulled on drift, hence this snapshot.
   3. file MTIME - the original Steam write time. It SURVIVES a copy (ctime does not), which is
-     what makes install -> copy -> uninstall recoverable by date. Verified on this corpus:
-     Hogwarts ctime 2026-07-29 but mtime 2025-12-04; Palworld mtime 2026-07-15 = the pre-patch
-     build. Use file_modified, never file_created.
+     what makes install -> copy -> uninstall recoverable by date: a copied file's ctime is the
+     copy's date while its mtime is still the pre-patch build's. Use file_modified, never
+     file_created.
 
 Output: tools/ghidra/corpus-provenance.tsv, a SNAPSHOT, never auto-regenerated.
 """
@@ -157,7 +157,7 @@ def main():
         paths = [p for p in [v.get("binary_last_seen")] + list(v.get("duplicate_copies") or [])
                  if p and os.path.exists(p)]
         # Prefer a copy whose size matches the manifest, not merely the first that exists —
-        # Palworld's binary_last_seen is the Steam path, PATCHED on 2026-07-29, while the D:
+        # a row's binary_last_seen can be a Steam path the game has since PATCHED while a D:
         # backup is still the corpus build. Stamping the former pairs a corpus-build buildid
         # with a new-build timestamp in one row.
         want = v.get("binary_size_bytes")

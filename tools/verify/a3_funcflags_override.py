@@ -2,11 +2,11 @@ r"""`UFunction::FunctionFlags` at version 421, WITHOUT the UE 4.21 title the row
 
     py tools/verify/a3_funcflags_override.py            # any UE 4.08-4.21 host; OCTOPATH 4.18
 
-THE ROW'S PROBLEM. `DynOff::FunctionFlagsOffsetFor` (`Grimoire.h`) is a measured table, in place
-of a ladder that read `>= 421 -> 0x98`: `4.08-4.21 = 0x88`, `4.22-4.24 = 0x98`,
-`4.25+ = 0xB0`, `+8` under CasePreservingName. Exactly **one** producible version changes
-behaviour between the two: **4.21**. The register gates the row on Star Wars Jedi: Fallen Order,
-the corpus's only 4.21 title — an EA-launcher title needing the EA client to install.
+THE ROW'S PROBLEM. `DynOff::FunctionFlagsOffsetFor` (`Grimoire.h`) is a measured table:
+`4.08-4.21 = 0x88`, `4.22-4.24 = 0x98`, `4.25+ = 0xB0`, `+8` under CasePreservingName. A ladder
+that read `>= 421 -> 0x98` differs from it at exactly **one** producible version: **4.21**. The
+register gates the row on Star Wars Jedi: Fallen Order, the corpus's only 4.21 title — an
+EA-launcher title needing the EA client to install.
 
 ⭐ WHY A 4.18 HOST IS A VALID SUBSTITUTE, and it is not a compromise:
 
@@ -17,8 +17,8 @@ the corpus's only 4.21 title — an EA-launcher title needing the EA client to i
      envelope, which IS latched and does NOT re-derive on override. So `set_ue_version_override`
      genuinely changes this offset, immediately, with no re-scan.
 
-  Therefore: override a 4.18 host to **421** and you feed the reader *exactly the input that
-  changed*. The table says 0x88 and the reads stay sane; the `>= 421` ladder says 0x98 and
+  Therefore: override a 4.18 host to **421** and you feed the reader *exactly the input where
+  the two disagree*. The table says 0x88 and the reads stay sane; the `>= 421` ladder says 0x98 and
   they would be garbage. Override to **422** and the table says 0x98, which is wrong for this
   binary — reads MUST degrade. That third leg is what makes this a test rather than a tautology:
   without it, "421 looks fine" is equally true of a reader that ignores the version entirely.
@@ -118,8 +118,8 @@ def main():
         show(back)
 
     say("\n================ A3 (substitute host) RESULT ================")
-    # 421 is THE version the fix changed. On this binary the true offset is 0x88, and the fixed
-    # table returns 0x88 for 421 -- so the reads must stay as sane as native.
+    # 421 is THE version where the table and a `>= 421` ladder disagree. On this binary the true
+    # offset is 0x88, and the table returns 0x88 for 421 -- so the reads must stay as sane as native.
     if at421.get("rate", 0) < base.get("rate", 0) - 5.0:
         fails.append("A3: overriding to 421 degraded sanity %.1f%% -> %.1f%% -- the table is NOT "
                      "returning 0x88 for 421, which is the entire fix"

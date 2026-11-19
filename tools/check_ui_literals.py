@@ -7,7 +7,7 @@
     py tools/check_ui_literals.py --list       # print every counted site, exit 0
 
 [I18N-READINESS-2026-11-04] check_axaml_strings holds the views' markup and check_vm_status_literals the view models'
-status lines. English also reaches the screen where neither looks, and nothing stopped NEW text there:
+status lines. English also reaches the screen where neither looks, and without this gate nothing stops NEW text there:
 
   * code-behind (every .cs under Views/): a control built in C# -- `Text = "..."`, `Content`, `Title`, `Header`,
     `Watermark`, `PlaceholderText` -- and `ToolTip.SetTip(control, "...")`;

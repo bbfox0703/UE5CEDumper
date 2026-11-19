@@ -245,7 +245,7 @@ def test_block_model():
         check("get_long past the end of a block is None", m.get_long(base + 0x1000 + 2044) is None)
         check("get_block classifies exec vs data",
               m.get_block(base + 0x1000).execute and not m.get_block(base + 0x3000).execute)
-        # NEGATIVE CONTROLS. Both of the rules this replaced fit SOME of the corpus, which is why
+        # NEGATIVE CONTROLS. Both rejected rules fit SOME of the corpus, which is why
         # they have to be shown wrong here rather than argued against.
         check("negative control: min(raw,virtual) would give a different size",
               min(2048, 2000) != m.exec_blocks()[0].size)

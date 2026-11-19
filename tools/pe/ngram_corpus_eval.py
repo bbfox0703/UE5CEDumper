@@ -9,10 +9,10 @@
     py tools/pe/ngram_corpus_eval.py recon   --out out/ngram-eval --index <file> --minus <file> \
                                              --binary <sha16> ...
 
-WHY THIS EXISTS. `aob_specificity.py` quotes an out-of-sample violation rate (27 / 7,345) that was
-measured by hand once and has no script. The question "should the index be built from more
-binaries, the shipped games included" turns on that number, so it has to be re-derivable for ANY
-source set — and rebuilding a 10 MB index per candidate set, per held-out game, is hours.
+WHY THIS EXISTS. `aob_specificity.py` leans on an out-of-sample violation rate, and the question
+"should the index be built from more binaries, the shipped games included" turns on that number,
+so it has to be re-derivable for ANY source set — and rebuilding a 10 MB index per candidate set,
+per held-out game, is hours.
 
 THE SHORTCUT, AND WHY IT IS EXACT. A pattern's bound depends only on the index entries for its own
 literal windows (a few thousand keys in total). `scan` records, per binary, the EXACT count of each

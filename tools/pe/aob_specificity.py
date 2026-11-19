@@ -15,10 +15,8 @@ regenerating it to make CI green discards exactly the signal the gate was built 
 diff first; if the rise is intended, say why in the commit.
 
 There are no callers in `dll/`, `ui/`, `scripts/` or `build.ps1`, which does NOT make the baseline
-scratch: the invocation paths are CI and a human typing the command above. Step 5 of the
-eval's build order ("gate authoring on it: a candidate clears the pre-filter before it earns a
-sweep") is still unbuilt — the gate guards REGRESSIONS in shipped patterns, it does not yet gate new
-ones.
+scratch: the invocation paths are CI and a human typing the command above. The gate guards
+REGRESSIONS in shipped patterns; it does not gate new ones.
 
 WHAT THE NUMBER MEANS. Every occurrence of the whole pattern must contain each of its literal
 windows, so the frequency of the RAREST window is an UPPER BOUND on the pattern's hit count *in the
@@ -170,21 +168,21 @@ def verdict(bound, longest, lit, floor):
     """THE GUARANTEE IS ONE-DIRECTIONAL: this can CERTIFY a pattern quiet, and cannot CONDEMN one.
 
     Worst hits per pattern over 153 patterns x the index's 126 source binaries
-    (2026-10-01, `tools/pe/verify_ngram_bound.py`):
+    (`tools/pe/verify_ngram_bound.py` re-derives it):
 
         CLEAR (bound <= floor)   n=32  median 1   90th    1   99th     3   MAX      3
         UNPROVEN (bound > floor) n=83  median 2   90th  619   99th  6069   MAX  26942
         NO-ANCHOR                n=38  median 2   90th 5329   99th 19501   MAX  19501
 
-    NO-ANCHOR is its own row for a reason: an earlier measurement lumped every non-CLEAR pattern
-    together, and its alarming maximum belonged to a pattern with no 4-byte literal run at all, not
-    to one the index had scored and failed to certify.
+    NO-ANCHOR is its own row for a reason: lumped in with every non-CLEAR pattern, its alarming
+    maximum would read as a pattern the index had scored and failed to certify, when it belongs to a
+    pattern with no 4-byte literal run at all.
 
     So CLEAR is tight and trustworthy. Above the floor the bound is far too loose to mean anything:
-    the buckets an earlier version called NOISY and VERY NOISY had MEDIANS of 0 and 2 — quieter than
-    the bucket it called OK — because wildcards constrain a pattern enormously more than its literal
-    windows do. That 5-level scale would have told you to reject GOBJ_ES53_1 (bound 2048, actually
-    47 hits and the single best pattern in the corpus, priority 100, correct on 37 oracles).
+    graded into finer buckets, the ones labelled NOISY and VERY NOISY come out with MEDIANS of 0 and
+    2 — quieter than the one labelled OK — because wildcards constrain a pattern enormously more than
+    its literal windows do. Such a 5-level scale would tell you to reject GOBJ_ES53_1 (bound 2048,
+    actually 47 hits and the single best pattern in the corpus, priority 100, correct on 37 oracles).
 
     Hence two outcomes plus a structural one, and no invented gradations. Use it to pick which
     candidates to sweep FIRST, never to throw one away."""

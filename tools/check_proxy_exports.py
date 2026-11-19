@@ -107,8 +107,8 @@ def read_exports(path):
     machine = struct.unpack_from("<H", d, pe + 4)[0]
     # Refuse a 32-bit source outright. Under 32-bit Python, WOW64 redirects
     # %SystemRoot%\System32 to SysWOW64, whose export tables have DIFFERENT ordinals for
-    # the same names (measured: winmm 180 named exports in System32 vs 192 in SysWOW64,
-    # 174 shared names at different ordinals). The parse would succeed and the baseline
+    # the same names (winmm's two copies differ in their named-export count, and the names
+    # they share sit at different ordinals). The parse would succeed and the baseline
     # would be wholesale wrong with nothing downstream able to tell.
     if magic != 0x20B or machine != 0x8664:
         raise RuntimeError(
@@ -394,8 +394,8 @@ def check_artifacts(root, base, verbose=False):
                       % (rel, len(named), first_ours))
     if checked == 0:
         # Hard error, not a note. --artifacts is an explicit request to check the binaries;
-        # reporting OK because there were none to check is a gate that guards nothing, which
-        # is exactly how this repo's last build-time guard shipped green (working-lessons 2.2).
+        # reporting OK because there were none to check is a gate that guards nothing
+        # (working-lessons 2.2).
         errors.append("--artifacts found no built proxy DLLs under %s -- nothing was checked. "
                       "Build with -Target DLL first, or drop --artifacts."
                       % " or ".join(d.replace("\\", "/") for d in ARTIFACT_DIRS))

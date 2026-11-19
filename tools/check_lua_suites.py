@@ -4,9 +4,9 @@
     py tools/check_lua_suites.py          # run them, or SKIP (exit 0) where the host is not built
     py tools/check_lua_suites.py --list   # print which suites run and which are excluded, and why
 
-WHY (skeptic T11, [PATH-SHAPE-2026-09-25]). The suites are the only behavioural tests of the .CT and of the Lua the
-UI emits, and no gate ran them: they ran only when someone remembered `py tools/verify/ce_lua53_host.py`. So a
-revert of a .CT fix could pass every gate.
+WHY ([PATH-SHAPE-2026-09-25]). The suites are the only behavioural tests of the .CT and of the Lua the UI emits,
+and without a gate they run only when someone remembers `py tools/verify/ce_lua53_host.py`. So a revert of a .CT
+fix could pass every gate.
 
 WHAT IT DOES NOT DO. It never BUILDS the host: that needs a local Cheat Engine install and MSVC, which is reaching
 outside the repo (gates must not; CI has neither). Where out/ce_lua53/lua53ce.exe exists -- this machine, after

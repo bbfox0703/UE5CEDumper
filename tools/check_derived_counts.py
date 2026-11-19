@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
   CLAUDE.md already carries the rule — "Docs numbers are DERIVED — regenerate, never hand-edit" —
-  and the docs broke it anyway, in the specific way a rule without a check always breaks: the
+  and a rule without a check always breaks in the same specific way: the
   number is right on the day it is typed and nobody re-derives it. A count restated in several
   docs drifts into several different values, while the source (`Renge.h`, `Frieren.h`) holds one.
 

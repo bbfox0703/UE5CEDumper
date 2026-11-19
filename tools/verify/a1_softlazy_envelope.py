@@ -7,12 +7,14 @@ r"""The TSoftObjectPtr / TLazyObjectPtr payload envelope, measured on a live gam
 THE QUESTION. A hardcoded `+0x10` for `TSoftObjectPtr`'s `FSoftObjectPath` is right only up to
 UE 5.2: 5.3 deleted `TPersistentObjectPtr::TagAtLastTest` and the path moved to `+0x08`. For
 `TLazyObjectPtr`'s `FGuid`, `+0x10` is wrong in EVERY era. The envelope is MEASURED
-(`Ubel.cpp` `PersistentPtrEnvelope`), and only a real measurement is latched.
+(`Ubel.cpp` `PersistentObjectPtrEnvelope`), and only a real measurement is latched.
 
-WHY THE SUITE CANNOT CLOSE IT. `dll/CMakeLists.txt` compiles only `dll_helpers_test.cpp` +
-`Radar.cpp` + `Denken.cpp`; `Ubel.cpp` is in NO test target. The helper test pins the ARITHMETIC
-(`FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor`); nothing exercises the latch, the log line,
-or the readers. So the DLL-side half of this row can only be taken from a running game.
+WHY THE SUITE CANNOT CLOSE IT. `dll_helpers_test.cpp` pins the ARITHMETIC
+(`FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor`), and `dll_core_test.cpp` drives the latch
+and the readers over hand-built ElementSizes and arrays in its own memory. Neither shows that a
+real title's engine hands the walk the ElementSize those tests assume, or that walking the engine's
+own classes reaches the measurement and writes its log line. So the DLL-side half of this row can
+only be taken from a running game.
 
 WHAT THIS RIG DOES. It finds soft/lazy properties by TYPE (`search_properties` matches by name, so
 the type filter is applied client-side), walks the classes that own them -- which is what makes the

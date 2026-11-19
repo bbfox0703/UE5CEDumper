@@ -109,6 +109,5 @@ def main():
 
 if __name__ == "__main__":
     # Guard so extract_blocks.py can reuse sections()/compile_pat()/scan() by import. Without
-    # it the module ran main() at import and died on sys.argv -- the same trap pdb_globals.py
-    # had, and the second time this exact bug has cost a run.
+    # it the module would run main() at import and die on sys.argv.
     main()

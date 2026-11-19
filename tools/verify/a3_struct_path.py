@@ -7,8 +7,9 @@ one, lets only the FIRST field of a given `UScriptStruct` type in a class contri
 leaves: `RelativeLocation` indexed; `RelativeScale3D`, `Velocity`, `Extent` never --
 subtree and all, across unrelated branches.
 The guard's CONTRACT is unit-pinned (`Test_Aura_StructPathGuard`, with a red negative
-control). The WALK THAT USES IT is not: **no test target compiles `Aura.cpp`**, so
-this rig is what runs `expandFields` calling the guard against a real class.
+control). The WALK THAT USES IT is not: `Aura.cpp` is compiled into `dll_core_test`,
+but no unit test drives `expandFields`, which needs a live engine's reflected classes
+to recurse into, so this rig is what runs it calling the guard against a real class.
 
 THE MEASUREMENT. A vector LEAF is a dotted candidate path ending `.X`/`.Y`/`.Z`; strip
 the leaf and you have the struct field that produced it. Under the defect a class can

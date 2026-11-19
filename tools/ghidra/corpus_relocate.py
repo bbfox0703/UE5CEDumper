@@ -5,9 +5,9 @@
     py tools/ghidra/corpus_relocate.py --roots "D:/UE_Analyze_data" --out out/relocation.tsv
 
 WHY THIS EXISTS. `corpus-manifest.json` records where each binary WAS when Ghidra imported it
-(`binary_last_seen` comes from the `.rep`'s own `Executable Location`). Those paths rot: on
-2026-08-01, 21 of 57 rows pointed at `D:\\tmp\\...`, `X:\\...` or a Steam library that had moved,
-and `build_corpus_manifest.py` cannot help — it re-derives the same recorded path, so it can only
+(`binary_last_seen` comes from the `.rep`'s own `Executable Location`). Those paths rot — a row
+ends up pointing at `D:\\tmp\\...`, `X:\\...` or a Steam library that has moved — and
+`build_corpus_manifest.py` cannot help: it re-derives the same recorded path, so it can only
 ever re-confirm "gone". `preflight.py` then reports those rows as BLOCKING when the file is in
 fact sitting on the disk under a different name.
 
@@ -21,7 +21,7 @@ TWO THINGS IT REFUSES TO GUESS.
 
   * A MATCHING FILENAME IS NOT A MATCH. `corpus-manifest.json`'s `binary_md5` is the identity
     (it is never nulled, unlike `binary_sha256` which the generator clears on a drifted row --
-    so check BOTH; checking only SHA-256 under-reports, measured at 4 rows).
+    so check BOTH; checking only SHA-256 under-reports).
   * A PDB BESIDE THE EXE IS NOT ITS PDB. A PDB from a different build of the same game loads
     without complaint and yields addresses wrong by an unpredictable amount, which is the worst
     failure mode for ground truth because every value still looks plausible. Pairing is decided

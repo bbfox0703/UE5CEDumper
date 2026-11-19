@@ -28,7 +28,7 @@ non-zero instruction count — `dump_identity.java` reports this) carries analys
 default run does not attempt to reproduce; `--analyze` does, at minutes per binary. It also says
 nothing about decompiler output or the xref index, for which no digest exists.
 
-PROVE IT CAN FAIL BEFORE TRUSTING A PASS. Two negative controls, both verified 2026-08-01:
+PROVE IT CAN FAIL BEFORE TRUSTING A PASS. Two negative controls, each of which must fail:
 
     # N1 — a same-named binary from a DIFFERENT build must be rejected. Point a row at its
     # sibling build and re-run; expect MISMATCH on the executable hash, the symbol digest, the
@@ -48,8 +48,8 @@ PROVE IT CAN FAIL BEFORE TRUSTING A PASS. Two negative controls, both verified 2
     py tools/ghidra/reimport_verify.py UE4.10-Game --orig-identity out/nc-identity --out out/re-N2
 
 N1 is the one that earns the pass — it is the only check that distinguishes "this binary rebuilds"
-from "some binary with the right name rebuilds". It also found the parenthesis bug in
-`stage_for_import`, which no amount of reading the code would have.
+from "some binary with the right name rebuilds". It also exercises `stage_for_import`, because
+the sibling build's folder name carries parentheses.
 """
 import argparse
 import collections
@@ -76,12 +76,10 @@ IGNORE_EXACT = {
     "meta.Date Created",         # a rebuild is by definition created later
     "meta.FSRL",                 # carries the source path
     "meta.Executable Location",  # ditto, and the corpus's recorded paths are stale anyway
-    "has_pdb_applied",           # derived label, added after the first probe run
+    "has_pdb_applied",           # derived label (a function-count heuristic), not identity
     "analysis_state",            # derived label; compared explicitly below instead
-    # A REBUILD IS SUPPOSED TO BE ON THE CURRENT GHIDRA. This was briefly graded as a MISMATCH,
-    # which made `ES2-0517` (the corpus's only 11.3.2 project; the other 72 programs are 12.1.2)
-    # look irreproducible and led to the advice "keep that .rep, or keep an 11.3.2 install".
-    # That is backwards, and it does not scale: on 12.2 or 13.0 EVERY project would suddenly be
+    # A REBUILD IS SUPPOSED TO BE ON THE CURRENT GHIDRA. Grading a version difference as a
+    # MISMATCH does not scale: on 12.2 or 13.0 EVERY project would suddenly be
     # "irreproducible" against a pinned original. The version an artifact was born on is not a
     # property worth preserving — the strategy is to rebuild on the installed Ghidra and, if a new
     # release breaks something, stay on the working version until it is fixed. Reported as an
@@ -130,13 +128,11 @@ def sanitize(n):
 def stage_for_import(path, staging):
     """-> a path `analyzeHeadless.bat` can actually open.
 
-    FOUND BY A NEGATIVE CONTROL, not by reasoning. `analyzeHeadless.bat` is a cmd batch file, and
-    cmd's parser breaks on `(` / `)` in an argument even inside double quotes — it fails the same
-    way from bash, from `subprocess`, and from a plain shell, so it is the launcher, not the caller.
-    Both ES2 rows live under `…\\ES2\\5.5 (735055807809773736)\\`, so they could not be re-imported
-    at all. The parentheses are NEW: `meta.Executable Location` shows both projects were originally
-    imported from a Steam path without them, so the archive's own folder naming introduced a
-    blocker that no amount of care in this script would have avoided.
+    `analyzeHeadless.bat` is a cmd batch file, and cmd's parser breaks on `(` / `)` in an argument
+    even inside double quotes — it fails the same way from bash, from `subprocess`, and from a
+    plain shell, so it is the launcher, not the caller. The archive's own folder naming can carry
+    parentheses (both ES2 rows live under `…\\ES2\\5.5 (735055807809773736)\\`), and no amount of
+    care in this script lets such a path be imported as it stands.
 
     8.3 short names are the textbook workaround and are DISABLED on this volume (the short path
     comes back identical to the long one), so the fix is to hardlink into a clean directory —
@@ -224,9 +220,9 @@ def compare_identity(orig, new):
         if k in IGNORE_EXACT or k.startswith(IGNORE_PREFIX) or a.get(k) == b.get(k):
             continue
         # Ghidra's metadata map is inconsistent about unset values: some keys are omitted, some
-        # are present with an empty string, and which one you get varies between program states.
-        # `meta.Preferred Root Namespace Category` reported as differing with BOTH sides shown as
-        # '' for exactly this reason. Absent and empty both mean unset.
+        # are present with an empty string, and which one you get varies between program states,
+        # so a key such as `meta.Preferred Root Namespace Category` can differ with BOTH sides
+        # empty. Absent and empty both mean unset.
         if k.startswith("meta.") and not a.get(k) and not b.get(k):
             continue
         if analysis_gap and (k in derived or k.startswith("symbols_source.")
@@ -234,24 +230,22 @@ def compare_identity(orig, new):
             continue
         # A `meta.*` key the analysed ORIGINAL has and the -noanalysis rebuild does not AT ALL is
         # analysis output by construction — an analyzer wrote it and none ran here. Detecting that
-        # by ASYMMETRY rather than by name is the point: the hand-maintained `derived` list above
-        # missed `meta.MinGW Relocations`, which graded DQ7R a MISMATCH while every equivalent row
-        # graded MODULO-ANALYSIS, and enumerating one more name would only defer the next miss.
+        # by ASYMMETRY rather than by name is the point: a hand-maintained list like `derived`
+        # above misses keys such as `meta.MinGW Relocations`, grading an equivalent row a
+        # MISMATCH, and enumerating one more name would only defer the next miss.
         # Keys present on BOTH sides and differing still fail, so this cannot hide a real change.
         if analysis_gap and k.startswith("meta.") and a.get(k) and not b.get(k):
             continue
-        # `(x or "")` would render an ABSENT key and an EMPTY one both as '', which is how a
-        # both-sides-'' line got reported as a difference and cost a round of confusion. Show
-        # absence as absence.
+        # `(x or "")` would render an ABSENT key and an EMPTY one both as '', so a real
+        # difference would print as a baffling both-sides-'' line. Show absence as absence.
         def shown(d):
             return "<absent>" if k not in d else repr(d[k][:50])
         other.append("%s: orig=%s rebuild=%s" % (k, shown(a), shown(b)))
-    # BOOKKEEPING TOTALS. Measured on a full --analyze rebuild of
-    # FactoryGameSteam-AudioMixerCore: the rebuild matched the original on the symbol-table DIGEST
-    # and on every function / instruction / defined-data count, and differed only by +1 data type
-    # and +7 in Ghidra's own symbol total. Two independent rebuilds of the same input were
-    # field-for-field IDENTICAL, so this is not analysis non-determinism — it is history the
-    # original carries that a clean rebuild does not. Kept as its own outcome rather than folded
+    # BOOKKEEPING TOTALS. A full --analyze rebuild can match the original on the symbol-table
+    # DIGEST and on every function / instruction / defined-data count and still differ in the
+    # data-type count and Ghidra's own symbol total. That is not analysis non-determinism (two
+    # rebuilds of one input agree field for field); it is history the original carries that a
+    # clean rebuild does not. Kept as its own outcome rather than folded
     # into a pass, and the set is deliberately tiny: any OTHER differing field is still a mismatch.
     v["bookkeeping_only"] = bool(other) and all(
         k.split(":")[0] in ("datatypes", "meta.# of Data Types", "meta.# of Symbols")

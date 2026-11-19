@@ -13,7 +13,8 @@ does the same job headless, and this script runs it.
 `Build.bat` / `RunUAT.bat` invoke MSVC directly through UBT, which is shipped precompiled and
 carries its own .NET. Building the GENERATED SOLUTION is the broken path -- it drags in the
 engine's own `EpicGames.*` C# programs, which target net6.0 that this machine has no targeting
-pack for, and VS 2026 additionally runs a one-way upgrade on the .sln first. See README.md:102.
+pack for, and VS 2026 additionally runs a one-way upgrade on the .sln first. See README.md's
+"Build it" step 4.
 
 ⭐ WHAT BUILDS ON THE DEV MACHINE, measured, so the toolchain claim is not inherited from a
 version table:
@@ -34,7 +35,7 @@ version table:
              BuildCookRun still fails: UAT writes its cook log to
              <engine>\\Engine\\Programs\\AutomationTool\\Saved\\Cook-*.txt and that path is not
              writable. Same class as 4.23's permission blocker; opening UE_4.27 the way UE_4.23
-             is opened is what unblocks it. ⚠ `uebp_LogFolder` does NOT redirect it -- tried.
+             is opened is what unblocks it. ⚠ `uebp_LogFolder` does NOT redirect it.
     UE 4.15  UE415_Flyinh  still blocked, and on the SAME permission axis, one step earlier:
              UnauthorizedAccessException on
              <engine>\\Engine\\Intermediate\\Build\\LastBuiltTargets.txt.
@@ -138,11 +139,10 @@ def mirror_files(project):
     """The files the in-repo mirror carries for `project`, or None when it has no mirror.
 
     DumperTest: the hashed list above (package-identity.json covers exactly those).
-    DumperTest58: every file in its mirror directory. ⛔ Until 2026-09-22 this function knew only
-    DumperTest, so `--sync-mirror` on DumperTest58 printed "no in-repo mirror" and packaged the
-    LIVE project's source while the edit sat in the repo -- found when an L86 fixture change
-    compiled clean against the old header. The README has called that directory a mirror since
-    2026-09-16.
+    DumperTest58: every file in its mirror directory. ⛔ Every mirrored project must be known here:
+    for one this function does not know, `--sync-mirror` prints "no in-repo mirror" and packages
+    the LIVE project's source while the edit sits in the repo, so a fixture change compiles clean
+    against the old header.
     """
     if project == "DumperTest":
         return list(MIRROR_SOURCES)
@@ -391,7 +391,7 @@ def main():
     # packaging DumperTest58 and it hashes a directory that does not exist, then OVERWRITES the
     # DumperTest record -- which is the committed evidence for a closed row -- with 5.8 data and
     # nine "missing source" problems. Nothing about that failure looks like "wrong project".
-    # Until it grows a project axis, refuse rather than corrupt. Steps 1 and 2 are the ones that
+    # Without a project axis there, refuse rather than corrupt. Steps 1 and 2 are the ones that
     # produce the package; step 3 only describes it.
     if args.project != "DumperTest":
         print("\n[3/3] capture_package_identity.py -- SKIPPED for %s" % args.project)
@@ -408,7 +408,7 @@ def main():
     # os.path.join(args.project, "Source", "DumperTest"). Passing the bare name resolves it
     # against the CWD, every one of the hashed sources comes back missing, and the record fills
     # with "project source 'X' is missing" -- which reads exactly like a real staleness problem.
-    # That cost a restore-from-git on 2026-09-06. Pass proj_dir.
+    # Pass proj_dir.
     rc, _ = run([sys.executable, cap, archive, "--project", proj_dir], "capture", 900)
 
     print("\n" + "=" * 78)

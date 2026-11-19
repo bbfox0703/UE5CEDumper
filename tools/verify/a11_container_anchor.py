@@ -5,7 +5,8 @@ r"""A11 steps 1 + 6 -- container candidates carry an element index; Direct ones 
 THE CLAIM (`A11`). A Value Search candidate that lives INSIDE a container must be
 re-anchored when the container grows, instead of being silently dropped or -- worse -- left
 pointing at whatever now occupies the old address. The RULE is unit-pinned (15 assertions, two
-negative controls); the WIRING is not, because no target compiles `Aura.cpp`.
+negative controls); the WIRING is not: `Aura.cpp` is compiled into `dll_core_test`, but no unit
+test drives a value scan and its refine over a live engine's objects.
 
 WHICH STEPS THIS COVERS, AND WHICH IT CANNOT
   step 1  a scanned container value must come back with an `[i]` element index.            HERE

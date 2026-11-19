@@ -47,7 +47,7 @@ def pe_build_stamp(path):
 
     With `/Brepro` the linker overwrites the COFF TimeDateStamp with a CONTENT HASH and emits a
     debug-directory entry of type 16 (IMAGE_DEBUG_TYPE_REPRO). That entry is the flag — so never
-    guess from plausibility. Measured on this corpus, plausibility is actively misleading:
+    guess from plausibility. On this corpus, plausibility is actively misleading:
     Hogwarts Legacy (4.27) reads `2025-11-12` and Elliot (5.4) reads `2026-07-15`; BOTH are hashes.
     Roughly a fifth of 32-bit hashes land in a 2000-2030 window.
 

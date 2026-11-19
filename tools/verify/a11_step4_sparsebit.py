@@ -7,7 +7,7 @@ old bytes are usually still there, so re-reading the candidate's address returns
 always did. `{dataPtr,count}` does not move either. If the refine trusts either of those, a removed
 entry reads as a live match forever — the silent-wrong-value case this row exists for.
 
-LAYOUT, verified live rather than assumed (DumperTest `Set_Int`, read 2026-08-21):
+LAYOUT, verified live rather than assumed (DumperTest `Set_Int`):
 
     +0x00  Data ptr        0x…FB516370
     +0x08  Num (MaxIndex)  3
@@ -17,8 +17,8 @@ LAYOUT, verified live rather than assumed (DumperTest `Set_Int`, read 2026-08-21
     +0x28  NumBits 3 / MaxBits 128
     +0x30  FirstFreeIndex -1 / NumFreeIndices 0
 
-The prediction "three elements at indices 0,1,2 ⇒ word0 == 0b111" was made before reading and
-matched. That is what licenses poking a single bit here.
+The prediction "three elements at indices 0,1,2 ⇒ word0 == 0b111" holds against that live read,
+and that is what licenses poking a single bit here.
 
 ⚠ ONLY the live actor's bit is cleared. The CDO holds the same value in the same field reached by
 the same code path, one bit different — it is the paired control, and if it disappears too the

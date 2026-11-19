@@ -74,8 +74,8 @@ def current_rev():
 def pe_hash(exe_path):
     """The hint cache's key for an exe: PE TimeDateStamp then SizeOfImage, 16 upper-case hex digits.
 
-    A fixture repackaged N times leaves N entries under one gameName (DumperTest58 Shipping had 8 on
-    2026-10-14), so the name alone cannot say which entry the next launch will read; its own hash can.
+    A fixture repackaged N times leaves N entries under one gameName, so the name alone cannot say
+    which entry the next launch will read; its own hash can.
     """
     b = pathlib.Path(exe_path).read_bytes()[:4096]
     e = int.from_bytes(b[0x3C:0x40], "little")
@@ -154,12 +154,11 @@ def main():
               % (key, was[0], SEED_VERSION, was[1], rev))
 
         # ---- launch ----------------------------------------------------------
-        # ⛔⛔ DO NOT SLICE THESE LOGS BY A BYTE OFFSET TAKEN BEFORE THE LAUNCH. The first
-        # version of this rig did exactly that and reported all four checks MISS on a run
-        # whose log plainly contained all three lines -- because a new process ROTATES the
-        # log, so the new file is SHORTER than the offset and everything got skipped. That
-        # is a false FAIL on a genuine PASS, and CLAUDE.md lists this precise variant
-        # ("a byte offset recorded before a process start that rotates the log").
+        # ⛔⛔ DO NOT SLICE THESE LOGS BY A BYTE OFFSET TAKEN BEFORE THE LAUNCH. A new process
+        # ROTATES the log, so the new file is SHORTER than the offset and everything is
+        # skipped: every check reads MISS on a run whose log plainly contains the lines. That
+        # is a false FAIL on a genuine PASS, and docs/working-lessons.md's log-window table lists
+        # this precise variant ("BYTE offset into a log recorded before launching the process").
         #
         # The watermark is a TIMESTAMP instead, parsed from each line's own `[YYYY-MM-DD
         # HH:MM:SS.mmm]` prefix, taken before the launch and compared with millisecond

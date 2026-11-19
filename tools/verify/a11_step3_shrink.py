@@ -19,9 +19,9 @@ is exercised here and the write-up must say so.
 read the scanned value — otherwise a drop is explained by the value changing rather than by the
 count. The rig asserts it.
 
-⚠ deep=False, deliberately, and it differs from the plan this came from. A deep descriptor carries
+⚠ deep=False, deliberately. A deep descriptor carries
 `ValueAnchor::Unknown`, so the container branch is never reached and the run would be vacuous —
-the same reason step 2 uses it. deep=False was measured to return container rows here.
+the same reason step 2 uses it. deep=False returns container rows here.
 """
 import pathlib
 import struct

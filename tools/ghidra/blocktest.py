@@ -1,14 +1,13 @@
 """Pattern regression test over the shape blocks. Milliseconds, no Ghidra, no corpus, stdlib only.
 
 THE GAP THIS FILLS. Between `extract_patterns.py` (which only checks for dead constants) and the
-full sweep (which needs ~200 GB of Ghidra projects) there was NO test at all. So any edit to a
-`Himmel.h` pattern was unverifiable on a machine without the corpus — which is every machine except
-one. This runs anywhere, including CI.
+full sweep (which needs ~200 GB of Ghidra projects) nothing else tests a pattern, so without this an
+edit to a `Himmel.h` pattern is unverifiable on a machine without the corpus. This runs anywhere,
+including CI.
 
 WHAT IT ASSERTS, and it is the strong property: for each recorded site, the pattern that found it
 must still match AND still RESOLVE to the same address. "The bytes still match" would pass even if
-an edit broke the displacement arithmetic, which is exactly the class of bug that produced the
-`GNAM_V7` out-of-bounds resolve.
+an edit broke the displacement arithmetic and sent a resolve out of bounds.
 
     py tools/ghidra/blocktest.py                       # -> exit 0 / 1
     py tools/ghidra/blocktest.py --tsv <patterns.tsv>  # against a specific extraction

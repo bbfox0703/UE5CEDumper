@@ -23,8 +23,8 @@ invariant plus a hand-counted writer list cannot hold this; counting the writers
 can.
 
 WHAT IT ALLOWS, and nothing else:
-  * the DECLARATIONS in Grimoire.h (the defaults; `DynOff::RuntimeOffset` since
-    [CPP-HARDENING-2026-11-14], `inline int` before),
+  * the DECLARATIONS in Grimoire.h (the defaults, as `inline RuntimeOffset` or
+    `inline int`),
   * the body of `ApplyPropertyFamily` itself, which is the one legitimate publisher,
   * ONE named exception: `DynOff::SetArrayInner` in Grimoire.h assigns FARRAYPROP_INNER on
     its own, for `Ubel.cpp`'s ArrayProperty probe, because UE5.3+ places `EArrayPropertyFlags`

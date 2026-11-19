@@ -46,10 +46,9 @@ ALLOWED = {"public", "default", "all", "username", "user", "you", "youruser",
 
 # A second, NARROWER pattern that ALLOWED does not get to excuse.
 #
-# ⚠ Found 2026-09-06 in docs/archive/todo-completed-build-937.md, which had carried
-# `…/C:/Users/user/.claude/projects/<project>/memory/<file>.md` since it was archived. PATTERN
-# matched it and then waved it through, because `user` is a legitimate generic stand-in and the
-# path genuinely reads like one.
+# ⚠ PATTERN alone matches a path like
+# `…/C:/Users/user/.claude/projects/<project>/memory/<file>.md` and then waves it through,
+# because `user` is a legitimate generic stand-in and the path genuinely reads like one.
 #
 # The account name is the wrong thing to key on. What makes that path certainly-real and certainly
 # wrong is where it CONTINUES: `.claude/projects/` is a per-session Claude Code directory, and a
@@ -71,17 +70,16 @@ SKIP = ("tools/check_no_local_paths.py",)
 # gate must know "Xyz", and writing it into a tracked file publishes exactly what is being
 # protected. The patterns above sidestep it by matching a SHAPE (`C:\Users\<something>` that is not
 # a known placeholder) and never needing the value. But a bare hostname has no shape — it is just a
-# word — so shape matching cannot see it, and on 2026-09-06 the machine name was found in 13
-# tracked files, six of them in docs/archive/, with two rigs HARD-CODING it (which also broke them
-# on the second PC).
+# word — so shape matching cannot see it, whether it is typed into a doc or HARD-CODED in a rig
+# (which also breaks the rig on any other PC).
 #
 # Resolution: read the identifiers from the ENVIRONMENT of whichever machine is running the gate —
 # which is precisely the machine that could leak them. Nothing is committed and nothing is hashed.
 #
-# ⛔ HASHING WOULD BE SECURITY THEATRE, so it was rejected: usernames and hostnames come from a tiny
-# search space, and a stored sha256 of one is brute-forced in seconds. A CI secret was rejected too
-# — secrets are unavailable to pull requests from forks (this repo has 10), and the leak is authored
-# LOCALLY, long before CI ever runs.
+# ⛔ HASHING WOULD BE SECURITY THEATRE: usernames and hostnames come from a tiny search space, and
+# a stored sha256 of one is brute-forced in seconds. A CI secret does not help either — secrets are
+# unavailable to pull requests from forks, and the leak is authored LOCALLY, long before CI ever
+# runs.
 #
 # ⚠ ITS LIMIT, STATED RATHER THAN HIDDEN: it only knows the CURRENT machine. If PC A commits PC B's
 # name, A's gate cannot see it. This COMPLEMENTS the shape patterns; those remain the load-bearing
@@ -106,9 +104,9 @@ def runtime_identifiers():
 def mask_account(m):
     """`C:\\Users\\Alice` -> `C:\\Users\\A****`. The path stays readable; the identity does not.
 
-    ⚠ The example name here is FICTIONAL on purpose. An earlier version used this
-    machine's real account, and the gate could not see it because it skipped its own
-    file -- see SKIP below.
+    ⚠ The example name here is FICTIONAL on purpose: the two regex branches skip this
+    file (see SKIP below), so a real account name here would be caught only by the
+    identifier branch, and only on its own machine.
     """
     acct = m.group(1)
     return m.group(0).replace(acct, redact(acct))
@@ -137,9 +135,8 @@ def unpushed_commit_messages():
     """(sha, message) for every local commit not yet on any remote branch.
 
     ⭐ WHY MESSAGES, AND WHY ONLY THE UNPUSHED ONES. A file-level gate reads `git ls-files` and can
-    never see `%B`. That gap is not theoretical: on 2026-09-06 the account name was found in the
-    message of 4b4d6775 -- the commit that REMOVED the same string from a file restated it in its
-    own message, so the file was cleaned and the leak stayed.
+    never see `%B`, and the gap matters: a commit that REMOVES a leaked string from a file tends to
+    restate it in its own message, so the file is cleaned and the leak stays.
 
     Only unpushed commits are checked, because those are the only ones still fixable: an unpushed
     commit can be amended or rebased, a pushed one cannot be recalled. That is also exactly the

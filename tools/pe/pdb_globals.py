@@ -257,8 +257,8 @@ def main():
     # FNamePool at all, GNames is the `TNameEntryArray*` that `FName::GetNames` lazily allocates.
     # Its prologue is `sub rsp,0x28; mov rax,[rip+Names]; test rax,rax; ...`, so the load sits at
     # +4 and needs NO -0x10 (that adjustment is an FNamePool/Blocks artifact and applying it here
-    # would silently land 16 bytes low). Validated against the UE4.15-Flying Shipping row already
-    # in sweep.sh: this reproduces its recorded GNames=142c92508 exactly.
+    # would silently land 16 bytes low). The UE4.15-Flying Shipping row in sweep.sh is the check:
+    # this must reproduce its recorded GNames=142c92508 exactly.
     n, r = find(syms, "?GetNames@FName@@")
     if r is not None:
         gn = base + r

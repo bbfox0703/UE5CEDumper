@@ -77,7 +77,7 @@ W("\n")
 
 # ---------------------------------------------------------------- 1. REGRESSION MATRIX
 #
-# MODEL CORRECTION. scan_patterns.java's ">>> SELECTED" line names the first pattern that
+# SELECTED IS NOT THE LANDING. scan_patterns.java's ">>> SELECTED" line names the first pattern that
 # *hits*. That is NOT what the runtime settles on: Genau::ScanForTarget validates every match
 # and, when they all fail, moves on to the next pattern. So a DECOY-ONLY pattern at the top of
 # the list is a FALL-THROUGH (cost), not a wrong answer (correctness). The pattern the runtime

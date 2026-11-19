@@ -2,7 +2,7 @@ r"""A11 step 2 — a container candidate must be RE-ANCHORED when the array's bu
 
     py tools/verify/a11_step2_realloc.py      (DumperTest dev running + injected, no UI)
 
-THE CLAIM. Without the fix, a growth realloc leaves every container element address stale and the
+THE CLAIM. Without re-anchoring, a growth realloc leaves every container element address stale and the
 candidates are lost outright. With it, the refine notices `{dataPtr,count}` changed and repoints
 them.
 

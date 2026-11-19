@@ -14,18 +14,15 @@ in it one level too shallow -- and the move is exactly the moment nobody re-read
 
 -----
 
-⚠⚠ THE INSTRUMENT IS THE HARD PART. THREE VERSIONS OF IT WERE WRONG BEFORE THIS ONE (2026-09-06).
+⚠⚠ THE INSTRUMENT IS THE HARD PART. Each of these mistakes still yields a plausible-looking report:
 
-  * v1 reported **586** unresolved. It counted `Fern.cpp:5159` line references (a form CLAUDE.md
-    mandates) and Lua patterns inside code fences as broken links.
-  * v2 reported the right total but the wrong CAUSES: `classify` probed exactly ONE extra `../`, so
-    32 links that are two levels too shallow were filed as "no such file". That produced a
-    confident and wrong story about renamed modules -- `Methode.cpp`, `Heiter.cpp` and `Routine.h`
-    all exist.
-  * v3 shipped a `⚠ CASE` paragraph promising to catch `Readme.MD` -> `Readme.md`. It did not:
-    `exists_cased` called `Path.resolve()` first, and **`resolve()` canonicalises case on Windows**,
-    so the listdir comparison always compared a name against itself. `exists_cased(REPO/'README.MD')`
-    returned True. The `case-mismatch-only` branch emitted zero rows for its whole life.
+  * Counting a `File.cpp:NNN` line reference or a Lua pattern inside a code fence as a link
+    inflates the total by hundreds.
+  * Probing exactly ONE extra `../` in `classify` files a link that is two levels too shallow as
+    "no such file", which reads as a confident and wrong story about renamed modules.
+  * Calling `Path.resolve()` in `exists_cased`: **`resolve()` canonicalises case on Windows**, so
+    the listdir comparison compares a name against itself, `exists_cased(REPO/'README.MD')` returns
+    True, and the `case-mismatch-only` branch never emits a row.
 
 ⛔ So: do not "simplify" any of the four exclusions below, and do not trust a count in a comment.
 Re-derive with `--list`.
@@ -33,11 +30,10 @@ Re-derive with `--list`.
 WHAT IS EXCLUDED, AND WHY EACH ONE IS NECESSARY:
 
   1. **A trailing `:123` / `:123-456` line reference** is stripped before the existence check.
-     CLAUDE.md requires this citation form. ⚠ The consequence is stated once, here: this gate checks
+     The docs cite source lines in this form. ⚠ The consequence is stated once, here: this gate checks
      that the FILE exists and says nothing about whether the LINE is still the right one. It cannot
-     -- and line drift is real: 16 of 28 such references in `docs/verification-register.md` were
-     stale when this was written. Verified negative: all such targets end in a real source
-     extension, none resolves to a directory, and no drive-letter target exists in the tree.
+     -- and line references drift as the code moves. The strip assumes every such target names a
+     source file, never a directory or a drive-letter path.
   2. **Fenced code blocks** (``` and ~~~), tracking the fence CHARACTER and LENGTH so a ``` inside a
      ~~~~ block does not close it -- and allowing a **blockquote prefix**, because `> ```lua` opens
      a fence just as well. That last clause is not hypothetical: without it the Lua pattern
@@ -54,8 +50,7 @@ KNOWN COVERAGE GAPS (documented rather than fixed, each for a reason):
 
 ⚠ CASE IS CHECKED, and it matters: `Path.exists()` is case-INSENSITIVE on Windows and
 case-SENSITIVE on GitHub, so `Readme.MD` renders locally and 404s on the web. This walks the real
-directory listing WITHOUT `resolve()`. (Every `.MD` in this repo was renamed to `.md` on
-2026-09-06; there are zero case-mismatched links today, which is the point of holding it there.)
+directory listing WITHOUT `resolve()`, and holds the repo at zero case-mismatched links.
 
 -----
 

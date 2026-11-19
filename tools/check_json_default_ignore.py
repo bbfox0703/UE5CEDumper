@@ -2,10 +2,10 @@
 
     py tools/check_json_default_ignore.py [--list] [--selftest]
 
-STATUS: REGISTERED in check_all.py. The two instances it was written against are repaired:
-[W1-QUOTA-UNLIMITED] (ExperimentalSettings' context does not use WhenWritingDefault) and the benign
-AobUsageFile.Version ([JsonIgnore(Condition = Never)]). The repair's red-before-green test is
-ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip.
+STATUS: REGISTERED in check_all.py. Its two known instances are clean: [W1-QUOTA-UNLIMITED]
+(ExperimentalSettings' context does not use WhenWritingDefault, pinned by
+ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip) and the benign
+AobUsageFile.Version ([JsonIgnore(Condition = Never)]).
 
 WHAT IT REFUSES. A VALUE-TYPE property whose initializer differs from `default(T)`, serialized under
 `JsonIgnoreCondition.WhenWritingDefault` -- set on a source-generated context's

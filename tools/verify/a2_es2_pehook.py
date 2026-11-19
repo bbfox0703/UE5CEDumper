@@ -33,7 +33,7 @@ from pipe_client import PipeClient  # noqa: E402
 
 # The log-folder name, i.e. the image name without .exe. Defaults to EVERSPACE 2 (the row's own
 # host) but takes any host, because the table has ONE row per UE version and each row needs its own
-# live witness -- 508 in particular had none until DumperTest58 existed.
+# live witness -- DumperTest58 is the one for 508.
 PROC = sys.argv[1] if len(sys.argv) > 1 else "ES2-Win64-Shipping"
 LOG = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs" / PROC
 
@@ -88,11 +88,11 @@ def main():
                          % p.get("object_count"))
 
         # --- scan-0.log: prove WHICH binary this is -------------------------------
-        # ⚠ TWO WAYS the version legitimately arrives, and an earlier version of this rig knew only
-        # one. `FindAll` SKIPS DetectVersion entirely when UE5CEDumper.{Machine}.json already holds
+        # ⚠ TWO WAYS the version legitimately arrives, and the rig must accept both. `FindAll`
+        # SKIPS DetectVersion entirely when UE5CEDumper.{Machine}.json already holds
         # a verdict for this PE hash, so on any host scanned before, scan-0.log has ZERO
         # `DetectVersion:` lines and a `FindAll: UE Version = N (cached...)` line instead. Demanding
-        # the first produced a false FAIL on DumperTest58.
+        # only the first is a false FAIL on every such host.
         dv = grep("scan", "DetectVersion:") + grep("scan", "FindAll: UE Version =")
         say("\n[scan-0.log] version lines: %d" % len(dv))
         for l in dv[-3:]:

@@ -12,10 +12,10 @@ Different: the corpus changed since the build — a file added there was never i
 violation on it is expected and proves nothing; the run says so and exits 2 instead of 1. An older
 index that lists its sources is resolved by name and code size.
 
-WHY THIS EXISTS. `aob_specificity.py`'s docstring carries two measured claims — "0 violations /
-1,017 pairs on the source binaries" and a worst-hits distribution per verdict. Both were measured
-BY HAND once, and a hand-measured number in a docstring is a number that goes stale silently. This
-re-derives them, so the next person can check instead of believe.
+WHY THIS EXISTS. `aob_specificity.py`'s docstring carries two measured claims — "0 violations on
+the source binaries" and a worst-hits distribution per verdict — and a hand-measured number in a
+docstring is a number that goes stale silently. This re-derives them, so the next person can check
+instead of believe.
 
 DUPLICATE SOURCES. An older index that lists its sources can name one binary twice (one build in
 two folders, both matched by a `**/*.exe` glob), so its entry count is not its count of distinct
@@ -27,8 +27,8 @@ windows, so the frequency of the RAREST window upper-bounds the pattern's hit co
 index was built from. A violation is `actual_hits > bound` on a source binary — which should be
 impossible, and if it ever fires the index is broken rather than merely loose.
 
-PAIRS ARE COUNTED EXPLICITLY, because `aob_specificity.py`'s 1,017 is no obvious product of
-patterns x binaries and the definition behind it is not written down there.
+PAIRS ARE COUNTED EXPLICITLY, because a pair count is no obvious product of patterns x binaries
+unless the definition behind it is written down.
 A pair here is (scoreable pattern, distinct source binary): scoreable = the pattern has a literal
 run of at least 4 bytes AND the index can size at least one of its windows. That is stated rather
 than inferred, so this number stays checkable even if it disagrees with that docstring's.

@@ -8,9 +8,9 @@ so it neither proves anything nor shows up as missing. `preflight.py` cannot see
 Source of truth is `corpus-manifest.json`'s `binary_last_seen` (+ `duplicate_copies`), which records
 the exact path Ghidra imported.
 
-⚠ Do NOT re-derive this by parsing project `.prp` files. An earlier attempt did and matched 0 of 30
-— including rows imported the same day — because **`.prp` holds the program NAME only; the
-executable path lives inside the packed `.db`**. `preflight.py:579` already documents exactly this
+⚠ Do NOT re-derive this by parsing project `.prp` files: that matches no row at all — not even one
+imported the same day — because **`.prp` holds the program NAME only; the executable path lives
+inside the packed `.db`**. `preflight.py`'s `project_programs` already documents exactly this
 ("The original `executablePath` is NOT here — it lives inside the packed .db"), and
 `build_corpus_manifest.py` gets it the working way, by scanning the `.db` gbf files (`_scan_gbf`).
 Note the failure mode: a wrong reader here returns *plausible emptiness*, not an error — every row

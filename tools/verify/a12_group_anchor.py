@@ -4,8 +4,8 @@ r"""A12 steps 1, 4 (the no-change half), 5 and 6 -- group-mode container anchori
 
 THE CLAIM (row `A12` in docs/auto-verification-session-plan.md). The single-value re-anchoring
 (a11_container_anchor.py), but in GROUP mode, where the leaf address has to survive three by-name hops. The rule and the anchor
-factories are unit-pinned (with negative controls); the WIRING is not, because no target compiles
-`Aura.cpp`.
+factories are unit-pinned (with negative controls); the WIRING is not: `Aura.cpp` is compiled into
+`dll_core_test`, but no unit test drives a group scan and its refine over a live engine's objects.
 
 Grep by FORMAT STRING: `RefineGroup re-anchor:` (whole-pass summary), `container-moved=`
 (per-candidate drop tally), `carries no ValueAnchor` (the stamp-dropped alarm).

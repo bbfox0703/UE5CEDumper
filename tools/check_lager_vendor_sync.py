@@ -8,7 +8,7 @@ WHY THIS EXISTS ([MH-PRERESERVE-PROXY])
   reach of ProcessEvent. vendor/minhook is a git submodule; a bump that changed any of those would leave Lager.h
   modelling a MinHook that no longer exists, and every dll_helpers_test still passes against Lager's own copy -- the
   live log line is then silently wrong. Lager.h's header says "A change to any of these in the vendored copy
-  invalidates this model", but nothing checked it. This does.
+  invalidates this model"; this gate is what checks it.
 
   Stark.cpp already static_asserts Lager's MEM_*/PAGE_*/PE constants against the Windows SDK; that is the SDK side.
   This is the MinHook side, which no SDK pins.

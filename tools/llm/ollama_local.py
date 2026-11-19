@@ -71,25 +71,24 @@ the card with it. Layered, because a rule the model has to remember is not a rul
   maintainer's rule; a machine adds its own (`install --exempt PREFIX`). ⚠ THE REMAINING GAPS: a rig
   that LAUNCHES a commercial game inside one tool call starts it after the hook has run -- the skill
   says `reserve` before such a rig; and a request already in flight is never cut short, so the VRAM
-  frees when it ends (Ollama defers the unload; measured).
+  frees when it ends (Ollama defers the unload).
 
-CROSS-SESSION, MEASURED 2026-09-26 with OLLAMA_NUM_PARALLEL=1 (two real processes): a second
-session's request QUEUES behind the first (3.8 s alone -> 7.6 s); an unload sent mid-request is
+CROSS-SESSION, with OLLAMA_NUM_PARALLEL=1 (two real processes): a second session's request QUEUES
+behind the first, roughly doubling its time; an unload sent mid-request is
 DEFERRED until it ends. So ask/warm hold a LEASE (leases\<pid>.json beside the reservation) while a
 request is in flight: `status` shows other sessions' as in_use_by, and a PENDING unload names the
 holder. Nothing here sees `ollama run`, another app or a LAN client -- Ollama exposes no in-flight
 requests.
 
-LIVE-CHECKED 2026-09-26, in a fresh session after the version-2 install (hook -> the machine copy):
-  * a Bash command whose TEXT held `steam.exe -applaunch <id>` (an echo) wrote the launch reservation
-    before the command ran;
-  * with the model resident (/api/ps listed it) and a reservation written by a tool the matcher does NOT
-    cover (so no hook ran), a computer-use `open_application` alone unloaded it: /api/ps read empty
-    right after, with 10 minutes of keep_alive left. That is the computer-use matcher and the
-    evict-under-reservation path, both on the real hook.
+ON THE REAL HOOK (the installed machine copy):
+  * a Bash command whose TEXT holds `steam.exe -applaunch <id>` (even an echo) writes the launch
+    reservation before the command runs;
+  * with the model resident (/api/ps lists it) and a reservation written by a tool the matcher does NOT
+    cover (so no hook ran), a computer-use `open_application` alone unloads it: /api/ps reads empty
+    right after, with keep_alive still to run. That is the computer-use matcher and the
+    evict-under-reservation path.
 
-MEASURED 2026-09-25 on the first machine that opted in (the numbers are hardware-bound; the
-behaviours are Ollama's own):
+ON ONE MACHINE (the numbers are hardware-bound; the behaviours are Ollama's own):
   * cold load ~20 s; unload (keep_alive 0) ~0.35 s, VRAM back within 1 s.
   * ⚠ a DIFFERENT num_ctx RELOADS the model (another cold load), so num_ctx is fixed per machine
     (config key `num_ctx`, default NUM_CTX) and oversized input is refused or chunked, never "fixed"
@@ -97,26 +96,26 @@ behaviours are Ollama's own):
   * THE WINDOW IS CHEAP FOR THIS MODEL, and the GGUF header says why. Of its 48 layers, 40 are
     sliding-window (8 KV heads x 256, capped at 1024 tokens whatever num_ctx is) and only 8 are
     global -- with ONE KV head of 512. So each extra token of window costs 8 layers x 1 head x
-    (512 K + 512 V) x 2 bytes (f16) = 16 KiB of KV cache. Measured (VRAM over idle, 2026-09-26):
+    (512 K + 512 V) x 2 bytes (f16) = 16 KiB of KV cache. VRAM over idle:
         num_ctx    8192   16384   32768   65536   131072
         MiB       14287   14447   14767   15407    16081
     i.e. ~20 KiB/token (KV + compute buffer) up to 64k. From 64k to 128k it grew by half that,
     so Ollama's memory fitting changes beyond 64k: measure, never extrapolate. To re-derive for
     another model, read `<arch>.attention.*` from the GGUF header (head_count_kv, key_length,
     value_length, sliding_window, sliding_window_pattern).
-  * ⚠ /api/ps `size_vram` reported 1.09 GB for a model nvidia-smi measured at 13.9 GB. Never judge
+  * ⚠ /api/ps `size_vram` can read 1.09 GB for a model nvidia-smi puts at 13.9 GB. Never judge
     VRAM from it; "unloaded" means "absent from /api/ps".
   * ⚠ on Windows a connect to a CLOSED loopback port waits out the whole timeout (a 1.5 s timeout
     took 1.51 s) instead of failing fast, so PROBE_TIMEOUT is short.
-  * ⛔ BY DEFAULT OLLAMA TRUNCATES AN OVER-WINDOW PROMPT SILENTLY. A ~134k-token request to a 32k
-    window came back HTTP 200 with prompt_eval_count 16387: the question at the top was cut away and
-    the model confidently answered a DIFFERENT question. Every request therefore sends
-    `truncate: false`, which makes the same request an HTTP 400 carrying the server's exact count
-    ("request (134020 tokens) exceeds the available context size (32768 tokens)") in 0.8 s. An Ollama
-    too old to know the field would ignore it and truncate again -- measured on 0.34.4.
-  * ⚠ THIS MODEL'S TOKENIZER SPLITS NUMBERS DIGIT BY DIGIT: numeric log text measured 1.5-1.7 chars
-    per token (the estimate had assumed 2.8 and was 1.8x short). So the estimate only PLANS slices;
-    the server's count decides, and --chunked re-splits an overflowing slice at the MEASURED rate.
+  * ⛔ BY DEFAULT OLLAMA TRUNCATES AN OVER-WINDOW PROMPT SILENTLY. The request comes back HTTP 200
+    with the top of the prompt cut away, so the question is gone and the model confidently answers
+    a DIFFERENT one. Every request therefore sends `truncate: false`, which makes the same request
+    an HTTP 400 carrying the server's exact count ("request (N tokens) exceeds the available
+    context size (M tokens)"), fast. An Ollama too old to know the field would ignore it and
+    truncate again (the behaviour above is that of 0.34.4).
+  * ⚠ THIS MODEL'S TOKENIZER SPLITS NUMBERS DIGIT BY DIGIT: numeric log text runs 1.5-1.7 chars per
+    token, far denser than a prose estimate assumes. So the estimate only PLANS slices; the
+    server's count decides, and --chunked re-splits an overflowing slice at the MEASURED rate.
 
 ⚠ NOT OLLAMA_HOST. That variable is the SERVER's bind address; on a machine that exposes Ollama to
 the network it is `0.0.0.0`, which a client cannot connect to on Windows. The URL comes from the
@@ -295,8 +294,8 @@ def command_launches_commercial(command: str, exempt=DEFAULT_EXEMPT_PREFIXES) ->
 def hook_command(raw: str) -> str:
     """The shell command from the hook's stdin JSON; the RAW text if that is not parseable JSON.
 
-    A guard that goes blind on malformed input is the wrong way to fail: found 2026-09-25 when a
-    hand-built test payload (a `\\` collapsed by the shell) was silently a no-op."""
+    A guard that goes blind on malformed input is the wrong way to fail: a hand-built test payload
+    (a `\\` collapsed by the shell) would otherwise be silently a no-op."""
     try:
         data = json.loads(raw) if (raw or "").strip() else {}
         return str(((data.get("tool_input") or {}).get("command")) or "")
@@ -909,7 +908,7 @@ def _read_json(path: pathlib.Path):
 
 
 def _write_json(path: pathlib.Path, data, indent=None) -> bool:
-    """Write-then-rename, so a reader in another session never sees a half-written file (it read as junk,
+    """Write-then-rename, so a reader in another session never sees a half-written file (it reads as junk,
     and a junk lease or marker is pruned as dead)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
   Cheat Engine's injection stub does not wait for us. From CE's own source
-  (read at tag 7.5, 2026-08-15):
+  (read at tag 7.5):
 
     CEFuncProc.pas:1346-1360   createremotethread, then a wait loop of
                                `counter := 10000 div 10` x 10 ms — a HARD,
@@ -54,7 +54,7 @@ import sys
 import time
 
 OFF_INIT_STATE = 0x0C          # Mimic::MailboxData::initState
-RETURN_BUDGET_MS = 500.0       # generous: the fixed path measures ~2 ms
+RETURN_BUDGET_MS = 500.0       # generous: the async path returns in ~2 ms
 STATE_NAMES = {0: "IDLE", 1: "RUNNING", 2: "READY", 3: "FAILED", 4: "SKIPPED"}
 
 

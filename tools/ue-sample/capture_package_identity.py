@@ -58,12 +58,11 @@ MUST_EXIST = ["DumperTestActor", "DumperTestSubsystem", "DumperTestPayload",
 # by the NARROW/ASCII string in FPropertyParams -- the same fact the comment above
 # states. A UTF-16 hit is a TEXT() literal, which proves the opposite: the member is
 # being PRINTED, i.e. it exists as a plain C++ field, which is exactly what the sample
-# wants. Counting both encodings made DumperTestHUD.cpp's own readout
+# wants. Counting both encodings would make DumperTestHUD.cpp's own readout
 # ("RawInt_Ticking=%d  RawFloat_Ticking=%.3f  RawDouble_Ticking=%.3f") declare the
-# Native-C test dead on a perfectly correct package -- every build since commit
-# b3d8593 would have failed this check.
+# Native-C test dead on a perfectly correct package.
 # The word-boundary guard is the second half: without it "RawInt" matches inside
-# "RawInt_Ticking" even in ASCII, so a future ASCII readout would revive the same bug.
+# "RawInt_Ticking" even in ASCII, so an ASCII readout would do the same.
 MUST_BE_ABSENT = ["RawInt", "RawFloat", "RawDouble"]
 
 
@@ -106,11 +105,10 @@ def probe(path):
 # package was built. The record then says "in sync" while the packaged binary genuinely differs —
 # a false negative in the one tool whose entire job is catching that.
 #
-# ⚠ Found 2026-09-06: `DumperTestHUD.h/.cpp` had been mirrored but never listed. They are not
-# incidental — README.md says the HUD readout *is* the sample's health check, and it is the only
-# way to learn the values of the non-UPROPERTY raw fields (there is no reflection to ask), so a
-# silent HUD drift breaks precisely the rows that have no other oracle. `DumperTest.Build.cs` was
-# not even mirrored; it defines the module, and Batch-2 work adds link libraries to it.
+# ⚠ `DumperTestHUD.h/.cpp` are not incidental — README.md says the HUD readout *is* the sample's
+# health check, and it is the only way to learn the values of the non-UPROPERTY raw fields (there
+# is no reflection to ask), so a silent HUD drift breaks precisely the rows that have no other
+# oracle. `DumperTest.Build.cs` belongs here too: it defines the module and its link libraries.
 #
 # ⚠ Adding names CHANGES source_sha256, so the stored record reads as drift exactly once. That is
 # the same one-off the LF-normalisation note below describes — re-capture to settle it.
@@ -130,7 +128,7 @@ EXCLUDED = ("DumperTest.cpp", "DumperTest.h", "DumperTestCharacter.cpp", "Dumper
 
 
 def hash_sources(src_dir):
-    """One digest over the five sample sources, name-and-content, in fixed order.
+    """One digest over the SOURCES files, name-and-content, in fixed order.
 
     Name included so a rename cannot collide, order fixed so the digest is stable.
 

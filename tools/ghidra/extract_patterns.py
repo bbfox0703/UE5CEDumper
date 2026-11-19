@@ -7,11 +7,10 @@ With --check, ALSO (a) assert that Himmel.h's own header summary agrees with wha
 parsed, and (b) recompute every RIP entry's (instrOffset, opcodeLen, totalLen) against
 its own pattern bytes — see the geometry block below — exiting non-zero if either
 disagrees. Without the flag the exit code is always 0
-(printing a discrepancy is not detecting one) — which is exactly how the counts in
-CLAUDE.md / roadmap.md / Features.md / dll-spec.md / architecture.md drifted to four
-different wrong values while Himmel.h's header stayed right. Machine-check the one copy
-that has authority; the derived prose is regenerated from it by hand, and this is what
-tells you to do that.
+(printing a discrepancy is not detecting one). A count restated in several docs drifts
+to several different wrong values while Himmel.h's header stays right, so machine-check
+the one copy that has authority; the derived prose is regenerated from it by hand, and
+this is what tells you to do that.
 """
 import re, sys, os
 
@@ -34,8 +33,8 @@ clean = "\n".join(lines)
 
 # Drop #define directives (including backslash line-continuations). Without this the
 # `SIG_RIP(id, pat, tgt, ...)` MACRO DEFINITION itself parses as a signature row, yielding a
-# phantom entry with id="id", target="tgt" and pattern "<UNRESOLVED:pat>" — which inflated the
-# reported pattern count by one and produced a spurious "SKIP unparsable" in every sweep.
+# phantom entry with id="id", target="tgt" and pattern "<UNRESOLVED:pat>" — which would inflate
+# the reported pattern count by one and produce a spurious "SKIP unparsable" in every sweep.
 _nodef, _skipping = [], False
 for ln in clean.splitlines():
     if _skipping or ln.lstrip().startswith("#define"):
