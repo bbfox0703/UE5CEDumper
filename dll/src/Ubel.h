@@ -82,7 +82,7 @@ struct ClassInfo {
     // The immediate super's PropertiesSize, i.e. where THIS class's own properties begin.
     // Fields carries the whole SuperStruct chain (they are prepended below), so a consumer
     // that must tell own from inherited -- the SDK header emitter -- cannot do it without
-    // this number, and nothing else on the wire implies it (audit #5 W2).
+    // this number, and nothing else on the wire implies it.
     int32_t                SuperPropertiesSize = 0;
     // The LOWEST Offset among this class's OWN properties -- captured before the super
     // chain is prepended, because after that the two are indistinguishable.
@@ -98,7 +98,7 @@ struct ClassInfo {
     //
     // -1 = not measured / this class declares no properties of its own. Consumers MUST
     // treat a negative as "no information" and fall back to SuperPropertiesSize: taking a
-    // min() against 0 or -1 re-emits the entire inherited chain (audit #5 W2).
+    // min() against 0 or -1 re-emits the entire inherited chain.
     int32_t                OwnPropertiesStart = -1;
     std::vector<FieldInfo> Fields;
     // [WALKCLASS-MEMO-REUSE] What the class looked like when it was walked, read from the address: its name (the
@@ -162,7 +162,7 @@ namespace Ubel {
 // so the resolved string is a pure function of these two int32s.
 //
 // That is what makes them a sound witness for the per-UObject name cache, which is
-// keyed by a raw address the engine recycles (audit #5 U6/F3). FNamePool entries are
+// keyed by a raw address the engine recycles. FNamePool entries are
 // append-only for the life of the process — only ~FNameEntryAllocator frees them —
 // so if these bytes still read the same, the cached string is still the correct
 // answer, whoever owns the address now. It is also strictly cheaper than the FNamePool
@@ -175,8 +175,7 @@ namespace Ubel {
 // Aura::GetSerialNumber, whose own comment marks the packed FUObjectItem layout
 // *** UNVERIFIED ***.
 //
-// `number` is load-bearing: without it Slot_1 / Slot_2 / Slot_3 all render as "Slot"
-// (audit #5 U8).
+// `number` is load-bearing: without it Slot_1 / Slot_2 / Slot_3 all render as "Slot".
 struct NameWitness {
     int32_t comparisonIndex = 0;
     int32_t number = 0;
@@ -206,19 +205,17 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // implausible PropertiesSize). Callers must treat an empty Fields as "skip this
 // address", which is what every existing call site already does; it is NOT a signal
 // that the class genuinely declares nothing, because a field-less UCLASS is
-// legitimate and IS memoized. (audit #5 U4)
+// legitimate and IS memoized.
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
 
 // ============================================================
-// Class-walk cache bound (audit #5 U5)
+// Class-walk cache bound
 // ============================================================
 //
-// The finding was re-filed FOUR times saying eviction is illegal until
-// WalkClassEx stops returning `const ClassInfo&`. That is right about the
-// ENRICHED cache and WRONG about this one: WalkClass returns BY VALUE, and all
-// three s_walkClassCache touch points copy under the mutex — so bounding it is
-// legal today with zero call-site change. Half the bytes were reclaimable the
-// whole time.
+// Eviction from the ENRICHED cache is illegal while WalkClassEx returns
+// `const ClassInfo&`. Eviction from THIS one is legal: WalkClass returns BY
+// VALUE, and all three s_walkClassCache touch points copy under the mutex — so
+// bounding it needs zero call-site change.
 //
 // What is NOT done here, deliberately: the enriched WalkClassEx memo (its
 // `const&` return is the real blocker), and Aura's s_classContainerCache, which
@@ -880,7 +877,7 @@ int32_t GetIndex(uintptr_t uobjectAddr);
 // Returns "" on failure or out-of-range length. Caps at kMaxFStringChars
 // (8192) wide chars — the cap bounds the allocation against a garbage Count
 // from freed memory, not string length, so long descriptions/dialogue lines
-// resolve rather than reading as "(empty)" (audit #5 U10).
+// resolve rather than reading as "(empty)".
 std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 
 // [VND9-04] The three string properties share FString's { Data, Num, Max } template and differ only in character
@@ -1038,7 +1035,7 @@ struct LiveFieldValue {
     // Published on the wire so the UI never recomputes it: the stride needs
     // alignof(Key)/alignof(Value), which do not cross the wire, and a C#
     // re-implementation of the formula goes stale silently whenever
-    // Macht::ComputeSetElementStride changes (audit #5 V2).
+    // Macht::ComputeSetElementStride changes.
     int32_t     mapStride = 0;           // 0 = unknown (element data was not read)
 
     // For SetProperty: TSet header info
@@ -1151,7 +1148,7 @@ inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize)
 //   * The entry loop BROKE mid-table (readCount < intendedCount) -> do not publish.
 //     Caching a half-read table permanently splits one UEnum: values below the break
 //     point resolve, values above render as raw integers, everywhere, with no retry.
-// Pure — unit-tested in dll_helpers_test. (audit #5; see U4)
+// Pure — unit-tested in dll_helpers_test.
 inline bool ShouldPublishEnumTable(bool buildLayoutOk, int32_t intendedCount, size_t readCount) {
     if (!buildLayoutOk) return true;
     return intendedCount >= 0 && readCount == static_cast<size_t>(intendedCount);
@@ -1273,12 +1270,12 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Returns "" for labels that have no gameplay-numeric meaning (Padding / Pointer),
 // signalling the caller to DROP the row. The human-readable guessed label is
 // carried separately (never in the property-type field). Pure.
-// === Byte-blind struct preview (audit U3) ===
+// === Byte-blind struct preview ===
 //
 // LAST RESORT ONLY. When a caller cannot resolve the UScriptStruct* it can ask
 // for a hint decoded from raw bytes. That is a guess by construction and the
 // reflected-layout decoder (Ubel.cpp WalkInstance's `{Name=Value}` preview) is
-// always preferable — see the remaining half of U3 in the register.
+// always preferable.
 //
 // Skipping 8 bytes whenever size > 8 assumes the struct begins with a vtable.
 // That is true of FGameplayAttributeData (GAS declares a virtual destructor, so
@@ -1302,14 +1299,14 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Pure: bytes in, string out. Lives here so dll_helpers_test can pin it — no
 // target compiles Ubel.cpp.
 
-// === Reflected struct preview (audit U17) ===
+// === Reflected struct preview ===
 //
-// The layout half of U3. The byte-blind decoder below cannot tell 3 doubles from
+// The byte-blind decoder below cannot tell 3 doubles from
 // 6 floats — Radar.h states the rule: the struct name does not determine the
 // width and neither does the engine version. The only thing that CAN settle it is
 // the reflected field list, and every call site that matters already holds the
 // UScriptStruct*. These two are the pure half of that decode, so the width
-// handling — which is exactly where the LWC bug lives — is unit-pinnable.
+// handling — what tells an LWC vector from six floats — is unit-pinnable.
 
 /// Format a number for a preview cell. `%g` flips to scientific past a few digits
 /// (18328.64 -> "1.833e+04"), unreadable in a value column; `%f` with trailing
@@ -1335,7 +1332,7 @@ inline std::string FormatPreviewNumber(double v) {
 }
 
 /// Decode ONE reflected scalar at `p`, using the property's OWN declared width.
-/// This is the whole point of U17: a DoubleProperty is read as 8 bytes and a
+/// This is the whole point of the reflected preview: a DoubleProperty is read as 8 bytes and a
 /// FloatProperty as 4, so an LWC FVector yields its three real components instead
 /// of six float halves, with no guessing anywhere.
 ///
@@ -1549,7 +1546,7 @@ inline std::string NormalizeGuessedTypeToProperty(const std::string& guessedType
     return "";  // Padding / Pointer? / unknown -> drop
 }
 
-// === Enum raw-value read (audit #5 U9) ===
+// === Enum raw-value read ===
 //
 // Read a UEnum member's raw integer value from `size` bytes at `p`. UE stores every
 // enum member value as int64 in UEnum::Names, and the standard UHT-generated sentinel
@@ -1570,7 +1567,7 @@ inline int64_t ReadEnumRawValue(const uint8_t* p, int32_t size) {
     }
 }
 
-// === FString / FUtf8String length cap (audit #5 U10) ===
+// === FString / FUtf8String length cap ===
 //
 // The largest character count ReadFString / ReadFUtf8String will accept. The cap's
 // real job is to bound the allocation against a GARBAGE Count read out of freed memory
@@ -1689,7 +1686,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset = 
 // Decode a struct through its REFLECTED layout — the correct answer, and the one
 // every caller holding a UScriptStruct* should use. Emits "{Name=Value, ...}".
 // Returns "" when nothing is previewable (or, for InterpretStructAt, when the
-// layout cannot be resolved) so the caller can fall back to hex. Audit U17.
+// layout cannot be resolved) so the caller can fall back to hex.
 std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
                                     const ClassInfo& si, int previewLimit);
 std::string InterpretStructAt(const uint8_t* buf, int32_t size,

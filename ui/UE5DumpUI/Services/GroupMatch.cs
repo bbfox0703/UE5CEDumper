@@ -156,8 +156,8 @@ public static class GroupMatch
         }
     }
 
-    /// <summary>[W2-GROUPMATCH-WIDTH] The mirror of Radar's <c>Fit::AlwaysTrue</c> verdict
-    /// (audit #5 AB4): an ordered target with no encoding at an integer leaf's width still
+    /// <summary>[W2-GROUPMATCH-WIDTH] The mirror of Radar's <c>Fit::AlwaysTrue</c> verdict:
+    /// an ordered target with no encoding at an integer leaf's width still
     /// holds for EVERY value of that width when it lies beyond the range on the predicate's
     /// side -- Smaller above the max, Bigger below the min.</summary>
     private static bool EveryValueSatisfies(double target, string t, bool bigger)
@@ -323,22 +323,21 @@ public static class GroupMatch
     /// (a group needs ≥ 2 values; the caller enforces the 2..4 bound).</summary>
     /// <param name="perSlotCapHit">A slot matched MORE leaves than the cap kept, so its
     /// witness list — and the "All fields" popup built from it — is a page. Required, not
-    /// optional: the DLL sibling has published <c>per_slot_cap_hit</c> on the wire since
-    /// AE13, and the snapshot path silently discarded the same fact (audit #5 AF13). It is
-    /// set independently of the return value, because a truncated slot can still fail the
+    /// optional: the DLL sibling publishes <c>per_slot_cap_hit</c> on the wire, and a
+    /// snapshot-path caller that could skip it would silently discard the same fact. It
+    /// is set independently of the return value, because a truncated slot can still fail the
     /// assignment — and that is the case where the user most needs to know the miss might
     /// be an artifact of the cap.</param>
     /// <remarks>
-    /// THE DEFAULT WAS 8 AND THAT WAS A BUG — the same one the DLL's Orden had (fixed
-    /// 2026-08-05). The cap truncates in leaf order, which is field-declaration order with
+    /// A DEFAULT OF 8 IS A BUG, here and in the DLL's Orden alike. The cap
+    /// truncates in leaf order, which is field-declaration order with
     /// the BASE class first, so on any Actor the first eight satisfying leaves are
     /// PrimaryActorTick/CustomTimeDilation and a derived class's OWN fields never make the
     /// list. Because this list is also what a later temporal pass compares against, a
-    /// Changed/Unchanged match could only ever see never-changing engine fields.
+    /// Changed/Unchanged match would only ever see never-changing engine fields.
     ///
     /// <para><b>What is shared with the live Group Scan is the DEFAULT, not the cap in
-    /// force</b> (audit #5 AF12 — the previous wording claimed the stronger thing). Both
-    /// sides start from <see cref="Constants.GroupPerSlotCap"/>, but Value Search exposes
+    /// force</b>. Both sides start from <see cref="Constants.GroupPerSlotCap"/>, but Value Search exposes
     /// a per-session picker (<c>GroupPerSlotCap</c>, 8..4096) that it sends to the DLL as
     /// <c>per_slot_cap</c>, and a snapshot query has no such control — so the moment the
     /// user moves that picker the two DO diverge, and the same object can keep a longer

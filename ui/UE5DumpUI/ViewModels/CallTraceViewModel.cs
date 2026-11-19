@@ -506,7 +506,7 @@ public partial class CallTraceViewModel : ViewModelBase
 
         // [LIVEFUNCS-STEP3] The native stacks, before the release too, and whatever the parameters were: a stacks-only
         // trace has none. Every reply carries every stack ring's window, so a first one-slot read fetches them, and each
-        // ring is then paged over its window as the parameter rings are (review M1). A page whose slots were all
+        // ring is then paged over its window as the parameter rings are. A page whose slots were all
         // orphans -- the oldest ones, once the trace's ring lapped -- comes back empty yet moves on, so only a page
         // that does not move ends a ring.
         List<StackSlot>? stackSlots = null;
@@ -536,7 +536,7 @@ public partial class CallTraceViewModel : ViewModelBase
         CollectPageGarbage();   // the build's columns take the room the pages left, not new memory
         long count = n;
         // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
-        // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
+        // leave the ring in the game until the next Start.
         var trace = await Task.Run(() =>
         {
             var built = CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs);
@@ -1292,7 +1292,7 @@ public sealed class CallTraceRow
     public string FunctionText { get; init; } = "";
     /// <summary>[TRACE-UNLOADED-NAMES] Gone when the trace was read: the view marks it beside the name.</summary>
     public bool FuncUnloaded { get; init; }
-    /// <summary>Its address held another function during the recording (review DLL-3): marked too.</summary>
+    /// <summary>Its address held another function during the recording: marked too.</summary>
     public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
     /// <summary>[LIVEFUNCS-STEP2] U10: the Object cell's tooltip: its whole text, which a narrow column cuts; none for a

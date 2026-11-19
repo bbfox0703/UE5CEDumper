@@ -68,7 +68,7 @@ public static class ContainerGeometry
     /// the thing an inline edit writes, and the thing a CE record must point at.
     /// <para>
     /// The element base is the <b>key</b> (the TPair starts with it), so anything that treats the
-    /// element base as the value writes over the key. That was audit #5 finding V1.
+    /// element base as the value writes over the key.
     /// </para>
     /// </summary>
     /// <returns>0 when <paramref name="dataBase"/> or the stride is unusable.</returns>

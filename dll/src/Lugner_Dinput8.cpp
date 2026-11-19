@@ -20,7 +20,6 @@
 // vacated slot and an ordinal import silently calls the wrong
 // function. That is why ProxyDinput8.def pins @1..@6 explicitly
 // and why tools/check_proxy_exports.py re-derives both halves.
-// (Audit PX1 — this file said "5" from day one and was wrong.)
 //
 // Mutual exclusion: when both proxy DLLs are present in the game
 // folder, only the first to load runs full init. The second

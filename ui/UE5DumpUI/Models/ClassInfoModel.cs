@@ -18,7 +18,7 @@ public sealed class ClassInfoModel
     /// <see cref="Fields"/> carries the <b>entire</b> SuperStruct chain: the DLL prepends every
     /// inherited property. A consumer that must tell own from inherited — the SDK header emitter,
     /// which would otherwise re-declare every base property inside a struct that already inherits it
-    /// — cannot derive this boundary from anything else on the wire (audit #5 W2).
+    /// — cannot derive this boundary from anything else on the wire.
     /// </para>
     /// </summary>
     public int SuperPropertiesSize { get; init; }
@@ -29,7 +29,7 @@ public sealed class ClassInfoModel
     /// empty-base optimisation puts the derived struct's first member at offset 0 — so the super's
     /// size is one too high to use as a floor. A negative value means NO INFORMATION and must fall
     /// back to SuperPropertiesSize; folding it into a min() would re-emit the whole inherited
-    /// chain (audit #5 W2).</summary>
+    /// chain.</summary>
     public int OwnPropertiesStart { get; init; } = -1;
     public List<FieldInfoModel> Fields { get; init; } = new();
 }

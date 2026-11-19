@@ -40,9 +40,9 @@ public sealed class FreezeScriptParams
     ///
     /// <para><b>Required on purpose.</b> <see cref="UeTypeName"/> alone does not
     /// determine the width of an <c>EnumProperty</c>, so a freeze script built without
-    /// this wrote 4 bytes into a 1-byte <c>enum class : uint8</c> and destroyed its
-    /// three neighbours (audit #5 Y15). Leaving it optional would let the next call
-    /// site silently re-create that bug; <c>required</c> makes the compiler ask.</para>
+    /// this would write 4 bytes into a 1-byte <c>enum class : uint8</c> and destroy its
+    /// three neighbours. Leaving it optional would let a call site silently omit it;
+    /// <c>required</c> makes the compiler ask.</para>
     /// </summary>
     public required int PropertySize { get; init; }
 
@@ -53,14 +53,13 @@ public sealed class FreezeScriptParams
     /// layout, and for a row that came from a DLL older than this field --
     /// <see cref="BoolNative"/> is what separates the first from the rest.
     ///
-    /// <para><b>Required on purpose</b>, for the same reason as <see cref="PropertySize"/>
-    /// and by the same precedent. UE packs <c>uint8 bFoo:1</c> bools eight to a byte, and
-    /// without the mask the freeze tick wrote the whole byte ~16×/sec: up to 7 sibling
-    /// bools clobbered, and — whenever the mask was not <c>0x01</c> — the intended bool
-    /// never set at all, so the feature silently did nothing while corrupting its
-    /// neighbours. The engine reported the mask all along and it was dropped at this
-    /// boundary. Making it optional would let the next call site re-create the bug
-    /// silently; <c>required</c> makes the compiler ask. (audit #5 AA1)</para>
+    /// <para><b>Required on purpose</b>, for the same reason as <see cref="PropertySize"/>.
+    /// UE packs <c>uint8 bFoo:1</c> bools eight to a byte, and without the mask the
+    /// freeze tick would write the whole byte ~16×/sec: up to 7 sibling bools clobbered,
+    /// and — whenever the mask is not <c>0x01</c> — the intended bool never set at all,
+    /// so the feature would silently do nothing while corrupting its neighbours. Making
+    /// it optional would let a call site drop the mask silently; <c>required</c> makes
+    /// the compiler ask.</para>
     /// </summary>
     public required int BoolFieldMask { get; init; }
 

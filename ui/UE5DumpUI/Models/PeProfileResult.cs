@@ -49,7 +49,7 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public bool   IsUnloaded { get; init; }
     /// <summary>With <see cref="IsUnloaded"/>: another function has taken the address since.</summary>
     public bool   IsRecycled { get; init; }
-    /// <summary>Another function took this address DURING the recording (review DLL-3): the count is both functions',
+    /// <summary>Another function took this address DURING the recording: the count is both functions',
     /// and the name the latest one's.</summary>
     public bool   IsReused   { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The name key the row's names are rendered from (T10): what a tick or a snapshot

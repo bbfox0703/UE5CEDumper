@@ -65,7 +65,7 @@ template<typename T>
 inline bool ReadSafe(uintptr_t addr, T& out) {
 #if defined(__SANITIZE_ADDRESS__)
     // The caller's `out`, checked (a read touch: it leaves `out` as it is, should addr ever alias it); the foreign
-    // source below is not. Without it the unchecked copy also hid a dangling `out` (review 2026-11-15).
+    // source below is not. Without it the unchecked copy would also hide a dangling `out`.
     AsanProbe::TouchOwnedRead(&out, sizeof(T));
 #endif
     __try {
@@ -167,16 +167,16 @@ struct ParsedPattern {
 // Returns false when it may not start anywhere — the caller must then scan NOTHING
 // for that pattern. `maxStartOut` is only written on true.
 //
-// This exists as ONE predicate because the arithmetic it replaces is a `size_t`
+// This exists as ONE predicate because the bare arithmetic is a `size_t`
 // subtraction that UNDERFLOWS: `regionSize - patLen` for a pattern longer than the
 // region is ~1.8e19, and a `for (pos = 0; pos <= maxStart; ++pos)` loop then walks
-// the address space. The single-pattern scanners each guarded it correctly and
-// separately; `ScanRegionBatch` guarded only the batch's SHORTEST pattern, so a
-// batch mixing a 60-byte and a 200-byte pattern cleared a 100-byte region and then
-// underflowed on the second — in a function with no SEH. (audit #5 MA2)
+// the address space. A batch must apply it per pattern: `ScanRegionBatch`'s own
+// early-out compares the region against only its SHORTEST pattern, so a batch mixing
+// a 60-byte and a 200-byte pattern clears a 100-byte region and would then underflow
+// on the second — in a function with no SEH.
 //
-// patLen == 0 is refused rather than treated as "matches everywhere": the old
-// arithmetic gave `maxStart = regionSize`, which reported a match at one-past-the-end
+// patLen == 0 is refused rather than treated as "matches everywhere": the bare
+// arithmetic gives `maxStart = regionSize`, which reports a match at one-past-the-end
 // of the region. ParsePattern cannot currently produce an empty pattern, so this is
 // belt-and-braces — but it is the branch a future caller would get wrong.
 //
@@ -247,12 +247,11 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
     return true;
 }
 
-// ── Why this module carries NO Tot::Requested() poll (audit #5 MA1) ──────────
+// ── Why this module carries NO Tot::Requested() poll ────────────────────────
 //
-// Recorded here because the absence has now been raised three times, and refuted
-// once for the WRONG reason. To be exact: it is not that the `__try`/`__except`
-// blocks are cancellation — there is no `__try` in any scan core at all. The SEH
-// sites are the guarded reads and writes, the .pdata lookup and the stack walk,
+// It is not that the `__try`/`__except` blocks are cancellation — there is no
+// `__try` in any scan core at all. The SEH sites are the guarded reads and writes,
+// the .pdata lookup and the stack walk,
 // none of them a scan core; the scan cores dereference the image with no guard
 // of any kind.
 //

@@ -72,7 +72,7 @@ struct Accum {
     uint8_t accessSize  = 0;
     bool    highConf    = false;
     // [DENKEN-WRITE-SITES] Distinct write sites, decode order, at most kMaxWriteSites between them: through a proven
-    // `this`, and through any other base (review DWS-DLL-1).
+    // `this`, and through any other base.
     std::vector<uintptr_t> thisSites;
     std::vector<uintptr_t> otherSites;
     bool    writeSitesTruncated = false;

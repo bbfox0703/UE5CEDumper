@@ -97,7 +97,7 @@ public static class CeInvokeReturn
         // Everything else is classified via the same table the baked helper uses,
         // so scalar reads stay consistent with writeBakedParams.
         // `size` is already a parameter of this method; without it a 1-byte enum
-        // RETURN was reported from a 4-byte read (audit #5 Y16 site 3).
+        // RETURN would be reported from a 4-byte read.
         var helperType = BakedScriptGenerator.MapToHelperType(ueType, size);
         var (readFn, fmt) = ScalarRead(helperType);
         if (readFn != null)

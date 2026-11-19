@@ -95,7 +95,7 @@ struct SlotMatches {
 // on the first scan, so they never match here (the refine path handles them).
 // The width gate asks the target SET, not "does the value fit": for Exact a width
 // with no encoding is skipped, but for Smaller/Bigger the set may instead hold an
-// AlwaysTrue verdict -- every value of the width satisfies (audit #5 AB4) -- and
+// AlwaysTrue verdict -- every value of the width satisfies -- and
 // that is honoured. Exact reduces to byte-equality via ComparePredicate; Between
 // additionally needs the upper bound (`targets2`) to fit the width.
 inline bool LeafSatisfiesSlot(const Leaf& leaf, const SlotTarget& slot) {

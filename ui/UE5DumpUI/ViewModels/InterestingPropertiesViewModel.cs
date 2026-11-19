@@ -161,7 +161,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     }
 
     /// <summary>Drop scored properties so a reconnect never shows rows (and live
-    /// FProperty* addresses) from the previous game (audit X5). Client-side only.</summary>
+    /// FProperty* addresses) from the previous game. Client-side only.</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();
@@ -235,13 +235,13 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             {
                 ct.ThrowIfCancellationRequested();
                 // Skip rows already scanned (XrefInfo persists across filter changes) —
-                // but NOT one whose previous sweep hit the deadline. (audit #5 Z9)
+                // but NOT one whose previous sweep hit the deadline.
                 if (!string.IsNullOrEmpty(row.XrefInfo) && !XrefFormat.IsPartialCell(row.XrefInfo))
                 { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindPropertyXrefsAsync(row.Match.FieldAddr, true, 200, ct);
-                    bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
+                    bool deadline = res.Scan?.DeadlineHit ?? false;   // a partial cell, re-scanned next batch
                     bool capped = res.Scan?.CapHit ?? false;           // [W3-XREF-CAP] its own cause
                     row.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     if (res.Xrefs.Count > 0) withFuncs++;
@@ -268,14 +268,13 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // NOT a cancel. PipeClient distinguishes three causes:
             // a caller cancel carries OUR ct (caught above), a deliberate teardown
             // carries the client's own token, and an unexpected pipe death — the game
             // crashing, the DLL unloading — arrives as an IOException. A bare
-            // `catch (OperationCanceledException)` reported all of them as
-            // "Find Funcs cancelled at N/M", so a dead game read as "you pressed
-            // Cancel" and nothing was logged at all. (audit #5 Z5; this is audit #3's
-            // L14 applied at the two sites it missed.)
+            // `catch (OperationCanceledException)` would report all of them as
+            // "Find Funcs cancelled at N/M", so a dead game would read as "you pressed
+            // Cancel" and nothing would be logged at all.
             _log.Error("Batch Find Funcs failed", ex);
             StatusText = $"Find Funcs failed at {done}/{targets.Count}.";
         }
@@ -412,9 +411,9 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             // Build the class histogram over the FULL deduped set, then filter.
             //
             // countsPartial: any capped seed query means the deduped set is a page, so
-            // the picker's per-class counts are a lower bound. The flags were already
-            // being read fifteen lines below for the panel's own cap warning while the
-            // picker beside it implied a complete census. (audit #5 Z4)
+            // the picker's per-class counts are a lower bound. The same flags drive the
+            // panel's own cap warning below; without them here the picker beside it
+            // would imply a complete census.
             ClassFilter.Rebuild(_allRows.Select(r => r.ClassName),
                                 countsPartial: batch.Aborted || batch.TruncatedQueries.Count > 0);
             ApplyFilter();
@@ -429,8 +428,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
 
             // A capped sweep must SAY so. Without this the panel reports a row count that
             // reads as "this is the pool", the user filters it, does not find their field and
-            // concludes it does not exist -- the exact report class the D5/F4 fix was written
-            // to end, surviving here because the batch path never parsed the flag (audit #5 X1).
+            // concludes it does not exist.
             var capped = batch.TruncatedQueries;
             var capSuffix = batch.Aborted
                 ? PartialResultNotice.Cancelled()

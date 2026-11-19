@@ -150,7 +150,7 @@
 // from +0x10 to +0x00 (cache-locality reorder; `PreAllocatedObjects` went to the end), so on 5.8
 // the FUObjectArray BASE and ObjObjects are the SAME address. Consequence for pattern authoring,
 // and only this: the GObjects patterns that carry a version-fixed adjustment encode PRE-5.8
-// arithmetic. THE THREE FAMILIES DO NOT TARGET THE SAME THING (audit #5 AD23), and getting it
+// arithmetic. THE THREE FAMILIES DO NOT TARGET THE SAME THING, and getting it
 // backwards is how a new pattern gets authored with the wrong adjustment:
 //
 //   * `-0x10` on V10/AV1/AV2/RE2/V12 — anchor `ObjObjects.Objects` (the chunk table) at
@@ -213,9 +213,9 @@ enum class AobResolve : uint8_t {
 // All three also carry instrOffset/opcodeLen/totalLen = 0, so the emitted range would be
 // the degenerate [0, 0) even if the pattern were scannable. Publishing any of them makes
 // the UI's "an AOB is available" test (non-empty string) true while every address in the
-// exported table resolves to `??` — audit #4 B2.
+// exported table resolves to `??`.
 //
-// ⚠ RipDeref is refused too (audit #5 AD10). CE replays the triple as exactly one step —
+// ⚠ RipDeref is refused too. CE replays the triple as exactly one step —
 // `addr = match + len + i32[match + pos]` — which yields the RIP TARGET. RipDeref's answer
 // is one further load THROUGH that target, and there is nowhere in (pattern, pos, len) to
 // say so; a CE script built from it would register the pointer-to-pointer slot as if it
@@ -276,7 +276,7 @@ struct AobSignature {
     const char* notes;        // Human-readable: game name, UE version
 };
 
-// ── Compile-time RIP geometry validation (audit #5 AD17) ─────────────────────────────────
+// ── Compile-time RIP geometry validation ────────────────────────────────────────────────
 // Sibling of ASSERT_TABLE_ORDER at the bottom of this file: it catches what NOTHING else can
 // see. A triple pointing into the middle of its own instruction (instrOffset at the ModRM, or
 // naming the DISPLACEMENT where the field wants the INSTRUCTION) compiles, sorts, scans and
@@ -404,7 +404,7 @@ constexpr const char* AOB_GOBJECTS_V8 = "4C 8B 0D ?? ?? ?? ?? 8B D0 C1 EA 10";
 constexpr const char* AOB_GOBJECTS_V9 = "4C 8B 0D ?? ?? ?? ?? 48 98 48 8D 0C 40 49";
 // V10: lea rcx,[rip+X]; call; call; mov byte[],1  — credited to Split Fiction, UNVERIFIED there:
 //   RE-UE4SS pins that title at UE 5.4 (CustomGameConfigs/Split Fiction/UE4SS-settings.ini), not 5.5+,
-//   and this shape cannot match its GUObjectArray site (vendor audit #7, [VND583-DOC CGC-4]).
+//   and this shape cannot match its GUObjectArray site ([VND583-DOC CGC-4]).
 //   Needs -0x10 adjustment (points into struct, not base)
 constexpr const char* AOB_GOBJECTS_V10 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01";
 // V11: lea reg,[rip+X]; mov r9,rcx; mov [rcx],rax; mov eax,-1  — Little Nightmares 3

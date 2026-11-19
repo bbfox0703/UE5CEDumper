@@ -794,10 +794,9 @@ public sealed class InvokeParamDialog : Window
                 {
                     // Use struct-aware decoding for known structs, then dynamic, then scalar
                     string decoded;
-                    // Trusted form: the same size cross-check the INPUT boxes use (Y7).
+                    // Trusted form: the same size cross-check the INPUT boxes use.
                     // Decoding the post-call buffer on a size-contradicted layout
-                    // renames and re-offsets every value the user reads back
-                    // (audit #5 AC2).
+                    // renames and re-offsets every value the user reads back.
                     var structLayout = ResolveTrustedLayout(
                         p.TypeName, p.StructName, p.Size, _ueVersion);
                     if (structLayout != null)
@@ -961,8 +960,8 @@ public sealed class InvokeParamDialog : Window
 
             // Params that could not be rendered as a Lua literal were baked as 0 with an
             // --[[unparsed:…]] marker. Saying "N baked param(s)" over that would report a
-            // clean export of a script that will call the game with the wrong arguments
-            // (audit #5 Y14), so name them instead — computed from the SAME renderer the
+            // clean export of a script that will call the game with the wrong arguments,
+            // so name them instead — computed from the SAME renderer the
             // generator used, not from a second parse that could disagree.
             var unparsed = bakedValues
                 .Where(v => BakedScriptGenerator.IsUnparsedLiteral(v.UeTypeName, v.LiteralText))
@@ -985,7 +984,7 @@ public sealed class InvokeParamDialog : Window
             {
                 // Wrap as paste-able CE memory-record XML. A bare [ENABLE]/[DISABLE] AA
                 // body cannot be pasted into CE's address list on its own — it has to be a
-                // CheatEntry with VariableType = Auto Assembler Script (audit #5 Y12).
+                // CheatEntry with VariableType = Auto Assembler Script.
                 var xml = Services.CheatTableBuilder.WrapAaScriptXml(description, script);
                 bool copied = await _platform.CopyToClipboardAsync(xml);
                 if (!copied)
@@ -1244,7 +1243,7 @@ public sealed class InvokeParamDialog : Window
     /// <summary>
     /// Decode an integer param at whatever width the engine reported. Used by the
     /// size-driven fallback and by EnumProperty, whose width is 1/2/4/8 and is NOT
-    /// implied by its type name (audit #5, the width family).
+    /// implied by its type name.
     /// </summary>
     private static string DecodeBySize(byte[] buf, int offset, int available, int size)
     {
@@ -1326,7 +1325,7 @@ public sealed class InvokeParamDialog : Window
     /// <para><b>The rule itself lives on <see cref="KnownStructLayouts.GetTrustedLayout"/></b>,
     /// beside the table it guards, where <c>StructReturnDecoder</c> can reach it too — a Service
     /// cannot depend on a View — so the INPUT boxes and the RESULT grid refuse the same
-    /// size-contradicted layout (Y7, audit #5 AC2). This name stays so existing callers and tests do
+    /// size-contradicted layout. This name stays so existing callers and tests do
     /// not churn; the behaviour is defined in one place.</para>
     /// </summary>
     internal static KnownStructLayouts.StructLayout? ResolveTrustedLayout(

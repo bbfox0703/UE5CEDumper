@@ -1332,7 +1332,7 @@ inline RuntimeOffset FBYTEPROP_ENUM{0x78};  // FByteProperty::Enum (UEnum*) — 
 // (Detection keeps this = FBYTEPROP_ENUM + 8; default mirrors that.)
 inline RuntimeOffset FENUMPROP_ENUM{0x80};  // FEnumProperty::Enum (UEnum*) = FBYTEPROP_ENUM + 8
 
-// ── The sizeof(FProperty) subclass-extension FAMILY (audit #5 G12) ───────────
+// ── The sizeof(FProperty) subclass-extension FAMILY ───────────
 //
 // FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name
 // the SAME slot — the first subclass field, i.e. sizeof(FProperty) — and FENUMPROP_ENUM
@@ -1738,7 +1738,7 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 // The engine's own build string, as a second opinion on a reading below the floor [VER-410-GATE]
 //
 // A reading below MIN_SUPPORTED_UE_VERSION refuses the whole scan, so one VS_FIXEDFILEINFO field is
-// not enough evidence for it (audit #4 B25): a game's own version can read as 4.x. The same
+// not enough evidence for it: a game's own version can read as 4.x. The same
 // VERSIONINFO carries a second signal. UBT stamps the ProductVersion STRING as
 // `Major.Minor.Patch-Changelist+Branch`, the branch either full, naming the release a second time
 // (`++depot+UE4-Releases+4.10`, later `++UE4+Release-4.18`), or simplified (`UE4`); by 4.15 a game
@@ -1977,7 +1977,7 @@ constexpr const char* VERSION_CMC_CLASS_PATH    = "/Script/Engine.CharacterMovem
 ///
 /// Case-insensitive (Windows filenames are). Deliberately NOT a substring search: a game
 /// legitimately called e.g. `MyCheatEngineClone.exe` must not be refused, so the match is
-/// anchored at the start. (Audit #4 B34.)
+/// anchored at the start.
 inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
     if (!exeLeafName || !*exeLeafName) return false;
     // "cheatengine-*.exe" — every shipped variant of the main executable.
@@ -1993,7 +1993,7 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
 /// answers the one question `DllMain` has to settle *before* any thread exists. It is a
 /// separate function from `IsCheatEngineExeName` because
 /// `DllMain` cannot be reached from a test, so the decision it makes has to live somewhere
-/// a test CAN reach, taking exactly the value Windows hands us (audit #5 AB1).
+/// a test CAN reach, taking exactly the value Windows hands us.
 ///
 /// **False for Cheat Engine, and only for Cheat Engine.** CE loads a plugin DLL and then
 /// unloads it — `Settings → Plugins → Add` does LoadLibrary → `CEPlugin_GetVersion` →

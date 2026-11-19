@@ -198,12 +198,11 @@ public static class Constants
 
     // Per-process mirror logging.
     //
-    // There is deliberately NO folder-COUNT cap here (audit #5 AF9 removed
-    // MaxProcessFolders = 20). The comment above is the whole policy, and a count cap
-    // sat four lines below it contradicting it: a per-process folder is named after the
+    // There is deliberately NO folder-COUNT cap here. The comment above is the whole
+    // policy, and a count cap would contradict it: a per-process folder is named after the
     // GAME, so the count is "distinct games played in the window" and cannot run away,
-    // while the eviction was recursive and took the DLL's five log categories with it —
-    // files Sein.cpp's age-only sweep had deliberately kept.
+    // while an eviction would be recursive and take the DLL's log categories with it —
+    // files Sein.cpp's age-only sweep deliberately keeps.
     public const int LogMaxAgeDays = 21;               // Keep this in sync with Grimoire::LOG_RETENTION_DAYS
 
     // ---- Log compression (compact /C /EXE:LZX, in place) -------------------------

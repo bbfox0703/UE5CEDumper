@@ -291,10 +291,10 @@ const std::vector<DataType>& MultiNumericMembers(DataType dt);
 // ClassInfo.Fields[].TypeName) to its concrete scalar DataType. The
 // full numeric member set is recognised — "IntProperty"->Int32,
 // "FloatProperty"->Float, "Int16Property"->Int16, "Int8Property"->Int8,
-// "ByteProperty"->UInt8, etc. "EnumProperty"->UInt8 (audit #5 AB14): enums are
+// "ByteProperty"->UInt8, etc. "EnumProperty"->UInt8: enums are
 // 1-byte in the overwhelming majority; the underlying width is not in the name, so
 // a rare wider enum is read at its low byte — acceptable for the small indices
-// enums hold, and it was invisible otherwise. Returns false for BoolProperty +
+// enums hold, and unmapped an enum field is unscannable. Returns false for BoolProperty +
 // non-numeric names. (NumericNoByte simply never feeds byte-width names
 // here because its PropertyTypeNames union excludes them.) Used by the
 // scan + refine engines to resolve each candidate's own width.
@@ -581,7 +581,7 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
     return RefineAnchorVerdict::KeepAddress;
 }
 
-/// What a container-element leaf carries from the deep walk to refine (audit #5 A12).
+/// What a container-element leaf carries from the deep walk to refine.
 ///
 /// ⚠ `data` is the buffer base STORED AT SCAN TIME, not derived from stride+intra the
 /// way the single-value path derives it. That is deliberate and it is the safer of two
@@ -649,7 +649,7 @@ struct FieldDescriptor {
                                     // this is the CONTAINER HEADER's offset, which is
                                     // what lets refine re-read the header without
                                     // storing its address on every candidate.
-    // audit #5 A11 — how refine must treat this field's stored absolute address.
+    // How refine must treat this field's stored absolute address.
     //
     // ⚠ SINGLE-VALUE SESSIONS ONLY. `Session` stamps these three; `GroupSession` does
     // NOT — its `internDesc` interns a descriptor per (short class name, field, offset),
@@ -658,7 +658,7 @@ struct FieldDescriptor {
     // pointer arithmetic. So a group leaf carries its anchor per-match on
     // `GroupSlotMatch::anchor` instead, and these stay `Unknown`/0 there.
     // Do NOT read `descriptors[groupSlotMatch.descriptorIdx].anchor` — it is not the
-    // truth for that session, it is the default. (audit #5 A12)
+    // truth for that session, it is the default.
     ValueAnchor anchor        = ValueAnchor::Unknown;
     int32_t     elemStride    = 0;  // container element stride  (container anchors only)
     int32_t     elemIntra     = 0;  // value offset WITHIN the element (map value / struct inner)
@@ -696,7 +696,7 @@ struct FieldDescriptor {
 // scanned by exactly one worker thread, so instances never duplicate
 // across the per-thread merge.)
 //
-// Cross-RPC identity model (audit #5 AB7). A candidate is re-read across refines
+// Cross-RPC identity model. A candidate is re-read across refines
 // by its stored ABSOLUTE address; `instanceIndex` is display metadata, not
 // re-validated. If the owning object is freed and its slot recycled by ANOTHER
 // object between scans, refine reads the new occupant's bytes. This is NOT patched
@@ -743,7 +743,7 @@ struct Candidate {
     uint32_t    descriptorIdx = 0;   // -> Session::descriptors
     uint32_t    instanceIdx   = 0;   // -> Session::instances
     int32_t     elementIndex  = -1;  // array/container element index, -1 = direct field
-    // audit #5 A11 — the container's element count (TArray::Num / TSparseArray::
+    // The container's element count (TArray::Num / TSparseArray::
     // MaxIndex) AT SCAN TIME. -1 = not a container element. Lands in the padding
     // this struct already carried, so the lean-Candidate constraint above is
     // unaffected. Per-candidate rather than per-container because the alternative
@@ -933,7 +933,7 @@ public:
         // The candidate vector may have been pruned — drop the cached view
         // so the next QueryWith rebuilds the order against the surviving set.
         it->second->viewValid = false;
-        // Reap OTHER idle sessions too (audit #5 AB17). Runs AFTER the bump above
+        // Reap OTHER idle sessions too. Runs AFTER the bump above
         // so it can never drop the session being refined — a user stepping away
         // mid-refine keeps their candidates, which is the whole point of the 300s.
         ExpireOldSessionsLocked(owner);
@@ -1015,13 +1015,13 @@ private:
 
     // The sweep body, assuming mu_ is already held. `ExpireOldSessions()` locks and
     // calls this; RefineWith / End call it directly under their own lock so a Refine
-    // can protect its session (bump lastUse) BEFORE sweeping. (audit #5 AB17)
+    // can protect its session (bump lastUse) BEFORE sweeping.
     void ExpireOldSessionsLocked(uint64_t owner);
 
     // 5-minute idle expiry — matches discrete's Phase 27b precedent.
     // Long enough that a user can step away mid-refine without losing
     // candidates; short enough that abandoned sessions clear on the next
-    // value-scan operation (Begin / RefineWith / End all sweep — audit #5 AB17).
+    // value-scan operation (Begin / RefineWith / End all sweep).
     static constexpr std::chrono::seconds kExpirySeconds = kScanSessionIdleExpiry;
 
     std::mutex                                                  mu_;
@@ -1088,20 +1088,19 @@ struct GroupSlotMatch {
     int32_t   offset        = 0;   // bytes from the OWNING object to the leaf (direct); 0 for deep
     uintptr_t leafAddr      = 0;   // ABSOLUTE address of the value — direct: owner+offset;
                                    // deep (container element): the element's own address.
-                                   // Refine re-reads this. ⚠ "stale on realloc = drop" was
-                                   // OPTIMISTIC and is corrected here (audit #5 A11): a TArray
+                                   // Refine re-reads this. ⚠ A stale address is NOT reliably
+                                   // dropped on realloc: a TArray
                                    // RemoveAt relocates the tail in place and a sparse slot is
                                    // REUSED on the next Add, so a stale element address survives
                                    // the read and returns the WRONG value. `anchor` below is what
-                                   // lets refine re-read the container instead of trusting this
-                                   // (audit #5 A12).
+                                   // lets refine re-read the container instead of trusting this.
     uintptr_t ownerAddr     = 0;   // object directly holding the leaf: the candidate actor for an
                                    // own-block leaf, or an OWNED sub-object for a cross-object leaf
                                    // (P4). Drives the per-slot handoffs to the right object.
     std::string ownerClass;        // class name of ownerAddr's object: the candidate class for an
                                    // own-block leaf, the OWNED sub-object's class for a cross-object
                                    // leaf (P4 inc 2). Drives the per-slot Pivot handoff to the right class.
-    // audit #5 A12 — the container this leaf lives in, as it was AT SCAN TIME, so refine
+    // The container this leaf lives in, as it was AT SCAN TIME, so refine
     // can re-read the header and re-anchor instead of trusting `leafAddr`. Defaults to
     // `Unknown`/-1, which the rule refuses to act on: this struct is default-initialised
     // at its producer, so a hop that drops the copy must degrade, never mis-fire.
@@ -1122,7 +1121,7 @@ struct GroupCandidate {
 // Two are clamped — slots to 2..4 and the per-slot cap to [8, 4096] — but the
 // candidate count rides `max_results`, which Fern does NOT clamp, so the product
 // has no upper bound and a broad scan on a large game could hold multiple GB inside
-// the target process (audit #5 AB19: the per-slot clamp's own comment names "x every
+// the target process (the per-slot clamp's own comment names "x every
 // candidate" as the hazard it does not cover). These pure helpers give the session
 // manager a total-leaf backstop that bounds the THIRD factor's contribution.
 
@@ -1173,13 +1172,13 @@ struct GroupSession {
     std::vector<FieldDescriptor>          descriptors;  // shared via GroupSlotMatch::descriptorIdx
     std::vector<InstanceRecord>           instances;    // shared via GroupCandidate::instanceIdx
     std::chrono::steady_clock::time_point lastUse;
-    // Candidates the memory backstop dropped at Begin (audit #5 AB19). Non-zero only
+    // Candidates the memory backstop dropped at Begin. Non-zero only
     // when a session exceeded kMaxGroupSessionLeaves total leaves — normally 0. Set
     // by GroupSessionManager::Begin; a future Fern change can surface it on the wire
     // beside `total` so the trim is never fully silent.
     size_t                                candidatesDroppedForMemory = 0;
 
-    // The Begin scan dropped leaves past the per-slot cap (audit #5 AE13). Persisted on
+    // The Begin scan dropped leaves past the per-slot cap. Persisted on
     // the SESSION rather than recomputed, because it cannot be recomputed: refine prunes
     // what is already stored and never calls Orden::MatchGroup, and query is a pure
     // window over the stored pool — so a truncation that happened at Begin is invisible
@@ -1252,7 +1251,7 @@ std::vector<std::string> SplitFilterTerms(const std::string& filter);
 //
 // The three passes are greedy (they never revisit an earlier slot), so they can
 // seat two slots on one leaf where a proper matching exists — a duplicate the
-// group-scan contract forbids. A final augmenting-path repair (audit #5 AB18)
+// group-scan contract forbids. A final augmenting-path repair
 // fixes exactly that: it keeps each slot's greedy pick when already distinct and
 // otherwise bumps an earlier slot to a less-preferred leaf, guaranteeing a
 // distinct assignment whenever one exists (the caller established via
@@ -1317,7 +1316,7 @@ public:
 
     // `perSlotCapHit` / `perSlotCap` are REQUIRED, not defaulted: they are known only
     // at Begin and every later command has to be able to repeat them, so a call site
-    // that forgets them should not compile. (audit #5 AE13)
+    // that forgets them should not compile.
     uint64_t Begin(uint64_t owner,
                    std::vector<SlotSpec>        slots,
                    std::vector<GroupCandidate>  candidates,
@@ -1336,7 +1335,7 @@ public:
         it->second->lastUse = std::chrono::steady_clock::now();
         fn(*it->second);
         it->second->viewValid = false;
-        // Reap OTHER idle group sessions (audit #5 AB17) — after the bump, so the
+        // Reap OTHER idle group sessions — after the bump, so the
         // session being refined is protected.
         ExpireOldSessionsLocked(owner);
         return true;

@@ -7,9 +7,8 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Resolve a path to the volume that ACTUALLY holds it, and the two numeric rules that go
-/// with asking Win32 about that volume. One implementation, deliberately: this is the third
-/// time the same mistake has been made in this codebase, and the reason it kept coming back
-/// is that every site rolled its own resolution.
+/// with asking Win32 about that volume. One implementation, deliberately: the mistake below
+/// comes back whenever a site rolls its own resolution.
 ///
 /// <para><b>The mistake.</b> <c>Path.GetPathRoot(@"C:\Mount\Games\file.db")</c> is
 /// <c>C:\</c> — always, because it is pure string surgery on the path and knows nothing
@@ -24,9 +23,8 @@ namespace UE5DumpUI.Services;
 /// volume API (<c>GetDriveTypeW</c>, <c>GetVolumeInformationW</c>, <c>SHQueryRecycleBinW</c>)
 /// requires. Pass its output to a Win32 call, never back through a BCL type.</para>
 ///
-/// <para>audit #5 <b>AC17</b> found and fixed this in <c>VolumeHasRecycleBin</c>;
-/// <c>[VOLUMEROOT-2026-08-19]</c> is the sibling grep that found the other three sites
-/// still doing it the old way. Both now go through here.</para>
+/// <para><c>[VOLUMEROOT-2026-08-19]</c> <c>VolumeHasRecycleBin</c> and the sibling sites
+/// that ask a volume question go through here.</para>
 /// </summary>
 internal static class VolumeRoot
 {

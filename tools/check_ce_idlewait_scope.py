@@ -8,7 +8,7 @@ Every `*ScriptGenerator` that talks to the mailbox shares ONE `EmitBlock` betwee
 `[ENABLE]` and `[DISABLE]`, and the `cmd` store at the bottom is emitted for BOTH. So an
 idle wait that only one of the two blocks receives is always wrong: the other block writes
 operands, clears status and stores `cmd` while another command may still be in flight --
-the AA10 hazard the emitters' own comments describe.
+the write over an in-flight command that the emitters' own comments describe.
 
 That makes the legitimate population EMPTY by construction, which is the only kind of
 predicate worth gating here. The repo has paid for the alternative twice: proposed gate #17

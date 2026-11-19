@@ -122,23 +122,18 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
         var top = TopDeltas(before, after, 0);
 
         // Busy is summed from the per-command deltas, NOT from the global
-        // total_busy_ms delta. The two disagreed on the first live run: the global
-        // figure includes the probe's OWN opening get_diagnostics, so a 57.7 ms
-        // Copy CE Field reported "busy 93 ms (161.2%)" — the probe measuring
-        // itself. Deriving busy from the same rows the ranking shows makes the
-        // percentage and the breakdown agree by construction.
+        // total_busy_ms delta: the global figure includes the probe's OWN opening
+        // get_diagnostics, so it would report the probe measuring itself and can
+        // exceed the operation's own wall time. Deriving busy from the same rows the
+        // ranking shows makes the percentage and the breakdown agree by construction.
         double busyMs = top.Sum(t => t.TotalMs);
-        // ...and so is the COUNT, for the same reason and from the same rows. It used
-        // to be `after.TotalDispatches - before.TotalDispatches`, the global counter,
-        // which includes the probe's own get_diagnostics that `top` (and therefore
-        // busyMs) deliberately skips. The line then printed three numbers over two
-        // denominators: "11 dispatches" beside "busy 15.2 ms" beside "per call: dll
-        // 1.524" — 15.2/11 = 1.38, not 1.524, because the per-call divisor is the
-        // transport count, which excludes the probe too. Measured on a real P3R
-        // session (2026-08-26) and on DumperTest: the divisor was always
-        // dispatches-1, on two games and two builds. The busy fix directly above was
-        // made and this one, two lines below it, was not. (audit #4's root cause: the
-        // report and the reality computed by different code paths.)
+        // ...and so is the COUNT, for the same reason and from the same rows. The global
+        // counter, `after.TotalDispatches - before.TotalDispatches`, includes the probe's
+        // own get_diagnostics that `top` (and therefore busyMs) deliberately skips, so a
+        // count taken from it would print three numbers over two denominators: the
+        // per-call divisor is the transport count, which excludes the probe too, so
+        // "N dispatches" would not divide "busy" into "per call". The report and the
+        // reality must be computed by the same code path.
         long dispatches = top.Sum(t => t.Count);
         double wallMs   = elapsed.TotalMilliseconds;
 

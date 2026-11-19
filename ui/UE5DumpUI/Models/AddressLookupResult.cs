@@ -139,9 +139,8 @@ public sealed class ContainerScanStats
     /// opted in via <c>container_depth &gt; 1</c>). It matters to the reader because the
     /// deep pass is bounded by a per-container element probe cap as well as by the
     /// deadline — so a deep MISS is not proof of absence even when
-    /// <see cref="DeadlineHit"/> is false. The DLL has always emitted this and the UI
-    /// dropped it, which is half of why the "[scanned X/Y]" suffix could not do the one
-    /// job it was added for. (audit #5 Z12)
+    /// <see cref="DeadlineHit"/> is false. The "[scanned X/Y]" suffix reads it, so a
+    /// deep miss is not reported as proof of absence.
     /// </summary>
     public bool DeepScan { get; init; }
 

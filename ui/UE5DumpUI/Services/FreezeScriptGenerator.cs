@@ -214,7 +214,7 @@ public static class FreezeScriptGenerator
         // bCanBeDamaged / bHidden / bReplicates) and an exact-class pool holds
         // whichever stray instance of that ancestor the level has — never the pawn
         // the user was looking at. The Force submenu on the same row already walks
-        // subclasses (Solide, audit #5 A6); the two must not scope oppositely.
+        // subclasses (Solide); the two must not scope oppositely.
         // (`[FREEZESCOPE-2026-08-18]`)
         Line(sb, "  derived            = true,  -- also hold every SUBCLASS " +
                  "(set false for exact class only)");

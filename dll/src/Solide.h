@@ -86,17 +86,17 @@ struct StealthCandidate {
     int32_t     score = 0;    // MatchStealthField keyword score (higher = better)
 };
 
-// ---- integer property width + SIGNEDNESS (audit #5 AF8) --------------------
+// ---- integer property width + SIGNEDNESS --------------------
 //
 // The numeric hold reads a field, compares it against the target and rewrites on
 // drift. That loop only terminates if the READ and the WRITE agree about the
-// field's type — and for Int8Property they did not: both paths used `uint8_t`.
+// field's type, signedness included — an Int8Property read through `uint8_t` breaks it.
 //
-// The write was fine (`static_cast<uint8_t>(-5)` is 0xFB, which IS -5 in an int8),
-// but the read handed back 251, so `read != target` was true forever: the worker
-// rewrote the same byte every tick and the UI reported permanent drift against the
+// A `uint8_t` write is fine (`static_cast<uint8_t>(-5)` is 0xFB, which IS -5 in an int8),
+// but a `uint8_t` read hands back 251, so `read != target` is true forever: the worker
+// rewrites the same byte every tick and the UI reports permanent drift against the
 // game. The mirror case is just as wrong in the other direction — forcing 200 into
-// an Int8Property stores 0xC8, the game sees -56, and the unsigned read agrees with
+// an Int8Property stores 0xC8, the game sees -56, and an unsigned read agrees with
 // the target so the hold looks like it converged.
 //
 // Split out header-inline BECAUSE NO TEST TARGET COMPILES Solide.cpp. Keeping the

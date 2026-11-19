@@ -132,7 +132,7 @@ public partial class DetectStatsViewModel : ViewModelBase
     private int _detectGen;
 
     /// <summary>Drop detected-stat rows so a reconnect never shows fields (and live
-    /// addresses) from the previous game (audit X5). Client-side only — the offline
+    /// addresses) from the previous game. Client-side only — the offline
     /// snapshot corpus is owned by the store, not here.</summary>
     public void ClearOnDisconnect()
     {
@@ -297,17 +297,17 @@ public partial class DetectStatsViewModel : ViewModelBase
             int confirmedCount = results.Count(r => r.IsConfirmed);
             // Same cap caveat as Interesting Properties: this panel drives the SAME batch call at
             // the same 200-row-per-query limit, so a common seed ("Max", "Count", "Health") caps
-            // routinely and the candidate list is a page, not the pool (audit #5 X1).
+            // routinely and the candidate list is a page, not the pool.
             int cappedQueries = batch.TruncatedQueries.Count;
             var capSuffix = batch.Aborted
                 ? "  ⚠ scan cancelled — partial"
                 : cappedQueries > 0
                     ? $"  ⚠ {cappedQueries} keyword(s) hit the 200-row cap — more candidates exist"
                     : "";
-            // The class-probe cap is its OWN truncation and was silent: the row cap above talks
+            // The class-probe cap is its OWN truncation: the row cap above talks
             // about candidates, this one about how many of their classes were live-checked at
             // all. Without it "0 confirmed" reads as "nothing is a stat" when it can mean
-            // "we stopped looking after 30 classes". (audit #5 AF2)
+            // "we stopped looking after 30 classes".
             int unprobedClasses = byClass.Count - classesProbed;
             var probeSuffix = unprobedClasses > 0
                 ? $"  ⚠ {classesProbed} of {byClass.Count} classes live-probed — {unprobedClasses} " +

@@ -291,14 +291,14 @@ public interface IDumpService
     // RefineValueScanAsync for those.
     //
     // Native C++ fields (non-UPROPERTY) are not REFLECTED, so they are invisible
-    // to the default walk — but they are reachable: pass `nativeC: true` (18 lines
-    // below) and the DLL additionally scans each object's unmanaged holes (the byte
+    // to the default walk — but they are reachable: pass BeginValueScanAsync's
+    // `nativeC: true` and the DLL additionally scans each object's unmanaged holes (the byte
     // ranges inside the object that no property covers) via the Guess-What
     // heuristic, numeric types only. The UI's Value Search tab has BOTH banners —
     // str.VS.Banner names the limitation and points at the Native-C toggle,
-    // str.VS.NativeBanner describes the scan once it is on. Saying "NOT visible to
-    // this scan" full stop predated the Native-C work and had this interface
-    // contradicting its own parameter list. (audit #5 AE31)
+    // str.VS.NativeBanner describes the scan once it is on. "NOT visible to this
+    // scan", full stop, would be wrong: it contradicts this interface's own
+    // parameter list.
     // V3-C: the DLL session OWNS the full candidate set; begin/refine return
     // `Total` (full count) plus only the FIRST PAGE (`pageSize`, scan order).
     // The UI is a windowed view that pages / filters / sorts server-side via
@@ -670,7 +670,7 @@ public interface IDumpService
     ///
     /// <para>The single tri-state <c>get_god_mode</c> collapses those three into
     /// one number, so it cannot distinguish "GodMode was never enabled" from "the
-    /// hold is engaged but there is no pawn to write to yet" (audit #5 AD4).</para>
+    /// hold is engaged but there is no pawn to write to yet".</para>
     /// </summary>
     Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default);
 

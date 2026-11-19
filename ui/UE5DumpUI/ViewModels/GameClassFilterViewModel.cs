@@ -26,12 +26,11 @@ public partial class GameClassFilterViewModel : ViewModelBase
     /// <c>TotalClasses</c> counts to the end regardless ([CLASSTOTAL-2026-08-18]); this bounds only
     /// the rows materialized. Clamped 100..50000 by the NumericUpDown and again DLL-side.
     ///
-    /// <para>[CLASSCAP] — the status line has always ended "or raise the cap" and there
-    /// was nothing to raise. Found while live-checking CLASSTOTAL on Avowed: "5,000 classes shown
-    /// of 7,409 total … ⚠ STOPPED at the 5,000-row cap" — and then advised raising a cap the
-    /// toolbar did not expose anywhere. Third instance of audit #5 Z10.
-    /// (The old sentence is deliberately not quoted in full here: <c>ClassListCapTests</c>
-    /// greps this file for it, so a doc quote would defeat the assertion.)</para></summary>
+    /// <para>[CLASSCAP] — the status line's cap note advises raising the cap, and advice must
+    /// name a lever the toolbar exposes; this is that lever.
+    /// (The sentence that advises a cap with no control is deliberately not quoted here:
+    /// <c>ClassListCapTests</c> greps this file for it, so a doc quote would defeat the
+    /// assertion.)</para></summary>
     [ObservableProperty] private int _classListCap = Constants.DefaultClassListCap;
 
     /// <inheritdoc cref="ClassListCap"/>
@@ -70,7 +69,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
 
     /// <summary>Warning shown beside the Super / Package pickers when the class walk
     /// stopped at its cap, so their dropdowns are a sample rather than the set of
-    /// values that exist. Empty (and hidden) on a complete load. (audit #5 AE15)</summary>
+    /// values that exist. Empty (and hidden) on a complete load.</summary>
     [ObservableProperty] private string _suggestionsNote = "";
 
     /// <summary>Event raised when user wants to find instances of a class.</summary>
@@ -96,7 +95,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
     }
 
     /// <summary>Drop the class list so a reconnect never shows classes (and live
-    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    /// UClass* addresses) from the previous game. Client-side only.</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();
@@ -136,19 +135,16 @@ public partial class GameClassFilterViewModel : ViewModelBase
             RebuildSuggestions(result.Truncated, result.Total, result.TotalClasses);
             ApplyFilter();
 
-            // A capped list must SAY so, AND say how many it capped out of. The DLL now
+            // A capped list must SAY so, AND say how many it capped out of. The DLL
             // counts every class to the end of GObjects even after it stops collecting
             // rows, so `TotalClasses` is the honest pool total, not a copy of the cap
-            // ([CLASSTOTAL-2026-08-18] / audit #5 X2). On a truncated walk the two numbers
+            // ([CLASSTOTAL-2026-08-18]). On a truncated walk the two numbers
             // differ meaningfully — "5,000 of 6,609" — so filtering a page and finding
-            // nothing is no longer indistinguishable from the class not existing, and the
+            // nothing is distinguishable from the class not existing, and the
             // user can see how far above the cap the real count is.
             // ⚠ "or raise the cap" is offered ONLY while the cap can actually go higher.
-            // [CLASSCAP]: this line said it unconditionally on a panel that had NO cap
-            // control at all — the third instance of the audit #5 Z10 shape (name no lever the
-            // user cannot reach), found while live-checking CLASSTOTAL on Avowed, where it read
-            // "5,000 classes shown of 7,409 total … or raise the cap" with nothing to raise. The
-            // control exists now; at the ceiling the advice would be the same lie in a new place.
+            // [CLASSCAP]: advice must name no lever the user cannot reach, and at the
+            // ceiling the cap control cannot go higher, so the advice would be a lie there.
             // The cap note names RequestedLimit, the cap this load was sent with: the Max box can change while
             // the load runs.
             var capNote = result.Truncated
@@ -179,17 +175,15 @@ public partial class GameClassFilterViewModel : ViewModelBase
     /// <para>
     /// The truncation facts are parameters rather than something this method reads back
     /// off <c>_allResults</c>, because they cannot be derived from it: a capped page and
-    /// a complete list of the same length are identical here. The caller had them all
-    /// along — <see cref="LoadAsync"/> reads <c>result.Truncated</c> ten lines below the
-    /// old parameterless call and used it only for the status line, so two dropdowns
-    /// built from a sample sat next to a status line that admitted the cap.
-    /// (audit #5 AE15)
+    /// a complete list of the same length are identical here. <see cref="LoadAsync"/> has
+    /// them from the same reply its status line reads, so the dropdowns built from a sample
+    /// admit the cap just as that status line does.
     /// </para>
     /// </summary>
     /// <param name="truncated">The DLL stopped collecting at its row cap.</param>
     /// <param name="shown">Classes actually returned.</param>
     /// <param name="poolTotal">Classes counted to the end of GObjects — the honest pool
-    /// total, which the DLL keeps counting past the cap ([CLASSTOTAL] / audit #5 X2).</param>
+    /// total, which the DLL keeps counting past the cap ([CLASSTOTAL]).</param>
     private void RebuildSuggestions(bool truncated, int shown, int poolTotal)
     {
         // Distinct super names, sorted
@@ -274,9 +268,9 @@ public partial class GameClassFilterViewModel : ViewModelBase
     {
         // Commit a just-typed keyword BEFORE blanking the box (CLAUDE.md's keyword-search
         // rule: "Flush() before clearing the box on tab-switch/navigation"). Schedule()
-        // only arms a 700 ms debounce, so a user who typed a keyword, saw its matches and
-        // then hit Clear inside that window had it thrown away — and Clear is the single
-        // most likely thing to do straight after reading the results. (audit #5 AE16)
+        // only arms a 700 ms debounce, so a keyword typed, matched and then cleared inside
+        // that window would be thrown away — and Clear is the single most likely thing to
+        // do straight after reading the results.
         _filterMemory.Flush();
         FilterText = "";
         SuperFilter = "";
@@ -353,17 +347,16 @@ public partial class GameClassFilterViewModel : ViewModelBase
                 // Skip rows already scanned (XrefInfo persists across filter changes) —
                 // but NOT one whose previous sweep hit the deadline, or the partial answer
                 // becomes permanent for the session and a re-run cannot improve it.
-                // (audit #5 Z9's second half, at the fourth site — AE17/AE18)
                 if (!string.IsNullOrEmpty(entry.XrefInfo) && !XrefFormat.IsPartialCell(entry.XrefInfo))
                 { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindFunctionsByClassAsync(entry.ClassAddr, true, 200, ct);
                     // The DLL runs each sweep against a real 30 s budget and latches
-                    // `scan.deadline_hit` when it runs out. Discarding it wrote a bare "0"
-                    // for a class whose reflection sweep never finished, which reads as
+                    // `scan.deadline_hit` when it runs out. Discarding it would write a bare
+                    // "0" for a class whose reflection sweep never finished, which reads as
                     // "no function takes this class" — the opposite of what a timeout
-                    // establishes. (audit #5 AE17 / AE18)
+                    // establishes.
                     bool deadline = res.Scan?.DeadlineHit ?? false;
                     bool capped = res.Scan?.CapHit ?? false;   // [W3-XREF-CAP] its own cause, never the deadline's
                     entry.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
@@ -391,12 +384,12 @@ public partial class GameClassFilterViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // NOT a cancel. PipeClient distinguishes three causes:
             // a caller cancel carries OUR ct (caught above), a deliberate teardown carries
             // the client's own token, and an unexpected pipe death — the game crashing, the
-            // DLL unloading — arrives as an IOException. The bare catch reported all of
-            // them as "Find Func cancelled at N/M", so a dead game read as "you pressed
-            // Cancel" and nothing was logged. Third site of audit #3's L14. (audit #5 AE19)
+            // DLL unloading — arrives as an IOException. A bare catch would report all of
+            // them as "Find Func cancelled at N/M", so a dead game would read as "you
+            // pressed Cancel" and nothing would be logged.
             _log.Error("Batch Find Func failed", ex);
             StatusText = $"Find Func failed at {done}/{targets.Count}.";
         }

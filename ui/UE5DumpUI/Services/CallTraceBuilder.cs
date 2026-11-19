@@ -75,7 +75,7 @@ public static class CallTraceBuilder
 
         // The time base is the earliest clock reading, not the first record's: the DLL takes a sequence number and then
         // reads the clock, so two threads can take numbers in one order and read the clock in the other, and an
-        // unsigned difference from a later origin wraps to about 1.8e15 ms (review F4).
+        // unsigned difference from a later origin wraps to about 1.8e15 ms.
         int calls = 0;
         ulong earliest = ulong.MaxValue, latest = 0;
         foreach (ref readonly var r in recs)

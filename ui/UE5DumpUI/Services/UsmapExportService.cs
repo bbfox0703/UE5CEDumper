@@ -633,8 +633,7 @@ public static class UsmapExportService
             if (_sealed)
             {
                 // Appending here would hand out an index past the end of the table already
-                // written to the file, which is a silently corrupt export. Fail loudly instead
-                // (audit #5 W7).
+                // written to the file, which is a silently corrupt export. Fail loudly instead.
                 throw new InvalidOperationException(
                     $"USMAP name table is sealed; '{name}' was not registered before serialization.");
             }

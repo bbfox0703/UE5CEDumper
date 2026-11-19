@@ -130,7 +130,7 @@ static fs::path MakeTempPath(const fs::path& path) {
 // The root holds the app-wide fixed files; the per-game families that must move and
 // expire as a GROUP (Snapshots\ with its -wal/-shm, Bookmarks\) live in their own
 // subfolders, which this never enters — so nothing here can orphan a sibling.
-// Runs at most once per process. (audit #5 FL2)
+// Runs at most once per process.
 static void SweepOrphanTemps(const fs::path& path) {
     // Atomic, not a plain bool: SaveResults runs on the init/scan path while
     // SaveUserOverride / SaveInvokeTimeout run on pipe threads. They serialise on the
@@ -149,7 +149,7 @@ static void SweepOrphanTemps(const fs::path& path) {
 
     // Explicit increment(ec): a range-for advances with the THROWING operator++,
     // and the ec handed to the constructor only ever reports construction. Same
-    // trap as Sein's retention sweeps (audit #5 SE2).
+    // trap as Sein's retention sweeps.
     const fs::directory_iterator last{};
     int removed = 0;
     while (it != last) {

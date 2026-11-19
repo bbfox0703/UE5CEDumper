@@ -71,13 +71,13 @@ public sealed partial class ScoredPropertyRow : ObservableObject
     public int    PropOffset        => Match.PropOffset;
     /// <summary>Engine-reported byte width — carried through to
     /// <c>FreezeScriptParams.PropertySize</c> so the batch-CT path picks an
-    /// EnumProperty's writer by its real width (audit #5 Y15).</summary>
+    /// EnumProperty's writer by its real width.</summary>
     public int    PropSize          => Match.PropSize;
     /// <summary>FBoolProperty FieldMask — carried through to
     /// <c>FreezeScriptParams.BoolFieldMask</c> so the batch-CT path writes only
     /// the bit a packed bool owns instead of stamping its whole byte and wiping
-    /// up to 7 siblings (audit #5 AA1). Exactly the same dropped-field shape as
-    /// <see cref="PropSize"/> above, one row down.</summary>
+    /// up to 7 siblings. The same carry-through as <see cref="PropSize"/> above:
+    /// a field this row does not forward is lost to that path.</summary>
     public int    BoolFieldMask     => Match.BoolFieldMask;
     /// <summary>The DLL's <c>bool_native</c>, carried through beside the mask
     /// ([BOOL-NATIVE-SEARCH]).</summary>

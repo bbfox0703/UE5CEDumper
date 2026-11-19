@@ -277,7 +277,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>Clear the function-filter box. Flushes the keyword memory first — the
     /// sibling of what <see cref="ClearFieldSearchForNavigation"/> already does for the
     /// FIELD search box (<c>FlushPendingSearchKeyword</c>), so the function box's
-    /// Schedule has its Flush. (audit #5 AE16)</summary>
+    /// Schedule has its Flush.</summary>
     [RelayCommand]
     private void ClearFunctionFilter()
     {
@@ -1075,8 +1075,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Each actor as a navigable entry.
         //
         // HasNoParentOffset, and it is not cosmetic: these rows are RECONSTRUCTED from
-        // each actor's Outer, because ULevel::Actors carries no UPROPERTY (audit #5
-        // F8/F9) — there is no offset from UWorld to an actor, and no element index
+        // each actor's Outer, because ULevel::Actors carries no UPROPERTY — there is
+        // no offset from UWorld to an actor, and no element index
         // either. Offset 0 here is "unknown", not "at +0", and a CE pointer chain that
         // believes it emits [UWorld + 0] = the world's VTABLE POINTER. The same hop
         // built by Locate-in-GWorld is marked the same way (PathStepToBreadcrumbs
@@ -1156,7 +1156,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Capture the parent AT GESTURE TIME, not after the walk. A post-await check
             // alone only catches "drill first, Back second"; the reverse ordering commits
             // its damage synchronously before the await ever returns. The same rule as
-            // audit #5 AE2: the ticket is claimed at GESTURE time.
+            // ClassStructViewModel._loadId: the ticket is claimed at GESTURE time.
             var parentAtGesture = CurrentCrumb;
 
             // Save the clicked field name on the current breadcrumb for scroll restoration on Back
@@ -1842,17 +1842,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         $"{{DataTable: {dt.RowCount} rows, {dt.RowStructName}}}"
         + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
 
-    /// <summary>internal for the audit #5 V8 drill test: the DataTable branch of
+    /// <summary>internal for the DataTable drill test: the DataTable branch of
     /// NavigateToContainer is otherwise reachable only through a fire-and-forget
     /// dispatcher hop that populates <c>_cachedDataTableRows</c>.</summary>
     internal void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
     {
-        // The DataTable drill is the container path the [CONTAINERCAP] badge sweep did
-        // not reach, and it was the worst of the family: the crumb printed RowCount —
-        // the TRUE total the DLL reports — over a grid holding only the rows that fit
-        // WalkDataTableRowsAsync's fixed page (64). A 5,000-row table therefore
-        // announced "5000" and showed 64, so a row that simply had not been fetched
-        // read as a row the table does not contain (audit #5 V8).
+        // A container path of the [CONTAINERCAP] badge family. The grid holds only the
+        // rows that fit WalkDataTableRowsAsync's fixed page (64), while RowCount is the
+        // TRUE total the DLL reports. A crumb
+        // printing RowCount alone would announce "5000" over the 64 rows of a 5,000-row
+        // table, so a row that simply was not fetched would read as a row the table
+        // does not contain.
         var received = dtResult.Rows.Count;
 
         Breadcrumbs.Add(new BreadcrumbItem
@@ -2011,7 +2011,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     // internal (not private) so a test can drive the real seam: this method's element geometry
-    // (audit #5 V1) is invisible to a test that exercises the helpers in isolation.
+    // is invisible to a test that exercises the helpers in isolation.
     internal void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
     {
         var keyLabel = !string.IsNullOrEmpty(sourceField.MapKeyType) ? sourceField.MapKeyType : "?";
@@ -2395,7 +2395,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // Geometry MUST survive the filter or the emitters silently fall back to a
                 // guess, and exporting SELECTED map elements would lay out differently from
                 // exporting the same map whole. The sibling clone in CeXmlExportService keeps
-                // it too (audit #5 V5).
+                // it too.
                 MapValueOffset = containerField.MapValueOffset,
                 MapStride = containerField.MapStride,
                 MapDataAddr = containerField.MapDataAddr,
@@ -5479,7 +5479,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         //
         // AFTER the early return, like ExportCeXmlAsync above — opening it first would spend
         // two get_diagnostics round-trips and file a "Copy CE Field" sample every time the
-        // command fires with nothing selected. (audit #5 AE8, sibling site)
+        // command fires with nothing selected.
         await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Copy CE Field");
         if (IsExporting) return;   // an export is already running — its Cancel button is showing
 
@@ -6009,7 +6009,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // [SDK-LIVE-VALUE-TYPES] A header declares TYPES, and the rows on screen hold VALUES: an
             // enum's value name, a pointer's runtime class. So the class is walked -- a struct view's
             // crumb carries its struct, an object view's class is _currentClassAddr -- and its
-            // declared rows are exported, super and own-property boundary included (audit #5 W2).
+            // declared rows are exported, super and own-property boundary included.
             // The walk must be the class on screen, and on a view rendered without a walk
             // _currentClassAddr is not: a container or DataTable view keeps its OWNER's class there
             // under a class name of its own. The name check below catches that. Anything else falls
@@ -6964,7 +6964,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     /// <summary>Drop the live walk state so a reconnect never shows an object (and
     /// its live addresses) from the previous game, and STOP the auto-refresh timer so
-    /// it can't re-walk a dead pipe (audit X5). Deliberately preserves the persisted
+    /// it can't re-walk a dead pipe. Deliberately preserves the persisted
     /// per-game <see cref="BookmarkSlots"/> / <c>_activePeHash</c> / SearchHistory —
     /// those are reloaded on reconnect and must survive a disconnect.</summary>
     public void ClearOnDisconnect()
@@ -7011,7 +7011,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Audit fix #17: stop both DispatcherTimers when the VM is destroyed.
+    /// Stop both DispatcherTimers when the VM is destroyed.
     /// Without this, a still-registered Tick handler keeps the VM rooted by
     /// the Avalonia dispatcher, so the timer fires post-disposal — at best
     /// wasting work, at worst crashing on stale state.
@@ -7306,7 +7306,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// The crumb a drill-down gesture was launched FROM, captured at gesture time so a
     /// post-await append can tell whether the spine it is about to grow is still the one
-    /// the user was looking at. Audit V3/V4.
+    /// the user was looking at.
     ///
     /// ⚠ Identity, not <c>Breadcrumbs.Count</c>. Back-then-Forward, and Back-then-a-different-drill,
     /// both restore the count while changing the parent — a count check passes and the
@@ -7976,7 +7976,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
         // Record what the view is now, so the fire-and-forget load can detect a
-        // navigation that happened during its round-trip (audit #7).
+        // navigation that happened during its round-trip.
         _cachedDataTableRows = null;
         if (result.ClassName == "DataTable" && !string.IsNullOrEmpty(result.Address))
         {
@@ -8093,7 +8093,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Inject a synthetic "RowMap" field at the end of the field list
             var syntheticField = SyntheticRowMapField(dtResult, start.DataTableAddr);
 
-            // Apply on the UI thread, GUARDED (audit #7): UpdateDisplay fires this
+            // Apply on the UI thread, GUARDED: UpdateDisplay fires this
             // and forgets it. If the user navigated to another object during the
             // WalkDataTableRows round-trip, landing the synthetic RowMap (and
             // caching its rows) would attach the previous DataTable's data to the

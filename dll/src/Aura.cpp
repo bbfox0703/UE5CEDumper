@@ -1786,8 +1786,7 @@ int32_t GetSerialNumber(int32_t index) {
 
     // The whole offset rule lives in Lineal so it can be unit-pinned. A size-only rule
     // (`s_itemSize >= 24 ? 0x10 : 0x0C`) returns 0x0C for the reachable 20-byte packed
-    // item, which reads ClusterRootIndex and makes every weak reference look stale
-    // (audit #5 A1).
+    // item, which reads ClusterRootIndex and makes every weak reference look stale.
     const int serialOff = Lineal::SerialOffsetForLayout(
         s_layoutMode, s_itemSize, s_itemObjOffset, s_packedSerialOff);
 
@@ -2152,7 +2151,7 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     for (int32_t i = 0; i < count; ++i) {
         // When the caller asked for an exact total we must keep COUNTING past the cap
         // and stop only APPENDING; otherwise `total` degenerates into the page size and
-        // a 500-actor page is indistinguishable from a 500-actor level (audit #5 F6).
+        // a 500-actor page is indistinguishable from a 500-actor level.
         if (!totalOut && static_cast<int>(rset.results.size()) >= maxResults) break;
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:find", "FindInstancesDerivedFrom: aborted (client gone / shutdown)");
@@ -2226,7 +2225,7 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     rset.templatesSkipped = templatesSkipped;
     // ONE source for "is this a page or the whole set". When an exact total was asked
     // for, derive the flag from it — a second flag computed by a different code path can
-    // disagree with the total (audit #4), and this handler's caller publishes `truncated`.
+    // disagree with the total, and this handler's caller publishes `truncated`.
     rset.truncated = totalOut ? (matchTotal > maxResults)
                              : (static_cast<int>(rset.results.size()) >= maxResults);
 
@@ -2671,7 +2670,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     int numCandidates = 0;
 
     for (int32_t i = 0; i < count; ++i) {
-        // audit #5 A7: this is a full-GObjects walk; poll cancellation like every sibling
+        // This is a full-GObjects walk; poll cancellation like every sibling
         // scan (FindInstancesByClass / FindInstancesDerivedFrom / the value scans) so a
         // client disconnect or shutdown doesn't block UE5_Shutdown's join for the whole
         // pass. A cancelled lookup returns "not found": the candidate set is incomplete, so
@@ -2942,7 +2941,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // offset (parent struct offset + child field offset) and a dotted name
 // like "Stats.Levels".
 
-// ContainerKind lives in Aura.h (audit #5 A4) so the coverage predicate
+// ContainerKind lives in Aura.h so the coverage predicate
 // DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
 // Defined with the ref-meta entries below; the container walks above them check the same gate.
@@ -3188,7 +3187,7 @@ static bool IsScalarLeafType(const std::string& t) {
 // Emit `structAddr`'s direct scalar leaves (incl. those nested in direct
 // sub-structs), at element path `arrayPath`[`elemIndex`]. Containers inside the
 // struct are NOT emitted here — they're walked via GetClassContainers.
-// `anchor` has NO default (audit #5 A12): the three callers reach this helper from
+// `anchor` has NO default: the three callers reach this helper from
 // genuinely different places -- inside a container element, recursing through a direct
 // sub-struct, and from snapshot capture with no container at all -- so each must SAY
 // which it is. It is passed whole rather than as a `slotBase` to recompute from,
@@ -3244,7 +3243,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
         int32_t   capacity = 0;
         Macht::TSparseArrayView sa{};
         const bool isSparse = (cfe.kind != ContainerKind::Array);
-        // audit #5 A12 — the container's identity AT SCAN TIME, so refine can re-read the
+        // The container's identity AT SCAN TIME, so refine can re-read the
         // header instead of trusting each leaf's absolute address. Built HERE because this
         // is the only scope holding the header address and the raw counts.
         //
@@ -5159,7 +5158,7 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         if (Macht::ReadSafe(level + owOff, ow) && ow && ow != rootWorld) return res;
     }
 
-    // NO ULevel::Actors lookup (audit #5 F8).
+    // NO ULevel::Actors lookup.
     //
     // `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO
     // UPROPERTY, so FindFieldOffset cannot see it: it returns < 0, and the fuzzy
@@ -5529,8 +5528,8 @@ PropertySearchResult SearchProperties(
 
     int32_t count = GetCount();
     // NOT result.scannedObjects — that is filled after the loop with what was
-    // actually walked. Assigning the pool size here made every capped search claim
-    // a full sweep. (audit #5 D5/F4)
+    // actually walked. Assigning the pool size here would make every capped search
+    // claim a full sweep.
     int32_t walked = 0;
 
     for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
@@ -6028,8 +6027,7 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
 
     int32_t count = GetCount();
     int32_t scannedClasses = 0;
-    // Same fix as the single-query path: what was WALKED, not the pool size.
-    // (audit #5 D5/F4)
+    // Same rule as the single-query path: what was WALKED, not the pool size.
     int32_t walked = 0;
     bool    batchAborted = false;
 
@@ -7267,8 +7265,8 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     Denken::NativeAnalysisResult r = Denken::Analyze(exec, reader);
     if (!r.ok) return "none";
 
-    // Carry the decoder's "I stopped early" flag OUT rather than only into the log
-    // (audit #5 AF7). Set before the mapping loop so an early return can't drop it.
+    // Carry the decoder's "I stopped early" flag OUT rather than only into the log.
+    // Set before the mapping loop so an early return can't drop it.
     out.budgetHit = r.budgetHit;
 
     // Map each [this+off] access to the properties on the owning class (UFunction's Outer) at that offset
@@ -7704,7 +7702,7 @@ ValueScanResult ScanForValue(
                                                      // (only computed when preFilterNoise)
         // The static field index for this class hit kMaxScanFieldsPerClass, so
         // "already covered by the static paths" is no longer true for it and the
-        // deep pass must not skip anything on that basis (audit #5 A4).
+        // deep pass must not skip anything on that basis.
         bool                    fieldCapHit = false;
         std::vector<ScanField>  fields;
         // Per-object batch-read plan. The body span covering this
@@ -7917,7 +7915,7 @@ ValueScanResult ScanForValue(
             // The name is only half the gate: it says "X/Y/Z triple", not how
             // wide. The property's own reflected ElementSize settles that (12 =
             // 3xfloat, 24 = 3xdouble LWC) and a size that is neither is refused
-            // here rather than read at a guessed width. (audit #5 AB3)
+            // here rather than read at a guessed width.
             int32_t vecWidth = 0;
             if (accepted && !acceptedStructNames.empty() && f.TypeName == "StructProperty") {
                 bool nameMatch = false;
@@ -8334,8 +8332,8 @@ ValueScanResult ScanForValue(
             if (!Radar::TryDataTypeFromPropertyTypeName(propTypeName, memberDt)) return false;
             // FindEntry, not Find: a width the target cannot ENCODE may still be one
             // every field of satisfies (Smaller 500 over Int8). Find() hides that
-            // verdict by design, so using it here is what dropped whole width
-            // classes from every ordered scan. (audit #5 AB4)
+            // verdict by design, so using it here would drop whole width
+            // classes from every ordered scan.
             const Radar::NumericTargetSet::Entry* e =
                 multiTargets ? multiTargets->FindEntry(memberDt) : nullptr;
             if (!e) return false;
@@ -8468,7 +8466,7 @@ ValueScanResult ScanForValue(
                                 ? sf.elemTypeName : sf.typeName;
             d.fieldOffset   = sf.offset;
             d.boolFieldMask = sf.boolFieldMask;
-            // audit #5 A11 — tell refine HOW this field's address was formed, so a
+            // Tell refine HOW this field's address was formed, so a
             // container element can be re-anchored instead of re-read blind. The
             // switch is exhaustive on purpose: a ScanContainer added later must
             // state its anchor here or the compiler will not have covered it.
@@ -8525,7 +8523,7 @@ ValueScanResult ScanForValue(
         // interned instance index; only the value's address + snapshot +
         // element index live on the candidate itself. Used by both the
         // direct-field and per-array-element paths.
-        // `containerNum` has NO default, deliberately (audit #5 A11): every call site
+        // `containerNum` has NO default, deliberately: every call site
         // must state the container's element count at scan time, or -1 for "not a
         // container element". A site that forgets it fails to COMPILE rather than
         // silently minting a candidate refine cannot re-anchor.
@@ -8631,8 +8629,8 @@ ValueScanResult ScanForValue(
             d.boolFieldMask     = boolMask;      // NOT 0xFF: a packed bool shares its byte
                                                  // with up to 7 siblings, so a hardcoded
                                                  // whole-byte mask compares all of them.
-                                                 // Newly reachable now that struct-sided
-                                                 // Set/Map leaves emit (audit #5 A4).
+                                                 // Struct-sided Set/Map leaves reach
+                                                 // this too.
             uint32_t idx = static_cast<uint32_t>(tr.descriptors.size());
             tr.descriptors.push_back(std::move(d));
             deepDescriptors.emplace(std::move(key), idx);
@@ -8641,13 +8639,13 @@ ValueScanResult ScanForValue(
 
         auto deepEmit = [&](const ContainerLeaf& lf) {
             if (static_cast<int32_t>(tr.candidates.size()) >= maxResults) return;
-            // Was `lf.depth < 2`, i.e. "depth 1 is covered by the static paths". That
-            // is true only for ARRAYS -- collectStructArrayInner is reached solely
+            // Not a bare `lf.depth < 2` ("depth 1 is covered by the static paths"):
+            // that is true only for ARRAYS -- collectStructArrayInner is reached solely
             // from the ArrayProperty branch -- so a struct-sided TSet<FStruct> or
-            // TMap<K, FStruct> element was covered by neither the static index nor
-            // this pass, and an everyday TMap<FName, FItemData> inventory count was
-            // unfindable with Deep ON as well as OFF (audit #5 A4). The two sibling
-            // consumers already had the right shape: the snapshot path tests
+            // TMap<K, FStruct> element would be covered by neither the static index nor
+            // this pass, and an everyday TMap<FName, FItemData> inventory count would be
+            // unfindable with Deep ON as well as OFF. The two sibling
+            // consumers have the same shape: the snapshot path tests
             // `leafName.empty() && depth < 2`, and the group scan uses `depth < 1`.
             // `!sci->fieldCapHit` guards the predicate's own premise: it answers
             // "does the STATIC INDEX reach this leaf", which is only meaningful if
@@ -8796,8 +8794,8 @@ ValueScanResult ScanForValue(
             // so IsSparseIndexAllocated skips them. Element addresses are raw
             // (like TArray) — refine re-anchors them via Radar::ValueAnchor::
             // SparseElement, which re-reads the header and re-tests THIS slot's
-            // allocation bit rather than trusting the stored address (audit #5
-            // A11): a realloc does not just drop the candidate -- a freed sparse
+            // allocation bit rather than trusting the stored address: a realloc
+            // does not just drop the candidate -- a freed sparse
             // slot is REUSED in place and reads as a live value.
             if (sf.container == ScanContainer::Set
                 || sf.container == ScanContainer::MapKey
@@ -9289,7 +9287,7 @@ ValueScanStats RefineCandidates(
     std::vector<Radar::Candidate> kept;
     kept.reserve(candidates.size());
 
-    // === audit #5 A11 — re-anchor container-element candidates ================
+    // === re-anchor container-element candidates ================
     // Read each container header ONCE per pass: N candidates in one TArray share
     // one header, and a refine over 100K candidates must not pay N reads for it.
     struct HeaderSnapshot {
@@ -9362,9 +9360,9 @@ ValueScanStats RefineCandidates(
         }
         // [A2-TOPTIONAL-REFINE] The gate ScanForValue's V1c applies, applied again here -- a TOptional's bytes
         // are only a value while it is SET, and UE's MarkUnset clears bIsSet while zeroing nothing. Without this
-        // an Unchanged (or Exact-the-stale-value) refine kept a reset optional forever. Every non-optional
+        // an Unchanged (or Exact-the-stale-value) refine would keep a reset optional forever. Every non-optional
         // candidate has -1 / 0 here and falls straight through; V1c emits only Direct anchors, so c.addr IS the
-        // value address, and a group session leaves these at their defaults (audit #5 A12).
+        // value address, and a group session leaves these at their defaults.
         if (desc.optionalFlagOffset >= 0) {
             uint8_t isSet = 0;
             if (!Macht::ReadSafe(c.addr + static_cast<uintptr_t>(desc.optionalFlagOffset), isSet)
@@ -9394,7 +9392,7 @@ ValueScanStats RefineCandidates(
             // Two shapes, and they cannot share a variable: a prev-value refine
             // compares against raw stored bytes, everything else against a target
             // ENTRY whose verdict may be "every value of this width matches"
-            // (audit #5 AB4 — Find() cannot express that, FindEntry can).
+            // (Find() cannot express that, FindEntry can).
             const uint8_t* cmpTarget = nullptr;
             const Radar::NumericTargetSet::Entry* cmpEntry = nullptr;
             const uint8_t* cmp2      = nullptr;
@@ -9509,7 +9507,7 @@ ValueScanStats RefineCandidates(
     // Only when it actually fired — a line that is always there stops being read.
     // `repointed` is the half that is a GAIN: a grown container's realloc leaves
     // every stored element address stale, and without the re-anchor those
-    // candidates would be lost outright. (audit #5 A11)
+    // candidates would be lost outright.
     if (reanchorDropped || reanchorRepointed) {
         LOG_INFO("Radar: Refine re-anchor: %d container element(s) repointed after a "
                  "realloc, %d dropped (slot freed / container shrank / header gone)",
@@ -9706,7 +9704,7 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
                                ContainerKind::Direct,
                                // No container here either, so there is nothing to re-anchor
                                // against. `Direct` rather than a default, so `Unknown` keeps
-                               // meaning "a hop dropped the stamp". (audit #5 A12)
+                               // meaning "a hop dropped the stamp".
                                Radar::MakeDirectLeafAnchor(),
                                /*depth*/ 0, /*structDepth*/ 0,
             [&](const ContainerLeaf& lf) {
@@ -10478,10 +10476,10 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         if (deep && static_cast<int32_t>(result.candidates.size()) < maxResults) {
             curClassName = className;
             deepBlocks.clear();
-            // audit #5 A9: pass the per-walk element counter so dlim.maxTotalElems actually
-            // bounds this object's deep walk. Without it (the 7th arg defaulted to nullptr)
-            // the budget set at dlim.maxTotalElems above was inert, and a single deep/wide
-            // object (the recorded SEED ~24 s chunk) ran to the global 15 s deadline,
+            // Pass the per-walk element counter so dlim.maxTotalElems actually
+            // bounds this object's deep walk. Without it (the 7th arg defaults to nullptr)
+            // the budget set at dlim.maxTotalElems above is inert, and a single deep/wide
+            // object can run to the global 15 s deadline,
             // consuming the whole scan budget. Mirrors ScanForValue's deepEmit call.
             int64_t deepVisited = 0;
             WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepVisitor, &deepVisited);
@@ -10503,8 +10501,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
 
     // Report it, don't just log it. The log line below is invisible to the user who is
     // looking at the results grid, and this is the single fact that explains a slot
-    // whose "All fields" list is short — four "the scan missed my field" reports.
-    // (audit #5 AE13)
+    // whose "All fields" list is short.
     result.perSlotCapHit = capHit;
     if (capHit) {
         LOG_WARN("ScanForValueGroup: at least one object had more than %d leaves matching a slot "
@@ -10537,7 +10534,7 @@ ValueScanStats RefineGroupCandidates(
     constexpr int kDiagCandidates = 5;
     int dbgCandidates = 0;
 
-    // audit #5 A12 -- re-anchor container-element leaves before re-reading them, using
+    // Re-anchor container-element leaves before re-reading them, using
     // the same pure rule the single-value refine uses. Read each container header ONCE
     // per pass: a block is one container element, so many leaves share one header.
     struct HeaderSnapshot {
@@ -10647,7 +10644,7 @@ ValueScanStats RefineGroupCandidates(
                 if (!Macht::ReadBytesSafe(sm.leafAddr, buf, sz)) { ++dRead; continue; }
                 // [W2-ORDEN-FINDENTRY] Two shapes, as in the single-value refine: a prev-value
                 // refine compares against the stored bytes, a targeted one against a target
-                // ENTRY whose verdict may be "every value of this width matches" (audit #5 AB4).
+                // ENTRY whose verdict may be "every value of this width matches".
                 // Find() cannot express that verdict: through it, `Bigger -5` would prune every unsigned leaf.
                 const Radar::NumericTargetSet::Entry* cmpEntry =
                     usePrev ? nullptr : slots[s].targets.FindEntry(width);

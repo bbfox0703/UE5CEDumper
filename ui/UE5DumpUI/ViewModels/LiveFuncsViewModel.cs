@@ -334,7 +334,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>Read the free memory again: when the slider moves, when Trace is ticked, when the tab is shown, when
     /// the experimental tabs change, and at Start -- memory moves while the slider waits (a game launched after the
-    /// UI takes most of it; review INT-4).</summary>
+    /// UI takes most of it).</summary>
     private void RefreshAvailableMemory()
     {
         long bytes = _platform?.GetAvailablePhysicalMemoryBytes() ?? long.MaxValue;
@@ -657,7 +657,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         get
         {
             if (!AnySnapshotChoice) return "";
-            // Stacks alone: this line weighs parameter copies, so all it has to say is the DLL's refusal (review L6).
+            // Stacks alone: this line weighs parameter copies, so all it has to say is the DLL's refusal.
             if (_snapChosen.Count == 0)
             {
                 var s = CurrentEstimate();
@@ -816,7 +816,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private bool _traceAllConfirmed;
 
     /// <summary>[TRACE-UNLOADED-NAMES] Ticks the DLL left out at the last traced Start: unloaded since the fetch that
-    /// showed them (review UI-1).</summary>
+    /// showed them.</summary>
     internal int LastTickedDropped { get; private set; }
 
     /// <summary>The running recording asked for a trace (fixed at Start).</summary>
@@ -1252,7 +1252,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
                       _stackChosen.Count > 0 ? StringLookup("str.LF.Stack.NeedsTrace") : "",
                   }.Where(s => s.Length > 0));
             // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
-            // Start leaves nothing to open (review DLL-4).
+            // Start leaves nothing to open.
             HasTraceToOpen = false;
             LastTraceInfo = null;
             var start = trace == null ? await _dump.PeProfileStartAsync() : await _dump.PeProfileStartAsync(trace);
@@ -1269,7 +1269,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             }
             // [LIVEFUNCS-STEP3] A DLL that predates stacks answers no names.stacks: it took none of them, so the recording
             // is not what was asked. Stop it and give the game its memory back. One that refused every stack choice
-            // answers 0 and names them in Refused, and its recording stands (review M3). Neither sends trace.stack, so
+            // answers 0 and names them in Refused, and its recording stands. Neither sends trace.stack, so
             // its absence cannot tell the two apart.
             if (trace?.Snapshots?.Stacks != null && start.Trace is { Names: { Stacks: null } } unstacked)
             {
@@ -1414,7 +1414,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         var i = LastTraceInfo;
         // No trace object at all is a DLL without the trace. One that wrote nothing is reported empty, and the DLL has
-        // already given its ring back (review DLL-5), so it reads as not allocated.
+        // already given its ring back, so it reads as not allocated.
         if (i == null) return StringLookup("str.LF.Trace.NoneKept");
         if (i.Written == 0) return StringLookup("str.LF.Trace.Empty") + (HasNotCalledNames ? " " + NotCalledText : "");
         if (!i.Quiesced) return StringLookup("str.LF.Trace.NotQuiesced");
@@ -1654,9 +1654,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void Clear()
     {
         _allEntries = new();
-        // The tab-leave path (OnLeavingTab) already flushes; the Clear BUTTON did not,
-        // and it is the one reachable while the user is still looking at the matches
-        // their keyword produced. (audit #5 AE16, sibling site)
+        // The tab-leave path (OnLeavingTab) flushes too; the Clear BUTTON is the one
+        // reachable while the user is still looking at the matches their keyword
+        // produced.
         _filterMemory.Flush();
         FilterText = "";
         Results.Clear();

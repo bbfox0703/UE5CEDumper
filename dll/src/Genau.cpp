@@ -16,7 +16,7 @@
 #include "Serie.h"
 #include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded (B18)
-#include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby (audit #5 G2)
+#include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby
 
 #include <string>
 #include <cstring>
@@ -886,7 +886,7 @@ struct ScanReport {
     bool                           hintUsed     = false;    // true if winner came from hint cache
     // We stopped before every pattern had been tried, so `finalAddress == 0` says NOTHING
     // about whether the target exists in this image. Everything that persists or latches a
-    // scan verdict must consult this first (audit #5 MA1) — a cancelled scan that is written
+    // scan verdict must consult this first — a cancelled scan that is written
     // to the hint cache as method="not_found" destroys a good "aob" hint permanently, which
     // is strictly worse than the freeze the cancellation exists to prevent.
     //
@@ -1181,7 +1181,7 @@ void SetModuleAnchor(uintptr_t gobjects) { s_moduleAnchor = gobjects; }
 
 /// @param producesAnchor  true ONLY for FindGObjects. Deliberately has NO default: a
 ///        target added later must state whether it is the anchor producer, and the
-///        compiler — not a reviewer — is what enforces that. (audit #5 AA38)
+///        compiler — not a reviewer — is what enforces that.
 static uintptr_t ScanForTarget(
     const AobSignature* patterns, size_t count,
     ValidatorFn validate, ScanReport& report,
@@ -1259,9 +1259,9 @@ static uintptr_t ScanForTarget(
                     pr.validated = (resolved != 0);
                     // Only record the hint's own attempt when it WON. On a miss the
                     // pattern stays in `sorted` and the batch passes below scan it
-                    // again, so pushing here put the same pattern in report.results
+                    // again, so pushing here would put the same pattern in report.results
                     // twice — inflating "N patterns tried" and listing it twice in the
-                    // per-pattern dump (audit #5 AD3). The batch pass is the one that
+                    // per-pattern dump. The batch pass is the one that
                     // reports, because it is the one whose verdict is final.
                     if (resolved) {
                         report.results.push_back(pr);
@@ -1290,7 +1290,7 @@ static uintptr_t ScanForTarget(
                 // re-scans them across every loaded module. Erasing on an empty result would
                 // remove the pattern before the only pass that could still find it — a target
                 // living in another module would be unresolvable on any run that had a hint,
-                // and resolvable on the cold run that had none (audit #5 AD3).
+                // and resolvable on the cold run that had none.
             } else {
                 LOG_INFO("[%s] Hint: pattern '%s' is non-AOB type (%d), skipping hint",
                          report.targetName, hintPatternId, static_cast<int>(hintSig->resolve));
@@ -3162,7 +3162,7 @@ static int CountPreUE4Markers() {
 // "Unreal", "UE4", "UE5", "++UE") near a bare version pattern, so that
 // stray SDK strings like "PhysX 5.5.0" / "DirectX 12.5" cannot
 // fool the bare-pattern path.
-// HasUEAnchorNearby lives in VersionNeedleScan.h (audit #5 G2) so it can be unit-tested
+// HasUEAnchorNearby lives in VersionNeedleScan.h so it can be unit-tested
 // and so the gated Tier 2/3 pass can share it. Its first-byte reject inside the window
 // matters because the fused pass does not return the instant it sees a Tier 2 hit and
 // so reaches more anchor calls.
@@ -3269,8 +3269,8 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
     if (rv.version) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
         // that is the most destructive verdict this detector can reach. A single VS_FIXEDFILEINFO
-        // field is not enough evidence for it, because a game's own version can read as 4.x
-        // (audit #4 B25). So a sub-4.11 reading short-circuits as tier 1 only when the resources
+        // field is not enough evidence for it, because a game's own version can read as 4.x.
+        // So a sub-4.11 reading short-circuits as tier 1 only when the resources
         // corroborate it with a second, independent signal: the exe's ProductVersion is the
         // engine's own build string naming the same version (a licensee can edit that string's
         // branch, which is why Grimoire::EngineBuildStringCode is strict about it), or a
@@ -4627,7 +4627,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // slot and requires it to equal expectedElemSize — a recovery that qualifies as a
         // measurement. Only a still-negative offset means the version guess survives.
         // This is the one that matters most: an ELEMSIZE landing on PropertyFlags is what
-        // Ubel.cpp `WalkInstance` documents as a ~1 GiB per-element allocation (audit #5 U1).
+        // Ubel.cpp `WalkInstance` documents as a ~1 GiB per-element allocation.
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ElementSize, keeping default 0x%02X",
                  DynOff::bUseFProperty ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE);
         unmeasured |= UNMEASURED_PROP_ELEMSIZE;
@@ -5307,7 +5307,7 @@ static bool ValidateGEngineSlot(uintptr_t slotAddr) {
 }
 
 // Would a CE script replaying the published triple land on the address we actually
-// resolved? (audit #5 AD10)
+// resolved?
 //
 // This asks the question DIRECTLY rather than inferring it from the resolve enum, because
 // the enum structurally cannot answer it. `IsCeReplayableAob` is a necessary condition —

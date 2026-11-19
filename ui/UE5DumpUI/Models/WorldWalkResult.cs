@@ -17,7 +17,7 @@ public sealed class WorldWalkResult
     public int ActorCount { get; init; }
     /// <summary>The level's real actor-array element count, or -1 when the array was
     /// never read (pre-2818 DLL, or the Actors property was not found — see
-    /// <see cref="Error"/>). Test for &lt; 0, not for 0. (audit #5 D5/F6)</summary>
+    /// <see cref="Error"/>). Test for &lt; 0, not for 0.</summary>
     public int ActorTotal { get; init; } = -1;
     /// <summary>The actor list is a page: <see cref="ActorTotal"/> exceeds the limit.</summary>
     public bool Truncated { get; init; }

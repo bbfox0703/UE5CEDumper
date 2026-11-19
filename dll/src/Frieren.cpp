@@ -95,7 +95,7 @@ const char* g_cachedGEngineExport    = nullptr;   // [AOBM-EXPORT-GWORLD-AOB]
 // array descriptor, Serie's pool state, and FindGEngineSlot's report wholesale, and the
 // probes read back what earlier probes latched — so an interleave latches a MIX and
 // still prints validated=yes. Atomic for the unlocked fast path; s_initMutex guards the
-// body so a second caller waits and returns the first caller's result. (B4/B5 audit #4)
+// body so a second caller waits and returns the first caller's result.
 static std::atomic<bool> s_initialized{false};
 static std::mutex  s_initMutex;
 // [A3-MIMIC-INIT-FASTPATH] True, under s_initMutex, for the whole body of an init that is actually scanning -- from before
@@ -1189,8 +1189,8 @@ bool UE5_AutoStartBlocking() {
 bool UE5_AutoStart() {
     LAND_FORWARD(UE5_AutoStart);
     // Cheat Engine hosting us is the one case where a background thread is the
-    // wrong answer (audit #5 AB1: CE FreeLibrary's plugin DLLs, and a thread left
-    // running in an unmapped image crashes CE). There is also no remote stub to
+    // wrong answer: CE FreeLibrary's plugin DLLs, and a thread left running in an
+    // unmapped image crashes CE. There is also no remote stub to
     // outrun there — an in-process call has no deadline — so run inline.
     wchar_t hostPath[MAX_PATH] = {};
     const bool mayThread = (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) == 0)
@@ -2477,7 +2477,7 @@ static void TryInstallGameThreadHook(bool force = false) {
 // one or more Fern pipe-lane threads issue their FIRST invoke at the same moment.
 // Two threads that both detect and both reach Stark::InstallHook would make a
 // double MH_CreateHook on the same address, which can corrupt MinHook's state (and
-// races the s_originalPE write the game thread reads), risking a crash (audit #3).
+// races the s_originalPE write the game thread reads), risking a crash.
 // std::call_once serializes the pair; late arrivals
 // block until it finishes, then observe the fully-written offset via call_once's
 // happens-before. Diagnostic: the arrival counter surfaces whether the race
@@ -2569,7 +2569,7 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
                                       bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {
     if (!instance || !ufunc) return -1;
 
-    // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
+    // Lazy, race-safe one-time detection + (retryable) hook install.
     EnsureProcessEventReady();
     const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
     if (!Stark::PeOffsetUsable(peOffset)) return -3;

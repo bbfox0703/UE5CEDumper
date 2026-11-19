@@ -46,11 +46,11 @@ public sealed class FunctionPropRef
 
     /// <summary>Path 2: the first this-many <see cref="WriteSites"/> write through a register proven to hold
     /// <c>this</c>; the rest write through another base -- another object's field at the same offset, or not this
-    /// field at all (review DWS-DLL-1). 0 from a DLL that does not say.</summary>
+    /// field at all. 0 from a DLL that does not say.</summary>
     public int WriteSitesViaThis { get; init; }
 
     /// <summary>Path 2: how many properties share this offset when more than one -- bitfield bools packed into one
-    /// byte -- so a write there may be to any of them (review DWS-DLL-2). 0 when the property is alone.</summary>
+    /// byte -- so a write there may be to any of them. 0 when the property is alone.</summary>
     public int SharedOffset { get; init; }
 
     /// <summary>The first write site, "+N" for the others, "…" when the DLL kept only some, and " ?" when not even the
@@ -102,11 +102,11 @@ public sealed class FunctionPropRefsResult
     /// <summary>
     /// Path 2: the disassembler stopped at its instruction budget, so
     /// <see cref="Props"/> is a PREFIX of the fields this function touches — a field
-    /// missing from the list is "not seen YET", not "not used" (audit #5 AF7).
+    /// missing from the list is "not seen YET", not "not used".
     ///
     /// <para>Matters most for the read the dialog is used for: "nothing writes this
-    /// field, so freezing it is safe". Denken computed the flag and Aura logged it,
-    /// and it was dropped before the wire — the same discard shape as Z9/AE13.
+    /// field, so freezing it is safe". Denken computes the flag; it crosses the wire
+    /// so the dialog, not only Aura's log, can qualify that read.
     /// Always false for the exact bytecode path.</para>
     /// </summary>
     public bool BudgetHit { get; init; }

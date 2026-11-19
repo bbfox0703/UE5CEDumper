@@ -1184,7 +1184,7 @@ void Fern::MonitorLoop() {
                     // BOTH lanes together so g_perCommand is reset (AcceptLoop
                     // firstConn) before the next session's scans.
                     // Record WHICH connection raised this, unconditionally. The
-                    // latch is owned by its raisers (audit #5 F2), so a second
+                    // latch is owned by its raisers, so a second
                     // lane dropping while the flag is already set must still be
                     // recorded — otherwise clearing on the first one's exit would
                     // free a cancel the second still needs. Only the LOG stays
@@ -1431,7 +1431,7 @@ void Fern::AcceptLoop() {
             m_listenPipe = INVALID_HANDLE_VALUE;   // consumed by this connection
             firstConn = m_conns.empty();
             // Assign the id HERE, under the lock — never on the connection thread,
-            // or two accepts race to the same value (audit #5 F2).
+            // or two accepts race to the same value.
             conn->seq = ++m_connSeq;
             conn->ownerKey = Voll::ClientOwnerKey(conn->clientPid, conn->seq);
             m_conns.push_back(conn);
@@ -1443,8 +1443,7 @@ void Fern::AcceptLoop() {
         // connects into an EMPTY registry. ReevaluatePerCommandCancel above covers that
         // case (an empty registry trivially has no live owner) plus the one it cannot —
         // a lane dropping while its sibling stays connected, the ordinary shape with two
-        // lanes, which would leave the latch set for the life of the process
-        // (audit #5 F2).
+        // lanes, which would leave the latch set for the life of the process.
         (void)firstConn;
 
         LOG_INFO("PipeServer: Client connected (conns=%zu)", connCount);
@@ -1531,8 +1530,7 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     // Payload and terminator go out as TWO WriteFile calls rather than through a
     // `line + "\n"` temporary. The temporary would be a full second copy of the
     // serialized response — megabytes on snapshot_chunk / find_instances /
-    // list_all_functions, in the GAME process's heap, purely to append one byte
-    // (audit #5 F5).
+    // list_all_functions, in the GAME process's heap, purely to append one byte.
     //
     // Safe because the pipe is PIPE_TYPE_BYTE | PIPE_READMODE_BYTE (AcceptLoop's
     // CreateNamedPipeW): there are no message boundaries to split, the reader
@@ -2151,7 +2149,7 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["map_value_offset"] = fv.mapValueOffset;
         // The stride this walk used. The UI cannot derive it — the formula needs
         // alignof(Key)/alignof(Value), which never cross the wire — so it must be
-        // told, or it re-implements the formula and drifts (audit #5 V2).
+        // told, or it re-implements the formula and drifts.
         if (fv.mapStride != 0)
             fj["map_stride"] = fv.mapStride;
         if (fv.mapDataAddr != 0)
@@ -3054,7 +3052,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["objects"]      = std::move(objects);
             // std::move: `data` is dead after this return, and a snapshot chunk is
             // 8192 objects — the envelope splice would otherwise deep-copy the whole
-            // DOM inside the game process's heap (audit #5 F5).
+            // DOM inside the game process's heap.
             return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
@@ -3207,8 +3205,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             classData["super_name"] = ci.SuperName;
             classData["props_size"] = ci.PropertiesSize;
             // Where this class's OWN properties begin. "fields" below carries the whole
-            // SuperStruct chain, and nothing else in this reply implies the boundary
-            // (audit #5 W2).
+            // SuperStruct chain, and nothing else in this reply implies the boundary.
             classData["super_props_size"] = ci.SuperPropertiesSize;
             // Lower floor for the own/inherited split. super_props_size alone is wrong
             // when the super is an EMPTY USTRUCT: UE reports its PropertiesSize as 1
@@ -3945,10 +3942,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["actors"]      = actors;
             data["actor_count"] = static_cast<int>(actors.size());
             // actor_count is the PAGE size; actor_total is the whole level. -1 = never
-            // fully read (see the errors above). (audit #5 D5/F6)
+            // fully read (see the errors above).
             data["actor_total"] = actorTotal;
             // ONE source. Deriving this here from actorTotal as well would be two flags
-            // computed by different code paths — audit #4's named root cause — so take
+            // computed by different code paths, free to disagree — so take
             // the flag the pass itself produced.
             data["truncated"]   = levelActors.truncated;
             return Renge::MakeResponse(id, data).dump();
@@ -4013,7 +4010,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // mirroring the value-scan begin/refine responses.
             data["class_histogram"] = HistogramToJson(rset.classHistogram, kClassHistogramMaxRows);
             data["class_distinct"]  = rset.classDistinct;
-            // std::move — find_instances caps at 50000 rows (audit #5 F5).
+            // std::move — find_instances caps at 50000 rows.
             return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
@@ -4119,7 +4116,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // Freeze needs this: without it the generated script would write a
                 // whole byte over a bit-packed bool, clobbering up to 7 siblings
                 // and — when the mask is not 0x01 — never setting the intended
-                // bool at all. (audit #5 AA1)
+                // bool at all.
                 //
                 // ⚠ ABSENT does not mean native: it is a native whole-byte bool OR
                 // an unresolved layout (the probe missed; the byte may hold up to 8
@@ -4143,7 +4140,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["total"]           = static_cast<int>(searchResult.results.size());
             data["scanned_classes"] = searchResult.scannedClasses;
-            // The objects actually walked, not the pool size (audit #5 D5/F4).
+            // The objects actually walked, not the pool size.
             data["scanned_objects"] = searchResult.scannedObjects;
             // Additive: a client that ignores these is unaffected. Without them
             // a capped search is indistinguishable from a complete one that found
@@ -4225,7 +4222,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     // encoder above for the full contract. Also set during the field
                     // walk, so this no-preview path carries them too; Interesting
                     // Properties' batch cheat table freezes from these rows.
-                    // (audit #5 AA1, [BOOL-NATIVE-SEARCH])
+                    // [BOOL-NATIVE-SEARCH]
                     if (m.boolFieldMask != 0)
                         item["bool_mask"] = m.boolFieldMask;
                     if (m.boolNative) item["bool_native"] = true;
@@ -4240,7 +4237,6 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 envelope["match_count"] = static_cast<int>(sr.results.size());
                 // Per-query: the batch loop stops when EVERY query is full, so one
                 // seed keyword can be capped while another swept the whole pool.
-                // (audit #5 D5/F4)
                 envelope["truncated"]   = sr.truncated;
                 perQuery.push_back(envelope);
             }
@@ -4816,8 +4812,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Per-slot leaf-cap truncation. Distinct from deadline_hit: that one says
             // fewer OBJECTS were examined, this one says an examined object kept fewer
             // WITNESSES than it matched — so a slot's "All fields" list is a page, and a
-            // later Changed/Decreased refine can only re-read what was kept
-            // (audit #5 AE13). `per_slot_cap` is the EFFECTIVE cap after the 8..4096
+            // later Changed/Decreased refine can only re-read what was kept.
+            // `per_slot_cap` is the EFFECTIVE cap after the 8..4096
             // clamp above, which the client cannot derive (it omits the key entirely
             // when it equals its own default).
             data["per_slot_cap_hit"] = scanResult.perSlotCapHit;
@@ -4851,7 +4847,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool countMismatch = false, parseFailed = false;
             std::string badScanType;
             Aura::ValueScanStats stats;
-            // Carried from the Begin scan (audit #5 AE13) — a refine prunes the stored
+            // Carried from the Begin scan — a refine prunes the stored
             // pool and never re-runs Orden::MatchGroup, so it cannot recompute this.
             bool perSlotCapHit = false;
             int  perSlotCapEff = 0;
@@ -4938,7 +4934,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["page_size"]   = pageSize;
             data["duration_ms"] = static_cast<int64_t>(stats.durationMs);
             // Inherited from Begin: the survivors are a subset of a set whose per-slot
-            // witness lists were already capped. (audit #5 AE13)
+            // witness lists were already capped.
             data["per_slot_cap_hit"] = perSlotCapHit;
             data["per_slot_cap"]     = perSlotCapEff;
             data["candidates"]  = candidates;
@@ -4984,7 +4980,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json candidates = json::array();
             int totalCount    = 0;
             int filteredCount = 0;
-            bool perSlotCapHit = false;   // carried from Begin (audit #5 AE13)
+            bool perSlotCapHit = false;   // carried from Begin
             int  perSlotCapEff = 0;
             bool found = Radar::GroupSessionManager::Instance().QueryWith(
                 conn->seq, sessionId, filter, sortKey, sortDesc, excludeClasses,
@@ -5011,7 +5007,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["offset"]         = offset;
             data["count"]          = static_cast<int>(candidates.size());
             // Repeated on every window so a UI that only ever calls query (a reconnected
-            // panel, a sort change) still learns the set was capped. (audit #5 AE13)
+            // panel, a sort change) still learns the set was capped.
             data["per_slot_cap_hit"] = perSlotCapHit;
             data["per_slot_cap"]     = perSlotCapEff;
             data["candidates"]     = candidates;
@@ -5194,7 +5190,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total_classes"]   = listResult.totalClasses;
             // The walk stopped at the cap — this is a page, not the pool. The UI
             // resolves class NAMES out of it, so without this flag a class past the
-            // cap is reported as one that does not exist (audit #5 X2).
+            // cap is reported as one that does not exist.
             data["truncated"]       = listResult.truncated;
             data["classes"]         = classes;
             return Renge::MakeResponse(id, data).dump();
@@ -5238,12 +5234,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the Console panel turns a capped scan into a positive claim about the
             // game ("No UFUNCTION(exec) commands found in this game"), and
             // Interesting Functions has no flag to hand its class-noise picker.
-            // Same shape as list_classes' `truncated` above. (audit #5 Z8)
+            // Same shape as list_classes' `truncated` above.
             data["truncated"]        = enumResult.truncated;
             data["aborted"]          = enumResult.aborted;
             data["limit"]            = limit;
             data["functions"]        = functions;
-            // std::move — list_all_functions defaults to a 100000 limit (audit #5 F5).
+            // std::move — list_all_functions defaults to a 100000 limit.
             return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
@@ -5699,7 +5695,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             proc["cpu_percent"]       = ps.cpuPercent;   // -1 = needs a 2nd sample
             data["process"] = proc;
 
-            // Class-walk cache occupancy (audit #5 U5 Tier 0). The cache's bound is a
+            // Class-walk cache occupancy. The cache's bound is a
             // rough estimate; these three numbers are what make it tunable per game.
             // approx_bytes is deliberately rough --
             // it counts the two owned strings and the field vector, and std::string's
@@ -6990,7 +6986,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // Extinction / NEKOPALIVE): Objects* points directly at a single
                 // FUObjectItem[] with NO chunk pointer table. The 4-hop chunked chain below
                 // would treat Item[0].Object as a chunk-table pointer at hop 3 and hand CE a
-                // GARBAGE address the user can write to (audit #5 A8). Degrade to the
+                // GARBAGE address the user can write to. Degrade to the
                 // ABSOLUTE object address — valid for this session only — exactly as the
                 // packed branch above does. A restart-surviving flat chain would need the
                 // FFixedUObjectArray Objects-deref offset plumbed out and live verification
@@ -7051,9 +7047,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uint64_t ptrMask = 0;
             if (request.contains("ptr_mask_bits")) {
                 const auto& v = request["ptr_mask_bits"];
-                // STRICT (audit #5 AD19): 0 means "leave unchanged" here, so a typo'd mask
-                // was silently discarded and the command still answered ok — the caller is
-                // told the constant was set when it was not. Refuse instead.
+                // STRICT: 0 means "leave unchanged" here, so a typo'd mask read as 0 would
+                // be silently discarded while the command still answered ok — telling the
+                // caller the constant was set when it was not. Refuse instead.
                 if (v.is_string()) {
                     const std::string ms = v.get<std::string>();
                     uintptr_t parsed = 0;
@@ -7313,7 +7309,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 applied = true;
             }
 
-            // Run full offset detection — but ONLY if it never ran (audit #5 G3).
+            // Run full offset detection — but ONLY if it never ran.
             //
             // ValidateAndFixOffsets writes unmeasured version defaults into the LIVE DynOff
             // globals before probing and corrects them at the end, with no staging and no
@@ -7883,7 +7879,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // the other side of UE5_CallProcessEventEx's `if (Stark::IsHookActive())`
                 // and returns 0/-2/-3/-4/-8, never -7. So the text must never name an
                 // execution: that would send the user to inspect the function and the game
-                // state when nothing was ever dispatched. (audit #5 D5/F7)
+                // state when nothing was ever dispatched.
                 else if (callResult == -7) errMsg += " (game-thread hook is down — the invoke was "
                                                      "never dispatched; re-enable the script and retry)";
                 // -8 gets its own text rather than falling through as a bare number.
@@ -8202,8 +8198,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["resolved"] = (held > 0);
                 data["code"]     = (held < 0) ? held : 0;
                 // Was the instance pool capped? AddForce's int32_t return is fully spoken
-                // for (negative = ForceResult, non-negative = held count — see audit L2,
-                // do not overload it), so read the flag back off the job instead.
+                // for (negative = ForceResult, non-negative = held count — do not
+                // overload it), so read the flag back off the job instead.
                 // [LISTINSTANCES-KEEPS-TEMPLATES] ...and the templates it passed over, with held 0 too: an
                 // armed hold can then say whether only templates of the class exist (additive key).
                 if (held >= 0) {

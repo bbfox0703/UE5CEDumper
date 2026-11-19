@@ -281,10 +281,9 @@ extern "C" DWORD WINAPI Proxy_VerLanguageNameW(DWORD wLang, LPWSTR szLang, DWORD
     return fn ? fn(wLang, szLang, cchLang) : 0;
 }
 
-// Note: previously exposed a ProxyVersion_Cleanup() that called
-// FreeLibrary(g_realVersion) from DLL_PROCESS_DETACH. Removed per
-// audit finding #2 — FreeLibrary from DllMain detach is documented
-// as undefined behavior (loader-lock deadlock risk). The OS reclaims
-// the loaded version.dll automatically when the host process exits.
+// Note: g_realVersion is never freed. FreeLibrary from DllMain
+// detach is documented as undefined behavior (loader-lock deadlock
+// risk). The OS reclaims the loaded version.dll automatically when
+// the host process exits.
 
 #endif // UE5_PROXY_VERSION_BUILD

@@ -176,7 +176,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// deploy blocks a scan as a scan blocks a deploy. Without it Deploy and Undeploy could run
     /// over the same <c>Binaries</c> folder at once and both write the single result line, and
     /// <see cref="ScanAsync"/> could <c>Games.Clear()</c> the collection
-    /// <see cref="UpdateAllAsync"/> is mid-way through. (audit #5 AE5 / AE6 / AE7)
+    /// <see cref="UpdateAllAsync"/> is mid-way through.
     /// </para>
     /// <para>
     /// This does NOT replace what the MVVM toolkit already does. <c>AsyncRelayCommand</c> reports
@@ -239,7 +239,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// is what calls <c>Cancel()</c> on them (<see cref="CancellableOperations"/>), so those
     /// paths are reachable. That includes the destructive one:
     /// <see cref="DeleteSelectedOrphansAsync"/> recycles a chain of files per row and
-    /// re-checks the token between rows. (audit #5 AE20)
+    /// re-checks the token between rows.
     /// </para>
     /// <para>
     /// One button rather than one per command: the panel is exclusive (only one of these can be
@@ -354,7 +354,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
     /// <summary>Whether any games are selected for batch operations.
     ///
-    /// <para>audit #5 AE29 — ⚠ NO VIEW BINDS THIS TODAY, and it has no per-row hook, so it is
+    /// <para>⚠ NO VIEW BINDS THIS TODAY, and it has no per-row hook, so it is
     /// only correct immediately after the bulk sites that re-raise it (Select All / Clear /
     /// Invert / rescan). Its sibling <see cref="HasOrphanSelection"/> IS bound and DOES have one
     /// (<see cref="OnOrphanRowChanged"/>). Before binding this to anything, subscribe to each
@@ -424,7 +424,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // two quick clicks start two refreshes over the same Games, and whichever
             // CONTINUATION resumes last writes the grid — which may be the one for the type the
             // radio no longer shows. Cancel + re-check, the idiom InstanceFinderViewModel
-            // already uses for its own re-run. (audit #5 AE4)
+            // already uses for its own re-run.
             _typeRefreshCts?.Cancel();
             _typeRefreshCts?.Dispose();
             _typeRefreshCts = new CancellationTokenSource();
@@ -914,8 +914,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
             ClearError();
             // GetAppDataPath() is %LOCALAPPDATA% itself, so the app's own folder segment
             // has to be added — every other consumer does. Without it the written record
-            // of a destructive cleanup landed in %LOCALAPPDATA%\Reports: outside the
-            // System-tab data wipe, and outside "send me your app data folder". Audit #4 B38.
+            // of a destructive cleanup would land in %LOCALAPPDATA%\Reports: outside the
+            // System-tab data wipe, and outside "send me your app data folder".
             string dir = Path.Combine(_platform.GetAppDataPath(),
                                       Constants.LogFolderName, "Reports");
             Directory.CreateDirectory(dir);

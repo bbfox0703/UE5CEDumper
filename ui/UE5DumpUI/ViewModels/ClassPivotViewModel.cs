@@ -199,7 +199,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     public bool CanLocateResult => CanOpenResultObject;
     /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
     /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
-    /// flag would disable this button on games where GWorld IS resolved (audit #5 AE10).</summary>
+    /// flag would disable this button on games where GWorld IS resolved.</summary>
     public bool CanLocateResultInGWorld => CanOpenResultObject;
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX button reads. Never null:
@@ -301,7 +301,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     /// <summary>Drop the live DataTable pick (process-scoped, from FindInstances) and
-    /// cancel pending work on disconnect (audit X5). Snapshot-derived rows are
+    /// cancel pending work on disconnect. Snapshot-derived rows are
     /// disk-backed and PRESERVED — a reconnect re-populates via SetEngineState.</summary>
     public void ClearOnDisconnect()
     {
@@ -681,7 +681,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     // `keepTicked` carries the user's ticks across a refresh, by Id — the picks hold
     // NEW SnapshotMeta instances afterwards. Empty (or null) means "first build":
     // only then does the two-newest default apply, which is what makes the default
-    // a starting point rather than something that reasserts itself (audit #5 AF5).
+    // a starting point rather than something that reasserts itself.
     private void RebuildDiscoverPicks(IReadOnlySet<long>? keepTicked = null)
     {
         bool restoring = keepTicked is { Count: > 0 };

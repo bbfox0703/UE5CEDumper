@@ -36,14 +36,10 @@ namespace UE5DumpUI.Views;
 public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
 {
     /// <summary>
-    /// AOT-safe column sort comparers, keyed by SortMemberPath. Found by the
-    /// repo-wide DataGrid sweep behind audit #5 AF16-AF23 — no finding named this
-    /// dialog, and it is the seventh site with the identical shape.
-    /// <para><b>It also carried a written justification for the defect</b>, which is
-    /// how it survived: "sort is a runtime nice-to-have ... sortable headers still
-    /// work in the non-AOT default build". True and beside the point — the build we
-    /// SHIP is the trimmed one, so the headers were dead for every user. Wiring them
-    /// costs four lines.</para>
+    /// AOT-safe column sort comparers, keyed by SortMemberPath.
+    /// <para><b>Not a nice-to-have</b>: sortable headers without them still work in the
+    /// non-AOT default build, but the build we SHIP is the trimmed one, where they would be
+    /// dead for every user.</para>
     /// </summary>
     private static readonly IReadOnlyDictionary<string, IComparer> PickerSortComparers =
         new Dictionary<string, IComparer>

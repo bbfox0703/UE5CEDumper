@@ -19,15 +19,13 @@ public static class KnownStructLayouts
     /// version.</b> When they disagree the guess is wrong — a mis-detected version (LWC turns
     /// FVector's floats into doubles, doubling every offset) or a licensee fork with a modified
     /// struct, both of which this project has met. Acting on a wrong layout puts every sub-field
-    /// at a wrong offset with nothing on screen saying so. (audit #5 Y7.)</para>
+    /// at a wrong offset with nothing on screen saying so.</para>
     ///
-    /// <para><b>This lives HERE, next to the table it guards, because it did not before.</b> Y7's
-    /// fix was written as a private helper inside <c>InvokeParamDialog</c>, so it protected the
-    /// one call site in that view and could not be reached by the two in
-    /// <c>StructReturnDecoder</c> (a Service cannot depend on a View) — leaving the invoke dialog
-    /// refusing a size-contradicted layout for its INPUT boxes while accepting the very same
-    /// layout for the RESULT grid. That is audit #5 AC2, i.e. the audit's own fix applied at 1 of
-    /// 4 sites. A predicate that guards a table belongs with the table.</para>
+    /// <para><b>This lives HERE, next to the table it guards.</b> A private helper inside
+    /// <c>InvokeParamDialog</c> could not be reached from <c>StructReturnDecoder</c> (a Service
+    /// cannot depend on a View), and would leave the invoke dialog refusing a size-contradicted
+    /// layout for its INPUT boxes while accepting the very same layout for the RESULT grid. A predicate
+    /// that guards a table belongs with the table.</para>
     /// </summary>
     /// <param name="structName">UScriptStruct name, or null/empty for a non-struct param.</param>
     /// <param name="engineSize">Engine-reported byte size of the param. &lt;= 0 means the DLL did

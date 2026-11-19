@@ -22,9 +22,8 @@ namespace UE5DumpUI.Services;
 /// "keep 21 days": rotation runs on every startup, so a few restarts discarded
 /// everything before them regardless of date. Mirrors Grimoire::LOG_RETENTION_DAYS
 /// in the DLL's Sein logger.
-/// (audit #5 Z17 — this block said "5MB" and "keep 15 days"; both constants had moved
-/// to 8 MB / 21 days. Named rather than re-stated numerically where the constant exists,
-/// so the next change to either cannot silently invalidate the prose again.)
+/// (Each constant is named beside its number, so when either value moves the prose
+/// still points at the source of truth.)
 ///
 /// Startup housekeeping runs in three passes, widening as it goes:
 ///   1. per-category archive + prune of THIS folder  (ArchivePreviousLog / PruneAgedLogs)
@@ -277,11 +276,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
                 // defaults rollOnFileSizeLimit to false and rollingInterval to Infinite,
                 // so the sink has no roll point and silently drops every event once the
                 // limit is reached — for the rest of the process, with no error and no
-                // SelfLog. Measured against these exact package versions: 1 file created,
-                // frozen at the limit, 69 of 500 events kept, and the post-limit warnings
-                // and errors simply absent. Meanwhile docs/architecture.md and the
-                // CLAUDE.md log rule both promise the 8 MB cap ARCHIVES mid-session, and
-                // the DLL half (Sein::RotateIfNeeded) genuinely does. Audit #4 B31.
+                // SelfLog. docs/architecture.md and the CLAUDE.md log rule both promise
+                // the 8 MB cap ARCHIVES mid-session, as the DLL half
+                // (Sein::RotateIfNeeded) does.
                 rollOnFileSizeLimit: true,
                 // Serilog defaults this to 31 as soon as rolling is enabled. A COUNT limit
                 // is precisely the retention policy this project deliberately replaced with
@@ -542,8 +539,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
 
     /// <summary>
     /// Last-write time of the newest file anywhere under <paramref name="dir"/>, falling
-    /// back to the directory's own timestamp only when it is empty. Shared by both
-    /// sweeps so they cannot disagree about which folder is "recent".
+    /// back to the directory's own timestamp only when it is empty. The directory's own
+    /// timestamp moves when an entry is added or removed, not when an existing file in
+    /// it is appended to, so it can call a folder with a live log in it stale.
     /// </summary>
     private static DateTime NewestWriteUtc(DirectoryInfo dir)
     {
@@ -561,28 +559,25 @@ public sealed class LoggingService : ILoggingService, IDisposable
     }
 
     // ================================================================
-    // REMOVED: the count-based per-process folder cap (audit #5 AF9).
+    // NO count-based per-process folder cap.
     //
-    // `CleanupProcessFolders` evicted every per-game folder past the newest 20 and
-    // logged it at Debug. Three things make that indefensible rather than merely
+    // Evicting every per-game folder past the newest N would be wrong, not merely
     // redundant:
     //
     //  1. CLAUDE.md's Log-output rule says retention is BY AGE, not by generation
-    //     count, and explains why a count cannot express it. Constants.cs said the
-    //     same thing four lines above `MaxProcessFolders = 20`, so the file
-    //     contradicted itself.
-    //  2. There was nothing to guard against. A folder is named after the GAME
+    //     count, and explains why a count cannot express it.
+    //  2. There is nothing to guard against. A folder is named after the GAME
     //     (SanitizeFolderName(processName)), not the PID — relaunching a game reuses
     //     its folder, so the count is "distinct games played in 21 days". It cannot
     //     run away.
-    //  3. It deleted RECURSIVELY, and the folder is shared: the DLL writes five
+    //  3. Such a cap deletes RECURSIVELY, and the folder is shared: the DLL writes five
     //     categories into the same directory under an age-only policy of its own
-    //     (Sein.cpp's PruneStaleProcessFolders, whose comment already reads
-    //     "Age-based, matching the file policy"). So the UI silently destroyed logs
-    //     the DLL had deliberately kept — the two halves of one folder disagreeing.
+    //     (Sein.cpp's PruneStaleProcessFolders, "Age-based, matching the file
+    //     policy"). The UI would silently destroy logs the DLL deliberately keeps —
+    //     the two halves of one folder disagreeing.
     //
     // CleanupOldLogFolders(Constants.LogMaxAgeDays) runs from the constructor and is
-    // now the sole owner of folder retention, which is what the docs always claimed.
+    // the sole owner of folder retention.
     // ================================================================
 
     /// <summary>
@@ -609,9 +604,7 @@ public sealed class LoggingService : ILoggingService, IDisposable
                     continue;
 
                 // Judge by the NEWEST file inside, not the directory's own mtime —
-                // see NewestWriteUtc for why. Shared with CleanupProcessFolders so the
-                // two sweeps cannot disagree about which folder is "recent"; they used
-                // to, and the count-based one was the wrong half.
+                // see NewestWriteUtc for why.
                 if (NewestWriteUtc(dir) < cutoff)
                 {
                     try

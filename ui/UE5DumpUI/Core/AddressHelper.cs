@@ -40,14 +40,14 @@ public static class AddressHelper
     ///
     /// <para>
     /// Returns false — rather than a number — for the two provably-out-of-module cases:
-    /// an address BELOW the base (an unsigned subtraction there wraps, which is how a
-    /// heap pointer came out as <c>+FFFF81820A83F268</c>), and a delta wider than
+    /// an address BELOW the base (an unsigned subtraction there wraps, turning a
+    /// heap pointer into e.g. <c>+FFFF81820A83F268</c>), and a delta wider than
     /// <see cref="MaxPossibleImageRva"/>. Also false when either string is not hex.
     /// </para>
     /// <para>
-    /// Pure and static so the rule is testable without a game: it is the whole of
-    /// audit #5 AE30. NOT exact in the other direction — a heap allocation that happens
-    /// to land within 4 GiB above the image still passes, because the module's real
+    /// Pure and static so the rule is testable without a game. NOT exact in the other
+    /// direction — a heap allocation that happens to land within 4 GiB above the image
+    /// still passes, because the module's real
     /// SizeOfImage is not on the wire (the DLL sends <c>module_base</c> and
     /// <c>module_name</c> only). Tightening it further means adding a wire field.
     /// </para>

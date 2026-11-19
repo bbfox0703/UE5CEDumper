@@ -129,7 +129,8 @@ public partial class SnapshotViewModel
     public bool CanUseGroupRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && NewestGroupSnapshot?.GameSessionId == _currentSessionId;
 
-    // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
+    // NOT gated on the client IsGWorldAvailable flag: the DLL is the source of truth for GWorld,
+    // and a stale/false flag would disable the button on games where GWorld IS resolved.
     public bool CanLocateGroupRowInGWorld => CanUseGroupRowActions;
 
     /// <summary>[AOBM-VALUE-ROWS-CE] The slots' HEX / +CE buttons: the same session gate as Copy, and a reachable

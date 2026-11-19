@@ -190,7 +190,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Audit fix #16: dispose the debounce Timer and any in-flight load CTS
+    /// Dispose the debounce Timer and any in-flight load CTS
     /// when the VM is destroyed. Without this, a Timer callback fires after
     /// the VM is GC-eligible (Timer holds a strong root via the lambda),
     /// keeping the whole VM alive and potentially racing with finalization.
@@ -486,7 +486,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             // Superseded by a newer load/search -> that op owns the cache and the flag.
             if (gen != _loadGen) return;
             // User pressed Cancel. The previous result set is still on screen and is
-            // still valid, so say so rather than blanking it (audit #5 V9).
+            // still valid, so say so rather than blanking it.
             StatusText = "Search cancelled";
             _log.Info($"Search cancelled for '{SearchText}'");
         }
@@ -503,7 +503,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Drop all process-scoped rows so a reconnect never shows objects
-    /// (and addresses) from the previous game (audit X5). Client-side only — the
+    /// (and addresses) from the previous game. Client-side only — the
     /// pipe is already gone; does not touch persisted state (there is none here).</summary>
     public void ClearOnDisconnect()
     {

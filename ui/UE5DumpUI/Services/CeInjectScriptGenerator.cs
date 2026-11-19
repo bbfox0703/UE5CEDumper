@@ -180,7 +180,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "    showMessage('[UE5CEDumper] Already loaded and serving in this process.\\n\\n' ..");
         Line(sb, "      'No injection needed -- just launch UE5DumpUI.exe and click Connect.')");
         // Untick: this record did not start that pipe, so its [DISABLE] must never
-        // be allowed to run UE5_Shutdown against it (audit #4 B30).
+        // be allowed to run UE5_Shutdown against it.
         // [A3-B30-STALE-FLAG] ...and the flag that guard reads must be FALSE here. It is one global in CE's Lua
         // state, which outlives a File > Open (CE frees the records WITHOUT running [DISABLE]), so a record from the
         // previous table can have left it true -- and this very untick would then pass the guard and tear the
@@ -311,11 +311,10 @@ public static class CeInjectScriptGenerator
         // Without this a second disable would still pass the guard with nothing to stop.
         Line(sb, "UE5_StartedByThisRecord = false");
         // The DLL stays mapped: FreeLibrary on an injected DLL mid-game isn't worth
-        // the risk. Re-ticking is a real restart now, not a shrug: UE5_Shutdown parks
+        // the risk. Re-ticking is a real restart, not a shrug: UE5_Shutdown parks
         // initState at IDLE, [ENABLE] reads that as "parked" and calls UE5_AutoStart,
-        // which re-arms Tot's shutdown latch and Mimic's poller (audit #4 B1(b) —
-        // before that fix the mailbox thread could only ever be started from DllMain,
-        // so a Disable was unrecoverable without restarting the game).
+        // which re-arms Tot's shutdown latch and Mimic's poller -- without that re-arm
+        // a Disable would be unrecoverable short of restarting the game.
         Line(sb, "if not b then");
         Line(sb, "  print('[UE5CEDumper] shutdown did not complete cleanly -- check the DLL log.')");
         Line(sb, "else");

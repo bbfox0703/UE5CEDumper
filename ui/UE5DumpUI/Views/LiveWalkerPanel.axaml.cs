@@ -56,14 +56,14 @@ public partial class LiveWalkerPanel : UserControl
             ["PtrAddress"]   = DataGridSortComparers.Hex<LiveFieldValue>(r => r.PtrAddressValue),
         };
 
-    // FunctionGrid's "Params" column (audit #5 AF20). This file wired 1 of its 3
-    // DataGrids; the missed one is subtler than a template column: "Params" IS a
+    // FunctionGrid's "Params" column, a subtler case than a template column: "Params" IS a
     // DataGridTextColumn, but its value comes from a <MultiBinding> in ELEMENT
     // syntax, which is a reflection binding rather than a compiled one — so nothing
-    // roots NumParms and the header was inert in the shipped trimmed build. The
-    // third grid (the reverse-lookup results) binds and sorts on the same path for
-    // every column, so it is rooted -- but rooted is not ORDERED: its Owner Addr column
-    // sorted the hex text until [W4-HEXSORT], and now has ReferencesSortComparers.
+    // roots NumParms and, without this comparer, the header is inert in a trimmed build.
+    // The reverse-lookup results grid binds and sorts on the same path for every
+    // column, so it is rooted -- but rooted is not ORDERED: without a comparer its
+    // Owner Addr column would sort the hex text, so it has ReferencesSortComparers
+    // [W4-HEXSORT].
     private static readonly IReadOnlyDictionary<string, IComparer> FunctionsSortComparers =
         new Dictionary<string, IComparer>
         {
@@ -78,7 +78,7 @@ public partial class LiveWalkerPanel : UserControl
             ["OwnerAddress"] = DataGridSortComparers.Hex<ReferenceMatch>(r => r.OwnerAddressValue),
         };
 
-    // Audit fix #18: track the currently-subscribed VM so we can `-=` from
+    // Track the currently-subscribed VM so we can `-=` from
     // it before re-subscribing to a new one. Without this, every
     // DataContext reassignment leaves a stale handler on the previous VM
     // (keeping it alive) and adds a duplicate handler on the new one

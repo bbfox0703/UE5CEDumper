@@ -635,7 +635,7 @@ public partial class SnapshotViewModel : ViewModelBase
 
     /// <summary>Stop the auto-snapshot loop (it re-scans the game on a tick and would
     /// otherwise hammer a dead pipe) and drop the live session id so per-row Live/Addr
-    /// actions auto-disable on disconnect (audit X5). The saved snapshot corpus + diff
+    /// actions auto-disable on disconnect. The saved snapshot corpus + diff
     /// rows are disk-backed and PRESERVED — a reconnect re-scopes via SetEngineState.</summary>
     public void ClearOnDisconnect()
     {

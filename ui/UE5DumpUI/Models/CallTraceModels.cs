@@ -52,7 +52,7 @@ public sealed class TraceInfo
     public int   Ticked     { get; init; }
     public int   Excluded   { get; init; }
     /// <summary>[TRACE-UNLOADED-NAMES] Ticks the DLL left out at Start: their function was unloaded since the fetch
-    /// that showed it (review UI-1). Only in a traced Start's reply.</summary>
+    /// that showed it. Only in a traced Start's reply.</summary>
     public int   TickedDropped { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The trace records only inside ticked calls (by address or by name) and, with
     /// snapshots, the chosen calls alone. Null from a DLL that predates names: then <see cref="Ticked"/> &gt; 0 says it.</summary>
@@ -107,7 +107,7 @@ public sealed class TraceFuncName
     public bool   Unloaded      { get; init; }
     /// <summary>With <see cref="Unloaded"/>: another function has taken the address since.</summary>
     public bool   Recycled      { get; init; }
-    /// <summary>The address held another function during the recording (review DLL-3): its calls are both functions',
+    /// <summary>The address held another function during the recording: its calls are both functions',
     /// under the latest one's name.</summary>
     public bool   Reused        { get; init; }
     public string ClassName     { get; init; } = "";

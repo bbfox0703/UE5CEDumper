@@ -8,8 +8,8 @@ namespace UE5DumpUI;
 /// <summary>
 /// Explicit ViewLocator — no reflection, AOT compatible.
 ///
-/// <para><b>Match is deliberately wider than Build, and this is not an oversight</b>
-/// (audit #5 AF27). <c>Match</c> accepts all <b>21</b> concrete <see cref="ViewModelBase"/>
+/// <para><b>Match is deliberately wider than Build, and this is not an oversight</b>.
+/// <c>Match</c> accepts all <b>21</b> concrete <see cref="ViewModelBase"/>
 /// subclasses; <c>Build</c> has arms for <b>6</b>. The other 15 fall to the <c>_ =&gt;</c> arm
 /// and render "View not found: X". Narrowing <c>Match</c> to the 6 would NOT be an improvement:
 /// Avalonia would then apply its default template and render <c>ToString()</c>, i.e. the type

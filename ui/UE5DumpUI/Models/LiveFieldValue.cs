@@ -127,7 +127,7 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// True when this row is NOT reachable from the current object by a byte offset —
     /// it was derived from a back-reference, not read out of a reflected field. The
     /// GWorld actor list is the only producer today: <c>ULevel::Actors</c> carries no
-    /// UPROPERTY (audit #5 F8/F9), so the actors under "Start from GWorld" are
+    /// UPROPERTY, so the actors under "Start from GWorld" are
     /// reconstructed from each actor's <c>Outer</c> and there is no offset — and no
     /// element index — that walks UWorld to them.
     ///

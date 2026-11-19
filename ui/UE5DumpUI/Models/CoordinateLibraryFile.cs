@@ -139,10 +139,10 @@ public static class CoordPrecision
     /// "R" goes scientific below 1e-5, so a legitimately-exported small value comes
     /// back as "1E-05".
     ///
-    /// <para><b>AllowThousands is deliberately NOT set</b> (audit #4 B21). With it, a European
-    /// decimal comma parsed silently and WRONGLY: <c>"67162,398"</c> became <b>67162398</b> — a
-    /// coordinate a thousand times out, accepted with no issue raised, because the
-    /// decimal-comma repair only ran for <c>;</c>-delimited files. Dropping the flag also
+    /// <para><b>AllowThousands is deliberately NOT set</b>. With it, a European decimal
+    /// comma would parse silently and WRONGLY: <c>"67162,398"</c> would become
+    /// <b>67162398</b> — a coordinate a thousand times out, accepted with no issue raised, because the
+    /// decimal-comma repair runs only for <c>;</c>-delimited files. Leaving the flag off also
     /// rejects Excel's grouped <c>"67,162.398"</c>, and that is the accepted trade: a rejected
     /// row is VISIBLE in the import preview and the user can fix the file, whereas a silently
     /// mis-scaled coordinate teleports them into the void with nothing to look at. Grouped

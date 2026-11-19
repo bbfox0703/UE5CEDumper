@@ -59,7 +59,7 @@ static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>
 // Ubel.h for why those bytes, and not an (InternalIndex, SerialNumber) pair). Without
 // that, after a level change every name-bearing response would serve the DESTROYED
 // object's name for the rest of the process, while the class is read fresh — so the two
-// would disagree with no error anywhere. (audit #5 U6 + F3's in-session half)
+// would disagree with no error anywhere.
 struct NameCacheEntry {
     Ubel::NameWitness witness;
     std::string       name;
@@ -140,7 +140,7 @@ static std::string ReadFName(uintptr_t fnameAddr) {
 //
 // Use it rather than open-coding `memcpy(&idx, p, 4); Serie::GetString(idx)`, which drops
 // FName::Number: Slot_1 / Slot_2 / Slot_3 would all render as "Slot" while ReadFNameAt,
-// reading the same 8 bytes through the function above, returns the suffix. (audit #5 U8)
+// reading the same 8 bytes through the function above, returns the suffix.
 //
 // Number sits at DynOff::FNAME_NUMBER: +4, except on a case-preserving UE4 / 5.0 build, whose
 // FName is {ComparisonIndex, DisplayIndex, Number} and puts it at +8. [VND583-07] From 5.1 the
@@ -255,7 +255,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         // UEnum: values below the break point resolve, values above it render as raw
         // integers — in the Live Walker, the Property Grid and every CE export, for
         // the rest of the process, with no retry. Leaving it uncached costs a re-read
-        // per lookup and lets the next one recover. (audit #5)
+        // per lookup and lets the next one recover.
         if (!tableComplete) {
             for (const auto& [v, n] : entries)
                 if (v == value) return n;
@@ -328,7 +328,7 @@ static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
     std::memcpy(&data, hdr, sizeof(data));
     std::memcpy(&count, hdr + 8, sizeof(count));
 
-    if (!data || !IsPlausibleStringCount(count)) return "";  // audit #5 U10: cap bounds a garbage Count, not string length
+    if (!data || !IsPlausibleStringCount(count)) return "";  // the cap bounds a garbage Count, not string length
 
     // Read wchar_t buffer (count includes null terminator in most UE builds)
     std::vector<wchar_t> wbuf(count, 0);
@@ -368,7 +368,7 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
     std::memcpy(&data, hdr, sizeof(data));
     std::memcpy(&count, hdr + 8, sizeof(count));
 
-    if (!data || !IsPlausibleStringCount(count)) return "";  // audit #5 U10: cap bounds a garbage Count, not string length
+    if (!data || !IsPlausibleStringCount(count)) return "";  // the cap bounds a garbage Count, not string length
 
     // count includes the null terminator in most UE builds.
     std::vector<char> bytes(count, 0);
@@ -580,7 +580,7 @@ static int LazyGuidOffset(int32_t elemSize) {
 // where it carries a matching length ceiling (num > 8192) plus a Max-window and
 // heap-pointer gate the by-offset ReadFString cannot use (it has no header sibling
 // to corroborate). ReadFString shares the same 8192-char bound
-// (Ubel::kMaxFStringChars, audit #5 U10) so a long StrProperty resolves too.
+// (Ubel::kMaxFStringChars) so a long StrProperty resolves too.
 // Returns "" if `addr` does not hold a plausible, decodable FString.
 // ============================================================
 static std::string TryDecodeFStringAt(uintptr_t addr) {
@@ -759,7 +759,7 @@ void ClearNameCache() {
     //
     // Two reasons to purge, and STALENESS IS NOT ONE OF THEM: every hit is
     // witnessed against the FName bytes it was decoded from, so a recycled address
-    // cannot return a destroyed object's name even between purges (audit #5 U6/F3).
+    // cannot return a destroyed object's name even between purges.
     // The reasons are (a) bounding growth — one entry per GObjects slot ever named,
     // millions of strings and ~150-200 MB on a 2M-object game — and (b) covering a
     // Serie::Init re-run, the one event that can remap a ComparisonIndex and so make
@@ -1137,7 +1137,7 @@ static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 // filed under the new epoch. Not declared in the header, so nothing outside this translation unit can set it.
 static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
 
-// --- LRU bound for the cache above (audit #5 U5) ---
+// --- LRU bound for the cache above ---
 //
 // Legal here and ONLY here: WalkClass returns ClassInfo BY VALUE and every
 // s_walkClassCache touch copies under s_walkClassCacheMutex, so evicting an entry
@@ -3570,7 +3570,7 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // sizeof(TLazyObjectPtr) = FWeakObjectPtr(8) + the persistent-ptr envelope + FGuid(16).
     // ⛔ NOT a fixed 0x20. FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so there is
     // no pad after the tag: 0x1C up to 5.2, and 0x18 from 5.3 where TagAtLastTest was deleted.
-    // 0x20, the FWeakObjectPtr+Tag+pad+FGuid model (audit A1), is wrong in EVERY era. A caller
+    // 0x20, the FWeakObjectPtr+Tag+pad+FGuid model, is wrong in EVERY era. A caller
     // that overrides the engine's size with this entry substitutes it for a right one, so it is
     // the envelope LazyGuidOffset answers (latched, else the version default) + sizeof(FGuid).
     if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
@@ -4094,7 +4094,7 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return bytes[0] ? "true" : "false";
     }
     if (typeName == "NameProperty" && size >= 4) {
-        // FName — resolve via FNamePool, Number included (audit #5 U8)
+        // FName — resolve via FNamePool, Number included
         return DecodeFNameBytes(bytes, size);
     }
 
@@ -4425,9 +4425,9 @@ ReadArrayResult ReadArrayElements(
         // Interpret value
         if (enumPtr) {
             // Enum element: read raw integer value and resolve name. Same byte-enum-
-            // unsigned rule as the struct-field path via ReadEnumRawValue (audit #5 U9);
-            // this path already read size 1 unsigned, so routing it here only shares the
-            // rule so the two enum readers cannot drift.
+            // unsigned rule as the struct-field path via ReadEnumRawValue; this path
+            // reads size 1 unsigned either way, so routing it here only shares the rule
+            // so the two enum readers cannot drift.
             int64_t rawVal = ReadEnumRawValue(buf.data(), elemSize);
             elem.rawIntValue = rawVal;
             elem.enumName = ResolveEnumValue(enumPtr, rawVal);
@@ -4764,7 +4764,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         cf.typeName = fi.TypeName;
         cf.offset   = fi.Offset;
 
-        // Audit #5 U15: fi.Size is FPROPERTY_ELEMSIZE read RAW, which this file
+        // fi.Size is FPROPERTY_ELEMSIZE read RAW, which this file
         // documents (ValidateArrayElemSize, ReadPointerArrayElements,
         // ReadWeakObjectArrayElements, ReadLazyObjectArrayElements) as returning
         // garbage for members of certain UScriptStruct layouts. A garbage size makes
@@ -4914,9 +4914,9 @@ ReadArrayResult ReadStructArrayElements(
                     : byteVal != 0;
                 sf.value = boolVal ? "true" : "false";
             } else if ((cf.typeName == "EnumProperty" || cf.typeName == "ByteProperty") && cf.enumAddr) {
-                // audit #5 U9: a byte enum must be read UNSIGNED — reading through int8_t
-                // sign-extended the UHT MAX=255 sentinel (and any enumerator >= 128) to a
-                // negative int that never matched the UEnum table. ReadEnumRawValue keeps
+                // A byte enum must be read UNSIGNED — reading through int8_t would
+                // sign-extend the UHT MAX=255 sentinel (and any enumerator >= 128) to a
+                // negative int that never matches the UEnum table. ReadEnumRawValue keeps
                 // size 1 unsigned and 2/4/8 signed, matching the array-enum sibling below.
                 int64_t rawVal = ReadEnumRawValue(buf.data() + cf.offset, cf.size);
                 sf.value = ResolveEnumValue(cf.enumAddr, rawVal);
@@ -4960,7 +4960,7 @@ ReadArrayResult ReadStructArrayElements(
                 // Raw UObject* at field+0. InterfaceProperty belongs here (and only
                 // here): FScriptInterface is { UObject* +0x00; void* +0x08 } = 16 bytes,
                 // so a `cf.size == 8` gate would match neither arm and report every
-                // BOUND interface as "null" (audit #5 U14). The declared width is 16,
+                // BOUND interface as "null". The declared width is 16,
                 // the pointer is still 8 bytes at offset 0.
                 //
                 // The gate is BOUNDS, not width: all three hold a UObject* at
@@ -5196,7 +5196,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
 // Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
 // Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
 // ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
-// and 5.3 deleted the tag outright. 0x20 is the model audit A1 removed.
+// and 5.3 deleted the tag outright.
 // ============================================================
 bool IsLazyObjectArrayType(const std::string& innerTypeName) {
     return innerTypeName == "LazyObjectProperty";
@@ -5215,7 +5215,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
     result.ok = false;
 
     // ⛔ DO NOT force a constant here. A forced 0x20 — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)
-    // model, audit A1 — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
+    // model — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
     // (≥5.3), and LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so
     // the `TLazyObjectPtr payload envelope measured` line could not come from THIS path. Use the
     // envelope arithmetic the scalar path uses: it takes the envelope from a real ElementSize and
@@ -6150,7 +6150,7 @@ void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
 
 // Struct-preview scalars (float/double) are formatted WITHOUT scientific notation
 // for human-range magnitudes by FormatPreviewNumber (Ubel.h; pure, unit-pinned),
-// shared with the reflected-struct preview so the two cannot drift apart (audit U17).
+// shared with the reflected-struct preview so the two cannot drift apart.
 // `%g` flips to scientific past a few digits (e.g. 18328.64 -> "1.833e+04"), which
 // is unreadable in the Value column preview; the leaf drilldown uses %f. So: %f for
 // the broad int32/int64-ish range with trailing zeros trimmed (2245.0000 -> "2245",
@@ -7096,7 +7096,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // dword of EPropertyFlags — i.e. exactly what you get when
                         // DynOff::FPROPERTY_ELEMSIZE lands on PropertyFlags (Genau derives
                         // it blind as bestProbe - 0x10 and can still report
-                        // bOffsetsValidated=true — audit #5 G1). Unvalidated it would become a
+                        // bOffsetsValidated=true). Unvalidated it would become a
                         // per-element std::vector size: a ~1 GiB commit + zero-fill on every
                         // iteration, plus a ~1 GiB stride that makes every element wild.
                         int32_t rawKeySize = 0, rawValSize = 0;
@@ -7188,7 +7188,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
-                            fv.mapStride = stride;   // publish the stride actually used (audit #5 V2)
+                            fv.mapStride = stride;   // publish the stride actually used
                             Sein::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d ValOff=%d Stride=%d MaxIdx=%d NumBits=%d",
                                 fv.mapCount, fi.Name.c_str(), (unsigned long long)sa.Data,
                                 fv.mapKeySize, fv.mapValueSize, valOffset, stride, sa.MaxIndex, sa.numBits);
@@ -7376,7 +7376,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
-                            fv.mapStride = stride;   // publish the stride actually used (audit #5 V2)
+                            fv.mapStride = stride;   // publish the stride actually used
                             int read = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
                                 if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;
@@ -7507,7 +7507,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (fv.setCount > 0
                         && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Macht::ComputeSetElementStride(fv.setElemSize);
-                        fv.setStride = stride;   // publish the stride actually used (audit #5 V2)
+                        fv.setStride = stride;   // publish the stride actually used
                         int read = 0;
                         for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
                             if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;
@@ -7586,7 +7586,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                     if (fv.setCount > 0 && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Macht::ComputeSetElementStride(fv.setElemSize);
-                        fv.setStride = stride;   // publish the stride actually used (audit #5 V2)
+                        fv.setStride = stride;   // publish the stride actually used
                         int read = 0;
                         for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
                             if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;
@@ -7720,7 +7720,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 // Preview: one shared decoder, so this path and every container /
-                // preview / DataTable path cannot drift apart (audit U17).
+                // preview / DataTable path cannot drift apart.
                 if (hasBuf) {
                     std::string preview = InterpretStructByLayout(
                         structBuf.data(), readSize, si, previewLimit);
@@ -8179,7 +8179,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     std::string n = ReadFName(fieldAddr);
                     if (!n.empty()) fv.strValue = std::move(n);
                 } else if (isTextInner) {
-                    // FText display (audit #5 U11): ReadFTextString follows the ITextData* at
+                    // FText display: ReadFTextString follows the ITextData* at
                     // FText+0 -- the SAME decoder the plain TextProperty path uses.
                     std::string s = ReadFTextString(fieldAddr);
                     if (!s.empty()) fv.strValue = std::move(s);
@@ -8232,7 +8232,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (fv.structClassAddr && previewLimit > 0) {
                     // Memoized, and a HIT still deep-copies the flattened super chain —
                     // WalkClass returns by value. Sibling of the array-element preview
-                    // above; same per-element loop, same cost (audit #5 U18).
+                    // above; same per-element loop, same cost.
                     ClassInfo si = WalkClass(fv.structClassAddr);
                     int32_t readSize = innerSize;
                     if (readSize <= 0 || readSize > 1024) {
@@ -8924,7 +8924,7 @@ void ResolvePropertyPreviews(
         // TSoftObjectPtr = FWeakObjectPtr(8) [+ Tag(4) + pad(4) on UE ≤ 5.2] +
         // FSoftObjectPath, so the readable value is the asset path at the measured
         // envelope (+0x10 up to 5.2, +0x08 from 5.3), never a pointer, for
-        // SoftClassProperty too (audit #5 U13). Display
+        // SoftClassProperty too. Display
         // order matches WalkInstance's own soft-pointer handler: path, then the
         // resolved target when the asset happens to be loaded, then "(none)".
         if (t == "SoftObjectProperty" || t == "SoftClassProperty" || IsAssetPtrProperty(t)) {
@@ -8946,7 +8946,7 @@ void ResolvePropertyPreviews(
         }
 
         // --- ObjectProperty / ClassProperty / InterfaceProperty: raw UObject* at +0 ---
-        // InterfaceProperty gets a preview here too (audit #5 U13). FScriptInterface is
+        // InterfaceProperty gets a preview here too. FScriptInterface is
         // { UObject* +0x00; void* +0x08 }, so its first 8 bytes ARE a genuine object pointer — the same
         // reason CeXmlExportService.IsRawObjectPtrSlot includes it and the weak-like
         // types above it does not.

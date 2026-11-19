@@ -1952,7 +1952,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var state = await _dump.SetGodModeAsync(wantOn);
-            // Land the toggle on the SAME map as ↻ (audit #5 AD4). set_god_mode
+            // Land the toggle on the SAME map as ↻. set_god_mode
             // returns only the observed value, so a force-ON with no pawn yet comes
             // back < 0, and on its own would badge "Unknown" — the request itself is
             // what the user needs to see reflected. `want` is known here without a
@@ -2119,7 +2119,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 StatusText = $"Hold failed: DLL error {r.Code}.";
                 return;
             }
-            // Code 0: Solide kept the job, whatever it holds this instant (audit #5 Z11, as Property Search's Force).
+            // Code 0: Solide kept the job, whatever it holds this instant (as Property Search's Force).
             _stealthArmed = true;
             if (r.Held == 0)
             {
@@ -2693,8 +2693,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// "Unknown" while the DLL holds a definite answer for it. [BADGEPRIME].</para>
     ///
     /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
-    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, audit #5
-    /// AD4). So after a UI restart an unprimed but still-active Fly, Move Speed or Gravity
+    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>). So after
+    /// a UI restart an unprimed but still-active Fly, Move Speed or Gravity
     /// hold would show "Unknown", and the user would have no sign the game was still
     /// modified.</para>
     ///
@@ -3881,7 +3881,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <see cref="CoordinateLibraryStore"/>, in which case every persistence path
     /// below silently no-ops and the whole library dies with the process.
     ///
-    /// This exists because the omission is silent (audit #4 B27): App builds
+    /// This exists because the omission is silent: App builds
     /// <c>MainWindowViewModel</c> with positional arguments, and an omitted one binds
     /// to its optional default instead of failing to compile. Asserted by
     /// <c>CompositionRootWiringTests</c>; not used by the UI.
@@ -5306,7 +5306,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <para>Every export shares one generator and one <c>folded</c> out-parameter; an
     /// export path that discards the list (<c>out _</c>) hands the user a script whose
     /// picker silently omits a group's radio button, with no hint that anything was
-    /// dropped (audit #5 AF15). Shared rather than copied, so the wording cannot drift
+    /// dropped. Shared rather than copied, so the wording cannot drift
     /// between paths.</para>
     ///
     /// <para>Returns "" when nothing folded, so callers can append it unconditionally —

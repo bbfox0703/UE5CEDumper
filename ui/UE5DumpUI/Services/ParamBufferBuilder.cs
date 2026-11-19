@@ -278,15 +278,15 @@ public static class ParamBufferBuilder
     /// <c>TOptional</c>, and a zeroed by-value struct. Without this,
     /// <see cref="WriteParam"/> would fall through to its size-driven default and write the
     /// user's textbox as a raw 4-byte integer over the structure's first pointer field —
-    /// a bogus <c>Data</c> pointer handed straight to ProcessEvent (audit #5 Y11).</para>
+    /// a bogus <c>Data</c> pointer handed straight to ProcessEvent.</para>
     ///
     /// <para><c>StructProperty</c> is here for the LAYOUT-LESS case only: when the dialog
     /// resolved sub-fields it writes them through <see cref="WriteStructParam"/> and never
     /// reaches this predicate.</para>
     ///
     /// <para>This is the exact set the exported script's helper refuses to
-    /// fabricate (<c>writeParams</c>' <c>tarray/tmap/tset/delegate</c> arm, audit #5
-    /// AA16), so the two invoke paths answer the same input the same way.</para>
+    /// fabricate (<c>writeParams</c>' <c>tarray/tmap/tset/delegate</c> arm), so the two
+    /// invoke paths answer the same input the same way.</para>
     ///
     /// <para><c>LazyObjectProperty</c> too (<c>[VND584-01]</c>): a weak pointer plus a
     /// GUID nothing can make, so the DLL refuses a picked object in one; all-zero is
@@ -322,8 +322,7 @@ public static class ParamBufferBuilder
     /// all-zero <c>FText</c> is not an empty <c>FText</c>: it carries a
     /// <c>TSharedRef</c> the engine dereferences on use, so passing zeros is a crash
     /// rather than a default. The exported script's helper refuses it unconditionally for
-    /// exactly this reason, and FIRE must too, so one dialog input gets one answer
-    /// (audit #5 Y11).</para>
+    /// exactly this reason, and FIRE must too, so one dialog input gets one answer.</para>
     /// </summary>
     public static bool IsRefusedParam(string typeName) => typeName == "TextProperty";
 
@@ -362,8 +361,8 @@ public static class ParamBufferBuilder
     /// a number at all also returns true — the parsers already have defined behaviour for
     /// that and it is not this check's job to duplicate it.</para>
     ///
-    /// <para>Two exceptions, both about types with no textbox encoding at all (audit #5
-    /// Y11). An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
+    /// <para>Two exceptions, both about types with no textbox encoding at all.
+    /// An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
     /// box holds, because zeros are not an empty FText: its text data is a null pointer that
     /// every FText accessor dereferences. Passing one survives (copying and destroying both
     /// skip a null), so the crash comes from whatever READS it -- the callee, or later code
@@ -558,8 +557,7 @@ public static class ParamBufferBuilder
     /// <summary>
     /// One byte, accepting everything the exported script accepts: decimal, 0x hex, and
     /// NEGATIVE values for a signed Int8 (-1 -> 0xFF). Not <c>byte.TryParse</c>, which
-    /// rejects any negative outright, so the 0 fallback would silently send 0
-    /// (audit #5 Y5).
+    /// rejects any negative outright, so the 0 fallback would silently send 0.
     /// </summary>
     private static byte ParseByteOrSByte(string text)
         => BakedScriptGenerator.TryParseHexOrDecimal((text ?? "").Trim(), out var u)
@@ -573,7 +571,7 @@ public static class ParamBufferBuilder
     /// <c>TryParse(text, IFormatProvider, out _)</c> defaults to
     /// <c>NumberStyles.Float | NumberStyles.AllowThousands</c> and ACCEPTS "NaN" / "Infinity",
     /// so with it `1,5` would fire as 15.0 while the baked script renders it unparsed, and NaN
-    /// would reach the game as a real float (audit #5 Y4).
+    /// would reach the game as a real float.
     /// </para>
     /// </summary>
     private static double ParseReal(string text)

@@ -925,8 +925,7 @@ struct ClassListResult {
     // GObjects — i.e. this list is a page, not the pool. Same contract as
     // SearchResultSet::truncated. Callers that resolve a class BY NAME must
     // surface it: without it, a class sitting past the cap is indistinguishable
-    // from one that does not exist, and every consumer reported the latter
-    // (audit #5 X2).
+    // from one that does not exist, and a consumer would report the latter.
     bool truncated = false;
     std::vector<ClassListEntry> results;
 };
@@ -1419,14 +1418,14 @@ struct AllFunctionsResult {
     // pool total and must never be read as one — the pool size cannot be known
     // without paying the WalkFunctions cost for every remaining class, which is
     // exactly what the cap exists to avoid. `truncated` below is the honest
-    // signal. (audit #5 Z8)
+    // signal.
     int totalFunctions   = 0;
     // The walk stopped early, so `entries` is a PAGE, not the pool:
     //   truncated = hit maxEntries       (more functions exist, unseen)
     //   aborted   = Tot::Requested()     (client gone / shutdown mid-walk)
     // Without these a capped scan is indistinguishable from an exhaustive one,
     // and the Console panel turns it into a positive claim about the game
-    // ("No UFUNCTION(exec) commands found in this game"). (audit #5 Z8)
+    // ("No UFUNCTION(exec) commands found in this game").
     bool truncated       = false;
     bool aborted         = false;
     std::vector<AllFunctionEntry> entries;
@@ -1583,9 +1582,9 @@ struct FunctionPropRefResult {
     std::string method;
     int32_t unmappedAccesses = 0;  // disasm: [reg+off] hits with no matching property
     // disasm: the decoder stopped at its instruction budget, so the property list
-    // below is a PREFIX of what the function touches (audit #5 AF7). Denken computed
-    // this and Aura logged it, then dropped it — leaving the Xref dialog to present a
-    // truncated list as an exhaustive answer to "which fields does this touch?".
+    // below is a PREFIX of what the function touches. Denken computes this and it is
+    // carried to the caller, or the Xref dialog would present a truncated list as an
+    // exhaustive answer to "which fields does this touch?".
     // Always false for the bytecode path, which is exact.
     bool budgetHit = false;
 };
@@ -1875,9 +1874,9 @@ struct GroupScanResult {
     // was kept. Deliberately NOT in ValueScanStats: that struct is shared with the
     // single-value / snapshot / pivot paths, which have no per-slot cap.
     //
-    // Before audit #5 AE13 this was a function-local bool in ScanForValueGroup whose
-    // only consumer was a LOG_WARN, so the one fact that explains "the scan missed my
-    // field" reached the DLL log and nothing else. It is a bool rather than a count
+    // ScanForValueGroup returns it in the result, not just in a LOG_WARN, because it is
+    // the one fact that explains "the scan missed my field", and a DLL log line alone
+    // never reaches the UI. It is a bool rather than a count
     // because the pre-cap magnitude only exists inside Orden::MatchGroup's inner loop;
     // widening that is a separate change and the bool is what the UI needs to stop
     // presenting a capped witness list as complete.

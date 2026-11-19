@@ -44,8 +44,8 @@ internal sealed class McpLog : ILoggingService, IDisposable
                 .WriteTo.File(
                     FilePath,
                     fileSizeLimitBytes: Constants.LogMaxSizeBytes,
-                    // Without rolling, the size limit silently drops every later event (LoggingService's audit #4
-                    // B31); without a null count, Serilog would evict by generation, which the age rule replaced.
+                    // Without rolling, the size limit silently drops every later event (see LoggingService);
+                    // without a null count, Serilog would evict by generation, and retention here is by age instead.
                     rollOnFileSizeLimit: true,
                     retainedFileCountLimit: null,
                     outputTemplate: OutputTemplate)

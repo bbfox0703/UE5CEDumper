@@ -494,7 +494,7 @@ public static class CeXmlExportService
     // drilled element can dereference it with Offsets=[0]. This is a STRICT subset
     // of IsObjectPropertyType and matches the DLL's Ubel::IsPointerArrayType:
     // Weak (FWeakObjectPtr {ObjectIndex, SerialNumber}), Soft (FSoftObjectPath) and
-    // Lazy (FGuid) elements are NOT raw pointers even though the DLL resolves them
+    // Lazy (an FWeakObjectPtr, then the object's FGuid) elements are NOT raw pointers even though the DLL resolves them
     // to a live UObject* — dereferencing their slot would land CE at a garbage
     // address, so they must keep their existing leaf / Phase-G handling.
     //
@@ -516,7 +516,8 @@ public static class CeXmlExportService
     /// <item><c>WeakObjectProperty</c> — <c>FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }</c>.
     /// Two ints, not an address.</item>
     /// <item><c>SoftObjectProperty</c> / <c>SoftClassProperty</c> — <c>FSoftObjectPath</c>, a string-ish struct.</item>
-    /// <item><c>LazyObjectProperty</c> — <c>FGuid</c>, four ints.</item>
+    /// <item><c>LazyObjectProperty</c> — an <c>FWeakObjectPtr</c> followed by the object's <c>FGuid</c>; its first
+    /// 8 bytes are an index+serial pair, not an address.</item>
     /// </list>
     /// <para>The DLL resolves all of those to a live <c>UObject*</c> and stamps it on
     /// <c>PtrAddress</c>, so a resolved target is no evidence of a pointer slot: the resolved
@@ -1940,10 +1941,10 @@ public static class CeXmlExportService
     /// <para>A hop carries <c>FieldOffset &lt; 0</c> when it was reached by a
     /// BACK-reference rather than by reading a field: the GWorld actor list (an actor's
     /// <c>Outer</c>) and the World-Partition recovery path (<c>ULevel::OwningWorld</c>).
-    /// <c>ULevel::Actors</c> has no UPROPERTY (audit #5 F8/F9), so no offset and no
-    /// element index exists to publish. Emitting one anyway produced
-    /// <c>[UWorld + 0]</c> — the world's vtable pointer — and CE showed a chain that
-    /// resolved into the executable image.</para>
+    /// <c>ULevel::Actors</c> has no UPROPERTY, so no offset and no
+    /// element index exists to publish. Emitting one anyway would produce
+    /// <c>[UWorld + 0]</c> — the world's vtable pointer — and CE would show a chain that
+    /// resolves into the executable image.</para>
     ///
     /// <para>Re-rooting trades restart-stability for correctness: the exported chain is
     /// anchored on that object's absolute (session-only) address, exactly like an
@@ -2297,7 +2298,7 @@ public static class CeXmlExportService
             // The gate is IsRawObjectPtrSlot, NOT the broad IsObjectPropertyType: Weak /
             // Soft / Lazy slots do not contain a pointer at all, so Offsets=[0] would
             // dereference an index+serial pair (or a GUID) as an address. They keep their
-            // 8-byte hex leaf further down. See IsRawObjectPtrSlot (audit #5 W5); the
+            // 8-byte hex leaf further down. See IsRawObjectPtrSlot; the
             // array path makes the equivalent distinction.
             //
             // Lookup is by PtrAddress so two fields pointing to the same instance share
@@ -4061,7 +4062,7 @@ public static class CeXmlExportService
     /// straight into <c>&lt;DropDownList&gt;</c>, so a single <c>&amp;</c> in one entry — a
     /// <c>TArray&lt;FName&gt; Tags</c> holding a designer-typed <c>Bow &amp; Arrow</c> is enough —
     /// makes the whole CheatTable malformed and Cheat Engine rejects the <b>entire document</b>, so
-    /// this site escapes as Descriptions do (audit #4 B3, audit #5 W4).</para>
+    /// this site escapes as Descriptions do.</para>
     ///
     /// <para><b>Line breaks</b>: the format is line-delimited, so a CR/LF inside a name would forge
     /// extra dropdown entries and shift every following one. That does not break XML well-formedness,
@@ -4162,7 +4163,7 @@ public static class CeXmlExportService
     /// elements, soft-object paths, DataTable row names — and a single <c>&amp;</c> in any
     /// of them produces an invalid entity reference that makes Cheat Engine reject the
     /// <b>whole document</b>. A multi-thousand-entry export then imports as nothing, with
-    /// no indication which record was at fault (audit #4 B3). Escaping a string that was
+    /// no indication which record was at fault. Escaping a string that was
     /// already safe is a no-op, so there is no reason to be selective.</para>
     /// </summary>
     private static string EscapeXmlContent(string s)
@@ -4413,7 +4414,7 @@ public static class CeXmlExportService
     /// element — each record swallowing the next three elements.</para>
     ///
     /// <para>A 1-byte enum must NOT be read as 4 bytes — that pulls in the next field's bytes —
-    /// at every call site, container elements included (audit #5 W6). Taking the size as a
+    /// at every call site, container elements included. Taking the size as a
     /// parameter rather than as a caller-side ternary is what stops a new call site forgetting
     /// it.</para>
     ///

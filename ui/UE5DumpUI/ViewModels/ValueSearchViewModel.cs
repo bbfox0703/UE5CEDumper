@@ -33,8 +33,7 @@ public sealed record ValueSortOption(string Label, string Key);
 /// <see cref="NativeCScan"/> ("Native-C", opt-in, default off) adds a raw pass
 /// over each object's unmanaged holes, and the panel carries a second banner
 /// for that mode. Both banners are in en.axaml (str.VS.Banner /
-/// str.VS.NativeBanner). Calling it a hard contract predated the Native-C work
-/// and was the strongest of three such claims in the tree. (audit #5 AE31)
+/// str.VS.NativeBanner).
 /// </summary>
 public partial class ValueSearchViewModel : ViewModelBase
 {
@@ -512,14 +511,13 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// derived from it is a subset of a partial set. Latched for the life of the
     /// session because a refine cannot recompute it — <c>refine_value_scan</c> prunes
     /// what the DLL already holds and reports its own (exact-over-that-set) numbers.
-    /// Cleared by New Scan and by a disconnect, never by a refine. (audit #5 AE24)</summary>
+    /// Cleared by New Scan and by a disconnect, never by a refine.</summary>
     private bool _scanTruncated;
     private bool _groupScanTruncated;
 
     /// <summary>The group session's Begin scan dropped leaves past the per-slot witness
     /// cap. Session-scoped like <see cref="_groupScanTruncated"/> and for the same
-    /// reason — the DLL carries it forward on refine and query, so the UI must too.
-    /// (audit #5 AE13)</summary>
+    /// reason — the DLL carries it forward on refine and query, so the UI must too.</summary>
     private bool _groupPerSlotCapHit;
     /// <summary>The cap the DLL actually APPLIED, echoed back on the wire. Distinct
     /// from the bound <see cref="GroupPerSlotCap"/> input above, which is what the user
@@ -549,7 +547,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                ExclusionKey(GroupClassFilter.ExcludedClasses));
 
     /// <summary>Whether an append must be promoted to a page-0 reset. Pure, so the
-    /// rule is unit-testable without a pipe. (audit #5 AE21)</summary>
+    /// rule is unit-testable without a pipe.</summary>
     internal static bool ShouldPromoteAppendToReset(bool resetInFlight, WindowQuery? loaded, WindowQuery current)
         => resetInFlight || loaded is null || loaded.Value != current;
 
@@ -593,7 +591,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
         // OUR cancel = superseded by a newer query; correctly silent. A token-less OCE
         // (pipe teardown) and an IOException (game gone) fall through to the reporting
-        // catch below instead of vanishing. (audit #5 AE23)
+        // catch below instead of vanishing.
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
@@ -626,7 +624,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
         // Our own debounce cancel — the expected path on every keystroke. Anything else
         // is a real failure on a fire-and-forget task, which would otherwise be an
-        // unobserved exception with no log line at all. (audit #5 AE23)
+        // unobserved exception with no log line at all.
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex) { _log.Error("ValueSearch debounced reload failed", ex); }
         finally
@@ -919,7 +917,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     /// <summary>Forget both live scan sessions + drop their candidate windows so a
-    /// reconnect never shows (or acts on) addresses from the previous game (audit X5).
+    /// reconnect never shows (or acts on) addresses from the previous game.
     /// The DLL sessions die with the process and self-expire, so this is CLIENT-SIDE
     /// ONLY — it must NOT call the End* pipe teardown against the gone game. Sessions
     /// are zeroed first so any selection-changed reload early-returns on !HasSession.</summary>
@@ -1016,11 +1014,10 @@ public partial class ValueSearchViewModel : ViewModelBase
         // the scenario somebody thought to test. Degrades to a no-op when not connected;
         // never affects the operation.
         //
-        // AFTER validation, deliberately. Opening it above the four early returns cost two
-        // get_diagnostics round-trips on every rejected click and filed a "Value Scan (First)"
+        // AFTER validation, deliberately. Opened above the early returns, it would cost two
+        // get_diagnostics round-trips on every rejected click and file a "Value Scan (First)"
         // measurement for a scan that never ran — polluting the very dataset the probe exists
         // to collect, with samples whose duration is the validation, not the scan.
-        // (audit #5 AE8)
         await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (First)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
@@ -1078,11 +1075,11 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            // NOT our cancel. PipeClient tells the three causes apart (audit #5 AC10):
+            // NOT our cancel. PipeClient tells the three causes apart:
             // a caller cancel carries OUR token (caught above), a deliberate teardown
             // carries the client's own, and an unexpected pipe death — game crash, DLL
-            // unload — arrives as IOException. The bare OCE catch reported every one of
-            // them as "First Scan cancelled." and logged nothing. (audit #5 AE23)
+            // unload — arrives as IOException. A bare OCE catch would report every one of
+            // them as "First Scan cancelled." and log nothing.
             ErrorMessage = $"First Scan failed: {ex.Message}";
             _log.Error($"ValueSearch First Scan failed", ex);
         }
@@ -1122,8 +1119,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             return;
         }
 
-        // Same ordering as First Scan above, and for the same reason — this site has the
-        // identical defect and the finding named only First. (audit #5 AE8)
+        // Same ordering as First Scan above, and for the same reason.
         await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (Next)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
@@ -1143,8 +1139,8 @@ public partial class ValueSearchViewModel : ViewModelBase
 
             // Refine prunes the existing set (no re-scan), so the histogram is exact
             // OVER THAT SET — and stays a lower bound on the game whenever the set it
-            // prunes was itself truncated. Passing `false` here is what erased the
-            // "Counts are partial" badge on the first refine. (audit #5 AE24)
+            // prunes was itself truncated. Passing `false` here would erase the
+            // "Counts are partial" badge on the first refine.
             ClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
                 result.ClassDistinct, countsPartial: _scanTruncated);
@@ -1161,7 +1157,6 @@ public partial class ValueSearchViewModel : ViewModelBase
         catch (Exception ex)
         {
             // See FirstScanAsync — a token-less OCE is a pipe death, not a user cancel.
-            // (audit #5 AE23)
             ErrorMessage = $"Next Scan failed: {ex.Message}";
             _log.Error($"ValueSearch Refine failed", ex);
         }
@@ -1182,11 +1177,10 @@ public partial class ValueSearchViewModel : ViewModelBase
         _scanTruncated = false;      // a new session has not truncated anything yet (AE24)
         _loadedWindow = null;        // nothing on screen belongs to a live query (AE21)
         _resetInFlight = false;
-        // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone left
-        // the combo still displaying the previous sort while the next scan ran in scan order,
+        // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone would leave
+        // the combo still displaying the previous sort while the next scan runs in scan order,
         // and re-selecting the option the combo already shows raises no change notification —
         // so the user could not get that sort back without picking something else first.
-        // (audit #5 AE9)
         _suppressSortReload = true;
         SelectedSortOption = SortOptions[0];   // "Scan order"
         SortDescending = false;
@@ -1539,7 +1533,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         { StatusText = "Group First Scan cancelled."; }
         catch (Exception ex)
         {
-            // A token-less OCE is a pipe death, not a user cancel (audit #5 AE23).
+            // A token-less OCE is a pipe death, not a user cancel.
             ErrorMessage = $"Group First Scan failed: {ex.Message}";
             _log.Error("ValueSearch group first scan failed", ex);
         }
@@ -1566,8 +1560,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             var result = await _dump.RefineGroupScanAsync(GroupSessionId, GroupInputs.ToList(), PageSize, SelectedRoundingMode, cts.Token);
 
             // countsPartial + the inherited-truncation clause: a group refine over a
-            // truncated first scan has the identical defect the finding named on the
-            // single side. (audit #5 AE24)
+            // truncated first scan prunes a partial set, the same as the single side.
             GroupClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
                 result.ClassDistinct, countsPartial: _groupScanTruncated);
@@ -1586,7 +1579,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         { StatusText = "Group Next Scan cancelled."; }
         catch (Exception ex)
         {
-            // A token-less OCE is a pipe death, not a user cancel (audit #5 AE23).
+            // A token-less OCE is a pipe death, not a user cancel.
             ErrorMessage = $"Group Next Scan failed: {ex.Message}";
             _log.Error("ValueSearch group refine failed", ex);
         }
@@ -1609,8 +1602,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         _groupCapApplied = 0;
         _loadedGroupWindow = null;     // AE21
         _groupResetInFlight = false;
-        // Same picker reset as NewScanAsync — the group mode had the identical defect and
-        // the finding named only the single-scan side. (audit #5 AE9)
+        // Same picker reset as NewScanAsync, and for the same reason.
         _suppressGroupSortReload = true;
         SelectedGroupSortOption = GroupSortOptions[0];   // "Scan order"
         GroupSortDescending = false;
@@ -1646,8 +1638,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     /// <summary>Group-mode twin of <see cref="LoadWindowAsync"/> — same Load-More
-    /// offset hazard, same promote-to-reset guard. The finding named only the single
-    /// side; this path has the identical code. (audit #5 AE21)</summary>
+    /// offset hazard, same promote-to-reset guard.</summary>
     private async Task LoadGroupWindowAsync(bool reset)
     {
         if (!HasGroupSession) return;

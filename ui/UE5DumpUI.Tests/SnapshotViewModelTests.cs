@@ -217,7 +217,7 @@ public class SnapshotViewModelTests : IDisposable
         vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
 
         var task = vm.CaptureCommand.ExecuteAsync(null);
-        await dump.SecondChunkReached.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);   // producer blocked on chunk 2
+        await dump.SecondChunkReached.Task.WaitAsync(HangBound, ct);   // producer blocked on chunk 2
         Assert.Equal(1L, (await RawRowsAsync(ct)).Snapshots);   // precondition: the partial's row is there to delete
         vm.CancelCommand.Execute(null);
         await task;
@@ -1092,18 +1092,26 @@ public class SnapshotViewModelTests : IDisposable
         return vm;
     }
 
-    /// <summary>Await the refresh the VM ITSELF started, with a real deadline.
-    /// SetEngineState's refresh is fire-and-forget, so a test that followed it with
-    /// an awaited RefreshCommand ran BOTH over the same Snapshots collection:
-    /// measured 25/4000 in-process iterations saw duplicated rows or a torn null
-    /// slot (surfacing as an NRE inside OnIsGroupModeChanged, naming nothing).
-    /// Bounded at 10s because a hang is not a test result.</summary>
+    /// <summary>How long a wait on the VM's own work may take before the test calls it a hang. It turns a hang into
+    /// a failure and measures nothing else: the VM queues its store reads on the thread pool, and under the loaded
+    /// full parallel suite a queued read can wait many seconds for a thread, so a tight bound fails work that is only
+    /// slow. [SNAPSHOT-GROUPMATCH-FLAKE] 2026-11-19</summary>
+    private static readonly TimeSpan HangBound = TimeSpan.FromSeconds(60);
+
+    /// <summary>Await the refresh the VM ITSELF started, bounded by <see cref="HangBound"/>.
+    /// SetEngineState's refresh is fire-and-forget, so a test that followed it with an awaited RefreshCommand would
+    /// run BOTH over the same Snapshots collection: duplicated rows, or a torn null slot that surfaces as an NRE
+    /// inside OnIsGroupModeChanged, naming nothing. The failure says how long it waited and the refresh's state, so a
+    /// slow refresh and a hung one read differently.</summary>
     private static async Task DrainAsync(Task? pending, string what)
     {
         Assert.True(pending is not null, $"{what}: the VM never started it (seam unassigned)");
+        var waited = System.Diagnostics.Stopwatch.StartNew();
         var finished = await Task.WhenAny(
-            pending!, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
-        Assert.True(ReferenceEquals(finished, pending), $"{what} did not finish within 10s");
+            pending!, Task.Delay(HangBound, TestContext.Current.CancellationToken));
+        Assert.True(ReferenceEquals(finished, pending),
+            $"{what} did not finish within {HangBound.TotalSeconds:0}s (waited {waited.Elapsed.TotalSeconds:0.0}s; " +
+            $"the refresh is {pending!.Status})");
         await pending!;   // observe any fault it captured
     }
 

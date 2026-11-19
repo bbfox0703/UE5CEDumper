@@ -133,7 +133,7 @@ public class App : Application
             // Wiring lives in AppComposition so a test can exercise this exact call.
             // Do NOT inline it back: MainWindowViewModel's service parameters are all
             // optional, so an omitted argument compiles and silently disables a whole
-            // feature (audit #4 B27). AppComposition's parameters are required.
+            // feature. AppComposition's parameters are required.
             var mainVm = AppComposition.BuildMainWindowViewModel(
                 _pipeClient, _dumpService, _logging, _platform, _aobUsage, _aobMakerBridge,
                 _proxyDeploy, _experimentalGate, _snapshotStore, globalHotkeys, _bookmarkStore,

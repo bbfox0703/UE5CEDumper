@@ -1719,7 +1719,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 // Need a class address to walk_functions. The row already has one — it
                 // came from list_all_functions — so use it. See ResolveClassAddrAsync
-                // for why re-deriving it from list_classes was a bug (audit #5 X2).
+                // for why re-deriving it from list_classes is wrong.
                 var classAddr = await ResolveClassAddrAsync(className, rowClassAddr);
                 if (string.IsNullOrEmpty(classAddr)) return;
 
@@ -2094,7 +2094,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Audit fixes #16/#17: dispose owned child VMs that hold timers /
+    /// Dispose owned child VMs that hold timers /
     /// CancellationTokenSources. Called from MainWindow.Closed so timer
     /// callbacks don't fire after the window is gone. Any child VM that is
     /// IDisposable (owns a timer / CTS / SQLite handle) MUST be disposed here —
@@ -2938,10 +2938,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Clear every panel that holds PROCESS-SCOPED state on disconnect (audit X5).
-    /// The old fan-out reset only Teleport / DumpExplorer / LiveFuncs, so a reconnect
-    /// (often to a DIFFERENT game) left the other panels showing rows whose addresses
-    /// belonged to the previous process — and still offered jumps to them.
+    /// Clear every panel that holds PROCESS-SCOPED state on disconnect.
+    /// A reconnect is often to a DIFFERENT game, and a panel that kept its rows
+    /// would show addresses belonging to the previous process — and still offer
+    /// jumps to them.
     ///
     /// Every clear here is CLIENT-SIDE ONLY (the pipe is already gone), and the ones
     /// that hold live DLL state say so: ValueSearch forgets its two scan sessions
@@ -2988,9 +2988,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private void ApplyEngineState(EngineState state)
     {
         // Fresh session (connect / proxy trigger_scan): blank the Extra-Scan strip so
-        // no result from the previous game survives. Update() no longer does this —
-        // it is also the plain pointer refresh, and doing it there wiped the scan's
-        // own result seconds after the user saw it (audit #5 V10).
+        // no result from the previous game survives. Update() does not do this —
+        // it is also the plain pointer refresh, and doing it there would wipe the scan's
+        // own result seconds after the user saw it.
         Pointers.ResetScanState();
         Pointers.Update(state);
 

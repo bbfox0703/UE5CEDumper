@@ -61,12 +61,11 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// <summary>Configurable result cap. The class walk is always exhaustive; this only
     /// bounds the returned list. Clamped 100..50000 by the NumericUpDown and again DLL-side.
     ///
-    /// <para>[PROPSEARCHCAP-2026-08-19] The panel had no Max at all and every search was
-    /// pinned to the wire default of 200 — very low for a query like <c>Health</c> on a real
-    /// game, and the reason a wanted field could sit past the cap with nothing the user could
-    /// do about it. Audit #5 <b>Z10</b> fixed the half that was dishonest (the status line
-    /// advised "raise Max" on a panel with no Max) by removing the advice; this adds the
-    /// lever, so the advice can come back — see the cap suffix in <c>SearchAsync</c>.</para>
+    /// <para>[PROPSEARCHCAP-2026-08-19] The user's lever over the cap. The wire default of
+    /// 200 is very low for a query like <c>Health</c> on a real game, so a wanted field can
+    /// sit past the cap; without a Max on this panel the user could do nothing about it, and
+    /// advice to "raise Max" would name a control the panel lacks. With it, the advice names
+    /// a real lever — see the cap suffix in <c>SearchAsync</c>.</para>
     ///
     /// <para>⚠ Default stays <b>200</b>, deliberately, and is NOT raised to Instance Finder's
     /// 5000. Property search returns a row per matching property per class and resolves a
@@ -245,7 +244,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public void OnConnected() => ConnectPrime = RefreshForcedFieldsAsync();
 
     /// <summary>Drop search results + the forced-fields mirror so a reconnect never
-    /// shows rows (and live UClass* addresses) from the previous game (audit X5).
+    /// shows rows (and live UClass* addresses) from the previous game.
     /// Client-side ONLY: this clears the mirror without calling the (gone) pipe — do NOT reset holds here. The DLL's
     /// force-holds SURVIVE a pipe drop for as long as the game lives (they die only with the process), which is why
     /// the Stealth card re-reads them on connect [A4-STEALTH-PRIME], and <see cref="OnConnected"/> re-reads this
@@ -560,16 +559,15 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (r.Code < 0)
                 StatusText = $"Force {m.PropName}: DLL error {r.Code}.";
             else if (r.Held == 0)
-                // "nothing held" was wrong, and wrong in the dangerous direction.
+                // "nothing held" would be wrong, and wrong in the dangerous direction.
                 // Solide::AddForce only DISCARDS a job when the field resolved on at
                 // least one instance and was type-refused everywhere — that path
                 // returns a negative code and is handled above. Reaching here with
                 // code 0 means the job was KEPT and the re-assert worker was STARTED,
                 // so the hold is armed and begins writing into the game the moment a
                 // matching instance spawns. Telling the user it did nothing, while the
-                // "Forced fields (N held)" strip below simultaneously lists it, is the
-                // two-surfaces-disagree shape this whole audit keeps finding.
-                // (audit #5 Z11)
+                // "Forced fields (N held)" strip below simultaneously lists it, would make
+                // two surfaces disagree.
                 StatusText = $"⏳ Force {m.PropName} = ARMED but holding nothing yet — no live instance of "
                            + $"{m.ClassName} or any subclass exists right now. It will apply automatically "
                            + $"as soon as one spawns; use \"Forced fields\" below to release it."
@@ -689,13 +687,11 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // Build the class histogram over the FULL result, then filter.
             //
             // countsPartial is NOT optional here. The picker presents its per-class hit
-            // counts as a class census of the result, and fifteen lines below this the
+            // counts as a class census of the result, and further down the
             // SAME method reads the very same flags to print its own cap warning — so
-            // omitting it left the panel warning "this list is capped" in one place
-            // while the picker beside it implied a complete tally. The `⚠ Counts are
-            // partial` string has existed in en.axaml the whole time and could never
-            // appear on this panel. (audit #5 Z4; ValueSearchViewModel already does
-            // this correctly.)
+            // omitting it would leave the panel warning "this list is capped" in one place
+            // while the picker beside it implied a complete tally. (ValueSearchViewModel
+            // passes it the same way.)
             ClassFilter.Rebuild(_allResults.Select(m => m.ClassName),
                                 countsPartial: result.Truncated || result.Aborted);
             ApplyResultFilter();
@@ -885,7 +881,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 // Skip rows already scanned (XrefInfo persists across filter changes) —
                 // but NOT a row whose previous sweep hit the deadline: re-running that
                 // one can still find something, so treating it as done would make the
-                // partial answer permanent. (audit #5 Z9)
+                // partial answer permanent.
                 if (!string.IsNullOrEmpty(match.XrefInfo) && !XrefFormat.IsPartialCell(match.XrefInfo))
                 { cached++; continue; }
                 try
@@ -894,7 +890,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                     // res.Scan.DeadlineHit is the whole reason this isn't just res.Xrefs:
                     // the DLL latches it on a real 30 s budget, and a timed-out sweep
                     // written as a bare "0" reads as "no function touches this field, so
-                    // freezing it is safe". (audit #5 Z9)
+                    // freezing it is safe".
                     bool deadline = res.Scan?.DeadlineHit ?? false;
                     bool capped = res.Scan?.CapHit ?? false;   // [W3-XREF-CAP] its own cause, never the deadline's
                     match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);

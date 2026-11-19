@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — Audit and review ids cut from the code comments (pass 3); the Snapshot group-match flake `[COMMENT-NO-HISTORY-2026-11-18]` `[SNAPSHOT-GROUPMATCH-FLAKE]`
+
+- **Comments:** `check_comment_history` counts audit and review finding ids (`audit #5 A12`, `Audit fix #10`,
+  `audit U17`, `(review DWS-DLL-1)`, `(review F4)`), each shape with positive and negative self-test controls. The 489
+  lines it found in 143 files are rewritten without them, keeping every hazard, invariant, cross-reference and `[TAG]`;
+  the baseline is 0 again. Five and then three editor/reviewer pairs; `comment_only_diff` passes for every file. Six
+  comments the reviewers found contradicting the code are corrected: Solide's `s_workerMutex` is the outer lock with
+  `s_mutex` nested inside, SpcQuery's per-row GWorld button has no GWorld requirement of its own, LoggingService no
+  longer names a sweep that does not exist, IDumpService names a parameter instead of a wrong line distance,
+  DiagnosticsProbe's busy-ms note drops its measurement story, and CeXmlExportService gives LazyObjectProperty's real
+  layout (an `FWeakObjectPtr`, then the `FGuid`). The idle-wait gate's text names the hazard instead of the id the
+  emitters' comments no longer carry.
+- **Flake:** two Snapshot group-match tests failed once each under a heavily loaded full run (10 and 11 s). Their only
+  10 s element was the wait for the VM's own refresh; not reproduced in 9 more loaded full runs, so the cause is read
+  from the durations. That wait and the file's other 10 s wait share a 60 s hang bound, and the drain's failure now
+  says how long it waited and the refresh's state; a 0 ms bound fails both tests with that message.
+- Left, in todo.md: bare finding codes without an `audit` / `review` word (`(AE13)`, about 420 lines; the shape also
+  matches design-phase labels), `Genau.h`'s version-rationale log (the maintainer's call), one log string in
+  `Aura.cpp`.
+- Comments and tests only: the DLL builds; C# 8497 passed (1 skipped); 40 gates.
+
 ## 2026-11-19 (build 3746) — Five review rounds of the UI-text fixes: 53 more places the UI, its comments and the runbooks disagreed with the code `[UI-TEXT-AUDIT-2026-11-18]`
 
 - **What changes:**

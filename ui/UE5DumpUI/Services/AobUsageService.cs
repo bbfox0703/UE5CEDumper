@@ -110,13 +110,13 @@ public sealed class AobUsageService
     /// <summary>
     /// Load the usage file, or create a new one if it doesn't exist.
     ///
-    /// THE ONE INVARIANT (audit #5 AC4 + AC5, which are the same defect seen twice): an
+    /// THE ONE INVARIANT: an
     /// empty <see cref="AobUsageFile"/> may only be handed back once the bytes it replaces
     /// are safely somewhere else. This file is not one game's cache — it holds EVERY game's
     /// scan record, its DLL-stamped version detection, and the user's per-game UE-version
     /// override and invoke timeout. The caller's very next act is
     /// <see cref="SaveFileAsync"/>, so returning a blank document while the original still
-    /// sits at <see cref="_filePath"/> published a one-game file over all of it — from a
+    /// sits at <see cref="_filePath"/> would publish a one-game file over all of it — from a
     /// Warn nobody reads, and with none of the care the DELIBERATE reset takes ten numbered
     /// backups to provide. Quarantine first; if the quarantine cannot be taken, FAIL — the
     /// callers all treat a throw as "skip this write", which is exactly right.

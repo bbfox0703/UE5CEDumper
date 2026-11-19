@@ -194,8 +194,8 @@ public static class CeLuaHygiene
         // whole idle deadline is a frozen Cheat Engine window.
         Line(sb, indent, "  sleep(1); _idlePump(); _idleIters = _idleIters + 1");
         Line(sb, indent, $"  _idleCmd = readInteger({mbExpr} + {CeMailboxLayout.OffCmd})");
-        // [A1-LUA-WAIT] EXACTLY one deadline -- the Lua helpers' shape (ue5_freeze_helper.lua / ue5_invoke_helper.lua,
-        // audit #5 AA29). `_idleTick and (elapsed >= Ms) or (iters >= N)` would evaluate the iteration arm whenever
+        // [A1-LUA-WAIT] EXACTLY one deadline -- the Lua helpers' shape (ue5_freeze_helper.lua / ue5_invoke_helper.lua).
+        // `_idleTick and (elapsed >= Ms) or (iters >= N)` would evaluate the iteration arm whenever
         // the elapsed test is FALSE, making the deadline min(real ms, N x sleep cost). The count is a fallback ONLY for
         // a build without getTickCount.
         Line(sb, indent, "  local _idleOver");
@@ -244,8 +244,8 @@ public static class CeLuaHygiene
     /// <c>callmethod</c> 0=stdcall / 1=cdecl, and <b>the address is argument 3</b>.
     /// Passing the address in slot 2 makes CE execute with <c>address = nil</c> and
     /// return <c>nil</c> <i>without raising</i>, so a <c>pcall</c> around it reports
-    /// success for a call that never happened (audit #4 B1 — a CE Disable would then
-    /// tear nothing down while telling the user it had).</para>
+    /// success for a call that never happened — a CE Disable would then tear nothing
+    /// down while telling the user it had.</para>
     ///
     /// <para>Hence also the result check: <c>pcall</c>'s status answers "did Lua
     /// raise", never "did the function run". <c>executeCodeEx</c> returns the callee's
@@ -899,7 +899,7 @@ public static class CeLuaHygiene
     /// <para><b>The message follows the FACT, not the intent.</b> It re-reads
     /// <c>getAddressSafe</c> AFTER the unregister and claims success only when the symbol
     /// is actually gone, so the report is derived from the reality, not from a separate
-    /// code path (audit #4a). The bounded loop also removes a stacked registration
+    /// code path. The bounded loop also removes a stacked registration
     /// were one ever to exist, and can never hang.</para>
     /// </summary>
     /// <param name="tag">Script tag for the diagnostic, e.g. <c>"GWorld"</c>.</param>

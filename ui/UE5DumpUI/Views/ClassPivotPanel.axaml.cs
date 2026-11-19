@@ -10,9 +10,7 @@ namespace UE5DumpUI.Views;
 
 public partial class ClassPivotPanel : UserControl
 {
-    // AOT-safe sort comparers. Found by the repo-wide DataGrid sweep that closed
-    // audit #5 AF16-AF23 — this panel was never named by a finding, and had the same
-    // defect in five columns. A DataGridTextColumn is only rooted when its
+    // AOT-safe sort comparers. A DataGridTextColumn is only rooted when its
     // SortMemberPath equals its own Binding path; every column below renders a
     // FORMATTED string and sorts on the numeric/raw backing property, so nothing
     // roots the sort path and the reflection sort is trimmed away

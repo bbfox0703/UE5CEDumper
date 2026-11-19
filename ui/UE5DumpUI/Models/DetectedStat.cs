@@ -26,9 +26,9 @@ public sealed class DetectedStat
     /// <summary>
     /// Whether this row's class was live-probed at all. Detect stops probing after
     /// <c>MaxClassesProbed</c> classes, and past that cap every signal below is false for
-    /// the same reason a DISPROVEN row's is: nothing was measured. The two rendered
-    /// identically, so a real stat sitting at rank 31 looked exactly like one the probe had
-    /// examined and rejected. (audit #5 AF2)
+    /// the same reason a DISPROVEN row's is: nothing was measured. If the two rendered
+    /// identically, a real stat sitting at rank 31 would look exactly like one the probe
+    /// had examined and rejected.
     /// </summary>
     public bool WasProbed { get; init; } = true;
 

@@ -8,7 +8,7 @@ internal static class VdfParser
 {
     /// <summary>What a token IS, not just what it says. Without this the extractor could
     /// not tell a quoted value <c>"path"</c> from the key <c>"path"</c>, nor a quoted
-    /// string <c>"[$WIN32]"</c> from a bare platform conditional. (audit #5 AC12)</summary>
+    /// string <c>"[$WIN32]"</c> from a bare platform conditional.</summary>
     private enum TokenKind { BraceOpen, BraceClose, Quoted, Bare }
 
     private readonly record struct Token(TokenKind Kind, string Text);
@@ -137,17 +137,18 @@ internal static class VdfParser
     /// Expected structure: "libraryfolders" { "0" { "path" "C:\..." ... } "1" { ... } }
     ///
     /// KeyValues alternates key → value inside every block, where a value is either a
-    /// string or a nested block. The old walker tracked only brace depth, so it had no
-    /// idea which side of that alternation a token sat on and accepted ANY depth-2 token
-    /// reading "path" as a key. Two consequences, both fixed here by carrying the
-    /// alternation explicitly (audit #5 AC12):
+    /// string or a nested block. This walker carries that alternation explicitly. A
+    /// walker tracking only brace depth has no idea which side of the alternation a
+    /// token sits on and accepts ANY depth-2 token reading "path" as a key, with two
+    /// consequences:
     ///
     ///   • a VALUE could masquerade as a key. <c>"label" "path"</c> — a library the user
-    ///     labelled "path" — made the walker treat the NEXT key ("contentid") as a
+    ///     labelled "path" — would make the walker treat the NEXT key ("contentid") as a
     ///     library folder, injecting a directory Steam never named;
-    ///   • nesting was never validated. A stray <c>}</c> drove depth negative and every
-    ///     later block was read one level shallow, so "path" keys stopped being seen and
-    ///     the file yielded zero libraries with nothing anywhere saying why.
+    ///   • nesting would go unvalidated. A stray <c>}</c> would drive depth negative and
+    ///     every later block would be read one level shallow, so "path" keys would stop
+    ///     being seen and the file would yield zero libraries with nothing anywhere
+    ///     saying why.
     ///
     /// Returns null when the document is structurally sound, otherwise a description of
     /// the first fault. Extraction stops at that point: past a structural break the token

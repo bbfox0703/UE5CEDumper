@@ -104,7 +104,7 @@ public static class DumpAllService
     /// Returns a <see cref="DumpResult"/> carrying what the summary line
     /// reports, so the caller can compose an honest completion
     /// message from what the dump actually produced (classes emitted / errors)
-    /// rather than from the output file's byte length (audit X4).
+    /// rather than from the output file's byte length.
     /// <paramref name="clock"/> paces the progress reports; tests pass a manual one.
     /// </summary>
     public static async Task<DumpResult> GenerateAsync(

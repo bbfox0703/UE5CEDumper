@@ -271,8 +271,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Drop the instance list + walked fields so a reconnect never shows
-    /// instances (and addresses) from the previous game or offers a stale field walk
-    /// (audit X5). Bumps the search/field tickets so an in-flight response can't
+    /// instances (and addresses) from the previous game or offers a stale field walk.
+    /// Bumps the search/field tickets so an in-flight response can't
     /// repaint after this. Client-side only. Null <see cref="SelectedInstance"/>
     /// FIRST — a non-null selection's changed-handler triggers a pipe field walk.</summary>
     public void ClearOnDisconnect()
@@ -305,12 +305,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// The <see cref="_searchGen"/> contract is "whoever bumps the generation takes over
     /// <see cref="IsSearching"/>", because <see cref="RunSearchCoreAsync"/>'s finally
     /// clears the flag only for the latest op (<c>if (gen == _searchGen)</c> — "only the
-    /// latest op owns the flag"). Two callers bumped it while owning no search of their
+    /// latest op owns the flag"). A caller that bumps it while owning no search of its
     /// own — the reverse-address lookup, which owns <see cref="IsLookingUp"/> instead,
-    /// and <see cref="ClearOnDisconnect"/> — so the superseded search skipped its clear,
-    /// nothing else ever ran, and the indeterminate ProgressBar bound in
-    /// InstanceFinderPanel.axaml span for the rest of the session with nothing in
-    /// flight. Clearing it HERE is what makes the bumper an owner. (audit #5 Z6)
+    /// or <see cref="ClearOnDisconnect"/> — would otherwise make the superseded search
+    /// skip its clear with nothing else left to run it, and the indeterminate ProgressBar
+    /// bound in InstanceFinderPanel.axaml would spin for the rest of the session with
+    /// nothing in flight. Clearing it HERE is what makes the bumper an owner.
     /// </para>
     /// <para>
     /// Clearing is correct rather than merely convenient: the superseded response is
@@ -598,7 +598,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         // can't overwrite the single lookup result) and stop class-noise toggles from
         // re-running a class search over the now-stale leftover facets. The bump also
         // has to release IsSearching, which this command does not otherwise own — see
-        // SupersedeClassSearch. (audit #5 Z6)
+        // SupersedeClassSearch.
         _reRunCts?.Cancel();
         SupersedeClassSearch();
         _hasActiveClassSearch = false;
@@ -655,13 +655,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // clean miss from a deadline-truncated scan — important when
             // testing on big games (FF7 Rebirth ~430K objects).
             //
-            // It could not do that job before audit #5 Z12. Two reasons, both fixed:
-            // the DLL swapped in the DEEP pass's counters only when the deep pass found
-            // NOTHING, so a deep success reported the shallow pass's numbers and threw
-            // the deep pass's own deadline flag away; and `container_scan.deep_scan` was
-            // emitted by the DLL and never parsed here, so a deep MISS never revealed
-            // that the per-container element cap — not exhaustion — could have ended the
-            // search. PartialResultNotice.ScanSuffix names both bounds.
+            // That needs both passes' bounds: the DLL folds the deep pass into the
+            // counters (its deadline flag included, so a partial-but-successful deep
+            // pass does not read as complete), and `container_scan.deep_scan` is parsed
+            // here so a deep MISS reveals that the per-container element cap — not
+            // exhaustion — could have ended the search. PartialResultNotice.ScanSuffix
+            // names both bounds.
             string scanSuffix = result.ContainerScan is { } cs
                 ? PartialResultNotice.ScanSuffix(
                       cs.ObjectsScanned, cs.ObjectsTotal, cs.DurationMs,
@@ -756,7 +755,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// selection that SURVIVES the filter. Both transitions are bookkeeping forced by
     /// <see cref="UiCollection.Reset"/>, not user intent, so neither may clear the
     /// loaded field grid nor issue a walk. Never set when the selection is genuinely
-    /// going away — that case still clears normally. (audit #5 Z7)</summary>
+    /// going away — that case still clears normally.</summary>
     private bool _suppressSelectionSideEffects;
 
     partial void OnSelectedInstanceChanged(InstanceResult? value)
@@ -1142,7 +1141,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 ct.ThrowIfCancellationRequested();
                 rows++;
                 // A partial cell is not a finished answer — re-running it can still find
-                // more, so it must not be treated as cached. (audit #5 Z9)
+                // more, so it must not be treated as cached.
                 if (!string.IsNullOrEmpty(inst.XrefInfo) && !XrefFormat.IsPartialCell(inst.XrefInfo))
                 { reused++; continue; }
                 if (string.IsNullOrEmpty(inst.ClassAddress)) { inst.XrefInfo = "—"; continue; }
@@ -1150,7 +1149,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 try
                 {
                     var res = await _dump.FindFunctionsByClassAsync(inst.ClassAddress, true, 200, ct);
-                    bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
+                    bool deadline = res.Scan?.DeadlineHit ?? false;
                     bool capped = res.Scan?.CapHit ?? false;           // [W3-XREF-CAP] its own cause
                     var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     classCache[inst.ClassAddress] = summary;

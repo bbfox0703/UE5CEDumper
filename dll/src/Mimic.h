@@ -276,7 +276,7 @@ enum ProtectOp : uint64_t {
 // the class that DECLARES it (`bCanBeDamaged` presents as `Actor`), so an
 // exact-name pool can hold one incidental debug actor while every AActor subclass in
 // the level — the player's pawn included — goes untouched. Solide's Force scopes the
-// same way (audit #5 A6); the two sit on the same panel row and must not scope
+// same way; the two sit on the same panel row and must not scope
 // oppositely. (`[FREEZESCOPE-2026-08-18]`)
 //
 // The bit DEFAULTS OFF, and that is the whole backward-compatibility story: a
@@ -415,7 +415,7 @@ struct MailboxData {
                                         //       [8..15]  UClass*  (uint64) — the CONCRETE class of THAT
                                         //                object, i.e. its per-entry identity witness
                                         //
-                                        // WHY the two extra outputs (contract 2, audit #5 AA2/AA3):
+                                        // WHY the two extra outputs (contract 2):
                                         //   A caller that CACHES these pointers and writes to them on a
                                         //   timer cannot tell a still-live instance from a recycled slot.
                                         //   With (UClass*, classOffset) it can re-read obj->ClassPrivate
@@ -531,7 +531,7 @@ constexpr uint32_t FUNC_FLAG_STATIC = 0x00002000u;
 /// instanceAddr / ufuncAddr / paramsData), so a bare re-FIRE of CMD_INVOKE reads
 /// whatever the PREVIOUS command left at offset 0x024. Two commands overwrite it
 /// with a page count, and CMD_FIND_FUNCTION leaves the flags of a DIFFERENT
-/// function — which is the false-positive above. (audit #5 MB1)
+/// function — which is the false-positive above.
 constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolved) {
     return flagsResolved
         && (functionFlags & (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC))

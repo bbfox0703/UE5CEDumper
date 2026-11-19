@@ -761,9 +761,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     /// Open a fresh connection to the CE-plugin pipe. Never throws — every public
     /// method turns a false into the same user-visible "AOBMaker not connected".
     ///
-    /// That is exactly why the failure must be LOGGED here (audit #5 AC3): six of the
-    /// seven call sites do nothing but <c>IsAvailable = false; return false;</c>, so a
-    /// bare catch made "CE isn't running", "the plugin isn't loaded", "another client
+    /// That is exactly why the failure must be LOGGED here: the call sites mostly do
+    /// nothing but <c>IsAvailable = false; return false;</c>, so a
+    /// bare catch would make "CE isn't running", "the plugin isn't loaded", "another client
     /// owns the single pipe instance", "the ACL refused us" and "the caller cancelled"
     /// one indistinguishable outcome with zero diagnostics anywhere.
     ///

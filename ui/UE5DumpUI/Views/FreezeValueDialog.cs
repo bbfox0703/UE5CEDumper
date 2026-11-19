@@ -36,7 +36,7 @@ public sealed class FreezeValueDialog : Window
     /// <summary>
     /// Which action the value being typed will drive. The dialog is shared: the value
     /// validation, the type mapping and the scope summary are identical, but the
-    /// ACTION is not, and every string that names it must follow (audit #5 AF22).
+    /// ACTION is not, and every string that names it must follow.
     ///
     /// <para><see cref="Freeze"/> generates a CE script the user then enables;
     /// <see cref="Force"/> writes the field immediately through the DLL and holds it on
@@ -211,7 +211,7 @@ public sealed class FreezeValueDialog : Window
     /// not from its type name. This MUST stay the same call
     /// <see cref="FreezeScriptGenerator.Generate"/> makes: the value is checked here
     /// against the writer the generated script will use, so a divergence would validate
-    /// against one width and write with another (audit #5 Y15).</para>
+    /// against one width and write with another.</para>
     ///
     /// <para>A named method rather than an inline expression in the constructor, because
     /// the constructor needs an Avalonia runtime and cannot be unit-tested — this is the
@@ -257,8 +257,7 @@ public sealed class FreezeValueDialog : Window
     /// </summary>
     /// <param name="narrowHint">How to target fewer classes, IN THE FLOW THE USER IS IN.
     /// Passed rather than hardcoded because the two flows have different answers and the
-    /// Freeze one is unreachable from Force — there is no generated CFG block to edit
-    /// (audit #5 AF22).
+    /// Freeze one is unreachable from Force — there is no generated CFG block to edit.
     /// <para><b>Required, deliberately no default.</b> A warning that does not say how to
     /// narrow the scope is only an apology (the property
     /// <c>ScopeWarning_FiresWhenTheFieldIsInherited</c> has pinned since it was written),
@@ -339,9 +338,9 @@ public sealed class FreezeValueDialog : Window
 
     /// <summary>
     /// The "big number" a freeze usually wants. Clamped to what the target type can
-    /// hold — pre-filling a flat 9999 put the DEFAULT out of range on every byte-wide
+    /// hold — pre-filling a flat 9999 would put the DEFAULT out of range on every byte-wide
     /// property, so the user could accept a value they never typed and have it land as
-    /// 15 (audit #5 Y9).
+    /// 15.
     /// </summary>
     private const decimal SuggestedMagnitude = 9999m;
 
@@ -363,7 +362,7 @@ public sealed class FreezeValueDialog : Window
     /// downstream narrows in silence: <c>ue5_freeze_helper.lua</c>'s writer is
     /// <c>writeByte(addr, math.floor(v) % 256)</c> and Solide's is
     /// <c>static_cast&lt;uint8_t&gt;(llround(value))</c> — both turn 9999 into 15 and
-    /// report success (audit #5 Y9). The two consumers of this dialog are Freeze and
+    /// report success. The two consumers of this dialog are Freeze and
     /// Property Search → Force, so one check covers both.
     ///
     /// <c>decimal</c> because the set spans <c>long.MinValue</c>…<c>ulong.MaxValue</c>,
@@ -451,7 +450,7 @@ public sealed class FreezeValueDialog : Window
                 }
                 // A 4-byte field cannot hold every finite double, and the narrowing is
                 // silent on both sides (CE's writeFloat, Solide's WriteFloatAt), so an
-                // accepted 1e300 lands as +inf and 1e-300 lands as 0 (audit #5 Y9).
+                // accepted 1e300 lands as +inf and 1e-300 lands as 0.
                 if (helperType == "float")
                 {
                     var fv = (float)dv;

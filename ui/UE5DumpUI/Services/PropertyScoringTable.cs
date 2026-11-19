@@ -524,14 +524,12 @@ public static class PropertyScoringTable
     /// using the full keyword tables above — so this list is "what to
     /// fetch", not "what to score on".
     ///
-    /// <para><b>This list and the keyword tables above must be kept in step,
-    /// and drifted apart for a long time (audit #5 Z3).</b> A property is only
-    /// ever scored if it was fetched, so a keyword no seed can reach is a dead
-    /// scoring arm: 58 of the 123 scored keywords were unreachable, including
-    /// most of Utility and Resources. <c>PropertyScoringTableTests</c> now
-    /// asserts the two agree, so this cannot silently drift again — the
-    /// "Add a keyword" recipe at the top of this class never mentioned the seed
-    /// list, 460 lines below it, which is how the gap opened.</para>
+    /// <para><b>This list and the keyword tables above must be kept in step.</b>
+    /// A property is only ever scored if it was fetched, so a keyword no seed
+    /// can reach is a dead scoring arm. <c>PropertyScoringTableTests</c>
+    /// asserts the two agree, so they cannot silently drift apart — the
+    /// "Add a keyword" recipe at the top of this class is far from this seed
+    /// list, and a keyword added there alone is never fetched.</para>
     ///
     /// <para><b>Why this is not simply the union of the keyword tables.</b> The
     /// DLL matches a seed as a bare case-insensitive substring
