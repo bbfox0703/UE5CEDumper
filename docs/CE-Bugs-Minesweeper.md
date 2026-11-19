@@ -603,9 +603,11 @@ Where the Lua group can reach us:
   `os.setlocale`; our other `tonumber` calls take base-16 or integer text, which does not consult the locale,
   and the number literals our scripts carry are read by the lexer, which does retry with the locale's decimal
   point (`llex.c` `trydecpoint`).
-- **`process`**: the AOB-scan scripts take the module name from `process` (`CeXmlExportService.cs`,
-  `StandaloneTrainerScriptGenerator.cs`). We register no custom type, but on 7.6 any table that
-  does would point those scans at CE's own exe.
+- **`process`**: only through a fallback. The AOB-scan scripts (`CeXmlExportService.cs`,
+  `StandaloneTrainerScriptGenerator.cs`) name the module they scan from the opened process's first
+  `enumModules()` entry, the module CE names `process` after (`CeLuaHygiene.MainModuleNameLua`,
+  `[CE76-PROCESS-GLOBAL]`), and read `process` only when that list comes back empty. On 7.6, a table
+  that registers a custom type can affect those scans only when the module snapshot fails as well.
 - Not reached: no emitted Lua writes `memrec.Value`, and our exported String records meet that
   write path only when a user types into the cell. We never call `loadTable`, both `.CT` writers
   save UTF-8 without a BOM, and `scripts/UE5CEDumper.CT` has none.

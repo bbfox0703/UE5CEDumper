@@ -110,10 +110,10 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
-        // [PATH-CE-MODULE-VIEW] Scan CE's OWN name for the main module. `process` and enumModules' Name are the
-        // same ANSI bytes; the baked UE5T.module is the Unicode name, which CE does not know for a non-ASCII exe
+        // [PATH-CE-MODULE-VIEW] Scan CE's OWN name for the main module (CeLuaHygiene.MainModuleNameLua, the ANSI bytes
+        // enumModules reports); the baked UE5T.module is the Unicode name, which CE does not know for a non-ASCII exe
         // (ゲーム-… is ???-… to CE on code page 950). UE5T.module stays in the table as information only.
-        Line(sb, "local mod = process");
+        Line(sb, "local mod = " + CeLuaHygiene.MainModuleNameLua);
         Line(sb, "if mod == nil or mod == '' then");
         Line(sb, "  showMessage('[UE5 Trainer] No process is opened in Cheat Engine. Attach CE to the game, then tick Setup again.')");
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));

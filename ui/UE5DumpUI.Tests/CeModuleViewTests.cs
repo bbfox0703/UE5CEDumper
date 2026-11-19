@@ -177,7 +177,7 @@ public class CeModuleViewTests
             .ToList();
         Assert.Empty(offenders);
 
-        // The GWorld-walk export's module argument is unused -- its script scans CE's `process` --
+        // The GWorld-walk export's module argument is unused -- its script scans CE's own name for the main module --
         // so it is not pinned here; its doc says so.
 
         string pointer = File.ReadAllText(Path.Combine(dir, "PointerPanelViewModel.cs"));
@@ -187,14 +187,14 @@ public class CeModuleViewTests
     [Fact]
     public void Trainer_ScansCesOwnMainModule_NeverTheBakedName()
     {
-        // CE's `process` and enumModules()' Name are the SAME ANSI bytes; a baked UTF-8 name is not.
+        // enumModules()' Name is the ANSI bytes CE matches; a baked UTF-8 name is not.
         var setup = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
         {
             Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
             Module = "遊戲-Win64-Shipping.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
         })[0].Script;
 
-        Assert.Contains("local mod = process", setup);
+        Assert.Contains("local mod = " + CeLuaHygiene.MainModuleNameLua, setup);
         Assert.DoesNotContain("local mod = UE5T.module", setup);
         // No process opened: say so and untick, instead of string.lower(nil) inside the helper.
         Assert.Matches(@"if mod == nil or mod == '' then\s+showMessage\('\[UE5 Trainer\][^']*[Aa]ttach", setup);

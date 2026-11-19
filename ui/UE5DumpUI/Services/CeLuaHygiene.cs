@@ -110,6 +110,24 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("-- ").Append(Attribution).Append('\n');
     }
 
+    /// <summary>
+    /// [CE76-PROCESS-GLOBAL] A Lua expression naming the main module of the process Cheat Engine has open, as the
+    /// AOB-scan helpers compare it: the <c>Name</c> of the first <c>enumModules()</c> entry. CE names its
+    /// <c>process</c> global after the first entry of its own module snapshot of the same process, so on a healthy CE
+    /// the two are the same ANSI bytes, and every copy of <c>AOBScanModuleUE</c> a session may already hold matches
+    /// it. The global is read only when the list names nothing (a failed module snapshot): CE 7.6 overwrites it with
+    /// its own exe name once any table registers a custom type (docs/CE-Bugs-Minesweeper.md).
+    ///
+    /// <para>Nil when no process is open: <c>enumModules</c> with process id 0 lists CE's own modules, and a custom
+    /// type assembled before any process was opened leaves <c>process</c> naming CE's own exe.</para>
+    ///
+    /// <para>One line, so each emitter writes it after its <c>local name = </c> in its own line-ending style.</para>
+    /// </summary>
+    public const string MainModuleNameLua =
+        "(function() if getOpenedProcessID() == 0 then return nil end "
+        + "local m synchronize(function() m = enumModules() end) m = type(m) == 'table' and m[1] or nil "
+        + "if m and m.Name and m.Name ~= '' then return m.Name end return process end)()";
+
     /// <summary>Emit the DEBUG preamble. Place it right after
     /// <c>if syntaxcheck then return end</c> in each <c>{$lua}</c> block that
     /// prints diagnostics or auto-closes. Every block is its own Lua chunk in CE,

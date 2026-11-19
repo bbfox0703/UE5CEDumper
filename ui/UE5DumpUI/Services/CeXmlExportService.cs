@@ -1432,8 +1432,8 @@ public static class CeXmlExportService
     /// and a "base" pointer entry dereferences it. All breadcrumb/field children nest under base.
     /// This format survives game restarts (re-scans AOB on script activation).
     /// <para>The <c>moduleName</c> argument is NOT used: the script scans CE's own name for the main module
-    /// (<c>process</c>), which is the ANSI bytes <c>enumModules</c> compares -- a baked name is not, for a non-ASCII
-    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW]</para>
+    /// (<see cref="CeLuaHygiene.MainModuleNameLua"/>), which is the ANSI bytes <c>enumModules</c> compares -- a baked
+    /// name is not, for a non-ASCII exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW]</para>
     /// </summary>
     public static string GenerateAobWrappedXml(
         string rootName,
@@ -1612,8 +1612,8 @@ public static class CeXmlExportService
         sb.AppendLine("}");
         sb.AppendLine();
 
-        // Use CE global 'process' for the attached process module name
-        sb.AppendLine("local module_name = process");
+        // The opened process's main module as CE names it; CeLuaHygiene.MainModuleNameLua says why not `process`.
+        sb.AppendLine("local module_name = " + CeLuaHygiene.MainModuleNameLua);
         sb.AppendLine();
 
         // Scan and register loop
@@ -1801,7 +1801,8 @@ public static class CeXmlExportService
         {
             sb.AppendLine($"local entry = {{aob='{aob}', pos={aobPos}, aoblen={aobLen}, symbol='{gworldSymbol}'}}");
             sb.AppendLine("local gworld_base = nil");
-            sb.AppendLine("local aob_addr_str = AOBScanModuleUE(process, entry.aob)");
+            sb.AppendLine("local module_name = " + CeLuaHygiene.MainModuleNameLua);
+            sb.AppendLine("local aob_addr_str = AOBScanModuleUE(module_name, entry.aob)");
             sb.AppendLine("if aob_addr_str then");
             sb.AppendLine("  local aob_addr_val = tonumber(aob_addr_str, 16)");
             sb.AppendLine("  local relative_offset = readInteger(aob_addr_val + entry.pos, true)");
