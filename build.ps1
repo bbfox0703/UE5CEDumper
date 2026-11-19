@@ -258,48 +258,48 @@ function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
-function Repair-MsvcToolOrder() {
+function Get-MsvcBinDir() {
     <#
     .SYNOPSIS
-        Put Visual Studio's copy of cl, link, cmake and ninja first on PATH when another folder shadows it.
+        The folder of the loaded toolset's cl.exe and link.exe (VCToolsInstallDir, bin\Host<host>\<target>),
+        or $null when the developer environment names none that holds both.
+    #>
+    if (-not $env:VCToolsInstallDir -or -not $env:VSCMD_ARG_HOST_ARCH -or -not $env:VSCMD_ARG_TGT_ARCH) { return $null }
+    $bin = (Join-Path $env:VCToolsInstallDir "bin\Host$($env:VSCMD_ARG_HOST_ARCH)\$($env:VSCMD_ARG_TGT_ARCH)").TrimEnd('\')
+    if ((Test-Path (Join-Path $bin 'cl.exe')) -and (Test-Path (Join-Path $bin 'link.exe'))) { return $bin }
+    return $null
+}
+
+function Test-OnPath([string]$Dir) {
+    # Whether PATH lists $Dir (case-insensitive, trailing backslash ignored).
+    return [bool]($env:PATH -split ';' | Where-Object { $_.TrimEnd('\') -eq $Dir } | Select-Object -First 1)
+}
+
+function Repair-MsvcToolOrder([string]$Bin) {
+    <#
+    .SYNOPSIS
+        Put the loaded toolset's folder first on PATH when another cl.exe or link.exe comes before it.
 
     .DESCRIPTION
         A shell started from a developer environment (Git Bash, MSYS2) may put its own folders in front of PATH,
-        and build.ps1 reuses such an environment as it is. Git's and MSYS2's usr\bin hold a coreutils link.exe,
-        which the AOT publish would run, and MSYS2's mingw64\bin holds c++.exe, which CMake's Ninja generator
-        takes from the first PATH folder holding any compiler it knows. For each tool whose first copy on PATH is
-        not under VSINSTALLDIR, the folder of the first copy that is moves to the front. A tool this Visual Studio
-        does not ship (no CMake component) is left alone; cl and link must exist. [MSVC-GUARD-2026-11-19]
+        and build.ps1 reuses such an environment as it is: Git's and MSYS2's usr\bin hold a coreutils link.exe.
+        Only cl and link are checked. CMake and Ninja are left where they are: the DevShell appends Visual
+        Studio's, so a standalone CMake earlier on PATH is the one every run uses, and moving it would change
+        which cmake owns build\. [MSVC-GUARD-2026-11-19]
     #>
-    if (-not $env:VSINSTALLDIR) {
-        Write-Fail "The developer environment names no VSINSTALLDIR, so the MSVC tools cannot be located"
-        return $false
-    }
-    $vsRoot = [System.IO.Path]::GetFullPath($env:VSINSTALLDIR).TrimEnd('\') + '\'
-    $front = [System.Collections.Generic.List[string]]::new()
-    foreach ($tool in @('cl.exe', 'link.exe', 'cmake.exe', 'ninja.exe')) {
-        $all = @(Get-Command $tool -CommandType Application -All -ErrorAction SilentlyContinue |
-                 ForEach-Object { $_.Source })
-        $vsCopy = $all | Where-Object { $_.StartsWith($vsRoot, [StringComparison]::OrdinalIgnoreCase) } |
-                  Select-Object -First 1
-        if (-not $vsCopy) {
-            if ($tool -in 'cl.exe', 'link.exe') {
-                Write-Fail "No $tool under $vsRoot is on PATH; the MSVC x64 environment is incomplete"
-                return $false
-            }
-            continue
-        }
-        if ($all[0] -ne $vsCopy) {
-            $dir = Split-Path $vsCopy -Parent
-            Write-Info "$tool resolved to $($all[0]); putting $dir first on PATH"
-            if (-not $front.Contains($dir)) { $front.Add($dir) }
+    $moved = $false
+    foreach ($tool in 'cl.exe', 'link.exe') {
+        $first = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $first -or (Split-Path $first.Source -Parent).TrimEnd('\') -ne $Bin) {
+            $found = if ($first) { $first.Source } else { 'nothing' }
+            Write-Info "$tool resolved to $found; putting $Bin first on PATH"
+            $moved = $true
         }
     }
-    if ($front.Count -gt 0) { $env:PATH = ($front -join ';') + ';' + $env:PATH }
-    return $true
+    if ($moved) { $env:PATH = "$Bin;$env:PATH" }
 }
 
-function Use-MsvcCompiler() {
+function Use-MsvcCompiler([string]$Bin) {
     <#
     .SYNOPSIS
         Point CC and CXX at MSVC's cl.exe for every CMake configure this script runs.
@@ -310,18 +310,14 @@ function Use-MsvcCompiler() {
         longer depends on what the environment or PATH holds. Kept caches are Repair-StaleToolchainCache's
         concern; CMake never re-reads CC / CXX for them. [MSVC-GUARD-2026-11-19]
     #>
-    $cl = Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $cl) {
-        Write-Fail "cl.exe is not on PATH after loading the MSVC x64 environment"
-        return $false
-    }
+    $cl = Join-Path $Bin 'cl.exe'
     foreach ($name in 'CC', 'CXX') {
         $old = [Environment]::GetEnvironmentVariable($name)
-        if ($old -and $old -ne $cl.Source) { Write-Info "$name named $old; configuring with $($cl.Source) instead" }
-        [Environment]::SetEnvironmentVariable($name, $cl.Source)
+        if ($old -and $old -ne $cl) { Write-Info "$name named $old; configuring with $cl instead" }
+        [Environment]::SetEnvironmentVariable($name, $cl)
     }
     # The AOT publish names its linker by full path from here (see the publish step).
-    $script:msvcLink = Join-Path (Split-Path $cl.Source -Parent) 'link.exe'
+    $script:msvcLink = Join-Path $Bin 'link.exe'
     return $true
 }
 
@@ -338,12 +334,18 @@ function Enter-VsDevEnvironment() {
     # this same session), DON'T enter it again. Enter-VsDevShell PREPENDS the VC paths
     # to PATH/LIB/INCLUDE every time, so re-entering stacks them until the linker's
     # command line blows past the 8191-char Windows limit (-> AOT link exits 123).
-    # What a later shell put in front of PATH is repaired instead.
+    # What a later shell put in front of PATH is repaired instead. A PATH that no longer lists the toolset at all
+    # (MSYS2's minimal PATH keeps the variables and replaces PATH) is entered afresh, which stacks nothing.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
-        if (-not (Repair-MsvcToolOrder) -or -not (Use-MsvcCompiler)) { return $false }
-        $script:vsDevShellLoaded = $true
-        Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
-        return $true
+        $bin = Get-MsvcBinDir
+        if ($bin -and (Test-OnPath $bin)) {
+            Repair-MsvcToolOrder $bin
+            if (-not (Use-MsvcCompiler $bin)) { return $false }
+            $script:vsDevShellLoaded = $true
+            Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
+            return $true
+        }
+        Write-Info "The inherited x64 environment's PATH lists no MSVC toolset folder; entering the DevShell"
     }
 
     $devShellDll = Join-Path $script:vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
@@ -355,7 +357,13 @@ function Enter-VsDevEnvironment() {
     try {
         Import-Module $devShellDll
         Enter-VsDevShell -VsInstallPath $script:vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
-        if (-not (Repair-MsvcToolOrder) -or -not (Use-MsvcCompiler)) { return $false }
+        $bin = Get-MsvcBinDir
+        if (-not $bin) {
+            Write-Fail "The DevShell named no MSVC toolset folder holding cl.exe and link.exe"
+            return $false
+        }
+        Repair-MsvcToolOrder $bin
+        if (-not (Use-MsvcCompiler $bin)) { return $false }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment loaded"
         return $true
