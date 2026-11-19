@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — The rest of the test, tools, scripts and XAML comments read and cleaned; line references gated there too `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Gates:** `check_comment_refs` now also reads Python docstrings, Lua block comments, the .axaml and the .ps1 (through
+  `tools/comment_lang.py`), so an in-repo line number, a false "no test target compiles X.cpp" or a dead doc name there
+  fails it too; `check_comment_history` counts a dated event with no preposition (`Found 2026-09-06`, `Added
+  2026-09-09`). The 110 reference findings and 8 history lines this exposed are fixed: a line number became the function,
+  constant or test it pointed at, and the stale `aot-pitfalls.md` citations state their fact instead.
+- **Pass Y:** a loose scan's ~4,800 candidate lines in the 633 test / tools / scripts / XAML files no earlier pass had
+  read were judged in context by ten editor/reviewer pairs; 321 files changed. The reviewers checked each new sentence
+  against the code and corrected 111, mostly rig docstrings describing code that has since moved on (a cache that now has
+  invalidation, a function lookup that now climbs to base classes).
+- **Verified:** comments only (321/321 by `comment_only_diff`, no line splice, Python compiles warning-free); the five
+  C++ self-tests 0 failures; C# 8510 (1 skipped); the headless tests build; 40 gates. Both comment gates are at 0.
+
 ## 2026-11-19 (no build change) — The XAML, scripts and tools comments cleaned and gated; build.ps1 heals a removed toolset; quiet log tests `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - **Comment scanners:** `tools/comment_lang.py` gives XAML, Lua (and the .CT), PowerShell and Python (docstrings
