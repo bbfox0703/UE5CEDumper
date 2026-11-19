@@ -15199,6 +15199,35 @@ int main() {
                     }
                 }
             }
+
+            // The base relaxed D alone validates: a 4.20-5.7 preallocated array whose block sits above 16 TB at a
+            // 64K boundary (D's count is its high dword, D's max its low dword 0), with 5,242,880 objects (past every
+            // row's 0x400000) and the disregard-for-GC set off (ObjLastNonGCIndex -1, so relaxed B has no count).
+            // D's count is above its max but no whole number of chunks, so the 5.8 guard leaves it.
+            {
+                uint8_t* hiBlock = nullptr;
+                for (uint32_t hi : { 0x1F05u, 0x2105u, 0x2305u, 0x2505u }) {
+                    hiBlock = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(static_cast<uintptr_t>(hi) << 32),
+                                                                 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                    if (hiBlock) break;
+                }
+                check("UE58-ADJ10 setup: a preallocated block above 16 TB at a 64K boundary", hiBlock != nullptr);
+                if (hiBlock) {
+                    memcpy(hiBlock, chunkAt[0], 64 * 24);
+                    const Numbers big = { "5,242,880 objects, preallocated", 96, 81, 0x500000, true };
+                    build(shapes[0], big, 0);
+                    for (int i = 0; i < big.maxChunks; ++i) table[i] = reinterpret_cast<uintptr_t>(hiBlock);
+                    const uintptr_t block = reinterpret_cast<uintptr_t>(hiBlock);
+                    memcpy(hdr + kBase + 0x18, &block, 8);
+                    const int32_t lastNonGC = -1, firstGC = 0, maxNotGC = 0;
+                    memcpy(hdr + kBase + 0x00, &firstGC, 4);
+                    memcpy(hdr + kBase + 0x04, &lastNonGC, 4);
+                    memcpy(hdr + kBase + 0x08, &maxNotGC, 4);
+                    check("UE58-ADJ10 control: a pre-5.8 base that only relaxed D validates (PreAllocatedObjects' halves) "
+                          "still validates", Genau::ValidateGObjects(B));
+                    VirtualFree(hiBlock, 0, MEM_RELEASE);
+                }
+            }
             VirtualFree(region, 0, MEM_RELEASE);
         }
         Aura::Init(pool.Addr());

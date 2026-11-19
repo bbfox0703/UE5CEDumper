@@ -348,12 +348,21 @@ static bool ValidateGObjects(uintptr_t addr) {
     // isFlat: objPtr is FUObjectItem[] directly (no chunk indirection).
     // maxOff/maxCOff/numCOff mirror the corresponding Tier 1 preset above (A/C<-Default,
     // B<-Back4Blood, D<-UE4-Extended, E<-UE5-Extended, F<-UE5.8, Flat<-Flat). maxOff feeds
-    // an upper-bound sanity check only — see kRelaxedMaxCeiling below.
-    struct { int numOff; int maxOff; int objOff; int maxCOff; int numCOff; bool isFlat; const char* name; } relaxed[] = {
+    // an upper-bound sanity check (see kRelaxedMaxCeiling below) and the `ue58Early` guard.
+    //
+    // ue58Early: [UE58-ADJ10-WRONG-ANCHOR] 2026-11-19. Read 0x10 below a UE 5.8 FUObjectArray, D's slots hold
+    // that array's ObjObjects with each count pair swapped: Objects at +0x10, NumElements / MaxElements at +0x18 /
+    // +0x1C, NumChunks / MaxChunks at +0x20 / +0x24. That is the address a GObjects row with adjustment -0x10
+    // offers first on 5.8. Its tell is a count above its max that is exactly the +0x24 dword's whole chunks, as
+    // FUObjectArray::AllocateObjectPool leaves MaxElements. A genuine D array never has its count above its max, so
+    // the guard refuses none; and it asks for the whole chunks, not only the order, because D also reads the halves
+    // of a pre-5.8 PreAllocatedObjects above 16 TB in these slots, and validates that base when no other row does.
+    struct { int numOff; int maxOff; int objOff; int maxCOff; int numCOff; bool isFlat; const char* name;
+             bool ue58Early = false; } relaxed[] = {
         { 0x14, 0x10, 0x00, 0x18, 0x1C, false, "A/C" },
         { 0x04, 0x00, 0x10, 0x08, 0x0C, false, "B"   },
         { 0x1C, 0x18, 0x10,   -1,   -1, true,  "D-Flat" },  // flat twin of D — see "Flat-Base" above
-        { 0x1C, 0x18, 0x10, 0x20, 0x24, false, "D"   },
+        { 0x1C, 0x18, 0x10, 0x20, 0x24, false, "D", true },
         { 0x24, 0x20, 0x10, 0x28, 0x2C, false, "E"   },    // UE5-Extended: GC prefix + PreAllocatedObjects
         { 0x08, 0x0C, 0x00, 0x14, 0x10, false, "F"   },    // UE5.8: cache-locality reorder
         { 0x0C, 0x08, 0x00,   -1,   -1, true,  "Flat" },   // FFixedUObjectArray: no chunks (OT / early UE4)
@@ -383,13 +392,23 @@ static bool ValidateGObjects(uintptr_t addr) {
             // happens to fall in range is still betrayed by its "max" slot: in an ICU-like
             // locale blob, for one, that dword can be the low half of a module pointer and read
             // in the hundreds of millions. Deliberately WEAKER than Tier 1 (which also
-            // rejects `max < num`): we apply a loose ceiling only, and skip the check entirely
-            // if the read fails. A title that raises gc.MaxObjectsInGame past our strict cap —
-            // or whose max field is not where this row assumes — therefore still reaches the
-            // relaxed accept path.
+            // rejects `max < num`): a loose ceiling, plus `ue58Early` where a row carries it, and
+            // no check at all if the read fails. A title that raises gc.MaxObjectsInGame past our
+            // strict cap — or whose max field is not where this row assumes — therefore still
+            // reaches the relaxed accept path.
             int32_t maxElements = 0;
-            if (Macht::ReadSafe(addr + L.maxOff, maxElements) &&
-                static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
+            const bool maxRead = Macht::ReadSafe(addr + L.maxOff, maxElements);
+            if (maxRead && static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
+
+            // ue58Early (see the table): a count above its max that is the +0x24 dword's whole chunks is a UE 5.8
+            // ObjObjects read 0x10 early, so this address is not the array's.
+            if (L.ue58Early && maxRead && numElements > maxElements) {
+                int32_t maxChunks58 = 0;
+                if (Macht::ReadSafe(addr + 0x24, maxChunks58)
+                    && static_cast<int64_t>(numElements)
+                           == static_cast<int64_t>(maxChunks58) * Grimoire::OBJECTS_PER_CHUNK)
+                    continue;
+            }
 
             // Pass 1 only: chunk consistency, mirroring Tier 1. A row whose chunk slots are
             // unreadable or structurally impossible (no chunks, or more live than allocated)
