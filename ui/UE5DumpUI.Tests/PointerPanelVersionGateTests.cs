@@ -311,6 +311,15 @@ public class PointerPanelVersionGateTests
         Assert.Equal(Enumerable.Range(floor, 427 - floor + 1), ue4);
     }
 
+    /// <summary>[VND9-05] The DLL accepts 509 and reads it from a 5.9 title, so the override list offers it too, newest
+    /// last as the list runs.</summary>
+    [Fact]
+    public void OverrideList_OffersUe59AsItsNewestEngine()
+    {
+        Assert.Equal("UE 5.9", PointerPanelViewModel.UeVersionOverrideOptions[^1]);
+        Assert.Equal(509, PointerPanelViewModel.LabelToVersion("UE 5.9"));
+    }
+
     [Fact]
     public void OverrideList_KeepsAutoFirstAndEveryLabelRoundTrips()
     {
