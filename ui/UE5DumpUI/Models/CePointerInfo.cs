@@ -15,12 +15,15 @@ public sealed class CePointerInfo
 
     /// <summary>
     /// CE offset chain (bottom-to-top). Direct layouts: [field, withinChunk*itemSize+objOffset,
-    /// chunkIndex*8, 0]. Under <see cref="PackedLayout"/> the GObjects-relative chain cannot be
-    /// expressed, so this degrades to a single [field] hop off an absolute <see cref="CeBase"/>.
+    /// chunkIndex*8], off a <see cref="CeBase"/> at the array's Objects field. Under
+    /// <see cref="PackedLayout"/> the GObjects-relative chain cannot be expressed, so this degrades
+    /// to a single [field] hop off an absolute <see cref="CeBase"/>.
     /// </summary>
     public int[] CeOffsets { get; init; } = [];
 
-    /// <summary>CE base address string, e.g. "Game.exe"+1BA1820, or an absolute address when packed.</summary>
+    /// <summary>CE base address string: the array's Objects field, e.g. "Game.exe"+1BA1830 (GObjects plus
+    /// the layout's Objects offset, since CE reads the base before its first offset), or an absolute
+    /// address when packed.</summary>
     public string CeBase { get; init; } = "";
 
     /// <summary>

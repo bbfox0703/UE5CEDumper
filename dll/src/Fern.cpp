@@ -6982,12 +6982,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (Aura::IsFlat()) {
                 // FLAT (non-chunked) FFixedUObjectArray (OctoPath / FF7R Intergrade /
                 // Extinction / NEKOPALIVE): Objects* points directly at a single
-                // FUObjectItem[] with NO chunk pointer table. The 4-hop chunked chain below
-                // would treat Item[0].Object as a chunk-table pointer at hop 3 and hand CE a
+                // FUObjectItem[] with NO chunk pointer table. The chunked chain below would
+                // read an item's UObject* as a chunk pointer and hand CE a
                 // GARBAGE address the user can write to. Degrade to the
                 // ABSOLUTE object address — valid for this session only — exactly as the
-                // packed branch above does. A restart-surviving flat chain would need the
-                // FFixedUObjectArray Objects-deref offset plumbed out and live verification
+                // packed branch above does. A restart-surviving flat chain (the Objects field as
+                // base, Aura::GetObjectsOffset, then one item hop) still needs live verification
                 // on a flat title; tracked in the register.
                 data["flat_layout"]   = true;
                 data["packed_layout"] = false;
@@ -7003,21 +7003,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeResponse(id, data).dump();
             }
 
-            // CE offset chain (bottom-to-top), DIRECT layouts (classic / UE5.7+ unpacked):
-            // Level 4 (outermost): deref FUObjectArray* → chunkTable (offset 0)
-            // Level 3: chunkTable + chunkIndex*8 → chunk
-            // Level 2: chunk + withinChunk*itemSize + objOffset → FUObjectItem.Object*
-            // Level 1 (innermost): Object + fieldOffset → value
-            // NOTE: the item hop adds GetItemObjOffset() so the chain dereferences the
-            // Object pointer at its real within-item offset — +0x00 on classic, +0x08 on
-            // UE5.7+ unpacked (where FlagsAndRefCount sits at item+0x00).
+            // The DIRECT layouts (classic / UE5.7+ unpacked). The base is the latched row's Objects field, not the
+            // published address: CE reads [base] before its first offset. [CEPTR-OBJECTS-2026-11-19]
             data["packed_layout"] = false;
+            const int objectsOffset = Aura::GetObjectsOffset();
+            data["objects_offset"] = objectsOffset;
+            const Aura::CeChunkedChain chain = Aura::BuildCeChunkedChain(
+                g_cachedGObjects, objectsOffset, internalIndex, Aura::GetItemSize(), Aura::GetItemObjOffset(),
+                fieldOffset);
             json offsets = json::array();
-            offsets.push_back(fieldOffset);                                              // field offset from UObject*
-            offsets.push_back(withinChunk * Aura::GetItemSize() + Aura::GetItemObjOffset()); // item in chunk → Object*
-            offsets.push_back(chunkIndex * 8);                                           // chunk in table
-            offsets.push_back(0);                                                        // deref FUObjectArray.Objects
-
+            for (int hop : chain.offsets) offsets.push_back(hop);
             data["ce_offsets"] = offsets;
 
             // CE base address string: "Module.exe"+RVA, in CE's OWN name for the module (Methode::CeModuleNameUtf8:
@@ -7025,7 +7020,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // name's quote and RVA silently. [PATH-MODULE-NAME-UTF8]
             data["ce_base"] = Renge::CeModuleRelative(Methode::CeModuleNameUtf8(moduleFileName.c_str(),
                                                                                 moduleFileName.size(), CP_ACP),
-                                                      static_cast<uint64_t>(gobjectsRVA));
+                                                      static_cast<uint64_t>(chain.base - moduleBase));
 
             return Renge::MakeResponse(id, data).dump();
         }

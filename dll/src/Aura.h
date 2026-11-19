@@ -278,20 +278,25 @@ int GetObjectsOffset();
 
 // [CEPTR-OBJECTS-2026-11-19] The Cheat Engine pointer get_ce_pointer_info hands out for byte `fieldOffset` of the
 // object in slot `internalIndex` of a CHUNKED array whose items store the UObject* directly (`itemSize`-byte items,
-// the pointer at `itemObjOffset`). `offsets` is in CE's order: offsets[0] is added last.
+// the pointer at `itemObjOffset`), the array published at `arrayAddr` with its Objects field `objectsOffset` in.
+// CE reads [base] before it adds its first offset -- N offsets are N reads (CE's MemoryRecordUnit.pas,
+// TMemoryRecord.GetRealAddress) -- so no offset can stand in for objectsOffset: the base is the Objects field itself.
+// Its read gives the chunk table; the offsets then lead to the chunk, to the UObject*, and to the field, which is
+// only added. `offsets` is in CE's order: offsets[0] is added last.
 struct CeChunkedChain {
-    uintptr_t        base = 0;
+    uintptr_t        base = 0;          // the Objects field
     int32_t          chunkIndex = 0;
     int32_t          withinChunk = 0;
-    std::vector<int> offsets;
+    std::vector<int> offsets;           // the field, the UObject* in the chunk, the chunk in the table
 };
-inline CeChunkedChain BuildCeChunkedChain(uintptr_t arrayAddr, [[maybe_unused]] int objectsOffset,
-                                          int32_t internalIndex, int itemSize, int itemObjOffset, int fieldOffset) {
+inline CeChunkedChain BuildCeChunkedChain(uintptr_t arrayAddr, int objectsOffset, int32_t internalIndex,
+                                          int itemSize, int itemObjOffset, int fieldOffset) {
     CeChunkedChain c;
-    c.base        = arrayAddr;
+    c.base        = arrayAddr + static_cast<uintptr_t>(objectsOffset);
     c.chunkIndex  = internalIndex / Grimoire::OBJECTS_PER_CHUNK;
     c.withinChunk = internalIndex % Grimoire::OBJECTS_PER_CHUNK;
-    c.offsets     = { fieldOffset, c.withinChunk * itemSize + itemObjOffset, c.chunkIndex * 8, 0 };
+    c.offsets     = { fieldOffset, c.withinChunk * itemSize + itemObjOffset,
+                      c.chunkIndex * static_cast<int>(sizeof(uintptr_t)) };
     return c;
 }
 

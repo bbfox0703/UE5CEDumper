@@ -1875,15 +1875,23 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
 Builds a CE pointer chain (`ce_base` + `ce_offsets`) for a GObjects instance. Under the
 UE5.7+ packed FUObjectItem layout a native CE chain cannot reconstruct the bit-packed
 object pointer, so the response degrades to the absolute object address and sets
-`packed_layout:true` + a `warning` (the chain won't survive a restart / ASLR rebase). The
-direct-layout item hop includes `Aura::GetItemObjOffset()` so it dereferences the Object
-pointer at its real within-item offset (+0x00 classic, +0x08 UE5.7+ unpacked).
+`packed_layout:true` + a `warning` (the chain won't survive a restart / ASLR rebase). A flat
+(non-chunked) array degrades the same way, with `flat_layout:true`.
+
+On the chunked direct layouts, `ce_base` is the array's **Objects field**: `gobjects_rva` plus
+`objects_offset`, the latched preset row's offset of that field (0 for a stock array published at
+ObjObjects, 0x10 for UE5-Extended at the FUObjectArray base, 0x28 for MindsEye-Extended, ...).
+Cheat Engine reads `[base]` before it adds the first offset (N offsets are N reads), so the
+Objects offset cannot be one of the offsets; three follow — the chunk in the table, the item's
+UObject* in the chunk (`Aura::GetItemObjOffset()`: +0x00 classic, +0x08 UE5.7+ unpacked), and the
+field. `[CEPTR-OBJECTS-2026-11-19]`; built by `Aura::BuildCeChunkedChain`.
 
 ```jsonc
-// Direct (classic / unpacked57): full GObjects → chunk → item → field chain
+// Direct (classic / unpacked57): Objects field → chunk → item → field
 { "id": 18, "ok": true, "packed_layout": false,
-  "ce_base": "\"Game.exe\"+1BA1820",
-  "ce_offsets": [64, 264, 24, 0] }            // [field, withinChunk*itemSize+objOff, chunkIndex*8, 0]
+  "gobjects_rva": "0x1BA1820", "objects_offset": 16,
+  "ce_base": "\"Game.exe\"+1BA1830",             // gobjects_rva + objects_offset
+  "ce_offsets": [64, 264, 24] }                // [field, withinChunk*itemSize+objOff, chunkIndex*8]
 
 // Packed57 (UNVERIFIED): degraded to the absolute object address
 { "id": 18, "ok": true, "packed_layout": true,

@@ -1168,6 +1168,23 @@ must not move, and the release notes say it is untested.
    the rest are derived from sizeof(FProperty) as on stock. Acceptance: a map, a set and an enum field read right in
    the Live Walker.
 
+### ⬜ A GObjects CE pointer resolves in Cheat Engine (built 2026-11-19, ships in the next build) — `[CEPTR-OBJECTS-2026-11-19]`
+
+`get_ce_pointer_info` (the MCP tool `read_ce_pointer`) on a chunked direct-layout array: `ce_base` is the latched
+row's Objects field (`gobjects_rva` + `objects_offset`), then three offsets `[field, item, chunk*8]`, because CE reads
+`[base]` before its first offset. Unit tests: dll_helpers_test `Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt`
+(CE's algorithm over fake memory, seven rows and item shapes); dll_core_test VND10-A1-01's `CEPTR-OBJECTS` checks (the
+chain for each row Aura latches on a fake array reaches `Aura::GetByIndex`). No CE record built from the reply has been
+opened on a running game.
+
+1. ⬜ **A base-anchored array** (DumperTest Shipping, where GOBJ_ES53_1 publishes the FUObjectArray base; the scan log
+   latches UE5-Extended). Acceptance, both sides: the pipe reply for a live object (one in chunk 1 or later if the
+   count reaches it, else any) carries `objects_offset: 16`, a `ce_base` 0x10 past `gobjects_rva` and three offsets;
+   a CE pointer record made of exactly `ce_base` + `ce_offsets` shows the address `addr + field_offset`, and its value
+   equals what `read_instance` reports for that field.
+2. ⬜ **An array published at ObjObjects** (a title whose scan log latches the Default row, `objects_offset: 0`).
+   Same acceptance. A PBZ or MindsEye array is not installed here; dll_core_test holds those rows.
+
 ### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
 
 A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
