@@ -222,6 +222,14 @@ Installing both halves of a row is a real failure mode, not just waste.
 | Ghidra's bundled venv | `pip install pyghidra` | Imports fine, then fails at `pyghidra.start()`. |
 | CE's bundled Lua 5.3 DLL | — | A DLL + import lib, not an interpreter, and the wrong minor version. |
 
+**MSVC only, whatever else is installed.** The build refuses or repairs every other toolchain it can meet
+`[MSVC-GUARD-2026-11-19]`: the root `CMakeLists.txt` stops a configure whose C++ compiler is not MSVC (GCC, clang-cl);
+`build.ps1` points `CC` / `CXX` at the loaded environment's `cl.exe`, drops a build dir whose cache names another
+compiler, puts Visual Studio's own `cl` / `link` / `cmake` / `ninja` first on PATH even in an inherited developer prompt
+(Git's and MSYS2's `usr\bin` hold a coreutils `link.exe`, MSYS2's `mingw64\bin` a `c++.exe`), clears the
+`Platform=x64` a vcvars prompt sets (MSBuild would read it), and hands the AOT publish MSVC's `link.exe` by full path.
+`py tools/verify/msvc_guard_probe.py` checks each, with the foreign toolchain passed as an argument.
+
 ### Explicitly **not** dependencies
 
 **7-Zip** (zero references — release packaging uses `Compress-Archive`), **SQLite CLI** (nothing

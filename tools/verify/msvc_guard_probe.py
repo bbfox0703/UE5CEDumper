@@ -32,7 +32,8 @@ platform-env   run `build.ps1 -Target AsanConfigure` with Platform set, as every
                would read it as a property and move the C# outputs to bin\\<platform>\\.
 inherited-stripped  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment whose PATH
                was replaced by the given folders, as MSYS2's minimal PATH does: VSCMD_ARG_TGT_ARCH says x64, but no
-               MSVC tool is on PATH. PASS: exit 0, and the new cache names MSVC's cl.exe.
+               MSVC tool is on PATH. Include a Python folder: build.ps1's identity guard needs one before anything else.
+               PASS: exit 0, and the new cache names MSVC's cl.exe.
 aot-link       run `build.ps1 -Mode Publish` in the inherited environment above. PASS: exit 0, and dist/UE5DumpUI.exe
                was written by this run and is the Native AOT size, not the ~107 MB self-contained one.
                --direct instead runs the `dotnet publish` build.ps1 runs, into out/, without build.ps1: what
@@ -182,6 +183,7 @@ def scenario_stale_cache(a) -> bool:
 def scenario_platform_env(a) -> bool:
     env = plain_env()
     env["PLATFORM"] = a.platform
+    shutil.rmtree(ASAN_DIR, ignore_errors=True)
     rc = build_ps1(["-Target", "AsanConfigure"], env, "platform_env.log")
     text = open(os.path.join(OUT, "platform_env.log"), encoding="utf-8", errors="replace").read()
     cleared = f"Platform={a.platform}" in text and "cleared" in text
