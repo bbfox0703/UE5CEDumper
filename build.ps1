@@ -299,26 +299,11 @@ function Repair-MsvcToolOrder([string]$Bin) {
     if ($moved) { $env:PATH = "$Bin;$env:PATH" }
 }
 
-function Use-MsvcCompiler([string]$Bin) {
-    <#
-    .SYNOPSIS
-        Point CC and CXX at MSVC's cl.exe for every CMake configure this script runs.
-
-    .DESCRIPTION
-        A fresh configure takes CC / CXX before any PATH search, so a user's CXX naming another
-        compiler would win over the developer environment. With both naming cl.exe the choice no
-        longer depends on what the environment or PATH holds. Kept caches are Repair-StaleToolchainCache's
-        concern; CMake never re-reads CC / CXX for them. [MSVC-GUARD-2026-11-19]
-    #>
-    $cl = Join-Path $Bin 'cl.exe'
-    foreach ($name in 'CC', 'CXX') {
-        $old = [Environment]::GetEnvironmentVariable($name)
-        if ($old -and $old -ne $cl) { Write-Info "$name named $old; configuring with $cl instead" }
-        [Environment]::SetEnvironmentVariable($name, $cl)
-    }
-    # The AOT publish names its linker by full path from here (see the publish step).
+function Set-MsvcToolPaths([string]$Bin) {
+    # The loaded toolset's cl.exe and link.exe, by full path: Invoke-CMakeConfigure hands cl.exe to every configure,
+    # and the AOT publish names link.exe.
+    $script:msvcCl = Join-Path $Bin 'cl.exe'
     $script:msvcLink = Join-Path $Bin 'link.exe'
-    return $true
 }
 
 function Enter-VsDevEnvironment() {
@@ -340,7 +325,7 @@ function Enter-VsDevEnvironment() {
         $bin = Get-MsvcBinDir
         if ($bin -and (Test-OnPath $bin)) {
             Repair-MsvcToolOrder $bin
-            if (-not (Use-MsvcCompiler $bin)) { return $false }
+            Set-MsvcToolPaths $bin
             $script:vsDevShellLoaded = $true
             Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
             return $true
@@ -363,7 +348,7 @@ function Enter-VsDevEnvironment() {
             return $false
         }
         Repair-MsvcToolOrder $bin
-        if (-not (Use-MsvcCompiler $bin)) { return $false }
+        Set-MsvcToolPaths $bin
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment loaded"
         return $true
@@ -400,6 +385,31 @@ function Invoke-CmdInVsEnv([string]$Commands) {
         if ($LASTEXITCODE -ne 0) { return $false }
     }
     return $true
+}
+
+function Invoke-CMakeConfigure([string]$Command) {
+    <#
+    .SYNOPSIS
+        Run one CMake configure with CC and CXX naming the loaded toolset's cl.exe.
+
+    .DESCRIPTION
+        A fresh configure takes CC / CXX before any PATH search, so a user's CXX naming another compiler, or
+        MSYS2's mingw64\bin with its c++.exe ahead on PATH, would otherwise decide which compiler the tree gets.
+        They name cl.exe for this call only and get their old values back after, so the calling session keeps its
+        own. Kept caches are Repair-StaleToolchainCache's concern: CMake never re-reads CC / CXX for them.
+        [MSVC-GUARD-2026-11-19]
+    #>
+    if (-not (Enter-VsDevEnvironment)) { return $false }
+    $saved = @{}
+    foreach ($name in 'CC', 'CXX') {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        if ($saved[$name] -and $saved[$name] -ne $script:msvcCl) {
+            Write-Info "$name named $($saved[$name]); this configure uses $script:msvcCl"
+        }
+        [Environment]::SetEnvironmentVariable($name, $script:msvcCl)
+    }
+    try { return (Invoke-CmdInVsEnv $Command) }
+    finally { foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) } }
 }
 
 function Invoke-CppSelfTest {
@@ -759,7 +769,7 @@ if ($Target -eq "AsanConfigure") {
     if ($Clean -and (Test-Path $asanDir)) { Remove-Item $asanDir -Recurse -Force }
     Repair-StaleToolchainCache $asanDir
     Repair-NinjaHeaderDeps $asanDir
-    $asanOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
+    $asanOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
     if (-not $asanOk) {
         Write-Fail "CMake configure of build_asan failed"
         exit 1
@@ -838,7 +848,7 @@ if ($cppTargets.Count -gt 0) {
     Repair-NinjaHeaderDeps
 
     Write-Step "Configuring CMake (Ninja + MSVC, all DLL targets)..."
-    $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
+    $configOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
 
     if (-not $configOk) {
         Write-Fail "CMake configure failed"
@@ -1216,7 +1226,7 @@ if ($Target -in "All", "Test") {
 
     if (-not (Test-Path (Join-Path $BUILD_DIR "CMakeCache.txt"))) {
         Write-Step "Configuring CMake for tests (Ninja + MSVC)..."
-        $testCfgOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
+        $testCfgOk = Invoke-CMakeConfigure "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
         if (-not $testCfgOk) {
             Write-Fail "CMake configure (tests) failed"
             $exitCode = 1
