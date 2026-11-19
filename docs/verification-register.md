@@ -1280,11 +1280,19 @@ reached:
    Filed as `[LIVEFUNCS-UI-SNAP-MEMORY]` in todo.md. *Was:* **The UI's memory while it loads snapshots.** The D3 line
    counts the snapshot buffer in the game's figure only. Acceptance: a full 32 MB snapshot buffer loaded in the Call
    Trace tab, and the load's memory log line.
-   ⬜ **Re-measure on 3771** (shared and capped copies, `[LIVEFUNCS-UI-SNAP-MEMORY]`): the same run -- DumperTest58
-   Shipping, the two CameraModifier functions, the 32 MB buffer, 160 s. Acceptance: ui-view-0.log's `CallTrace:
-   parameter copies --` line reports the copies kept and the decoded MB after sharing (at most 256), and the memory
-   line after the load stays within the panel's new "about ... after" figure; a late call's Parameters tab still decodes
-   DeltaTime / ViewLocation / FOV, and its "At the call" values stay in their column.
+   ✅ **CLOSED 2026-11-19 on 3771 `[LIVEFUNCS-UI-SNAP-MEMORY]`** (DumperTest58 Shipping, injected DLL 3771, AOT
+   UE5DumpUI 3771): the same run -- 10 s plain, then `BlueprintModifyCamera` (7 parameters, 116 B) and
+   `BlueprintModifyPostProcess` (3, 1,984 B) chosen with the 32 MB buffer, recorded 162 s. The panel's line, with both
+   chosen, read "the game 96 MB from Start; this UI up to 477 MB while it loads the trace, about 352 MB after". The
+   status read "31184 copies kept" (as on 3733); Call Trace loaded 19,444 calls, "15592 calls with a copy". ui-view-0.log:
+   `CallTrace: parameter copies -- 31,184 kept; decoded values about 0 MB after sharing (budget 256 MB), 0 of them now
+   raw bytes only; raw copies 0 MB after sharing`, then `at the load's start heap 53 MB, working set 240 MB; working
+   set at its peak 340 MB, ...; after it heap 122->110 MB, working set 340->241 MB` -- against 1,381 MB at the peak and
+   900 MB heap / 1,035 MB working set after on 3733. A late `BlueprintModifyCamera` call decoded DeltaTime 0.0335,
+   ViewLocation {X=-400, Y=0, Z=302.0126}, ViewRotation and FOV 90 with the out values before and after; a late
+   `BlueprintModifyPostProcess` call's settings summary wrapped inside "At the call" and inside "After the call", neither
+   running into the other. The game and the UI were closed afterwards. Not covered: a recording whose copies differ
+   from call to call, where the budget would bite (the unit tests hold that case).
 4. ✅ **CLOSED 2026-11-17 on 3732 `[LIVEFUNCS-STEP2-UE423]`** (UE423_Flying Shipping, UE 4.23's UProperty model;
    `livefuncs_snap_live.py --label ue423 --choose "" --plain-s 20 --record-s 30`, 6/6 with 3 not run,
    `out/livefuncs-snap/ue423.json`): the 10 busiest functions with parameters chosen by name, the Start accepted with

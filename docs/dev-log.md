@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — Build 3771's parameter-copy memory measured on a game `[LIVEFUNCS-UI-SNAP-MEMORY]`
+
+- **Live, DumperTest58 Shipping, the run that found it** (two CameraModifier functions, the 32 MB buffer, 162 s,
+  31,184 copies): loading the trace in Call Trace now peaks at 340 MB of working set and leaves 241 MB, with 110 MB of
+  heap; build 3733 peaked at 1,381 MB and left 1,035 MB with 900 MB of heap. Every copy was kept: the decoded values
+  shared down to under 1 MB. The Live Funcs line read "this UI up to 477 MB ..., about 352 MB after", a bound the load
+  stayed under. The PostProcess settings summary wraps inside its own Parameters column.
+
 ## 2026-11-19 (build 3771) — Call Trace keeps a full parameter buffer in a fraction of the memory `[LIVEFUNCS-UI-SNAP-MEMORY]`
 
 - **What changes:**
