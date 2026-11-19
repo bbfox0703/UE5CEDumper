@@ -1471,7 +1471,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
