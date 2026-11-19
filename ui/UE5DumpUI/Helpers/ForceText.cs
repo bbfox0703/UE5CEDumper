@@ -3,8 +3,8 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// [LISTINSTANCES-KEEPS-TEMPLATES] The Force (Solide) status line's note when a hold is armed on nothing because every
 /// object of the class is a template -- a class default object, one of its default subobjects, a Blueprint component
-/// template -- which a Force never writes: whatever a template holds, every later spawn copies. One wording for the
-/// Property Search and Teleport cards.
+/// template -- which a Force never writes: whatever a template holds, every later spawn copies. One wording, shared
+/// by the cards that arm a Force.
 /// </summary>
 internal static class ForceText
 {

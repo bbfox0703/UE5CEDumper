@@ -8,7 +8,7 @@ namespace UE5DumpUI.Services;
 ///
 /// The required free space is the SMALLER of a percentage of the whole drive and an
 /// absolute floor: defaults <see cref="DefaultMinPercent"/>% and
-/// <see cref="DefaultMinGb"/> GB — e.g. a 1 TB drive → min(≈110 GB, 50 GB) = 50 GB;
+/// <see cref="DefaultMinGb"/> GB — e.g. a 1 TB drive → min(≈100 GB, 50 GB) = 50 GB;
 /// a 200 GB drive → min(20 GB, 50 GB) = 20 GB. Unknown totals (0, from a test double
 /// / non-Windows platform) collapse the percentage term to 0, so the guard never
 /// blocks when it can't measure the drive.

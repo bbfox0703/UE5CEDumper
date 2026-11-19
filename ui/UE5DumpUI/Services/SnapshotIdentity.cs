@@ -20,7 +20,7 @@ public static class SnapshotIdentity
     /// merged. The class suffix <c>_C</c> is preserved (C is not a digit), and
     /// a bare <c>_5</c> (empty name) is left intact.
     ///
-    /// v1 limitation: a spawn counter on an OUTER component (e.g. a component
+    /// Limitation: a spawn counter on an OUTER component (e.g. a component
     /// whose owning Pawn is <c>BP_Player_C_0</c>) is not normalised — the SPC /
     /// Pivot loose-join mode covers that case instead. See
     /// docs/experimental-snapshot-spc-pivot.md §5.

@@ -3,7 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace UE5DumpUI.ViewModels;
 
 /// <summary>
-/// Base class for all ViewModels.
+/// Base class for the app's ViewModels.
 /// </summary>
 public abstract class ViewModelBase : ObservableObject
 {

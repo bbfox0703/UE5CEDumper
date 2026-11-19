@@ -11,9 +11,10 @@ namespace UE5DumpUI.Views;
 
 public partial class InstanceFinderPanel : UserControl
 {
-    // [W4-HEXSORT] The address columns sort NUMERICALLY. Each is binding-rooted (AOT-safe), so it wired nothing -- and
-    // the default sort ordered the hex TEXT: "0x9" after "0x10", a 12-character module address after every 13-character
-    // heap one. "HexValue" is deliberately absent: a raw byte dump in memory order, for which text order is memcmp order.
+    // [W4-HEXSORT] The address columns sort NUMERICALLY. Each is binding-rooted, so trimming needs no comparer for it,
+    // but without one the default sort would order the hex TEXT: "0x9" after "0x10", a 12-character module address
+    // after every 13-character heap one. "HexValue" is deliberately absent: a raw byte dump in memory order, for which
+    // text order is memcmp order.
     private static readonly IReadOnlyDictionary<string, IComparer> InstancesSortComparers =
         new Dictionary<string, IComparer>
         {

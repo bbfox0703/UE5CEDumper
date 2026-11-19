@@ -82,7 +82,7 @@ uint64_t NowTicks() {
 uint64_t TicksToUs(uint64_t deltaTicks) {
     const uint64_t f = static_cast<uint64_t>(QpcFreq().QuadPart);
     if (f == 0) return 0;
-    // Scale before dividing so a sub-microsecond delta doesn't floor to zero.
+    // Scale before dividing: dividing first would floor every sub-second delta to zero.
     return (deltaTicks * 1000000ULL) / f;
 }
 

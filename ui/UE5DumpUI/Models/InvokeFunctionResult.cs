@@ -6,7 +6,8 @@ namespace UE5DumpUI.Models;
 /// </summary>
 public sealed class InvokeFunctionResult
 {
-    /// <summary>Return code from UE5_CallProcessEvent (0=success, negative=error).</summary>
+    /// <summary>Return code of the DLL's ProcessEvent call (UE5_CallProcessEventEx, or UE5_CallProcessEventDirect for
+    /// a direct call; 0=success, negative=error).</summary>
     public int Result { get; init; }
 
     /// <summary>Resolved UObject instance address (hex string).</summary>
@@ -68,8 +69,9 @@ public sealed class InvokeFunctionResult
 /// <c>{ Data*, Num, Max }</c> struct, and its <c>Data</c> pointer must be a
 /// valid address in the GAME process. The DLL (injected, so its heap is the
 /// game's) allocates the char buffer, patches the struct at <see cref="Offset"/>,
-/// runs ProcessEvent, then frees it. The UI leaves those 16 bytes zeroed in
-/// <c>params_hex</c> and sends this descriptor instead.
+/// runs ProcessEvent, then frees it -- except after a game-thread timeout (-5),
+/// when the still-queued call holds a copy pointing at it. The UI leaves those
+/// 16 bytes zeroed in <c>params_hex</c> and sends this descriptor instead.
 /// </summary>
 /// <param name="Offset">Byte offset of the FString slot within the params buffer.</param>
 /// <param name="Wide">True for UTF-16 <c>FString</c>; false for byte

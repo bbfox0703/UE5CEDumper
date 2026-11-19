@@ -11,8 +11,8 @@ namespace UE5DumpUI.Views;
 /// <code>&lt;views:ClassFacetFilterButton Filter="{Binding ClassFilter}"/&gt;</code>
 /// The button surfaces the Top-N class histogram in a flyout; ticking a row
 /// hides that class from the result list immediately (the helper re-runs the
-/// owner's filter). Shared by Instance Finder, Interesting Functions /
-/// Properties and Property Search.
+/// owner's filter). Shared across result panels so the filter behaves the
+/// same in each.
 /// </summary>
 public partial class ClassFacetFilterButton : UserControl
 {

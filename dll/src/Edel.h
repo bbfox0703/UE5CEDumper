@@ -5,7 +5,7 @@
 // CurrentTarget: auto-detect the actor the local player is currently
 // targeting / focused on. Walks the GWorld → PlayerController → Pawn chain and
 // scores the player's outgoing object-pointer fields (Edel reads what the
-// player's mind is fixed on), so the user no longer has to guess a class-name
+// player's mind is fixed on), so the user does not have to guess a class-name
 // keyword to find the focused enemy + its related objects (AttributeSet / HP).
 // ============================================================
 
@@ -54,7 +54,8 @@ struct CurrentTargetResult {
 // Fast + bounded: NO full GObjects scan except the PlayerController
 // instance-scan fallback inside the chain (only when the engine chain fails).
 // Read-only — writes nothing to game memory. Honors Tot::Requested().
-// maxCandidates caps the returned list (default 8, clamped to [1, 64]).
+// maxCandidates caps the returned list (default 8; a value <= 0 means the default,
+// and anything above 64 is clamped to 64).
 CurrentTargetResult DetectCurrentTarget(int32_t maxCandidates = 8);
 
 }  // namespace Edel

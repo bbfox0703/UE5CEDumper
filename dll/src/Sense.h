@@ -4,12 +4,11 @@
 // Sense — 賽恩瑟, ゼンゼ (Second-Exam proctor, "scythe" — harvest / collection)
 // Diagnostics: self-health telemetry for the DLL + this process.
 //
-// Answers the question docs/multipipe-eval.md leaves open. That doc names
-// DLL-side SERIAL-DISPATCH HEAD-OF-LINE BLOCKING as the root cause of UI lag and
-// game-thread CPU starvation as the CE-mailbox risk — but nothing measured
-// either, so "should Phase 1 (non-blocking dispatch) be built?" was decided
-// blind. Sense records how long each pipe command actually occupies the
-// dispatcher, which is the number that settles it.
+// Measures what docs/multipipe-eval.md reasons about. That doc names DLL-side
+// SERIAL-DISPATCH HEAD-OF-LINE BLOCKING as the root cause of UI lag and
+// game-thread CPU starvation as the CE-mailbox risk. Sense records how long each
+// pipe command actually occupies the dispatcher: what that blocking costs, read
+// off a running game instead of guessed.
 //
 // Two tiers, both cheap:
 //   Tier 1 — our own health: per-command dispatch time (count / total / max /
@@ -32,12 +31,10 @@ namespace Sense {
 /// Aggregated dispatch cost for one pipe command name.
 ///
 /// Times are MICROSECONDS, accumulated from QueryPerformanceCounter. Milliseconds
-/// off GetTickCount64 were the first implementation and were actively misleading:
-/// its ~15.6 ms granularity floors every sub-tick dispatch to 0, so a real run of
-/// 1397 `walk_instance` calls reported "0 ms total, max 15 ms" — a statistical
-/// artefact of which calls happened to straddle a tick boundary, not a
-/// measurement. Most pipe commands are far below that granularity, which is
-/// exactly the population this exists to measure.
+/// off GetTickCount64 would mislead: its ~15.6 ms granularity floors every
+/// sub-tick dispatch to 0, and its max is an artefact of which calls happen to
+/// straddle a tick boundary, not a measurement. Most pipe commands are far below
+/// that granularity, which is exactly the population this exists to measure.
 struct CommandStat {
     std::string cmd;
     uint64_t    count   = 0;   // times dispatched since the last Reset
@@ -83,8 +80,8 @@ uint64_t TotalBusyUs();
 /// fraction of wall-clock was the dispatcher busy?".
 uint64_t UptimeMs();
 
-/// Drop all command stats and restart the uptime clock. Called when the last
-/// client disconnects so a fresh session's numbers aren't polluted by the last.
+/// Drop all command stats and restart the uptime clock, so a fresh session's
+/// numbers aren't polluted by the last.
 void Reset();
 
 /// Sample Tier 2 process facts. On demand only; see cpuPercent for why two

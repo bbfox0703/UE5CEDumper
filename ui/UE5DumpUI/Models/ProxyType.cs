@@ -29,16 +29,15 @@ public enum ProxyType
     Dxgi,
 
     /// <summary>
-    /// Hijack winmm.dll. Measured at 24/24 importable across every installed UE
-    /// game — exactly the same set as <see cref="Dxgi"/>, so it reaches nothing
-    /// dxgi misses.
+    /// Hijack winmm.dll. It reaches the same UE games as <see cref="Dxgi"/>, so
+    /// it reaches nothing dxgi misses.
     ///
     /// <para>It exists as a second free <b>slot</b>, not for coverage: a proxy
     /// only works if its filename is unused, and <c>dxgi.dll</c> is the name
     /// ReShade and many mod loaders take, while <c>version.dll</c> is likewise
     /// a common ASI/mod-loader name (e.g. Ultimate ASI Loader). When both are
-    /// taken, winmm is the remaining universally-importable choice — dinput8 is
-    /// only 2/24.</para>
+    /// taken, winmm is the remaining universally-importable choice — few UE games
+    /// import dinput8.</para>
     /// </summary>
     Winmm,
 }

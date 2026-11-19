@@ -8,7 +8,7 @@ namespace UE5DumpUI.Models;
 /// <para><b>This is deliberately NOT a <see cref="DetectedGame"/>, and an instance must NEVER be
 /// added to the panel's <c>Games</c> collection.</b> "Update all" iterates <c>Games</c> and
 /// redeploys wherever <c>File.Exists(target) &amp;&amp; IsOurProxyDll(target)</c> holds — which an
-/// orphan row satisfies exactly. It would write a fresh ~2.7 MB proxy into the uninstalled game's
+/// orphan row satisfies exactly. It would write a fresh proxy into the uninstalled game's
 /// folder instead of removing it, i.e. the feature would re-create what it exists to delete. Two
 /// lesser breakages follow too: the proxy-suggestion pass calls <c>Path.GetFileName(game.ExePath)</c>
 /// on an empty path, and the deploy-status refresh would label orphans as deployed and pollute the
@@ -71,8 +71,8 @@ public sealed partial class OrphanProxy : ObservableObject
     /// <summary>Result text after an attempted removal.</summary>
     [ObservableProperty] private string _statusText = "";
 
-    /// <summary>True when <see cref="StatusText"/> reports a FAILURE. Without this a locked file or a
-    /// permission refusal rendered in success green, which is the one colour it must not be.</summary>
+    /// <summary>True when <see cref="StatusText"/> reports a FAILURE. Without this, a locked file or a
+    /// permission refusal would render in success green, which is the one colour it must not be.</summary>
     [ObservableProperty] private bool _statusIsError;
 
     /// <summary>Brush key for the status line — red on failure, green on success.</summary>

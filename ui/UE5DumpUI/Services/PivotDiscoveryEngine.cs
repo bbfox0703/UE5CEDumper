@@ -15,13 +15,14 @@ namespace UE5DumpUI.Services;
 /// (class, prop) pairs that changed between two captures (before/after an in-game
 /// action) so the user picks from a short, ranked list.
 ///
-/// The ranking is a transparent weighted sum of four signals, every one of which
-/// is exposed on the candidate for a future cross-game calibration pass (the same
-/// way <see cref="PropertyScoringTable"/> was tuned over 20 games):
+/// The ranking is a transparent weighted sum of five signals, every one of which
+/// is exposed on the candidate so the weights can be calibrated across games, as
+/// <see cref="PropertyScoringTable"/>'s scores are:
 ///   • interest    — the calibrated name/class score (Gold/HP/XP rank high). Dominant.
 ///   • change      — did it move cleanly (monotonic) vs jitter.
 ///   • selectivity — a change confined to FEW instances is specific (the thing you
 ///                   touched); a change on thousands is usually global render/anim noise.
+///   • shape       — a one-time change beats per-interval jitter (needs ≥3 snapshots).
 ///   • population  — penalises ubiquitous fields (huge instance counts) as a noise prior.
 /// Kept separate from <see cref="SnapshotStore"/> (which does the SQL load) so the
 /// roll-up/ranking is unit-testable without a database — same split as

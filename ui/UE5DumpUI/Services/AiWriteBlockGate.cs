@@ -6,7 +6,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. The "Block AI writes" file: the window's instance writes it, and an MCP server
+/// [MCP-WRITE-GRANTS-2026-11-14] The "Block AI writes" file: the window's instance writes it, and an MCP server
 /// only ever reads it through <see cref="ReadState"/>. The switch can narrow what an AI may do and never widen it, so a
 /// forged or edited file can at most block or revoke.
 ///
@@ -108,9 +108,9 @@ public sealed class AiWriteBlockGate : IAiWriteBlockGate
                     Thread.Sleep(SaveRetryDelayMs);
                     continue;
                 }
-                // Measured in AiWriteBlockGateTests: a replace-by-rename fails while any reader holds the file, even one
-                // sharing delete. Written in place instead, the way a server's read shares: a server that reads it half
-                // written finds it unreadable and blocks for that call, which errs the safe way.
+                // A replace-by-rename fails while any reader holds the file, even one sharing delete (AiWriteBlockGateTests
+                // saves under such a read). Written in place instead, the way a server's read shares: a server that reads
+                // it half written finds it unreadable and blocks for that call, which errs the safe way.
                 if (WriteInPlace(json)) return true;
                 _log?.Error(Constants.LogCatInit, "Block AI writes: could not save", e);
                 return false;

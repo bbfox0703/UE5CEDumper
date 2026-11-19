@@ -162,7 +162,7 @@ public partial class SpcQueryViewModel
                 query.Slots.Add(slot);
             }
 
-            // Off the UI thread — the intersection over ~1.8M rows would freeze the window.
+            // Off the UI thread — the intersection over the selected snapshots' rows would freeze the window.
             var res = await Task.Run(() => _store.SpcGroupQueryAsync(query, ct), ct);
             if (!string.IsNullOrEmpty(res.Error)) { GroupStatusText = res.Error!; return; }
 

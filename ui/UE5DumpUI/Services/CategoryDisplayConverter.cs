@@ -4,10 +4,11 @@ using Avalonia.Data.Converters;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Renders <see cref="FunctionCategory"/>? values for the chip-filter
-/// ComboBox in the Interesting Functions Finder. Null → "All" (the
-/// "no filter" sentinel); concrete values use the same DisplayName the
-/// score chip column uses, keeping the chip + dropdown labels consistent.
+/// Renders <see cref="FunctionCategory"/>? and <see cref="PropertyCategory"/>?
+/// values for the chip-filter ComboBoxes in the Interesting Functions and
+/// Interesting Properties finders. Null → "All" (the "no filter" sentinel);
+/// concrete values use the same DisplayName the score chip column uses,
+/// keeping the chip + dropdown labels consistent.
 /// </summary>
 public sealed class CategoryDisplayConverter : IValueConverter
 {

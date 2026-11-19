@@ -1,7 +1,7 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. What <c>get_holds</c> reports (DLL 3704+): every gameplay hold whose owner the
+/// [MCP-WRITE-GRANTS-2026-11-14] §4.10. What <c>get_holds</c> reports: every gameplay hold whose owner the
 /// DLL records, whether it is in force, and who holds it. The window labels each gameplay card from it. Hold names
 /// are <see cref="Constants"/>' Hold* words, matched whole and ordinally.
 /// </summary>
@@ -25,9 +25,10 @@ public sealed class HoldEntry
 {
     public string Hold { get; init; } = "";
     public bool Active { get; init; }
-    /// <summary>A debug-camera ON still on its way (DLL 3706+): held by its sender already.</summary>
+    /// <summary>A debug-camera ON still on its way: held by its sender already. False from an older DLL.</summary>
     public bool Pending { get; init; }
-    /// <summary>An ended AI session's debug camera the DLL turns off once the game thread runs (DLL 3707+).</summary>
+    /// <summary>An ended AI session's debug camera the DLL turns off once the game thread runs. False from an older
+    /// DLL.</summary>
     public bool ReleaseOwed { get; init; }
     public HoldOwner Holder { get; init; } = new();
 

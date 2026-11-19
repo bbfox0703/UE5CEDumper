@@ -81,9 +81,9 @@ public static class CheatTableBuilder
         if (rows.Count == 0)
             throw new ArgumentException("Cannot build a CT with zero rows.", nameof(rows));
 
-        // Every saved table carries the game-thread reminder, for the same reason every
-        // PUSHED one does (AobMakerBridgeService.CreateAAScriptAsync): it is the only place
-        // the reader is told that mailbox commands are dispatched on the game thread, so a
+        // Every saved table carries the game-thread reminder, for the same reason the Teleport
+        // panel pushes one to CE (TeleportViewModel.PushGameThreadReminderAsync): it is the entry
+        // that tells the reader that mailbox commands are dispatched on the game thread, so a
         // paused or alt-tabbed game times every script out -- and that a timed-out command
         // is not cancelled, it lands whenever the game next ticks. A .CT handed to someone
         // else is exactly the case where none of that context travels with it.
@@ -278,9 +278,8 @@ public static class CheatTableBuilder
     }
 
     /// <summary>Strip filename-illegal characters from a process name.
-    /// Windows + cross-platform — drops the union of
-    /// <see cref="Path.GetInvalidFileNameChars"/> + a small set of
-    /// confusables (space → _, etc.) that hurt double-click usability.</summary>
+    /// Replaces every <see cref="Path.GetInvalidFileNameChars"/> character,
+    /// and every space (spaces hurt double-click usability), with '_'.</summary>
     internal static string SanitizeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
@@ -294,7 +293,8 @@ public static class CheatTableBuilder
             else
                 sb.Append(c);
         }
-        // Trim trailing dots / spaces — Windows treats them as invalid.
+        // Trim trailing dots / spaces — Windows treats them as invalid — and any
+        // trailing '_' (what a trailing space or invalid character became).
         return sb.ToString().TrimEnd('.', '_', ' ');
     }
 }

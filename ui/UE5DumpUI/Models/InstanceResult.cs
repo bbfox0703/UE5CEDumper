@@ -21,12 +21,12 @@ public sealed partial class InstanceResult : ObservableObject
 
     /// <summary>
     /// Address as ulong for AOT-safe hex sorting (0 on parse failure) — the same shape
-    /// RelatedObject.AddressValue already uses, so the two "Address" columns finally sort
-    /// the same way. [PARAMSSORT-2026-08-22]
+    /// RelatedObject.AddressValue uses, so the two "Address" columns sort the same way.
+    /// [PARAMSSORT-2026-08-22]
     ///
-    /// <para>Equal-length UPPERCASE hex compares identically ordinally and numerically, and
-    /// this host emits 13 characters for all 137 instances of Object, so the string comparer
-    /// did not MISBEHAVE here. That is a property of this heap's layout, not of the comparer:
+    /// <para>Equal-length UPPERCASE hex compares identically ordinally and numerically, so a
+    /// string sort looks right on a heap whose addresses all have the same length. That is a
+    /// property of the heap's layout, not of the comparer:
     /// any result set mixing a 12- and a 13-character address — a game with a static
     /// FUObjectArray, a 0x7FF… module-resident object — orders them by first character.</para>
     /// </summary>

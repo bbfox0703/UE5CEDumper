@@ -21,7 +21,7 @@ public sealed class ConsoleHistoryEntry
     public string Label =>
         $"{When:HH:mm:ss}  {ClassName}::{FuncName}";
 
-    /// <summary>"OK" or "Err: ..." — short status badge.</summary>
+    /// <summary>"OK" or "Err" — short status badge.</summary>
     public string Badge => Success ? "OK" : "Err";
 
     public string BadgeColor => Success ? "#4EC9B0" : "#F44747";

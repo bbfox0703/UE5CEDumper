@@ -6,9 +6,9 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// [VALUESCAN-NONFINITE-TARGET] What a numeric scan target must be before either matcher sees it. Infinity, NaN or a
-/// number past double's range (1e400) gave different answers live and in the snapshot search: the DLL's stod throws
-/// on "1e400" and its float leaves take an infinity that GroupMatch refuses, while .NET reads "1e400" as +Infinity.
-/// Nonsense input on both sides, so it is refused where it is typed.
+/// number past double's range (1e400) would get different answers live and in the snapshot search: the DLL's stod
+/// throws on "1e400" and its float leaves take an infinity that GroupMatch refuses, while .NET reads "1e400" as
+/// +Infinity. Nonsense input on both sides, so it is refused where it is typed.
 /// </summary>
 public static class ValueTargetCheck
 {
@@ -16,7 +16,7 @@ public static class ValueTargetCheck
 
     /// <summary>The refusal for the first value of <paramref name="values"/> a numeric scan of
     /// <paramref name="dataType"/> cannot take, or null when every one is fine. Only a value that reads as a number
-    /// and is not a finite one is refused; anything else is the matchers' to judge, as before.</summary>
+    /// and is not a finite one is refused; anything else is the matchers' to judge.</summary>
     public static string? NonFiniteError(ValueScanDataType dataType, params string?[] values)
     {
         if (!IsNumeric(dataType)) return null;
@@ -46,8 +46,8 @@ public static class ValueTargetCheck
     }
 
     /// <summary>What the DLL's std::stod (the strtod family) reads as non-finite and .NET's invariant parse does not:
-    /// C99's inf / infinity / nan / nan(chars), any case, signed or not. Without it "inf" reached the live matcher as
-    /// +inf while the snapshot store refused it as no number -- two answers to one input.</summary>
+    /// C99's inf / infinity / nan / nan(chars), any case, signed or not. Without it "inf" reaches the live matcher as
+    /// +inf while the snapshot store refuses it as no number -- two answers to one input.</summary>
     private static readonly System.Text.RegularExpressions.Regex C99NonFinite = new(
         @"^[+-]?(inf(inity)?|nan(\([0-9A-Za-z_]*\))?)$",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);

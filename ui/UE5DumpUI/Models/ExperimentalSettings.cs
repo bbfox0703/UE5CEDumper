@@ -33,10 +33,10 @@ public sealed class ExperimentalSettings
 /// <remarks>
 /// ⛔ NO <c>DefaultIgnoreCondition = WhenWritingDefault</c> on this context. It compares against
 /// <c>default(T)</c>, NOT against the initializer: "Unlimited" is <c>SnapshotQuotaMb = 0</c> =
-/// <c>default(int)</c>, so the key was OMITTED from the file, the next launch re-ran the
-/// <c>= 1024</c> initializer, and the snapshot store then FIFO-deleted the snapshots the user had
-/// opted to keep — with a second entrance needing no user action, because <c>ApplyAutoQuota</c>
-/// picks Unlimited by itself once the retained set outgrows the top preset. [W1-QUOTA-UNLIMITED].
+/// <c>default(int)</c>, so the key would be OMITTED from the file, the next launch would re-run the
+/// <c>= 1024</c> initializer, and the snapshot store would then FIFO-delete the snapshots the user
+/// opted to keep — reachable with no user action too, because <c>ApplyAutoQuota</c> picks Unlimited
+/// by itself once the retained set outgrows the top preset. [W1-QUOTA-UNLIMITED].
 /// The rule is written in docs/teleport-coord-library-spec.md ("MUST NOT be WhenWritingDefault")
 /// and enforced by tools/check_json_default_ignore.py. Writing <c>"enabled": false</c> as well is
 /// harmless: old and new builds read it identically.

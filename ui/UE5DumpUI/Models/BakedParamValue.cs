@@ -19,8 +19,9 @@ namespace UE5DumpUI.Models;
 ///     <see cref="FunctionParamModel.TypeName"/> (e.g. "IntProperty",
 ///     "FloatProperty", "ObjectProperty").</param>
 /// <param name="Size">Size in bytes of this scalar (post struct flattening).
-///     Used for sanity checks; the helper allocates from
-///     <c>FunctionInfoModel.ParmsSize</c> and writes by type, not size.</param>
+///     It carries what the type name alone does not: an EnumProperty's write
+///     width, and the byte count a by-value struct ('fstruct') zeroes. The
+///     helper allocates the buffer from <c>FunctionInfoModel.ParmsSize</c>.</param>
 /// <param name="Offset">Absolute offset within the function's params buffer
 ///     where this value should be written.</param>
 /// <param name="LiteralText">Raw user-entered text from the dialog TextBox
@@ -29,8 +30,8 @@ namespace UE5DumpUI.Models;
 ///     generated script.</param>
 /// <param name="BoolFieldMask">For a BoolProperty struct sub-field PACKED into a byte shared with
 ///     siblings: its single-bit FieldMask, so the helper does a read-modify-write of that bit
-///     instead of stamping the whole byte (which zeroed a sibling or landed on bit 0). 0 = native
-///     or unresolved: today's whole-byte write. [A3-FIRE-STRUCT-BOOLMASK]</param>
+///     instead of stamping the whole byte, which would zero a sibling or land on bit 0. 0 = native
+///     or unresolved: a whole-byte write. [A3-FIRE-STRUCT-BOOLMASK]</param>
 public sealed record BakedParamValue(
     string ParamName,
     string UeTypeName,

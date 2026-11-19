@@ -6,12 +6,10 @@ namespace UE5DumpUI.Services;
 /// Process-wide accumulator for time spent inside <see cref="PipeClient.SendAsync"/> —
 /// the ONE extra measurement needed to decompose a heavy operation's cost.
 ///
-/// <para><b>Why.</b> The build-2324 measurement showed a heavy export spends
-/// <c>0.088 ms</c> per call inside the DLL and <c>0.208 ms</c> per call somewhere
-/// else, and concluded that batching <c>walk_instance</c> is the real lever — but
-/// it could not say how much of that 0.208 ms batching would actually recover.
-/// Pipe latency disappears when 200 calls become one; UI-side per-result work does
-/// not. Promising a speed-up without that split would be guessing.</para>
+/// <para><b>Why.</b> A heavy export's per-call cost outside the DLL is part pipe
+/// latency and part UI-side work, and batching <c>walk_instance</c> recovers only
+/// the first. Pipe latency disappears when 200 calls become one; UI-side per-result
+/// work does not. Promising a speed-up without that split would be guessing.</para>
 ///
 /// <para><b>The split this enables.</b> Transport is measured here; the DLL's own
 /// dispatch time already comes from <c>Sense</c>; the operation's wall-clock is
@@ -30,8 +28,7 @@ namespace UE5DumpUI.Services;
 /// exclusive time.</para>
 ///
 /// Cost: one <see cref="Stopwatch.GetTimestamp"/> pair and two interlocked adds per
-/// pipe call — negligible against a round-trip already measured in hundreds of
-/// microseconds.
+/// pipe call — negligible against a round-trip of hundreds of microseconds.
 /// </summary>
 internal static class PipeTransportStats
 {

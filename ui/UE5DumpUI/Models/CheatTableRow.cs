@@ -3,14 +3,13 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// One entry in a multi-row .CT batch. Discriminated union over the row
-/// kinds that <see cref="CheatTableBuilder"/> understands -- currently
-/// Property (freeze script) and Function (baked invoke).
+/// One entry in a multi-row .CT batch. Base of the row kinds that
+/// <see cref="CheatTableBuilder"/> understands; each kind renders its own
+/// AA Script body.
 ///
-/// Designed agnostic of the source panel so future call sites
-/// (LiveWalker mixed-row selection, Live ProcessEvent Profiler results,
-/// ...) can feed the same builder without touching the panel-specific
-/// ScoredFunctionRow / ScoredPropertyRow models.
+/// Agnostic of the source panel, so any panel can feed the same builder
+/// without touching the panel-specific ScoredFunctionRow /
+/// ScoredPropertyRow models.
 /// </summary>
 public abstract record CheatTableRow
 {
@@ -27,8 +26,8 @@ public abstract record CheatTableRow
     public required string Description { get; init; }
 
     /// <summary>Render the AA Script body to embed in the CE XML.
-    /// Implementations call into BakedScriptGenerator /
-    /// FreezeScriptGenerator etc. so the script-generation logic stays
+    /// Implementations call into the script generators (or return a
+    /// caller-supplied body) so the script-generation logic stays
     /// single-sourced.</summary>
     public abstract string GenerateScript();
 }

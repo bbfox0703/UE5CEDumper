@@ -107,9 +107,9 @@ public interface IProxyDeployService
     ///
     /// <para><b>Type-agnostic on purpose.</b> It sweeps EVERY proxy flavour we ship,
     /// not the one currently selected in the UI: the radio button chooses what to
-    /// <i>deploy</i>, whereas undeploy is a clean-up. Scoping it to the selection
-    /// left a user who deployed <c>dxgi.dll</c> and later switched the radio to
-    /// <c>version.dll</c> unable to remove it at all — while the grid reported
+    /// <i>deploy</i>, whereas undeploy is a clean-up. Scoped to the selection, it would
+    /// leave a user who deployed <c>dxgi.dll</c> and later switched the radio to
+    /// <c>version.dll</c> unable to remove it at all — while the grid reports
     /// <see cref="ProxyDeployStatus.DeployedOtherType"/> at them.</para>
     ///
     /// <para>Only ever deletes files that are OURS (<c>ProductName</c> check via
@@ -136,7 +136,7 @@ public interface IProxyDeployService
     /// THREADING: the same contract as <see cref="RefreshDeployStatusAsync"/> above applies, with one
     /// clarification. CONSTRUCTING <see cref="OrphanProxy"/> rows on a worker is safe — nothing is
     /// data-bound until the caller adds them to a collection. MUTATING an already-bound row from a
-    /// worker is not, and is the shape that produced the libSkiaSharp access violation. So: build the
+    /// worker is not: that is the libSkiaSharp access violation described there. So: build the
     /// list on the worker, return it, add it on the UI thread; and apply every per-row result from
     /// <see cref="RemoveOrphanProxyAsync"/> after the await. Callers must not use ConfigureAwait(false).
     /// </remarks>

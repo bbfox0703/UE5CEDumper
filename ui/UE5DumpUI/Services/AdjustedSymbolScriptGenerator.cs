@@ -6,9 +6,9 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// [AOBM-GWORLD-GENAOB] A CE symbol script for a pointer whose signature ADJUSTS the RIP target (Himmel's
 /// <c>adjustment</c>, e.g. GOBJ_AV1's -0x10 on Avowed). The plugin's <c>CreateSymbolScript</c> registers the raw RIP
-/// target and cannot add a constant (AOBMaker R17, unanswered), so this does what it does and then adds the adjustment:
-/// scan the module for the AOB, read the instruction's disp32, register <c>hit + aobLen + disp + adjustment</c>. It
-/// rescans on every enable, so it survives restarts, as the plugin's script does.
+/// target and cannot add a constant, so this does what it does and then adds the adjustment: scan the module for the
+/// AOB, read the instruction's disp32, register <c>hit + aobLen + disp + adjustment</c>. It rescans on every enable, so
+/// it survives restarts, as the plugin's script does.
 /// <para>The scan is Lua (<c>AOBScanModuleUnique</c>, CE 7.5 and 7.7), not an AA <c>aobscanmodule</c>: CE runs a
 /// script's <c>{$lua}</c> blocks before it assembles the AA lines, so Lua could not read an AA scan's result.</para>
 /// <para>The record is enabled THROUGH the plugin, so a failure raises (<c>error</c>) instead of a <c>showMessage</c>:

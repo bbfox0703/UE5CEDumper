@@ -4,18 +4,17 @@
 // GraphPath — pure, header-only breadth-first shortest-path core for the
 // UObject reference graph ("Locate in GWorld" feature).
 //
-// Given a root UObject (GWorld → UWorld) and a target UObject, find the
+// Given a root UObject (e.g. GWorld → UWorld) and a target UObject, find the
 // SHORTEST (fewest-hop) chain of outgoing pointer edges root → … → target,
 // bounded by a depth budget. BFS guarantees the first time the target is
 // reached is via a shortest path, so "first found == shortest" is free.
 //
 // This header is DELIBERATELY free of any live-memory / UE-reflection
 // dependency: the graph adjacency is supplied by a caller-provided
-// `neighborFn` functor. Aura.cpp instantiates it with a real
-// GObjects/reflection enumerator; dll_helpers_test.cpp instantiates it with
-// an in-memory mock graph. That keeps the search logic (cycles, depth bound,
-// shortest-path reconstruction, abort) unit-testable without an injected
-// process.
+// `neighborFn` functor: the live search supplies a real GObjects/reflection
+// enumerator, a unit test an in-memory mock graph. That keeps the search
+// logic (cycles, depth bound, shortest-path reconstruction, abort)
+// unit-testable without an injected process.
 //
 // neighborFn contract:
 //   neighborFn(uintptr_t node, auto&& emit)

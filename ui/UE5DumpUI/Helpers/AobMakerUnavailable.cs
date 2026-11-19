@@ -25,7 +25,7 @@ internal static class AobMakerUnavailable
 
     /// <summary>The en.axaml key for <paramref name="failure"/>. <see cref="AobMakerFailure.None"/> maps to
     /// <see cref="KeyAbsent"/>: a caller asking for this text after a connect that SUCCEEDED is looking at a pipe
-    /// that broke mid-request (CE closed), which is the old wording's case.</summary>
+    /// that broke mid-request (CE closed), which the absent wording fits.</summary>
     internal static string KeyFor(AobMakerFailure failure) => failure switch
     {
         AobMakerFailure.Busy   => KeyBusy,
@@ -44,7 +44,7 @@ internal static class AobMakerUnavailable
 
     /// <summary>
     /// <c>Res.Get</c> returns an EMPTY string for a key it cannot resolve (and always, headless), and an empty status
-    /// line is the "no message" defect again — so each case keeps a short literal core, the
+    /// line tells the user nothing — so each case keeps a short literal core, the
     /// <c>PointerPanelViewModel.OrFallback</c> pattern. en.axaml supplies the full wording.
     /// </summary>
     private static string Fallback(AobMakerFailure failure) => failure switch

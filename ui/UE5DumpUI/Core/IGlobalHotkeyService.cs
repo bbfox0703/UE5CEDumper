@@ -2,9 +2,9 @@ namespace UE5DumpUI.Core;
 
 /// <summary>
 /// Registers an OS-global hotkey so an action can fire while another window
-/// (the game) has focus. Used by the Teleport panel's cursor teleport: the
-/// user keeps the game focused, presses the hotkey, and the dumper teleports
-/// to whatever's under the in-game cursor.
+/// (the game) has focus. The Teleport panel's cursor teleport is the case it
+/// exists for: the user keeps the game focused, presses the hotkey, and the
+/// dumper teleports to whatever's under the in-game cursor.
 ///
 /// Implementations live behind this interface per the Platform Abstraction
 /// rule (the Win32 RegisterHotKey P/Invoke must not leak into Core / VMs).

@@ -12,22 +12,19 @@ namespace UE5DumpUI.Views;
 public partial class InterestingFunctionsPanel : UserControl
 {
     // AOT-safe sort comparers for the two template data columns (Score /
-    // Cat) — they have no column-level Binding so their reflection sort is
-    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Text columns sort out-of-box.
+    // Cat), which have no column-level Binding, so their reflection sort is
+    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs),
+    // and for Params below. The other text columns sort out-of-box.
     private static readonly IReadOnlyDictionary<string, IComparer> ResultsSortComparers =
         new Dictionary<string, IComparer>
         {
             ["FinalScore"]    = DataGridSortComparers.Number<ScoredFunctionRow>(r => r.FinalScore),
             ["CategoryLabel"] = DataGridSortComparers.Ordinal<ScoredFunctionRow>(r => r.CategoryLabel),
-            // Params (PARAMSSORT-2026-08-22). The cell shows "{NumParms} ({ParmsSize}B)"
-            // but the column now sorts on NumParms, so nothing roots the sort path and a
-            // comparer is required. It previously sorted on ParamsLabel — which was AOT-safe
-            // (binding and sort path agreed, so the property was rooted) and WRONG: the
-            // ordinal order of the label puts "11 (72B)" above "2 (9B)". Measured on
-            // DumperTest 2026-08-22: 3,142 functions, two with >=10 parameters, so the
-            // inversion is reachable on a stock host. AF20 fixed the Live Walker twin only,
-            // because the audit asked "is the header inert under trimming?" and these three
-            // were not inert — just wrong.
+            // Params [PARAMSSORT-2026-08-22]. The cell shows "{NumParms} ({ParmsSize}B)"
+            // but the column sorts on NumParms, so nothing roots the sort path and a
+            // comparer is required. Sorting on ParamsLabel would be AOT-safe (binding and
+            // sort path agree, so the property is rooted) and WRONG: the ordinal order of
+            // the label puts "11 (72B)" above "2 (9B)".
             ["NumParms"] = DataGridSortComparers.Number<ScoredFunctionRow>(r => r.NumParms),
         };
 

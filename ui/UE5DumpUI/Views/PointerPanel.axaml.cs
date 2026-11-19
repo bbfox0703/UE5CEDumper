@@ -12,9 +12,8 @@ public partial class PointerPanel : UserControl
         InitializeComponent();
     }
 
-    // Credit-footer URLs (AOBMaker + repo) open in the default browser. The
-    // experimental opt-in is now a separate bare checkbox, so both credit links
-    // are plain clickable text again. Mirrors CreditFooter's UseShellExecute pattern.
+    // Credit-footer URLs (AOBMaker + repo) open in the default browser; both
+    // credit links are plain clickable text. Mirrors CreditFooter's UseShellExecute pattern.
     private void OnUrlPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is not TextBlock tb || string.IsNullOrWhiteSpace(tb.Text)) return;

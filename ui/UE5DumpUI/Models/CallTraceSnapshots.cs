@@ -57,7 +57,7 @@ public sealed class CallTraceSnapshots
 
 /// <summary>
 /// [LIVEFUNCS-STEP3] A loaded trace's native stacks: every stack slot the DLL kept, joined to its call by the entry
-/// record's sequence number. Kept apart from <see cref="CallTraceSnapshots"/> (the design's D15): a stack is not a
+/// record's sequence number. Kept apart from <see cref="CallTraceSnapshots"/>: a stack is not a
 /// parameter copy, so it never counts where a call is said to have parameters, and a trace that took stacks and no
 /// parameters still has these. Read before the trace is released, as the parameters are.
 /// </summary>

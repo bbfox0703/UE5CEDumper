@@ -1,8 +1,9 @@
 // ============================================================
-// BuildStamp.cpp — the ONLY C++ translation unit that includes the CMake-
-// generated BuildInfo.h. Keeping the volatile build macros behind these
-// out-of-line accessors means a per-build number bump recompiles just this one
-// tiny file (and version.rc), not the heavy consumers. See BuildStamp.h.
+// BuildStamp.cpp — the C++ translation unit that includes the CMake-generated
+// BuildInfo.h; other TUs include BuildStamp.h. Keeping the volatile build
+// macros behind these out-of-line accessors means a per-build number bump
+// recompiles just this one tiny file (and version.rc), not the heavy
+// consumers. See BuildStamp.h.
 // ============================================================
 #include "BuildStamp.h"
 #include "BuildInfo.h"

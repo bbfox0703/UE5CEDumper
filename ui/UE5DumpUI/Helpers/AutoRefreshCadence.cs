@@ -19,20 +19,17 @@ public enum AutoRefreshSkip
 public readonly record struct AutoRefreshCountdown(int Remaining, string Label);
 
 /// <summary>
-/// Pure cadence rules for the Live Walker's auto-refresh — extracted from
-/// <c>LiveWalkerViewModel</c> because the shipped version could not be tested and
-/// was wrong in a way that produced NO error of any kind.
+/// Pure cadence rules for the Live Walker's auto-refresh, kept out of
+/// <c>LiveWalkerViewModel</c> so they can be tested: a cadence defect here produces NO
+/// error of any kind.
 ///
-/// <para><b>The defect this exists to make impossible</b> (reported by the maintainer
-/// against 1.0.0.3262, tag <c>[AUTOREFRESH-2026-08-19]</c>): the countdown value was
-/// reset in exactly one place — inside the refresh tick, <i>after</i> its early-return
-/// guard. So any tick that was skipped (a cell being edited, no rooted object, a dead
-/// pipe) left the counter to decrement to zero and clamp there **forever**, while the
-/// Auto toggle still read ON and nothing was logged. A 21-minute session's pipe log
-/// carried zero periodic walks and zero errors: the panel silently did nothing while
-/// displaying a frozen "0s".</para>
+/// <para><b>The defect this exists to make impossible</b> (<c>[AUTOREFRESH-2026-08-19]</c>):
+/// a countdown reset only inside the refresh tick, <i>after</i> its early-return guard,
+/// lets any skipped tick (a cell being edited, no rooted object, a dead pipe) decrement the
+/// counter to zero and clamp it there **forever**, while the Auto toggle still reads ON and
+/// nothing is logged: the panel silently does nothing while displaying a frozen "0s".</para>
 ///
-/// <para>Two rules fix the class of defect rather than the one trigger:
+/// <para>Two rules close the class of defect rather than the one trigger:
 /// <list type="number">
 /// <item>the countdown <b>re-arms itself</b> at zero — it displays the timer's PERIOD,
 ///       which keeps elapsing whether or not the last tick did any work, so it must
@@ -82,8 +79,8 @@ public static class AutoRefreshCadence
     /// <summary>
     /// One 1-second step of the countdown display.
     ///
-    /// <para>The reset at zero is the fix: it lives HERE, on the path that always runs,
-    /// instead of on the refresh's success path that may never run again.</para>
+    /// <para>The reset at zero lives HERE, on the path that always runs, not on the
+    /// refresh's success path, which may never run again.</para>
     /// </summary>
     public static AutoRefreshCountdown Step(int remaining, int intervalSec, AutoRefreshSkip skip)
     {
@@ -108,10 +105,10 @@ public static class AutoRefreshCadence
     /// <summary>
     /// Should a suspended auto-refresh come back on?
     ///
-    /// <para><paramref name="resumePending"/> is set ONLY when something outside the
-    /// user's control stopped it — the pipe dropping, or switching away from the tab.
-    /// A user untick and every navigation re-root deliberately do NOT set it, so those
-    /// stay off until re-ticked. The data checks matter because resuming onto an empty
+    /// <para><paramref name="resumePending"/> means something outside the user's control
+    /// stopped it, such as the pipe dropping or a switch away from the tab. A user untick
+    /// or a navigation re-root deliberately does NOT set it, so those stay off until
+    /// re-ticked. The data checks matter because resuming onto an empty
     /// panel would just re-arm a tick that skips, which is the state this whole file
     /// exists to prevent.</para>
     /// </summary>

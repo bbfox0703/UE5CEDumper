@@ -18,9 +18,8 @@ public sealed class RelatedObject
     public string ClassName { get; init; } = "";
 
     /// <summary>
-    /// Relationship to the queried object: "Self" / "Class" / "Outer" /
-    /// "Controller" / "Pawn" / "AbilitySystem (ASC)" / "AttributeSet" /
-    /// "Owned Component" / "Owned Object".
+    /// Relationship to the queried object, as the DLL labels it (e.g. "Self",
+    /// "Outer", "Pawn", "Owned Component").
     /// </summary>
     public string Relation { get; init; } = "";
 
@@ -31,7 +30,7 @@ public sealed class RelatedObject
     /// <summary>Offset within the parent object (CE / GWorld handoff); -1 when N/A.</summary>
     public int FieldOffset { get; init; } = -1;
 
-    /// <summary>0 = hierarchy/counterpart; 1..2 = owned-BFS depth.</summary>
+    /// <summary>0 = hierarchy/counterpart; 1 and up = owned-BFS depth.</summary>
     public int Depth { get; init; }
 
     /// <summary>Object that holds the pointer to this one.</summary>

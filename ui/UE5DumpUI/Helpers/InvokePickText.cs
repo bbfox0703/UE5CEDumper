@@ -12,8 +12,8 @@ internal static class InvokePickText
 
     /// <summary>Whether the Console may keep running the class's commands on this object. A class-default pick
     /// re-resolves instead, so a CheatManager spawned later is found, and so does a Debug-Camera-owned one, so a
-    /// Debug Camera destroyed later leaves no pin on it. An empty pick is an older DLL that never said: pinned, as
-    /// before.</summary>
+    /// Debug Camera destroyed later leaves no pin on it. An empty pick, from an older DLL that does not send one, is
+    /// pinned.</summary>
     internal static bool IsPinnable(string pick)
         => pick is "" or Constants.InvokePickLive or Constants.InvokePickAddress;
 

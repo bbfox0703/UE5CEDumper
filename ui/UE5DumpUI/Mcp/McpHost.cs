@@ -4,7 +4,7 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. <c>UE5DumpUI.exe --mcp</c>: the MCP server instead of the window.
+/// [PIPE-PER-PROCESS-2026-11-06] <c>UE5DumpUI.exe --mcp</c>: the MCP server instead of the window.
 ///
 /// Program.Main branches here before the single-instance mutex and before Avalonia, as it does for
 /// <c>--inject-elevated</c>, so a server and the UI run side by side, and so do several servers (each AI session
@@ -12,7 +12,7 @@ namespace UE5DumpUI.Mcp;
 /// program, which opens no console, and its standard handles are the ones the client passed.
 ///
 /// What it shares with a running UI: nothing it writes. It has its own pipe connection to the game (the DLL serves
-/// 6), its own log file, and it never touches the UI's settings, bookmarks or logs.
+/// up to Fern's kMaxPipeInstances), its own log file, and it never touches the UI's settings, bookmarks or logs.
 /// </summary>
 internal static class McpHost
 {
@@ -103,8 +103,7 @@ internal static class McpHost
             string blockFile = AiWriteBlockGate.PathFor(platform);
             var grants = new McpGrants(mode, log, () => AiWriteBlockGate.ReadState(blockFile));
             using var game = new McpGameLink(pipe, platform, log, grants);
-            // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
-            // once.
+            // The UI's experimental opt-in binds the AI too: read on every call, so the UI's change counts at once.
             var server = new McpServer(McpTools.Create(game, grants, () => new ExperimentalGate(platform).IsEnabled),
                 log, stdout, version, grants);
             int code = server.RunAsync(stdin).GetAwaiter().GetResult();

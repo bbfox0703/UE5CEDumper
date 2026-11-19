@@ -9,8 +9,8 @@ public sealed record CsxPushScript(string Script, string RootName, int Structure
 
 /// <summary>
 /// [AOBM-DISSECT-INJECT] The CSX half: turn Live Walker's own CSX export into a CE Lua script that builds the same
-/// structures in Structure Dissect, pushed through the CE plugin's <c>CreateAAScript</c>. AOBMaker declined a CSX
-/// command (R12: no XML parsing inside CE), so the XML is read HERE, from our own export, and CE only runs
+/// structures in Structure Dissect, pushed through the CE plugin's <c>CreateAAScript</c>. The plugin has no CSX
+/// command and, by design, parses no XML inside CE, so the XML is read HERE, from our own export, and CE only runs
 /// <c>createStructure</c> / <c>addElement</c>.
 /// <para>It mirrors what CE's own "Import from file" does with the same CSX (7.5 <c>StructuresFrm2</c>
 /// <c>TStructelement.createFromXMLNode</c>): a nested <c>&lt;Structure&gt;</c> becomes a child only under a Pointer
@@ -189,8 +189,8 @@ public static class CsxStructurePushGenerator
 /// <summary>
 /// [AOBM-DISSECT-INJECT] Just enough XML for the CSX <see cref="CsxExportService"/> writes: elements with double-quoted
 /// attributes, the five entities it escapes (plus numeric ones), and the comment or declaration it may lead with.
-/// XDocument did this job first and pulled System.Private.Xml into the trimmed binary -- +3.3 MB, measured on build
-/// 3612, for one parse of our own output. Anything outside that subset is refused, not guessed at.
+/// XDocument would pull System.Private.Xml into the trimmed binary for one parse of our own output. Anything outside
+/// that subset is refused, not guessed at.
 /// </summary>
 internal static class CsxReader
 {

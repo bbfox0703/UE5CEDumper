@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. Keeps a tool reply under <see cref="MaxChars"/> by cutting its largest
+/// [PIPE-PER-PROCESS-2026-11-06] Keeps a tool reply under <see cref="MaxChars"/> by cutting its largest
 /// arrays, and says what was cut.
 ///
 /// Claude Code warns above 10,000 tokens and moves a result over 25,000 tokens, or over 50,000 characters, to a file

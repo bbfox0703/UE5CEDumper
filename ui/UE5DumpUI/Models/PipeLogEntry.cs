@@ -4,7 +4,7 @@ namespace UE5DumpUI.Models;
 /// One line of named-pipe traffic for the System-tab "Pipe Activity" log — a
 /// live, in-UI tail of the same TX/RX the pipe log file records. It lets the
 /// user watch light commands stay responsive (interleave) while a heavy scan
-/// runs (the Phase 1 lane split) without opening the %LOCALAPPDATA% logs.
+/// runs (the interactive / bulk lane split) without opening the %LOCALAPPDATA% logs.
 /// Immutable; constructed on the pipe threads and rendered on the UI thread.
 /// </summary>
 public sealed class PipeLogEntry

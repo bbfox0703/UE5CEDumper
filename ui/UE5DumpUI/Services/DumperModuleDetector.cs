@@ -20,8 +20,8 @@ internal static class DumperModuleDetector
     /// ProductName it is a proxy load; otherwise the same ProductName on
     /// <c>ue5dumper.dll</c> is an inject / CE .CT load.</summary>
     /// <remarks>Derived from <see cref="ProxyType"/> rather than hardcoded, so a new
-    /// proxy flavour cannot silently desync this list from the enum — the same
-    /// desync that left the double-inject guards blind to dinput8/dxgi for builds.</remarks>
+    /// proxy flavour cannot silently desync this list from the enum — a hand-kept
+    /// list leaves the double-inject guards blind to every flavour it misses.</remarks>
     private static readonly string[] ProxyNames =
         Enum.GetValues<ProxyType>().Select(t => t.GetDllName().ToLowerInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
