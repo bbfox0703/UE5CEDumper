@@ -212,7 +212,7 @@ Installing both halves of a row is a real failure mode, not just waste.
 
 | Provided by | Do **not** separately install | What goes wrong |
 |---|---|---|
-| VS2026 → `VC.CMake.Project` | `Kitware.CMake`, `Ninja-build.Ninja` | **The worst one.** `build.ps1` enters the DevShell, which *prepends* VS's paths — so it uses VS's cmake while a bare `cmake` uses the winget one. They then fight over one `build/` dir, and the configuring cmake's absolute path is baked into `build.ninja` + `CMakeCache.txt`. VS ships cmake **4.3.1-msvc1** and ninja **1.13.2**, well clear of the 3.25 floor. |
+| VS2026 → `VC.CMake.Project` | `Kitware.CMake`, `Ninja-build.Ninja` | **The worst one.** The DevShell `build.ps1` enters *appends* VS's CMake and Ninja to PATH (it prepends only the compiler tools), so which cmake configures `build/` depends on PATH order and on the shell — a VS-managed prompt and a bare shell can pick different ones. They then fight over one `build/` dir, and the configuring cmake's absolute path is baked into `build.ninja` + `CMakeCache.txt`. VS ships cmake **4.3.1-msvc1** and ninja **1.13.2**, well clear of the 3.25 floor. |
 | VS2026 → `VC.Tools.x86.x64` | any standalone MASM | `ml64.exe` is a *file inside the toolset*; there is no standalone package. It is genuinely needed — the proxy DLLs' jmp-thunks are `.asm`, and the build always configures them, so a missing ml64 kills the whole configure. |
 | VS2026 → `Windows11SDK.*` | winget `Microsoft.WindowsSDK.*` | Same payload, same `Windows Kits\10` tree, multiple GB duplicated. |
 | the VS **Installer** | winget `Microsoft.VisualStudio.Locator` | vswhere is dropped by the Installer regardless of workloads. Worse: `build.ps1` probes **PATH first**, so a winget portable copy *shadows* the real one. Repair-only fallback. |
@@ -224,10 +224,12 @@ Installing both halves of a row is a real failure mode, not just waste.
 
 **MSVC only, whatever else is installed.** The build refuses or repairs every other toolchain it can meet
 `[MSVC-GUARD-2026-11-19]`: the root `CMakeLists.txt` stops a configure whose C++ compiler is not MSVC (GCC, clang-cl);
-`build.ps1` points `CC` / `CXX` at the loaded environment's `cl.exe`, drops a build dir whose cache names another
-compiler, puts Visual Studio's own `cl` / `link` / `cmake` / `ninja` first on PATH even in an inherited developer prompt
-(Git's and MSYS2's `usr\bin` hold a coreutils `link.exe`, MSYS2's `mingw64\bin` a `c++.exe`), clears the
-`Platform=x64` a vcvars prompt sets (MSBuild would read it), and hands the AOT publish MSVC's `link.exe` by full path.
+`build.ps1` hands every configure the loaded toolset's `cl.exe` through `CC` / `CXX` (MSYS2's `mingw64\bin` holds a
+`c++.exe` CMake would otherwise take), drops a build dir whose cache names another compiler, puts the toolset's
+`cl` / `link` folder first on PATH even in an inherited developer prompt (Git's and MSYS2's `usr\bin` hold a
+coreutils `link.exe`) and enters the DevShell afresh when that prompt's PATH lists no toolset at all, clears the
+`Platform` every vcvarsall prompt sets (MSBuild would read it), and hands the AOT publish MSVC's `link.exe` by full
+path. CMake and Ninja are left where PATH puts them.
 `py tools/verify/msvc_guard_probe.py` checks each, with the foreign toolchain passed as an argument.
 
 ### Explicitly **not** dependencies

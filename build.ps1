@@ -1069,7 +1069,7 @@ if ($Target -in "All", "UI", "Test") {
             # No .NET runtime bundled — much smaller than self-contained single-file.
             Write-Step "Publishing UE5DumpUI (Native AOT, Release)..."
 
-            # IlcUseEnvironmentalTools: ILCompiler takes LIB / INCLUDE from the environment
+            # IlcUseEnvironmentalTools: ILCompiler takes LIB from the environment
             # Enter-VsDevEnvironment loaded instead of running its own findvcvarsall.bat
             # discovery, which captures cmd.exe output to locate link.exe: in a stacked
             # environment cmd.exe prints "The input line is too long." and that text
