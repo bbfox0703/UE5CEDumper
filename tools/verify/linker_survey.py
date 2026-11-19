@@ -12,10 +12,12 @@ The three signals, strongest first:
     VS 2019 16.11, 14.38 / 14.43 for VS 2022). 14.00 is also VS 2015's own link.exe, which is why it decides only
     together with the next signal.
   * the Rich header in the DOS stub: link.exe always writes it, lld-link never does, a protector may strip it.
-Verdict: anything with an MSVC mark (a Rich header, an MSVC debug entry, a linker minor other than 00) is "msvc";
-linker 14.00 with a debug directory holding no MSVC entry is "lld"; linker 14.00 with no Rich header and no debug
-directory at all is "lld*" -- lld's signature, or a VS 2015 link.exe build with both marks stripped, which a UE5 title
-cannot be (UE5 needs VS 2019 or later). Avowed (UE 5.3) is an "lld": CODEVIEW and REPRO entries, no MSVC one.
+Verdict: anything with an MSVC mark (a Rich header, an MSVC debug entry, a 14.xx linker minor other than 00) is
+"msvc"; linker 14.00 with a debug directory holding no MSVC entry is "lld"; linker 14.00 with no Rich header and no
+debug directory at all is "lld*" -- lld's signature, or a VS 2015 link.exe build with both marks stripped, which a UE5
+title cannot be (UE5 needs VS 2019 or later); any other linker version with no MSVC mark (GNU ld writes 2.xx) is
+"unknown". Avowed (UE 5.3) is an "lld": CODEVIEW and REPRO entries, no MSVC one. The DLL's scan log judges the
+mapped image by the same rules (Macht::ClassifyLinker).
 
     py tools/verify/linker_survey.py <exe> [<exe> ...]
     py tools/verify/linker_survey.py --scan <root> [<root> ...]     # every UE-sized exe under each root
@@ -62,8 +64,10 @@ def signature(path):
     rich = b"Rich" in head[0x80:min(lfanew, len(head))]
     msvc_debug = any(t in MSVC_DEBUG for t in types)
     linker = "%d.%02d" % (lmaj, lmin)
-    if rich or msvc_debug or (lmaj, lmin) != (14, 0):
+    if rich or msvc_debug or (lmaj == 14 and lmin != 0):
         verdict = "msvc"
+    elif lmaj != 14:
+        verdict = "unknown"
     elif types:
         verdict = "lld"
     else:
