@@ -53,11 +53,23 @@ public static class CeXmlExportService
     /// (default 256, floored at 16 by the toolbar slider). Read by
     /// <see cref="EmitStringLeaf"/>; 0 (unset) falls back to 256. Because the value is a
     /// fixed read window (with ZeroTerminate=1 CE still stops at the null), a generous
-    /// length never truncates a shorter live string — it only guards strings that later
-    /// grow. Copy CE XML / Copy CE Field only (CSX uses its own Bytesize).
+    /// length never truncates a shorter live string — it leaves room to show strings that
+    /// later grow. It bounds no write: CE grows it to fit a typed value, which is why the
+    /// record is read-only unless <see cref="_ceEditableStrings"/> is set
+    /// (<see cref="StringRecordReadOnlyList"/>). Copy CE XML / Copy CE Field only (CSX uses
+    /// its own Bytesize).
     /// </summary>
     [ThreadStatic]
     private static int _ceStringLength;
+
+    /// <summary>
+    /// [CEXML-STRING-CAPACITY] 2026-11-19 The export's "Editable string records" option, off by default. Off, every
+    /// String record <see cref="EmitStringLeaf"/> writes carries <see cref="StringRecordReadOnlyList"/>; on, the list
+    /// is left out and CE's value editor writes the record, past the game's buffer when the typed string is longer.
+    /// Set per Generate* entry.
+    /// </summary>
+    [ThreadStatic]
+    private static bool _ceEditableStrings;
 
     /// <summary>
     /// Copy CE Field "Fabricate empty array slots" target count (0 = off, the default and
@@ -1172,6 +1184,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1197,6 +1210,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -1310,6 +1324,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1331,6 +1346,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -1458,6 +1474,7 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
+        bool ceEditableStrings = false,
         int fabricateArrayCount = 0,
         // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
         // about this game that the exported values cannot show.
@@ -1481,6 +1498,7 @@ public static class CeXmlExportService
         _curRowColor = null;
         _collapseLeafPointers = collapseLeafPointers;
         _ceStringLength = ceStringLength;
+        _ceEditableStrings = ceEditableStrings;
         _fabricateArrayCount = fabricateArrayCount;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
@@ -3944,6 +3962,24 @@ public static class CeXmlExportService
         typeName is "StrProperty" or "Utf8StrProperty" or "AnsiStrProperty";
 
     /// <summary>
+    /// [CEXML-STRING-CAPACITY] 2026-11-19 The drop-down list a String record carries, with <c>ReadOnly="1"</c>, so that
+    /// CE's value editor cannot write the string; <see cref="EmitStringLeaf"/> leaves it out when the export's "Editable
+    /// string records" option (<see cref="_ceEditableStrings"/>) is on. CE writes a typed value whole, plus its
+    /// terminator, at the FString's Data pointer whatever the record's Length (it grows Length to fit: cheat-engine
+    /// MemoryRecordUnit.pas, TMemoryRecord.SetValue), and the game's heap buffer holds TArray Max characters, a number
+    /// the live walk does not read. A record with a drop-down list gets no inline editor, and CE's list dialog, when
+    /// user input is disallowed, offers only the listed items, drops a trailing <c>*</c> entry and writes nothing when
+    /// none is picked; this list's one entry is that <c>*</c>, so there is nothing to pick. DisplayValueAsItem stays
+    /// off, so the value column still shows the live string. CE's Dropdown options dialog shows the line with
+    /// "Disallow manual user input" ticked, so the reason travels with the record.
+    /// <para>CE still writes the record from a multi-record edit begun on another record, a parent record set to pass
+    /// its value to its children, a hotkey, a freeze after the game moves the string to a smaller buffer, or Lua's
+    /// <c>memrec.Value</c>, and a user who empties the list gets the unbounded write back.</para>
+    /// </summary>
+    private const string StringRecordReadOnlyList =
+        "*:read-only -- CE would write a typed string whole, even past the buffer the game allocated";
+
+    /// <summary>
     /// Emit a CE String leaf with proper Length/Unicode/CodePage/ZeroTerminate.
     /// CE's String type encodes three modes via the Unicode + CodePage flags:
     ///   StrProperty     = FString (wchar_t*, UTF-16)  -> Unicode=1, CodePage=0
@@ -3951,6 +3987,7 @@ public static class CeXmlExportService
     ///   Utf8StrProperty = FUtf8String (char*, UTF-8)  -> Unicode=0, CodePage=1
     /// All three share the FString TArray header { Data ptr, int32 Count, int32 Max },
     /// so Offsets=[0] dereferences the Data pointer to reach the character buffer.
+    /// CE's value editor cannot write the record unless the export allows it: <see cref="StringRecordReadOnlyList"/>.
     /// </summary>
     private static void EmitStringLeaf(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool unicode, bool codepage = false)
@@ -3971,6 +4008,8 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}  <Unicode>{(unicode ? 1 : 0)}</Unicode>");
         sb.AppendLine($"{indent}  <CodePage>{(codepage ? 1 : 0)}</CodePage>");
         sb.AppendLine($"{indent}  <ZeroTerminate>1</ZeroTerminate>");
+        if (!_ceEditableStrings)
+            sb.AppendLine($"{indent}  <DropDownList ReadOnly=\"1\">{EscapeXmlContent(StringRecordReadOnlyList)}</DropDownList>");
         sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");

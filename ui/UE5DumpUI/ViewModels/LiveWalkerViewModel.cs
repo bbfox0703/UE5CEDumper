@@ -349,6 +349,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Seeded from the toolbar master; passed to CE XML / CE Field export.</summary>
     public int CeStringLength { get; set; } = Constants.DefaultCeStringLength;
 
+    /// <summary>[CEXML-STRING-CAPACITY] 2026-11-19 Leave exported String records editable in CE (off by default: each
+    /// carries a read-only drop-down list). Seeded from the toolbar master; passed to CE XML / CE Field export.</summary>
+    public bool CeEditableStrings { get; set; }
+
     /// <summary>Copy CE Field array fabricate count (0 = off). When &gt; 0, Copy CE Field on a
     /// selected TArray pads it to this many element rows using a resolved element's layout.
     /// Seeded from the toolbar master; passed ONLY to the Copy CE Field export (not Copy CE XML).</summary>
@@ -5172,6 +5176,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
                     ceStringLength: CeStringLength,
+                    ceEditableStrings: CeEditableStrings,
                     resolvedInstances: resolvedInstances,
                     flattenChain: CollapseChain,
                     descShowOffset: DescShowOffset,
@@ -5196,6 +5201,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
                     ceStringLength: CeStringLength,
+                    ceEditableStrings: CeEditableStrings,
                     resolvedInstances: resolvedInstances,
                     flattenChain: CollapseChain,
                     descShowOffset: DescShowOffset,
@@ -5639,6 +5645,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
                     ceStringLength: CeStringLength,
+                    ceEditableStrings: CeEditableStrings,
                     resolvedInstances: resolvedInstances,
                     flattenChain: CollapseChain,
                     includeGuessed: includeGuessed,
@@ -5665,6 +5672,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
                     ceStringLength: CeStringLength,
+                    ceEditableStrings: CeEditableStrings,
                     resolvedInstances: resolvedInstances,
                     flattenChain: CollapseChain,
                     includeGuessed: includeGuessed,

@@ -138,6 +138,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _previewLimit = Constants.DefaultPreviewLimit; // Struct preview sub-field count (0-6)
     [ObservableProperty] private int _deepScanElemCapExponent = 8; // 2^8 = 256 (find_by_address deep scan per-container cap)
     [ObservableProperty] private int _ceStringLengthExponent = 8; // 2^8 = 256 (CE String leaf <Length>; floored at 2^4 = 16)
+    [ObservableProperty] private bool _ceEditableStrings; // [CEXML-STRING-CAPACITY] off = exported String records are read-only in CE
     [ObservableProperty] private int _fabricateArrayCountExponent = 2; // 2^2 = 4 rows (default); 0 = off, 2^N = Copy CE Field array fabricate count
 
     // Always-visible top-toolbar AOBMaker status (mirrors the per-tab indicators).
@@ -440,6 +441,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(CeStringLength));
         LiveWalker.CeStringLength = CeStringLength;
         InstanceFinder.CeStringLength = CeStringLength;
+    }
+
+    partial void OnCeEditableStringsChanged(bool value)
+    {
+        LiveWalker.CeEditableStrings = value;
+        InstanceFinder.CeEditableStrings = value;
     }
 
     partial void OnFabricateArrayCountExponentChanged(int value)
@@ -2504,7 +2511,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(SelectedAddressFormatIndex), nameof(CollapsePointerNodes),
         nameof(ArrayLimitExponent), nameof(DropDownLimitExponent),
         nameof(CsxDrilldownDepth), nameof(PreviewLimit), nameof(DeepScanElemCapExponent),
-        nameof(CeStringLengthExponent), nameof(FabricateArrayCountExponent),
+        nameof(CeStringLengthExponent), nameof(CeEditableStrings), nameof(FabricateArrayCountExponent),
         nameof(DumpAllObjectIndex),
     };
     private static readonly HashSet<string> LiveWalkerPersist = new()
@@ -2641,6 +2648,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         PreviewLimit = o.Main.PreviewLimit;
         DeepScanElemCapExponent = o.Main.DeepScanElemCapExponent;
         CeStringLengthExponent = o.Main.CeStringLengthExponent;
+        CeEditableStrings = o.Main.CeEditableStrings;
         FabricateArrayCountExponent = o.Main.FabricateArrayCountExponent;
 
         var lw = o.LiveWalker;
@@ -2809,6 +2817,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.Main.PreviewLimit = PreviewLimit;
         o.Main.DeepScanElemCapExponent = DeepScanElemCapExponent;
         o.Main.CeStringLengthExponent = CeStringLengthExponent;
+        o.Main.CeEditableStrings = CeEditableStrings;
         o.Main.FabricateArrayCountExponent = FabricateArrayCountExponent;
 
         o.LiveWalker.CollapseChain = LiveWalker.CollapseChain;

@@ -195,6 +195,11 @@
                             Minimum="4" Maximum="12"
                             TickFrequency="1" IsSnapToTickEnabled="True"
                             ToolTip.Tip="{StaticResource str.Tip.StringLength}"/>
+                    <!-- [CEXML-STRING-CAPACITY] Off by default, so an exported String record is read-only in Cheat Engine. -->
+                    <CheckBox Content="{StaticResource str.Toolbar.EditableStrings}"
+                              IsChecked="{Binding CeEditableStrings}"
+                              ToolTip.Tip="{StaticResource str.Tip.EditableStrings}"
+                              Foreground="#CCCCCC" FontSize="12"/>
                   </StackPanel>
 
                   <!-- Copy CE Field: fabricate empty array slots (0 = off) -->

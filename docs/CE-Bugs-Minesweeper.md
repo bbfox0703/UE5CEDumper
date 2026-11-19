@@ -580,7 +580,7 @@ or parses its text; the DLL's own disassembly is Zydis (`Denken`).
 | No EVEX: `62` always prints as `bound` | 7.5 src; not re-measured in 7.7 | `disassembler.pas:10933-10940` |
 | No `endbr64`: there is no `0F 1E` case | 7.5 src; not re-measured in 7.7 | `disassembler.pas:2892-2945` |
 
-**CE Lua** — owner: none here. **Bites us: two rows can, conditionally** (listed after the table).
+**CE Lua** — owner: none here. **Bites us: four rows can, conditionally** (listed after the table).
 
 | Defect | Seen | Where |
 |--------|------|-------|
@@ -608,6 +608,15 @@ Where the Lua group can reach us:
   `enumModules()` entry, the module CE names `process` after (`CeLuaHygiene.MainModuleNameLua`,
   `[CE76-PROCESS-GLOBAL]`), and read `process` only when that list comes back empty. On 7.6, a table
   that registers a custom type can affect those scans only when the module snapshot fails as well.
-- Not reached: no emitted Lua writes `memrec.Value`, and our exported String records meet that
-  write path only when a user types into the cell. We never call `loadTable`, both `.CT` writers
-  save UTF-8 without a BOM, and `scripts/UE5CEDumper.CT` has none.
+- **String records**: the two String-write rows (the overrun, and the Size growth behind it) are
+  in CE's own value write, the one a String record's value editor calls. By default every String
+  record a CE XML export writes carries a drop-down list that disallows user input and whose one
+  entry is CE's `*` wildcard, which CE's value dialog never offers (`CeXmlExportService`,
+  `[CEXML-STRING-CAPACITY]`), so CE's value editor has nothing to write. The Options switch
+  "Editable string records" leaves the list out, and a typed value then reaches that write. With
+  the list, a multi-record edit begun on another record, a parent record set to pass its value to
+  its children, a hotkey, a freeze after the game moves the string to a smaller buffer, or a user
+  who empties the list still reaches it, and a String record pushed by +CE or +CE Field (flat)
+  through the AOBMaker plugin carries no such list.
+- Not reached: no emitted Lua writes `memrec.Value`. We never call `loadTable`, both `.CT`
+  writers save UTF-8 without a BOM, and `scripts/UE5CEDumper.CT` has none.

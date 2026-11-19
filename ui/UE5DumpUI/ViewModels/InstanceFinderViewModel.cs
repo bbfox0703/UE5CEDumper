@@ -98,6 +98,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// Seeded from the toolbar master; passed to CE XML export.</summary>
     public int CeStringLength { get; set; } = Constants.DefaultCeStringLength;
 
+    /// <summary>[CEXML-STRING-CAPACITY] 2026-11-19 Leave exported String records editable in CE (off by default: each
+    /// carries a read-only drop-down list). Seeded from the toolbar master; passed to CE XML export.</summary>
+    public bool CeEditableStrings { get; set; }
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     /// <summary>Optional object-name filter (case-insensitive substring), ANDed
@@ -928,6 +932,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength,
+                ceEditableStrings: CeEditableStrings,
                 headerNotes: notes);
             // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
             // the synchronous Generate* call"), and after an await this method may resume on another thread.

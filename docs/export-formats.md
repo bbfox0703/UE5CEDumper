@@ -537,9 +537,9 @@ layout those parsers need to read a game's assets, saves and network traffic.
 | BoolProperty (byte) | Byte | | | Fallback |
 | NameProperty | 4 Bytes | | | FName index |
 | EnumProperty | Byte / 2 / 4 / 8 Bytes | | | width = property byte size; + DropDownList |
-| StrProperty | String | | | Unicode=1, CodePage=0, Offsets=[0] |
-| Utf8StrProperty | String | | | Unicode=0, **CodePage=1**, Offsets=[0] (UE5.5+ FUtf8String) |
-| AnsiStrProperty | String | | | Unicode=0, CodePage=0, Offsets=[0] (UE5.5+ FAnsiString) |
+| StrProperty | String | | | Unicode=1, CodePage=0, Offsets=[0]; read-only DropDownList unless Options ▸ Editable string records |
+| Utf8StrProperty | String | | | Unicode=0, **CodePage=1**, Offsets=[0] (UE5.5+ FUtf8String); read-only DropDownList unless Options ▸ Editable string records |
+| AnsiStrProperty | String | | | Unicode=0, CodePage=0, Offsets=[0] (UE5.5+ FAnsiString); read-only DropDownList unless Options ▸ Editable string records |
 | ObjectProperty | 8 Bytes | | ✓ | Pointer |
 | ClassProperty | 8 Bytes | | ✓ | Pointer |
 | WeakObjectProperty | 8 Bytes | | ✓ | |
