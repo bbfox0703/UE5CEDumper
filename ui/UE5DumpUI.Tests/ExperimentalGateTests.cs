@@ -83,10 +83,10 @@ public class ExperimentalGateTests : IDisposable
     {
         // [W1-QUOTA-UNLIMITED]. 0 means "Unlimited", and it is chosen by the user (the quota
         // combo) or BY ITSELF (ApplyAutoQuota, once the retained set outgrows the 5 GB preset).
-        // Under DefaultIgnoreCondition = WhenWritingDefault the key was OMITTED -- 0 is
-        // default(int) -- the next launch reloaded the = 1024 initializer, and SnapshotStore then
-        // FIFO-deleted the snapshots the user had opted to keep. The test above round-trips 2048
-        // only, which serializes fine and could never see it.
+        // Under DefaultIgnoreCondition = WhenWritingDefault the key would be OMITTED -- 0 is
+        // default(int) -- the next launch would reload the = 1024 initializer, and SnapshotStore would
+        // then FIFO-delete the snapshots the user had opted to keep. The test above round-trips 2048
+        // only, which serializes fine and cannot see it.
         var gate = new ExperimentalGate(_platform);
         gate.SnapshotQuotaMb = 0;
         Assert.Equal(0, new ExperimentalGate(_platform).SnapshotQuotaMb);

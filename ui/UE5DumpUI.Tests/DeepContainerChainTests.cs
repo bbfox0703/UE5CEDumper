@@ -51,7 +51,7 @@ public class DeepContainerChainTests
     [Fact]
     public void DisplayPath_DeeplyNested_SpansFullChain()
     {
-        // The SEED repro: SaveSlotList[1].MsTuneData.MsTunes[0].WeaponTuneList[0].Tunes[42].
+        // The SEED chain: SaveSlotList[1].MsTuneData.MsTunes[0].WeaponTuneList[0].Tunes[42].
         var m = new ContainerMatch
         {
             OwnerName    = "BP_LifeSaveData_C",

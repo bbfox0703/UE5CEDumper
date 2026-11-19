@@ -186,7 +186,7 @@ public class KeywordMemoryFlushOnClearTests
         vm.FilterText = "dash";
         Assert.NotEmpty(vm.Results);
 
-        // OnLeavingTab already flushed; the Clear BUTTON did not, and it is the one
+        // OnLeavingTab flushes; the Clear BUTTON must too, as it is the one
         // reachable while the user is still looking at the matches.
         vm.ClearCommand.Execute(null);
         Assert.Contains("dash", vm.FilterHistory);

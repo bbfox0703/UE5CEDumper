@@ -359,9 +359,9 @@ public class ClassPivotViewModelTests : IDisposable
 
     // ---- [PIVOT-HANDOFF-SHADOWED] a handoff names one copy of a shadowed name by its offset ----
     //
-    // The picker lists each copy apart (Zed@+0x10 / @+0x20), but the handoffs -- right-click "Pivot this property"
-    // (PivotForAsync) and discovery's "Use ->" -- carried the name alone and ticked the FIRST copy, whichever one the
-    // user had picked.
+    // The picker lists each copy apart (Zed@+0x10 / @+0x20), so the handoffs -- right-click "Pivot this property"
+    // (PivotForAsync) and discovery's "Use ->" -- must carry the offset too: the name alone ticks the FIRST copy,
+    // whichever one the user picked.
 
     // ⚠ Not the PrerollTime fixture above: the field load pre-ticks fields by their NAME's interest score, so both
     // PrerollTime copies arrive ticked and no handoff can be seen choosing one. "Zed" scores nothing and is a float
@@ -404,8 +404,8 @@ public class ClassPivotViewModelTests : IDisposable
     [Fact]
     public async Task PivotForAsync_WithNoOffset_StillTicksTheFirstCopy()
     {
-        // The control, and the fixture's own: nothing arrives pre-ticked, and a source with no offset keeps the
-        // name match it always had.
+        // The control, and the fixture's own: nothing arrives pre-ticked, and a source with no offset still
+        // matches by name alone.
         await SeedZedHoldersAsync("shadow", 5, 6, 7);
         var vm = NewVm();
 
@@ -1298,8 +1298,9 @@ public class ClassPivotViewModelTests : IDisposable
 
     // ---- [W1-PIVOT-LOADCTS] a field load must not cancel an in-flight CLASS load ----
     //
-    // One shared _loadCts let a field load cancel the class load in flight, and nothing restarts it: the picker kept the
-    // previous snapshot's classes. This store's class list for snapshot 2 is GATED and honours its token, as SQLite does.
+    // A _loadCts shared with the class load would let a field load cancel the class load in flight, and nothing restarts
+    // it: the picker would keep the previous snapshot's classes. This store's class list for snapshot 2 is GATED and
+    // honours its token, as SQLite does.
 
     private sealed class ClassGatedStore : ISnapshotStore
     {
@@ -1764,10 +1765,10 @@ public class ClassPivotViewModelTests : IDisposable
 
     // ---- [W1-PIVOT-SESSION] the row handoffs are gated on the game session ----
     //
-    // A result row's ObjAddr is an address in the launch that captured its snapshot. Class Pivot
-    // shipped (e554639c) before the session gate (534314f4) and never got it, and right after a
-    // reconnect its DEFAULT selection is a previous launch's snapshot -- so Open in Live Walker,
-    // Copy Address and both Locates handed a dead process's address to the running game.
+    // A result row's ObjAddr is an address in the launch that captured its snapshot, and right after
+    // a reconnect Class Pivot's DEFAULT selection is a previous launch's snapshot -- so without the
+    // gate, Open in Live Walker, Copy Address and both Locates would hand a dead process's address
+    // to the running game.
 
     private static EngineState Live(string creation) =>
         new() { PeHash = "G", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = creation };

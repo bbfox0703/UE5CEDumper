@@ -912,7 +912,7 @@ public class CsxExportServiceTests
 
         Assert.Contains("Description=\"[0] Hello world!\"", csx);
         Assert.Contains("Description=\"[1] Exactly twenty chars\"", csx);
-        Assert.Contains("Description=\"[2] Twenty-two character…\"", csx);   // was "[2]"
+        Assert.Contains("Description=\"[2] Twenty-two character…\"", csx);   // not a bare "[2]"
     }
 
     [Fact]

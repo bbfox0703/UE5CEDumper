@@ -209,8 +209,8 @@ public class ContainerTruncationTests
 
     // ---- [A3-CONTAINER-4096-ADVICE] a DLL-capped reply is not a slider-capped one ----
     //
-    // The scalar re-fetch asks for the FULL count, and the DLL clamps every request (4,096 today). The status then
-    // advised "raise the Array Limit slider", which cannot raise that cap. Derived from the reply, never a hardcoded 4096.
+    // The scalar re-fetch asks for the FULL count, and the DLL clamps every request (4,096 today), so the status must not
+    // advise "raise the Array Limit slider", which cannot raise that cap. Derived from the reply, never a hardcoded 4096.
 
     private sealed class ClampingArrayStub : StubDumpService
     {

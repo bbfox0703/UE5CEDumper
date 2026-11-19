@@ -132,9 +132,9 @@ public class CoordCsvParseTests
     [Fact]
     public void Parse_EmptyGroup_DoesNotShiftColumns()
     {
-        // THE regression this whole codec exists to avoid. The repo's only existing
-        // delimited reader (BugItGoParser) splits with RemoveEmptyEntries, which here
-        // would collapse 10 fields to 9 and make Group="Map02", Map="89828.133".
+        // THE failure this whole codec exists to avoid. A delimited reader that splits
+        // with RemoveEmptyEntries (as BugItGoParser does) would collapse 10 fields
+        // to 9 here and make Group="Map02", Map="89828.133".
         var r = P(Header + "k3fb,Boss,,Map02,89828.133,-15534.243,850.328,346.88,0.93,0\n");
         var e = Assert.Single(r.Entries);
         Assert.Equal("Boss", e.Label);

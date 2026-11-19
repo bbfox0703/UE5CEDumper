@@ -8,9 +8,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [LF-EXPOFF-TRACE] The System tab's experimental checkbox unticks connected or not (the maintainer's choice after the
-/// review, 2026-10-09: 「連線中也可取消，立即清理」): what the features run in the game is turned off at once, or at the next
-/// connect, by Teleport (<c>ExperimentalTeardownTests</c>). Only the session lock disables the box.
+/// [LF-EXPOFF-TRACE] The System tab's experimental checkbox unticks connected or not: what the features run in the game
+/// is turned off at once, or at the next connect, by Teleport (<c>ExperimentalTeardownTests</c>). Only the session lock
+/// disables the box.
 /// The real gate and the real main window, so the connection is the app's own flag and the refusal while locked is the
 /// gate's own.
 /// </summary>
@@ -125,9 +125,9 @@ public class ExperimentalUntickTests : IDisposable
         Assert.Equal(idle, main.DetectStats.StatusText);
     }
 
-    // ---- The round-3 review's LOW: which tabs lock the opt-in was a literal list in the view's tab switch, and the claims
-    // that rest on it -- what the rest of an experimental feature needs on an untick, and the locked box's tooltip,
-    // which names those tabs -- were checked by nothing: dropping a tab from the list passed every suite.
+    // ---- Which tabs lock the opt-in (MainWindowViewModel.LocksExperimental), and the claims that rest on it -- what the
+    // rest of an experimental feature needs on an untick, and the locked box's tooltip, which names those tabs -- are
+    // pinned here, so dropping a tab from the rule fails a test rather than passing every suite.
 
     /// <summary>Every experimental tab of the main window (shown only with the features on): its Tag and its header.</summary>
     private static List<(string tag, string header)> ExperimentalTabs()

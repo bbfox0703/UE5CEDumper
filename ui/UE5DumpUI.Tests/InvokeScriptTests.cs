@@ -1276,9 +1276,9 @@ public class InvokeScriptTests
         Assert.Contains("_dumpHex('[Invoke] Before')", script);
         Assert.Contains("_dumpHex('[Invoke] After ')", script);
         // Robust mailbox resolution: mirror helper's getAddressSafe + module-
-        // prefixed fallback. Bare getAddress() returned garbage on the user's
-        // CE setup which then crashed the dump with format(nil). Don't
-        // regress this -- both code paths must remain.
+        // prefixed fallback. A bare getAddress() can return garbage on a
+        // CE setup, and the dump then crashes with format(nil), so
+        // both code paths must remain.
         Assert.Contains("getAddressSafe('g_invokeMailbox')", script);
         Assert.Contains("getAddressSafe('UE5Dumper.g_invokeMailbox')", script);
         // Nil-guard on individual byte reads so a single unreadable byte
@@ -1687,9 +1687,9 @@ public class InvokeScriptTests
     public void CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling()
     {
         // Mirrors ParamBufferBuilder.IsZeroDefaultText (empty, `0`, `0x0` any case, trimmed).
-        // This exact spelling was run through a Lua interpreter (5.4 on the dev PC; it uses only
-        // string.match / string.lower, unchanged from CE's 5.3) against that predicate's cases,
-        // 16/16 incl. a nil edit and a nil Text; changing it means re-running that check.
+        // This exact spelling is pinned because no gate runs it: a change must be run under a Lua
+        // interpreter (it uses only string.match / string.lower, unchanged from CE's 5.3) against
+        // that predicate's cases, a nil edit and a nil Text included, before this pin moves.
         var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("ArrayProperty", 16));
 
         Assert.Contains(
@@ -2013,9 +2013,9 @@ public class InvokeScriptTests
     [Fact]
     public void TeleportPoseGetters_HaveExVariantsThatCarryTheParentRelativeFlag()
     {
-        // The three getters could not report a PARENT-RELATIVE pose (an attached pawn whose world read failed): rc 0 and
-        // RelativeLocation numbers read exactly like world coordinates. New exports, the originals untouched -- CE
-        // scripts call those by position.
+        // The three original getters cannot report a PARENT-RELATIVE pose (an attached pawn whose world read failed): rc 0
+        // and RelativeLocation numbers read exactly like world coordinates. So the flag comes through new exports, and the
+        // originals stay untouched -- CE scripts call those by position.
         string h = DllSource("Frieren.h");
         foreach (var name in new[] { "UE5_TeleportGetPoseEx", "UE5_TeleportGetMarkerEx", "UE5_TeleportGetLastEx" })
             Assert.Matches(name + @"\([^;]*int32_t\*\s*outParentRelative\);", h);

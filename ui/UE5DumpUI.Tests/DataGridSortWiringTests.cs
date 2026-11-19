@@ -197,7 +197,7 @@ public class DataGridSortWiringTests
             // hex). Only some branches interpolate a number and they are not the same number,
             // so there is no numeric key to sort on; ordinal is the only order that exists.
             // LiveWalkerPanel.axaml.cs wires Ordinal deliberately. What the scan actually
-            // caught is one branch of the chain, not a formatted-number column.
+            // matches is one branch of the chain, not a formatted-number column.
             ["LiveWalkerPanel.axaml|DisplayValue"] =
                 "LiveFieldValue.DisplayValue is a heterogeneous fallback chain; no single " +
                 "numeric key exists, and Ordinal is wired on purpose.",

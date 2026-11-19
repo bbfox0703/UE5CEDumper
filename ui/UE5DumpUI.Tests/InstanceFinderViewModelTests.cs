@@ -412,9 +412,9 @@ public class InstanceFinderViewModelTests
     // [W4-LOOKUP-FILTER] a lookup result survives the keyword filter's re-projection.
     // ==================================================================
     //
-    // The lookup empties _allInstances on purpose and added its one result straight into the bound
-    // Instances. The next ApplyInstanceFilter re-projects from _allInstances, so a leftover keyword --
-    // or even clearing it -- erased the result for good while LookupStatusText still reported a match.
+    // The lookup empties _allInstances on purpose, and the next ApplyInstanceFilter re-projects from
+    // _allInstances: a result added only to the bound Instances would be erased for good by a leftover
+    // keyword -- or even by clearing it -- while LookupStatusText still reported a match.
 
     private static AddressLookupResult FoundAt(string name, string cls) => new()
     {

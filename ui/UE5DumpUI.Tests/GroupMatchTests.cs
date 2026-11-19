@@ -109,7 +109,7 @@ public class GroupMatchTests
     [Fact]
     public void TwoFloatLeaves_ExactWholeTarget_RoundMatches()
     {
-        // The reported GAS case: AttributeSetCore.Health BaseValue(0x8) + CurrentValue(0xC)
+        // The GAS case: AttributeSetCore.Health BaseValue(0x8) + CurrentValue(0xC)
         // both store 513.3599853516; searching Exact 513/513 must match via rounding.
         var leaves = new[]
         {
@@ -395,8 +395,8 @@ public class GroupMatchTests
     {
         // The snapshot corpus and the live Group Scan answer the same question, so a
         // different cap here would make the same object match on one page and not the
-        // other. 8 was the DLL's old value and the bug: leaves arrive base-class-first,
-        // so it stored only inherited fields and a temporal pass saw nothing change.
+        // other. A cap of 8 is too small: leaves arrive base-class-first, so it would
+        // store only inherited fields and a temporal pass would see nothing change.
         var leaves = new List<GroupMatch.Leaf>();
         for (int i = 0; i < 40; i++) leaves.Add(L(i * 4, "IntProperty", 100 + i));
         var slots = new List<GroupMatch.Slot> { Between(0, 100000), Between(0, 100000) };

@@ -5,8 +5,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [I18N-READINESS-2026-11-04] Gives <see cref="Res"/> the app's English before any test runs. A unit test has no
-/// Avalonia application, so Res answered "" for every key; this reads en.axaml from the checkout once and installs it
-/// as <see cref="Res.Lookup"/>. The headless suite's StringTableFidelityTests pins the reader against Avalonia's own.
+/// Avalonia application, so Res would answer "" for every key; this reads en.axaml from the checkout once and
+/// installs it as <see cref="Res.Lookup"/>. The headless suite's StringTableFidelityTests pins the reader against
+/// Avalonia's own.
 /// </summary>
 internal static class EnStringsModule
 {
@@ -29,7 +30,7 @@ internal static class EnStringsModule
     }
 
     /// <summary>The file itself, walking up from the test binaries: a marker file such as CLAUDE.md is not enough,
-    /// since ui/ has its own (a test that stopped at the first one went red in CI, 2026-10-01).</summary>
+    /// since ui/ has its own (a walk that stops at the first one stops in ui/, not at the repository root).</summary>
     private static string? Find()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)

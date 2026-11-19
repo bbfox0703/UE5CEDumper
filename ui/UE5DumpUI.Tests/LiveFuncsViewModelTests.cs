@@ -375,7 +375,7 @@ public class LiveFuncsViewModelTests
         Assert.Equal(expected, e.Kind);
     }
 
-    // Cadence classification (Phase E): (meanMs, cv, gapSamples) → isPeriodic.
+    // Cadence classification: (meanMs, cv, gapSamples) → isPeriodic.
     [Theory]
     [InlineData(500.0, 0.05, 19, true)]    // steady 0.5 s timer — regular, out of frame band
     [InlineData(16.0,  0.05, 900, false)]  // per-frame Tick — regular but in the frame band
@@ -501,10 +501,10 @@ public class LiveFuncsViewModelTests
 
     /// <summary>
     /// The reason RequestCopyText is Func&lt;string,Task&lt;bool&gt;&gt; and not
-    /// Action&lt;string&gt;. As an Action the handler was an async lambda, so Invoke
-    /// returned at its first await and the VM set "Copied ..." BEFORE the clipboard was
-    /// even touched -- unreachable by any assertion, because the answer arrived after the
-    /// claim. Blind-spot sweep round 3, sub-shape (b).
+    /// Action&lt;string&gt;. As an Action the handler would be an async lambda, so Invoke
+    /// would return at its first await and the VM would set "Copied ..." BEFORE the clipboard
+    /// was even touched -- unreachable by any assertion, because the answer would arrive
+    /// after the claim.
     /// </summary>
     [Fact]
     public async Task CopyFuncName_WhenTheClipboardRefuses_DoesNotClaimSuccess()

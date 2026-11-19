@@ -560,9 +560,9 @@ public class FreezeScriptGeneratorTests
         var script = FreezeScriptGenerator.Generate(SampleParams());
 
         // Five captures: pcall status, then start()'s own (ok, err, count, capped).
-        // `scapped` joined the tuple with the derived scope — a capped pool makes the
+        // `scapped` is in the tuple because of the derived scope — a capped pool makes the
         // count a floor rather than a total, and dropping the capture here would put
-        // the caveat back out of reach. (`[FREEZESCOPE-2026-08-18]`)
+        // the caveat out of reach. (`[FREEZESCOPE-2026-08-18]`)
         Assert.Contains("local sok, sok2, serr, scount, scapped = pcall(handleOrErr.start)",
                         script);
     }
@@ -874,7 +874,7 @@ public class FreezeScriptGeneratorTests
     //
     // scripts/tests/freeze_enable_capped_test.lua LOADS and EXECUTES a real emitted
     // [ENABLE] block, because a text assertion structurally cannot tell a reachable
-    // branch from dead code. Demonstrated 2026-08-24: replacing `elseif scapped then`
+    // branch from dead code. For example, replacing `elseif scapped then`
     // with `elseif false then` leaves the string "CAP REACHED" in the script -- so the
     // Assert.Contains below still PASSES -- while the rig catches it, because it runs.
     //

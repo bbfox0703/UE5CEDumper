@@ -353,18 +353,18 @@ public class CoordinateLibraryStoreTests : IDisposable
 
     // ── [A1-COORD-RESURRECT] + [A1-COORD-BACKUP] ─────────────────────────────────────────────
     //
-    // Load fell back to the rolling .bak when the main file was MISSING as well as corrupt, so a
-    // "Clear all" -- which deletes the main file and deliberately keeps the backups -- came back
-    // on the next connect or restart. And after a .bak recovery the file on disk is still the
-    // corrupt one (the load runs with persistence suppressed), so the one-shot backups copied
-    // garbage, and a Replace-import's Save then rolled the corrupt main over the only good .bak.
+    // A Load that fell back to the rolling .bak when the main file is MISSING, not only corrupt,
+    // would bring a "Clear all" -- which deletes the main file and deliberately keeps the backups --
+    // back on the next connect or restart. And after a .bak recovery the file on disk is still the
+    // corrupt one (the load runs with persistence suppressed), so one-shot backups copied from disk
+    // would hold garbage, and a Replace-import's Save would roll the corrupt main over the only good .bak.
 
     private void CorruptMain(string key) => File.WriteAllText(_store.FilePathFor(key), "{ this is not json");
 
     [Fact]
     public void ClearAll_ThenLoad_DoesNotResurrectTheLibrary()
     {
-        // The recorded repro: Save, Save, SavePreClearBackup, Delete, Load -> empty.
+        // The sequence: Save, Save, SavePreClearBackup, Delete, Load -> empty.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "One" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Two" }));   // .bak = "One"
         _store.SavePreClearBackup("game", _store.Load("game"));

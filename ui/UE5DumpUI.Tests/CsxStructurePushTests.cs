@@ -227,7 +227,7 @@ public class CsxStructurePushTests : IDisposable
     public void Escaped_names_and_a_leading_comment_are_read_as_the_CSX_writer_wrote_them()
     {
         // CsxExportService escapes & < > " ' and may prepend PackedLayoutNotice's XML comment: the reader must give back
-        // the original text, whatever parses it (it was XDocument; a purpose-built reader keeps 3 MB of
+        // the original text, whatever parses it (a purpose-built reader rather than XDocument keeps 3 MB of
         // System.Private.Xml out of the trimmed binary).
         const string csx = """
 

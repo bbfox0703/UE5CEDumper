@@ -12,30 +12,27 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The DELIVERY half of the clipboard contract — blind-spot sweep round 3, sub-shape (a).
+/// The DELIVERY half of the clipboard contract.
 ///
-/// <para>Round 3 classified all 57 <c>CopyToClipboardAsync</c> call sites: 55 dropped the
-/// result and 29 then claimed success anyway. 14 of the 29 are DELIVERY copies, where the
-/// clipboard is the deliverable — a generated CE script the status line tells the user to
-/// paste into Cheat Engine. When the write does nothing and the app says it worked, the
-/// user pastes <b>the previous clipboard content</b> into CE and runs it against a live
-/// game.</para>
+/// <para>A DELIVERY copy is one where the clipboard is the deliverable — a generated CE
+/// script the status line tells the user to paste into Cheat Engine. When the write does
+/// nothing and the app says it worked, the user pastes <b>the previous clipboard
+/// content</b> into CE and runs it against a live game.</para>
 ///
-/// <para><b>Why these tests are behavioural and not source-text assertions.</b> Every one
-/// of those 14 sites already sat inside a <c>try/catch</c> that looked like handling. It
-/// is dead code: <c>IPlatformService.CopyToClipboardAsync</c> documents that it never
-/// throws for an ordinary clipboard failure, so only the returned <c>bool</c> carries it.
-/// A test that greps for a <c>catch</c> would have passed on every defective site.</para>
+/// <para><b>Why these tests are behavioural and not source-text assertions.</b> A delivery
+/// site can sit inside a <c>try/catch</c> that looks like handling and is dead code:
+/// <c>IPlatformService.CopyToClipboardAsync</c> documents that it never throws for an
+/// ordinary clipboard failure, so only the returned <c>bool</c> carries it. A test that
+/// greps for a <c>catch</c> would pass on a site that drops the bool.</para>
 ///
-/// <para>⚠ The existing doubles hard-code <c>Task.FromResult(true)</c>
-/// (<c>InstanceFinderViewModelTests.NoopPlatform</c> and ~8 siblings), which is exactly
-/// why no test could observe the false path before this file. <see cref="RefusingPlatform"/>
-/// is the negative control the suite was missing.</para>
+/// <para>⚠ Most test doubles hard-code <c>Task.FromResult(true)</c>
+/// (<c>InstanceFinderViewModelTests.NoopPlatform</c> among them), so they never reach the
+/// false path. <see cref="RefusingPlatform"/> is the negative control that does.</para>
 /// </summary>
 public class ClipboardDeliveryTests
 {
-    /// <summary>A platform whose clipboard refuses every write — the state the 14 sites
-    /// claimed success over. Records what it was asked to copy so a test can prove the
+    /// <summary>A platform whose clipboard refuses every write — the state a delivery site
+    /// must not claim success over. Records what it was asked to copy so a test can prove the
     /// payload was built before the write was attempted.</summary>
     private sealed class RefusingPlatform : IPlatformService
     {
@@ -124,17 +121,16 @@ public class ClipboardDeliveryTests
     [Fact]
     public void FailureText_PutsTheImperativeWhereTruncationCannotEatIt()
     {
-        // ⛔ THE REGRESSION THIS PINS, measured on a live run 2026-09-09
-        // ([CLIPELLIPSIS-2026-09-09]): the MainWindow toolbar caps StatusText and
-        // ErrorMessage at MaxWidth=360 with CharacterEllipsis (MainWindow.axaml's status bar) and
-        // truncated this message at roughly character 50 —
+        // ⛔ [CLIPELLIPSIS-2026-09-09] The MainWindow toolbar caps StatusText and
+        // ErrorMessage at MaxWidth=360 with CharacterEllipsis (MainWindow.axaml's status bar),
+        // which cuts a message at roughly character 50 —
         //   "ERROR: could not write to the clipboard — the inject ..."
-        // while "so do not paste" sat at character 135 of 206. The one sentence the message
-        // exists to deliver was the one the user could not see.
+        // so "do not paste", the one sentence the message exists to deliver, must sit
+        // before the cut or the user never sees it.
         //
         // 40 is well inside any plausible truncation of a 360px-wide 12pt line, and the
-        // assertion is on the INDEX rather than on presence because presence was already
-        // true when the defect was live.
+        // assertion is on the INDEX rather than on presence because a message that puts the
+        // imperative past the cut still contains it.
         var msg = ClipboardDelivery.FailureText("the CE AA script");
         var idx = msg.IndexOf("do not paste", StringComparison.OrdinalIgnoreCase);
         Assert.InRange(idx, 0, 40);
@@ -148,9 +144,9 @@ public class ClipboardDeliveryTests
 }
 
 /// <summary>
-/// The blind-spot sweep's round-3 tail: the CONVENIENCE copies that carry a claim -- an address, a path or a name,
-/// followed by a status line saying it was copied. The sweep left them outside gate 17b on purpose (their payload
-/// is not a script), and each set "Copied ..." whatever <c>CopyToClipboardAsync</c> returned. Losing an address
+/// The CONVENIENCE copies that carry a claim -- an address, a path or a name, followed by a status line saying it
+/// was copied. They sit outside gate 17b (check_clipboard_delivery.py) on purpose (their payload is not a script),
+/// so these tests hold their "Copied ..." line to what <c>CopyToClipboardAsync</c> returned. Losing an address
 /// costs a click, but a line that says it arrived sends the user to paste the PREVIOUS clipboard into Cheat Engine
 /// instead of re-clicking.
 ///
@@ -331,9 +327,9 @@ public class ConvenienceCopyClaimTests : IDisposable
     }
 
     /// <summary>
-    /// The two code-built dialogs. Their Copy button set a green "Copied: X" after a copy whose result was thrown away;
-    /// the handler must bind the result and keep a failure line for the refused write. Pinned in source because no
-    /// unit test here can open a Window.
+    /// The two code-built dialogs. Their Copy button shows a green "Copied: X", so the handler must bind the copy's
+    /// result and keep a failure line for the refused write. Pinned in source because no unit test here can open a
+    /// Window.
     /// </summary>
     [Theory]
     [InlineData("ui/UE5DumpUI/Views/FunctionPropsDialog.cs")]

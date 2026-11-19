@@ -632,9 +632,9 @@ public class InterestingFunctionsViewModelTests
             new() { ClassName="ShopSubsystem", FuncName="OpenShop",
                     FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
         };
-        // Same determinism problem as its sibling, and the same fix: park the load inside the
-        // window rather than assuming ExecuteAsync left it there. This one had the race too — it
-        // just never happened to be the test that went red. [TESTFLAKE-2026-08-21]
+        // Same determinism problem as its sibling, and the same answer: park the load inside the
+        // window rather than assuming ExecuteAsync left it there, since this test races the same
+        // way. [TESTFLAKE-2026-08-21]
         var gated = new GatedEntryList(entries);
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };

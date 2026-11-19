@@ -70,7 +70,7 @@ public class ForegroundScriptGeneratorTests
     }
 
     // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
-    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    // deferred untick (which runs [DISABLE]) does not show a SECOND dialog.
     [Fact]
     public void Disable_block_never_pops_a_modal()
     {

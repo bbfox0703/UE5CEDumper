@@ -221,7 +221,7 @@ public class ClassFacetFilterTests
         Assert.Equal(before, changes[0]);   // Reset never re-filters
     }
 
-    // ── CanOpen: the disabled-button-with-active-exclusion trap (regression) ──
+    // ── CanOpen: the disabled-button-with-active-exclusion trap ──
 
     [Fact]
     public void CanOpen_FalseBeforeAnySearch()
@@ -243,7 +243,7 @@ public class ClassFacetFilterTests
     [Fact]
     public void CanOpen_StaysTrueWhenExcludedButEmptyResult()
     {
-        // The exact bug: hide a class, then a search returns 0 rows (or every
+        // The trap: hide a class, then a search returns 0 rows (or every
         // match is in a hidden class). The button must stay openable so the user
         // can reach Clear — otherwise the exclusion is stuck active + invisible.
         var f = Make(out _);
@@ -272,7 +272,7 @@ public class ClassFacetFilterTests
         Assert.False(f.CanOpen);
     }
 
-    // ── Auto-detect (Phase 3, opt-in soft pre-tick) ──────────────────────────
+    // ── Auto-detect (opt-in soft pre-tick) ───────────────────────────────────
 
     private static System.Func<System.Collections.Generic.IReadOnlyList<string>,
         System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<(string, bool, string)>>>

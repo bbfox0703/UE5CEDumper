@@ -7,8 +7,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Pins the SCOPE of the dispatcher fault guard added for
-/// <c>[PASTECRASH-2026-08-18]</c>.
+/// Pins the SCOPE of the dispatcher fault guard
+/// (<c>[PASTECRASH-2026-08-18]</c>).
 ///
 /// <para>The guard's only risk is over-reach: marking a dispatcher exception
 /// handled turns a crash into silent corruption, so half of these tests are
@@ -32,8 +32,8 @@ public class InputLayerFaultClassifierTests
         "   at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)";
 
     /// <summary>
-    /// The whole trace, copied out of the real
-    /// <c>%LOCALAPPDATA%\UE5CEDumper\crash.log</c> written at 2026-08-18 22:02:50 —
+    /// The whole trace, copied out of a real
+    /// <c>%LOCALAPPDATA%\UE5CEDumper\crash.log</c> —
     /// 23 frames plus the unwind separator, not the 5-frame excerpt above.
     ///
     /// <para><b>Its last frame is <c>UE5DumpUI.Program.Main</c></b>, so as a piece of
@@ -404,10 +404,10 @@ public class InputLayerFaultClassifierTests
     }
 
     [Theory]
-    // A method marker must be a whole method NAME, not any prefix of one. This
-    // found a live over-match: plain string.Contains accepted
+    // A method marker must be a whole method NAME, not any prefix of one. Plain
+    // string.Contains would accept
     // "TextBox.PasteHistoryItem()" as a Paste frame, so a method nobody had reasoned
-    // about would have been inside the swallow. Avalonia has no such method today —
+    // about would be inside the swallow. Avalonia has no such method today —
     // which is the point, the guard must not silently acquire one.
     [InlineData("   at Avalonia.Controls.TextBox.PasteHistoryItem()")]
     [InlineData("   at Avalonia.Controls.TextBox.CopyToBuffer(Int32 n)")]

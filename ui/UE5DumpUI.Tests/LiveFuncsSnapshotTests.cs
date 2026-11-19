@@ -166,7 +166,7 @@ public class LiveFuncsSnapshotTests
         await vm.StopCommand.ExecuteAsync(null);
     }
 
-    // ---- U5 ----
+    // ---- [LIVEFUNCS-STEP2] choosing a function for parameter snapshots ----
 
     /// <summary>An unloaded row with a name key keeps its Trace, Params? and Stack? boxes, as each follows the function
     /// by name; only a keyless one loses them. The (unloaded) marker's tooltip names the three columns rather than
@@ -247,7 +247,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(32L << 20, dump.LastTrace.Snapshots.Bytes);   // the default buffer
     }
 
-    // ---- U6 ----
+    // ---- [LIVEFUNCS-STEP2] the parameter estimate ----
 
     [Fact]
     public void The_estimate_pins_the_DLLs_numbers_read_from_Linie_h()
@@ -375,7 +375,7 @@ public class LiveFuncsSnapshotTests
         Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
     }
 
-    // ---- U7 ----
+    // ---- [LIVEFUNCS-STEP2] choosing the shown rows ----
 
     [Fact]
     public async Task Choosing_shown_rows_takes_the_filtered_view_only_and_says_what_it_left_out()
@@ -401,9 +401,9 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(before, vm.SnapshotFunctions.Count);
     }
 
-    // ---- U9 ----
+    // ---- [LIVEFUNCS-STEP2] what a traced Start records, and what it says ----
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-55: with a function ticked and another chosen for parameters or a stack, a
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] With a function ticked and another chosen for parameters or a stack, a
     /// traced Start also records the chosen calls made outside every ticked scope (the DLL's lone calls), so the Start's
     /// status and the Call Trace tab's scope sentence say so once the DLL reports a ring for them; with ticks alone both
     /// keep the sentence that names only the ticked functions.</summary>
@@ -462,7 +462,7 @@ public class LiveFuncsSnapshotTests
         }
     }
 
-    /// <summary>[UI-TEXT-AUDIT-2026-11-18] UT-38: nothing ticked, but a function chosen for parameters: the Start traces
+    /// <summary>[UI-TEXT-AUDIT-2026-11-18] Nothing ticked, but a function chosen for parameters: the Start traces
     /// only the chosen calls, and the Trace check box's tooltip says what a traced Start records in the words the ticked
     /// count's tooltip uses, rather than "every call", or "only their calls" once something is ticked.</summary>
     [Fact]
@@ -547,7 +547,7 @@ public class LiveFuncsSnapshotTests
         Assert.Empty(vm.NotCalledNames);
     }
 
-    // ---- U8 ----
+    // ---- [LIVEFUNCS-STEP2] where the copies show, and the view ----
 
     /// <summary>A parameter copy shows in Call Trace's Parameters tab and, as segments or raw, in its Bytes tab: the
     /// Params? box's tooltip names both, by the tabs' own headers.</summary>
@@ -1677,8 +1677,8 @@ public class LiveFuncsSnapshotTests
         Assert.Contains($"IsVisible=\"{{Binding #{name}.IsChecked}}\"", opens[^1].Value, StringComparison.Ordinal);
     }
 
-    /// <summary>(3) The baseline's line speaks only when there is a baseline, or Diff is on and there is none: it said "No
-    /// baseline" to every user who never asked for one, a line of the panel spent on a hint. Each way it can change is
+    /// <summary>(3) The baseline's line speaks only when there is a baseline, or Diff is on and there is none: otherwise it
+    /// says "No baseline" to every user who never asked for one, a line of the panel spent on a hint. Each way it can change is
     /// raised, the last one when Diff was already off and nothing else would be.</summary>
     [Fact]
     public async Task The_baseline_line_shows_only_with_a_baseline_or_with_Diff_on()
@@ -1932,9 +1932,9 @@ public class LiveFuncsSnapshotTests
         Raises("the free memory read again", () => vm.OnEnteringTab());
     }
 
-    /// <summary>(2) What a choice click costs the summary. The click raises many of the summary's inputs, and when each
-    /// raise had every binding build the summary again, its estimates with it, a click built it once for every input it
-    /// raised and every binding, folded or not ([LF-COMPACT-TOP] keeps the count measured then). Unfolded nothing shows
+    /// <summary>(2) What a choice click costs the summary. The click raises many of the summary's inputs, and if each
+    /// raise had every binding build the summary again, its estimates with it, a click would build it once for every input
+    /// it raised and every binding, folded or not ([LF-COMPACT-TOP]). Unfolded nothing shows
     /// it, so a click builds it not at all; folded, once a binding, after the click's work, from the one raise posted
     /// when the first input moved. A raise posted before an unfold has nothing to show.</summary>
     [Fact]

@@ -368,8 +368,8 @@ public class FreezeValueDialogValidationTests
 
     // ── Scope disclosure ([FREEZESCOPE-2026-08-18]) ─────────────────────────
     //
-    // The dialog is the last screen before the script exists, and it was silent
-    // about the one thing the user cannot infer from the row: the freeze is keyed
+    // The dialog is the last screen before the script exists, so it must state
+    // the one thing the user cannot infer from the row: the freeze is keyed
     // on the class that DECLARES the field, so "freeze my pawn's bCanBeDamaged" is
     // really "hold it on every live Actor and subclass in the level". Both strings
     // are pure statics for the same reason the validator is — the Window itself
