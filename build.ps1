@@ -196,6 +196,41 @@ function Repair-NinjaHeaderDeps([string]$Dir = $BUILD_DIR) {
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
+function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
+    <#
+    .SYNOPSIS
+        Drop the build dir if CMakeCache.txt names a compiler, linker or SDK tool that no longer exists.
+
+    .DESCRIPTION
+        CMake records the full path of every tool it found at configure time
+        (CMAKE_CXX_COMPILER = ...\VC\Tools\MSVC\<version>\bin\Hostx64\x64\cl.exe, and the
+        C compiler, linker, mt and rc beside it) and never re-checks it. A Visual Studio
+        update installs the toolset under a new <version> folder and removes the old one,
+        so a kept build dir then fails every configure and every build step with "is not
+        a full path to an existing compiler tool" -- the C++ DLLs and the C++ tests do not
+        build at all, while the C# side carries on. A fresh configure finds the new
+        toolset, so remove the dir and let the caller's configure run. No-op when every
+        recorded tool exists, or when nothing is configured yet.
+    #>
+    $cache = Join-Path $Dir "CMakeCache.txt"
+    if (-not (Test-Path $cache)) { return }
+    $missing = @()
+    foreach ($line in [System.IO.File]::ReadAllLines($cache)) {
+        $m = [regex]::Match($line, '^(CMAKE_(?:CXX_COMPILER|C_COMPILER|LINKER|MT|RC_COMPILER)):FILEPATH=(.+)$')
+        if (-not $m.Success) { continue }
+        $toolPath = $m.Groups[2].Value.Trim()
+        if ([System.IO.Path]::IsPathRooted($toolPath) -and -not (Test-Path -LiteralPath $toolPath)) {
+            $missing += "$($m.Groups[1].Value) = $toolPath"
+        }
+    }
+    if ($missing.Count -eq 0) { return }
+
+    Write-Step "Stale toolchain paths in $cache (the toolset they name is gone, e.g. after a Visual Studio update):"
+    foreach ($entry in $missing) { Write-Info $entry }
+    Write-Info "Removing the build dir to force a clean re-configure against the installed toolset."
+    Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
+}
+
 function Enter-VsDevEnvironment() {
     <#
     .SYNOPSIS
@@ -617,6 +652,7 @@ if ($Target -eq "AsanConfigure") {
     Write-Banner "AddressSanitizer tree (configure only)"
     $asanDir = Join-Path $ROOT_DIR "build_asan"
     if ($Clean -and (Test-Path $asanDir)) { Remove-Item $asanDir -Recurse -Force }
+    Repair-StaleToolchainCache $asanDir
     Repair-NinjaHeaderDeps $asanDir
     $asanOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
     if (-not $asanOk) {
@@ -691,7 +727,9 @@ if ($cppTargets.Count -gt 0) {
     # NOTE: no clean here. -Clean already removed $BUILD_DIR in the Clean phase;
     # otherwise we keep it for an incremental Ninja build (the whole point).
     # A tree configured under a different console code page has dead header-dep
-    # tracking; drop it first so the configure below is fresh. No-op when healthy.
+    # tracking, and one configured against a since-removed toolset cannot build at all;
+    # drop either first so the configure below is fresh. No-op when healthy.
+    Repair-StaleToolchainCache
     Repair-NinjaHeaderDeps
 
     Write-Step "Configuring CMake (Ninja + MSVC, all DLL targets)..."
@@ -1066,8 +1104,10 @@ if ($Target -in "All", "Test") {
     # `build test` run on its own (no DLL build this invocation) the dir may be
     # empty/unconfigured — configure it now (cheap; only the requested test
     # targets are compiled below, not the DLLs).
-    # Removes the build dir when its header-dep tracking is dead, which also clears
-    # CMakeCache.txt and so makes the configure below run. No-op when healthy.
+    # Removes the build dir when its recorded toolset is gone or its header-dep tracking
+    # is dead, which also clears CMakeCache.txt and so makes the configure below run.
+    # No-op when healthy.
+    Repair-StaleToolchainCache
     Repair-NinjaHeaderDeps
 
     if (-not (Test-Path (Join-Path $BUILD_DIR "CMakeCache.txt"))) {
