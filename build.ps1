@@ -573,9 +573,16 @@ if (-not $NoIdentityCheck) {
         throw "Identity guard could not run (no Python). Re-run with -NoIdentityCheck to skip deliberately."
     }
     & $py (Join-Path $ROOT_DIR "tools/check_no_local_paths.py")
-    if ($LASTEXITCODE -ne 0) {
+    $identityExit = $LASTEXITCODE
+    # 1 is the checker's EXIT_FINDING and the only code that means a name leaked. Any other non-zero
+    # code is a tree that was never checked: its EXIT_CANNOT_RUN, or a launcher that never started it.
+    if ($identityExit -eq 1) {
         Write-Fail "a tracked file carries a machine-local path or this machine's account/computer name"
         throw "Identity guard FAILED. The names are REDACTED above on purpose. Fix the files it lists, or re-run with -NoIdentityCheck if you are deliberately committing a placeholder."
+    }
+    if ($identityExit -ne 0) {
+        Write-Fail "the identity guard could not check the tree (exit $identityExit) — nothing was found and nothing was checked; the reason is printed above"
+        throw "Identity guard could not run (exit $identityExit). Fix the cause it printed, or re-run with -NoIdentityCheck to skip deliberately."
     }
     Write-Ok "no machine-local paths or identifiers in tracked files"
 }

@@ -155,7 +155,26 @@ def ident_pattern(value):
 
 
 def scrub(text):
-    return text
+    """`text` with each concrete account segment and this machine's identifiers redacted. For what
+    the gate says about itself: git's error text and a traceback carry paths too, and redact()'s
+    rule holds for every line the gate prints."""
+    out = PATTERN.sub(lambda m: m.group(0) if m.group(1).lower() in ALLOWED else mask_account(m),
+                      text)
+    for value in runtime_identifiers():
+        out = ident_pattern(value).sub(redact(value), out)
+    return out
+
+
+class CannotRun(Exception):
+    """The tree could not be listed, so nothing was checked."""
+
+
+def cannot_run(reason):
+    """Say that the tree was not checked, and why, under the exit code no caller reads as a finding
+    or a pass."""
+    print("check_no_local_paths: CANNOT RUN -- " + scrub(reason))
+    print("Nothing was checked: this is not a finding, and not a pass.")
+    return EXIT_CANNOT_RUN
 
 
 def unpushed_commit_messages(git=GIT, root=ROOT):
@@ -188,8 +207,20 @@ def unpushed_commit_messages(git=GIT, root=ROOT):
 
 
 def tracked_files(git=GIT, root=ROOT):
-    out = subprocess.run(git + ["ls-files"], cwd=root, capture_output=True, text=True,
-                         errors="replace").stdout
+    """Every tracked path, relative to `root`. Raises CannotRun when git does not list the tree:
+    a scan of no files would print CHECK OK over a tree it never saw."""
+    try:
+        r = subprocess.run(git + ["ls-files"], cwd=root, capture_output=True, text=True,
+                           errors="replace")
+    except OSError as e:
+        raise CannotRun("git could not be started (%s: %s) -- is git on PATH?"
+                        % (type(e).__name__, e)) from None
+    if r.returncode != 0:
+        why = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()][:1]
+        raise CannotRun("`git ls-files` exited %d%s" % (r.returncode, (": " + why[0]) if why else ""))
+    out = r.stdout
+    if not out.strip():
+        raise CannotRun("`git ls-files` listed no file")
     # ⚠ Everything is returned, INCLUDING this file. Dropping it here would make the gate blind
     # to a real account name sitting in one of its own docstrings. The two REGEX branches are
     # suppressed for it in run() instead -- that is the narrow thing SKIP is needed for.
@@ -199,7 +230,10 @@ def tracked_files(git=GIT, root=ROOT):
 def run(argv, git=GIT, root=ROOT):
     """The scan of the tree at `root`; `git` is the argv that lists it."""
     list_only = "--list" in argv
-    files = tracked_files(git, root)
+    try:
+        files = tracked_files(git, root)
+    except CannotRun as e:
+        return cannot_run(str(e))
     # Built once.
     ident_patterns = {v: ident_pattern(v) for v in runtime_identifiers()}
 
@@ -271,7 +305,12 @@ def run(argv, git=GIT, root=ROOT):
 
 
 def guarded(entry, argv):
-    return entry(argv)
+    """`entry(argv)`, with a crash reported as EXIT_CANNOT_RUN: see EXIT_FINDING."""
+    try:
+        return entry(argv)
+    except Exception as e:
+        print(scrub(traceback.format_exc()).rstrip())
+        return cannot_run("the checker raised %s (traceback above)" % type(e).__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,7 +394,8 @@ def main(argv):
     if missed:
         for m in missed:
             print("SELFTEST FAILED: " + m)
-        return EXIT_CANNOT_RUN
+        return cannot_run("the checker misses its own controls (above), so its verdict on the "
+                          "tree would mean nothing")
     if "--selftest" in argv:
         print("check_no_local_paths: selftest OK (%d cases)" % n)
         return EXIT_OK
