@@ -4,8 +4,10 @@ The acceptance test of the MSVC toolchain guards [MSVC-GUARD-2026-11-19].
 
     py tools/verify/msvc_guard_probe.py cmake-guard   --cxx <non-MSVC C++ compiler>
     py tools/verify/msvc_guard_probe.py inherited-env --prepend "<dir>;<dir>"
-    py tools/verify/msvc_guard_probe.py stale-cache   --cxx <non-MSVC C++ compiler>
+    py tools/verify/msvc_guard_probe.py stale-cache   --cxx <non-MSVC C++ compiler> [--cache-type STRING]
     py tools/verify/msvc_guard_probe.py cxx-env       --cxx <non-MSVC C++ compiler>
+    py tools/verify/msvc_guard_probe.py platform-env  [--platform x86]
+    py tools/verify/msvc_guard_probe.py inherited-stripped --path "<dir>;<dir>"
     py tools/verify/msvc_guard_probe.py aot-link      --prepend "<dir>;<dir>" [--direct]
 
 The foreign toolchain is always an argument: CI has no second toolchain, and a gate must not reach outside the repo.
@@ -21,8 +23,16 @@ inherited-env  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in
                without entering the DevShell again. PASS: exit 0, and the new cache names MSVC's cl.exe and link.exe.
 stale-cache    plant build_asan/CMakeCache.txt naming that compiler, as a tree configured from another shell would,
                then run `build.ps1 -Target AsanConfigure`. PASS: exit 0, and the new cache names MSVC's cl.exe.
+               --cache-type picks the entry's type: CMake writes FILEPATH for a compiler it found, STRING or
+               UNINITIALIZED for one given with -D.
 cxx-env        remove build_asan/, then run `build.ps1 -Target AsanConfigure` with CXX / CC naming that compiler, which
                CMake takes before any PATH search. PASS: exit 0, and the new cache names MSVC's cl.exe.
+platform-env   run `build.ps1 -Target AsanConfigure` with Platform set, as every vcvarsall prompt sets it (x86 and arm64
+               ones go through the fresh DevShell path). PASS: exit 0 and the log says Platform was cleared -- MSBuild
+               would read it as a property and move the C# outputs to bin\\<platform>\\.
+inherited-stripped  remove build_asan/, then run `build.ps1 -Target AsanConfigure` in a vcvars64 environment whose PATH
+               was replaced by the given folders, as MSYS2's minimal PATH does: VSCMD_ARG_TGT_ARCH says x64, but no
+               MSVC tool is on PATH. PASS: exit 0, and the new cache names MSVC's cl.exe.
 aot-link       run `build.ps1 -Mode Publish` in the inherited environment above. PASS: exit 0, and dist/UE5DumpUI.exe
                was written by this run and is the Native AOT size, not the ~107 MB self-contained one.
                --direct instead runs the `dotnet publish` build.ps1 runs, into out/, without build.ps1: what
@@ -163,10 +173,28 @@ def scenario_stale_cache(a) -> bool:
     os.makedirs(ASAN_DIR)
     with open(os.path.join(ASAN_DIR, "CMakeCache.txt"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# planted by tools/verify/msvc_guard_probe.py stale-cache\n")
-        fh.write(f"CMAKE_CXX_COMPILER:FILEPATH={a.cxx.replace(os.sep, '/')}\n")
-        fh.write(f"CMAKE_C_COMPILER:FILEPATH={foreign_c_compiler(a.cxx).replace(os.sep, '/')}\n")
-    rc = build_ps1(["-Target", "AsanConfigure"], plain_env(), "stale_cache.log")
+        fh.write(f"CMAKE_CXX_COMPILER:{a.cache_type}={a.cxx.replace(os.sep, '/')}\n")
+        fh.write(f"CMAKE_C_COMPILER:{a.cache_type}={foreign_c_compiler(a.cxx).replace(os.sep, '/')}\n")
+    rc = build_ps1(["-Target", "AsanConfigure"], plain_env(), f"stale_cache_{a.cache_type.lower()}.log")
     return judge_cache(ASAN_DIR, want_linker=False) and rc == 0
+
+
+def scenario_platform_env(a) -> bool:
+    env = plain_env()
+    env["PLATFORM"] = a.platform
+    rc = build_ps1(["-Target", "AsanConfigure"], env, "platform_env.log")
+    text = open(os.path.join(OUT, "platform_env.log"), encoding="utf-8", errors="replace").read()
+    cleared = f"Platform={a.platform}" in text and "cleared" in text
+    print(f"  Platform={a.platform}: {'cleared' if cleared else 'NOT cleared'}")
+    return cleared and rc == 0
+
+
+def scenario_inherited_stripped(a) -> bool:
+    env = msvc_env(vcvars_path(a.vcvars))
+    env["PATH"] = a.path.replace("/", "\\")
+    shutil.rmtree(ASAN_DIR, ignore_errors=True)
+    rc = build_ps1(["-Target", "AsanConfigure"], env, "inherited_stripped.log")
+    return judge_cache(ASAN_DIR, want_linker=True) and rc == 0
 
 
 def scenario_cxx_env(a) -> bool:
@@ -194,7 +222,8 @@ def scenario_aot_link(a) -> bool:
 
 
 SCENARIOS = {"cmake-guard": scenario_cmake_guard, "inherited-env": scenario_inherited_env,
-             "stale-cache": scenario_stale_cache, "cxx-env": scenario_cxx_env, "aot-link": scenario_aot_link}
+             "stale-cache": scenario_stale_cache, "cxx-env": scenario_cxx_env, "platform-env": scenario_platform_env,
+             "inherited-stripped": scenario_inherited_stripped, "aot-link": scenario_aot_link}
 
 
 def main() -> int:
@@ -203,12 +232,18 @@ def main() -> int:
     ap.add_argument("--cxx", help="a non-MSVC C++ compiler (cmake-guard, stale-cache, cxx-env)")
     ap.add_argument("--prepend", help="folders put in front of PATH, ';'-separated (inherited-env, aot-link)")
     ap.add_argument("--direct", action="store_true", help="aot-link: dotnet publish without build.ps1")
+    ap.add_argument("--cache-type", default="FILEPATH", choices=["FILEPATH", "STRING", "UNINITIALIZED"],
+                    help="stale-cache: the type of the planted compiler entries")
+    ap.add_argument("--platform", default="x86", help="platform-env: the Platform value a vcvarsall prompt sets")
+    ap.add_argument("--path", help="inherited-stripped: the whole PATH, ';'-separated")
     ap.add_argument("--vcvars", help="vcvars64.bat to use (default: the newest VS with the C++ x64 tools)")
     a = ap.parse_args()
     if a.scenario in ("cmake-guard", "stale-cache", "cxx-env") and not (a.cxx and os.path.exists(a.cxx)):
         ap.error(f"{a.scenario} needs --cxx naming an existing compiler")
     if a.scenario in ("inherited-env", "aot-link") and not a.prepend:
         ap.error(f"{a.scenario} needs --prepend")
+    if a.scenario == "inherited-stripped" and not a.path:
+        ap.error("inherited-stripped needs --path")
     print(f"== {a.scenario}")
     ok = SCENARIOS[a.scenario](a)
     print("PASS" if ok else "FAIL")
