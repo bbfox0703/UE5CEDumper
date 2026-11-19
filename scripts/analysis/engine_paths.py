@@ -24,6 +24,7 @@ ENGINE_PATH_PREFIXES = (
     "/Script/GameplayTasks", "/Script/GameplayAbilities", "/Script/PacketHandler",
     "/Script/PropertyAccess", "/Script/DeveloperSettings", "/Script/AssetRegistry",
     "/Script/MediaAssets", "/Script/HeadMountedDisplay",
+    "/Script/CascadeRuntime",   # Cascade's plugin from UE 5.9, on by default
 )
 
 
