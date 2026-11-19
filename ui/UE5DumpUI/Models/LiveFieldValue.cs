@@ -6,7 +6,7 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// A sub-field value within a struct array element (Phase F).
+/// A sub-field value within a struct array element.
 /// </summary>
 public sealed class StructSubFieldValue
 {
@@ -23,7 +23,7 @@ public sealed class StructSubFieldValue
 }
 
 /// <summary>
-/// A single element value from an array (Phase B scalar / Phase D pointer / Phase F struct).
+/// A single element value from an array (scalar / pointer / struct).
 /// </summary>
 public sealed class ArrayElementValue
 {
@@ -33,11 +33,11 @@ public sealed class ArrayElementValue
     public string EnumName { get; init; } = "";
     /// <summary>Raw integer value for CE DropDownList (enum value or FName ComparisonIndex).</summary>
     public long RawIntValue { get; init; }
-    // Phase D: pointer array fields
+    // Pointer array fields
     public string PtrAddress { get; init; } = "";
     public string PtrName { get; init; } = "";
     public string PtrClassName { get; init; } = "";
-    // Phase F: struct sub-fields
+    // Struct sub-fields
     public List<StructSubFieldValue>? StructFields { get; init; }
 }
 
@@ -258,17 +258,17 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>For ArrayProperty (soft arrays): sizeof(FName) in bytes (8 normal, 12 with CasePreservingName). 0 = not a soft array.</summary>
     public int SoftArrayFNameSize { get; init; }
 
-    /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>
+    /// <summary>For ArrayProperty (soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>
     public bool SoftArrayIsTopLevelAssetPath { get; init; }
 
-    /// <summary>For ArrayProperty (Phase G soft arrays): byte offset of FSoftObjectPath inside the TSoftObjectPtr element.
+    /// <summary>For ArrayProperty (soft arrays): byte offset of FSoftObjectPath inside the TSoftObjectPtr element.
     /// 0x10 up to UE 5.2, 0x08 from UE 5.3 — which deleted TPersistentObjectPtr::TagAtLastTest.
     /// Derived DLL-side from the property's ElementSize; 0 = not a soft array, or a DLL that does not send it,
     /// where 0x10 is the only safe assumption.
     /// ⚠ Do not bake 0x10: on any UE 5.3+ title that reads AssetName where PackageName should be.</summary>
     public int SoftArrayPathOffset { get; init; }
 
-    /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).
+    /// <summary>For ArrayProperty: inline scalar element values (up to 64).
     /// Settable so an array container view can persist the elements it fetched on demand
     /// (struct arrays whose inner struct reflects 0 fields get no inline walk preview)
     /// onto the cached container field, so Back-navigation re-renders the same rows.</summary>
@@ -525,10 +525,10 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <c>[V8PREVIEWCLIP-2026-08-23]</c> is what that costs: a DataTable's pre-drill
     /// preview reads
     /// <c>{DataTable: 100 rows, DumperTestTableRow}  ⚠ showing 64 of 100</c>, the badge
-    /// is appended LAST, and the prefix alone overflows the column — so the one
-    /// disclosure that warns you the grid holds 64 of 100 rows was unreachable at the
-    /// default width, on every table, at every N. The ViewModel string was correct the
-    /// whole time and a test asserted it; only the pixels were wrong. Same shape as
+    /// is appended LAST, and the prefix alone overflows the column — so without the
+    /// tooltip the one disclosure that warns you the grid holds 64 of 100 rows is
+    /// unreachable at the default width, on every table, at every N, while the ViewModel
+    /// string and its test are correct. Same shape as
     /// <c>[PARAMSSORT-2026-08-22]</c> in another panel.
     /// </para>
     /// <para>
@@ -553,13 +553,10 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <c>null</c> when empty.
     /// </summary>
     /// <remarks>
-    /// Sibling of <see cref="ValueTooltip"/>, same defect, one column left. The Type
-    /// cell is 115 px and UE type names run long by nature — the case that prompted it
-    /// was <c>DataTableRows</c> rendering as <c>DataTableRo</c>, and
-    /// <c>SoftObjectProperty</c> / <c>MulticastInlineDelegateProperty</c> are worse. It
-    /// was spotted as the negative control for <c>[V8PREVIEWCLIP-2026-08-23]</c>:
-    /// hovering this cell to prove the Value tooltip was really the new binding showed
-    /// a column that was equally clipped and equally silent.
+    /// Sibling of <see cref="ValueTooltip"/>, same clipping, one column left. The Type
+    /// cell is 115 px and UE type names run long by nature — <c>DataTableRows</c>
+    /// renders as <c>DataTableRo</c>, and <c>SoftObjectProperty</c> /
+    /// <c>MulticastInlineDelegateProperty</c> are worse, with no ellipsis either.
     ///
     /// <para>⚠ No <c>[NotifyPropertyChangedFor]</c> needed, and that is a fact about
     /// <see cref="TypeName"/>, not an omission: it is <c>init</c>-only and structural —
@@ -717,11 +714,11 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// TextBox as the user types, the bool ComboBox when the user picks. Opening the editor does not
     /// push the current value into it (Avalonia's
     /// <c>BindingExpression.StartCore</c> publishes to the target before subscribing), and the
-    /// template column's commit does not push the TextBox either. Since [LWREFRESH-2026-08-21] the
-    /// row object survives the post-commit refresh, so the LAST typed text survived with it:
-    /// reopen the cell, press Enter without typing, and the previous edit was written into the game
-    /// again ("Written: Health = 250" while the game had moved on to 57). Escape, reopen, Enter did
-    /// the same with no refresh at all.</para>
+    /// template column's commit does not push the TextBox either. The row object survives the
+    /// post-commit refresh ([LWREFRESH-2026-08-21]), so without a reset the LAST typed text survives
+    /// with it: reopen the cell, press Enter without typing, and the previous edit is written into
+    /// the game again over whatever value the game has moved on to. Escape, reopen, Enter does the
+    /// same with no refresh at all.</para>
     /// <para>Reset at edit BEGIN, not in <see cref="CopyLiveValuesFrom"/>: a copy-time reset misses
     /// the Escape variant and would drop text typed while a refresh lands mid-edit. And not by
     /// comparing against the current value, which would silently drop a deliberate re-type.</para>

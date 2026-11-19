@@ -909,7 +909,7 @@ public static class CeLuaHygiene
         Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
         // [A1-SLOTSYM-FAILED] Release only what THIS record registered. A record whose enable failed never reached the
         // register step, so it is not a holder -- and its [DISABLE] (CE runs it on the deferred untick) releases nothing.
-        // Without memrec (a hand-run chunk) the count alone decides, as before.
+        // Without memrec (a hand-run chunk) the count alone decides.
         Line(sb, indent, $"{SlotSymHolders} = {SlotSymHolders} or {{}}");
         Line(sb, indent, $"local _hs = {SlotSymHolders}['{sym}']");
         Line(sb, indent, "local _mine = true");

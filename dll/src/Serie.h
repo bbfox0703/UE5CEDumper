@@ -102,11 +102,10 @@ inline int32_t FirstEntryAfterNone(int noneOffset, int stride) {
 }
 
 // True when two candidate block-offset-bit widths address the SAME byte for
-// `nameIndex` — i.e. a probe at that index CANNOT distinguish the two widths (audit
-// #5 G4). At the historical probe index (testIdx = 1) every width < the index's bit
-// position collapses to (chunkIndex=0, chunkOffset=1*stride), which is why
-// DetectBlockOffsetBits could never pick 14 over the default 16: the 14-bit arm was
-// structurally unreachable. A discriminating index must satisfy this == false.
+// `nameIndex` — i.e. a probe at that index CANNOT distinguish the two widths. At probe
+// index 1 every width < the index's bit position collapses to (chunkIndex=0,
+// chunkOffset=1*stride), so a probe there can never pick 14 over the default 16: the
+// 14-bit arm is structurally unreachable. A discriminating index must satisfy this == false.
 inline bool BlockBitsAreIndistinguishable(int32_t nameIndex, int bitsA, int bitsB, int stride) {
     BlockProbe a = ComputeBlockProbe(nameIndex, bitsA, stride);
     BlockProbe b = ComputeBlockProbe(nameIndex, bitsB, stride);
@@ -132,7 +131,7 @@ inline bool UE4NameIndexInBounds(int32_t nameIndex, int32_t chunkSize, int32_t m
 // the AnsiName / WideName union, at +0x10 on x64 -- with NAME_WIDE_MASK 0x1 and NAME_INDEX_SHIFT 1, and
 // AllocateNameEntry stores Index = (slot << 1) | wide, the slot being where the table holds the entry. So the word
 // names its own slot, and the bit is believed only beside it: a layout whose first int32 is something else keeps the
-// narrow read it always had.
+// narrow read.
 inline constexpr bool UE4EntryIsWide(int32_t indexWord, int32_t nameIndex) {
     return (indexWord & 1) != 0 && (indexWord >> 1) == nameIndex;
 }

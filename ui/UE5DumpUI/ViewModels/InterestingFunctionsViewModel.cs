@@ -44,7 +44,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// checks. Mirrors <see cref="LiveWalkerViewModel"/>'s pattern.</summary>
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
     /// <summary><see cref="Environment.TickCount64"/> at the last check, null before the first: on the wall clock a
-    /// step back made the time since the last check negative, and nothing re-checked until the clock caught up.
+    /// step back makes the time since the last check negative, and nothing re-checks until the clock catches up.
     /// [PROPSEARCH-FREEZE-STALE-AOBMAKER]</summary>
     private long? _lastAobMakerCheck;
 
@@ -98,10 +98,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// with two writers would make that null ambiguous and break that test in the
     /// very interleaving it exists to pin.
     ///
-    /// Why a seam at all: the setter is fire-and-forget, so a test that set the
-    /// property and then called RescoreAsync() itself started a SECOND re-score
+    /// Why a seam at all: the setter is fire-and-forget, so a test that sets the
+    /// property and then calls RescoreAsync() itself starts a SECOND re-score
     /// racing the first. Both end in ApplyFilter(), which Clear()s and refills
-    /// Results, so the assertion could enumerate a half-rebuilt (or momentarily
+    /// Results, so the assertion can enumerate a half-rebuilt (or momentarily
     /// EMPTY) collection. Awaiting this instead is what makes the toggle path
     /// deterministic.</summary>
     internal Task? PendingToggleRescore { get; private set; }
@@ -329,7 +329,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                         // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script" /
                         // "bytecode_unreadable" -- see FunctionPropRefsResult.NotAnalysed), so a
                         // bare "0" would read as "analysed, touches no class fields". The single-function
-                        // dialog already says "NOTHING was analysed"; the batch never read the tag.
+                        // dialog says "NOTHING was analysed" too.
                         row.XrefInfo = PartialResultNotice.NotAnalysedCell;
                         notAnalysed++;
                     }
@@ -521,14 +521,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             // reflects current connectivity. Fire-and-forget: this MUST NOT
             // be awaited. CheckAvailabilityAsync pays AobMakerBridgeService's
             // 2s pipe-connect timeout whenever CE isn't running -- the normal
-            // state for this panel -- and awaiting it held IsLoading true for
-            // those 2s AFTER the grid was already painted and the final status
-            // written, so the panel looked idle while RescoreAsync's
-            // `if (IsLoading ...) return;` guard silently swallowed every
-            // Gameplay-Actions toggle. Every other AOBMaker probe in the UI is
-            // fire-and-forget for the same reason; this was the lone `await`.
-            // Dropping the Task is safe -- CheckAobMakerAsync swallows its own
-            // exceptions into IsAobMakerAvailable = false.
+            // state for this panel -- and awaiting it would hold IsLoading true
+            // for those 2s AFTER the grid is painted and the final status
+            // written, so the panel would look idle while RescoreAsync's
+            // `if (IsLoading ...) return;` guard silently swallows every
+            // Gameplay-Actions toggle. Dropping the Task is safe --
+            // CheckAobMakerAsync swallows its own exceptions into
+            // IsAobMakerAvailable = false.
             _ = CheckAobMakerAsync();
         }
         catch (Exception ex)
@@ -684,8 +683,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                                  : "tick \"Game Only\" to skip engine classes, or scan a narrower game")
                 : "";
         // "from M of N classes", not "across N classes": the second number is the
-        // EXAMINED count and reads as provenance, which overstated coverage 2.6x on
-        // P3R (2,293 examined, ~889 contributing). (FUNCDENOM-2026-08-26)
+        // EXAMINED count, and read as provenance it overstates coverage wherever many
+        // examined classes contribute no function. (FUNCDENOM-2026-08-26)
         return $"{f.Total:N0} functions from {f.ClassesWithFunctions:N0} of " +
                $"{f.ScannedClasses:N0} classes  " +
                $"({interesting:N0} above threshold {KeywordScoringTable.InterestingThreshold}, " +

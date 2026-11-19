@@ -102,15 +102,15 @@ public static class PropertyScoringTable
         "Attack", "Atk", "Multiplier",
         // Weapon-related fields (loadout pointers, weapon stats)
         "Weapon", "Hit", "HitDamage",
-        // === Added build 678 — confirmed cross-game via 15-game dump
-        // analysis (scripts/analysis/analyze_dumps.py). Each appears
-        // in ≥ 7/15 games with substantial per-game hit counts. ===
-        "Effect",       // GameplayEffect framework — 14/15 games, 5740 hits
-        "Target",       // combat target / aim target — 14/15 games
-        "Radius",       // AoE / detection radius — 12/15 games
-        "Ability",      // GameplayAbility framework — 7/15 games
-        "Modifier",     // DamageModifier / SpeedModifier — 7/15 games
-        "Duration",     // buff/effect duration — 9/15 games
+        // === Cross-game keywords, from a multi-game dump analysis
+        // (scripts/analysis/analyze_dumps.py): each appears in many of
+        // the analysed games with substantial per-game hit counts. ===
+        "Effect",       // GameplayEffect framework
+        "Target",       // combat target / aim target
+        "Radius",       // AoE / detection radius
+        "Ability",      // GameplayAbility framework
+        "Modifier",     // DamageModifier / SpeedModifier
+        "Duration",     // buff/effect duration
     };
 
     public const int ResourcesKeywordScore = 4;
@@ -128,8 +128,8 @@ public static class PropertyScoringTable
         "Ammo", "Material", "Materials", "Resource", "Resources", "Supply", "Supplies",
         // Inventory metadata
         "Stack", "Count", "Quantity", "Amount",
-        // === Added build 678 — confirmed cross-game (13/15 games via
-        // scripts/analysis/analyze_dumps.py, 1351 cross-game hits). ===
+        // === Cross-game keywords, from the same dump analysis
+        // (scripts/analysis/analyze_dumps.py). ===
         "Item", "Items",
     };
 
@@ -537,8 +537,8 @@ public static class PropertyScoringTable
     /// scarce resource is the per-query cap, not CPU. A seed whose matches are
     /// mostly unrelated words spends its whole envelope before reaching the
     /// field the user wants — that is why <see cref="DeliberatelyUnseededKeywords"/>
-    /// exists and must stay excluded. Volume alone is fine: <c>Item</c> (3,050
-    /// matches) and <c>Velocity</c> (665) exceed the cap but are 98%/99%
+    /// exists and must stay excluded. Volume alone is fine: <c>Item</c> and
+    /// <c>Velocity</c> can exceed the cap, but nearly all their matches are
     /// genuine, so the 200 rows they do return are the right rows.</para>
     ///
     /// <para>Added seeds cost little beyond the first hit: the inner loop tests
@@ -577,23 +577,20 @@ public static class PropertyScoringTable
 
     /// <summary>
     /// Scored keywords that are deliberately NOT seeded, and must not be
-    /// "helpfully" added later. See the measurement in the
-    /// <see cref="SeedQueries"/> remarks: each of these is a short acronym or
-    /// fragment whose substring matches are overwhelmingly unrelated words, so
-    /// seeding it would burn a whole 200-row envelope on junk in GObjects walk
-    /// order and surface nothing.
+    /// "helpfully" added later. See the <see cref="SeedQueries"/> remarks: each
+    /// of these is a short acronym or fragment whose substring matches are
+    /// overwhelmingly unrelated words, so seeding it would burn a whole 200-row
+    /// envelope on junk in GObjects walk order and surface nothing.
     ///
-    /// Measured over 578,809 distinct identifiers from three shipped UE games
-    /// (DWORIGINS, ES2, CrimsonDesert), as substring-matches / of which the
-    /// seed is actually the leading token:
-    ///   MP    10,180 /   634 (6%)   — Component, Compression, Template, Sample
-    ///   SP     8,847 / 5,514 (62%)  — but Spawn/Space/Speed/Spline, not "SP"
-    ///   XP     3,373 /   702 (21%)
-    ///   Exp    1,422 / 1,272 (89%)  — but Exposure/Explorer/Export, not "Exp"
-    ///   Lv     1,949 /   484 (25%)  — Solve/Valve/Twelve
-    ///   Def    1,962 / 1,616 (82%)  — but Default(880) dominates
-    ///   Load   1,063 /   421 (40%)  — Upload/Download/Preload
-    ///   Run      442 /   284 (64%)  — Runtime(145) outweighs Run(88)
+    /// The words each one sits inside:
+    ///   MP    — Component, Compression, Template, Sample
+    ///   SP    — Spawn, Space, Speed, Spline
+    ///   XP    — mostly inside longer words
+    ///   Exp   — Exposure, Explorer, Export
+    ///   Lv    — Solve, Valve, Twelve
+    ///   Def   — Default
+    ///   Load  — Upload, Download, Preload
+    ///   Run   — Runtime
     /// A name like <c>CurrentMP</c> therefore stays unreachable by design. The
     /// honest repair for those is a whole-token match on the DLL side (the
     /// client scorer already tokenises), not a broader substring.

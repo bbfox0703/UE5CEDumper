@@ -372,8 +372,8 @@ public sealed class FlyStatus
 }
 
 /// <summary>Live state of the See-through occluders feature (Schlacht), returned
-/// by <c>seethrough_set</c> / <c>seethrough_get_state</c>. Stage 1 hides the single
-/// nearest non-Pawn occluder on the camera→pawn line.</summary>
+/// by <c>seethrough_set</c> / <c>seethrough_get_state</c>. It hides the nearest
+/// non-Pawn occluders on the camera→pawn line, <see cref="PierceCount"/> of them.</summary>
 public sealed class SeeThroughStatus
 {
     /// <summary>Schlacht::SeeThroughResult (0 = OK, negative = not-init / no-pawn /

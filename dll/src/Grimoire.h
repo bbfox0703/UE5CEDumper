@@ -41,7 +41,7 @@ constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 // module exports that name, so a module that does is not one the walk needs.
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 // [DUMPER-SECOND-COPY-AUTOSTART] What a later copy calls or reads on an earlier copy in the same process (Land): its
-// mailbox, the hand-off it carries from this change on, and the shutdown every build carries.
+// mailbox, the hand-off a newer build carries (an older one lacks it), and the shutdown every build carries.
 constexpr const char*    DUMPER_MAILBOX_EXPORT  = "g_invokeMailbox";
 constexpr const char*    DUMPER_YIELD_EXPORT    = "UE5_YieldToLaterCopy";
 constexpr const char*    DUMPER_SHUTDOWN_EXPORT = "UE5_Shutdown";
@@ -50,7 +50,7 @@ constexpr const char*    DUMPER_HAND_OVER_HIDDEN_EXPORT = "UE5_HandOverHiddenAct
 // How many actors the later copy takes per call: See-through hides a handful at a time, so one call is the usual case.
 constexpr int32_t        LAND_HIDDEN_BATCH = 256;
 // How long a later copy asks an earlier copy that is still handing over (to a copy it took over) for that record, and
-// how often: a hand-off's shutdown can take 9-13 s on a busy game, and it may run past the pass's own wait.
+// how often: a hand-off's shutdown can take many seconds on a busy game, and it may run past the pass's own wait.
 constexpr int32_t        LAND_HIDDEN_WAIT_MS = 120000;
 constexpr int32_t        LAND_HIDDEN_POLL_MS = 100;
 // One take-over pass at a time across every copy in a process, %lu = the pid: the copies share no memory, and two

@@ -25,8 +25,8 @@ namespace UE5DumpUI.Views;
 ///
 /// The re-apply on the way back to Normal is ALSO deferred to a Background tick rather than
 /// done synchronously inside the WindowState change: a synchronous set mid-un-maximize
-/// emitted a maximized-origin (~0,0) position transient that latched into the snapshot and
-/// surfaced as the window jumping to 0,0 on the SECOND restore. Running after the burst
+/// emits a maximized-origin (~0,0) position transient that latches into the snapshot, and
+/// the window then jumps to 0,0 on the SECOND restore. Running after the burst
 /// settles also lets the re-apply override the OS's placement instead of racing it.
 ///
 /// MainWindow keeps its own equivalent (entangled with cross-restart persistence + screen

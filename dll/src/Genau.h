@@ -184,7 +184,7 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
     switch (anchor) {
         case AnchorState::None:
             // GObjects' own Pass 2 runs before any anchor exists — refusing it would
-            // break the modular builds multi-module support was added for.
+            // break the modular builds multi-module support exists for.
             return producesAnchor ? ModuleAdmission::Accept
                                   : ModuleAdmission::RefuseUnanchored;
         case AnchorState::MainExe:
@@ -366,8 +366,8 @@ uintptr_t FindGWorld(const char* hintPatternId = nullptr);
 // Returns 0 if no AOB pattern matched (caller should fall back to bIsBound).
 //
 // Layout support: the outer key is a raw `UObjectBase*` at every stock version from
-// 4.23 through 5.x (PDB-verified — the long-standing "UE 4.23-4.27 uses FObjectKey"
-// note was wrong, and FObjectKey is 8 bytes there, not 16). Aura's walker still probes
+// 4.23 through 5.x (PDB-verified — 4.23-4.27 do NOT key on FObjectKey, which is 8
+// bytes there, not 16). Aura's walker still probes
 // the live key shape at runtime rather than trusting a version number, so a licensee
 // fork keyed differently fails safe instead of misreading.
 uintptr_t FindSparseDelegateStorage();
@@ -380,7 +380,7 @@ uintptr_t FindSparseDelegateStorage();
 //
 // That precondition is ENFORCED, not just documented: if DynOff::bOffsetsProbeRan is
 // still false this returns 0 immediately (method "deferred") without scanning, because the
-// validator cannot possibly succeed and the scan costs 0.2-0.7 s. Call
+// validator cannot possibly succeed and the scan would only waste time. Call
 // ResolveGEngineDeferred once the offsets are up.
 //
 // PROBE-RAN, not VALIDATED — the two diverge, since a partially probed run reports

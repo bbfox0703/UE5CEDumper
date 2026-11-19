@@ -529,10 +529,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             // ⛔ BOTH RESULTS ARE LOAD-BEARING. These return Task<bool> and the bridge returns
             // **false** rather than throwing when the CE side is gone or refuses
             // (AobMakerBridgeService: ReconnectAsync fails -> IsAvailable = false -> return
-            // false), so the catch below never fires and the green "Pushed ..." label was
-            // printed over a push that never happened. Found 2026-09-09 -- the blind-spot
-            // sweep's round 3 had recorded "IAobMakerBridge: 0 DEFECT, family closed" while
-            // this site was open.
+            // false), so the catch below never fires; ignoring them would print the green
+            // "Pushed ..." label over a push that never happened.
             //
             // ⚠ The two calls are NOT interchangeable, and the message says which failed: the
             // record is what the user right-clicks, the navigation is what they look at. A

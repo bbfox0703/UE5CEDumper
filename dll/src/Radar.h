@@ -198,9 +198,8 @@ size_t SizeOf(DataType dt);
 // the engine version: one UE5 game holds fields of both widths.
 //
 // The width comes from the property's own REFLECTED ElementSize, which is the
-// rule docs/teleport-spec.md §5.3 already fixed for this repo ("Never key this
-// off a version number") and which Wirbel/Laufen/Dunste/Schlacht each already
-// apply locally. These two helpers are the shared, testable statement of it.
+// rule docs/teleport-spec.md §5.3 sets for this repo ("Never key this off a
+// version number"). These two helpers are the shared, testable statement of it.
 constexpr int32_t VECTOR_WIDTH_FLOAT  = 12;   // 3 x float  (UE4, FVector3f)
 constexpr int32_t VECTOR_WIDTH_DOUBLE = 24;   // 3 x double (UE5 LWC FVector)
 // Bytes of the canonical decoded form stored in Candidate::prevValue and used
@@ -529,8 +528,8 @@ constexpr uintptr_t ContainerElemAddr(uintptr_t data, int32_t idx,
 ///        address comparison can. Pass true for TArray, which has no such bit.
 ///
 /// Known residual, stated rather than hidden: `TArray::Insert` shifts on a count
-/// INCREASE, and this keeps those candidates. That is no worse than today, and
-/// catching it would need a per-element identity witness (see todo.md).
+/// INCREASE, and this keeps those candidates, as an unanchored refine would.
+/// Catching it would need a per-element identity witness (see todo.md).
 constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
                                                     int32_t   elementIndex,
                                                     int32_t   numAtScan,
@@ -697,8 +696,8 @@ struct FieldDescriptor {
 // by its stored ABSOLUTE address; `instanceIndex` is display metadata, not
 // re-validated. If the owning object is freed and its slot recycled by ANOTHER
 // object between scans, refine reads the new occupant's bytes. This is NOT patched
-// with a `(InternalIndex, SerialNumber)` witness — that pair was refused three
-// times and is wrong for a passive observer (working-lessons §4.3: UE zeroes
+// with a `(InternalIndex, SerialNumber)` witness — that pair is refused: it is
+// wrong for a passive observer (working-lessons §4.3: UE zeroes
 // SerialNumber on free and allocates it lazily, so most objects carry serial 0
 // and a stored (i,0) matches a recycled (i,0), reporting "fresh" exactly when it
 // must not). §4.3's correct pattern — witness the INPUT BYTES of a memoized
@@ -1221,12 +1220,12 @@ bool IsZeroValueText(const std::string& s);
 // Split a group filter into whitespace-separated, lower-cased terms.
 //
 // **space = AND** — the repo-wide keyword-box rule (CLAUDE.md): terms are ANDed,
-// fields are ORed. The group filter was the last box treating its input as one
-// substring, which made a two-field request impossible to express: a scan can hold
-// 2 x 36 = 72 valid pairings and nothing distinguishes `FrozenInt` from the other
-// 35 unchanged fields, so naming BOTH fields is the only way to ask for a specific
-// pairing. `tickcount frozenint` now means "keep candidates where some field
-// matches each", and the witness picker gives each slot one of the named fields.
+// fields are ORed. Read as one substring, a two-field request would be impossible
+// to express: a scan can hold 2 x 36 = 72 valid pairings and nothing distinguishes
+// `FrozenInt` from the other 35 unchanged fields, so naming BOTH fields is the only
+// way to ask for a specific pairing. `tickcount frozenint` means "keep candidates
+// where some field matches each", and the witness picker gives each slot one of
+// the named fields.
 std::vector<std::string> SplitFilterTerms(const std::string& filter);
 
 // Choose ONE leaf per slot so a displayed row is a genuine ASSIGNMENT: no two
@@ -1255,11 +1254,10 @@ std::vector<std::string> SplitFilterTerms(const std::string& filter);
 // HasDistinctAssignment that it does). Only if that precondition is violated can
 // a duplicate remain.
 //
-// WHY THIS LIVES HERE and not in the wire encoder. Every earlier version of this
-// rule was written inside Fern.cpp's JSON builder, where no test could reach it
-// and where it could silently disagree with BuildGroupOrderedView — which walks
-// EVERY leaf of every slot. Four separate "the scan missed my field" reports were
-// all that one disagreement. Same file as the filter, same helpers, one answer.
+// WHY THIS LIVES HERE and not in the wire encoder. Inside Fern.cpp's JSON builder
+// no test could reach it, and it could silently disagree with BuildGroupOrderedView —
+// which walks EVERY leaf of every slot — so a field the scan kept would read as missed.
+// Same file as the filter, same helpers, one answer.
 //
 // It still shows only ONE of the possible assignments; `query_group_slot_leaves`
 // is what surfaces the rest.

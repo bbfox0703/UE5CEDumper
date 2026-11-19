@@ -71,12 +71,12 @@ inline std::atomic<bool> g_shutdown{false};
 // would bail to an EMPTY set every re-assert tick while a client is gone.
 inline thread_local bool t_backgroundWorker = false;
 
-// Immunity from the PER-COMMAND cancel, split out from "is a background worker"
-// because one flag was answering two different questions:
+// Immunity from the PER-COMMAND cancel, kept apart from "is a background worker"
+// because they answer two different questions:
 //   (a) should this thread ignore a PIPE client's mid-command disconnect?
 //   (b) is this a REPEATING worker, so refuse the off-game-thread invoke fallback?
-// For the re-assert workers both answers are yes, which is why one flag sufficed —
-// until the CE mailbox poller (Mimic) needed (a) without (b). It serves CE, not the
+// For the re-assert workers both answers are yes; the CE mailbox poller (Mimic)
+// needs (a) without (b). It serves CE, not the
 // pipe, so a pipe disconnect must not cancel its work; but it carries the user's
 // ONE-SHOT CE invokes, so marking it a background worker would make
 // UE5_CallProcessEventEx refuse them with -8 whenever the PE hook is down.
@@ -89,7 +89,7 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 //
 // ⛔ WHY THE UNBOUND CASE FALLS BACK TO g_perCommand INSTEAD OF MEANING "not cancellable".
 // The obvious formulation -- `return (t_connCancel && t_connCancel->load()) || g_shutdown`
-// -- was designed, reviewed and REJECTED 2026-09-07. It makes "unbound" behaviourally
+// -- is REJECTED: it makes "unbound" behaviourally
 // identical to "cancel-immune", which inverts this module's default from FAIL-SAFE to
 // FAIL-SILENT: every thread that does not bind silently stops being cancellable, and
 // t_cancelImmune becomes semantically dead (so the background-worker and CE-poller
@@ -108,7 +108,7 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 // case the binding exists for.
 //
 // So the fallback is deliberate and load-bearing: a BOUND thread gets per-connection
-// precision, and everything else keeps the pre-2026-09-07 global behaviour unchanged.
+// precision, and everything else reads the process-wide g_perCommand.
 // Narrowing that population is a separate, larger piece of work (todo.md).
 inline thread_local std::atomic<bool>* t_connCancel = nullptr;
 
@@ -159,8 +159,7 @@ struct ConnectionCancelScope {
     ConnectionCancelScope& operator=(const ConnectionCancelScope&) = delete;
 };
 
-// Every background worker is also cancel-immune — set both so existing call sites
-// keep their exact behaviour.
+// Every background worker is also cancel-immune, so this sets both flags.
 inline void MarkBackgroundWorker() { t_backgroundWorker = true; t_cancelImmune = true; }
 
 /// True on a re-assert / feature worker thread. Read by the invoke path to refuse
@@ -184,7 +183,7 @@ inline bool Requested() {
     if (t_connCancel)
         return t_connCancel->load(std::memory_order_relaxed)
             || g_shutdown.load(std::memory_order_relaxed);
-    // Unbound: unchanged global behaviour, deliberately. See t_connCancel's note.
+    // Unbound: the process-wide flag, deliberately. See t_connCancel's note.
     return g_perCommand.load(std::memory_order_relaxed)
         || g_shutdown.load(std::memory_order_relaxed);
 }

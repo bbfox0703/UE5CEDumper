@@ -33,8 +33,8 @@ inline T* Ptr(uintptr_t addr) {
 // [CPP-HARDENING-2026-11-14] The AddressSanitizer test build only (build_asan\; the shipped DLL never defines
 // __SANITIZE_ADDRESS__, so none of this exists there). The probes below read memory this DLL does not own -- the
 // game's, or a test fixture standing in for it -- past objects, into freed ones and across sections, under SEH: that
-// is their job, and ASan reported it 1,021 times in dll_core_test (2026-11-15), every one from ReadSafe or
-// ReadBytesSafe. So the foreign side of a probe's copy goes through CopyUnchecked, which ASan does not check, while
+// is their job, and ASan, left to check those reads, flags them in ReadSafe and ReadBytesSafe. So the foreign side
+// of a probe's copy goes through CopyUnchecked, which ASan does not check, while
 // this DLL's own side still goes through an instrumented touch, so a destination too small is still reported.
 namespace AsanProbe {
 // Byte by byte through volatile: a memcpy here would be ASan's run-time interceptor, which checks both ranges whatever
@@ -95,7 +95,7 @@ bool IsAddrReadable(uintptr_t addr, size_t size = sizeof(uintptr_t));
 
 // Write bytes to memory. Makes the pages READWRITE for the write, so it writes code and read-only data too: only the
 // DLL's own writers use it, on addresses they found themselves. A caller's address goes through the two below.
-// [[nodiscard]]: a dropped result is how Fly once logged ENABLED over a pawn whose mode never changed.
+// [[nodiscard]]: a dropped result lets a caller log success over a write that never happened.
 [[nodiscard]] bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
 
 // [D2-3-WRITEMEM] The worst page in [addr, addr + size) for a data write (Lager::ClassifyWriteRegion): Writable only
@@ -145,8 +145,8 @@ bool LooksLikeImagePointer(uintptr_t addr);
 // `.srdata`, its code in `.debug`), and Elliot / Stellar Blade / Hogwarts are each
 // named differently again — yet all expose a working IMAGE_DIRECTORY_ENTRY_EXCEPTION.
 //
-// NOTE `addr` may be MID-function (measured: 6.8%-39.8% of call targets across the
-// corpus land where the covering entry's BeginAddress != addr), so clamp a scan with
+// NOTE `addr` may be MID-function (across the corpus, a sizeable share of call targets
+// land where the covering entry's BeginAddress != addr), so clamp a scan with
 // `end - addr`, NEVER with `end - begin`.
 bool GetFunctionExtent(uintptr_t addr, uintptr_t& begin, uintptr_t& end);
 
@@ -258,10 +258,10 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
 // Cancellation lives one level up, at the PATTERN boundary in
 // Genau::ScanForTarget (its batch loop and its multi-module Pass 2). That is
 // where it belongs because the largest indivisible unit below this line is one
-// AOBScanBatch — measured at most 0.64 s on a 213 MB .text — or one
-// AOBScanAllModules — measured at most 2.34 s on a 593-module title. Both sit
-// inside CE's 5000 ms call ceiling, so a poll here would buy no measurable
-// responsiveness while costing a relaxed atomic load per 32-byte AVX2 stride.
+// AOBScanBatch or one AOBScanAllModules, and both finish well inside CE's 5000 ms
+// call ceiling on the largest images and module counts in the corpus, so a poll here
+// would buy no measurable responsiveness while costing a relaxed atomic load
+// per 32-byte AVX2 stride.
 //
 // ⚠ If a poll is ever added here anyway, it MUST discard the partial result —
 // return 0 / an EMPTY vector, never what was found so far. Two callers read these
@@ -329,8 +329,8 @@ inline constexpr size_t kMinScannedModuleSize = 0x10000;
 // every other arm let through, because answering it reads the module's export table.
 //
 // Why the dumper's images are left out: they hold the dumper's code, and that code touches the same engine structures
-// the patterns describe, so a pattern can match it (IS Defense: two of GOBJ_V1's three multi-module matches were in
-// our version.dll proxy). No engine global ever lives in one of them, so leaving them out loses no real candidate.
+// the patterns describe, so a pattern can match it (in IS Defense, GOBJ_V1 matches inside our version.dll proxy). No
+// engine global ever lives in one of them, so leaving them out loses no real candidate.
 // A second build can be mapped beside this one -- two proxies in one game folder (the first-loaded-wins mutex idles
 // the second, its image stays), or UE5Dumper.dll injected beside a proxy by a tool that does not check -- which is
 // why the question is "a build of the dumper", not only "this image".
@@ -457,8 +457,8 @@ inline bool ReadTSparseArray(uintptr_t addr, TSparseArrayView& out) {
     // NumFreeIndices at +0x34. It sits immediately after FirstFreeIndex (+0x30),
     // which ends the 0x38-byte TSparseArray. Reading it at +0x3C lands past the
     // end — in the enclosing TSet's Hash allocator padding, which is zeroed with
-    // the UObject and never written — so it always read 0 and every caller
-    // computing `MaxIndex - NumFreeIndices` OVER-reported the element count of
+    // the UObject and never written — so it would always read 0 and every caller
+    // computing `MaxIndex - NumFreeIndices` would OVER-report the element count of
     // any container that had ever had an entry removed.
     ReadSafe(addr + 0x34, out.NumFreeIndices);
     return true;
@@ -473,14 +473,13 @@ inline bool IsSparseIndexAllocated(const TSparseArrayView& sa, int32_t index) {
     // The heap allocation WINS whenever it exists. A TBitArray that has grown past
     // 128 bits COPIES the inline words to the heap and then keeps updating only the
     // heap copy — the inline buffer is left frozen at its spill-time contents. So
-    // checking `wordIdx < 4` first meant that once a TSet/TMap had ever exceeded 128
-    // slots, indices 0..127 were judged from STALE bits: a slot freed after the spill
-    // still read as allocated, and callers walked a dead element (a phantom Find-Refs
-    // hit, a dead value admitted by ScanForValue).
+    // checking `wordIdx < 4` first would, once a TSet/TMap had ever exceeded 128
+    // slots, judge indices 0..127 from STALE bits: a slot freed after the spill
+    // would still read as allocated, and callers would walk a dead element (a phantom
+    // Find-Refs hit, a dead value admitted by ScanForValue).
     //
-    // Aura::ResolveTMapBitArrayBase has always applied this rule correctly
-    // ("Inline if MaxBits <= 128; heap (secondaryPtr) otherwise"); this is the same
-    // rule, and it fixes all 13 Aura call sites and 6 Ubel ones at once.
+    // Aura::ResolveTMapBitArrayBase applies the same rule
+    // ("Inline if MaxBits <= 128; heap (secondaryPtr) otherwise").
     if (sa.secondaryData) {
         if (!ReadSafe(sa.secondaryData + wordIdx * 4, word)) return false;
     } else if (wordIdx < 4) {
@@ -511,12 +510,12 @@ inline int32_t SanitizeAlign(int32_t align) noexcept {
 // elemAlign: pass alignof(T). For a TMap that is max(alignof(Key), alignof(Value)).
 // Omitting it drops the TPair's TRAILING padding and every element after index 0
 // is read at a wrong address — TMap<AActor*,float> has an unpadded pair of 12, so
-// the old one-argument form returned 20 where the engine strides 24 (and
+// a one-argument call returns 20 where the engine strides 24 (and
 // TMap<FString,int32> 28 vs 32, TMap<UObject*,uint8> 20 vs 24).
 //
 // TSet<T> is unaffected: a bare elemSize is already a multiple of alignof(T),
-// so the default of 4 reproduces the previous behaviour exactly and the TSet
-// call sites need no change.
+// so the default of 4 gives the engine's stride and a TSet call site need not
+// pass one.
 inline int32_t ComputeSetElementStride(int32_t elemSize, int32_t elemAlign = 0) {
     int32_t a = SanitizeAlign(elemAlign);
     if (a < 4) a = 4;                                  // hash fields are int32-aligned

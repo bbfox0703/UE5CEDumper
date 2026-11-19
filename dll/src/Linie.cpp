@@ -951,7 +951,7 @@ bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
 }
 
 // [LIVEFUNCS-STEP3] CopySnaps' loop, copied rather than shared: a stack slot carries no after bit and its payload is
-// frames, and the parameter snapshots' tested reader stays as it was.
+// frames, and sharing it would change the parameter snapshots' tested reader.
 bool CopyStacks(uint32_t s, uint64_t from, size_t maxSlots, std::vector<StackCopy>& out, uint64_t* next,
                 uint64_t* orphans) {
     if (orphans) *orphans = 0;

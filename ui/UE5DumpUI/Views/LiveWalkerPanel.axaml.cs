@@ -26,23 +26,20 @@ public partial class LiveWalkerPanel : UserControl
     // has no column-level binding, so its reflection sort is trimmed under AOT — wire
     // an explicit comparer (the sort trap explained in Helpers/DataGridSortComparers.cs).
     //
-    // ⚠ "Type" joined this list on 2026-08-23 and did NOT start as a template column.
-    // It was a DataGridTextColumn, therefore binding-rooted and safe, until
-    // [V8PREVIEWCLIP-2026-08-23] converted it so the cell would have an element to hang
-    // ToolTip.Tip on (a DataGridTextColumn's Binding= is not an element). That
-    // conversion silently removed the column-level binding that was rooting TypeName,
-    // and a sort header that animates and does nothing is invisible in every
-    // JIT test host — only the trimmed binary misbehaves.
-    //   DataGridSortWiringTests caught it the same minute, which is exactly what that
-    // guard exists for. Worth remembering as a shape: making a column PRETTIER can
-    // break its SORT, because the two ride on the same attribute.
+    // ⚠ "Type" is a template column so the cell has an element to hang ToolTip.Tip on
+    // ([V8PREVIEWCLIP-2026-08-23]; a DataGridTextColumn's Binding= is not an element). As
+    // a template column it has no column-level binding rooting TypeName, and a sort header
+    // that animates and does nothing is invisible in every JIT test host — only the
+    // trimmed binary misbehaves. DataGridSortWiringTests is the guard for exactly that.
+    // Worth remembering as a shape: making a column PRETTIER can break its SORT, because
+    // the two ride on the same attribute.
     //
-    // "Offset" joined for the same reason in a third disguise: the column is still a
-    // DataGridTextColumn, but its Binding was moved off Offset onto OffsetDisplay so a
-    // GWorld actor row (which has NO offset from the world) stops rendering as "0x0".
-    // That un-roots SortMemberPath="Offset" exactly like the template conversion did —
-    // and sorting on OffsetDisplay instead would have been worse than inert: it would
-    // order hex TEXT, putting 0x9 after 0x10.
+    // "Offset" is here for the same reason in another disguise: the column is a
+    // DataGridTextColumn, but it binds OffsetDisplay rather than Offset so a GWorld actor
+    // row (which has NO offset from the world) does not render as "0x0". That un-roots
+    // SortMemberPath="Offset" just as a template column does — and sorting on
+    // OffsetDisplay instead would be worse than inert: it would order hex TEXT, putting
+    // 0x9 after 0x10.
     private static readonly IReadOnlyDictionary<string, IComparer> FieldsSortComparers =
         new Dictionary<string, IComparer>
         {
@@ -372,11 +369,11 @@ public partial class LiveWalkerPanel : UserControl
             //
             // ScrollIntoView means "make visible", and WHERE the row lands depends on the
             // direction: a row BELOW the viewport stops at the bottom edge, a row ABOVE it
-            // at the top edge. The rebuild left the grid at the top, so scrolling straight
-            // to the saved top row put it at the BOTTOM, and the row the user had drilled
-            // through (below it) stayed off screen: "press Back, then scroll down"
-            // [LW-BACK-SCROLL]. So scroll to the end first: the saved top row is then ABOVE
-            // the viewport and comes back as the first visible row -- the view the user left.
+            // at the top edge. The rebuild leaves the grid at the top, so scrolling straight
+            // to the saved top row would put it at the BOTTOM, and the row the user drilled
+            // through (below it) would stay off screen [LW-BACK-SCROLL]. So scroll to the
+            // end first: the saved top row is then ABOVE the viewport and comes back as the
+            // first visible row -- the view the user left.
             var keep = keepVisible != null ? Match(rows, keepVisible) : null;
             var top = topRow != null ? Match(rows, topRow) : null;
             if (top != null && rows.Count > 0)
@@ -458,14 +455,14 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
-    // FieldGrid_LoadingRow was HERE and is deliberately gone. [LWREFRESH-2026-08-21]
+    // The FieldGrid deliberately has no LoadingRow handler. [LWREFRESH-2026-08-21]
     //
-    // It painted Row.Background/Foreground on realization, which cannot react to a property change
+    // Painting Row.Background/Foreground on realization cannot react to a property change
     // on a row that is reused rather than replaced — and reusing rows is what stops the grid
-    // drifting a row upward on every Refresh. The tint now comes from a bound DataGridRow style in
+    // drifting a row upward on every Refresh. The tint comes from a bound DataGridRow style in
     // LiveWalkerPanel.axaml.
     //
-    // ⚠ Do not reinstate it "as a safety net": `e.Row.Background = …` writes at LocalValue
+    // ⚠ Do not add one "as a safety net": `e.Row.Background = …` writes at LocalValue
     // priority, which outranks a Style setter, so its Transparent branch alone would pin every
     // non-matching row and silently kill the binding.
 
@@ -480,7 +477,7 @@ public partial class LiveWalkerPanel : UserControl
 
         // [A4-EDIT-STALE-PENDING] Forget the previous edit's text. The row object survives a
         // refresh, and the pending text is written only when the user types or picks, so without this a
-        // reopen-then-Enter (or Escape, reopen, Enter) wrote the LAST edit into the game again.
+        // reopen-then-Enter (or Escape, reopen, Enter) would write the LAST edit into the game again.
         // Here, at edit BEGIN — not in CopyLiveValuesFrom, which misses the Escape variant and would
         // drop text typed while a refresh lands mid-edit. See LiveFieldValue.ResetPendingEdit.
         if (e.Row.DataContext is LiveFieldValue opening)

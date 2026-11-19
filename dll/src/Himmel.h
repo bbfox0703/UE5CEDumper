@@ -960,9 +960,9 @@ constexpr const char* AOB_GWORLD_GH_4 = "0F 57 C9 0F 2E C1 74 ?? 48 8B 1D ?? ?? 
 // ============================================================
 // UE 5.7's MSVC codegen inserts an extra load / picks different registers around
 // the GWorld access, so ALL of the Tier-1 (100–290) UE5 GWorld patterns (ES2_1-6,
-// SF_1, GH_1/2, TQ_1/2, V1) get ZERO hits on this build. The scan then reaches the
-// generic GWLD_SF_2 (Tier 2, pri 300), which matched a single DECOY .data global and
-// passed the (intentionally loose) ValidateGWorldBasic → wrong GWorld. These four
+// SF_1, GH_1/2, TQ_1/2, V1) get ZERO hits on this build. Without the patterns below the scan
+// reaches the generic GWLD_SF_2 (Tier 2, pri 300), which matches a single DECOY .data global
+// and passes the (intentionally loose) ValidateGWorldBasic → wrong GWorld. These four
 // patterns re-anchor GWorld at the TOP of Tier 1 (pri 100–160, before every pattern
 // that misses/mis-fires). Each was verified to hit ONLY the real GWorld slot (0
 // decoys) across the whole .text image.
@@ -1092,8 +1092,8 @@ constexpr const char* AOB_SPARSE_DI427_2 =
     "48 63 44 24 ?? 4? 33 ?? 83 F8 FF 74 ?? 48 8D ?? 40 48 C1 E? 05 48 03 ?? ?? ?? ?? ?? EB ?? 4? 8B ?? 48 85 ?? 4? 8D ?? 08 4? 0F 44 ??";
 
 // --- PAL51: UE 5.1 sparse-delegate element address (Palworld) -----------------
-// WHY it exists: Palworld was the corpus's first UE 5.1 sample, and SparseDelegates resolved
-// there through exactly ONE pattern (SPARSE_ES2_1). That is the thinnest coverage of any target
+// WHY it exists: without it, SparseDelegates on Palworld (UE 5.1) resolves through exactly ONE
+// pattern (SPARSE_ES2_1). That is the thinnest coverage of any target
 // on any binary, and it matters more here than elsewhere because ValidateSparseDelegates is the
 // weakest validator we have — on an empty map it can only range-check two ints (its UObject-key
 // content check needs a live element), so it cannot rescue a miss.
@@ -1307,8 +1307,9 @@ constexpr const char* AOB_GOBJECTS_DI427_3 =
 //   (operator== / GetComparisonNameEntry / GetDisplayNameEntry / GetEntry / ToString / ...).
 //   lea rcx,[NamePoolData]; call FNamePool::FNamePool; mov <r>,rax; mov byte[bInit],1;
 //   then reload the spilled FName as a qword and shift the Number half out.
-//   Intended replacement for the GNAM_V5/V2/D7_1 family, which on this binary fire
-//   16 686 / 16 692 / 104 897 times with ZERO correct hits. 10 sites, all correct.
+//   Ordered far ahead of GNAM_V5 / GNAM_V2 (Dumper-7's D7_1 is left out of the table); on
+//   this binary V5 / V2 / D7_1 fire 16 686 / 16 692 / 104 897 times with ZERO correct hits.
+//   10 sites, all correct.
 constexpr const char* AOB_GNAMES_DI427_1 =
     "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4? 8B ?? C6 05 ?? ?? ?? ?? 01 48 8B 44 24 ?? 48 C1 E8 20";
 // GNAM_DI427_2: same lazy-init head, but continued into the FNameEntry address math —

@@ -492,7 +492,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         if (className.Length == 0 && nameFilter.Length == 0) return;
 
         // A fresh manual query: drop any server-side exclusions left from a PREVIOUS
-        // search (now that exclusion persists server-side, a class hidden for "Pawn"
+        // search (exclusion persists server-side, so a class hidden for "Pawn"
         // would otherwise silently filter "Inventory" — possibly with no visible row
         // to untick). Reset() does NOT fire onChanged, so this won't re-run here.
         _reRunCts?.Cancel();          // supersede an in-flight class-noise re-run
@@ -608,10 +608,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             LookupStatusText = "Looking up...";
             ShowCeXml = false;
 
-            // Reject malformed input up-front. Prior behavior surfaced
-            // "No UObject found at this address" for "0xajsd;jald" — misleading,
-            // because the DLL silently parsed it to 0 (noexcept StrToAddr) and
-            // searched for a UObject at 0 instead.
+            // Reject malformed input up-front. The DLL silently parses "0xajsd;jald"
+            // to 0 (noexcept StrToAddr) and searches for a UObject at 0, so sending it
+            // would surface a misleading "No UObject found at this address".
             if (!AddressHelper.TryNormalizeAddress(LookupAddress, _engineState?.ModuleBase, out var addrStr))
             {
                 LookupStatusText = "Invalid address — expected hex (e.g. 0x7FF... or module.exe+RVA)";
@@ -677,11 +676,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                     OuterAddr = result.OuterAddr,
                 };
                 // [W4-LOOKUP-FILTER] Into the BACKING list too. It was emptied just above, and every
-                // later ApplyInstanceFilter re-projects from it -- so a leftover keyword, or clearing it,
-                // erased the lookup result for good while the status line still reported a match.
+                // later ApplyInstanceFilter re-projects from it -- without this a leftover keyword, or
+                // clearing it, would erase the lookup result for good while the status line still
+                // reported a match.
                 // ⛔ The keyword is NOT cleared here: it is an [ObservableProperty], and the assignment
-                // re-enters the filter (harmless now that the backing list holds the row, but still
-                // not the lookup's call to make).
+                // re-enters the filter (harmless, as the backing list holds the row, but still not the
+                // lookup's call to make).
                 _allInstances.Add(instance);
                 Instances.Add(instance);
                 HasInstances = true;

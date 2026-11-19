@@ -776,9 +776,8 @@ public sealed class ProxyDeployService : IProxyDeployService
     // StatusDetail / SuggestedProxy are bound to the Proxy Deploy DataGrid. Writing them
     // from inside a Task.Run raises PropertyChanged on a thread-pool thread, which lets
     // Avalonia mutate the visual tree while the render thread is composing it — that is an
-    // access violation inside libSkiaSharp, not an exception, so it takes the whole app
-    // down with no managed stack. It did: "Scan Steam" then "Update all" over 29 games
-    // reliably crashed with 0xc0000005 in libSkiaSharp.
+    // access violation inside libSkiaSharp (0xc0000005), not an exception, so it takes the
+    // whole app down with no managed stack.
     //
     // So: do the file I/O on the worker, COLLECT the results, and APPLY them after the
     // await — which resumes on the caller's context. Every call site is a UI-thread
@@ -821,8 +820,8 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// that operation's own result. The disk state of a failed deploy is "file absent", which
     /// <see cref="ClassifyAbsentSelected"/> honestly reports as <c>(NotDeployed, null)</c> —
     /// overwriting both the failure status and the reason, and leaving the user a row that
-    /// says NotDeployed with a blank Error next to a banner reading "1 failed". The reason
-    /// then existed only in the log.</para>
+    /// says NotDeployed with a blank Details cell next to a banner reading "1 failed". The reason
+    /// would then exist only in the log.</para>
     /// </summary>
     internal static bool ShouldApplyRefresh(string binariesDir, IReadOnlySet<string>? preserve)
         => preserve == null || !preserve.Contains(binariesDir);
@@ -1376,7 +1375,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // The radio button picks what to DEPLOY; undeploy is a clean-up, and
                 // a user who deployed dxgi.dll and later switched the radio to
                 // version.dll would otherwise be unable to remove it at all — while
-                // the grid happily reported DeployedOtherType.
+                // the grid reports DeployedOtherType.
                 var plan = PlanUndeploy(AllProxyDllNames().Select(name =>
                 {
                     string p = Path.Combine(game.BinariesDir, name);
@@ -1890,8 +1889,8 @@ public sealed class ProxyDeployService : IProxyDeployService
             int vanished = 0;   // already gone before we got to it — not a failure, not a removal
 
             // ⚠ Cancellation is OBSERVED here, not thrown. [ORPHANCANCEL-2026-08-20]
-            // Throwing out of the middle of a row discarded everything that row had already
-            // done — the file it had just recycled, and the knowledge that its folder chain was
+            // Throwing out of the middle of a row would discard everything that row had already
+            // done — the file it had just recycled, and the knowledge that its folder chain is
             // now half-pruned. Breaking out with the counts intact is what lets the caller
             // report reality instead of a tally computed on a different path.
             bool cancelled = false;

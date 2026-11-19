@@ -451,8 +451,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // cancellable worker and then writes the grid AFTER that await returns. A cancel
             // landing in that window is too late, and the stale write goes through. So any
             // refresh that finds the radio has moved on corrects what it just wrote; without
-            // this the grid keeps showing a type nobody selected and, as the finding put it,
-            // "nothing ever re-runs".
+            // this the grid keeps showing a type nobody selected, and nothing ever re-runs.
             //
             // It must NOT gate on `ct`, and must not reuse it: the call that needs to correct
             // itself is by definition the SUPERSEDED one, so its own token is exactly the one
@@ -826,11 +825,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
             NotifyOrphanSelectionChanged();
 
             // Name the NEXT action explicitly, and quote the button label verbatim ("Report…",
-            // ellipsis and all) so it can be matched on screen. The scan finishing was being read
-            // as "the report has been produced" — a fair assumption, since a scan that reports its
-            // findings on screen looks finished — and the file was then never written. Saying which
-            // button writes it costs one clause and removes the guess. The clean case also states
-            // the coverage, because "found nothing" is only reassuring next to "…out of how many".
+            // ellipsis and all) so it can be matched on screen. A scan that reports its findings on
+            // screen looks finished, so its end reads as "the report has been produced", and the
+            // file is then never written. Saying which button writes it costs one clause and
+            // removes the guess. The clean case also states the coverage, because "found
+            // nothing" is only reassuring next to "…out of how many".
             // Blocked rows are counted SEPARATELY. A row that cannot be removed here (no working
             // Recycle Bin on its volume) is still a real leftover the user needs to know about, but
             // folding it into "N leftover proxy DLL(s) … exactly what would go" would promise an
@@ -869,15 +868,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <para>A clean scan must still be able to write a report, and that is not a nicety: with no
     /// artifact, "scanned everything and found nothing" and "the scan never ran / looked in the
     /// wrong place / failed silently" are indistinguishable a week later. The report is the only
-    /// durable record that the sweep happened and what it covered. <c>BuildReport</c> has always
-    /// handled the empty case ("No leftover proxy DLLs were found."); it was this gate that made
-    /// that text unreachable.</para></summary>
+    /// durable record that the sweep happened and what it covered. <c>BuildReport</c> handles the
+    /// empty case ("No leftover proxy DLLs were found."), and a gate on "found something" would
+    /// make that text unreachable.</para></summary>
     public bool CanWriteOrphanReport => OrphanScanRan;
 
     /// <summary>
     /// Binaries folders of games we already know are installed. Passed to BOTH the scan and the
     /// removal so the installed-game veto is applied at both ends; giving the removal an empty set
-    /// made the deleting path weaker than the scan that authorised it.
+    /// would make the deleting path weaker than the scan that authorises it.
     /// </summary>
     private IReadOnlySet<string> LiveBinariesDirs() => new HashSet<string>(
         Games.Select(g => g.BinariesDir).Where(d => !string.IsNullOrEmpty(d)),
@@ -897,10 +896,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private async Task WriteOrphanReportAsync()
     {
         // Gate on "a scan has run", not on "it found something" — see CanWriteOrphanReport.
-        // Log BOTH outcomes. Three rounds were spent on "I ran Report and no file appeared"
-        // with nothing in the log to say whether the command had even been entered — the
-        // success path logged nothing and the refusal logged nothing, so "it never ran" and
-        // "it ran and failed" were indistinguishable. Same defect this whole audit is about.
+        // Log BOTH outcomes: with neither the success path nor the refusal logged, "I ran Report
+        // and no file appeared" leaves "it never ran" and "it ran and failed" indistinguishable.
         if (!OrphanScanRan)
         {
             _log.Info("ProxyDeploy", "Leftover report refused: no orphan scan has run in this session");
@@ -1282,10 +1279,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <remarks>
     /// A single immediate attempt cannot work: the injected DLL runs its whole AOB scan
     /// before opening the pipe, so for several seconds there is nothing to connect TO.
-    /// The failure looked like a broken injection ("Connection Error / The operation has
-    /// timed out") when the injection had in fact succeeded and the DLL was mid-scan —
-    /// the log showed the pipe opening 8.8 s later and then waiting for a client that
-    /// never came back.
+    /// Its failure looks like a broken injection ("Connection Error / The operation has
+    /// timed out") when the injection has in fact succeeded and the DLL is mid-scan —
+    /// the pipe opens seconds later and then waits for a client that never comes back.
     /// </remarks>
     internal async Task ConnectWithRetryAsync(string targetName, int pid)
     {
@@ -1559,8 +1555,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         rowNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
                                              + $"{SelectedProxyType.GetDllName()}", false));
                     }
-                    // [PROXY-RISKNOTE-WIPED] The refresh below rewrites this row from disk, which erased the note the
-                    // moment it was shown; it is written back after it (appended, so a switch note above stays).
+                    // [PROXY-RISKNOTE-WIPED] The refresh below rewrites this row from disk, which would erase the note
+                    // the moment it is shown; it is written back after it (appended, so a switch note above stays).
                     if (!string.IsNullOrEmpty(riskNote)) rowNotes.Add((game, riskNote!, true));
                 }
                 else
@@ -1601,7 +1597,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             if (ok == 0 && fail == 0)
             {
                 // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
-                // no-op run was the other half of the green "Deployed" this row removed.
+                // no-op run would claim a deploy that did not happen.
                 StatusColor = StatusNeutral;
                 LastOperationColor = StatusNeutral;
             }

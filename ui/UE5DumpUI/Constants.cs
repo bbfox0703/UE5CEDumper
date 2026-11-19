@@ -7,8 +7,8 @@ public static class Constants
 {
     // Named Pipe
     // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid> (Core/PipeTargets builds and
-    // parses the name), so the UI names the game it connects to: with one shared name a client landed on whichever game
-    // listened first, and the two lanes could reach different games.
+    // parses the name), so the UI names the game it connects to: with one shared name a client would land on whichever
+    // game listened first, and the two lanes could reach different games.
     public const string PipeNamePrefix = "UE5DumpBfx_";
     /// <summary>The one name every DLL served before the per-process name. A game whose DLL predates it (typically a
     /// proxy left in its folder) still serves this; the UI never connects to it and says why.</summary>
@@ -192,7 +192,7 @@ public static class Constants
     public const string MirrorLogPrefix = "ui";               // Prefix for mirror files in game folders
     // Retention is by AGE (LogMaxAgeDays), not by generation count. The previous
     // session's -0.log is archived to -YYYYMMDD-HHMMSS.log and aged out from there;
-    // a file count could not express "keep 15 days" because rotation runs on every
+    // a file count cannot express "keep N days" because rotation runs on every
     // startup. Matches Grimoire::LOG_RETENTION_DAYS on the DLL side.
     public const long LogMaxSizeBytes = 8 * 1024 * 1024;     // 8MB per file
 
@@ -207,13 +207,12 @@ public static class Constants
 
     // ---- Log compression (compact /C /EXE:LZX, in place) -------------------------
     //
-    // Retention bounds the AGE of the log corpus, not its SIZE: 21 days of multi-game
-    // sessions measured 111.9 MB. LZX took the eligible 102.05 MB of that to 7.98 MB
-    // (12.8:1) in 2.8 s, and left LastWriteTime untouched on all 289 files — which is why
+    // Retention bounds the AGE of the log corpus, not its SIZE, and archived logs compress
+    // well under LZX. Compression leaves LastWriteTime untouched — which is why
     // PruneAgedLogs needs no change. Numbers + traps: docs/log-compression-eval.md.
     //
-    // Size floor: 347 of 698 files were <= 4 KB and held 0.4 MB between them — half the
-    // work for 0.4% of the bytes.
+    // Size floor: the many small files hold a negligible share of the bytes, so
+    // compressing them is work for almost nothing.
     public const long LogCompressMinSizeBytes = 4096;
 
     // Idle window for the MANUAL button: don't touch a file something may still be
@@ -226,16 +225,14 @@ public static class Constants
     //
     // `-0.log` is a SLOT NAME, not a liveness fact: a game last played 13 days ago still
     // owns a walk-0.log that nothing will ever append to again. Excluding those outright
-    // was stricter than LoggingService.PurgeOrphanedLogs, which passes a live-name set only
-    // for the UI's own folder and sweeps every GAME folder on age alone — i.e. we were
-    // refusing to COMPRESS files the same subsystem is willing to DELETE. Measured cost of
-    // the old rule on a real folder: 36 files / 5 MB permanently uncompressed, and the set
-    // only grows, one final log per game ever tested.
+    // would be stricter than LoggingService.PurgeOrphanedLogs, which passes a live-name set
+    // only for the UI's own folder and sweeps every GAME folder on age alone — it would
+    // refuse to COMPRESS files the same subsystem is willing to DELETE, and that set only
+    // grows, one final log per game ever tested.
     //
     // Compressing them is durable: Sein archives a `-0.log` by RENAME on the next
-    // injection, and a rename preserves LZX (verified 335,872 bytes on disk before and
-    // after). A game that really is running keeps its log's mtime fresh, and the file lock
-    // is the backstop if it somehow does not.
+    // injection, and a rename preserves LZX. A game that really is running keeps its
+    // log's mtime fresh, and the file lock is the backstop if it somehow does not.
     public const int LogCompressLiveFileMinAgeDays = 7;
 
     // Age floor for the AUTOMATIC startup sweep (opt-in, default OFF). Deliberately longer
@@ -341,8 +338,8 @@ public static class Constants
     // Above this uptime, a crash report still claiming the "Startup" phase is
     // reporting a STALE marker rather than a real startup failure — no startup of
     // this app takes a minute. CrashReportFormatter.Headline says so explicitly
-    // instead of repeating the phase; see [PASTECRASH-2026-08-18], where the
-    // hard-coded phrase "startup crash" mislabelled a 31-minute-in crash.
+    // instead of repeating the phase, so a crash deep into a session is not filed
+    // as a startup crash [PASTECRASH-2026-08-18].
     public const int CrashStartupPhaseMaxSeconds = 60;
 
     // Pipe Communication
@@ -462,14 +459,14 @@ public static class Constants
     // per file: the newest timestamp in a game's set governs the whole set, so a
     // 30-day-old denylist sibling never outlives (or drags down) the .db it belongs to.
     public const int DataMaxAgeDays = 21;
-    // Objects streamed per snapshot_chunk pipe round-trip. 8192 (raised 200 -> 1000
-    // -> 8192) for two reasons on huge games (FF7 Rebirth ~433K objects: ~53 chunks):
+    // Objects streamed per snapshot_chunk pipe round-trip. 8192, for two reasons on huge
+    // games (hundreds of thousands of objects):
     //   (a) fewer pipe round-trips + SQLite write transactions;
     //   (b) the DLL parallelizes each chunk's object walk, and ScanThreadCount only
     //       engages worker threads at >= 8192 work items — so a full chunk runs
-    //       multi-threaded (the single-threaded walk was the 10+ min bottleneck).
+    //       multi-threaded (a single-threaded walk is the bottleneck).
     // Safe: byte-mode pipe (no message cap) + StreamReader.ReadLineAsync accumulates
-    // any size. See docs/todo.md snapshot-perf item (in-game re-test pending).
+    // any size. See the "Snapshot capture too slow on huge games" item in docs/todo.md.
     public const int SnapshotChunkSize = 8192;
 
     // Snapshot Diff / SPC / Group / Value snapshot-query row cap. Shared by the
@@ -499,8 +496,8 @@ public static class Constants
     /// <summary>Leaves kept PER SLOT per object in a group scan (DLL `per_slot_cap`).
     /// NOT a performance knob: this list is what a later Changed/Decreased refine
     /// re-reads, and leaves arrive base-class-first, so too small a value silently hides
-    /// a derived class's own fields — at the old fixed 8 every AActor stored only
-    /// PrimaryActorTick/CustomTimeDilation and a Changed refine pruned everything.
+    /// a derived class's own fields — at a cap of 8, every AActor would keep only
+    /// PrimaryActorTick/CustomTimeDilation and a Changed refine would prune everything.
     /// The DLL owns the clamp band; these mirror it so the UI can validate locally.</summary>
     public const int GroupPerSlotCap    = 256;
     public const int GroupPerSlotCapMin = 8;
@@ -568,8 +565,7 @@ public static class Constants
     //
     // ⚠ Deliberately NOT DefaultInstanceSearchCap. A property-search row is a match per
     // property per class WITH a resolved preview value, so it is far heavier than an
-    // instance address; 200 was the long-standing wire default and stays the default here.
-    // What changed is that the panel now has a control to raise it.
+    // instance address; 200 is the wire default, and the panel has a control to raise it.
     public const int DefaultPropertySearchCap = 200;
 
     // Default Classes-tab row cap (GameClassFilterUiOptions.ClassListCap and the panel's own
@@ -603,11 +599,10 @@ public static class Constants
     // dxgi.dll — statically imported by every D3D11/D3D12 UE game; the
     // reliable hijack target for EXEs that import neither version nor dinput8.
     public const string ProxyDllNameDxgi = "dxgi.dll";
-    // winmm.dll — measured at 24/24 importable across every installed UE game,
-    // exactly matching dxgi. It exists NOT for coverage (it reaches nothing dxgi
-    // misses) but as a second free SLOT: dxgi.dll is the name ReShade and many
-    // mod loaders take, and version.dll is likewise often occupied. See the
-    // 4th-proxy section in docs/todo.md.
+    // winmm.dll — a static-import hijack like dxgi. It exists NOT for coverage (it
+    // reaches nothing dxgi misses) but as a second free SLOT: dxgi.dll is the name
+    // ReShade and many mod loaders take, and version.dll is likewise often occupied.
+    // See the 4th-proxy section in docs/todo.md.
     public const string ProxyDllNameWinmm = "winmm.dll";
     public const string ProxyProductName = "UE5CEDumper";
     public const string SteamRegistryPath = @"SOFTWARE\WOW6432Node\Valve\Steam";

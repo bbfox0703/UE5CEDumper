@@ -377,8 +377,8 @@ json CandidateToJson(const Radar::Candidate& c,
 // Shared by the row's REPRESENTATIVE leaf and by query_group_slot_leaves' full
 // list, so the two can never disagree about what a leaf is called or holds. The
 // value comes from Radar::GroupSlotValueString — the same call the server-side
-// filter matches against, which is the whole point: this area's entire bug
-// history is two code paths answering one question differently.
+// filter matches against, which is the whole point: this area goes wrong when
+// two code paths answer one question differently.
 json GroupLeafToJson(const Radar::GroupSlotMatch& m,
                      const Radar::SlotSpec& spec,
                      const std::vector<Radar::FieldDescriptor>& descriptors) {
@@ -3085,7 +3085,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (path.empty()) return Renge::MakeError(id, "Missing path").dump();
 
             // The field is named "path" and clients send real UE paths; FindByName
-            // only ever matched a bare FName, so every path-shaped request failed.
+            // alone matches only a bare FName, so every path-shaped request would fail.
             uintptr_t obj = Aura::FindByNameOrPath(path);
             if (!obj) return Renge::MakeError(id, "Object not found").dump();
 
@@ -4717,7 +4717,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     return Renge::MakeError(id, "Unknown data_type in values: " + dtStr).dump();
                 }
                 // Slots fan out over numeric widths (NumericNoByte default /
-                // NumericAll); concrete per-slot widths remain a later extension.
+                // NumericAll); concrete per-slot widths are not supported.
                 if (!Radar::IsMultiNumericDataType(dt)) {
                     return Renge::MakeError(id, "group slot data_type must be NumericNoByte or NumericAll: " + dtStr).dump();
                 }
@@ -6949,7 +6949,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::wstring moduleNameNoExt = (dotPos != std::wstring::npos)
                 ? moduleFileName.substr(0, dotPos) : moduleFileName;
 
-            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (was '?' per non-ASCII character).
+            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (an older DLL sends '?' per non-ASCII character).
             std::string moduleName = Utf8Helpers::EncodeUtf16(moduleNameNoExt.c_str(), moduleNameNoExt.size());
 
             json data;
@@ -7231,7 +7231,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             RescanResult found;
             {
                 // One snapshot. A start claims `running` and then resets under this lock, so here the flag and the
-                // result belong to the same run: read apart, a start between them answered "finished, nothing found".
+                // result belong to the same run: read apart, a start between them would answer "finished, nothing found".
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
                 running = m_rescan.job.Running();
                 phase   = m_rescan.phase.load();
@@ -8422,12 +8422,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["source"] = (source == 1) ? "invoke" : "raw";
                 // ⛔ "raw" alone cannot tell a HEALTHY unattached world-space read from a
                 // DEGRADED parent-relative one, and the UI's model documents "raw" as
-                // MEANING not-attached -- so those numbers were shown as world coords,
-                // saved into a marker that passes the map guard, and later driven back
-                // into the pawn as a world destination. teleport-spec.md:218-220 asked
-                // for this flag when the fallback was designed. [POSEATTACH-2026-09-10]
+                // MEANING not-attached -- so without this flag those numbers would be shown
+                // as world coords, saved into a marker that passes the map guard, and later
+                // driven back into the pawn as a world destination. This is the warning
+                // flag teleport-spec.md §5.4 specifies for the raw fallback. [POSEATTACH-2026-09-10]
                 if (parentRel) data["parent_relative"] = true;
-                // Feature B: the resolved pawn — for the "Locate in GWorld" handoff
+                // The resolved pawn — for the "Locate in GWorld" handoff
                 // (hex string, matching find_path's object_addr / get_current_target's
                 // player_pawn). "0x0" when unresolved.
                 data["pawn_addr"] = Renge::AddrToStr(mv.PawnAddr);
@@ -8446,7 +8446,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["rot_field_offset"] = mv.RotFieldOffset;
                     data["rot_field_name"]   = "ControlRotation";
                 }
-                // Feature A: live velocity/acceleration off the CharacterMovement.
+                // Live velocity/acceleration off the CharacterMovement.
                 // has_movement=false on vehicle / custom-framework pawns (no CMC):
                 // the vel/acc fields are then absent and the UI shows "unavailable".
                 data["has_movement"] = mv.HasMovement;

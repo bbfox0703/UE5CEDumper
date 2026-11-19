@@ -300,20 +300,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <paramref name="classAddr"/> into the Class/Struct panel. Every cross-tab class
     /// handoff goes through here.
     ///
-    /// <para>The detach is the fix for <c>[TREERECLICK-2026-08-22]</c>. After a handoff the
-    /// panel shows a class that no tree node selected, yet the tree kept highlighting the
-    /// node the user picked earlier — the UI asserting a selection that is not what is on
-    /// screen. Worse, that lie was unrecoverable by the obvious gesture: an Avalonia
+    /// <para>Why the detach (<c>[TREERECLICK-2026-08-22]</c>): after a handoff the panel shows
+    /// a class that no tree node selected, and a tree still highlighting the node the user
+    /// picked earlier would assert a selection that is not what is on screen. Worse, that
+    /// lie would be unrecoverable by the obvious gesture: an Avalonia
     /// <c>ListBox</c> writes <c>SelectedItem</c> only when it CHANGES, so clicking the
-    /// still-highlighted node raised nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
-    /// never fired (<c>ObjectTreeViewModel.cs</c> <c>OnSelectedNodeChanged</c>) and no walk reached the pipe. Clearing
+    /// still-highlighted node raises nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
+    /// never fires (<c>ObjectTreeViewModel.cs</c> <c>OnSelectedNodeChanged</c>) and no walk reaches the pipe. Clearing
     /// the selection fixes both at once: the tree stops lying, and the next click on that
     /// node is a real change, so it loads.</para>
     ///
     /// <para>⛔ The fix does NOT belong in <c>ClassStructViewModel</c>, which is already
     /// correct — <c>LoadClassAsync</c> clears its dedupe key via <c>BeginLoad(nodeAddr:
     /// null)</c> (<c>ClassStructViewModel.cs</c>), which is exactly why clicking a
-    /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
+    /// DIFFERENT row always recovers. Nor does it belong in a pointer handler on the tree:
     /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
     /// swallows it, so that buys nothing this does not — and bypassing that
     /// dedupe is pinned against by <c>RepeatedSelectionOfSameNode_WalksOnlyOnce</c>.</para>
@@ -347,7 +347,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>[PATH-UI-LEGACY-QMARK] A Save-dialog file name from the module name: the stem, with every character
     /// a file name cannot hold made '_'. An older DLL reports non-ASCII characters as '?', which the Windows dialog
-    /// reads as a wildcard, so Save did nothing until the user retyped the name. Spaces are legal and kept.</summary>
+    /// reads as a wildcard, so Save would do nothing until the user retyped the name. Spaces are legal and
+    /// kept.</summary>
     internal static string SuggestedExportStem(string? moduleName, string fallback)
     {
         string stem = string.IsNullOrEmpty(moduleName) ? "" : Path.GetFileNameWithoutExtension(moduleName);
@@ -1733,8 +1734,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
-                // found the class default object first.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here would
+                // normally find the class default object first.
                 const string instanceAddr = "";
 
                 // Fast path: TRULY trivial functions only (no inputs AND no return).
@@ -1815,9 +1816,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Console panel wiring (Console = UFUNCTION(exec) discovery+invoke)
         //
         // Mirrors the InterestingFunctions handler bodies above. Duplicated
-        // intentionally for v1 — a future shared-helper extraction would
-        // touch GameClassFilter / InterestingFunctions / InterestingProperties
-        // / Console (4 callers), worth its own refactor pass.
+        // intentionally — a shared helper would touch every panel that has
+        // these handlers, worth its own refactor pass.
         // ─────────────────────────────────────────────────────────────
 
         Console.NavigateToFunction += async (className, funcName) =>
@@ -1888,7 +1888,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the dialog sends the class name, and the DLL
                 // picks the object at each FIRE with Aura::ResolveUserInstance (its contract is in Aura.h). An exact-name
-                // lookup here normally found the class default object first and left FIRE with nothing to send.
+                // lookup here would normally find the class default object first and leave FIRE with nothing to send.
 
                 if (Avalonia.Application.Current?.ApplicationLifetime is not
                     Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -1936,8 +1936,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
-                // found the class default object first.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here would
+                // normally find the class default object first.
                 const string instanceAddr = "";
 
                 var inputParams = funcMatch.InputParams.ToList();
@@ -2116,7 +2116,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // CTS (the Timer/CTS lambdas root the VM); dispose so they can't fire after teardown.
         InstanceFinder.Dispose();
         // PropertySearch is IDisposable (owns a debounce System.Threading.Timer);
-        // its Dispose had no caller before, leaking the timer until process exit.
+        // without this call the timer would leak until process exit.
         PropertySearch.Dispose();
         // Teleport owns a DispatcherTimer (auto-refresh) — dispose so it can't
         // tick after the window closes.
@@ -3294,8 +3294,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A live object of <paramref name="className"/> or of a class derived
     /// from it -- never a template -- or none (<see cref="LiveInstanceResult.Found"/> false): the object a navigate
     /// opens in Live Walker and a Locate searches a path from. One DLL answer for every such handler: an exact-name
-    /// lookup that skipped names starting <c>Default__</c> answered none for a class whose live objects are all of a
-    /// subclass, and handed over a class default object's default subobject, which is not named so.</summary>
+    /// lookup that skips names starting <c>Default__</c> would answer none for a class whose live objects are all of a
+    /// subclass, and would hand over a class default object's default subobject, which is not named so.</summary>
     private async Task<LiveInstanceResult> LiveInstanceAsync(string className)
     {
         var found = await _dump.FindLiveInstanceAsync(className);
@@ -3354,8 +3354,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private const string LocateRootGWorld = "GWorld", LocateRootGameEngine = "GameEngine";
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A Locate's top-bar line, written on every Locate: the object it searches
-    /// from, and the pick's note. Written only when there was a note, the previous Locate's warning stayed under the
-    /// next one's object. <paramref name="root"/> is where the path search starts.</summary>
+    /// from, and the pick's note. Were it written only when there is a note, the previous Locate's warning would stay
+    /// under the next one's object. <paramref name="root"/> is where the path search starts.</summary>
     internal static string LocateStatusText(LiveInstanceResult live, string className, string root) =>
         Helpers.AobMakerStatus.Say(KeyLocating, "Locating {0} ({1}) in {2}.", live.Name, live.ClassName, root)
         + PickNote(live, className);
@@ -3497,7 +3497,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// ALREADY has open, as an [ENABLE]/[DISABLE] memory record
     /// (<see cref="Services.CeInjectScriptGenerator"/>), so they never have to
     /// open the standalone <c>UE5CEDumper.CT</c> first. Cheat Engine holds one
-    /// table at a time, which is what made the <c>.CT</c> route a two-stage load;
+    /// table at a time, which is what makes the <c>.CT</c> route a two-stage load;
     /// the <c>.CT</c> stays shipped as the developer / no-AOBMaker path.
     ///
     /// Falls back to CE record XML on the clipboard when the AOBMaker plugin
@@ -3969,8 +3969,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
 
             StatusText = "Dumping classes...";
-            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post queued every report
-            // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
+            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post would queue every
+            // report twice, and the service's last one ("Done — N classes") would replace the final status below.
             var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
                 ? $"{p.Phase} ({p.Done}/{p.Total})"
                 : p.Done > 0 ? $"{p.Phase} ({p.Done})" : p.Phase);   // a phase with nothing counted yet
@@ -4101,7 +4101,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_engineState == null) return;
 
         // [EXPORT-STATUS-LATE-PROGRESS] Every status after the service goes through it; see ExportSymbolsAsync.
-        // This is the export the race was observed on: the service's last report replaced the final status below.
+        // Without it, the service's last report would replace the final status below.
         var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         try
         {

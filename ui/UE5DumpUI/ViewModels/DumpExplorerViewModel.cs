@@ -56,7 +56,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     [ObservableProperty] private string _filePath = "";
     [ObservableProperty] private string _searchText = "";
     /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function, 4 = Struct, 5 = Enum, 6 = Enumerator: the
-    /// panel's ComboBox order. The kinds added later are appended, so the older indices keep their meaning.</summary>
+    /// panel's ComboBox order. A new kind is appended, so the existing indices keep their meaning.</summary>
     [ObservableProperty] private int _selectedCategoryIndex;
     [ObservableProperty] private string _statusText =
         "Load a “Dump All” (.jsonl) file to browse its classes, structs, enums, properties and functions.";
@@ -580,9 +580,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
         // Object / Actor / Pawn / PlayerController, so a cross-game match is not a rare
         // edge — it is the guaranteed outcome of loading the wrong file, and it looks like
         // a successful match. Read the live identity HERE rather than fanning EngineState
-        // into the VM: SetConnected(true) can fire before an EngineState exists, and that
-        // ordering window is the known wrong-game bleed (todo.md C2) — a gate that races
-        // its own input would be the bug it is meant to prevent.
+        // into the VM: SetConnected(true) can fire before an EngineState exists, and in that
+        // ordering window the previous game's state bleeds in — a gate that races its own
+        // input would be the bug it is meant to prevent.
         string liveModule = "", livePeHash = "";
         try
         {

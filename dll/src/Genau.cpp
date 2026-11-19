@@ -221,12 +221,12 @@ static bool ValidateGObjects(uintptr_t addr) {
         //
         // Why it has to exist: the "Flat" row below is written ObjObjects-RELATIVE
         // ({0x00,0x08,0x0C}), which silently assumes a flat array is only ever handed to us at
-        // ObjObjects. That held only because five of ~56 GObjects patterns carry
-        // adjustment = -0x10 (GOBJ_V10 / AV1 / AV2 / RE2 / V12) and so offer ObjObjects as a
-        // second candidate. On UE 4.11 and 4.13 those five all MISS, every pattern that does hit
-        // resolves the BASE, and the ObjObjects-relative row then reads NumElements out of the
-        // OpenForDisregardForGC *bool* at +0x0C. That is why both titles failed with all 55
-        // patterns "no winner" — a preset gap, not a pattern gap.
+        // ObjObjects. That holds where a GObjects pattern carrying adjustment = -0x10 (GOBJ_V10 /
+        // AV1 / AV2 / RE2 / V12) hits, because each offers ObjObjects as a second candidate. On
+        // UE 4.11 and 4.13 those all MISS, every pattern that does hit resolves the BASE, and the
+        // ObjObjects-relative row then reads NumElements out of the OpenForDisregardForGC *bool*
+        // at +0x0C, so without this row such a title finds no winner at all — a preset gap, not
+        // a pattern gap.
         //
         // Ordered BEFORE UE4-Extended deliberately: otherwise whether a flat title is read as
         // flat depends on whether the FCriticalSection dwords at +0x20/+0x24 happen to look like
@@ -300,7 +300,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         return true;
     }
 
-    // --- Tier 2: Relaxed fallback (prevents regression) ---
+    // --- Tier 2: Relaxed fallback for an address no Tier 1 preset validates ---
     // Only check NumElements range + Objects pointer validity.
     // isFlat: objPtr is FUObjectItem[] directly (no chunk indirection).
     // maxOff/maxCOff/numCOff mirror the corresponding Tier 1 preset above (A/C<-Default,
@@ -322,13 +322,13 @@ static bool ValidateGObjects(uintptr_t addr) {
     // and has a plausible-looking count slot wins. On a UE5-Extended layout that is B, whose
     // numOff (+0x04) lands on ObjLastNonGCIndex: a real, in-range, but FROZEN count of the
     // startup disregard-for-GC set. The array is then enumerated only up to the CDOs and
-    // every runtime object is silently missing (DragonSword Awakening: 37,099 of 317,810).
+    // every runtime object is silently missing.
     //
     // Pass 1 requires the row's CHUNK fields to be self-consistent — the same numC/maxC check
     // Tier 1 applies, which is exactly what makes B reject on such a layout (its numCOff
-    // +0x0C is OpenForDisregardForGC, a bool that reads 0). Pass 2 is byte-identical to the
-    // historical behaviour, so nothing that resolves today can stop resolving: this only
-    // decides WHICH row wins when more than one would have.
+    // +0x0C is OpenForDisregardForGC, a bool that reads 0). Pass 2 drops that requirement, so
+    // the two passes accept exactly the addresses a single pass without it would: Pass 1
+    // only decides WHICH row wins when more than one would.
     for (int pass = 0; pass < 2; ++pass) {
         const bool requireChunks = (pass == 0);
         for (auto& L : relaxed) {
@@ -337,13 +337,13 @@ static bool ValidateGObjects(uintptr_t addr) {
             if (numElements < 0x1000 || numElements > 0x400000) continue;
 
             // Upper-bound sanity check on the MaxElements slot. A heap blob whose "num" slot
-            // happens to fall in range is still betrayed by its "max" slot: MindsEye's
-            // ICU-like locale blob read max = 0x0DE62600 (233M) because that dword is really
-            // the low half of a module pointer. Deliberately WEAKER than Tier 1 (which also
+            // happens to fall in range is still betrayed by its "max" slot: in an ICU-like
+            // locale blob, for one, that dword can be the low half of a module pointer and read
+            // in the hundreds of millions. Deliberately WEAKER than Tier 1 (which also
             // rejects `max < num`): we apply a loose ceiling only, and skip the check entirely
             // if the read fails. A title that raises gc.MaxObjectsInGame past our strict cap —
             // or whose max field is not where this row assumes — therefore still reaches the
-            // relaxed accept path exactly as it did before.
+            // relaxed accept path.
             int32_t maxElements = 0;
             if (Macht::ReadSafe(addr + L.maxOff, maxElements) &&
                 static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
@@ -1161,8 +1161,7 @@ static Genau::AnchorState CurrentAnchorState() {
 /// the impure part — asking Windows which module each address belongs to — here.
 ///
 /// Does NOT log: a pattern with N matches all resolving to the same foreign pointer would
-/// print N identical lines, and the first live run did exactly that -- 8 to 11 copies per
-/// pattern, five patterns deep. The caller accumulates and prints one line per pattern.
+/// print N identical lines. The caller accumulates and prints one line per pattern.
 static Genau::ModuleAdmission AdmitCandidate(uintptr_t resolved, bool producesAnchor,
                                              std::string* outModule) {
     if (!resolved) return Genau::ModuleAdmission::Accept;
@@ -1224,9 +1223,9 @@ static uintptr_t ScanForTarget(
                 // walks them until one validates. On the first match alone, a pattern whose
                 // first match fails validation would be logged as a MISS and then ERASED from
                 // the pattern set below — hiding it from the very path that would find the
-                // later, valid match — and the false "not found" PERSISTED over a good hint, so
-                // the failure oscillates: fail -> hint destroyed -> cold scan succeeds -> hint
-                // saved -> fail again.
+                // later, valid match — and the false "not found" would PERSIST over a good hint,
+                // so the failure would oscillate: fail -> hint destroyed -> cold scan succeeds ->
+                // hint saved -> fail again.
                 auto hintT0 = std::chrono::high_resolution_clock::now();
                 std::vector<uintptr_t> hintHits = Macht::AOBScanAll(hintSig->pattern);
                 auto hintT1 = std::chrono::high_resolution_clock::now();
@@ -1582,7 +1581,7 @@ static uintptr_t ScanForTarget(
                                    (unsigned long long)refusedAddr, refusedModule.c_str());
                     } else if (refusedWhy == Genau::ModuleAdmission::RefuseHeapAnchored) {
                         // [A2-HEAP-ANCHOR-TEXT] GObjects DID validate -- on the heap, where the data-scan fallback's
-                        // FUObjectArray lives. The unanchored text above said it never validated.
+                        // FUObjectArray lives. The unanchored text above says it never validated.
                         Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
                                    "— GObjects validated on the HEAP (a data-scan FUObjectArray lives in no module), "
                                    "so no module anchors this build; a match in a foreign module is not admissible",
@@ -2891,8 +2890,8 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     if (!fi || len < sizeof(VS_FIXEDFILEINFO)) return 0;
 
     // [VER-410-FIXED-VS-STRING] The fixed fields are the game's to set, and a game version can land inside 4.0-4.27 /
-    // 5.0-5.9 (a game at 4.5 on engine 4.15 read 405 and was scanned with 4.05's UFunction tail; at 5.1 it read 501 at
-    // tier 1). The engine's build string is stamped by UBT from Version.h whatever the fixed fields say, and
+    // 5.0-5.9 (a game at 4.5 on engine 4.15 reads 405 and would be scanned with 4.05's UFunction tail; at 5.1 it reads 501
+    // at tier 1). The engine's build string is stamped by UBT from Version.h whatever the fixed fields say, and
     // EngineBuildStringCode only answers for a UE<M> branch that agrees with its version half, so where the two name
     // different versions the string's is taken -- as a STRING reading (fromFixedField false): below the floor it
     // cannot corroborate itself, and refuses only beside an agreeing CrashReportClient. ProductVersion's string first,
@@ -2956,7 +2955,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
         }
         // The engine's own build string, version first (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`), in the
         // shapes the prefixes above miss: UBT stamps it from Version.h whatever the game put in the fixed fields, and
-        // without it an exe carrying a game version read nothing unless its string held a `++UE<n>+Release-` branch.
+        // without it an exe carrying a game version reads nothing unless its string holds a `++UE<n>+Release-` branch.
         // EngineBuildStringCode demands a UE<M> branch that agrees with the leading M.m, so a game's own version
         // string does not read as one -- an agreement the prefix path above does not check (it takes the M.m after
         // the prefix, wherever the prefix sits). `fromFixedField` stays false: a code read out of this string cannot
@@ -3102,8 +3101,8 @@ static bool HasPreUE4EpicCopyright() {
 //
 // The three string markers are found in ONE pass over the image, not one pass each. That
 // matters because this runs on the version==0 path, which is shared with stripped-tag but
-// fully SUPPORTED titles — Elliot is a 482 MB image, and six full naive sweeps over it would
-// be a visible regression on a game that must keep working.
+// fully SUPPORTED titles — an image can run to hundreds of MB, and six full naive sweeps over
+// it would visibly slow a game that must keep working.
 static int CountPreUE4Markers() {
     static const char* kMarkerNames[kPreUE4MarkerCount] = {
         "UnrealEngine3", "SeqAct_ (UE3 Kismet)", "PhysXLoader64 (PhysX 2.8)",
@@ -3241,9 +3240,8 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
     //
     // ⭐ They are read BEFORE either is used, so they can be compared. Two detectors that agree is
     // the strongest evidence this file can produce (working-lessons.md 1.4), and where they
-    // disagree the disagreement is itself the finding: both poisoned hint-cache entries this repo
-    // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
-    // have been caught here, because CrashReportClient reports 503 for both.
+    // disagree the disagreement is itself the finding: a hint-cache entry poisoned by a persisted
+    // runtime version raise shows up here wherever CrashReportClient reports the unraised version.
     const uint32_t crcVer = !crcPath ? DetectVersionFromCrashReportClient(exePath)
                           : *crcPath ? ReadUeVersionFromFile(crcPath, "CrashReportClient ProductVersion",
                                                              "CrashReportClient FileVersion")
@@ -3487,7 +3485,7 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
 }
 
 static VersionScanResult DetectVersionDetailed() {
-    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
+    // An empty path (GetModuleFileNameW failed) reads nothing from either source.
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     return DetectVersionDetailed(exePath, Macht::GetModuleBase(nullptr), Macht::GetModuleSize(nullptr));
@@ -4176,7 +4174,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     DynOff::FPROPERTY_OFFSET = bestProbe;
                     DynOff::FPROPERTY_ELEMSIZE = bestProbe - 0x10;
                     DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
-                    // Third writer of the same family: one expression, so it and Step 2.5 cannot
+                    // Another writer of the same family: one expression, so it and Step 2.5 cannot
                     // drift apart.
                     DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe, DynOff::bCasePreservingName));   // [VND583-11]
                 } else if (bestProbe >= 0) {
@@ -4667,8 +4665,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
-        // [VND583-02] UField::Next is only used by function walks here, and it was never
-        // measured in this mode. A failed probe keeps the default WITHOUT flipping validated:
+        // [VND583-02] UField::Next is only used by function walks here, and the steps above
+        // measure FField::Next, not it. A failed probe keeps the default WITHOUT flipping validated:
         // property walks do not use it, so the run's other offsets are still measured.
         const int ufieldNext = ProbeUFieldNextFProperty();
         if (ufieldNext > 0) {

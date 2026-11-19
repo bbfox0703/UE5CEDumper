@@ -266,7 +266,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public Helpers.AobMakerStatus AobMaker { get; }
 
     // ---- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace: armed by this panel's Start, read in the Call Trace tab.
-    // Experimental (T6): the controls show, a Start asks for a trace, and a kept trace is offered ([LF-EXPOFF-TRACE]),
+    // Experimental: the controls show, a Start asks for a trace, and a kept trace is offered ([LF-EXPOFF-TRACE]),
     // only while the experimental tabs are on.
     // The plan and its decisions: docs/live-funcs-timeline-plan.md.
 
@@ -346,7 +346,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanSnapshot));
     }
 
-    // ---- [LIVEFUNCS-STEP2] Parameter snapshots: chosen by name (T10), taken by the trace (T11-T14). The design is
+    // ---- [LIVEFUNCS-STEP2] Parameter snapshots: chosen by name, taken by the trace. The design is
     // docs/live-funcs-timeline-plan.md, "Step 2 design".
 
     /// <summary>The functions whose parameters the next traced Start copies, by name (FunctionTickSet's rules).</summary>
@@ -365,12 +365,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public int SnapshotBufferMb => 1 << SnapshotBufferExponent;
     public string SnapshotBufferText => Say("str.LF.Trace.BufferMb", SnapshotBufferMb);
 
-    /// <summary>The budget a Start sends (the DLL's defaults, provisional until measured live).</summary>
+    /// <summary>The budget a Start sends (the DLL's defaults).</summary>
     internal const int SnapshotPerFuncPerSec = 1000;
     internal const int SnapshotTotalPerSec = 10000;
 
-    // ---- [LIVEFUNCS-STEP3] Native stacks: chosen by name like the parameters, in a column of their own (D1), held in
-    // the same snapshot buffer (D4). The design is docs/live-funcs-step3-design.md.
+    // ---- [LIVEFUNCS-STEP3] Native stacks: chosen by name like the parameters, in a column of their own, held in
+    // the same snapshot buffer. The design is docs/live-funcs-step3-design.md.
 
     /// <summary>The functions whose native stack the next traced Start takes, by name (FunctionTickSet's rules).</summary>
     private readonly FunctionTickSet _stackChosen = new();
@@ -708,8 +708,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>The threshold: above this much of the game's time a second the stack estimate turns orange. An eighth of
     /// a 60 fps frame, if every capture of the second landed in one, which the budget's first-calls window allows.</summary>
     internal const double StackWarnMsPerSec = 2.0;
-    /// <summary>A capture's cost when no Stop has measured one: the plan's upper estimate. Games measured live
-    /// ([LIVEFUNCS-STEP3]) came out on both sides of it, so the line says it was assumed.</summary>
+    /// <summary>A capture's cost when no Stop has measured one: the plan's upper estimate. A real game's cost can fall
+    /// on either side of it ([LIVEFUNCS-STEP3]), so the line says it is assumed.</summary>
     internal const double StackAssumedUsPerCapture = 10.0;
 
     /// <summary>The captures a second the budget lets through, and the milliseconds of the game's time they take.</summary>
@@ -1182,9 +1182,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
             return;
         }
         // Max, not First: _allEntries is re-sorted in place by ApplyDiffAndFilter, and the
-        // Earliest-first toggle orders it by FirstSeq rather than by count — so First() made
-        // the captured baseline value depend on a VIEW setting. Max is what First() was
-        // reaching for and is independent of however the grid happens to be sorted.
+        // Earliest-first toggle orders it by FirstSeq rather than by count — so First() would make
+        // the captured baseline value depend on a VIEW setting. Max is the highest count First()
+        // would pick from a count-sorted list, independent of however the grid happens to be sorted.
         _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
         _baselineTruncated = LastTruncated;
         _baselineDistinct  = _lastDistinct - _lastPerFrameHidden;   // what it could have fetched; see LastTruncated
@@ -1572,7 +1572,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // is among the NEW rows shown would point at a table that does not hold it.
             bool newRowHidden = _allEntries.Any(e => e.IsNew && e.Count < _shownMinCalls);
             // newCount/increased are counted over the PAGE, so they cannot be reported
-            // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
+            // against the pre-cap table size — "3 NEW of 900" invites reading 900 as the
             // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}{UnloadedNote()}). "
@@ -1787,8 +1787,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         DropTraceClause();
     }
 
-    /// <summary>[LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they sent the user to a trace the
-    /// DLL no longer holds, and the switch turned off and on again composed them back. The Stop's own line stays.
+    /// <summary>[LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they would send the user to a trace
+    /// the DLL no longer holds, and turning the switch off and on again would compose them back. The Stop's own line stays.
     /// Cleared here rather than left to the status write, which raises nothing when the switch already took them
     /// off.</summary>
     private void DropTraceClause()

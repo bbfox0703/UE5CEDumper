@@ -19,8 +19,8 @@ namespace UE5DumpUI.Helpers;
 /// </summary>
 internal static class CrashReportFormatter
 {
-    /// <summary>Timestamp shape, unchanged from the original handler so existing
-    /// logs and this one read the same way.</summary>
+    /// <summary>Timestamp shape, the one existing crash.log entries carry, so
+    /// old and new entries read the same way.</summary>
     internal const string TimestampFormat = "yyyy-MM-dd HH:mm:ss";
 
     /// <summary>
@@ -63,8 +63,8 @@ internal static class CrashReportFormatter
         // phase marker is correct and the crash really is a startup crash. Wording it
         // as a finding ("the marker was never advanced") would put an accusation of a
         // second defect at the top of every such report, which is the same category
-        // of mistake as the hard-coded "startup crash" this whole formatter exists to
-        // undo: stating a guess as a fact.
+        // of mistake as a hard-coded "startup crash" label, the one this whole formatter
+        // exists to avoid: stating a guess as a fact.
         if (phase == AppPhase.Startup &&
             uptime.TotalSeconds > Constants.CrashStartupPhaseMaxSeconds)
         {

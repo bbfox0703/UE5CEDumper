@@ -283,8 +283,8 @@ public partial class SpcQueryViewModel : ViewModelBase
         foreach (var p in SnapshotPicks) p.RoundMode = value;
     }
 
-    /// <summary>Directional predicate options (display strings). v1 is
-    /// type-agnostic: directions only, no type/value entry.</summary>
+    /// <summary>Directional predicate options (display strings). Type-agnostic:
+    /// directions only, no type/value entry.</summary>
     public IReadOnlyList<string> PredicateOptions { get; } =
         new[] { "Any", "Unchanged", "Changed", "Increased", "Decreased" };
 
@@ -612,9 +612,9 @@ public partial class SpcQueryViewModel : ViewModelBase
     }
 
     /// <summary>Cancel an in-flight SPC query — called when the user navigates
-    /// away from the SPC tab. The in-memory intersection over ~1.8M rows is the
+    /// away from the SPC tab. The in-memory intersection over millions of rows is the
     /// heaviest experimental op; left running while another tab loads, it pegs a
-    /// core + allocates GBs (the tab-switch hang the user reported).</summary>
+    /// core + allocates GBs and hangs the tab switch.</summary>
     public void CancelPendingWork() { _queryCts?.Cancel(); _groupCts?.Cancel(); }
 
     [RelayCommand]

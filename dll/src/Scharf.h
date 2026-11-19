@@ -4,10 +4,11 @@
 // indicate a wrong FPROPERTY_OFFSET probe.
 //
 // Extracted so the walker's alignment heuristic can be unit-tested without
-// spinning up a real game process. The original inline check in Ubel.cpp
-// produced false-positive "Misaligned field" warnings on every UE 5.x game
-// (uint8 EnumProperty packed at sub-4-byte offsets, FName at 4-byte alignment
-// in non-CPN mode), drowning out real FPROPERTY_OFFSET regressions. Scharf
+// spinning up a real game process. A check that ignores the element size and
+// FName's real alignment raises false-positive "Misaligned field" warnings on
+// every UE 5.x game (uint8 EnumProperty packed at sub-4-byte offsets, FName at
+// 4-byte alignment in non-CPN mode), drowning out real FPROPERTY_OFFSET
+// regressions. Scharf
 // uses ElemSize and CasePreservingName mode to give a precise judgement
 // per type — the way a sharp-eyed examiner would.
 // ============================================================
@@ -79,8 +80,8 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // FName: 8 bytes (non-CPN) or 12 bytes (CPN) -- three int32, alignof 4 in BOTH modes.
     // `class FName` carries no alignas, so case-preserving does NOT raise its alignment.
     // The 8 seen in a TPair<FName, ptr> comes from the VALUE via max(keyAlign, valAlign),
-    // never from FName -- which is why returning 8 here corrupted TMap<uint8,FName>:
-    // ComputeMapValueOffset put the value at +8 where the engine puts it at +4.
+    // never from FName -- returning 8 here would corrupt TMap<uint8,FName>:
+    // ComputeMapValueOffset would put the value at +8 where the engine puts it at +4.
     // [VND583-03] ONE version exception, applied by the caller, not here: stock non-CPN 4.11-4.21
     // put FName in a union with uint64 CompositeComparisonValue, so alignof(FName) was 8 there.
     // Ubel::ResolveElementAlignment asks DynOff::FNameAlignFor before it reaches this arm.

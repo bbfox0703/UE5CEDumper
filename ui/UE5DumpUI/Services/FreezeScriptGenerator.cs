@@ -172,8 +172,7 @@ public static class FreezeScriptGenerator
         // Close ONLY on a start that reported an outcome, froze something, and froze
         // ALL of it. nil (old helper), 0 (armed, empty) and a capped pool all keep the
         // window up, because each just printed something the user needs to read —
-        // closing over the cap notice would put it straight back where the abandonment
-        // message was: written, and never seen.
+        // closing over the cap notice would leave it written, and never seen.
         CeLuaHygiene.AppendCloseOnSuccess(
             sb, "sok2 == true and scount ~= 0 and not scapped");
         Line(sb);
@@ -357,7 +356,7 @@ public static class FreezeScriptGenerator
         => !string.IsNullOrEmpty(definingClassName) ? definingClassName! : (className ?? "");
 
     /// <summary>
-    /// Whether the given UE property type is supported by v1 of the
+    /// Whether the given UE property type is supported by the
     /// freeze pipeline. Used by the row-level button enablement so
     /// users don't get a script that the helper would reject.
     /// Support is a property of the TYPE, so no size is needed —

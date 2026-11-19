@@ -59,13 +59,12 @@ public sealed class FreezeValueDialog : Window
     /// <c>"true"</c>). Null when the user cancels.</summary>
     public string? ValueLiteral { get; private set; }
 
-    // ⚠ NO DEFAULT ON `purpose`, deliberately. A default is the shape the original defect
-    // had: the Force flow was `new FreezeValueDialog(match)` and silently inherited every
-    // word of the Freeze wording, including CFG-block advice that means nothing for a
-    // DLL-held value. Both call sites now state which flow they are, and a third that
-    // forgets is a COMPILE ERROR rather than a dialog quietly lying about itself —
-    // strictly stronger than any test, and the lesson working-lessons.md §2.2 recorded
-    // ("make a wired-through field required"). [PARAMSSORT-2026-08-22 sweep]
+    // ⚠ NO DEFAULT ON `purpose`, deliberately. With a default, a Force call site written as
+    // `new FreezeValueDialog(match)` silently inherits every word of the Freeze wording,
+    // including CFG-block advice that means nothing for a DLL-held value. Every call site
+    // states which flow it is, and one that forgets is a COMPILE ERROR rather than a dialog
+    // quietly lying about itself — strictly stronger than any test (working-lessons.md §2.2:
+    // "make a wired-through field required"). [PARAMSSORT-2026-08-22 sweep]
     public FreezeValueDialog(PropertySearchMatch match, Purpose purpose)
     {
         _match = match;
@@ -260,9 +259,8 @@ public sealed class FreezeValueDialog : Window
     /// Freeze one is unreachable from Force — there is no generated CFG block to edit.
     /// <para><b>Required, deliberately no default.</b> A warning that does not say how to
     /// narrow the scope is only an apology (the property
-    /// <c>ScopeWarning_FiresWhenTheFieldIsInherited</c> has pinned since it was written),
-    /// and a default would let a new call site silently drop it — which is the exact
-    /// shape of the defect being fixed. Callers with genuinely no advice pass "".</para>
+    /// <c>ScopeWarning_FiresWhenTheFieldIsInherited</c> pins), and a default would let a
+    /// new call site silently drop it. Callers with genuinely no advice pass "".</para>
     /// </param>
     internal static string? ScopeWarning(PropertySearchMatch match, string narrowHint)
     {

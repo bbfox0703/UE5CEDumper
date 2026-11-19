@@ -299,9 +299,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public Func<PropertySearchMatch, Task<string?>>? FreezeValuePrompt { get; set; }
 
     /// <summary>
-    /// Last status message from a freeze-script attempt. Bound to the
-    /// existing <see cref="StatusText"/> for now — separated only so the
-    /// freeze flow can overwrite the same chrome the search uses.
+    /// Prompt for a value, generate a freeze script for the row and push it to CE
+    /// through AOBMaker. The outcome is reported on <see cref="StatusText"/>, the
+    /// same line the search uses; a cancelled prompt says nothing.
     /// </summary>
     [RelayCommand]
     private async Task CopyFreezeScriptAsync(PropertySearchMatch? match)
@@ -373,9 +373,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: a dead pipe
-        // (inside the cooldown, or with Cheat Engine closed while the value dialog was open) read as a rejection, and
-        // no reply read as "not sent" although the plugin may have made the record after the wait gave up.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: otherwise a dead
+        // pipe (inside the cooldown, or with Cheat Engine closed while the value dialog was open) reads as a rejection,
+        // and no reply reads as "not sent" although the plugin may have made the record after the wait gave up.
         StatusText = pushed.Created
             ? $"Freeze script created in CE: {description}"
             : pushed.TimedOut

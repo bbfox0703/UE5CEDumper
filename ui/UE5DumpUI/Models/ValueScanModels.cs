@@ -318,12 +318,11 @@ public class GroupSlotMatch
     /// <summary>Every leaf this slot kept, BY NAME — empty until fetched on demand
     /// via <c>query_group_slot_leaves</c> (live pipe sessions only).
     ///
-    /// Exists because a row can only display one assignment. On the DumperTest
-    /// sample, slot 0 kept {Health.CurrentValue, TickCount} and slot 1 kept 36
-    /// leaves including FrozenInt; the row showed the Health pair, and the only
-    /// trace of the rest was <see cref="MatchedOffsets"/> — raw integers that
-    /// cannot tell anyone that 1308 is <c>FrozenInt</c>. Reported as a missed
-    /// match four separate times.
+    /// Exists because a row can only display one assignment. A slot can keep dozens
+    /// of leaves while the row shows one pair, and without this the only trace of
+    /// the rest is <see cref="MatchedOffsets"/> — raw integers that cannot tell
+    /// anyone that 1308 is <c>FrozenInt</c>, so the field the user wanted reads as
+    /// a missed match.
     ///
     /// Each entry is itself a <see cref="GroupSlotMatch"/> carrying this slot's
     /// predicate and owner, so every per-slot handoff (Live Walker / Copy / Pivot
@@ -383,7 +382,7 @@ public class GroupSlotMatch
     // element's heap address at all and set Addr = AddrPlusOffset(objAddr, 0) — the
     // OWNING OBJECT's base. Inferring "deep leaf" from `FieldOffset == 0` there would
     // print the UObject header as the place the value lives: a plausible, copyable,
-    // WRONG address, which is worse than the obviously-unknown 0x0 it replaced. So the
+    // WRONG address, which is worse than an obviously-unknown 0x0. So the
     // producer states it explicitly instead of the consumer guessing.
     private string Locator =>
         FieldOffset != 0                                     ? OffsetHex
@@ -403,7 +402,7 @@ public class GroupSlotMatch
     // Detail-row caption: "Str  24 → 0x20  (IntProperty)" once locked (or
     // "Str  ↑ increased → 0x20 ..." for a prev-value slot); unlocked it names the
     // DISPLAYED field and says how many others matched the same value, because a bare
-    // "36 candidate offset(s)" told a user nothing about which fields those were.
+    // "36 candidate offset(s)" tells a user nothing about which fields those are.
     public string DisplayLabel =>
         Locked
             ? $"{(string.IsNullOrEmpty(FieldName) ? "?" : FieldName)}  {Criterion}{LocatorSuffix}  ({FieldType})"

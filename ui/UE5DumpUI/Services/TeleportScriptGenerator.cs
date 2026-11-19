@@ -187,7 +187,7 @@ public static class TeleportScriptGenerator
         {
             // [W2-MARKER-PARENTREL] contract 4: paramsData[178] carries pose flags, bit 0 = the pose came from the raw
             // parent-relative fallback (an attached pawn whose world-space read failed). Its numbers are NOT world
-            // coordinates, and the pose card's "do not save these" warning never reached CE -- a genuine problem the
+            // coordinates, and the pose card's "do not save these" warning does not reach CE -- a genuine problem the
             // user must see, so an ungated message, and hadError keeps the window open.
             Line(sb, "  if not hadError and code == 0 then");
             Line(sb, "    local pb = readBytes(mb + 0x3DA, 1, true)   -- paramsData[178]: pose flags");
@@ -241,11 +241,11 @@ public static class TeleportScriptGenerator
                 : "      'while the game is responding (focus it, or turn on Keep Foreground), or once off ' ..");
             Line(sb, "      'the vehicle or mount.')");
         }
-        // Only -7 had a message, so every other negative code (-6 empty marker, -8 no
-        // hit, -9 no cursor, ...) reached dbg() — silent at the shipped DEBUG==0 — left
-        // hadError false, and closed the window. "Recall marker 2" on an empty slot
-        // looked exactly like a successful recall. Report the rest generically rather
-        // than inventing per-code prose the DLL can outgrow.
+        // Every other negative code (-6 empty marker, -8 no hit, -9 no cursor, ...) is
+        // reported here. Without this arm it reaches only dbg() — silent at the shipped
+        // DEBUG==0 — leaves hadError false, and closes the window, so "Recall marker 2" on
+        // an empty slot looks exactly like a successful recall. Reported generically rather
+        // than with per-code prose the DLL can outgrow.
         Line(sb, "  elseif not hadError and code < 0 then");
         Line(sb, "    hadError = true");
         Line(sb, $"    showMessage('[Teleport] {label} failed (code ' .. tostring(code) .. ')')");

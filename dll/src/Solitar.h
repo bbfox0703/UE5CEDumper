@@ -83,11 +83,10 @@ inline uint8_t TrainerMaskFor(const BoolBits& b) {
 }
 
 // A bool property's layout from the {FieldSize, ByteOffset, ByteMask, FieldMask} quads read at each probed offset,
-// in probe order (`readOk[i]` false = that read faulted). A packed layout at ANY offset is taken first, under the rule
-// this probe has always applied -- one FieldMask bit, a ByteOffset inside the 8-byte bitfield word, a one-bit
-// ByteMask -- so a packed bool resolves exactly as it did. Only when there is none does Ubel::ClassifyBoolLayout's
-// Native verdict count. Anything else is refused: the all-zero a missed probe reads is never native, and a whole-byte
-// write there corrupts up to 7 sibling bools.
+// in probe order (`readOk[i]` false = that read faulted). A packed layout at ANY offset is taken first -- one
+// FieldMask bit, a ByteOffset inside the 8-byte bitfield word, a one-bit ByteMask. Only when there is none does
+// Ubel::ClassifyBoolLayout's Native verdict count. Anything else is refused: the all-zero a missed probe reads is
+// never native, and a whole-byte write there corrupts up to 7 sibling bools.
 // This precedence deliberately differs from Ubel's walk probe (ProbeBoolLayout, behind walk_instance's bool_native /
 // bool_mask), which takes the FIRST offset that classifies either way. Taking a native verdict ahead of a packed layout
 // further down the probe would turn a packed bool whose base offset reads native-looking bytes into a whole-byte write;
@@ -160,8 +159,8 @@ bool IsGodModeWanted();
 // resolvable = false when no pawn).
 int32_t GetState(State& out);
 
-// General primitive (docs/godmode-spec.md §5.4) — v2 hook for "force any bool"
-// from Property Search. Resolve + read-modify-write one reflected FBoolProperty
+// General primitive (docs/godmode-spec.md §5.4) for "force any bool": Solide
+// forces a bool field through it. Resolve + read-modify-write one reflected FBoolProperty
 // on an object -- its bit, or a native bool's whole byte (PickBoolBits). `on` is
 // the DESIRED VALUE OF THE PROPERTY. One-shot (no re-assert). Returns the observed
 // property value (1/0) or a negative ProtectResult.

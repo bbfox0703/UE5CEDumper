@@ -161,7 +161,7 @@ void SetInvokeTimeoutMs(int32_t timeoutMs);
 int32_t GetInvokeTimeoutMs();
 
 /// Total number of times HookedProcessEvent has fired since this process
-/// started. Used by post-install validation (build 648+) to confirm the
+/// started. Used by post-install validation to confirm the
 /// hook was actually placed on UObject::ProcessEvent and not on an
 /// adjacent UObject virtual: a real PE hook fires many times per second
 /// during normal gameplay, a wrong hook fires 0 times. Thread-safe.

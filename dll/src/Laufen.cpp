@@ -510,8 +510,8 @@ int32_t ResetKnob(int32_t knobId) {
         k.active = false;
         k.multiplier = 1.0;
         k.capturedPawn = 0;
-        // Decide under the SAME s_mutex hold as the clear — a stale re-read in a
-        // second scope was the race window.
+        // Decide under the SAME s_mutex hold as the clear — a re-read in a second
+        // scope leaves a race window in which it goes stale.
         anyActive = AnyActiveLocked();
     }
     // Join with s_mutex RELEASED (WorkerLoop takes s_mutex per tick) but

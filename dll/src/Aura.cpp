@@ -792,7 +792,7 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
-    // --- Tier 4: RELAXED fallback (preserves current behavior, prevents regression) ---
+    // --- Tier 4: RELAXED fallback ---
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
@@ -834,8 +834,8 @@ static bool DetectLayout(uintptr_t addr) {
     // B is tried first: the heap-pointer check below cannot tell them apart, so on a
     // UE5-Extended array B wins and reads NumElements out of +0x04 — which there is
     // ObjLastNonGCIndex, a real but FROZEN count of the startup disregard-for-GC set. The
-    // array is then enumerated only up to the CDOs (DragonSword Awakening: 37,099 of
-    // 317,810 objects) and no runtime object is ever visible to any scan.
+    // array is then enumerated only up to the CDOs (a small fraction of the objects)
+    // and no runtime object is ever visible to any scan.
     //
     // The discriminator is B's own chunk counts (Tier 1 "Back4Blood": MaxChunks@+0x08,
     // NumChunks@+0x0C). On a genuine B layout those are live chunk counts; on a
@@ -1497,9 +1497,9 @@ static void DetectItemSize() {
             //
             // A healthy pool has few nulls (genuinely free slots). Nulls at or above the
             // valid count, with essentially no bad reads, is the signature -- so say so.
-            // This does NOT reject the result: the candidate list is the fix, and a
+            // This does NOT reject the result: the candidate list is the remedy, and a
             // legitimately sparse chunk would trip this too. It exists so the NEXT item
-            // size we have not met is loud on the first log instead of silent for months.
+            // size we have not met is loud on the first log instead of silent.
             if (bestNull >= bestCount && bestCount > 0 && bestBad * 4 < bestCount) {
                 LOG_WARN("ObjectArray: stride %d accepted with null=%d >= valid=%d and bad=%d "
                          "-- if the real item is a MULTIPLE of %d whose extra field is lazily "
@@ -1831,14 +1831,9 @@ uintptr_t FindByName(const std::string& name) {
 
 uintptr_t FindByFullName(const std::string& fullName) {
     // Resolve an object written as a PATH ("/Script/Engine.Actor"), as opposed to
-    // FindByName's bare-FName match ("Actor").
-    //
-    // This was a stub returning 0 from the day it was declared, while `Aura.h`,
-    // `docs/dll-spec.md` and `UE5_FindObject`'s own `fullPath` parameter name all
-    // advertised it as working. Nothing called it, so nothing failed loudly — the
-    // path capability simply did not exist, and `ue5_dissect.lua`'s
-    // `createFromPath` (whose interactive dialog is PRE-FILLED with
-    // "/Script/Engine.Actor") could never have resolved anything.
+    // FindByName's bare-FName match ("Actor"). `ue5_dissect.lua`'s `createFromPath`
+    // (whose interactive dialog is PRE-FILLED with "/Script/Engine.Actor") reaches it
+    // through `UE5_FindObject` and FindByNameOrPath.
     //
     // Two-stage match, and the order is the point: `Ubel::GetFullName` walks the
     // whole Outer chain and allocates, so running it on all ~85K objects would make
@@ -1873,8 +1868,8 @@ uintptr_t FindByNameOrPath(const std::string& query) {
     // the more specific request: "/Game/Maps/Foo.Foo" and "/Game/Other/Foo.Foo"
     // share the leaf name "Foo", and answering either with whichever FName the
     // GObjects walk reached first is a wrong answer that looks like a right one.
-    // Bare names keep their old single-pass cost — LooksLikeObjectPath is false, so
-    // FindByName runs directly and nothing about the historical behaviour changes.
+    // Bare names cost a single pass — LooksLikeObjectPath is false, so FindByName
+    // runs directly.
     if (LooksLikeObjectPath(query)) {
         if (uintptr_t byPath = FindByFullName(query)) return byPath;
         // Deliberate fallback: an object whose FName legitimately contains a '.'
@@ -2394,7 +2389,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         const bool isCdo = tpl.kind == TemplateKind::ClassDefault;
         const bool isTemplate = tpl.kind != TemplateKind::None;
 
-        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
+        if (!v.derives) {   // the partial-name rule of the user-facing lookups: the first non-template, else the first
             // [INVOKE-PICK-GARBAGE] A destroyed object is no pick here either, not even the last resort.
             if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) { ++garbagePassed; continue; }
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
@@ -3408,9 +3403,9 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
              count, static_cast<unsigned long long>(addr));
 
     // Per-call deadline so a slow / huge-class game doesn't hang the UI.
-    // 15s is comfortable on first scan even for 400K-object games (FF7
-    // Rebirth) — first scan primes the per-class cache, subsequent scans
-    // finish in ~1s. 5s was too tight for first-scan on big games.
+    // 15s leaves room for the first scan of a game with hundreds of thousands
+    // of objects — the first scan primes the per-class cache, so later scans
+    // are far faster.
     constexpr int kDeadlineMs = 15000;
     auto t0 = std::chrono::steady_clock::now();
 
@@ -3809,7 +3804,7 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
 // Per-class cache of pointer-shaped fields and Object array fields.
 // Built lazily, mirrors the container cache pattern.
 //
-// Coverage (v2 + v3):
+// Coverage:
 //   - Direct ObjectProperty / ClassProperty / InterfaceProperty
 //     (8-byte UObject* read directly at field+0)
 //   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
@@ -4321,7 +4316,7 @@ static InvocationListView LocateInvocationList(uintptr_t mcdAddr) {
         if (Serie::GetString(comp).empty()) continue;
 
         if (best.found) {
-            // Never observed; if it ever happens the first (historical) layout wins and the
+            // Not expected; if it happens the first candidate (pad 0) wins and the
             // ambiguity is on the record rather than silently resolved.
             LOG_WARN("LocateInvocationList: BOTH pad=%d and pad=%d validate at 0x%llX — "
                      "keeping pad=%d", best.pad, pad,
@@ -4734,7 +4729,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // FWeakObjectPtr against `target`. Skipped silently when AOB scan
     // failed or UE version is unsupported.
     if (static_cast<int>(matches.size()) < maxResults && !deadlineHit &&
-        sparseEra && !sparseSkipped)   // [R7-S2] was `>= 500`: 4.23-4.27 have sparse delegates too
+        sparseEra && !sparseSkipped)   // [R7-S2] 4.23-4.27 have sparse delegates too, not only 5.x
     {
         uintptr_t storage = Genau::FindSparseDelegateStorage();
         if (storage) {
@@ -5641,8 +5636,8 @@ PropertySearchResult SearchProperties(
             match.classPath   = definingPath;
             // SuperName is the defining class's super (if we can read it
             // cheaply). For non-iterated defining-classes we'd need to
-            // read it via DynOff::USTRUCT_SUPER -> name; skip for now
-            // since it's not load-bearing for the dedup story.
+            // read it via DynOff::USTRUCT_SUPER -> name; skipped,
+            // since it's not load-bearing for the dedup.
             match.superName   = (definingAddr == obj) ? ci.SuperName : "";
             match.propName    = field.Name;
             match.propType    = field.TypeName;
@@ -5895,8 +5890,8 @@ PropertySearchResult SearchProperties(
 
         // Fall back to the CDO where nothing live exists — a default value is still the only
         // truth available, and dropping the preview entirely would lose information. But it
-        // must not be presented as a live reading: that silent substitution IS the defect
-        // this fix removes, so the row says which one it got (marked in 2c below).
+        // must not be presented as a live reading, so the row says which one it got (marked
+        // in 2c below).
         // Exact > derived > class default, decided by Aura::ChoosePreviewSource so the
         // ordering is stated in a header a test can compile. [CDOSCOPE-2026-08-20]
         std::unordered_map<uintptr_t, PreviewSource> previewSourceOf;
@@ -5939,7 +5934,7 @@ PropertySearchResult SearchProperties(
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
     // The stop reason is in the line, not just the counts. "3 matches from 8
-    // classes (scanned 24445 objects)" was self-contradictory and read as a
+    // classes (scanned 24445 objects)" contradicts itself and reads as a
     // completed sweep; "scanned 8 objects, STOPPED at the 3-row cap" cannot.
     Sein::Info("PIPE:search",
                  "SearchProperties '%s': %d matches from %d classes (scanned %d objects)%s",
@@ -6383,7 +6378,7 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
 
     // A full page means the walk collected the cap and there were more classes to
     // collect — same contract (and the same one-index-of-slack ambiguity) as
-    // SearchByName / SearchProperties. `totalClasses` now carries the real count, so a
+    // SearchByName / SearchProperties. `totalClasses` carries the real count, so a
     // truncated result reports "shown of total" honestly.
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
@@ -6577,10 +6572,9 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
         }
     }
 
-    // "from %d classes" read as PROVENANCE and was the EXAMINED count: on P3R it
-    // said "9760 entries from 2293 classes" while ~889 classes actually produced a
-    // row, overstating coverage 2.6x. Both numbers now appear, each labelled with
-    // the question it answers. (FUNCDENOM-2026-08-26)
+    // A lone "from %d classes" reads as PROVENANCE while it is the EXAMINED count, which
+    // overstates coverage wherever many examined classes produce no row. Both numbers
+    // appear, each labelled with the question it answers. (FUNCDENOM-2026-08-26)
     //
     // ⚠ APPEND-ONLY on the format string. Nothing in dll/src carries
     // _Printf_format_string_ or __attribute__((format)), so MSVC diagnoses no
@@ -6600,7 +6594,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     return result;
 }
 
-// --- v2a: Blueprint ubergraph entry-offset table ---
+// --- Blueprint ubergraph entry-offset table ---
 //
 // Every BP event compiles into the single ExecuteUbergraph_<BP> function; each
 // event's stub UFunction calls it with an int "entry offset" into the bytecode:
@@ -6651,7 +6645,7 @@ BuildUbergraphEntryTable(uintptr_t classAddr, uintptr_t ubergraphAddr) {
     return table;
 }
 
-// v2 read/write: is the FProperty reference at byte offset p (its pointer
+// Read/write: is the FProperty reference at byte offset p (its pointer
 // position; the variable opcode sits at p-1) the DESTINATION of an assignment?
 // Detects the common direct forms (opcode values from UE EExprToken):
 //   EX_LetBool(0x14)/MulticastDelegate(0x43)/Delegate(0x44)/Obj(0x5F)/WeakObjPtr(0x60)
@@ -6788,7 +6782,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
             x.writeCount     = writeCount;
             x.kind = (precByte == 0x01) ? "instance"
                    : (precByte == 0x00) ? "local" : "ref";
-            // v2a: retain match offsets only for ubergraph hits (attributed to
+            // Retain match offsets only for ubergraph hits (attributed to
             // events in a serial post-pass). funcName.rfind(prefix,0)==0 = starts_with.
             if (funcName.rfind("ExecuteUbergraph", 0) == 0)
                 x.ubergraphOffsets = offs;  // copied (offs is reused next iter)
@@ -6805,7 +6799,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
         out.stats.functionsWithScript += tr.funcsWithScript;
     }
 
-    // v2a: attribute ubergraph hits to BP events (serial — the entry-table build
+    // Attribute ubergraph hits to BP events (serial — the entry-table build
     // walks sibling UFunctions). Cache per ubergraph address; several refs can
     // share one. Attribution = the event whose entry offset is the largest <= P.
     {
@@ -7238,10 +7232,10 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
     // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
     // `(flags & FUNC_Native) == 0` would refuse every function on any build where the
-    // FunctionFlags offset does not resolve, deleting Path 2 wholesale to fix a case we
-    // have no evidence of there. So: refuse only when the flags were READ and say script.
-    // The confirmed failure has readable flags by construction — the UI rendered
-    // "BC,BP,Const" for it, and that string is derived from these very bits.
+    // FunctionFlags offset does not resolve, deleting Path 2 wholesale on a build with no
+    // evidence of the case. So: refuse only when the flags were READ and say script. The
+    // case this guards has readable flags by construction — the UI shows "BC,BP,Const"
+    // for such a function, and that string is derived from these very bits.
     constexpr uint32_t FUNC_Native = 0x00000400;
     const uint32_t funcFlags = ReadFunctionFlags(funcAddr);
     if (funcFlags != 0 && (funcFlags & FUNC_Native) == 0)
@@ -7478,10 +7472,10 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // puts an 8-byte access detector in front of it (DynOff::kDelegateDetectorPad). This
     // path has no ElementSize to derive that from, so LocateInvocationList derives it from
     // the object's own invariants.
-    // ⛔ Do NOT restore `if (...) invNum = 0;` here. Clamping an unreadable or implausible
-    // header to zero is what made a delegate whose bIsBound byte READ 1 report
-    // "(0 bindings, sparse)" — the code had positive evidence the delegate WAS bound and
-    // printed the opposite. listRead stays false and the renderer says so instead.
+    // ⛔ Do NOT add `if (...) invNum = 0;` here. Clamping an unreadable or implausible
+    // header to zero makes a delegate whose bIsBound byte READS 1 report
+    // "(0 bindings, sparse)" — positive evidence the delegate IS bound, printed as the
+    // opposite. listRead stays false and the renderer says so instead.
     const InvocationListView inv = LocateInvocationList(mcdAddr);
     if (!inv.found) {
         LOG_WARN("WalkSparseDelegateBindings: no coherent InvocationList at 0x%llX at either "
@@ -9033,7 +9027,7 @@ ValueScanResult ScanForValue(
         // the object itself — a struct-array element lives in the TArray's OWN heap
         // buffer, outside that window, so a native (non-UPROPERTY) value inside a
         // 0-reflected-field element struct (e.g. CustomAbilityEffectDuration's elapsed
-        // seconds) was unreachable by both the reflected deep pass (no fields to emit)
+        // seconds) is unreachable by both the reflected deep pass (no fields to emit)
         // and the object-body native pass. When Deep + Native-C are BOTH on, walk each
         // struct-element container of this class and probe each element's holes (the
         // bytes its element struct does not reflect — the whole element for a 0-field
@@ -9781,8 +9775,8 @@ Radar::GroupSlotMatch GroupSlotMatchFromMeta(const GroupLeafMeta& meta, uint32_t
 
 // The key a group leaf's descriptor is interned under. The TYPE is part of it: a native-C hole emits one leaf per width
 // that satisfies a slot, all named "<raw@0xNN>" at one offset, and refine reads each leaf's width from its descriptor --
-// keyed without the type, every width got the first one's (Int16) and was refined and shown as that. A reflected leaf has
-// one type per class / name / offset, so its descriptors are as before. [GROUP-RAW-WIDTH-INTERN]
+// keyed without the type, every width would get the first one's (Int16) and be refined and shown as that. A reflected
+// leaf has one type per class / name / offset, so the type does not split its descriptors. [GROUP-RAW-WIDTH-INTERN]
 std::string GroupDescInternKey(const std::string& className, const GroupLeafMeta& meta) {
     std::string key = className; key += '|'; key += meta.fieldName;
     key += '|'; key += std::to_string(meta.offset);
@@ -10258,8 +10252,8 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
     const size_t nSlots = slots.size();
     // Set if any object had more satisfying leaves than the per-slot cap. Reported once
     // at the end: a truncated set is still a correct FIRST scan, but a later
-    // Changed/Decreased refine can only re-read what was kept -- which is how a cap of 8
-    // hid every derived-class field behind AActor's.
+    // Changed/Decreased refine can only re-read what was kept -- so a small cap can hide
+    // every derived-class field behind AActor's.
     bool capHit = false;
     if (nSlots < 2) return result;                       // a group needs >= 2 values
     for (const auto& sp : slots)
@@ -10422,7 +10416,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
             if (std::chrono::steady_clock::now() - t0 > kDeadline) { result.stats.deadlineHit = true; break; }
         }
         // Newest-first (coupled with native-C in the UI): walk high-index first so
-        // that when the deadline truncates a huge game (FF7 Rebirth ~433K
+        // that when the deadline truncates a huge game (hundreds of thousands of
         // objects), the survivors are the most-recently-allocated objects — the
         // just-spawned UI widgets / actors that hold native values — rather than
         // low-index CDOs/templates. `idx` is the true GObjects index used everywhere.
@@ -10570,11 +10564,10 @@ ValueScanStats RefineGroupCandidates(
         if (gc.slotMatches.size() != nSlots) continue;
         if (gc.instanceIdx >= instances.size()) continue;   // defensive
         bool alive = true;
-        // Per-slot drop tally for the first few candidates. A refine that prunes to zero
-        // says only "0 surviving" today, which is the same output for six different causes:
-        // the leaf could not be read, its width has no target, the predicate rejected it, or
-        // the survivors could not form a distinct assignment. Three separate hypotheses were
-        // written and abandoned against that silence on 2026-08-05 -- so it now counts.
+        // Per-slot drop tally for the first few candidates. Without it a refine that prunes to
+        // zero says only "0 surviving", the same output for different causes: the leaf could
+        // not be read, its width has no target, the predicate rejected it, or the survivors
+        // could not form a distinct assignment.
         const bool diag = (dbgCandidates < kDiagCandidates);
         int dRead = 0, dWidth = 0, dNoTarget = 0, dPredicate = 0, dKept = 0, dEntered = 0;
         int dReanchor = 0;   // dropped because its container moved/shrank under it
@@ -10821,9 +10814,9 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 
     if (result.scanned <= 0) return result;
 
-    // Parallel capture: the chunk's objects are walked across worker threads — the
-    // single-threaded walk was the dominant cost on huge games (FF7 Rebirth ~433K
-    // objects: snapshot ran 10+ min and didn't finish). Every per-object dependency
+    // Parallel capture: the chunk's objects are walked across worker threads — a
+    // single-threaded walk is the dominant cost on huge games (hundreds of thousands
+    // of objects). Every per-object dependency
     // is parallel-safe: Ubel's class/name/struct caches are mutex-guarded and return
     // value copies (the same primitives ScanForValue already parallelizes), the
     // Native-C GuessGapTypes pass uses a thread_local buffer, and Macht reads are

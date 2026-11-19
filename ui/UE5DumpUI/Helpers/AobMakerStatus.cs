@@ -22,8 +22,8 @@ public sealed partial class AobMakerStatus : ObservableObject
     private static readonly TimeSpan ProbeCooldown = TimeSpan.FromSeconds(5);
 
     /// <summary><see cref="Environment.TickCount64"/> when the last probe started; null before the first. A monotonic
-    /// clock: on the wall clock a step back (NTP, or by hand) made the time since the last probe negative, and nothing
-    /// probed again until the clock caught up.</summary>
+    /// clock: on the wall clock a step back (NTP, or by hand) makes the time since the last probe negative, and nothing
+    /// probes again until the clock catches up.</summary>
     private long? _lastProbeTick;
 
     private bool InCooldown => _lastProbeTick is long t
@@ -82,9 +82,8 @@ public sealed partial class AobMakerStatus : ObservableObject
     }
 
     /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The probe still waiting on the pipe, if any. The cooldown starts when
-    /// a probe STARTS, so without this a caller inside it got the answer from before the probe: found by that row's
-    /// review 1 and reproduced by a test, a Freeze clicked while a Search's probe waited opened its value dialog over
-    /// a pipe that was already gone.</summary>
+    /// a probe STARTS, so without this a caller inside it gets the answer from before the probe: a Freeze clicked
+    /// while a Search's probe waits opens its value dialog over a pipe that is already gone.</summary>
     private Task<bool>? _probe;
 
     /// <summary>Probe the pipe now and publish the result. A probe already waiting on the pipe answers this caller

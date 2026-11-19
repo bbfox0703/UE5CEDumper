@@ -144,9 +144,9 @@ inline bool SleepSliced(int totalMs, const std::atomic<bool>& stop) {
 // wording, which is deliberate: those WARN strings are individually worded and are
 // grepped by the log-verification checklist, so they are not templated away.
 //
-// The loop also breaks on Tot::ShutdownRequested() (via SleepSliced), which the
-// hand-copied versions did not: they only tested their own stop flag, so a worker whose
-// StopWorker never ran could keep walking reflection against a tearing-down process.
+// The loop also breaks on Tot::ShutdownRequested() (via SleepSliced): a loop that tests
+// only its own stop flag lets a worker whose StopWorker never ran keep walking
+// reflection against a tearing-down process.
 template <typename TickFn>
 inline void ReassertLoop(const char* tag, int periodMs,
                          const std::atomic<bool>& stop, TickFn&& tick) {
@@ -177,8 +177,8 @@ public:
     // return is Completed(). `serverRunning` false refuses: a job started after Stop's join would be joined by nobody.
     template <class Reset, class Body>
     Start TryStart(const std::atomic<bool>& serverRunning, Reset&& reset, Body&& body) {
-        // The claim is one test-and-set under m_stateMu. The old check-then-set let two callers through: both ran
-        // their reset, both joined and replaced one std::thread, and the loser's thread was detached where no Stop
+        // The claim is one test-and-set under m_stateMu. A separate check and set lets two callers through: both run
+        // their reset, both join and replace one std::thread, and the loser's thread is detached where no Stop
         // would join it. `completed` is cleared in the same step, so Status() never pairs this run's `running` with
         // the last run's answer.
         {
@@ -229,8 +229,8 @@ public:
     // The last run's body returned true. Meaningful once Running() is false.
     bool Completed() const { return m_completed.load(std::memory_order_relaxed); }
 
-    // Running and Completed as one answer. Read apart, another client's start between the two paired "not running"
-    // with the new run's cleared answer: a status reply that said "finished, nothing found".
+    // Running and Completed as one answer. Read apart, another client's start between the two pairs "not running"
+    // with the new run's cleared answer: a status reply that says "finished, nothing found".
     struct Snapshot {
         bool running   = false;
         bool completed = false;

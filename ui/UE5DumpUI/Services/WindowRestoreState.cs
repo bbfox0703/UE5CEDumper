@@ -23,7 +23,7 @@ namespace UE5DumpUI.Services;
 /// <see cref="Commit"/> abandons the stash if the window has since flipped to non-Normal
 /// (the stashed values would be the maximized dimensions).
 ///
-/// Two extra safeguards back the "second restore jumps to 0,0" fix:
+/// Two extra safeguards keep a second restore from jumping to 0,0:
 /// <list type="bullet">
 /// <item><b>Position acceptability guard</b> — <see cref="NotePosition"/> and
 /// <see cref="Commit"/> reject a top-left that isn't visible-enough on any current
@@ -31,8 +31,8 @@ namespace UE5DumpUI.Services;
 /// transition artifact can't latch into the snapshot. The caller pushes the current
 /// monitors via <see cref="SetScreens"/>.</item>
 /// <item><b>Restore re-seed</b> — the caller re-applies the restore rect on a deferred
-/// (Background) dispatcher tick instead of synchronously mid-transition (which fought the
-/// OS's own un-maximize placement). After re-applying it calls
+/// (Background) dispatcher tick instead of synchronously mid-transition (which would fight
+/// the OS's own un-maximize placement). After re-applying it calls
 /// <see cref="OnRestoreReapplied"/> so the Position/Size events that re-apply triggers are
 /// re-seeded into the stash rather than mis-read as a fresh user move.</item>
 /// </list>
@@ -118,7 +118,7 @@ public sealed class WindowRestoreState
         if (!isNormalNow) return;
         if (_pendW > 0) _normalW = _pendW;
         if (_pendH > 0) _normalH = _pendH;
-        // Position promotion is gated the same way the stash is (was unconditional):
+        // Position promotion is gated the same way the stash is:
         // an off-screen / maximized-origin top-left must never latch into the snapshot.
         if (PositionAcceptable(_pendPos, _pendW, _pendH)) _normalPos = _pendPos;
     }

@@ -289,7 +289,7 @@ inline ImageLayout ParseImageLayout(const uint8_t* bytes, size_t len, uint64_t b
 
 /// Why the region walk that built the map stopped. When the map does not cover the whole window, the reason the
 /// summary prints must be the TRUE one: a budget or region-cap stop is not "a VirtualQuery failed", and reporting it
-/// as one sent a reader looking for an unmapped page that was never there.
+/// as one sends a reader looking for an unmapped page that is not there.
 enum class WalkStop { Complete, QueryFailed, Budget, RegionCap };
 
 inline const char* WalkStopNote(WalkStop stop) {

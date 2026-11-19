@@ -12,8 +12,8 @@ namespace UE5DumpUI.Helpers;
 /// <c>IsNullable</c>/<c>AllowNull</c> on its surface). Clearing the text box therefore drives
 /// <c>Value</c> to <c>null</c> on every one of them, unconditionally.</para>
 ///
-/// <para>Binding that <c>decimal?</c> straight at a non-nullable <c>int</c> view-model property is
-/// what produced the reported
+/// <para>Binding that <c>decimal?</c> straight at a non-nullable <c>int</c> view-model property
+/// produces
 /// <c>System.InvalidCastException: Could not convert '(null)' (null) to System.Int32</c>
 /// in a validation line under the control. ⚠ It is specific to <b>compiled</b> bindings, which this
 /// app turns on globally (<c>AvaloniaUseCompiledBindingsByDefault</c>). A reflection
@@ -22,11 +22,10 @@ namespace UE5DumpUI.Helpers;
 /// wrong. Do not use one to re-check this.</para>
 ///
 /// <para>Binding a <c>decimal?</c> property instead means no conversion happens at all, which is why
-/// the fix is a nullable façade rather than a converter: two other routes were tried and
-/// <b>measured to fail</b> before this one was chosen —
+/// this is a nullable façade rather than a converter. Neither converter route is usable —
 /// <c>NumericUpDown.TextConverter</c> never sees the empty-text path and additionally breaks
 /// ordinary in-range commits, and a binding <c>Converter</c> returning
-/// <c>BindingOperations.DoNothing</c> could not be shown to work on the compiled path.</para>
+/// <c>BindingOperations.DoNothing</c> has not been shown to work on the compiled path.</para>
 /// </summary>
 public static class NumericInput
 {
@@ -35,9 +34,8 @@ public static class NumericInput
     ///
     /// <para><c>null</c> means the user emptied the box — mid-edit, not a request to change
     /// anything — so <paramref name="current"/> is returned unchanged and the control repaints the
-    /// value still in effect. That matters beyond tidiness: the defect report noted the auto-capture
-    /// loop kept running at its floor while the field showed blank, so the screen stopped telling
-    /// the truth about what was in force.</para>
+    /// value still in effect. That matters beyond tidiness: a blank field over an auto-capture loop
+    /// still running at its floor would stop telling the truth about what is in force.</para>
     ///
     /// <para>An out-of-range number is <b>clamped</b>, never rejected. The control's own
     /// <c>ClipValueToMinMax</c> defaults to <c>false</c> (measured), under which a below-minimum

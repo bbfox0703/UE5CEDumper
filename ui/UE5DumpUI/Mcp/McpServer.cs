@@ -8,7 +8,7 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. A Model Context Protocol server over stdio, tools only, written against the
+/// [PIPE-PER-PROCESS-2026-11-06] A Model Context Protocol server over stdio, tools only, written against the
 /// 2025-11-25 revision: hand-rolled, no SDK in the AOT image.
 ///
 /// <para><b>Framing.</b> One JSON-RPC message per line in each direction, UTF-8, LF. Nothing but these messages may

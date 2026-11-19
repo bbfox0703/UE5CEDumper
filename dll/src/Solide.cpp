@@ -461,15 +461,15 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         // ⛔ REPORT THE REFUSAL ON A RE-ARM TOO. `newlyAdded` decides whether the job
         // is DROPPED -- it must not also decide whether the caller is TOLD. Re-arming
         // an already-armed class::field that resolves instances and is refused on
-        // every one returned plain held=0, and PropertySearch renders that as the
-        // positively false "no live instance of {Class} or any subclass exists right
-        // now ... will apply as soon as one spawns" -- when instances exist and the
-        // field was refused. [SOLIDE-REFUSAL]
+        // every one would otherwise return plain held=0, which PropertySearch renders
+        // as the positively false "no live instance of {Class} or any subclass exists
+        // right now ... will apply as soon as one spawns" -- when instances exist and
+        // the field was refused. [SOLIDE-REFUSAL]
         if (held == 0 && it->lastRefusal != 0) {
             refusal = it->lastRefusal;
-            // A job that was never persisted is dropped, exactly as before; a
-            // PRE-EXISTING hold is left alone -- the caller asked to re-arm it, not
-            // to remove it, and erasing on a refusal would silently unarm it.
+            // A job that was never persisted is dropped; a PRE-EXISTING hold is left
+            // alone -- the caller asked to re-arm it, not to remove it, and erasing on
+            // a refusal would silently unarm it.
             if (newlyAdded) { s_jobs.erase(it); keepArmed = false; }
         }
     }

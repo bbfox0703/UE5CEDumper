@@ -6,7 +6,7 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// [LIVEFUNCS-TIMELINE-2026-10-04] Turns the ring's records into a call tree. The DLL writes an entry record when a
 /// call enters ProcessEvent and a return record, pointing back at the entry, when it returns; nesting and durations
-/// are worked out here, after Stop, not kept on the game's hot path (the plan's TR3).
+/// are worked out here, after Stop, not kept on the game's hot path.
 /// </summary>
 public static class CallTraceBuilder
 {

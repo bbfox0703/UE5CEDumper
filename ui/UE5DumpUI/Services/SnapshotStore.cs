@@ -145,9 +145,9 @@ public sealed class SnapshotStore : ISnapshotStore
             await conn.OpenAsync(ct);
             // busy_timeout goes FIRST, before journal_mode. Switching a DB into WAL needs a
             // brief exclusive lock, and with the default 0 ms timeout a concurrent opener
-            // makes it fail on the spot with SQLITE_BUSY — the pragma batch was setting the
-            // timeout AFTER the pragma that needed it. Ordering it first turns that instant
-            // failure into a bounded wait.
+            // makes it fail on the spot with SQLITE_BUSY whenever the timeout is set AFTER the
+            // pragma that needs it. Ordering it first turns that instant failure into a
+            // bounded wait.
             //
             // busy_timeout: WAL allows concurrent readers, but a reader that opens while a
             // writer/checkpoint holds the read-mark lock would otherwise busy-spin the -shm
@@ -844,11 +844,11 @@ public sealed class SnapshotStore : ISnapshotStore
     public async Task<int> EnforceQuotaAsync(long quotaBytes, CancellationToken ct = default)
     {
         // ALWAYS fold the capture-grown WAL back into the .db first, off the UI thread (the
-        // caller wraps this in Task.Run). The previous "estimate db+wal+shm and skip the
-        // checkpoint when under quota" optimisation left a large un-checkpointed WAL behind
-        // after every under-quota capture; the next reader (e.g. the Class Pivot field load)
-        // then opened against that bloated WAL, contended for the WAL read-mark lock, and
-        // stalled — the "Loading fields…" Not-Responding freeze (low CPU, -shm lock churn).
+        // caller wraps this in Task.Run). Skipping the checkpoint whenever db+wal+shm is under
+        // quota would leave a large un-checkpointed WAL behind after every under-quota capture;
+        // the next reader (e.g. the Class Pivot field load) would then open against that
+        // bloated WAL, contend for the WAL read-mark lock, and stall — the "Loading fields…"
+        // Not-Responding freeze (low CPU, -shm lock churn).
         // Folding here is cheap (passive autocheckpoints already moved most frames into the
         // db during capture; this mainly truncates the -wal file) and means subsequent
         // readers always meet a small WAL and never contend.
@@ -1147,8 +1147,8 @@ public sealed class SnapshotStore : ISnapshotStore
         }
         if (query.SnapshotIds.Count > 2)
         {
-            // v1 compares exactly two snapshots (first-vs-last); 3+-snapshot predicate
-            // chains are a later extension (docs/snapshot-group-match-spec.md §8).
+            // Compares exactly two snapshots (first-vs-last); 3+-snapshot predicate
+            // chains are not implemented (docs/snapshot-group-match-spec.md §8).
             result.Error = "Group comparison supports 1 snapshot (absolute) or 2 (compare).";
             return result;
         }
@@ -2161,8 +2161,8 @@ public sealed class SnapshotStore : ISnapshotStore
 
     // In-memory fallback for non-Strict discovery (Loose / InSession). The UI never
     // selects these; kept so the public contract holds for any other caller. NOTE:
-    // this is the OLD path that loads a snapshot's full field set into RAM — it carries
-    // the same big-game memory exposure the Strict SQL path was built to avoid.
+    // this path loads a snapshot's full field set into RAM — it carries the big-game
+    // memory exposure the Strict SQL path avoids.
     private async Task<DiscoveryResult> DiscoverChangesInMemoryAsync(DiscoveryQuery query, CancellationToken ct)
     {
         int n = query.SnapshotIds.Count;
@@ -2281,8 +2281,8 @@ public sealed class SnapshotStore : ISnapshotStore
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
         // [SNAPDIFF-SHADOWED-PROP] Grouped by offset too: a class can carry two properties of one name (PrerollTime at
-        // +196 and +296 on DumperTest), and grouping by name pooled them into one entry with a doubled instance count
-        // and a distinct count over both copies, which the key scorer then ranked.
+        // +196 and +296 on DumperTest), and grouping by name alone would pool them into one entry with a doubled
+        // instance count and a distinct count over both copies, which the key scorer would then rank.
         cmd.CommandText = """
             SELECT prop_name, declared_type,
                    COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances, prop_offset
@@ -2302,7 +2302,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 Offset        = r.IsDBNull(4) ? -1 : r.GetInt32(4),
             });
         // A name listed twice is shadowed: each copy's label then carries its offset. A name listed once keeps its bare
-        // label, so every class without a shadowed name reads exactly as before.
+        // label.
         foreach (var dup in list.GroupBy(f => f.Name, StringComparer.Ordinal).Where(g => g.Count() > 1))
             foreach (var f in dup) f.Shadowed = true;
         return list;

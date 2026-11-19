@@ -31,8 +31,8 @@ namespace UE5DumpUI.Services;
 /// empty. That is a kernel-enforced emptiness check the plan cannot fake, it closes the
 /// scan→confirm→delete race (anything created in between makes the delete throw and the walk
 /// stops), and it is why <see cref="PlanPrune"/> does not need to assert emptiness of ancestors.
-/// Measured: recursive delete on a folder containing an unvalidated junction removed the junction
-/// and then threw, leaving a half-completed operation the caller believes did nothing.</para>
+/// Measured: recursive delete on a folder containing an unvalidated junction removes the junction
+/// and then throws, leaving a half-completed operation the caller believes did nothing.</para>
 /// </summary>
 internal static class ProxyOrphanScanner
 {

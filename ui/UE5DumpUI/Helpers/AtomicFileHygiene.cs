@@ -8,14 +8,13 @@ namespace UE5DumpUI.Helpers;
 /// string/date computation with no <c>System.IO</c> call, so the rules can be unit-tested
 /// without a disk, and the services keep the I/O.
 ///
-/// WHY IT EXISTS. Seven services in <c>Services/</c> hand-roll the same write-temp-then-move
-/// dance; two of them (<c>BookmarkStore</c>, <c>CoordinateLibraryStore</c>) clean up a stale
-/// temp and the rest do not. A temp name that carries the PID, as <c>AobUsageService</c>'s
-/// does, is the worst case — a distinctly named full copy of the cache per affected launch,
-/// i.e. UNBOUNDED residue in <c>%LOCALAPPDATA%\UE5CEDumper\</c>, against the app-data rule
-/// that the root holds only files "app-wide and fixed in number". This deliberately does NOT wrap the write itself:
-/// migrating the other six sites is a separate change, and a policy object they can all
-/// adopt later is worth more than a seventh copy of the mechanics.
+/// WHY IT EXISTS. A write-temp-then-move that never cleans up a stale temp leaves residue, and
+/// a temp name that carries the PID, as <c>AobUsageService</c>'s does, is the worst case — a
+/// distinctly named full copy of the cache per affected launch, i.e. UNBOUNDED residue in
+/// <c>%LOCALAPPDATA%\UE5CEDumper\</c>, against the app-data rule that the root holds only
+/// files "app-wide and fixed in number". This deliberately does NOT wrap the write itself: a
+/// policy object any service can adopt while keeping its own I/O is worth more than one more
+/// copy of the mechanics.
 ///
 /// The temp naming is byte-compatible with the DLL's <c>Flamme::MakeTempPath</c>, and the
 /// age guard matches <c>Flamme::SweepOrphanTemps</c>: AGE, never PID liveness. Both

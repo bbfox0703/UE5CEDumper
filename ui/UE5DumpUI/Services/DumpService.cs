@@ -63,7 +63,7 @@ public sealed class DumpService : IDumpService
                               ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false;
         var isLowConfidence = res["is_low_confidence"]?.GetValue<bool>()
                               ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false;
-        // build_number (build 653+): on the init response AND on every pointer snapshot.
+        // build_number: on the init response AND on every pointer snapshot.
         // Older DLLs omit the field — preserved as 0 so the UI can warn "DLL pre-dates
         // the build-number probe; assume stale".
         var dllBuildNumber  = res["build_number"]?.GetValue<int>() ?? 0;
@@ -1938,8 +1938,8 @@ public sealed class DumpService : IDumpService
                     InnerType  = obj["inner_type"]?.GetValue<string>() ?? "",
                     PropertyFlags = ParseFlagsHex(obj["prop_flags"]?.GetValue<string>()),
                     Preview    = obj["preview"]?.GetValue<string>() ?? "",
-                    // Inheritance-aware fields (build 610+) -- back-compat
-                    // with older DLLs that didn't emit these: defaults to
+                    // Inheritance-aware fields -- back-compat
+                    // with older DLLs that do not emit these: defaults to
                     // "" / 0, falls back to ClassName via the model's
                     // computed properties.
                     DefiningClassName = obj["defining_class_name"]?.GetValue<string>() ?? "",
@@ -2487,7 +2487,7 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             DurationMs     = res["duration_ms"]?.GetValue<long>() ?? 0,
             DeadlineHit    = res["deadline_hit"]?.GetValue<bool>() ?? false,
-            // Absent on a pre-AE13 DLL => false => "no evidence of truncation", which is
+            // Absent on an older DLL => false => "no evidence of truncation", which is
             // the only honest default: the UI must not claim a cap it was not told about.
             PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,
             PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
@@ -2878,7 +2878,7 @@ public sealed class DumpService : IDumpService
     /// reached on a title that is nowhere near 100,000 UFunctions.
     ///
     /// ⭐ WHY THIS EXISTS. The capped-census wording has to be seen on screen -- Console
-    /// must stop claiming anything about the game ("this scan did not finish, so it is not evidence
+    /// must not claim anything about the game ("this scan did not finish, so it is not evidence
     /// the game has none") and both panels must show the cap suffix
     /// (<c>[Z8-TRUNCATED-2026-08-23]</c>) -- and ordinary titles stay well short of the cap.
     ///
@@ -3072,8 +3072,8 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] One page decoded straight into the load's window: no base64 string, no byte[]
-    /// and no record array per page -- about half of the 14 MB page's garbage, which held the UI at 3.25 GB after a
-    /// 512 MB load (Avowed, 2026-10-07).</summary>
+    /// and no record array per page -- about half of a 14 MB page's garbage, which a large load otherwise piles
+    /// up.</summary>
     public async Task<TracePage> PeTraceGetIntoAsync(ulong from, int max, Memory<TraceRecord> into, CancellationToken ct = default)
     {
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_get", ["from"] = from, ["max"] = max }, ct);
@@ -3478,7 +3478,7 @@ public sealed class DumpService : IDumpService
     {
         // [TRACE-UNLOADED-NAMES] Always asked: the rows of a function unloaded since it fired come back named and
         // marked, and LiveFuncsViewModel must keep their dead address out of every request. A DLL older than the option
-        // ignores it and drops them, as it always did.
+        // ignores it and drops them.
         var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit, ["include_unloaded"] = true };
         if (skipPerFrame) req["skip_per_frame"] = true;
         var res = await _pipe.SendAsync(req, ct);

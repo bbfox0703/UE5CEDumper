@@ -7,25 +7,24 @@
 // Representatives), and return each slot's matching-leaf candidate list.
 //
 // This is the object-aware analogue of Cheat Engine's "Group Scan": the
-// block is one UObject instance (and, in later phases, one numeric container
-// / one struct-array element / one actor + its attribute components), and a
-// logical hit is "this block holds value A at some offset AND value B at a
+// block is one UObject instance (or one actor + the components and attribute
+// sets it owns), one numeric container, or one struct-array / map element, and
+// a logical hit is "this block holds value A at some offset AND value B at a
 // DIFFERENT offset AND ..." — order-independent and position-independent
 // (the slots' in-memory offsets may even be in any order).
 //
 // Source-agnostic by design: Orden never reads game memory and never touches
 // GObjects. The CALLER produces the Leaf set — the live value scan reads
-// property bytes via Ubel/Macht; a future Snapshot reuse decodes captured DB
-// hex; a future Class-Pivot reuse passes per-snapshot sequence values — and
-// Orden only does the pure combinatorial match. That seam is what lets
-// Snapshot / SPC Query / Class Pivot reuse this without dragging in the
+// property bytes via Ubel/Macht — and Orden only does the pure combinatorial
+// match. That seam is what lets the UI's Snapshot Group Match port it
+// (GroupMatch.cs, fed captured snapshot values) without dragging in the
 // scanner.
 //
 // Width + multi-numeric target machinery is shared with the single-value scan:
 // a Leaf carries its resolved Radar::DataType width, and a slot's target is a
 // Radar::NumericTargetSet (the same pre-parsed "one buffer per fitting width"
 // structure BuildNumericTargets produces), so "Str = 24" transparently matches
-// an Int16 / Int32 / Int64 / Float / Double leaf. P2: a slot also carries a
+// an Int16 / Int32 / Int64 / Float / Double leaf. A slot also carries a
 // Radar::ScanType predicate (Exact / Bigger / Smaller on the first scan) routed
 // through Radar::ComparePredicate; prev-value predicates are handled by the
 // caller's refine, not here (LeafSatisfiesSlot rejects them — no baseline).
@@ -160,16 +159,16 @@ inline bool HasDistinctAssignment(const std::vector<SlotMatches>& m, int nLeaves
 /// @param perSlotCap  How many satisfying leaves to KEEP per slot.
 /// @param outTruncated Set true if any slot had more matches than the cap.
 ///
-/// THE CAP IS ORDER-BIASED, AND THAT BIAS WAS A BUG (2026-08-05). Leaves arrive in
-/// field-declaration order, base class first, so on any AActor the first 8 satisfying
-/// leaves are `PrimaryActorTick.*`, `CustomTimeDilation` and friends -- and a derived
-/// class's OWN fields, which are the ones a user actually searches for, never made the
-/// list. The kept set is then ALSO what a later refine re-reads, so a `Changed` pass
-/// compared only never-changing engine fields and pruned every candidate to zero. The
-/// symptom looked like "group scan cannot see my property"; the cause was a cap of 8.
+/// THE CAP IS ORDER-BIASED. Leaves arrive in field-declaration order, base class
+/// first, so on any AActor the first satisfying leaves are `PrimaryActorTick.*`,
+/// `CustomTimeDilation` and friends -- and under a small cap a derived class's OWN
+/// fields, which are the ones a user actually searches for, never make the list. The
+/// kept set is ALSO what a later refine re-reads, so a `Changed` pass would compare
+/// only never-changing engine fields and prune every candidate to zero, which reads as
+/// "group scan cannot see my property".
 ///
-/// One list was serving two purposes: the assignment check needs only a handful, the
-/// refine needs everything. The cap now sizes for the REFINE, and truncation is reported
+/// One list serves two purposes: the assignment check needs only a handful, the
+/// refine needs everything. The cap sizes for the REFINE, and truncation is reported
 /// instead of being silent -- a cap that quietly drops the interesting half is exactly
 /// the kind of thing nothing else in this codebase can notice.
 /// Sized for the REFINE, not the assignment check: it must hold every leaf a later

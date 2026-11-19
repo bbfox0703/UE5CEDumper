@@ -75,8 +75,8 @@ public interface IDumpService
     // --- Live Data Walker ---
     /// <param name="lean">Ask the DLL to omit the keys a CE XML export never reads
     /// (per-instance header, every decoded VALUE — <c>hex</c> / <c>value</c> /
-    /// <c>str_value</c> / element hex …). Measured at ~24-38% of the payload
-    /// (multipipe-eval.md §10.6), and it costs the UI parse too, so batching's
+    /// <c>str_value</c> / element hex …). They are a sizeable share of the payload
+    /// (multipipe-eval.md §10.6), and they cost the UI parse too, so batching's
     /// residual payload-proportional IPC shrinks with it. <b>Only for the CE XML
     /// export path</b> — CSX and the Live Walker grid DO read those keys. Older
     /// DLLs ignore the flag and return the full shape, which is still correct.</param>
@@ -85,11 +85,11 @@ public interface IDumpService
     /// <summary>
     /// Walk N instances in as few round-trips as possible (chunked at ~200).
     ///
-    /// <para><b>Why it exists (measured, multipipe-eval.md §10.4):</b> a Copy CE XML
-    /// issued <b>20,357</b> single <c>walk_instance</c> calls, and the cost split as
-    /// dll 30% / <b>ipc 59-73%</b> / ui ~0%. Per call the round-trip overhead
-    /// (0.16-0.21 ms) is roughly TWICE the actual walk (0.08 ms) — so collapsing the
-    /// calls, not changing the dispatch model, is the lever.</para>
+    /// <para><b>Why it exists (multipipe-eval.md §10.4):</b> a Copy CE XML can issue
+    /// tens of thousands of single <c>walk_instance</c> calls, and IPC, not the DLL,
+    /// dominates their cost: per call the round-trip overhead is roughly TWICE the
+    /// actual walk — so collapsing the calls, not changing the dispatch model, is the
+    /// lever.</para>
     ///
     /// <para>Results are positionally aligned with <paramref name="items"/>. A chunk
     /// that fails for any reason — including an older DLL that does not know the
@@ -140,7 +140,7 @@ public interface IDumpService
     // --- DataTable Row Browsing ---
     Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64, CancellationToken ct = default);
 
-    // --- Array Element Reading (Phase B) ---
+    // --- Array Element Reading ---
     Task<ArrayElementsResult> ReadArrayElementsAsync(
         string instanceAddr, int fieldOffset,
         string innerAddr, string innerType, int elemSize,
@@ -184,7 +184,7 @@ public interface IDumpService
     Task<RelatedObjectsResult> GetRelatedObjectsAsync(
         string addr, int maxResults = 128, CancellationToken ct = default);
 
-    // --- Current-target auto-detect (Related Objects Phase 2, Edel) ---
+    // --- Current-target auto-detect (Related Objects, Edel) ---
     // Resolve GWorld -> PlayerController -> Pawn and return a ranked list of
     // candidate "current target" actors (best-first). The top candidate is the
     // auto-pick; the chain diagnostics say where detection stopped on failure.
@@ -270,7 +270,7 @@ public interface IDumpService
     Task<ClassListResult> ListClassesAsync(
         bool gameOnly = true, int limit = 5000, CancellationToken ct = default);
 
-    // --- Class-noise auto-detect (class-filter Phase 3) ---
+    // --- Class-noise auto-detect (class filter) ---
     // Classify class names as engine/system "noise" (safe-by-construction:
     // engine package OR super-chain to a pure-engine leaf base). Backs the opt-in
     // "auto-detect system classes" pre-tick in the class-noise picker.
@@ -400,7 +400,7 @@ public interface IDumpService
 
     Task EndGroupScanAsync(ulong sessionId, CancellationToken ct = default);
 
-    // --- Snapshot Capture (experimental — Phase A) ---
+    // --- Snapshot Capture (experimental) ---
     // Stateless cursor pagination (like get_object_list): begin returns the
     // total object count for progress; each chunk streams [offset, offset+limit)
     // objects with their numeric UPROPERTY values. Advance offset by the

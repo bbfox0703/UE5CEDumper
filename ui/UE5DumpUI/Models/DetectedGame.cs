@@ -67,14 +67,13 @@ public sealed partial class DetectedGame : ObservableObject
     /// The free-text line shown beside <c>Status</c> in the Proxy Deploy grid — the DETAIL
     /// behind the status, whatever register it happens to be in.
     ///
-    /// <para>⚠ It was called <c>ErrorMessage</c> and its column header said "Error", and both
-    /// were wrong often enough to mislead: the same field carries a plain INFORMATIONAL note
-    /// (<c>"Deployed as dxgi.dll"</c> — that game simply uses a different proxy than the one
-    /// selected, which is not a problem at all), a REFUSAL (<c>"Refused: another program's
-    /// proxy DLL"</c>), a WARNING (the multi-proxy conflict note, "only one will activate at
-    /// runtime"), and a genuine ERROR (<c>"Target in use (game running?)"</c>, an exception
-    /// message). Naming the channel after one of its four registers made the other three read
-    /// as failures.</para>
+    /// <para>⚠ Not an error field, and its column must not be headed "Error": the same field
+    /// carries a plain INFORMATIONAL note (<c>"Deployed as dxgi.dll"</c> — that game simply uses
+    /// a different proxy than the one selected, which is not a problem at all), a REFUSAL
+    /// (<c>"Refused: another program's proxy DLL"</c>), a WARNING (the multi-proxy conflict note,
+    /// "only one will activate at runtime"), and a genuine ERROR
+    /// (<c>"Target in use (game running?)"</c>, an exception message). Naming the channel after
+    /// one of its four registers makes the other three read as failures.</para>
     /// </summary>
     [ObservableProperty] private string? _statusDetail;
 

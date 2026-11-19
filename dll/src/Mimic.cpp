@@ -90,9 +90,9 @@ static HANDLE s_hThread = nullptr;
 
 // Mailbox poll interval. CE Lua's invokeUFunction blocks waiting for the
 // status flag to flip — every ms shaved off this interval is shaved off the
-// per-invoke wall-clock latency. Was 10ms historically; lowered to 1ms so a
-// tight Lua loop of N invokes doesn't accumulate (N × ~5ms) of pure idle
-// time inside the polling loop. CPU cost at idle: one thread ticks 1000x/sec
+// per-invoke wall-clock latency. At 1ms a tight Lua loop of N invokes does
+// not accumulate pure idle time inside the polling loop, as a 10ms interval
+// would (~5ms per invoke). CPU cost at idle: one thread ticks 1000x/sec
 // doing a handful of volatile reads — negligible. The polling thread bumps
 // the Windows timer resolution to 1ms via timeBeginPeriod so Sleep(1) really
 // delivers ~1ms on the few systems that still default to the legacy 15.6ms
@@ -579,7 +579,7 @@ uintptr_t GetAddress() {
 
 // [R7-S9] The globals are published INSIDE the fence (UE5_Init after FindAll, apply_rescan after BeginApply), so read
 // them FIRST and the flag LAST: seeing a published GObjects then guarantees seeing the flag that preceded it. As
-// arguments to one call the reads had no order at all -- C++ leaves argument evaluation unspecified.
+// arguments to one call the reads would have no order at all -- C++ leaves argument evaluation unspecified.
 static bool InitSettled() {
     const bool haveGObjects = g_cachedGObjects != 0;
     const bool haveGNames   = g_cachedGNames != 0;
@@ -737,7 +737,7 @@ static void HandleInvoke() {
     // Without this short-circuit, an idle game (main menu / loading
     // screen) leaves the GameThreadDispatch queue undrained and every
     // pure-helper invoke times out at the configured deadline (default
-    // 5s, observed in ES2 logs even at 7s). The user has no clue why a
+    // 5s). The user has no clue why a
     // simple `exp(8)` math helper would time out -- the call doesn't
     // need a game thread at all.
     //
@@ -939,10 +939,10 @@ static void HandleInvokeByName() {
 
 // [MCP-WRITE-GRANTS-2026-11-14] CMD_INVOKE and INVOKE_BY_NAME. A record that runs the debug camera's own functions (a
 // Console row baked into a CE record) changes the camera as CMD_SET_DEBUG_CAMERA does: under the hold's lock, and CE's
-// afterwards. Unrecorded, the camera it turned on stayed named for whoever held it before -- an AI session, whose end
-// then turned it off. The function is named by the UFunction itself, as the pipe's invoke_function names it. It never
-// waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this poller is the
-// mailbox's only one.
+// afterwards. Unrecorded, the camera it turns on would stay named for whoever held it before -- an AI session, whose
+// end would then turn it off. The function is named by the UFunction itself, as the pipe's invoke_function names it.
+// It never waits for the lock (TryChangeHoldAsCe): a pipe writer holds it across its own game-thread wait, and this
+// poller is the mailbox's only one.
 static void HandleInvokeHeld() {
     char name[128] = {};
     const uintptr_t ufuncAddr = Box().ufuncAddr;
@@ -1299,8 +1299,8 @@ static void HandleSetDebugCamera() {
 }
 
 // CMD_OFFSETS_VERDICT: were the DynOff offsets MEASURED? [W5-OFFSETS-MAILBOX]
-// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) both carry this verdict; the mailbox --
-// the path a CE script takes when executeCodeEx is unavailable -- did not, while ue5_dissect.lua builds
+// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) carry this verdict too; the mailbox is
+// the path a CE script takes when executeCodeEx is unavailable, and ue5_dissect.lua builds
 // CE structures out of those very offsets. No input. result = 1 measured / 0 not; paramsData[0..127]
 // carries the reason ("" when measured, "probe-not-run" before any detection).
 // Init-EXEMPT (Mimic.h CommandRequiresInit): "no probe has run" is an ANSWER here, not a failure.
@@ -1576,9 +1576,9 @@ static void HandleForeground() {
 // count (>=1, how many nearest occluders to hide), ufuncAddr = value (0/1 on/off).
 // Schlacht owns its own worker thread that does the game-thread invokes, so this
 // handler just flips the flag on the mailbox polling thread. CE is one owner of
-// it ([PIPE-PER-PROCESS-2026-11-06]): a pipe client that leaves no longer
-// turns off what CE's record turned on. Nothing in the mailbox changed, so the
-// contract version did not either.
+// it ([PIPE-PER-PROCESS-2026-11-06]): a pipe client that leaves does not
+// turn off what CE's record turned on. That ownership adds nothing to the
+// mailbox, so it is not a contract change.
 static void HandleSeeThrough() {
     if (Box().instanceAddr >= 1)
         Schlacht::SetPierceCount(static_cast<int32_t>(Box().instanceAddr));

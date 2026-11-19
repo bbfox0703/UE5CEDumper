@@ -32,7 +32,7 @@ public class App : Application
 
     /// <summary>[LEAD-SECOND-UI-CRASHLOG] The platform service Program.Main made, holding the single-instance mutex it
     /// took before Avalonia started. Null when the app is started some other way (the previewer), which then checks
-    /// here, as before.</summary>
+    /// here.</summary>
     internal static WindowsPlatformService? StartupPlatform { get; set; }
 
     public override void Initialize()
@@ -81,7 +81,7 @@ public class App : Application
 
             // Attach the dispatcher fault guard as soon as there is somewhere to
             // log to, and before any window exists — a clipboard/IME fault must
-            // never again take the process down with it ([PASTECRASH-2026-08-18]).
+            // never take the process down with it ([PASTECRASH-2026-08-18]).
             // The guard swallows ONLY faults the classifier positively identifies
             // as platform input-layer ones; everything else still crashes and still
             // reaches crash.log. Constructed and attached in ONE call so the

@@ -107,7 +107,8 @@ struct ArmHint {
     uint16_t copy  = 0;    // bytes to copy from the parameter block
     uint8_t  flags = 0;
     // [LIVEFUNCS-STEP3] The stack ring of the choice this address is armed for, numbered among the stack rings
-    // (0..S-1); -1: no stack. Last, so the hint keeps its size and every aggregate initializer means what it did.
+    // (0..S-1); -1: no stack. Last: it fills the tail padding, so the hint stays 24 bytes, and a positional
+    // initializer of the fields above means the same fields.
     int32_t  stackRing = -1;
 };
 static_assert(sizeof(ArmHint) == 24, "the hint lives in the hook's frame: stackRing fills what was padding");

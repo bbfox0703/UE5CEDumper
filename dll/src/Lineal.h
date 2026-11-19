@@ -124,7 +124,7 @@ inline void Encode(uintptr_t obj, const PackedConsts& c,
 // that one is about a passive observer STORING a serial UE allocates lazily.
 inline int SerialOffsetForLayout(ItemLayoutMode mode, int itemSize,
                                  int objOffset, int packedSerialOff) noexcept {
-    // Packed UE5.7+. The DEFAULT is now derived rather than guessed — 0x0C, from the vendored
+    // Packed UE5.7+. The DEFAULT is derived, not guessed — 0x0C, from the vendored
     // struct (FlagsAndRefCount@+0x00, ObjectPtrLow@+0x08, SerialNumber@+0x0C); see the header
     // comment for the citations. Still calibratable via set_packed_consts serial_off, because no
     // shipping game has been seen in this layout, and a wrong value degrades only weak-ref
@@ -160,7 +160,7 @@ inline constexpr int StrideScore(int named, int good, int bad) noexcept {
 // ⚠ Ties are REAL and the list order must not be what breaks them. Every candidate is
 // probed against the same NUMBER of items (not the same byte range), so a stride and any
 // MULTIPLE of it both read only valid objects on a correct pool and score identically --
-// true of 16/32 long before 40 existed. In that tie the SMALLER stride is the true item
+// 16 against 32, for one. In that tie the SMALLER stride is the true item
 // size; the larger merely samples every k-th item. The reverse never ties: a DIVISOR of
 // the true stride lands off-item on most probes and loses on named, or on bad.
 //   bestStride == 0 means "nothing chosen yet".
@@ -170,8 +170,7 @@ inline constexpr bool PreferStride(int score, int bestScore, int stride, int bes
 
 // The FUObjectItem sizes the auto-probe sweeps. Here rather than as a local in Aura.cpp
 // so a test can pin the SET -- the supporting rules being correct is no use if the true
-// size is not a candidate at all, which is the entire content of both A5 and its 2026-08-05
-// predecessor.
+// size is not a candidate at all.
 //   16  UE5 classic
 //   24  UE4 classic / UE5.7+ reordered (Object @ +0x08)
 //   32  UE 5.4 Development (STATS=1 adds TStatId)
@@ -183,9 +182,9 @@ inline constexpr int kItemStrideCandidates[] = { 16, 24, 32, 20, 40 };
 // tentatively. ⚠ This -- not the score -- is what the two alias shapes separate on:
 //   * an alias landing on GARBAGE  : named ~= bad -> FAILS here -> tentative path
 //   * an alias landing on a NULL   : named ~= half, bad == 0 -> PASSES -> confident
-// which is exactly why the 40-byte Test-build item was silent where the 32-byte one
-// was merely wrong. Note both still score POSITIVE (StrideScore(100,100,100) = 700),
-// so the score alone never told them apart.
+// so when the true size is missing from the candidates, a NULL-landing alias is chosen
+// silently where a GARBAGE-landing one at least goes tentative. Note both still score
+// POSITIVE (StrideScore(100,100,100) = 700), so the score alone never tells them apart.
 inline constexpr bool StrideQualityOk(int named, int bad) noexcept {
     return named == 0 || named > bad;   // no names at all -> no name-based confidence to check
 }

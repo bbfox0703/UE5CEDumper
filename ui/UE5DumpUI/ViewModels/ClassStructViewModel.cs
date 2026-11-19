@@ -115,9 +115,9 @@ public partial class ClassStructViewModel : ViewModelBase
     /// <param name="nodeAddr">
     /// The tree node this load is for, or <c>null</c> for a cross-tab load — which
     /// deliberately shows a class that no tree node selected, so the key must be
-    /// CLEARED rather than left naming the previously selected node. Leaving it
-    /// stale is AE3's third path and needs neither a failure nor any concurrency:
-    /// two ordinary clicks pin the panel.
+    /// CLEARED rather than left naming the previously selected node. Left stale,
+    /// it pins the panel with neither a failure nor any concurrency: two ordinary
+    /// clicks do it.
     /// </param>
     private int BeginLoad(string? nodeAddr)
     {
@@ -149,7 +149,7 @@ public partial class ClassStructViewModel : ViewModelBase
     /// answered third — deterministically last.
     ///
     /// ⚠ The ticket MUST be claimed here at GESTURE time, not inside
-    /// <see cref="LoadClassAsync"/>. Claiming it in the command inverts the fix:
+    /// <see cref="LoadClassAsync"/>. Claiming it in the command inverts the guard:
     /// the stale instance selection ENTERS the command last (its <c>get_object</c>
     /// hop delays entry), so it would take the HIGHEST ticket and win legitimately.
     /// </summary>
@@ -316,8 +316,8 @@ public partial class ClassStructViewModel : ViewModelBase
             // re-selecting the same node is refused forever and the panel stays
             // pinned on whatever it happened to be showing.
             _shownNodeAddress = null;
-            // [CLASSSTRUCT-FAILED-KEEPS-OLD] And nothing OLD stays either: a stale class re-selected after a level
-            // reload showed its error above the same class's pre-reload fields.
+            // [CLASSSTRUCT-FAILED-KEEPS-OLD] And nothing OLD stays either: otherwise a stale class re-selected after a
+            // level reload shows its error above the same class's pre-reload fields.
             DropShownClass();
             SetError(ex);
         }
@@ -336,9 +336,9 @@ public partial class ClassStructViewModel : ViewModelBase
     ///     UScriptStruct / UEnum / UFunction or any subclass thereof),
     ///     walk its address DIRECTLY. Going through GetObjectAsync would
     ///     return its metaclass (UClass-of-Class, UClass-of-ScriptStruct,
-    ///     etc.) whose FProperty chain is empty in UE — that produced the
-    ///     "shows /Script/CoreUObject/Class with 0 fields" bug the user
-    ///     reported on LocalPlayer.
+    ///     etc.) whose FProperty chain is empty in UE, so the panel would
+    ///     show "/Script/CoreUObject/Class with 0 fields" for a class node
+    ///     such as LocalPlayer.
     ///   - Otherwise it's an instance — fetch its UClass via get_object.
     ///
     /// A null `node` does NOT blank the panel: Avalonia's ListBox raises
@@ -396,8 +396,8 @@ public partial class ClassStructViewModel : ViewModelBase
                 var detail = await _dump.GetObjectAsync(node.Address);
                 // Superseded while we were resolving the metaclass. Bail BEFORE
                 // issuing the walk, so the stale round-trip is never put on the
-                // wire at all — this is the exact asymmetry AE2 describes, and
-                // skipping it saves a hop on a contended lane rather than adding one.
+                // wire at all — this hop is the round-trip asymmetry _loadId describes,
+                // and skipping it saves a hop on a contended lane rather than adding one.
                 if (gen != _loadId) return;
                 classAddr = detail.ClassAddr;
                 if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")

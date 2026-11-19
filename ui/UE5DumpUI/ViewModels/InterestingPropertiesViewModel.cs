@@ -74,9 +74,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
 
     // ------------------------------------------------------------------
     // Cross-tab navigation events. MainWindow routes these to the right
-    // destination. Single event for now (the cheat workflow lives in
-    // Live Walker on a real instance); add Class Struct fallback if a
-    // user reports finding zero live instances of a class repeatedly.
+    // destination.
     // ------------------------------------------------------------------
 
     public event Action<string, string>? NavigateToProperty;
@@ -294,12 +292,10 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     /// Send ONE batched search_properties_batch call carrying all
     /// SeedQueries. DLL walks GObjects + class fields once and checks
     /// every property against every keyword, returning per-query result
-    /// envelopes. Wall-time drops from ~42s (legacy sequential pipe
-    /// loop, build 681-682) to ~1.5s for a 4400-class game.
+    /// envelopes: one walk instead of one pipe round-trip per keyword.
     ///
-    /// Why progress is now one-shot: the speedup is so large that the
-    /// per-keyword loop disappears entirely on the wire. Status text
-    /// just shows the single round-trip + scoring phase.
+    /// Progress is one-shot because there is no per-keyword loop on the
+    /// wire. Status text just shows the single round-trip + scoring phase.
     /// </summary>
     [RelayCommand]
     private async Task LoadAsync()

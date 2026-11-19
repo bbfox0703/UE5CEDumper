@@ -14,7 +14,7 @@ namespace UE5DumpUI.ViewModels;
 /// <summary>
 /// [LIVEFUNCS-TIMELINE-2026-10-04] The Call Trace tab (experimental). It records nothing itself: a traced Live Funcs
 /// recording fills the DLL's ring, and this tab reads it after Stop, names what it saw, frees the DLL's memory, and
-/// shows the calls as a tree (T2, T3, T8). The plan and its decisions: docs/live-funcs-timeline-plan.md.
+/// shows the calls as a tree. The plan and its decisions: docs/live-funcs-timeline-plan.md.
 /// </summary>
 public partial class CallTraceViewModel : ViewModelBase
 {
@@ -112,8 +112,7 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The ceiling for every width: a hand-edited value of millions of pixels would lay the panel out far
     /// past any screen.</summary>
     internal const double MaxWidth = 4096;
-    /// <summary>The fixed layout the tab had before its widths could be dragged: where they start, and what the list's
-    /// floor is made of.</summary>
+    /// <summary>The default widths: where they start, and what the list's floor is made of.</summary>
     internal const double DefaultTimeColWidth = 96, DefaultDurationColWidth = 88, DefaultThreadColWidth = 64,
                           DefaultObjectColWidth = 260, DefaultDetailPaneWidth = 380;
     /// <summary>[CT-DETAIL-COVERS-LIST] What Function keeps of a row before the columns give way: a root row's expand
@@ -123,10 +122,10 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const double RowChrome = 24;
     /// <summary>[CT-DETAIL-COVERS-LIST] The list's floor, 208: a row's item padding (24) and Time and Duration at their
     /// default widths (96 + 88), so a call can be told by when it ran and clicked. The pane is never shown so
-    /// wide that the list has less, its own 200 included: a remembered or dragged width covered the whole list, its
-    /// rows and the pane's own handle, and the pane has nothing to show until a row is chosen. The maintainer chose 208
-    /// (2026-10-09) over a floor that kept Function's slice too: that one capped the pane near 502 px at the default
-    /// window with the object tree unfolded, too narrow for a Call stack's Where.</summary>
+    /// wide that the list has less, its own 200 included: otherwise a remembered or dragged width can cover the whole
+    /// list, its rows and the pane's own handle, and the pane has nothing to show until a row is chosen. The floor
+    /// leaves Function's slice out on purpose: keeping it too would cap the pane too narrow for a Call stack's Where
+    /// at the default window with the object tree unfolded.</summary>
     internal const double MinListWidth = RowChrome + DefaultTimeColWidth + DefaultDurationColWidth;
     /// <summary>The narrowest list a row's columns are fitted to: the floor, Thread at its default, Object at its floor
     /// and Function's slice, 512 in all.</summary>
@@ -246,7 +245,8 @@ public partial class CallTraceViewModel : ViewModelBase
     // remembered width the panel does not show, a drag past the limit would keep a margin that the next drag back has
     // to undo first, with nothing moving meanwhile. [CT-FLOOR-208] A drag that leaves the width where it was writes
     // nothing: a press with only a vertical jiggle, or a push into the limit, is not the user choosing the width
-    // shown, and written it replaced the remembered one in ui-options.json, so a wider window never gave it back.
+    // shown, and written it would replace the remembered one in ui-options.json, so a wider window would never give it
+    // back.
     internal void DragTime(double step) { if (DraggedColumn(0, step) is { } w) TimeColWidth = w; }
     internal void DragDuration(double step) { if (DraggedColumn(1, step) is { } w) DurationColWidth = w; }
     internal void DragThread(double step) { if (DraggedColumn(2, step) is { } w) ThreadColWidth = w; }
@@ -578,7 +578,7 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] A load leaves its window and every page's reply behind, and nothing makes the GC
-    /// run after it: on Avowed a 512 MB load held the working set at 3.25 GB a minute later (2026-10-07). One blocking,
+    /// run after it, so a large load keeps the working set high long after it ends. One blocking,
     /// compacting collection gives it back -- a pause after a load of seconds, the snapshot capture's precedent -- and
     /// the log line is what the memory estimate beside the trace slider is checked against.</summary>
     private void ReclaimAfterLoad()
@@ -608,7 +608,7 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t.EntriesDropped + t.OtherDropped > 0)
             sb.Append(' ').Append(Say("str.CT.Status.Dropped", t.EntriesDropped + t.OtherDropped, t.EntriesDropped,
                                       t.OtherDropped));
-        // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
+        // "Every call" only when nothing was left out; a left-out function's calls show under its caller.
         switch (ScopeKey(t.Info))
         {
             case "str.CT.Status.Scoped": sb.Append(' ').Append(Say("str.CT.Status.Scoped", t.Info.Ticked)); break;

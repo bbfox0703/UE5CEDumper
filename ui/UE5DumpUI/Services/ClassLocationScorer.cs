@@ -39,10 +39,9 @@ namespace UE5DumpUI.Services;
 public static class ClassLocationScorer
 {
     // ------------------------------------------------------------------
-    // Function-side bonuses (verbatim from KeywordScoringTable build 607
-    // when ClassBonuses lived inside that file -- moved here so Property
-    // side can share the bag-of-substrings pattern + tests cover both
-    // call sites).
+    // Function-side bonuses. Here rather than in KeywordScoringTable so the
+    // Property side shares the bag-of-substrings pattern and the tests cover
+    // both call sites.
     // ------------------------------------------------------------------
 
     private static readonly (string Substring, int Bonus)[] FunctionBonuses =
@@ -68,9 +67,8 @@ public static class ClassLocationScorer
         //                              Property-side Weapon rule)
         ("Enemy",             2),
         ("Weapon",            2),
-        // === 7-game cross-game analysis (2026-07-09, ES2/SEED/TQ2/Avowed/
-        // DQ7R/HogwartsLegacy/SB): Health* (4/7) and Damage* (5/7) classes
-        // host cheat-relevant functions. Clean tokens (no core UE class
+        // === 7-game cross-game analysis: Health* (4/7) and Damage* (5/7)
+        // classes host cheat-relevant functions. Clean tokens (no core UE class
         // contains them). The +2 lands on the CLASS NAME ALONE — there is no
         // keyword gate here or anywhere in this table (see the class doc). ===
         ("Health",            2),
@@ -176,7 +174,7 @@ public static class ClassLocationScorer
         // properties as it is to expose damage functions). ===
         new("Enemy",            2, false),
 
-        // === 7-game cross-game analysis (2026-07-09): Health* (4/7) and
+        // === 7-game cross-game analysis: Health* (4/7) and
         // Damage* (5/7) classes host cheat-relevant properties (HealthComponent,
         // DamageDealer, etc.). Clean tokens — no core UE class contains them.
         // The +2 lands on the CLASS NAME ALONE: there is no keyword gate in
@@ -219,10 +217,10 @@ public static class ClassLocationScorer
         // property NAMES alone already filter most noise (a property
         // called "PlaybackSpeed" on UAudioComponent doesn't match any
         // Stats / Combat / Resources keyword, so it naturally scores 0).
-        // The substring "Anim" / "Sound" / "Particle" penalty bit us hard
-        // in TowerOfMask: the game's player character class is named
-        // "AnimMan_Player_C" — a perfectly cheat-relevant target whose
-        // Health field was being filtered out because of the Anim penalty.
+        // A substring "Anim" / "Sound" / "Particle" penalty hits real targets:
+        // TowerOfMask's player character class is named "AnimMan_Player_C" —
+        // a perfectly cheat-relevant target whose Health field an Anim penalty
+        // would filter out.
         // The Function side keeps refined COMPOUND-name penalties for the
         // function-flavoured noise (which would otherwise dominate);
         // Property side doesn't have that problem and ships penalty-free.

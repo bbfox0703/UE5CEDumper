@@ -265,7 +265,7 @@ enum ProtectOp : uint64_t {
                                 //   observed state.
     PROTECT_OP_GET_GODMODE = 1, // Output result = observed state.
     PROTECT_OP_GET_STATE   = 2, // Output paramsData[0..2] = want / live / resolvable.
-    // Reserved (v2 — docs/godmode-spec.md §5.4): PROTECT_OP_SET_ACTOR_BOOL = 3,
+    // Reserved, not implemented (docs/godmode-spec.md §5.4): PROTECT_OP_SET_ACTOR_BOOL = 3,
     // generic "force any reflected bool" using instanceAddr=obj + className=prop.
 };
 
@@ -483,7 +483,7 @@ constexpr uint32_t ListInstancesPerPage(bool derived) {
 // Result caps. TWO of them, because the pools are not the same size and the cost
 // that matters is cap ÷ page size: the CE Lua caller re-runs a full GObjects walk
 // for EVERY page, on EVERY rescan (5 s by default). Both caps land on the same
-// 16-page ceiling the helper enforces, so widening the scope did not double the
+// 16-page ceiling the helper enforces, so the derived scope does not double the
 // per-rescan walk count.
 //
 // The derived cap is also a fact about the consumer, not just about the walk: the

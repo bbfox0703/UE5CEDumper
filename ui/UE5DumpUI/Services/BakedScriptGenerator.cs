@@ -306,9 +306,8 @@ public static class BakedScriptGenerator
             // point to zero it after a call (would race with Lua reading
             // the return value), and the helper's writeBakedParams zero
             // happens AFTER this dump. Without this pre-zero, the Before
-            // dump shows leftover bytes from the previous invoke (e.g.
-            // ES2 / Geri 2026-05-11 test: scen 2's Before showed scen 1's
-            // [3, 4, 7] payload). Pre-zeroing here makes Before always
+            // dump shows leftover bytes from the previous invoke's
+            // payload. Pre-zeroing here makes Before always
             // appear clean, so Before vs After unambiguously isolates
             // what THIS invoke wrote.
             //
@@ -333,8 +332,7 @@ public static class BakedScriptGenerator
         // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the function is not static and
         // the object was a class default object or another template, once the call reached dispatch, whether or not
         // it then succeeded (nil when the helper's own wait ran out first). An older embedded helper returns two
-        // values, so `warn` is nil there and the record
-        // behaves as it did.
+        // values, so `warn` is nil there and the record shows no warning.
         Line(sb,
             $"local ok, err, warn = invokeUFunction('{EscapeLua(className)}', " +
             $"'{EscapeLua(funcName)}', {parmsSize}, PARAMS)");
@@ -573,10 +571,10 @@ public static class BakedScriptGenerator
             or "WeakObjectProperty"
             or "InterfaceProperty"                    => "pointer",
         // [VND584-01] A lazy pointer is found by a GUID nothing can make: the helper refuses any value but 0 for it,
-        // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it was written as an address.
+        // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it would be written as an address.
         "LazyObjectProperty"                          => "lazy",
         // [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's asset pointer: its path is an FString the helper cannot build, so it is
-        // empty-only too, under its own token (helper 1.5). The int32 default wrote a typed value over its weak index.
+        // empty-only too, under its own token (helper 1.5). The int32 default would write a typed value over its weak index.
         "AssetObjectProperty" or "AssetClassProperty" => "asset",
         // Complex multi-byte buffer types -- the helper has no scalar
         // decoder for these, so the verify-mode emit treats them as a
@@ -722,10 +720,10 @@ public static class BakedScriptGenerator
     /// True when <see cref="RenderLiteral"/> would give up on this input and bake a 0.
     ///
     /// <para>Defined by RUNNING the real renderer rather than re-deriving the rule, so it
-    /// cannot disagree with what the script actually contains — a second parser here is
-    /// how "the report and the reality are computed by different code paths" gets
-    /// re-introduced. The dialog's export message uses it to name the params that failed to
-    /// parse instead of reporting a clean "N baked param(s)".</para>
+    /// cannot disagree with what the script actually contains — with a second parser here,
+    /// the report and the reality would be computed by different code paths. The dialog's
+    /// export message uses it to name the params that failed to parse instead of reporting
+    /// a clean "N baked param(s)".</para>
     /// </summary>
     public static bool IsUnparsedLiteral(string ueTypeName, string text)
         => RenderLiteral(ueTypeName, text).StartsWith(UnparsedMarker, StringComparison.Ordinal);

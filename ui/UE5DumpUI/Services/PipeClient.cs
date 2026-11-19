@@ -52,9 +52,9 @@ public sealed class PipeClient : IPipeClient
     public event Action<PipeLogEntry>? Activity;
     // Raised per response that carries the flag (raw observation — NOT
     // edge-suppressed here). The two-lane router (LaneRoutingPipeClient) owns the
-    // single combined latch that dedupes for the UI: per-lane suppression here was
-    // the audit-X7 cause of the "game thread paused" banner sticking ON when the
-    // lane that saw the pause went idle after the game resumed.
+    // single combined latch that dedupes for the UI: per-lane suppression here would
+    // leave the "game thread paused" banner stuck ON when the lane that saw the
+    // pause goes idle after the game resumes.
     public event Action<bool>? GameThreadStalledChanged;
 
     // id -> (command name, TX tick) so the RX line can show which command it
@@ -443,8 +443,8 @@ public sealed class PipeClient : IPipeClient
     /// the SAME <see cref="_pipe"/>; disposing the reader first closes that shared stream,
     /// so the writer's Dispose() then flushes to a closed pipe and throws
     /// ObjectDisposedException. On the synchronous shutdown path (App ShutdownRequested →
-    /// PipeClient.Dispose) that exception was unhandled and FailFast-crashed the process
-    /// (observed CTD on exit while connected). Dispose the WRITER first (flush while the pipe
+    /// PipeClient.Dispose) that exception is unhandled and FailFast-crashes the process
+    /// on exit while connected. Dispose the WRITER first (flush while the pipe
     /// is still open), then the reader, then the pipe — and guard each: a broken pipe at
     /// teardown (game closed / connection dropped) is expected, never fatal.
     /// </summary>

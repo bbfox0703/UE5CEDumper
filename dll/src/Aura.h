@@ -341,11 +341,11 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 //
 // buildHistogram: when true (the pipe `find_instances` path), the scan does NOT
 // stop at the cap — it walks ALL of GObjects so rset.classHistogram counts every
-// matched class even when its instances all sit past the cap (the histogram-vanish
-// fix), and applies excludeClasses before the cap. When false (the default, for
+// matched class even when its instances all sit past the cap, and applies
+// excludeClasses before the cap. When false (the default, for
 // callers that want a bounded first-N scan and ignore the histogram), the loop keeps
-// the early exit at maxResults and skips the tally — so those hot paths are not
-// regressed into a full-array walk.
+// the early exit at maxResults and skips the tally — so those hot paths do not
+// become a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false, bool skipTemplates = false);
 // skipTemplates: [LISTINSTANCES-KEEPS-TEMPLATES] a caller that WRITES to the pool passes true, and a template
 // (TemplateOf) is then no match at all -- no cap slot, no histogram row. Off by default: the Instance Finder lists
@@ -863,9 +863,8 @@ PropertySearchResult SearchProperties(
 // dedup index, per-query maxResults limit, and (optionally) per-query
 // preview values.
 //
-// The big win: a 36-query sweep on a 4400-class game drops from
-// ~42 sequential seconds (each call re-walks GObjects) to ~1.5 seconds
-// (one shared walk; per-property keyword check is cheap).
+// The big win: a many-query sweep costs one shared walk instead of one
+// GObjects walk per query (the per-property keyword check is cheap).
 //
 // withPreviews=false skips the Phase-2 instance scan that resolves
 // preview values for the wire output. The Interesting Properties tab
@@ -1232,11 +1231,9 @@ inline bool IsListedEnumObject(const std::string& className, const std::string& 
 //   * AnimBlueprintGeneratedClass     — Anim BP-derived classes
 //   * WidgetBlueprintGeneratedClass   — UMG widget BP-derived classes
 //   * DynamicClass                    — Shipping cooked dynamic classes
-// Before this whitelist, the class enumerators matched only "Class" and silently
-// dropped every game-specific BPGC — which is where 90%+ of game-specific Health /
-// Damage / Gold properties live. The user's TowerOfMask repro: `SearchProperties
-// 'Health': 0 matches` despite `Health @ AnimMan_Player_C` clearly existing in the
-// Class Struct view.
+// A class enumerator that matches only "Class" silently drops every game-specific
+// BPGC — which is where most game-specific Health / Damage / Gold properties live,
+// so a property search would answer 0 matches for a field the Class Struct view shows.
 inline bool IsClassLikeMeta(const std::string& metaClassName) {
     return metaClassName == "Class"
         || metaClassName == "BlueprintGeneratedClass"
@@ -1475,7 +1472,7 @@ struct PropertyXref {
                                        // Arr[i] = x) is not detected and counts as a read.
     std::string kind;                  // "instance" (0x01) / "local" (0x00) / "ref"
 
-    // v2a: for hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
+    // For hits inside a Blueprint ubergraph (ExecuteUbergraph_*), the BP
     // event(s) whose entry offset precedes the reference (comma-joined, distinct).
     // Empty for non-ubergraph functions. Best-effort: shared sub-graphs reached
     // from multiple events can mis-attribute (nearest-preceding heuristic).
@@ -1516,7 +1513,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
 // over each function's param chain, so it ALSO catches native (FUNC_Native)
 // functions whose Script is empty. Reuses the PropertyXref result shape: `kind`
 // = "param"/"return", `occurrences` = matching param count, `writeCount` = 0.
-// v1: direct params only (array/map element types are a future enhancement).
+// Direct params only: array/map element types are not inspected.
 PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
                                              int32_t maxResults = 200);
 
@@ -1701,8 +1698,8 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 //
 // Native C++ fields (non-UPROPERTY) are NOT visible to this scan — the
 // UI is contractually required to surface this limitation. See
-// `project_value_search_caveats` memory for the rationale and the
-// TArray<T> crash-risk plan that gates the v2 expansion past primitives.
+// `project_value_search_caveats` memory for the rationale; the leaf types
+// and the container walk are listed in Radar.h's header.
 
 struct ValueScanStats {
     int32_t scannedClasses = 0;   // Unique classes with matching-type fields
@@ -1934,8 +1931,8 @@ GroupScanResult ScanForValueGroup(
     // performance knob -- it decides what a later Changed/Decreased refine can re-read,
     // because the kept list IS the refine's input. Leaves arrive in field-declaration
     // order (base class first), so too small a value silently excludes a derived class's
-    // OWN fields behind its base class's: at the old default of 8 every AActor stored
-    // just PrimaryActorTick/CustomTimeDilation, and a Changed refine pruned every
+    // OWN fields behind its base class's: at a cap of 8 every AActor keeps
+    // just PrimaryActorTick/CustomTimeDilation, and a Changed refine prunes every
     // candidate to zero. Raise it for objects with unusually many numeric fields. The
     // scan WARNs when it truncates rather than dropping the extras silently.
     int                                 perSlotCap = Orden::kDefaultPerSlotCap);
@@ -2032,7 +2029,7 @@ struct SnapshotChunkResult {
     // A scan worker THREW while walking this chunk, so part of [offset, offset+scanned) was
     // never captured. `scanned` still reports the full range (the pager must advance past the
     // hole), which is exactly why this has to travel separately: without it a faulted chunk
-    // was stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
+    // would be stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
     // Published as snapshot_chunk's `worker_faulted`; the UI finalises the snapshot UNUSABLE.
     bool    workerFaulted = false;
     std::vector<SnapshotObject> objects;  // only objects with >=1 numeric field

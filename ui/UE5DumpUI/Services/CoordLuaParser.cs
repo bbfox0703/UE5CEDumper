@@ -432,8 +432,8 @@ public static class CoordLuaParser
                     return "";
                 case 'u':
                 {
-                    // Read wide: as an int, 80000000..FFFFFFFF turned negative, passed the range
-                    // check and threw out of ConvertFromUtf32.
+                    // Read wide: as an int, 80000000..FFFFFFFF would turn negative, pass the range
+                    // check and throw out of ConvertFromUtf32.
                     int close = i < s.Length && s[i] == '{' ? s.IndexOf('}', i) : -1;
                     var digits = close > i + 1 ? s.AsSpan(i + 1, close - i - 1) : default;
                     bool allHex = close > i + 1;

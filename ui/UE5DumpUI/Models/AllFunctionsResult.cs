@@ -25,7 +25,7 @@ public sealed class AllFunctionEntry
     public uint   FunctionFlags   { get; init; }
     public byte   NumParms        { get; init; }
     public ushort ParmsSize       { get; init; }
-    /// <summary>[UE-OVERRIDE-411] review 2: where the function's parameter chain ends, as the DLL measured it
+    /// <summary>[UE-OVERRIDE-411] Where the function's parameter chain ends, as the DLL measured it
     /// (<c>buffer_bytes</c>, never less than ParmsSize); 0 from a DLL that predates it. A baked cheat-table row
     /// gates the mailbox slab on it -- <see cref="Services.BakedScriptGenerator.BakedParmsSize(AllFunctionEntry)"/>.</summary>
     public uint   BufferBytes     { get; init; }

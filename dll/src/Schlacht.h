@@ -11,8 +11,8 @@
 // as the camera moves; everything is un-hidden on disable, or when the last
 // client that turned it on disconnects.
 //
-// Stage 1: NEAREST single occluder (camera→pawn LineTraceSingle). A future
-// Stage 2 can widen to all occluders (LineTraceMulti). Single-player only.
+// The nearest occluder by default; under a pierce depth (SetPierceCount) the
+// trace repeats past each hit, still with LineTraceSingle. Single-player only.
 // Offsets resolved by FName (DynOff), UE4/UE5-agnostic; pawn re-resolved per tick.
 // ============================================================
 #pragma once
@@ -24,7 +24,7 @@
 
 namespace Schlacht {
 
-// ── Who holds See-through ([PIPE-PER-PROCESS-2026-11-06] Stage C) ─────────────
+// ── Who holds See-through ([PIPE-PER-PROCESS-2026-11-06]) ─────────────────────
 // One switch, two kinds of client turn it on: a pipe client (the UI's card, a rig, MCP) and CE's mailbox record. Each
 // enable records who asked; a departing client process releases only its own claim, and See-through goes off with the
 // last claim. So a departure never turns it off under a ticked CE record (whose untick would then do nothing), and a
@@ -164,7 +164,7 @@ struct SeeThroughStatus {
     // size is hiddenCount by construction, so the two cannot drift.
     std::vector<uintptr_t> hiddenActors;
 
-    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C): how many owners, and whether CE's record is one.
+    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06]): how many owners, and whether CE's record is one.
     int32_t claims    = 0;
     bool    ceClaimed = false;
     // [MCP-WRITE-GRANTS-2026-11-14] Whether the client that asked holds one of those claims, so a client can tell its

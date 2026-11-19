@@ -621,11 +621,11 @@ public partial class SnapshotViewModel : ViewModelBase
     ///
     /// Both this and <see cref="RefreshCommand"/> end in
     /// <c>UiCollection.Reset(Snapshots, …)</c>, which Clear()s the collection and
-    /// re-Add()s every row. A test that called SetEngineState and then awaited
-    /// RefreshCommand ran the two CONCURRENTLY over the same ObservableCollection:
-    /// measured 25/4000 in-process iterations observed a corrupt list — duplicated
+    /// re-Add()s every row. A test that calls SetEngineState and then awaits
+    /// RefreshCommand instead of this runs the two CONCURRENTLY over the same
+    /// ObservableCollection, and an occasional run sees a corrupt list — duplicated
     /// rows (both refreshes appending after a single Clear) and torn null slots from
-    /// the unsynchronised List&lt;T&gt; growth, which surfaced as an NRE deep inside
+    /// the unsynchronised List&lt;T&gt; growth, which surface as an NRE deep inside
     /// OnIsGroupModeChanged rather than as anything naming a race.</summary>
     internal Task? PendingRefresh { get; private set; }
 
@@ -928,7 +928,7 @@ public partial class SnapshotViewModel : ViewModelBase
                                 dataType, gameOnly, offset, Constants.SnapshotChunkSize,
                                 includeNative, autoSkipNoise, numericFamily, lct);
                             fetchSw.Stop();
-                            // Phase-0 telemetry: full fetch round-trip + DLL-reported splits
+                            // Telemetry: full fetch round-trip + DLL-reported splits
                             // + the C#-side parse+pipe breakdown (read / RX-log / parse / build).
                             _capFetchMs += fetchSw.ElapsedMilliseconds;
                             _capWalkMs  += chunk.WalkMs;
@@ -1091,9 +1091,9 @@ public partial class SnapshotViewModel : ViewModelBase
             // A large capture parses MILLIONS of transient field objects (JSON DOM +
             // model build); under the default Workstation GC the grown heap stays
             // committed, so after a multi-snapshot session the working set can sit at
-            // several GB even though almost nothing is live — which is what made the UI
-            // look like it "ate too much" before the user could even use Class Pivot.
-            // Reclaim + COMPACT now (a natural pause, negligible vs the ~45s capture) and
+            // several GB even though almost nothing is live — the UI then looks like it
+            // "ate too much" before the user can even use Class Pivot.
+            // Reclaim + COMPACT now (a natural pause, negligible next to the capture) and
             // log managed-heap vs working-set so retention is measurable: if heap drops,
             // the memory was reclaimable garbage; if it stays high, it's a live retainer.
             var proc = System.Diagnostics.Process.GetCurrentProcess();
@@ -1373,7 +1373,7 @@ public partial class SnapshotViewModel : ViewModelBase
                         return;
                     case CaptureOutcome.Cancelled:
                         // A genuine user cancel already cancelled the loop token, so we break
-                        // at the top of the loop before reaching here; a disconnect now
+                        // at the top of the loop before reaching here; a disconnect
                         // returns Failed (above), not Cancelled. StopAutoSnapshot is
                         // idempotent — call it defensively so NO Cancelled path can leave the
                         // loop wedged with AutoSnapshotEnabled stuck on.

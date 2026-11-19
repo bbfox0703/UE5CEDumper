@@ -256,7 +256,7 @@ DWORD WINAPI RetireThread(LPVOID param) {
 }
 
 // The process-wide pass lock (Grimoire::LAND_PASS_MUTEX_FORMAT). Null when it cannot be had: the pass then runs alone in
-// this copy, which is what every copy did before the lock existed.
+// this copy, unserialised against the other copies' passes.
 struct PassLock {
     HANDLE h = nullptr;
     bool held = false;

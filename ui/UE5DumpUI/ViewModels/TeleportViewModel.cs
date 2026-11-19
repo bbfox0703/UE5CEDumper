@@ -2031,8 +2031,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _stealthNoneHeld;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
-    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
-    /// with a tuple -- a claim nothing had checked, while Solide kept holding -- and the gate could not see it.</summary>
+    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. A badge set with a bare tuple
+    /// is invisible to that gate, and an "Off" set that way claims what nothing checked while Solide may still hold.</summary>
     private void ApplyStealthState(int state)
         => (StealthState, StealthBadgeColor) = state switch
         {
@@ -2059,8 +2059,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // [SOLIDE-RELATED-STOPS] Said after whichever line below: a meter past where the search stopped is missed.
             var stopped = Helpers.StealthText.StopsClause(found.Stops);
             // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
-            // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
-            // went on forcing the meter.
+            // release, so Detect only reads: overwritten, they would release the newly found field or none while Solide
+            // goes on forcing the meter.
             if (_stealthArmed && _stealthCandidate is { } held)
             {
                 var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
@@ -2169,7 +2169,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 // [STEALTH-RESET-STALE-HELD] No meter is known to the card: none detected yet, or a reconnect whose
                 // prime could not match a forced field to one (a loading screen has no candidates). Nothing is sent,
-                // so the badge keeps what the card knew -- "Off" was a claim over a hold Solide may still run.
+                // so the badge keeps what the card knew -- "Off" would be a claim over a hold Solide may still run.
                 StatusText = StealthNothingText;
                 return true;   // nothing was sent, so nothing failed to land
             }
@@ -2372,7 +2372,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 + $"Paste into Cheat Engine's address list (right-click → Paste), then enable it to register '{sym}'.";
             // [QUERYPTR-LOG-ABSENT-LABEL] Name the branch, the same three the status line tells apart. The
             // already-pushed branch never asks AOBMaker, so `available` is false there too, and reading it alone
-            // logged "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
+            // would log "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
             string branch = alreadyPushed ? "already pushed this session"
                           : available ? "AOBMaker refused"
                           : "AOBMaker absent";
@@ -3583,8 +3583,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.3+) ──
 
     // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
-    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
-    // which is what the connect/disconnect reset's own comment always said it did.
+    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown.
     private const int GravDirUnavailable = -2;
 
     private void ApplyGravDirState(int state)
@@ -3768,7 +3767,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             // ⛔ DO NOT PAINT A LANDING NOBODY MEASURED. When the post-move re-read
-            // fails the DLL now says so instead of publishing (0,0,0); calling ApplyPose
+            // fails the DLL says so (LandingUnknown) rather than publishing (0,0,0); calling ApplyPose
             // there would overwrite the live X/Y/Z with zeros the user can copy into the
             // coords box or save as a marker. The move itself succeeded.
             // [TPREL-ZEROPOSE-2026-09-10]
@@ -3911,7 +3910,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public bool HasAiWriteBlock => _aiWriteBlock != null;
 
     // ── Who else holds each card's feature ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──
-    // Once grants took the per-call prompt away, the window must show what an AI session holds, as a ticked CE record
+    // Grants take the per-call prompt away, so the window must show what an AI session holds, as a ticked CE record
     // shows in CE. get_holds (DLL 3704+) names each hold's holder; every HoldsPollInterval while connected to such a DLL,
     // each card's *HolderText says who other than this window holds its feature (HolderText's words), and a card
     // someone else holds is read again, so its badge follows what they do. The card's OFF or Reset still takes it over:
@@ -4354,9 +4353,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>[W2-TPREL-MAP] An UNKNOWN current map ("" -- before the first pose read, with no pawn,
-    /// or disconnected) is not a different map. The filter and the teleport guard already treated it
-    /// so; the row flag and the summary did not, and flagged every row "you are on ''". One predicate
-    /// for all four, so they cannot drift apart again.</summary>
+    /// or disconnected) is not a different map: a row flag that read it as one would flag every row
+    /// "you are on ''". One predicate shared by the current-map checks, so they cannot drift apart.</summary>
     private bool IsOnCurrentMap(string? entryMap) =>
         string.IsNullOrEmpty(PoseMap) || IsSameMap(entryMap, PoseMap);
 
@@ -4969,7 +4967,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
             // Read the map AT CHECK TIME. PoseMap is only refreshed by the panel's
             // ~2s poll, which the user can switch off (and which does not exist at all
-            // for the generated Lua picker) -- so relying on it meant the guard could
+            // for the generated Lua picker) -- so relying on it would let the guard
             // fire on a map you had already left. One extra round-trip on an explicit
             // button press is a fair price for a guard that is actually correct.
             await RefreshCurrentMapAsync();
@@ -5404,8 +5402,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
             bool sent = pushed.Created;
-            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set raised
-            // nothing then, and the toolbar chip kept what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set would
+            // raise nothing then, and the toolbar chip would keep what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
             ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
             CoordStatus = sent

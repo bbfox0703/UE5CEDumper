@@ -105,7 +105,7 @@ public static class MovementScriptGenerator
                       "untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
             Line(sb, "elseif state < 0 then");
             // Nothing was applied, so the row must not stay ticked (same rule as the
-            // timeout path above; this one was missed for the same reason).
+            // timeout path above).
             Line(sb, $"  showMessage('[Movement] {label} -- no pawn / no CharacterMovement (enter gameplay first)')");
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
             Line(sb, "elseif DEBUG == 0 then");

@@ -19,8 +19,8 @@ namespace UE5DumpUI.Services;
 /// round-trips, so the run time grows with the game's class count, vs.
 /// zero DLL maintenance burden.
 ///
-/// **BPGC inclusion**: unlike <c>SearchProperties</c> (build 671
-/// `IsClassLikeMeta` fix) the dumper accepts every class-flavoured
+/// **BPGC inclusion**: like the DLL's <c>SearchProperties</c>
+/// (`Aura::IsClassLikeMeta`), the dumper accepts every class-flavoured
 /// metaclass (Class + BlueprintGeneratedClass + AnimBPGC +
 /// WidgetBPGC + DynamicClass) so game-specific BP classes — where
 /// almost all cheat-relevant properties live — are NOT dropped.
@@ -159,11 +159,11 @@ public static class DumpAllService
         // ----- Pass 2: walk every class-like and struct type -----
         //
         // Classes are walked in chunks of WalkClassBatchChunkSize via
-        // walk_class_batch (build 693). The DLL batch is a trivial loop
+        // walk_class_batch. The DLL batch is a trivial loop
         // over Ubel::WalkClassEx — same function the single walk_class
         // path uses — so each batch element is byte-identical to a
         // single-call result. WalkFunctions stays single-call per
-        // emitted class for now (separate optimisation candidate).
+        // emitted class (a separate optimisation candidate).
         // Any batch failure (pipe exception, unexpected element count)
         // is caught and the chunk is replayed via single WalkClassAsync
         // calls so per-class error attribution is preserved.
@@ -320,7 +320,7 @@ public static class DumpAllService
     /// WalkClassAsync calls so per-class error attribution survives.
     /// WalkFunctions is invoked single-call per emitted class — that
     /// half of the per-class round-trip cost is a separate batching
-    /// candidate (build 693 only batches walk_class).
+    /// candidate (only walk_class is batched).
     ///
     /// Returns the chunk's counts so the caller can maintain the cumulative
     /// counters the summary line reports. The GameOnly
@@ -359,9 +359,8 @@ public static class DumpAllService
         }
         catch
         {
-            // batchResult stays null → fallback below preserves
-            // per-class error rows (kind=error) the way the pre-batch
-            // path did.
+            // batchResult stays null → the single-call fallback below
+            // keeps per-class error rows (kind=error).
         }
 
         int classesThisChunk = 0;
@@ -547,7 +546,7 @@ public static class DumpAllService
     }
 
     /// <summary>
-    /// [EXTPR-539-540-2026-10-02] D3: a function's parameters, the return included, in the DLL's order.
+    /// [EXTPR-539-540-2026-10-02] A function's parameters, the return included, in the DLL's order.
     /// walk_functions lists the function's whole property chain, and a Blueprint function's locals follow its
     /// parameters there; <see cref="FunctionInfoModel.Parameters"/> leaves them out, with the DLL's CPF_Parm
     /// flag or, from a DLL that predates it, num_parms. No struct_fields: the struct's own line carries them.
@@ -578,7 +577,7 @@ public static class DumpAllService
         return fn.ParametersFromNumParms;
     }
 
-    /// <summary>[EXTPR-539-540-2026-10-02] D1: a struct's line. The class line's identity, super and props, so a
+    /// <summary>[EXTPR-539-540-2026-10-02] A struct's line. The class line's identity, super and props, so a
     /// reader parses both the same way; no functions, instance count or Blueprint-class flag.</summary>
     private static async Task WriteStructLineAsync(
         TextWriter w, UObjectNode obj, ClassInfoModel structInfo, CancellationToken ct)
@@ -632,7 +631,7 @@ public static class DumpAllService
         sb.Append(']');
     }
 
-    /// <summary>[EXTPR-539-540-2026-10-02] D2: an enum's line, entries in the DLL's order.</summary>
+    /// <summary>[EXTPR-539-540-2026-10-02] An enum's line, entries in the DLL's order.</summary>
     private static async Task WriteEnumLineAsync(TextWriter w, EnumDefinition e, CancellationToken ct)
     {
         var sb = new StringBuilder(e.Entries.Count * 40 + 128);
@@ -710,7 +709,7 @@ public static class DumpAllService
     /// <c>Ubel::GetFullName</c> emits engine paths as <c>//Script/Engine/Class</c> — a
     /// DOUBLE leading slash with <c>/</c> separators (dot is used only for sub-objects
     /// at depth &gt; 2, never for a top-level class). A naive <c>StartsWith("/Script/Engine.")</c>
-    /// never matched that real wire form, silently making GameOnly a no-op. So collapse
+    /// never matches that real wire form and would silently make GameOnly a no-op. So collapse
     /// the leading-slash run to a single <c>/</c>, then require the prefix to be followed
     /// by end-of-string, <c>/</c>, or <c>.</c>.</summary>
     internal static bool IsEnginePath(string fullPath)

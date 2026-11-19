@@ -86,14 +86,13 @@ public static class SdkExportService
                 // Mirrors the DLL-side `Aura::IsClassLikeMeta` whitelist
                 // (Class + BPGC variants + DynamicClass). A bare
                 // `ClassName == "Class"` check silently drops every
-                // BlueprintGeneratedClass — which is where 90%+ of
-                // game-specific cheat targets live. Same bug fixed in
-                // the DLL build 673; this is the C# mirror.
+                // BlueprintGeneratedClass — which is where most
+                // game-specific cheat targets live.
                 // [SDK-UDS-MISSING] A Blueprint UserDefinedStruct is its own UScriptStruct subclass, so its
-                // row reads "UserDefinedStruct": without it, every Blueprint member of that type named a
-                // struct the header never defined.
+                // row reads "UserDefinedStruct": without it, every Blueprint member of that type would name
+                // a struct the header never defined.
                 // Shared with the USMAP collector: class-like metas, native and user-defined
-                // structs, never a class-default object (which came out as an empty
+                // structs, never a class-default object (which would come out as an empty
                 // `struct Default__X {}`).
                 if (DumpAllService.IsExportedTypeRow(obj.ClassName, obj.Name))
                     targets.Add((obj.Address, obj.Name, obj.ClassName));
@@ -439,7 +438,7 @@ public static class SdkExportService
             "ClassProperty" => classCpp ?? "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TWeakObjectPtr<class {objClass}>" : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftObjectPtr<class {objClass}>" : "TSoftObjectPtr<UObject>",
-            // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
+            // [P3-SDK-INNERS] The scalar path's spellings, copied: otherwise a container of these is declared uint8_t.
             "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
             "AssetObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TAssetPtr<class {objClass}>" : "TAssetPtr<UObject>",   // [UE4-ASSETPTR-EXPORTS]
@@ -520,7 +519,7 @@ public static class SdkExportService
 
     /// <summary>
     /// One field, normalised so the schema and live emitters share the layout logic instead of
-    /// keeping two copies of it. They had two, and both carried the same two defects.
+    /// keeping two copies of it.
     /// </summary>
     private readonly record struct SdkField(
         string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl,
@@ -725,7 +724,7 @@ public static class SdkExportService
         return sb.ToString();
     }
 
-    // --- Enum and Function Generation (Phase 4) ---
+    // --- Enum and Function Generation ---
 
     /// <summary>
     /// Generate a C++ enum class definition from an EnumDefinition.

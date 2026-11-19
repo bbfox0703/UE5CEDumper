@@ -533,7 +533,7 @@ public static class CeXmlExportService
         typeName is "ObjectProperty" or "ClassProperty" or "InterfaceProperty";
 
     // ========================================
-    // Unified drilldown resolver (docs/ce-export-drilldown-spec.md Phase A)
+    // Unified drilldown resolver (docs/ce-export-drilldown-spec.md, "Phase A implementation contract")
     // ========================================
 
     /// <summary>
@@ -544,8 +544,8 @@ public static class CeXmlExportService
     /// level), recursing into each so nested containers expand too. Populates
     /// <paramref name="resolvedStructs"/> (keyed by StructDataAddr) and
     /// <paramref name="resolvedInstances"/> (keyed by PtrAddress) — the same keys
-    /// the emit phase looks up. Replaces the separate ResolveStructFieldsAsync +
-    /// ResolvePointerInstancesAsync calls for CE XML export.
+    /// the emit phase looks up. CE XML export calls this in place of the separate
+    /// ResolveStructFieldsAsync + ResolvePointerInstancesAsync calls.
     /// </summary>
     public static async Task ResolveDrilldownAsync(
         IDumpService dump,
@@ -767,7 +767,7 @@ public static class CeXmlExportService
             // TArray<ObjectProperty> (object pointers, e.g. SpawnedAttributes): emit
             // each non-null element pointer so the resolver walks the target object
             // and populates resolvedInstances — without this, drilling into a
-            // selected object-array element was a no-op (the element emitted as a
+            // selected object-array element is a no-op (the element emits as a
             // plain 8-byte pointer regardless of drilldown depth). ArrayElementValue
             // carries no PtrClassAddr; WalkInstance resolves the class from the
             // pointer itself when class_addr is omitted.
@@ -4422,7 +4422,7 @@ public static class CeXmlExportService
     /// shows the FName ComparisonIndex (paired with a DropDownList of names) rather than the whole
     /// 8- or 16-byte FName, and the pointer flavours stay 8 regardless of stride.</para>
     ///
-    /// <para>The earlier summary, kept: Map an array inner type name to CE field info.
+    /// <para>Maps an array inner type name to CE field info.
     /// Similar to MapCeField but takes a type name string (for array element types).
     /// BoolProperty in arrays = full byte (no bitfield).
     /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).

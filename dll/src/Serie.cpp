@@ -398,9 +398,8 @@ static void DetectStride() {
 }
 
 // Sample the lowest REAL entry boundary above "None" and render it for an init log line.
-// ONE implementation for BOTH Init paths, deliberately: the defect this replaces survived
-// because the same wrong index (1) was hand-written in two places and only one of them was
-// ever looked at (`docs/working-lessons.md` §2.17 — a fix that landed in one of its copies).
+// ONE implementation for BOTH Init paths, deliberately: an index hand-written in two places
+// lets a fix land in one of its copies only (`docs/working-lessons.md` §2.17).
 static std::string FirstEntrySampleText() {
     const int32_t idx = Serie::FirstEntryAfterNone(s_noneOffset, s_stride);
     if (idx <= 0) return "FName[?]=<entry geometry not established>";
@@ -653,10 +652,10 @@ std::string GetString(int32_t nameIndex, int32_t number) {
         // UE FNames can store localized display names (e.g., Japanese) in wide format.
         //
         // Surrogate handling is critical: nlohmann::json strict-validates UTF-8 and
-        // rejects 3-byte sequences that encode surrogate codepoints (CESU-8). Squad
-        // logs at build 488 showed 13 "invalid UTF-8 byte at index 1: 0xA0" failures
-        // on get_object_list — that 0xA0 is the second byte of 0xED 0xA0 0x80 = U+D800
-        // (high surrogate). Utf8Helpers::EncodeUtf16 detects surrogate pairs and emits
+        // rejects 3-byte sequences that encode surrogate codepoints (CESU-8): such a
+        // name makes a reply fail with "invalid UTF-8 byte at index 1: 0xA0" — that
+        // 0xA0 is the second byte of 0xED 0xA0 0x80 = U+D800 (high surrogate).
+        // Utf8Helpers::EncodeUtf16 detects surrogate pairs and emits
         // proper 4-byte UTF-8; lone surrogates collapse to '?'. The same helper is
         // unit-tested by utf8_helpers_test.cpp.
         std::vector<wchar_t> wbuf(len + 1, 0);

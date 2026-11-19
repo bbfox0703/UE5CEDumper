@@ -721,7 +721,8 @@ std::string GetName(uintptr_t uobjectAddr) {
     // input, so this replaces ReadFName rather than adding a read. Same tolerance
     // ReadFName has and for the same reason: ComparisonIndex must read, Number may
     // fail and default to 0. Kept as two reads, not one 8-byte load, so an unaligned
-    // or half-mapped address behaves exactly as it did before.
+    // or half-mapped address keeps that tolerance: a failed Number read does not lose
+    // the ComparisonIndex.
     const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
     NameWitness live{};
     if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
@@ -906,8 +907,8 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
 
 // [UPROP-INNER-TYPENAME] A property's type name in the running mode: an FField's FFieldClass name, or -- on a
 // UProperty engine, where a property IS a UObject -- its UClass name. The FField read on a UProperty lands on
-// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it was never typed there
-// (UE423_Flying: 1,016 TArray<uint8_t> in the SDK export; DQ XI S: 0 of 77 array inners).
+// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it goes untyped on such an
+// engine.
 static std::string GetPropertyTypeNameForMode(uintptr_t propAddr) {
     return DynOff::bUseFProperty ? GetFieldTypeName(propAddr) : GetUPropertyTypeName(propAddr);
 }
@@ -997,9 +998,9 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
 
         // Alignment sanity warning. See Scharf.h for the per-type rules — uses
         // the engine-reported ElemSize for variable-width types (EnumProperty), and respects
-        // CasePreservingName mode for FName layout. Earlier inline check assumed all
-        // EnumProperty was 4-byte and all NameProperty was 8-byte aligned, which produced
-        // up to ~75 false positives per game on UE 5.x AActor-derived BPs.
+        // CasePreservingName mode for FName layout. An inline check assuming every
+        // EnumProperty is 4-byte and every NameProperty 8-byte aligned would raise dozens
+        // of false positives per game on UE 5.x AActor-derived BPs.
         if (fi.Offset > 0 && !fi.TypeName.empty()
             && Scharf::IsAlignmentSuspicious(
                    fi.TypeName, fi.Offset, fi.Size, DynOff::bCasePreservingName)) {
@@ -1484,7 +1485,7 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
 
 // The name of the object in a property's subclass slot -- a StructProperty's UScriptStruct, an object property's
 // PropertyClass -- or "" when the slot does not hold that kind of object. [STRUCTPROBE-ANY-NAME] A printable name
-// was the whole test, so a named object of any other kind typed the member by ITS name.
+// alone is not the test: a named object of any other kind would type the member by ITS name.
 static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr_t)) {
     uintptr_t ptr = 0;
     if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
@@ -1602,11 +1603,10 @@ static bool IsPrintableName(const std::string& n) {
 // property's only member: 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and Dumper-7's Offsets.cpp agree
 // for the hard and soft class properties, and 4.11-4.17's UAssetClassProperty does the same (UE_4.10 UnrealType.h;
 // UE415_Flyinh's 4.15 PDB, PropertyClass +0x80 and MetaClass +0x88) -- so it is derived, never stored as a DynOff.
-// The slot is the MODE's own subclass start. On a UProperty engine FSTRUCTPROP_STRUCT was never derived before
-// [UPROP-SUBCLASS-SLOT] and sat one pointer past PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a
-// 0x70 start) -- and a family move after init can still leave it off for a while ([FAMILY-EPOCH]). That is why
-// the PropertyClass read and validated here, not the plain FSTRUCTPROP_STRUCT read, becomes a class-valued
-// property's obj_class.
+// The slot is the MODE's own subclass start. On a UProperty engine an underived FSTRUCTPROP_STRUCT sits one pointer
+// past PropertyClass -- ON the MetaClass ([UPROP-SUBCLASS-SLOT]) -- and a family move after init can still leave
+// it off for a while ([FAMILY-EPOCH]). That is why the PropertyClass read and validated here, not the plain
+// FSTRUCTPROP_STRUCT read, becomes a class-valued property's obj_class.
 // Validated before anything is published, because a wrong offset here reads a real UClass either way:
 // PropertyClass must be a class of classes (which also proves the slot), and the pointer after it a UClass.
 // Both empty when the anchor fails; metaClass alone empty when only the MetaClass fails -- the export then
@@ -1690,12 +1690,12 @@ static std::vector<std::unordered_map<uintptr_t, ClassInfo>::node_type> s_walkCl
 //  * PER ADDRESS (the address alone, not the memo's epoch key: a re-init's epoch bump must not un-stop an address or
 //    count it twice [WALKCLASS-STOP-EPOCH]): an address whose witness keeps changing -- an engine whose witness offsets read something
 //    volatile, which would otherwise park and re-walk on every call -- stops being checked after kMaxRewalksPerAddress
-//    re-walks and is answered as it was before the witness, said in the log. The stop is STICKY: a match against the
+//    re-walks and is answered from the memo without the witness, said in the log. The stop is STICKY: a match against the
 //    stopped entry, every other turn of an alternation, must not clear it.
 //  * Genuine reuse re-walks once and then HOLDS STILL: kHoldHitsToForgive matching hits in a row forgive an address
 //    that has not stopped, so many level changes at one address never reach the bound. The count is per address: one
 //    count for the whole process would switch the check off everywhere.
-//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers as before the
+//  * PROCESS-WIDE, by estimated bytes: past kMaxParkedBytes no entry is parked any more (the memo answers without the
 //    witness, said once) -- the last word on memory, whatever pattern the witnesses follow.
 static constexpr uint32_t kMaxRewalksPerAddress = 8;
 static constexpr uint32_t kHoldHitsToForgive    = 3;
@@ -2260,7 +2260,7 @@ bool OverrideInForceContradicted(unsigned versionInForce, bool userOverride) {
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // [VND583-01] The offset is DECIDED by the vote above when it can be; then a zero read is
     // a zero, never a reason to sweep. Otherwise the primary (the measured PropertiesSize
-    // relation, else the version table) and the sweep, as before. The table, the measurements
+    // relation, else the version table) and the sweep. The table, the measurements
     // behind it, and why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
@@ -2763,7 +2763,7 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
                 std::string err;
                 const int answer = ops.interfaceAddress(static_cast<uintptr_t>(object), p.interfaceClass, ops.ctx,
                                                         addr, err);
-                if (answer < 0) continue;   // not measured here: sent as it always was
+                if (answer < 0) continue;   // not measured here: sent unchanged
                 if (answer == 0) {
                     char a[32];
                     snprintf(a, sizeof(a), "0x%llX", static_cast<unsigned long long>(object));
@@ -4564,9 +4564,9 @@ ReadArrayResult ReadPointerArrayElements(
 // ============================================================
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
     // [VND583-08] UE's FWeakObjectPtr::Internal_GetObjectItem, in its order: SerialNumber == 0 is an
-    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair "resolved" to any
-    // object whose serial had never been assigned -- serials are handed out lazily, so most read 0
-    // -- and Find References listed it); a negative index is null; and index 0 is a real slot.
+    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair would "resolve" to
+    // any object whose serial had never been assigned -- serials are handed out lazily, so most read 0
+    // -- and Find References would list it); a negative index is null; and index 0 is a real slot.
     if (serialNumber == 0 || objectIndex < 0) return 0;
     uintptr_t obj = Aura::GetByIndex(objectIndex);
     if (!obj) return 0;
@@ -4792,11 +4792,11 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
                 uint8_t fieldMask = boolBytes[3];
-                // fieldSize == 1, not `>= 1 && <= 8`. Five of the seven copies of this
-                // probe already required 1; these two had drifted. FieldSize is the
-                // bitfield CONTAINER size and UHT only ever emits a 1-byte one, so the
-                // loose form bought nothing and accepted 8 -- which is exactly the low
-                // byte an 8-aligned pointer can present when the probe lands off-field.
+                // fieldSize == 1, not `>= 1 && <= 8`, as the other copies of this probe
+                // require. FieldSize is the bitfield CONTAINER size and UHT only ever
+                // emits a 1-byte one, so the loose form buys nothing and accepts 8 --
+                // which is exactly the low byte an 8-aligned pointer can present when
+                // the probe lands off-field.
                 if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
                     cf.boolFieldMask = fieldMask;
                     break;
@@ -5215,7 +5215,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
     // ⛔ DO NOT force a constant here. A forced 0x20 — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)
     // model — reads element 0 correctly while every index ≥1 drifts 4 bytes (≤5.2) or 8
     // (≥5.3), and LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so
-    // the `TLazyObjectPtr payload envelope measured` line could not come from THIS path. Use the
+    // the `TLazyObjectPtr payload envelope measured` line cannot come from THIS path. Use the
     // envelope arithmetic the scalar path uses: it takes the envelope from a real ElementSize and
     // falls back to the version default on garbage.
     //
@@ -5264,8 +5264,8 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
         // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
         // differently" is not available -- a faulted read and a genuinely-unset pointer
-        // produced the identical {00000000-...} string, and the fabricated one was also
-        // counted in readCount. The read's own answer is the only discriminator.
+        // would produce the identical {00000000-...} string, and the fabricated one would
+        // also count in readCount. The read's own answer is the only discriminator.
         // The four contiguous uint32s are the same bytes in the same order, so the
         // formatted output is unchanged on the success path.
         uint32_t guid[4] = {};
@@ -6377,7 +6377,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             } else {
                 // [VND583-05] The same words as the three sibling weak readers (struct member,
                 // array element, search preview): a live index whose serial no longer matches is a
-                // DEAD reference, not a null one. Unlabelled, the Value column showed the raw
+                // DEAD reference, not a null one. Unlabelled, the Value column would show the raw
                 // index+serial hex.
                 fv.typedValue = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
@@ -6853,8 +6853,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else {
                 // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass), the first
-                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version since
-                // [UPROP-SUBCLASS-SLOT]: a flat UPROPERTY_OFFSET + 0x2C was right on stock 4.18-4.24 only (4.11-4.17 are
+                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version
+                // ([UPROP-SUBCLASS-SLOT]): a flat UPROPERTY_OFFSET + 0x2C is right on stock 4.18-4.24 only (4.11-4.17 are
                 // + 0x28, case-preserving + 0x34), and the inner's Struct below is read at it UNPROBED.
                 int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
@@ -7104,20 +7104,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                         // If key/value is StructProperty, read UScriptStruct* for navigation
                         // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
-                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either read fails, because a 0 addr makes
+                        // `GetMapPairLayout` (`[TMAPGEOM-2026-09-09]`), which REFUSES the whole
+                        // layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
                         // pairStride, mis-striding the whole map. `WalkInstance` never calls
-                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
-                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        // GetMapPairLayout -- it uses this inlined copy -- so the twins must agree
+                        // on the same input, or this one guesses SILENTLY.
                         //
-                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
-                        // agree on REFUSING. The alternative was to keep guessing here, on the
-                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
-                        // stride does not render "slightly wrong", it renders CONFIDENT values read
-                        // from the middle of the previous pair, and nothing on screen says so.
-                        // Publishing nothing and naming the reason is the same call
-                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // ⭐ `[TMAPGEOM-TWIN-2026-09-09]`: the twins agree on REFUSING. Guessing on
+                        // the grounds that a slightly-wrong map beats a blank one in a UI fails here
+                        // -- a wrong stride does not render "slightly wrong", it renders CONFIDENT
+                        // values read from the middle of the previous pair, and nothing on screen
+                        // says so. Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` makes for an unrecognised stride.
                         // The HEADER is kept either way -- name, type and element count still show;
                         // only the element VALUES are withheld.
                         //
@@ -7293,20 +7292,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
-                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either read fails, because a 0 addr makes
+                        // `GetMapPairLayout` (`[TMAPGEOM-2026-09-09]`), which REFUSES the whole
+                        // layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
                         // pairStride, mis-striding the whole map. `WalkInstance` never calls
-                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
-                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        // GetMapPairLayout -- it uses this inlined copy -- so the twins must agree
+                        // on the same input, or this one guesses SILENTLY.
                         //
-                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
-                        // agree on REFUSING. The alternative was to keep guessing here, on the
-                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
-                        // stride does not render "slightly wrong", it renders CONFIDENT values read
-                        // from the middle of the previous pair, and nothing on screen says so.
-                        // Publishing nothing and naming the reason is the same call
-                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // ⭐ `[TMAPGEOM-TWIN-2026-09-09]`: the twins agree on REFUSING. Guessing on
+                        // the grounds that a slightly-wrong map beats a blank one in a UI fails here
+                        // -- a wrong stride does not render "slightly wrong", it renders CONFIDENT
+                        // values read from the middle of the previous pair, and nothing on screen
+                        // says so. Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` makes for an unrecognised stride.
                         // The HEADER is kept either way -- name, type and element count still show;
                         // only the element VALUES are withheld.
                         //
@@ -7875,7 +7873,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (enumPtr) {
                 {
                     // Same gate, same reason, as the EnumProperty handler above: a faulted read
-                    // leaves rawVal at 0, which this block then published as the NAME of
+                    // leaves rawVal at 0, which this block would publish as the NAME of
                     // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
                     // the FField and survives; only the value is refused.
                     uint8_t rawVal = 0;
@@ -8136,8 +8134,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // [R7-B-02] The weak value's raw pair, kept for the null / null (stale) label below.
             int32_t optWeakIdx = 0, optWeakSerial = 0;
             bool optWeakRead = false;
-            // [R7-B-04] ...and its [garbage] tag, which the display builder below appends (setting typedValue here
-            // was dead: that builder overwrote it for every resolved target).
+            // [R7-B-04] ...and its [garbage] tag, which the display builder below appends (it overwrites typedValue
+            // for every resolved target, so typedValue is not the place for it).
             const char* optWeakTag = "";
 
             // Decode the value only for a SET optional whose discriminator was read -- never a
@@ -8242,9 +8240,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                                      readSize);
                     }
 
-                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy. The copy
-                    // that stood here read a packed bool as its whole byte and knew fewer scalar
-                    // widths than InterpretStructByLayout — "now the ONLY one" was not true.
+                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy: a copy
+                    // drifts, reading a packed bool as its whole byte or knowing fewer scalar
+                    // widths than InterpretStructByLayout.
                     std::string preview = hasBuf
                         ? InterpretStructByLayout(structBuf.data(), readSize, si, previewLimit)
                         : std::string();
@@ -8441,8 +8439,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.ptrName      = b.targetName;
                     elem.ptrClassName = b.targetClassName;
                 }
-                // [R7-B-04] Through the one label, so a Garbage target is tagged here too (it was the one
-                // reader of five without the tag).
+                // [R7-B-04] Through the one label, so a Garbage target is tagged here as in the other
+                // readers.
                 elem.value = DescribeDelegateBinding(b.targetObj, b.targetName,
                                                      b.objectIndex, b.serialNumber,
                                                      b.functionName);
@@ -8666,7 +8664,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     // Note: works with 0-field classes too — the entire [headerEnd, propsSize] becomes one gap.
     // The gap pass is bounded SEPARATELY from the plausibility gate above: a class
     // can be entirely real and still be too large to sweep byte-wise, and conflating
-    // the two is what made a live 3.6 MB USaveGame report as recycled. Say the skip
+    // the two would report a large live object (a multi-MB USaveGame) as recycled. Say the skip
     // out loud rather than silently returning no guessed rows. (SANEPROPS-2026-08-26)
     //
     // Gated on `fillGaps` as well, so a default walk (fill_gaps defaults to false)
@@ -8844,9 +8842,9 @@ void ResolvePropertyPreviews(
             if (s.empty()) {
                 m.preview = "(empty)";
             } else {
-                // Truncate long strings — on a CHARACTER boundary. `s.resize(50)` split
-                // multi-byte sequences (2 CJK strings in 3), and nlohmann's strict dump()
-                // then threw on the invalid UTF-8, turning the entire search_properties
+                // Truncate long strings — on a CHARACTER boundary. A byte cut like
+                // `s.resize(50)` splits multi-byte sequences, and nlohmann's strict dump()
+                // then throws on the invalid UTF-8, turning the entire search_properties
                 // response into {"error":...} — zero rows for a search that matched.
                 m.preview = "\"" + Utf8Helpers::TruncateUtf8(s, 50) + "\"";
             }

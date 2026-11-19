@@ -19,7 +19,7 @@ namespace UE5DumpUI.Services;
 /// sweep OFF — with three deliberate deviations, all documented in
 /// docs/teleport-coord-library-spec.md §8:
 ///
-///  1. Keyed by the EXE MODULE NAME, not the PE hash (D1), so a game patch does not
+///  1. Keyed by the EXE MODULE NAME, not the PE hash, so a game patch does not
 ///     orphan a hand-curated list.
 ///  2. <see cref="CoordinateLibraryJsonContext"/> does NOT use
 ///     <c>WhenWritingDefault</c>, so a legitimate 0.0 coordinate is written.
@@ -85,12 +85,12 @@ public sealed class CoordinateLibraryStore
         if (moduleName!.Contains('?')) return "";
         string key = SanitizeKey(moduleName);
         if (key.Length > 0) return key;
-        // (skeptic QM-7) A real name with no character a key can hold ('★.exe') would get no library at all, under
+        // A real name with no character a key can hold ('★.exe') would get no library at all, under
         // the new DLL too: key it by a stable hash of the name instead.
         return "name-" + StableHash(StripExeOrDll(moduleName.Trim()).ToLowerInvariant());
     }
 
-    /// <summary>[PATH-UI-LEGACY-QMARK] (skeptic QM-1) The key an OLDER DLL's report of this game keyed to: every
+    /// <summary>[PATH-UI-LEGACY-QMARK] The key an OLDER DLL's report of this game keyed to: every
     /// non-ASCII UTF-16 unit as '?' (or the name as given, if it already carries them), sanitised by the rules
     /// <see cref="KeyFor"/> used before it refused such names. "" for an ASCII name -- it never had another key.
     /// Libraries saved under it would otherwise be stranded: refused under the old DLL, a different key under the

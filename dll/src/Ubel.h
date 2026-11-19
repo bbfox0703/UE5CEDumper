@@ -236,14 +236,12 @@ inline size_t EstimateClassInfoBytes(size_t nameLen, size_t pathLen,
 /// Entries kept in the plain class-walk cache before the least-recently-used one
 /// is evicted.
 ///
-/// 2048, NOT the 512 first proposed. 512 was sized against "~50x the deepest
-/// super chain", which is the wrong denominator: the working set is the classes
-/// touched in ONE scan pass, and the DSClient reference log touches 10,046
-/// distinct classes. 2048 entries is roughly 55K FieldInfo, and still reclaims
-/// most of what the unbounded map held.
+/// Sized against the working set, which is the classes touched in ONE scan pass
+/// (thousands of distinct classes on a real game), never against the depth of a
+/// super chain, which is the wrong denominator. 2048 entries is roughly 55K FieldInfo.
 ///
 /// Tune it with the get_diagnostics `class_cache` counters, never with the
-/// 0.038 ms average walk time — that average is dominated by cache HITS, so it
+/// average walk time — that average is dominated by cache HITS, so it
 /// says nothing about what an eviction costs.
 constexpr size_t kMaxWalkClassCacheEntries = 2048;
 
@@ -319,12 +317,11 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
 // WalkFunctions above walks one UClass's OWN UStruct::Children chain and stops there.
 // That is right for LISTING — the UI attributes each function to its declaring class, and
 // inheriting would repeat AActor's 140 entries under every actor class — but it is wrong
-// for RESOLVING, and the by-name resolvers were built straight on top of it. The result:
-// `SetActorHiddenInGame` on a StaticMeshActor came back "Function not found" for a function
-// the tool's own listing had produced, while the same call on an instance whose class IS
-// Actor worked. AActor declares 140 functions, APawn 33, ACharacter 48 — none of them
-// reachable by name on any derived instance, which on a real game means K2_TeleportTo,
-// SetActorLocation and Jump among ~221 others.
+// for RESOLVING. A by-name resolver over it alone answers "Function not found" for
+// `SetActorHiddenInGame` on a StaticMeshActor, a function the tool's own listing produced,
+// while the same call on an instance whose class IS Actor works. AActor declares 140
+// functions, APawn 33, ACharacter 48 — none of them would be reachable by name on a derived
+// instance, K2_TeleportTo, SetActorLocation and Jump among them.
 //
 // The traversal lives here, in the header, ON PURPOSE: its two call sites are in Frieren.cpp
 // and Mimic.cpp, which no test target compiles; Ubel.cpp itself reaches only `dll_core_test`.
@@ -430,7 +427,7 @@ inline bool InterfaceAddressFor(uintptr_t object, uintptr_t objectClass, uintptr
 // UClass::FindFunctionByName's order: the class chain (ResolveFunctionInChain), then -- only when no level declares the
 // name -- each level's implemented interfaces with their SuperStructs, most-derived level first. A function an
 // implementer does not redeclare (a native implementor of a BlueprintCallable interface function) lives only on the
-// interface class, so the chain alone answered "not found".
+// interface class, so the chain alone answers "not found".
 template <class ListFuncs, class ReadSuper, class ListInterfaces>
 inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* funcName, ListFuncs listFuncs,
                                                ReadSuper readSuper, ListInterfaces listInterfaces, FunctionInfo& out,
@@ -744,7 +741,7 @@ inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_
     const bool lazy = typeName == "LazyObjectProperty";
     if (!IsObjectPointerSlot(typeName, kind)) return ObjectParamAction::Leave;
     // Zero is null in all three. A value that is not a live object's address is one the caller encoded itself, and it
-    // goes through as it always did.
+    // goes through unchanged.
     if (leadingQword == 0 || !leadsWithLiveObject) return ObjectParamAction::Leave;
     // A lazy pointer resolves by a GUID nothing here can make (UHT refuses lazy UFunction parameters anyway), and a weak
     // pointer of any size but 8 is the remote-handle shape [VND583-15] this does not model.

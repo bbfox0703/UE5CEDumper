@@ -2,13 +2,13 @@ namespace UE5DumpUI.Core;
 
 /// <summary>
 /// Pure formatting for the "container drill-down was capped at the array limit" disclosure
-/// (finding <c>[CONTAINERCAP-2026-08-18]</c>).
+/// (<c>[CONTAINERCAP-2026-08-18]</c>).
 /// <para>
 /// A <c>TArray</c> / <c>TMap</c> / <c>TSet</c> is walked only up to the user's Array Limit
 /// (<see cref="Constants.DefaultArrayLimit"/>, surfaced as the toolbar slider). The DLL still
 /// reports the container's TRUE total (<c>arrayCount</c> / <c>mapCount</c> / <c>setCount</c>)
 /// alongside the capped element list, so when fewer elements were received than the true total the
-/// UI must say so — silence let a user conclude a 500-entry <c>TMap</c> did not contain an item they
+/// UI must say so — silence lets a user conclude a 500-entry <c>TMap</c> does not contain an item they
 /// simply could not see. Mirrors the existing GWorld actor-list "⚠ showing N of M actors" pattern.
 /// </para>
 /// </summary>

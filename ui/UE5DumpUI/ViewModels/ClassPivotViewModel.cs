@@ -120,7 +120,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// <summary>Client-side substring filter over the results grid (key + values).</summary>
     [ObservableProperty] private string _resultFilter = "";
 
-    // --- Change-driven discovery (C3): the automatic front-door. Instead of making
+    // --- Change-driven discovery: the automatic front-door. Instead of making
     // the user guess which class/key to pivot when the target is unknown, find the
     // (class, prop) targets whose value MOVED between two snapshots (capture
     // before/after an in-game action), ranked by "looks like game state". The user
@@ -722,8 +722,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Supersede any in-flight (stale) class load at ENTRY — the cache-hit and
         // empty early-return paths below must bump this too, so a slower scan
         // started by a prior snapshot bails (id mismatch) instead of clobbering the
-        // picker when it finally completes. Bumping only on the cache-MISS path left
-        // a hole: a miss in flight, then a switch to an ALREADY-cached snapshot, let
+        // picker when it finally completes. Bumping only on the cache-MISS path would leave
+        // a hole: a miss in flight, then a switch to an ALREADY-cached snapshot, would let
         // the miss complete and overwrite the cached list with the wrong snapshot's.
         int id = ++_classLoadId;
         if (SelectedSnapshot == null) { _allClasses.Clear(); Classes.Clear(); return; }
@@ -957,7 +957,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Bump the guard at entry (not after the null-check) so a null/empty
         // selection also supersedes any in-flight load — otherwise a slow load
         // for the previous DataTable could complete and repopulate Fields after
-        // the selection was cleared (same race fixed in LoadClasses/Fields).
+        // the selection was cleared (the same race LoadClasses/Fields guard against).
         int id = ++_fieldLoadId;
         _dataTable = null;
         SelectedKeyField = null;

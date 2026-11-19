@@ -17,8 +17,8 @@
 //     passing through walls. Pure raw Macht writes, no game thread (Path B).
 //   • Noclip: additionally invoke AActor::SetActorEnableCollision(false) once (game
 //     thread, Stark) so the sweep passes through walls; restored on off/disable.
-//     (An earlier per-tick teleport noclip jittered / desynced the mesh / broke
-//     input across games — velocity + collision-off is clean.) FF7Rebirth zeroes
+//     (A per-tick teleport noclip jitters / desyncs the mesh / breaks input
+//     across games — velocity + collision-off is clean.) FF7Rebirth zeroes
 //     Velocity every frame → neither mode moves it (authoritative movement system).
 //
 // Offsets resolved by FName (DynOff), UE4/UE5-agnostic; pawn re-resolved every tick.
@@ -231,7 +231,7 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
     if (outcome == CollisionApply::Queued) {
         // [W3-DUNSTE-QUEUED] -5 is NOT a refusal: the game thread did not drain within the
         // timeout, but the request stays QUEUED and WILL run when it does. Reporting it as
-        // "unchanged" let a queued disable land after the record said collision was ON.
+        // "unchanged" would let a queued disable land after the record says collision is ON.
         LOG_WARN("Fly: SetActorEnableCollision(%d) QUEUED (rc=-5, the game thread is busy) -- "
                  "it will run when the thread drains; the record is committed so the next "
                  "toggle undoes it", enable ? 1 : 0);

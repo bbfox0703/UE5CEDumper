@@ -29,7 +29,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusText = "";
 
-    // --- Phase 2: current-target auto-detect (Edel) ---
+    // --- Current-target auto-detect (Edel) ---
     [ObservableProperty] private ObservableCollection<TargetCandidate> _targetCandidates = new();
     [ObservableProperty] private TargetCandidate? _selectedCandidate;
     [ObservableProperty] private bool _hasCandidates;
@@ -40,7 +40,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
 
     // [W4-RELATED-RACE] Generation ticket, as ObjectTreeViewModel / InstanceFinderViewModel keep one.
     // LoadAsync clears before its await and appends after, and a handoff or candidate pick can start a
-    // load while one is in flight: without the ticket both passed their Clear() and both appended.
+    // load while one is in flight: without the ticket both pass their Clear() and both append.
     // ⛔ Not `if (IsBusy) return;` -- DetectTargetAsync sets IsBusy and then awaits this very load.
     private int _loadGen;
 
@@ -81,8 +81,8 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     {
         _loadGen++;   // [W4-RELATED-RACE] a load still in flight must not repopulate the cleared grid
         // ...and whoever bumps the generation takes over the busy flag. The superseded load's finally skips
-        // it by design, so without this a load in flight at disconnect left IsBusy stuck on -- the trap
-        // InstanceFinderViewModel.SupersedeClassSearch documents. (Review of c1c30d51.)
+        // it by design, so without this a load in flight at disconnect leaves IsBusy stuck on -- the trap
+        // InstanceFinderViewModel.SupersedeClassSearch documents.
         IsBusy = false;
         _suppressCandidateLoad = true;
         try
@@ -218,7 +218,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     [RelayCommand]
     private async Task DetectTargetAsync()
     {
-        // [W4-RELATED-RACE] Detect takes a ticket too (review of c1c30d51). A handoff that starts while the
+        // [W4-RELATED-RACE] Detect takes a ticket too. A handoff that starts while the
         // detector runs, or a disconnect, supersedes it: it then neither repopulates the candidates, nor
         // auto-loads over the newer graph, nor clears the newer load's busy state. Its own auto-load takes
         // the next ticket, and that load's finally clears IsBusy.

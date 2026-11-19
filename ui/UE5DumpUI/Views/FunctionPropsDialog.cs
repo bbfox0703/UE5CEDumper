@@ -472,8 +472,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         // one. The DLL reaches it when a script/Blueprint function has no usable Script buffer:
         // its `Func` points at the shared interpreter, so disassembling it would analyse
         // UObject::ProcessInternal and attribute the interpreter's field accesses to this
-        // function. Before the gate went in (Aura.cpp, AnalyzeNativeFunctionProps) this case
-        // arrived here as "disasm" and printed "[native disasm — heuristic, N unmapped]" —
+        // function. Without the gate (Aura.cpp, AnalyzeNativeFunctionProps) this case would
+        // arrive here as "disasm" and print "[native disasm — heuristic, N unmapped]" —
         // claiming to have disassembled the function it never looked at.
         var methodNote = _lastMethod == "disasm"
             ? "  [native disasm — heuristic"

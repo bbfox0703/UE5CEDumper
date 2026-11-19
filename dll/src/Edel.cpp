@@ -58,7 +58,7 @@ uintptr_t ReadPtrAt(uintptr_t obj, int32_t off) {
 }
 
 // Resolve the LOCAL PlayerController: engine chain first
-// (GWorld → OwningGameInstance → LocalPlayers[0] → PlayerController), then an
+// (GWorld → OwningGameInstance → LocalPlayers[0] → PlayerController), then
 // the shared instance-scan fallback (Aura::ScanForLocalPlayerController: the
 // local player's controller first).
 // A faithful read-only copy of Wirbel::ResolveLocalPC.

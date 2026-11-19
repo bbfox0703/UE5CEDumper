@@ -599,8 +599,8 @@ bool Init() {
 
 // The per-process log folder's name, from the host exe's leaf: the stem (last extension dropped), the nine
 // characters a file name cannot hold made '_', then TRAILING spaces and dots trimmed -- [PATH-SEIN-TRAILING-SPACE].
-// Win32 trims those from the LAST path segment only: for "Game .exe" create_directories made "Game", and every file
-// opened inside "Game " then failed, so the session went unlogged with no notice. An empty result ('.exe') is
+// Win32 trims those from the LAST path segment only: for "Game .exe" create_directories would make "Game", every file
+// opened inside "Game " would then fail, and the session would go unlogged with no notice. An empty result ('.exe') is
 // "unknown", never Logs\ itself. The UI derives the same name (ProxyImportAnalyzer.ProcessLogFolderName, which
 // LoggingService's mirror uses too) -- change the three together.
 std::wstring ProcessFolderName(const std::wstring& processName) {
@@ -620,7 +620,7 @@ std::wstring ProcessFolderName(const std::wstring& processName) {
 
 // [DUMPER-SECOND-COPY-AUTOSTART] The folder a SECOND writer of a process's logs uses. Each live -0.log is opened
 // deny-write, so while one writer holds them -- another copy of the dumper in this process (a proxy, then a later
-// injection), or another instance of the same game -- a second one could open none and logged nothing at all. It
+// injection), or another instance of the same game -- a second one would open none and log nothing at all. It
 // writes beside the first instead, in <process folder>.<its module>.<pid>; the retention sweep ages that folder like any.
 static std::wstring SecondWriterFolderName(const std::wstring& processFolder, const std::wstring& moduleStem,
                                            unsigned long pid) {
@@ -639,7 +639,7 @@ static std::wstring OwnModuleStem() {
 }
 
 // Every category failed as a sharing violation: another writer holds them. A partial failure is something else, and
-// is rerouted into the files that did open, as before.
+// is rerouted into the files that did open.
 static bool AllHeldByAnotherWriter(const int (&errs)[LF_COUNT]) {
     for (int e : errs)
         if (e != EACCES) return false;

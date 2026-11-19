@@ -55,7 +55,7 @@ public static class ContainerGeometry
     /// <summary>
     /// Slot stride for a TSet's element storage — the DLL's own number when it supplied one.
     /// <para>
-    /// TSet is the case the stale copies happened to get right: a bare <c>elemSize</c> is already a
+    /// TSet is the case the fallback formula gets right on its own: a bare <c>elemSize</c> is already a
     /// multiple of <c>alignof(T)</c>, so the DLL's <c>elemAlign</c> default of 4 reproduces
     /// <see cref="FallbackStride"/> exactly. Routed through here anyway so there is one rule.
     /// </para>

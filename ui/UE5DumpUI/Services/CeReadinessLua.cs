@@ -35,9 +35,8 @@ public static class CeReadinessLua
     /// <summary>Mailbox poll interval while waiting for start-up to finish.</summary>
     public const int PollIntervalMs = 250;
 
-    /// <summary>Upper bound on the readiness wait. Higher than the standalone
-    /// <c>.CT</c>'s historical flat 15 s budget because this loop only ever
-    /// *reaches* the bound when something is genuinely wedged — the normal path
+    /// <summary>Upper bound on the readiness wait. Generous, because this loop only
+    /// ever *reaches* the bound when something is genuinely wedged — the normal path
     /// exits the moment the DLL publishes READY.</summary>
     public const int ReadyTimeoutMs = 25000;
 
@@ -107,8 +106,7 @@ public static class CeReadinessLua
         "    'Check the DLL log:\\n  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 
     /// <summary>Ran out of time still IDLE/RUNNING — a timeout is an ERROR, never a
-    /// shrug: the historical <c>.CT</c> printed "complete (or failed)" and taught
-    /// users to ignore it.</summary>
+    /// shrug: a "complete (or failed)" message teaches users to ignore it.</summary>
     public static string TimedOutMessage =>
         "'[UE5CEDumper] Timed out waiting for the DLL to finish starting up.\\n\\n' ..\n" +
         "    'The AOB scan may be wedged, or the game may be blocking our thread.\\n' ..\n" +

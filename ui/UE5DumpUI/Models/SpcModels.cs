@@ -2,9 +2,9 @@ namespace UE5DumpUI.Models;
 
 /// <summary>
 /// Statistical-Process-Control predicate kinds for the experimental SPC Query
-/// tab. v1 is the type-agnostic DIRECTIONAL set only — the user picks how a
-/// field's value moved between consecutive snapshots, never a type or a literal
-/// value. This generalizes CE's "Unknown Initial Value + Increased/Decreased"
+/// tab: the type-agnostic DIRECTIONAL set — the user picks how a field's value
+/// moved between consecutive snapshots, never a type or a literal value (a literal
+/// value window is <see cref="SpcAbsoluteKind"/>). This generalizes CE's "Unknown Initial Value + Increased/Decreased"
 /// workflow across N persisted snapshots (and across game restarts). See
 /// docs/experimental-snapshot-spc-pivot.md §"Phase B".
 /// </summary>

@@ -4,7 +4,7 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D. The MCP server's log: one file per process in the UI's log folder, and
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP server's log: one file per process in the UI's log folder, and
 /// nothing on stdout or stderr.
 ///
 /// The UI's <see cref="Services.LoggingService"/> cannot serve here, for two reasons. It adds a Console sink, which

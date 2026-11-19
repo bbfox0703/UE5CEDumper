@@ -79,9 +79,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             MaxResults = NumericInput.KeepCurrentIfEmpty(value, MaxResults);
             // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
             // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // painting an empty box while a different value is in force. [SNAPINTERVAL-2026-08-20]
             OnPropertyChanged();
         }
     }
@@ -100,8 +98,8 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// <summary>Leaves kept PER SLOT per object in a group scan. NOT a speed knob — this
     /// list is what a later Changed/Decreased/Unchanged refine re-reads, and leaves are
     /// collected base-class-first, so too small a value silently hides a derived class's
-    /// OWN fields behind its inherited ones. At the old fixed 8 every AActor stored only
-    /// PrimaryActorTick/CustomTimeDilation and a Changed refine pruned every candidate.
+    /// OWN fields behind its inherited ones. At a cap of 8, every AActor would keep only
+    /// PrimaryActorTick/CustomTimeDilation and a Changed refine would prune every candidate.
     /// The DLL clamps to [8, 4096] regardless of what is sent.</summary>
     [ObservableProperty] private int    _groupPerSlotCap = Constants.GroupPerSlotCap;
 
@@ -826,14 +824,11 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returns at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy is even attempted, and the bool the handler eventually gets would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
@@ -1230,8 +1225,8 @@ public partial class ValueSearchViewModel : ViewModelBase
     // Intentionally does NOT gate on the C# IsGWorldAvailable flag: the DLL's
     // find_path_from_gworld is the source of truth for GWorld (it returns an
     // "invalid" / "no path" status when there's no live UWorld, which the locate
-    // flow surfaces). Gating here on a stale/false IsGWorldAvailable was disabling
-    // the button on games where GWorld was actually resolved (e.g. TQ2, proxy mode).
+    // flow surfaces). Gating here on IsGWorldAvailable would disable the button
+    // whenever that flag is stale or false on a game whose GWorld did resolve.
     private static string? GWorldLocateBlockReason(string? addr) =>
         string.IsNullOrEmpty(addr)
             ? "No owning-object address to locate for this match."
@@ -1264,7 +1259,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         if (string.IsNullOrEmpty(candidate.Addr)) return;
         // Deliberately no status claim, so there is nothing here that can be wrong:
         // this is a convenience copy of an address and the user re-clicks. Awaited only
-        // so the copy is no longer fire-and-forget.
+        // so the copy is not fire-and-forget.
         var handler = RequestCopyText;
         if (handler is not null) await handler(candidate.Addr);
     }
@@ -1768,7 +1763,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         if (slot == null || string.IsNullOrEmpty(slot.Addr)) return;
         // Deliberately no status claim, so there is nothing here that can be wrong:
         // this is a convenience copy of an address and the user re-clicks. Awaited only
-        // so the copy is no longer fire-and-forget.
+        // so the copy is not fire-and-forget.
         var handler = RequestCopyText;
         if (handler is not null) await handler(slot.Addr);
     }
@@ -1834,11 +1829,9 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// <summary>Fill a slot's <see cref="GroupSlotMatch.Leaves"/> with EVERY field it
     /// matched, by name.
     ///
-    /// A row can only display one assignment. On the DumperTest sample a
-    /// <c>Changed</c> + <c>Unchanged</c> refine kept {Health.CurrentValue, TickCount}
-    /// for slot 0 and 36 leaves including FrozenInt for slot 1 — two equally valid
-    /// pairs, one row — and the row's Health pair was read as "TickCount/FrozenInt
-    /// were missed". Everything else existed only as raw integers in
+    /// A row can only display one assignment. A refine can keep several equally valid
+    /// pairs, one row shows one of them, and the fields of the others read as missed.
+    /// Without this, everything else exists only as raw integers in
     /// <c>matched_offsets</c>, and an integer cannot say that 1308 is FrozenInt.
     ///
     /// Each returned leaf is a full <see cref="GroupSlotMatch"/>, so the per-slot
