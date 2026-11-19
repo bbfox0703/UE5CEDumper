@@ -7,6 +7,10 @@
 // end to end -- not a projection of what it might read. Each access prints
 // offset:size:occurrences:writes:highConfidence:v<writeSitesViaThis>:t<writeSitesTruncated>
 // then its write sites as RVAs in Denken's order, [rva,...] ([DENKEN-WRITE-SITES]).
+// The printer takes both result types apart with structured bindings, which
+// must name every member: a field added to Denken.h stops this file compiling
+// instead of going unprinted, which would let a bump that moves only that
+// field hash identically.
 #include "Denken.h"
 extern "C" {
 #include "pe_image.h"
@@ -16,13 +20,17 @@ extern "C" {
 #include <cstring>
 #include <vector>
 
-// Positive control: byte sequences the two revisions decode differently, each
-// followed by `mov [rcx+0x10], eax ; ret`, so the run proves the harness CAN see
-// a pin/master difference through Denken (an all-identical result is otherwise
-// indistinguishable from two builds of the same Zydis). The cases are bytes from
-// a95bb71..fcc63c6 (new ISA) and fcc63c6..4b31c34 (a 66-prefixed PTWRITE, now
-// refused): once the base revision is past a case's commit it stops differing, and
-// zydis_bump_diff.py says so -- add bytes from the new delta.
+// Positive control: each case is followed by `mov [rcx+0x10], eax ; ret`, so a
+// run proves the harness CAN see a pin/master difference through Denken (an
+// all-identical result is otherwise indistinguishable from two builds of the
+// same Zydis). vex-map7 rdmsr and movrs differ from a base before fcc63c6, the
+// 66-prefixed PTWRITE (refused since 7254d2c) from a base before 7254d2c; a case
+// stops differing once the base is past its commit. ibhf and wbnoinvd decode at
+// a95bb71 too, to the same length, and Denken's output for them is the same at
+// every revision (a run from a95bb71 shows it): they show that a decoder change
+// Denken does not read stays invisible.
+// Plain mov is the baseline. zydis_bump_diff.py flags the run only when NO case
+// differs: then add bytes from one of the new delta's decode changes.
 static int RunControl() {
     struct Case { const char* name; std::vector<uint8_t> head; };
     const std::vector<Case> cases = {
@@ -80,23 +88,23 @@ int main(int argc, char** argv) {
     unsigned long long totalInstr = 0, totalAcc = 0, budgetHits = 0;
     for (uint32_t rva : starts) {
         auto r = Denken::Analyze(static_cast<uintptr_t>(base + rva), reader);
-        std::sort(r.accesses.begin(), r.accesses.end(),
-                  [](const auto& x, const auto& y) { return x.offset < y.offset; });
-        std::fprintf(out, "%08X ok%d i%d c%d b%d n%zu", rva, r.ok, r.instrsDecoded, r.callsFollowed,
-                     r.budgetHit ? 1 : 0, r.accesses.size());
-        for (const auto& a : r.accesses) {
-            std::fprintf(out, " %X:%u:%d:%d:%d:v%u:t%d[", a.offset, a.accessSize, a.occurrences, a.writeCount,
-                         a.highConfidence ? 1 : 0, static_cast<unsigned>(a.writeSitesViaThis),
-                         a.writeSitesTruncated ? 1 : 0);
-            for (size_t k = 0; k < a.writeSites.size(); ++k)
+        auto& [ok, instrs, calls, budget, accesses] = r;
+        std::sort(accesses.begin(), accesses.end(), [](const auto& x, const auto& y) { return x.offset < y.offset; });
+        std::fprintf(out, "%08X ok%d i%d c%d b%d n%zu", rva, ok ? 1 : 0, instrs, calls, budget ? 1 : 0,
+                     accesses.size());
+        for (const auto& a : accesses) {
+            const auto& [off, bytes, occurrences, writes, hc, sites, viaThis, truncated] = a;
+            std::fprintf(out, " %X:%u:%d:%d:%d:v%u:t%d[", off, static_cast<unsigned>(bytes), occurrences, writes,
+                         hc ? 1 : 0, static_cast<unsigned>(viaThis), truncated ? 1 : 0);
+            for (size_t k = 0; k < sites.size(); ++k)
                 std::fprintf(out, "%s%llX", k ? "," : "",
-                             static_cast<unsigned long long>(a.writeSites[k] - static_cast<uintptr_t>(base)));
+                             static_cast<unsigned long long>(sites[k] - static_cast<uintptr_t>(base)));
             std::fputc(']', out);
         }
         std::fputc('\n', out);
-        totalInstr += r.instrsDecoded;
-        totalAcc += r.accesses.size();
-        budgetHits += r.budgetHit ? 1 : 0;
+        totalInstr += instrs;
+        totalAcc += accesses.size();
+        budgetHits += budget ? 1 : 0;
     }
     std::fclose(out);
     std::printf("starts=%zu instrs=%llu accesses=%llu budgetHits=%llu\n", starts.size(), totalInstr, totalAcc,
