@@ -596,10 +596,13 @@ Not a defect, recorded with them: `processMessagesPaintOnly` already exists in 7
 from the 7.5 source), so `CeLuaHygiene.cs`'s fallback to `processMessages` serves only older builds.
 
 Where the Lua group can reach us:
-- **`tonumber`**: the Invoke form (`InvokeScriptGenerator.cs`) reads a typed float parameter with
-  `tonumber(text) or 0.0`, so in a CE session where another script switched to a comma locale,
-  `3.14` would be sent as 0. We never call `os.setlocale`; our other `tonumber` calls take base-16
-  or integer text, which does not consult the locale.
+- **`tonumber`**: handled (`[CE-LUA-FLOAT-LOCALE]`). The Invoke form (`InvokeScriptGenerator.cs`) reads a
+  typed float or integer through its `_readNumber`. Text `tonumber` cannot read is read again with each dot
+  swapped for the locale's decimal point (taken from `tostring(0.5)`). When that decimal point is not a dot, text
+  holding it is not read at all. FIRE refuses a box it cannot read instead of sending 0. We never call
+  `os.setlocale`; our other `tonumber` calls take base-16 or integer text, which does not consult the locale,
+  and the number literals our scripts carry are read by the lexer, which does retry with the locale's decimal
+  point (`llex.c` `trydecpoint`).
 - **`process`**: the AOB-scan scripts take the module name from `process` (`CeXmlExportService.cs`,
   `StandaloneTrainerScriptGenerator.cs`). We register no custom type, but on 7.6 any table that
   does would point those scans at CE's own exe.

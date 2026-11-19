@@ -1509,7 +1509,7 @@ public class InvokeScriptTests
     public void Generate_StructParam_IsNeverWrittenAsAScalar(int structSize)
     {
         // Falling through the size switch to writeInteger would write FOUR bytes of an N-byte
-        // struct, from math.floor(tonumber(text)), rest left zero -- a garbage vector passed to
+        // struct, from the box's integer, rest left zero -- a garbage vector passed to
         // a live call with nothing saying so.
         var script = InvokeScriptGenerator.Generate("BP_Player_C", "SetLocation",
                                                     VectorParamFunc(structSize));
@@ -1705,11 +1705,75 @@ public class InvokeScriptTests
     [InlineData("StrProperty", 16, true)]    // an out FString is left empty, never gated
     public void CeForm_WritableParams_AreNotGated(string typeName, int size, bool isOut)
     {
-        // The control: the gate must not catch params FIRE writes.
+        // The control: the unwritable-param gate must not catch params FIRE writes. A number box still has its
+        // reader's refusal ([CE-LUA-FLOAT-LOCALE]), so each "nothing was sent" before the mailbox must be one of those.
         var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size, isOut));
+        var pre = BeforeTheMailbox(FireHandler(script));
 
         Assert.DoesNotContain("_isZeroDefault", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("nothing was sent", BeforeTheMailbox(FireHandler(script)), StringComparison.Ordinal);
+        Assert.Equal(System.Text.RegularExpressions.Regex.Matches(pre, @"if _num\[\d+\] == nil then").Count,
+                     System.Text.RegularExpressions.Regex.Matches(pre, "nothing was sent").Count);
+    }
+
+    /// <summary>[CE-LUA-FLOAT-LOCALE] The form's number reader on CE's own Lua VM, under the C locale and under a
+    /// comma-decimal one: a dot-decimal and a hex float read as themselves, and a comma, a thousands separator, a
+    /// fraction for a whole number, an overflow to infinity and an empty box read as nil, which FIRE refuses. The
+    /// [ENABLE] chunk the reader sits in compiles on that VM too.</summary>
+    [Fact]
+    public void CeForm_TheNumberReader_ReadsTheSameUnderACommaLocale()
+    {
+        CeLua53Host.RequireHost();
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("FloatProperty", 4));
+        int from = script.IndexOf("local function _readNumber(", StringComparison.Ordinal);
+        Assert.True(from >= 0, "the number reader is gone");
+        int to = script.IndexOf("\nend\n", from, StringComparison.Ordinal);
+        Assert.True(to > from, "the number reader has no closing end");
+        string reader = script[from..(to + "\nend\n".Length)];
+        int body = script.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        string enable = script[body..script.IndexOf("{$asm}", body, StringComparison.Ordinal)];
+        string lua = $$"""
+            local compiled, cerr = load('local syntaxcheck,memrec=...\n' .. [==[
+            {{enable}}
+            ]==])
+            if not compiled then io.write('FAIL the [ENABLE] chunk does not compile: ' .. tostring(cerr) .. '\n') end
+            {{reader}}
+            local function check(tag, text, whole, want)
+              local got = _readNumber(text, whole)
+              if got ~= want or (want ~= nil and math.type(got) ~= math.type(want)) then
+                io.write('FAIL ' .. tag .. ' [' .. tostring(text) .. '] whole=' .. tostring(whole) .. ' got ' .. tostring(got) .. '\n')
+              end
+            end
+            local function suite(tag)
+              check(tag, '3.14', false, 3.14)
+              check(tag, ' -2.5 ', false, -2.5)
+              check(tag, '1500', false, 1500)
+              check(tag, '0x1.8', false, 1.5)
+              check(tag, '3,14', false, nil)
+              check(tag, '1,000', false, nil)
+              check(tag, '1,000', true, nil)
+              check(tag, '', false, nil)
+              check(tag, 'abc', false, nil)
+              check(tag, '1e999', false, nil)
+              check(tag, '0x10', true, 16)
+              check(tag, '-5', true, -5)
+              check(tag, '4.0', true, 4)
+              check(tag, '3.7', true, nil)
+            end
+            suite('C')
+            local comma = 'none'
+            for _, name in ipairs({ 'de-DE', 'German_Germany.1252', 'German', 'fr-FR', 'French_France.1252' }) do
+              if os.setlocale(name, 'numeric') and tostring(0.5) == '0,5' then comma = name break end
+            end
+            if comma ~= 'none' then suite('comma') end
+            io.write('COMMA=' .. comma .. '\n')
+            io.write('DONE\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        Assert.Contains("DONE", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("FAIL", output, StringComparison.Ordinal);
+        if (output.Contains("COMMA=none", StringComparison.Ordinal))
+            Assert.Skip("no comma-decimal C locale could be set on CE's Lua VM here; the compile and C-locale half passed");
     }
 
     // --- [A3-CEFORM-4X-STALESLAB] the zero-fill covers every param, and never passes the slab ---
