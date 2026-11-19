@@ -479,6 +479,27 @@ inline int WideFlagTestsFunctionFlags(const uint8_t* body, size_t size, size_t p
     return -1;
 }
 
+/// [VND10-A1] The ProcessEvent vtable slot from the candidate vtables, in pass order: `firstPasses(vtable)` (the dword
+/// patterns, then the byte-narrowed tests) over EVERY vtable first, and only when all of them miss, `widePass(vtable)`
+/// (WideFlagTestsFunctionFlags) over every vtable. A binary the first passes answer on any vtable keeps that answer,
+/// whatever the wide pass would find on an earlier one. Each returns a slot offset or a value <= 0 for a miss. -1 when
+/// both miss everywhere; `outIndex` / `outWide` say which vtable and which pass answered.
+template <class FirstPasses, class WidePass>
+inline int PickProcessEventSlot(const std::vector<uintptr_t>& vtables, FirstPasses&& firstPasses, WidePass&& widePass,
+                                size_t* outIndex = nullptr, bool* outWide = nullptr) {
+    if (outIndex) *outIndex = 0;
+    if (outWide) *outWide = false;
+    for (size_t i = 0; i < vtables.size(); ++i) {
+        const int off = firstPasses(vtables[i]);
+        if (off > 0) { if (outIndex) *outIndex = i; return off; }
+    }
+    for (size_t i = 0; i < vtables.size(); ++i) {
+        const int off = widePass(vtables[i]);
+        if (off > 0) { if (outIndex) *outIndex = i; if (outWide) *outWide = true; return off; }
+    }
+    return -1;
+}
+
 /// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
 /// know whether it has run since: a STATEFUL toggle reads its state before it fires, and a toggle still queued will
 /// flip whatever that read said. Answered from the request's own promise: the drain fulfils it when it runs the

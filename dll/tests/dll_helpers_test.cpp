@@ -1678,6 +1678,42 @@ static void Test_Stark_WideFlagTests() {
            Stark::WideFlagTestsFunctionFlags(notTest.data(), notTest.size(), 0x400) == -1);
 }
 
+// [VND10-A1] The pass order Frieren's DetectProcessEventVTableOffset runs: the first passes over every candidate vtable,
+// then the wide pass. Vtables are stand-in ids; each pass answers from a table.
+static void Test_Stark_PickProcessEventSlot() {
+    using Answers = std::vector<std::pair<uintptr_t, int>>;
+    auto from = [](const Answers& a) {
+        return [a](uintptr_t vt) { for (const auto& [v, off] : a) if (v == vt) return off; return -1; };
+    };
+    const std::vector<uintptr_t> vts = { 1, 2, 3 };
+    size_t idx = 99;
+    bool wide = true;
+
+    // An Actor-like vtable first (its ProcessEvent override hides the high-flag test from the first passes) on which the
+    // wide pass WOULD match an earlier slot, then the stock base vtable the first passes answer: the stock answer stands.
+    int slot = Stark::PickProcessEventSlot(vts, from({ { 2, 0x220 } }), from({ { 1, 0x1F8 }, { 2, 0x220 } }), &idx, &wide);
+    EXPECT("PESLOT ⭐: the first passes on a later vtable beat the wide pass on an earlier one",
+           slot == 0x220 && idx == 1 && !wide);
+
+    // Phantom Blade Zero: no first-pass answer anywhere; the wide pass answers.
+    slot = Stark::PickProcessEventSlot(vts, from({}), from({ { 2, 0x260 } }), &idx, &wide);
+    EXPECT("PESLOT ⭐: with no first-pass answer anywhere, the wide pass answers", slot == 0x260 && idx == 1 && wide);
+
+    // Neither: -1, and the caller falls to the version table.
+    slot = Stark::PickProcessEventSlot(vts, from({}), from({}), &idx, &wide);
+    EXPECT("PESLOT: nothing anywhere -> -1", slot == -1 && !wide);
+
+    // The first vtable the first passes answer on wins among them, as before.
+    slot = Stark::PickProcessEventSlot(vts, from({ { 2, 0x220 }, { 3, 0x228 } }), from({}), &idx, &wide);
+    EXPECT("PESLOT control: among first-pass answers the earliest vtable wins", slot == 0x220 && idx == 1);
+
+    // The wide pass is never asked while the first passes answer somewhere.
+    bool wideAsked = false;
+    slot = Stark::PickProcessEventSlot(vts, from({ { 3, 0x220 } }),
+                                       [&](uintptr_t) { wideAsked = true; return 0x1F8; }, &idx, &wide);
+    EXPECT("PESLOT control: the wide pass is not consulted when a first pass answers", slot == 0x220 && !wideAsked);
+}
+
 // [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
 // first decides, and the other learns it lost.
 static void Test_Stark_ClaimRequest() {
@@ -13166,6 +13202,7 @@ int main() {
     RUN(Test_Stark_WaitQueuedInvoke);
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_WideFlagTests);
+    RUN(Test_Stark_PickProcessEventSlot);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);

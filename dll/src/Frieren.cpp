@@ -2059,9 +2059,9 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
     return -1;
 }
 
-// [VND10-A1] FunctionFlags at or past +0x100 (Stark::WideFlagTestsFunctionFlags). The caller runs it only after
-// DetectProcessEventVTableOffsetByPattern found nothing on EVERY candidate vtable, so a binary any earlier pass answers
-// keeps that answer, whichever vtable gave it.
+// [VND10-A1] FunctionFlags at or past +0x100 (Stark::WideFlagTestsFunctionFlags). Stark::PickProcessEventSlot runs it
+// only after DetectProcessEventVTableOffsetByPattern found nothing on EVERY candidate vtable, so a binary any earlier
+// pass answers keeps that answer, whichever vtable gave it.
 static int DetectProcessEventVTableOffsetByWideFlagTests(uintptr_t vtable) {
     constexpr int kMinOffset = 0x100;
     constexpr int kMaxOffset = 0x300;
@@ -2174,18 +2174,14 @@ static int DetectProcessEventVTableOffset(bool* fromVersionTable) {
     // Try the pattern scan across several distinct classes before giving up on it.
     // A class that overrides ProcessEvent (any AActor) hides the high-flag test in the
     // base implementation, so one sample is not enough to conclude "pattern scan failed".
-    for (size_t i = 0; i < vtables.size(); ++i) {
-        int off = DetectProcessEventVTableOffsetByPattern(vtables[i]);
-        if (off > 0) {
-            if (i > 0)
-                LOG_INFO("DetectProcessEvent: pattern matched on candidate vtable #%zu "
-                         "(earlier ones override ProcessEvent)", i);
-            return off;
-        }
-    }
-    for (size_t i = 0; i < vtables.size(); ++i) {
-        const int off = DetectProcessEventVTableOffsetByWideFlagTests(vtables[i]);
-        if (off > 0) return off;
+    size_t matchedOn = 0;
+    const int byPattern = Stark::PickProcessEventSlot(vtables, DetectProcessEventVTableOffsetByPattern,
+                                                      DetectProcessEventVTableOffsetByWideFlagTests, &matchedOn);
+    if (byPattern > 0) {
+        if (matchedOn > 0)
+            LOG_INFO("DetectProcessEvent: pattern matched on candidate vtable #%zu "
+                     "(earlier ones override ProcessEvent)", matchedOn);
+        return byPattern;
     }
 
     int off = DetectProcessEventVTableOffsetByVersion(vtables[0]);
