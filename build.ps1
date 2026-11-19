@@ -328,6 +328,14 @@ function Enter-VsDevEnvironment() {
     # What a later shell put in front of PATH is repaired instead.
     if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64') {
         if (-not (Repair-MsvcToolOrder) -or -not (Use-MsvcCompiler)) { return $false }
+        # vcvars64.bat sets Platform=x64, which Enter-VsDevShell does not. MSBuild reads every environment
+        # variable as a property, so the C# projects would build into bin\x64\ rather than bin\, one level
+        # deeper than the tests that find repository files by walking up from their output folder can
+        # reach. [MSVC-GUARD-2026-11-19]
+        if ($env:Platform) {
+            Write-Info "Platform=$($env:Platform) inherited from vcvars; cleared so the C# outputs stay in bin\"
+            Remove-Item Env:Platform
+        }
         $script:vsDevShellLoaded = $true
         Write-Ok "MSVC x64 environment already loaded (reusing inherited env)"
         return $true
