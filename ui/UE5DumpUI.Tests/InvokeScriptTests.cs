@@ -1558,6 +1558,46 @@ public class InvokeScriptTests
     // raw int32 over the structure's first pointer. The type classification must come from the
     // SHARED predicates, never a hand-copied list.
 
+    /// <summary>[CE-LUA-FLOAT-LOCALE] The CE form reads a typed float or integer through one reader that gives the
+    /// same answer under any C numeric locale (CE's tonumber follows the locale and does not retry with a dot), and FIRE
+    /// refuses a box that reader cannot read before the mailbox is touched, naming the parameter, instead of sending
+    /// 0.</summary>
+    [Theory]
+    [InlineData("FloatProperty", 4, false)]
+    [InlineData("DoubleProperty", 8, false)]
+    [InlineData("IntProperty", 4, true)]
+    [InlineData("BoolProperty", 1, true)]
+    public void CeForm_ANumberBoxItCannotRead_IsRefusedNotSentAsZero(string typeName, int size, bool whole)
+    {
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size));
+        var fire = FireHandler(script);
+
+        // No zero stands in for a box that did not parse, as a float or as an integer.
+        Assert.DoesNotContain("tonumber(edits[1].Text) or 0", script, StringComparison.Ordinal);
+        // The reader finds the locale's decimal point by formatting a known float, and it is defined before the FIRE
+        // handler that captures it.
+        int reader = script.IndexOf("local function _readNumber(text, whole)", StringComparison.Ordinal);
+        Assert.True(reader >= 0, "the number reader is gone");
+        Assert.True(reader < script.IndexOf("btnFire.OnClick = function()", StringComparison.Ordinal),
+            "the FIRE handler is defined before the reader it calls");
+        Assert.Contains("tostring(0.5)", script[reader..], StringComparison.Ordinal);
+
+        // Read and checked before the idle wait, so a refusal touches nothing; the form stays open.
+        var lines = BeforeTheMailbox(fire).Split('\n').Select(l => l.Trim()).ToList();
+        int read = lines.IndexOf($"_num[1] = _readNumber(edits[1].Text, {(whole ? "true" : "false")})");
+        Assert.True(read >= 0, $"the {typeName} box is not read before the mailbox is touched");
+        Assert.Equal("if _num[1] == nil then", lines[read + 1]);
+        Assert.StartsWith("showMessage('[Invoke] Arg: ", lines[read + 2], StringComparison.Ordinal);
+        Assert.Contains("nothing was sent", lines[read + 2], StringComparison.Ordinal);
+        Assert.EndsWith("')", lines[read + 2], StringComparison.Ordinal);
+        Assert.Equal("return", lines[read + 3]);
+        Assert.Equal("end", lines[read + 4]);
+
+        // The call sends the value that was checked.
+        Assert.Contains(fire.Split('\n'), l => l.Contains("(PD + 0, ", StringComparison.Ordinal)
+                                            && l.Contains("_num[1]", StringComparison.Ordinal));
+    }
+
     private static FunctionInfoModel OneParamFunc(string typeName, int size, bool isOut = false) => new()
     {
         Name = "Take", NumParms = 1, ParmsSize = (ushort)size,
