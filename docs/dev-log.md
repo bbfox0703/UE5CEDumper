@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3747) — CE Lua hardening: Invoke numbers read in any locale, the scan module named without `process`, String records read-only by default `[CE-LUA-FLOAT-LOCALE]` `[CE76-PROCESS-GLOBAL]` `[CEXML-STRING-CAPACITY]`
+
+- **What changes:**
+  - **Invoke record (CE):** a number box is read whatever the numeric locale (a comma-decimal locale no longer
+    turns "3.14" into 0.0), and text that is not a number is refused by name -- nothing is sent and the form stays
+    open -- instead of going out as 0.
+  - **AOB scripts and the trainer (CE):** the scan module is the opened process's main module from
+    `enumModules()`, not the `process` global, which CE 7.6 overwrites when a table registers a custom type.
+  - **CE XML String records** are read-only by default: CE writes a typed string whole, past the buffer the game
+    allocated, whatever the record's Length. The value still displays; a double-click opens a locked list that
+    writes nothing. The new toolbar Options switch **Editable string records** (kept across restarts) turns that
+    off. +CE records (through AOBMaker) are not affected.
+- The CE facts each fix rests on were read in the CE source and are in docs/CE-Bugs-Minesweeper.md, whose rows now
+  say which are handled.
+- **Tests:** each fix red, then green; the float reader also runs on CE's own Lua 5.3 under the C and a comma
+  locale. C# 8510 total (1 skipped, 0 failed); 40 gates. Read from source and generated text; not
+  run in a game.
+- AOT UI 62,766,592 bytes (sha256 211842305f400e3c...); UE5Dumper.dll 3,853,824 bytes (sha256 69f5bd7a4a869657...).
+
 ## 2026-11-19 (no build change) — The tests' comments cleaned and gated; the touched product files re-swept; CE 7.7 AutoAssembler defects documented `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - **Test code:** `check_comment_history` also counts the comments of `dll/tests`, `ui/UE5DumpUI.Tests` and
