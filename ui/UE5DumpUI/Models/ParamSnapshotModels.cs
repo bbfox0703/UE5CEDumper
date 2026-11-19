@@ -6,7 +6,7 @@ namespace UE5DumpUI.Models;
 
 /// <summary>A function's name as the DLL's name pool numbers it: the function's FName ints and its class's. Stable for
 /// the life of the game process, unlike an address (a widget's functions unload when it closes and come back
-/// elsewhere), so the UI keeps it for the connection and sends it back to tick or choose by name (T10).</summary>
+/// elsewhere), so the UI keeps it for the connection and sends it back to tick or choose by name.</summary>
 public readonly record struct NameKey(int FnIdx, int FnNum, int ClsIdx, int ClsNum);
 
 /// <summary>A function asked for by name: the strings the user saw, and every key that rendered to them in this
@@ -29,7 +29,7 @@ public sealed class SnapshotStartOptions
     public long Bytes { get; init; }
     public int PerRingPerSec { get; init; } = 1000;
     public int TotalPerSec { get; init; } = 10000;
-    /// <summary>[LIVEFUNCS-STEP3] The native stacks, or null for none: then the request is the step-2 one.</summary>
+    /// <summary>[LIVEFUNCS-STEP3] The native stacks, or null for none: then the request is the one a DLL that predates stacks reads.</summary>
     public StackStartOptions? Stacks { get; init; }
 }
 
@@ -275,7 +275,7 @@ public sealed class StackSite
     public bool   Own        { get; init; }
     /// <summary>A function the DLL recognised, as a token ("process_event"); "" otherwise. The UI owns the text.</summary>
     public string Known      { get; init; } = "";
-    /// <summary>[LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry <see cref="Fn"/> is, from the DLL's one pass
+    /// <summary>[LIVEFUNCS-STEP3] The UFunction whose native entry <see cref="Fn"/> is, from the DLL's one pass
     /// over the object array -- it names an exec thunk the trace never saw called through ProcessEvent. 0 and "" when
     /// none enters there.</summary>
     public ulong  UFunc      { get; init; }

@@ -140,7 +140,7 @@ static fs::path       s_processDir;             // per-process subfolder
 // so on the create-failure bail it is non-empty and names a directory that does not
 // exist — and PruneStaleProcessFolders' own-folder guard is `fs::equivalent(entry,
 // keep, ec)`, which is INERT against a nonexistent `keep`. Sweeping then could
-// delete the folder we are about to log into. (AB9)
+// delete the folder we are about to log into.
 static bool           s_processDirReady = false;
 
 // Early buffering: lines logged before InitProcessMirror opens files
@@ -297,11 +297,11 @@ static void ArchiveByWriteTime(const fs::path& src, const fs::path& dir,
 
 // Delete archived logs past the retention window. Only touches *.log, and never
 // the live -0.log (callers archive that first, so it does not exist here).
-// One error_code for ITERATION, a fresh one per filesystem call. Sharing a single ec
-// let a failed fs::remove poison the loop's own `if (ec) break`: the first undeletable
-// entry ended the sweep — and because enumeration order is stable, it ended it at the
-// SAME entry on every launch, so the advertised 21-day retention silently stopped
-// applying past that point forever. One locked file is enough to do that. (B19)
+// One error_code for ITERATION, a fresh one per filesystem call. A shared ec lets a
+// failed fs::remove poison the loop's own `if (ec) break`: the first undeletable entry
+// ends the sweep — and because enumeration order is stable, at the SAME entry on every
+// launch, so the advertised 21-day retention would silently stop applying past that
+// point forever. One locked file is enough to do that.
 static void PruneAgedLogs(const fs::path& dir) {
     FILETIME nowFt{};
     GetSystemTimeAsFileTime(&nowFt);
@@ -467,12 +467,12 @@ static void WriteToFile(LogFileState& fs_state, const char* line) {
     // unconditionally, and the truncating reopen can fail (disk full — the 21-day
     // retention has no size cap — or a viewer holding the file open). fprintf on a NULL
     // FILE* hits the UCRT invalid-parameter handler, which terminates the INJECTED GAME
-    // with no message. Logging is best-effort; the game is not. (B11)
+    // with no message. Logging is best-effort; the game is not.
     //
     // The line that TRIGGERED the failed rotation would otherwise still be the one
     // line lost — WriteLog picked this sink while the handle was alive. Hand it to
     // EmergencyNote, which writes to the first surviving file without re-entering
-    // rotation. Every LATER line for this category is rerouted by ResolveSink. (SE1)
+    // rotation. Every LATER line for this category is rerouted by ResolveSink.
     if (!fs_state.file) { EmergencyNote(line); return; }
     int written = fprintf(fs_state.file, "%s\n", line);
     if (written > 0) fs_state.written += static_cast<size_t>(written);
@@ -500,7 +500,7 @@ static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& 
     // Same per-entry error_code discipline as PruneAgedLogs: an undeletable folder
     // (a game still running, a viewer holding a file) must cost that folder, not the
     // rest of the sweep. Each entry declares fresh error_codes and the non-throwing
-    // overloads are used, so no failure carries over to the next entry or ends the loop. (B19)
+    // overloads are used, so no failure carries over to the next entry or ends the loop.
     ForEachDirEntry(parentDir, [&](const fs::directory_entry& entry) {
         std::error_code ec;
         if (!entry.is_directory(ec)) return;

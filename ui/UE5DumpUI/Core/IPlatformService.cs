@@ -17,7 +17,7 @@ public interface IPlatformService
     /// <summary>Bring the already-running instance's window to the front. Called when
     /// <see cref="TryAcquireSingleInstance"/> fails, i.e. the second launch is about to
     /// exit — without this it exits before the logger exists, so the user gets no window,
-    /// no dialog and no log line, and a double-click reads as "nothing happened". (B42)
+    /// no dialog and no log line, and a double-click reads as "nothing happened".
     /// <para>Default no-op so test doubles need not implement it; returns whether a
     /// window was actually raised.</para></summary>
     bool ActivateExistingInstance() => false;
@@ -110,8 +110,8 @@ public interface IPlatformService
     ///
     /// <para>Exposed separately so the ORPHAN SCAN can ask before the confirm dialog is built,
     /// and mark the row <c>NotOnFixedDrive</c> rather than promising a recycle it cannot deliver.
-    /// Previously the question was first asked inside the delete call, which is after the user
-    /// has already been told what would happen. (B13/B41)</para>
+    /// Asked first inside the delete call, the question would come after the user has already
+    /// been told what would happen.</para>
     ///
     /// <para>Default true so non-Windows test doubles keep their existing behaviour.</para>
     /// </summary>

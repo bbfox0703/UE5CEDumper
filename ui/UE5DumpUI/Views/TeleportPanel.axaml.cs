@@ -15,12 +15,12 @@ namespace UE5DumpUI.Views;
 
 public partial class TeleportPanel : UserControl
 {
-    /// <summary>AOT-safe sort comparers for the Coordinate Library grid. Five of its
-    /// columns were dead under trimming: X/Y/Z/Yaw sort on a NESTED path
+    /// <summary>AOT-safe sort comparers for the Coordinate Library grid. Without them, five
+    /// of its columns are dead under trimming: X/Y/Z/Yaw sort on a NESTED path
     /// (<c>Entry.X</c>) that no column binding roots, and Dist sorts on
     /// <c>Distance</c> while binding <c>DistanceText</c> — both are exactly the trap
-    /// <c>Helpers/DataGridSortComparers</c> documents. Label/Group/Map worked, so the
-    /// symptom was "some headers do nothing", which reads as a flaky app. (B16)</summary>
+    /// <c>Helpers/DataGridSortComparers</c> documents. Label/Group/Map still work, so the
+    /// symptom is "some headers do nothing", which reads as a flaky app.</summary>
     private static readonly IReadOnlyDictionary<string, System.Collections.IComparer> CoordSortComparers =
         new Dictionary<string, System.Collections.IComparer>
         {

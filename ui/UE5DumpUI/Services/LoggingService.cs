@@ -226,8 +226,8 @@ public sealed class LoggingService : ILoggingService, IDisposable
             _initLogger.Information("Process mirror log started: {MirrorDir}", mirrorDir);
             newInit.Information("Mirror log started for process: {Process}", processName);
 
-            // No folder-count cleanup here — see the AF9 note above. Folder retention
-            // is CleanupOldLogFolders(LogMaxAgeDays), which the constructor already ran.
+            // No folder-count cleanup here — retention is by age (see the class summary). Folder
+            // retention is CleanupOldLogFolders(LogMaxAgeDays), which the constructor already ran.
         }
         catch (Exception ex)
         {

@@ -51,7 +51,7 @@ public partial class LiveFuncsPanel : UserControl
     }
 
     // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: every question the view model asks needs a
-    // window to ask in, and the trace's columns show only with the experimental tabs on (T6). A DataGrid column is not
+    // window to ask in, and the trace's columns show only with the experimental tabs on. A DataGrid column is not
     // in the visual tree, so its visibility cannot be bound to the view model; it follows TraceAvailable from here.
     private LiveFuncsViewModel? _wired;
 
@@ -63,7 +63,8 @@ public partial class LiveFuncsPanel : UserControl
         _wired.ConfirmTraceAllCalls = () => ConfirmDialog.ShowAsync(
             Core.Res.Get("str.LF.Trace.Confirm.Title"), Core.Res.Get("str.LF.Trace.Confirm.Message"),
             Core.Res.Get("str.LF.Trace.Confirm.Run"), Core.Res.Get("str.LF.Trace.Confirm.Cancel"));
-        // [LIVEFUNCS-STEP3] T9.2's question; the view model writes it, as it names the function and the budget.
+        // [LIVEFUNCS-STEP3] The question asked before a per-frame function is chosen for a native stack; the view model
+        // writes it, as it names the function and the budget.
         _wired.ConfirmStackPerFrame = question => ConfirmDialog.ShowAsync(
             Core.Res.Get("str.LF.Stack.PerFrame.Title"), question,
             Core.Res.Get("str.LF.Stack.PerFrame.Run"), Core.Res.Get("str.LF.Stack.PerFrame.Cancel"));

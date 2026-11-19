@@ -65,7 +65,7 @@ public static class CeReadinessLua
         // BOTH spellings: depending on how CE picked up the module, an export is reachable
         // bare or only as "<module>.<name>", and which one works is not predictable from
         // here. lessons-learned.md mandates both; a single-spelling miss silently degrades
-        // this poll back to the blind fixed wait it exists to replace. (B33)
+        // this poll back to the blind fixed wait it exists to replace.
         Line(sb, indent, "    for _, sym in ipairs({'g_invokeMailbox', 'UE5Dumper.g_invokeMailbox'}) do");
         Line(sb, indent, "      local okSym, addr = pcall(getAddress, sym)");
         Line(sb, indent, "      if okSym and addr and addr ~= 0 then mb = addr break end");

@@ -16,7 +16,7 @@ public enum DenylistScope
 }
 
 /// <summary>
-/// Per-game class denylists (N1) — class FQNs the user marked as noise, kept
+/// Per-game class denylists — class FQNs the user marked as noise, kept
 /// SEPARATELY per experimental tab. Persisted next to the per-game snapshot DB
 /// (snapshots.&lt;pe_hash&gt;.denylist.json) so they auto-follow the game and
 /// survive DB FIFO eviction (eviction drops snapshots, not the noise picks).

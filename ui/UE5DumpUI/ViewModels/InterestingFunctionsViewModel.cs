@@ -79,8 +79,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// toggle on, let the load reconcile, toggle off — and if the first scoring lands last, the
     /// grid keeps the pack's rows while the CheckBox reads off AND
     /// <c>_scoredWithGameplayActions</c> reads off, so the mismatch the field exists to detect is
-    /// invisible and nothing ever reconciles it. That is Z1's "CheckBox and rows disagree,
-    /// permanently, recover by untick+retick" arriving by a different route.</para>
+    /// invisible and nothing ever reconciles it: the CheckBox and the rows disagree permanently,
+    /// until an untick+retick.</para>
     /// </summary>
     private int _rescoreGeneration;
 
@@ -193,14 +193,11 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returns at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy was even attempted, and the bool the handler eventually got would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
@@ -248,7 +245,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         _allRows = new List<ScoredFunctionRow>();
         _entries = Array.Empty<AllFunctionEntry>();
         _scoredWithGameplayActions = false;
-        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan (Z15)
+        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan
         SelectedResult = null;
         Results.Clear();
         ClassFilter.Reset();
@@ -307,7 +304,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -339,7 +336,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                     else
                     {
                         var fields = res.Props.Where(p => p.IsClassField).ToList();
-                        // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
+                        // A partial result is marked per cell, as for the scan deadline:
                         // a disasm that stopped at its instruction budget yields a SHORT
                         // list, and a bare "0" then reads as "this function touches no class
                         // fields" — the conclusion the user acts on. Mark it.
@@ -501,7 +498,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             _allRows = await Task.Run(() => ScoreEntries(_entries, includeActions));
 
             // Keep the scan facts so RescoreAsync can rewrite the SAME status line
-            // rather than leaving the previous scoring's numbers on screen. (Z15)
+            // rather than leaving the previous scoring's numbers on screen.
             _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
                                           result.ClassesWithFunctions, result.ScannedObjects,
                                           result.Truncated, result.Aborted, result.Limit, GameOnly: gameOnly);
@@ -672,10 +669,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
     /// <summary>
     /// The panel's one status sentence. Pure + internal so both writers share it
-    /// verbatim (Z15) and so the truncation disclosure (Z8) is unit-testable without a
-    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows and emitted no
-    /// marker at all before Z8, so "N functions across M classes" read as a complete
-    /// census of the game.
+    /// verbatim and so the truncation disclosure is unit-testable without a
+    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows, and without a
+    /// marker "N functions across M classes" would read as a complete census of the game.
     /// </summary>
     internal static string BuildStatusLine(LoadScanFacts f, int interesting)
     {
@@ -740,7 +736,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
-        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box
         FilterText      = "";
         CategoryFilter  = null;
         ShowAll         = false;

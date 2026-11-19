@@ -8,15 +8,14 @@ using UE5DumpUI.Models;
 
 namespace UE5DumpUI.ViewModels;
 
-/// <summary>One entry in the Value Search server-side sort picker (V3-C).
+/// <summary>One entry in the Value Search server-side sort picker.
 /// <see cref="Label"/> is shown in the combo; <see cref="Key"/> is the
 /// query_candidates wire string ("" / "scan" / "value" / "class" / "field"
 /// / "type" / "offset" / "addr" / "instance").</summary>
 public sealed record ValueSortOption(string Label, string Key);
 
 /// <summary>
-/// ViewModel for the Value Search panel (build 733+, port from
-/// discrete Phase 27b shape).
+/// ViewModel for the Value Search panel.
 ///
 /// Workflow:
 ///   1. User picks DataType + ScanType + Value(s), clicks First Scan.
@@ -153,14 +152,14 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// each numeric array / struct-array element becomes its own match block.</summary>
     [ObservableProperty] private bool   _deepScan;
 
-    /// <summary>Opt-in cross-object pass (Group mode only, default OFF; P4). When on,
+    /// <summary>Opt-in cross-object pass (Group mode only, default OFF). When on,
     /// each actor's block also folds in the numeric leaves of the sub-objects it OWNS
     /// (its components + a GAS ASC's AttributeSets), so a group whose values are
     /// distributed across {actor, components, attribute sets} is matched as one block.
     /// Ownership + value driven (not class-name driven).</summary>
     [ObservableProperty] private bool   _crossObjectScan;
 
-    /// <summary>Native-C (P1, opt-in, default OFF). When on, the scan ALSO inspects
+    /// <summary>Native-C (opt-in, default OFF). When on, the scan ALSO inspects
     /// each object's unmanaged holes — the byte ranges within the object that no
     /// UPROPERTY covers — for the requested numeric value, so native (non-UPROPERTY)
     /// C++ members like HP/MP become findable. Intentionally noisy on first scan:
@@ -284,7 +283,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         ValueScanDataType.Float,
         ValueScanDataType.Double,
         ValueScanDataType.Bool,
-        // Phase 2A — string types. FText is best-effort (cooked games
+        // String types. FText is best-effort (cooked games
         // strip a lot of metadata so display strings may be unresolvable;
         // we keep it as a third option since the UE NameProperty /
         // StrProperty / TextProperty fields are common enough that
@@ -292,7 +291,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         ValueScanDataType.FString,
         ValueScanDataType.FName,
         ValueScanDataType.FText,
-        // Phase 2B — vector types. FTransform is wire-stable but
+        // Vector types. FTransform is wire-stable but
         // currently returns zero hits pending per-version Translation
         // offset detection; deliberately not exposed in the dropdown
         // until that lands.
@@ -377,7 +376,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     [ObservableProperty] private bool   _isScanning;
     [ObservableProperty] private string _errorMessage = "";
     /// <summary>The bound result rows shown by the grid — the CURRENT
-    /// server-returned window (V3-C), NOT the full set. A typed
+    /// server-returned window, NOT the full set. A typed
     /// ObservableCollection (not a DataGridCollectionView) so the grid's
     /// compiled column bindings infer the row type. Filter / sort / paging run
     /// server-side over the full session set held in the DLL.</summary>
@@ -430,7 +429,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     private System.Threading.CancellationTokenSource? _filterCts;
 
     /// <summary>Case-insensitive keyword filter — now SERVER-SIDE over the full
-    /// session set (V3-C). A loaded-window-only filter would be untrustworthy
+    /// session set. A loaded-window-only filter would be untrustworthy
     /// ("no match" couldn't distinguish "not in the data" from "not loaded"),
     /// so a change reloads window 0 from the DLL (debounced).</summary>
     [ObservableProperty] private string _filterText = "";
@@ -465,15 +464,14 @@ public partial class ValueSearchViewModel : ViewModelBase
             // This branch writes Candidates WITHOUT going through LoadWindowAsync, so it
             // must supersede any view query still in flight itself — otherwise a page-0
             // reload issued before the scan lands afterwards and overwrites the fresh
-            // inline page with a window over the PREVIOUS session's set. Found while
-            // reviewing AE21 rather than filed with it; the guard is the same family and
-            // costs one line. The cancelled query returns through its OCE path and
-            // releases _resetInFlight in its own finally.
+            // inline page with a window over the PREVIOUS session's set. The cancelled
+            // query returns through its OCE path and releases _resetInFlight in its own
+            // finally.
             _viewCts?.Cancel();
             FilteredTotal = total;
             Candidates = new ObservableCollection<ValueCandidate>(inlineFirstPage);
             // Stamp the window key here too, or the very first Load More after a
-            // default-view scan sees a null key and needlessly re-fetches page 0. (AE21)
+            // default-view scan sees a null key and needlessly re-fetches page 0.
             _loadedWindow = CurrentWindowQuery();
             UpdateWindowStatus();
         }
@@ -483,7 +481,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
     }
 
-    // ── AE21: what the loaded window is a function of ────────────────────────
+    // ── What the loaded window is a function of ──────────────────────────────
     //
     // "Load More" derives its offset from Candidates.Count. That is only a valid
     // server offset while the rows on screen are still the head of the CURRENT
@@ -494,8 +492,8 @@ public partial class ValueSearchViewModel : ViewModelBase
     //      filter goes on the wire against the old list's offset;
     //   3. a fresh First/Next scan replaced the session's set under an unchanged
     //      filter/sort, so the key matches but the rows do not.
-    // (1) and (2) are caught by comparing the key, (3) by the in-flight flag. The
-    // symptom was one grid concatenating two different filters/sorts, with no error.
+    // (1) and (2) are caught by comparing the key, (3) by the in-flight flag. Missed,
+    // one grid concatenates two different filters/sorts, with no error.
 
     /// <summary>Every input the server window is a function of. A record struct so
     /// equality is structural and a forgotten field is a compile-time addition here
@@ -559,7 +557,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         if (!HasSession) return;
         var q = CurrentWindowQuery();
         if (!reset && ShouldPromoteAppendToReset(_resetInFlight, _loadedWindow, q))
-            reset = true;   // AE21 — Candidates.Count is not an offset into this query
+            reset = true;   // Candidates.Count is not an offset into this query
         _viewCts?.Cancel();
         var cts = _viewCts = new System.Threading.CancellationTokenSource();
         if (reset) _resetInFlight = true;
@@ -633,9 +631,9 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
     }
 
-    // --- V3-C server-side sort picker. Replaces client-side column-header
-    // sort, which could only reorder the loaded window (misleading once the
-    // set is windowed). Sorting runs in the DLL over the FULL session set. ---
+    // --- Server-side sort picker. A client-side column-header sort could only
+    // reorder the loaded window, which misleads once the set is windowed.
+    // Sorting runs in the DLL over the FULL session set. ---
 
     /// <summary>Sort options for the picker. Label is shown in the combo; Key
     /// is the query_candidates wire string.</summary>
@@ -666,7 +664,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     /// <summary>Drive the server-side sort from a DataGrid column-header click.
-    /// The grid is windowed (V3-C) so client-side column sorting would only
+    /// The grid is windowed, so client-side column sorting would only
     /// reorder the loaded page — instead a header click maps to one of the
     /// <see cref="SortOptions"/> keys and re-sorts the WHOLE session set in the
     /// DLL (keeping the Sort picker + Desc toggle in sync). Clicking the active
@@ -851,7 +849,7 @@ public partial class ValueSearchViewModel : ViewModelBase
 
     /// <summary>Raised to pivot the chosen candidate's (className, fieldName) in the
     /// experimental Class Pivot tab — the value-locator → pivot handoff (mirrors the
-    /// C5 right-click handoff on the property panels). A value-scan hit already
+    /// right-click handoff on the property panels). A value-scan hit already
     /// carries ClassName + FieldName, so "I can see this value on screen" reaches a
     /// grouped pivot in one click. (className, fieldName, fieldOffset).</summary>
     public event Action<string, string, int>? NavigateToPivot;
@@ -943,7 +941,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupFilteredTotal = 0;
         // The window bookkeeping and the truncation latch are session state too — a
         // reconnect that kept them would let a Load More page against a dead session's
-        // key (AE21) or tell the user a fresh scan inherited a truncation (AE24).
+        // key or tell the user a fresh scan inherited a truncation.
         _loadedWindow = null;
         _loadedGroupWindow = null;
         _resetInFlight = false;
@@ -1051,8 +1049,8 @@ public partial class ValueSearchViewModel : ViewModelBase
 
             SessionId = result.SessionId;
             // Latch the truncation for the WHOLE session, not just this line. Every
-            // later refine prunes a set that was already partial, and until AE24 the
-            // next status line and the picker badge both said otherwise.
+            // later refine prunes a set that was already partial, so the next status
+            // line and the picker badge must say so too.
             _scanTruncated = result.DeadlineHit;
             // Populate the class-noise picker from the server histogram BEFORE
             // applying the window (ApplyScanResultAsync consults ClassFilter via
@@ -1174,8 +1172,8 @@ public partial class ValueSearchViewModel : ViewModelBase
         Candidates = new ObservableCollection<ValueCandidate>();
         Total = 0;
         FilteredTotal = 0;
-        _scanTruncated = false;      // a new session has not truncated anything yet (AE24)
-        _loadedWindow = null;        // nothing on screen belongs to a live query (AE21)
+        _scanTruncated = false;      // a new session has not truncated anything yet
+        _loadedWindow = null;        // nothing on screen belongs to a live query
         _resetInFlight = false;
         // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone would leave
         // the combo still displaying the previous sort while the next scan runs in scan order,
@@ -1332,7 +1330,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     public bool CanAddGroupRow    => GroupInputs.Count < 4;
     public bool CanRemoveGroupRow => GroupInputs.Count > 2;
 
-    /// <summary>Per-slot width scope choices (P1): the multi-numeric meta types
+    /// <summary>Per-slot width scope choices: the multi-numeric meta types
     /// only. NumericNoByte (default) fans out over int16..double; NumericAll also
     /// includes 1-byte fields.</summary>
     public IReadOnlyList<ValueScanDataType> GroupDataTypeOptions { get; } = new[]
@@ -1341,7 +1339,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         ValueScanDataType.NumericAll,
     };
 
-    /// <summary>Per-slot scan-type choices for group mode (P2). First-scan types
+    /// <summary>Per-slot scan-type choices for group mode. First-scan types
     /// (Exact / Bigger / Smaller / Between) compare against the row's value; prev-value types
     /// (Changed / Unchanged / Increased / Decreased) compare against the previous
     /// round and need a session, so they're only valid on a refine — the value box
@@ -1509,7 +1507,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                 PreFilterNoise, SelectedRoundingMode, GroupPerSlotCap, cts.Token);
 
             GroupSessionId = result.SessionId;
-            _groupScanTruncated = result.DeadlineHit;   // AE24, group side
+            _groupScanTruncated = result.DeadlineHit;   // latched for the whole session, as in First Scan
             GroupClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
                 result.ClassDistinct, countsPartial: result.DeadlineHit);
@@ -1522,7 +1520,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                 // a match that never entered it (InheritedTruncation). Max sits in the mode row, which both modes show.
                 summary += $"  ⚠ truncated ({timeoutSent}s deadline / result cap) — raise the Timeout slider (deadline); use more / more distinctive values{PartialResultNotice.RaiseMaxClause(maxSent, Constants.ScanSessionMaxResultsCeiling)} (result cap)";
             // Separate fact from DeadlineHit, and the one that explains a short
-            // "All fields" list. Latched for the session: refine inherits it. (AE13)
+            // "All fields" list. Latched for the session: refine inherits it.
             _groupPerSlotCapHit = result.PerSlotCapHit;
             _groupCapApplied    = result.PerSlotCap;
             if (result.PerSlotCapHit)
@@ -1566,7 +1564,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                 result.ClassDistinct, countsPartial: _groupScanTruncated);
             await ApplyGroupScanResultAsync(result.Total, result.Candidates);
             // The DLL carries the Begin scan's cap verdict on the session, so a refine
-            // reports it too rather than looking like the problem went away. (AE13)
+            // reports it too rather than looking like the problem went away.
             _groupPerSlotCapHit = result.PerSlotCapHit || _groupPerSlotCapHit;
             if (result.PerSlotCap > 0) _groupCapApplied = result.PerSlotCap;
             StatusText = $"Group Next Scan: {result.Total} surviving objects in {result.DurationMs} ms"
@@ -1597,10 +1595,10 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupCandidates = new ObservableCollection<GroupCandidate>();
         GroupTotal = 0;
         GroupFilteredTotal = 0;
-        _groupScanTruncated = false;   // AE24
-        _groupPerSlotCapHit = false;   // AE13
+        _groupScanTruncated = false;   // a new session has not truncated anything yet
+        _groupPerSlotCapHit = false;   // nor dropped a leaf past the per-slot cap
         _groupCapApplied = 0;
-        _loadedGroupWindow = null;     // AE21
+        _loadedGroupWindow = null;     // nothing on screen belongs to a live query
         _groupResetInFlight = false;
         // Same picker reset as NewScanAsync, and for the same reason.
         _suppressGroupSortReload = true;
@@ -1628,7 +1626,7 @@ public partial class ValueSearchViewModel : ViewModelBase
             _groupViewCts?.Cancel();   // see ApplyScanResultAsync — same supersede rule
             GroupFilteredTotal = total;
             GroupCandidates = new ObservableCollection<GroupCandidate>(inlineFirstPage);
-            _loadedGroupWindow = CurrentGroupWindowQuery();   // AE21, group side
+            _loadedGroupWindow = CurrentGroupWindowQuery();   // stamp the window key, as ApplyScanResultAsync does
             UpdateGroupWindowStatus();
         }
         else
@@ -1673,7 +1671,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { /* superseded */ }
         catch (Exception ex)
         {
-            // Token-less OCE / IOException = the pipe died, not a supersede. (AE23)
+            // Token-less OCE / IOException = the pipe died, not a supersede.
             ErrorMessage = $"Group query failed: {ex.Message}";
             _log.Error("ValueSearch query_group_candidates failed", ex);
         }
@@ -1738,7 +1736,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     private void OpenGroupSlotInLiveWalker(GroupSlotMatch? slot)
     {
         // HandoffAddr is the leaf's direct owner — the owned sub-object for a
-        // cross-object leaf (P4), else the actor — so Live Walker opens the object
+        // cross-object leaf, else the actor — so Live Walker opens the object
         // that actually holds the field.
         if (slot == null || string.IsNullOrEmpty(slot.HandoffAddr)) return;
         NavigateToInstance?.Invoke(slot.HandoffAddr, slot.FieldOffset, slot.FieldName);
@@ -1827,7 +1825,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     private void PivotGroupSlot(GroupSlotMatch? slot)
     {
         // PivotClassName is the leaf's direct owner class — the owned sub-object's
-        // class for a cross-object leaf (P4 inc 2), else the candidate actor — so the
+        // class for a cross-object leaf, else the candidate actor — so the
         // Pivot lands on the class that actually declares the field.
         if (slot == null || string.IsNullOrEmpty(slot.PivotClassName) || string.IsNullOrEmpty(slot.FieldName)) return;
         NavigateToPivot?.Invoke(slot.PivotClassName, slot.FieldName, slot.FieldOffset);

@@ -181,7 +181,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public event Action<string>? NavigateToLiveWalker;
 
     /// <summary>Raised to pivot the selected property in the experimental Class
-    /// Pivot tab (className, propName, propOffset). C5 right-click handoff.</summary>
+    /// Pivot tab (className, propName, propOffset): the right-click handoff.</summary>
     public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>Gates the "Pivot this property" context-menu item — set true only
@@ -457,8 +457,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>Whether to show the Force submenu at all: the experimental gate AND a
     /// selected row that can actually be forced. Both halves are needed and neither can
-    /// carry the other — the gate alone left the submenu open with nothing usable in it,
-    /// and the row alone would bypass the experimental gate. (B36)</summary>
+    /// carry the other — the gate alone would leave the submenu open with nothing usable in
+    /// it, and the row alone would bypass the experimental gate.</summary>
     public bool ForceMenuVisible => ForceEnabled && (SelectedResult?.CanForceAny ?? false);
 
     partial void OnSelectedResultChanged(PropertySearchMatch? value)
@@ -866,7 +866,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -916,7 +916,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         {
             StatusText = $"Find Funcs cancelled at {done}/{targets.Count}.";
         }
-        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled) (L14)
+        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled)
         {
             _log.Error("Batch Find Funcs failed", ex);
             StatusText = $"Find Funcs failed at {done}/{targets.Count}.";

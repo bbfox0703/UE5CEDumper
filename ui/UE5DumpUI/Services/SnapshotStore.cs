@@ -984,7 +984,7 @@ public sealed class SnapshotStore : ISnapshotStore
 
         string classContains = filter.ClassContains ?? "";
         string propContains  = filter.PropContains ?? "";
-        // N1: per-game class denylist. Filter both A-load and B-stream so the
+        // Per-game class denylist. Filter both A-load and B-stream so the
         // Added/Removed churn counts also reflect only non-denylisted classes.
         var deny = filter.ExcludedClasses is { Count: > 0 } ? filter.ExcludedClasses : null;
 
@@ -1036,7 +1036,7 @@ public sealed class SnapshotStore : ISnapshotStore
         // Snapshot B: stream rows, hash-look-up A. matched = common keys (changed +
         // unchanged); bTotal = all B rows — together they give the Added/Removed churn.
         int matched = 0, bTotal = 0;
-        // N1: Top-N noise picker — accumulate per-class hit count + sample props
+        // Top-N noise picker — accumulate per-class hit count + sample props
         // over the changed-row set (counts only what the user actually sees).
         var noise = new NoiseAccumulator();
         await using (var cmd = conn.CreateCommand())
@@ -1257,8 +1257,8 @@ public sealed class SnapshotStore : ISnapshotStore
                         curCls, curIdx, curAddr, curName, leaves, slots, perSlot,
                         fName, fOff, fType, fVal, query.Slots));
             }
-            // Sticky across objects, and recorded even when the object did NOT match
-            // (AF13): a slot truncated at the cap is exactly when a miss may be an
+            // Sticky across objects, and recorded even when the object did NOT match:
+            // a slot truncated at the cap is exactly when a miss may be an
             // artifact rather than an answer.
             if (capHit) result.PerSlotCapHit = true;
             Reset();
@@ -1308,7 +1308,7 @@ public sealed class SnapshotStore : ISnapshotStore
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
-        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // name the cap in force
         return result;
     }
 
@@ -1503,12 +1503,12 @@ public sealed class SnapshotStore : ISnapshotStore
                         acc.ClassName, acc.Index, acc.ObjAddr, acc.NormPath,
                         acc.Leaves, slots, perSlot, acc.FName, acc.FOff, acc.FType, acc.FVal, inputs));
             }
-            if (capHit) result.PerSlotCapHit = true;     // AF13
+            if (capHit) result.PerSlotCapHit = true;
         }
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
-        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // name the cap in force
     }
 
     // The object-identity portion of an SpcKey (no prop/offset/array) — the grouping
@@ -1549,7 +1549,7 @@ public sealed class SnapshotStore : ISnapshotStore
         string propContains  = query.PropContains?.Trim() ?? "";
         var mode = query.JoinMode;
         var abs  = query.AbsolutePredicates is { Count: > 0 } ? query.AbsolutePredicates : null;
-        // N1: per-game class denylist. Null/empty = no filtering. The set is
+        // Per-game class denylist. Null/empty = no filtering. The set is
         // captured once here so a concurrent UI-side mutation can't change the
         // predicate mid-query.
         var deny = query.ExcludedClasses is { Count: > 0 } ? query.ExcludedClasses : null;
@@ -1564,7 +1564,7 @@ public sealed class SnapshotStore : ISnapshotStore
 
         // Evaluate the directional chain + absolute predicates; build result rows.
         // Accumulate per-class hit count + per-(class, prop) sub-count to drive the
-        // post-query Top-N noise picker (N1).
+        // post-query Top-N noise picker.
         var noise = new NoiseAccumulator();
         int evalCount = 0;
         foreach (var c in cands)
@@ -1938,8 +1938,8 @@ public sealed class SnapshotStore : ISnapshotStore
         // "Suggest Targets" front-door ever uses — reduces the N-snapshot compare
         // SERVER-SIDE and marshals only the CHANGED instances. Process memory is then
         // bounded by the changed-group count (thousands), NOT the snapshot's field
-        // count (millions) — which is what ballooned the old in-memory Dictionary<…,Cand>
-        // to 11 GB and hung the UI on big games. Loose / InSession fall back to the
+        // count (millions) — an in-memory Dictionary<…,Cand> over the latter hangs the
+        // UI on big games. Loose / InSession fall back to the
         // in-memory intersection: the UI never selects them, but keeping the path
         // preserves the public contract for any other caller. See
         // docs/experimental-snapshot-spc-pivot.md §"Phase C — C3".
@@ -2379,7 +2379,7 @@ public sealed class SnapshotStore : ISnapshotStore
         return result;
     }
 
-    // --- Phase C6: array-element pivot ---------------------------------------
+    // --- Array-element pivot -------------------------------------------------
 
     public async Task<IReadOnlyList<PivotClassInfo>> ListPivotArrayClassesAsync(
         long snapshotId, CancellationToken ct = default)
@@ -2727,7 +2727,7 @@ public sealed class SnapshotStore : ISnapshotStore
             return new SnapshotWipeResult(deleted, skipped);
         }, ct);
 
-    // --- N1: Top-N noise contributor accumulator (used by SPC + Diff) ---
+    // --- Top-N noise contributor accumulator (used by SPC + Diff) ---
     //
     // Walks each emitted result row, keeps per-class hit counts + per-(class, prop)
     // sub-counts, then writes a Top-50 ranking with up to 3 sample props per class.
@@ -2790,7 +2790,7 @@ public sealed class SnapshotStore : ISnapshotStore
         }
     }
 
-    // --- N1: per-game, PER-TAB class denylists (noise picker) ---
+    // --- Per-game, PER-TAB class denylists (noise picker) ---
     //
     // Stored next to the per-game DB as snapshots.<pe_hash>.denylist.json so the
     // lists auto-follow the game and survive quota-driven snapshot eviction. The

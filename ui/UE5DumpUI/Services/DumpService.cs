@@ -13,8 +13,8 @@ public sealed class DumpService : IDumpService
     private readonly ILoggingService _log;
     private readonly ISystemCodePage _codePage;
 
-    /// <param name="codePage">[PATH-CE-MODULE-VIEW] Gives <see cref="EngineState.CeModuleName"/>. REQUIRED (skeptic
-    /// T2): an optional one let a composition root forget it and silently fall back to no conversion. Tests that
+    /// <param name="codePage">[PATH-CE-MODULE-VIEW] Gives <see cref="EngineState.CeModuleName"/>. REQUIRED: an
+    /// optional one would let a composition root forget it and silently fall back to no conversion. Tests that
     /// do not care pass <see cref="IdentityCodePage.Instance"/>.</param>
     public DumpService(IPipeClient pipe, ILoggingService log, ISystemCodePage codePage)
     {
@@ -111,7 +111,7 @@ public sealed class DumpService : IDumpService
         };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
-        // What the DLL did with the write ([PIPE-PER-PROCESS-2026-11-06] Stage C); an older DLL echoes the request.
+        // What the DLL did with the write ([PIPE-PER-PROCESS-2026-11-06]); an older DLL echoes the request.
         var persisted = res["persisted"]?.GetValue<bool>() ?? persist;
         var autoRestore = res["auto_restore"]?.GetValue<string>();
         _log.Info(Constants.LogCatInit,
@@ -1503,11 +1503,11 @@ public sealed class DumpService : IDumpService
         {
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? funcAddr,
             ScriptBytes  = res["script_bytes"]?.GetValue<int>() ?? 0,
-            // Path 2: "bytecode" (exact) / "disasm" (native heuristic) / "none".
+            // "bytecode" (exact) / "disasm" (native heuristic) / "none".
             // Default to "bytecode" for older DLLs that don't emit the field.
             Method       = res["method"]?.GetValue<string>() ?? "bytecode",
             Unmapped     = res["unmapped"]?.GetValue<int>() ?? 0,
-            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported".
+            // Absent on an older DLL ⇒ false, i.e. "no truncation reported".
             BudgetHit    = res["budget_hit"]?.GetValue<bool>() ?? false,
             Props        = props,
         };
@@ -1681,11 +1681,11 @@ public sealed class DumpService : IDumpService
                 Hex = eo["h"]?.GetValue<string>() ?? "",
                 EnumName = eo["en"]?.GetValue<string>() ?? "",
                 RawIntValue = eo["rv"]?.GetValue<long>() ?? 0,
-                // Phase D: pointer element fields
+                // Pointer element fields
                 PtrAddress = eo["pa"]?.GetValue<string>() ?? "",
                 PtrName = eo["pn"]?.GetValue<string>() ?? "",
                 PtrClassName = eo["pc"]?.GetValue<string>() ?? "",
-                // Phase F: struct sub-fields
+                // Struct sub-fields
                 StructFields = ParseStructSubFields(eo["sf"]),
             });
         }
@@ -1815,7 +1815,7 @@ public sealed class DumpService : IDumpService
         return ParseFunctions(res);
     }
 
-    /// <summary>A walk_functions reply's functions. Shared with the MCP server's invoke tool (Stage D2-3), which builds a
+    /// <summary>A walk_functions reply's functions. Shared with the MCP server's invoke tool, which builds a
     /// call's buffer from the same model the Invoke dialog does.</summary>
     internal static List<FunctionInfoModel> ParseFunctions(JsonObject res)
     {
@@ -1832,7 +1832,7 @@ public sealed class DumpService : IDumpService
                     foreach (var pItem in paramsArr)
                     {
                         if (pItem is not JsonObject po) continue;
-                        // Phase B: parse optional struct_fields array
+                        // Parse optional struct_fields array
                         var structFields = new List<DynamicStructField>();
                         if (po["struct_fields"] is JsonArray sfArr)
                         {
@@ -1860,7 +1860,7 @@ public sealed class DumpService : IDumpService
                             IsParm = po["parm"]?.GetValue<bool>(),
                             StructName = po["struct_type"]?.GetValue<string>() ?? "",
                             StructFields = structFields,
-                            // Stage 1 (Invoke param picker): expected UClass name
+                            // Invoke param picker: expected UClass name
                             // for pointer-flavoured params. Empty when the DLL
                             // pre-dates the field or for non-pointer params.
                             ObjectClassName = po["obj_class"]?.GetValue<string>() ?? "",
@@ -2085,7 +2085,7 @@ public sealed class DumpService : IDumpService
         FieldType         = obj["field_type"]?.GetValue<string>() ?? "",
         BoolFieldMask     = (byte)(obj["bool_field_mask"]?.GetValue<int>() ?? 0xFF),
         Value             = obj["value"]?.GetValue<string>() ?? "",
-        // Native-C (P1): present only for raw-hole hits (absent => reflected).
+        // Native-C: present only for raw-hole hits (absent => reflected).
         IsNativeField     = obj["is_native_c"]?.GetValue<bool>() ?? false,
         GuessedType       = obj["guessed_type"]?.GetValue<string>() ?? "",
     };
@@ -2157,7 +2157,7 @@ public sealed class DumpService : IDumpService
             ["value"] = value,
             ["game_only"] = gameOnly,
             ["max_results"] = maxResults,
-            // V3-C: only the first page comes back inline; the rest is paged
+            // Only the first page comes back inline; the rest is paged
             // server-side via query_candidates.
             ["page_size"] = pageSize,
         };
@@ -2188,10 +2188,10 @@ public sealed class DumpService : IDumpService
         // Deep container pass is opt-in (default off) → attach only when enabled.
         if (deep)
             req["deep"] = true;
-        // Native-C raw-hole scan (P1) is opt-in (default off) → attach only when
+        // Native-C raw-hole scan is opt-in (default off) → attach only when
         // enabled. The (JsonNode) cast dodges the generic JsonObject indexer's
-        // Add<T> AOT/trim trap (IL2026/IL3050). native_align stays at the DLL
-        // default (4) for now — no UI stride control yet.
+        // Add<T> AOT/trim trap (IL2026/IL3050). native_align is not sent, so the
+        // DLL default (4) applies: the UI has no stride control.
         if (nativeC)
             req["native_c"] = (JsonNode)true;
         // Newest-first GObjects ordering is opt-in (default off) → attach only when
@@ -2368,7 +2368,7 @@ public sealed class DumpService : IDumpService
         HasLeafAddress = so["addr"] != null,
         OwnerAddr     = so["owner_addr"]?.GetValue<string>() ?? "",
         OwnerClass    = so["owner_class"]?.GetValue<string>() ?? "",
-        // Native-C (P2): present only for raw-hole leaves.
+        // Native-C: present only for raw-hole leaves.
         IsNativeField = so["is_native_c"]?.GetValue<bool>() ?? false,
         GuessedType   = so["guessed_type"]?.GetValue<string>() ?? "",
     };
@@ -2436,7 +2436,7 @@ public sealed class DumpService : IDumpService
             {
                 ["value"]     = sp.Value,
                 ["data_type"] = sp.DataType.ToString(),
-                ["scan_type"] = sp.ScanType.ToString(),  // per-slot predicate (P2)
+                ["scan_type"] = sp.ScanType.ToString(),  // per-slot predicate
             };
             if (sp.ScanType == ValueScanType.Between)
                 slot["value2"] = sp.Value2;              // Between upper bound
@@ -2458,10 +2458,10 @@ public sealed class DumpService : IDumpService
             req["deep"] = true;
         if (crossObject)
             req["cross_object"] = true;
-        // Native-C raw-hole pass (P2), opt-in → attach only when on (back-compat).
+        // Native-C raw-hole pass, opt-in → attach only when on (back-compat).
         if (nativeC)
             req["native_c"] = (JsonNode)true;
-        // Newest-first ordering (P2): attach only when on (auto-set with native_c).
+        // Newest-first ordering: attach only when on (auto-set with native_c).
         if (newestFirst)
             req["newest_first"] = (JsonNode)true;
         // Scan deadline (Value Search "Timeout" slider). DLL default 15000ms →
@@ -2543,7 +2543,7 @@ public sealed class DumpService : IDumpService
             SessionId  = res["session_id"]?.GetValue<ulong>() ?? sessionId,
             Total      = res["total"]?.GetValue<int>() ?? 0,
             DurationMs = res["duration_ms"]?.GetValue<long>() ?? 0,
-            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,
             PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
             ClassHistogram = ParseClassHistogram(res),
             ClassDistinct  = res["class_distinct"]?.GetValue<int>() ?? 0,
@@ -2585,7 +2585,7 @@ public sealed class DumpService : IDumpService
             Total         = res["total"]?.GetValue<int>() ?? 0,
             FilteredTotal = res["filtered_total"]?.GetValue<int>() ?? 0,
             Offset        = res["offset"]?.GetValue<int>() ?? offset,
-            PerSlotCapHit = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCapHit = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,
             PerSlotCap    = res["per_slot_cap"]?.GetValue<int>() ?? 0,
         };
         if (res["candidates"] is JsonArray arr)
@@ -2692,7 +2692,7 @@ public sealed class DumpService : IDumpService
             // default is OFF for flag-unaware callers).
             ["auto_skip_noise"] = autoSkipNoise,
         };
-        // Native-C raw-hole capture (P3), opt-in → attach only when on (back-compat).
+        // Native-C raw-hole capture, opt-in → attach only when on (back-compat).
         if (nativeC)
             req["native_c"] = (JsonNode)true;
         // Type-family narrowing, opt-in → attach only when narrowed (the DLL
@@ -2980,8 +2980,8 @@ public sealed class DumpService : IDumpService
                 ["ticked"] = ticked,
                 ["exclude_per_frame"] = trace.ExcludePerFrame,
             };
-            // [LIVEFUNCS-STEP2] By name (T10). Sent only when there are names, so a Start without them is the step-1
-            // request byte for byte.
+            // [LIVEFUNCS-STEP2] By name. Sent only when there are names, so a Start without them is byte for byte the
+            // request a DLL that predates names reads.
             if (trace.TickedNames.Count > 0) traceReq["ticked_names"] = NamedFunctionsJson(trace.TickedNames, withSize: false);
             if (trace.Snapshots is { } s)
             {
@@ -2993,8 +2993,8 @@ public sealed class DumpService : IDumpService
                     ["total_per_s"] = s.TotalPerSec,
                 };
                 // [LIVEFUNCS-STEP3] Stacks ride inside the snapshot object because they share its buffer. Sent only when
-                // asked, and last, so a Start without them is the step-2 request byte for byte. No size goes with a stack
-                // choice: the depth alone sizes a stack slot.
+                // asked, and last, so a Start without them is byte for byte the request a DLL that predates stacks
+                // reads. No size goes with a stack choice: the depth alone sizes a stack slot.
                 if (s.Stacks is { } st)
                 {
                     snaps["stacks"] = new JsonObject
@@ -3450,7 +3450,7 @@ public sealed class DumpService : IDumpService
             Unwind     = s["unwind"]?.GetValue<bool>() ?? false,
             Own        = s["own"]?.GetValue<bool>() ?? false,
             Known      = s["known"]?.GetValue<string>() ?? "",
-            // [LIVEFUNCS-STEP3] S3-A1: absent from a DLL without the native-entry index, and on a site none enters at.
+            // [LIVEFUNCS-STEP3] Absent from a DLL without the native-entry index, and on a site none enters at.
             UFunc      = ParseAddr(s["ufunc"]?.GetValue<string>()),
             ClassName  = s["class"]?.GetValue<string>() ?? "",
             FuncName   = s["func"]?.GetValue<string>() ?? "",

@@ -3,7 +3,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Categories surfaced by the Interesting Properties Finder (B').
+/// Categories surfaced by the Interesting Properties Finder.
 /// One property gets exactly one category — the one with the highest
 /// keyword hit score, broken by enum order (Stats &gt; Combat &gt;
 /// Resources &gt; Movement &gt; Utility &gt; Timing &gt; Other).
@@ -155,7 +155,7 @@ public static class PropertyScoringTable
         "IsImmortal", "CanBeDamaged", "Invincible", "Invulnerable",
     };
 
-    // Timing (L1) — time/timer properties: BP-authored cooldown/countdown/
+    // Timing — time/timer properties: BP-authored cooldown/countdown/
     // duration floats, respawn/reload/cast timers, and the engine's
     // reflected time-dilation knobs (AWorldSettings::TimeDilation, per-actor
     // CustomTimeDilation). All whole-token: "Time" only fires when 'time' is
@@ -182,7 +182,7 @@ public static class PropertyScoringTable
         "LifeSpan", "Lifespan", "Lifetime", "InitialLifeSpan",
         // Recharge / tick cadence.
         "Recharge", "TickRate", "Cadence",
-        // Global slow-mo / freeze-time knobs (the L1 Hemmung levers).
+        // Global slow-mo / freeze-time knobs (the Hemmung levers).
         "TimeDilation", "GlobalTimeDilation",
         // Bare "Time" — whole-token, so safe (CastTime/RespawnTime/
         // TimeSeconds → Timing; Lifetime/Runtime → not).
@@ -190,11 +190,10 @@ public static class PropertyScoringTable
     };
 
     // ------------------------------------------------------------------
-    // Structural-signal tuning (P2a). Applied on top of keyword +
-    // class-location scoring using ONLY data search_properties already
-    // carries (PropType + StructType) — no new wire fields. PropertyFlags
-    // gating (SaveGame/BlueprintVisible/Transient) is a separate follow-up
-    // (P2b) that needs prop_flags added to the search_properties response.
+    // Structural-signal tuning. Applied on top of keyword +
+    // class-location scoring using PropType + StructType, which
+    // search_properties carries. PropertyFlags gating is a separate
+    // signal (its own block below) that reads the response's prop_flags.
     // ------------------------------------------------------------------
 
     /// <summary>UScriptStruct name of a GAS gameplay attribute. An
@@ -299,10 +298,10 @@ public static class PropertyScoringTable
         // pushes interesting properties above the threshold even when
         // their keyword hits are lukewarm — surfacing the "wait, why is
         // there a Health field in GameViewportClient?" findings that
-        // are the whole point of B'.
+        // are the whole point of the Interesting Properties Finder.
         var (classBonus, isUnusual) = ClassLocationScorer.PropertyBonus(match.ClassName);
 
-        // --- Structural signals (P2a): type-aware + GAS refinement. Uses
+        // --- Structural signals: type-aware + GAS refinement. Uses
         // only PropType + StructType, both already on PropertySearchMatch. ---
         bool isGas = string.Equals(match.StructType, GasAttributeStructType,
                                    StringComparison.Ordinal);
@@ -330,7 +329,7 @@ public static class PropertyScoringTable
             structuralBonus += NonValueTypePenalty;
         }
 
-        // PropertyFlags gating (P2b): persistent / designer-facing fields are
+        // PropertyFlags gating: persistent / designer-facing fields are
         // more likely a live cheat target; editor-only fields never are.
         // Additive on top of GAS/type signals; a no-op (flags 0) on older DLLs
         // that don't emit prop_flags, so this can't regress existing scores.
@@ -377,7 +376,7 @@ public static class PropertyScoringTable
     }
 
     // ------------------------------------------------------------------
-    // Structural helpers (P2a) — type prior + Current/Max stat pairing
+    // Structural helpers — type prior + Current/Max stat pairing
     // ------------------------------------------------------------------
 
     /// <summary>Categories whose real cheat target is a numeric scalar (or a
@@ -490,7 +489,7 @@ public static class PropertyScoringTable
     /// <see cref="CtGroupName"/> does not.</summary>
     public static string DisplayName(PropertyCategory cat) => CtGroupName(cat);
 
-    /// <summary>[I18N-READINESS-2026-11-04] P4. The group a generated CT files a property category's records under.
+    /// <summary>[I18N-READINESS-2026-11-04] The group a generated CT files a property category's records under.
     /// ⛔ DO NOT LOCALIZE: an artifact, so a table saved under one UI language keeps its groups under another.</summary>
     public static string CtGroupName(PropertyCategory cat) => cat switch
     {
@@ -518,7 +517,7 @@ public static class PropertyScoringTable
     /// <summary>
     /// One canned query per category, used by the Interesting Properties
     /// VM to batch-call <c>search_properties</c> across a wide keyword
-    /// surface in round 1 (no new DLL command needed). Each entry is
+    /// surface (no new DLL command needed). Each entry is
     /// a representative keyword that the DLL substring-matches against
     /// every property name. The scorer then re-evaluates client-side
     /// using the full keyword tables above — so this list is "what to
@@ -569,8 +568,8 @@ public static class PropertyScoringTable
         "Quest", "Cheat", "Immortal", "Damaged", "Invincible",
         "Save", "Checkpoint", "Mission", "Objective", "Debug", "GodMode",
         "NoClip", "Score", "Invulnerable",
-        // Timing (L1) — the DLL substring-matches these against property
-        // names so round-1 actually fetches timer fields for the scorer.
+        // Timing — the DLL substring-matches these against property
+        // names so the fetch actually returns timer fields for the scorer.
         "Cooldown", "Duration", "Timer", "Delay", "Interval", "Elapsed",
         "Remaining", "Lifespan", "Recharge", "TimeDilation", "Time",
         "TickRate", "Cadence",

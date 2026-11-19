@@ -40,10 +40,10 @@ public sealed class FreezeValueDialog : Window
     ///
     /// <para><see cref="Freeze"/> generates a CE script the user then enables;
     /// <see cref="Force"/> writes the field immediately through the DLL and holds it on
-    /// every live instance. Reusing the Freeze strings for Force put "Create freeze
-    /// script" on the button of a flow that creates no script, and offered a remedy
+    /// every live instance. The Freeze strings on a Force would put "Create freeze
+    /// script" on the button of a flow that creates no script, and offer a remedy
     /// ("edit className in the generated CFG block") that has no CFG block to edit —
-    /// the same unreachable-advice trap as Z10.</para>
+    /// advice the user cannot act on.</para>
     /// </summary>
     public enum Purpose { Freeze, Force }
 
@@ -313,7 +313,7 @@ public sealed class FreezeValueDialog : Window
         (Purpose.Force,  Leaf.NarrowHint) => "str.ValuePrompt.Force.NarrowHint",
         // Unreachable from any in-repo call site: both enums are covered above. Reached
         // only by casting an undeclared value, which is a programmer error — and falling
-        // back to the Freeze wording is the AF22 defect itself, so refuse instead.
+        // back to the Freeze wording would name the wrong action (see Purpose), so refuse instead.
         _ => throw new ArgumentOutOfRangeException(
                  nameof(purpose), $"No en.axaml wording defined for {purpose}/{leaf}"),
     };
@@ -441,7 +441,7 @@ public sealed class FreezeValueDialog : Window
                 // TryParse accepts "NaN"/"Infinity" and overflow rounds to ±Infinity, and
                 // ToString("R") then emits the bare word — not a Lua number literal, so the
                 // emitted script reads it as an undefined global (nil) and freezes nothing.
-                // Reject at the dialog, where the user can still see why. (B23)
+                // Reject at the dialog, where the user can still see why.
                 if (!double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var dv)
                     || !double.IsFinite(dv))
                 {

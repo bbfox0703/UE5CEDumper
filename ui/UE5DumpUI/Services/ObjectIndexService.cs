@@ -7,7 +7,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// [EXTPR-539-540-2026-10-02] D4: the object index, Dump All's opt-in second file
+/// [EXTPR-539-540-2026-10-02] The object index, Dump All's opt-in second file
 /// (<c>&lt;name&gt;.objects.jsonl</c>). Every object get_object_list returns — packages, types, class-default
 /// objects and instances alike, as Dumper-7's and RE-UE4SS's object dumps have them — one JSON line each:
 /// <list type="bullet">
@@ -22,7 +22,7 @@ namespace UE5DumpUI.Services;
 ///     <c>objects_written</c> on any pool with holes.</item>
 /// </list>
 /// Addresses are valid for that run of the game only. The file can run to hundreds of megabytes on a big pool,
-/// so the caller shows <see cref="EstimateAsync"/>'s numbers and asks before writing it (D4.2).
+/// so the caller shows <see cref="EstimateAsync"/>'s numbers and asks before writing it.
 /// </summary>
 public static class ObjectIndexService
 {

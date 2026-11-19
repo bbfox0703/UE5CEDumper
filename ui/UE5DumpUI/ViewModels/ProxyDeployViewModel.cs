@@ -25,9 +25,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private bool _isScanning;
     // WHICH scan is running. IsScanning stays the mutual-exclusion guard, but it cannot
     // also drive the Cancel buttons: three commands set it and only two have a Cancel, so
-    // every one of them showed BOTH buttons — each wired to a different command, whose
-    // CanExecute (the wrapped command's CanBeCanceled) was false, rendering a disabled
-    // ghost Cancel on the card that was not scanning. (B45)
+    // every one of them would show BOTH buttons — each wired to a different command, whose
+    // CanExecute (the wrapped command's CanBeCanceled) is false, rendering a disabled
+    // ghost Cancel on the card that is not scanning.
     [ObservableProperty] private bool _isScanningDrives;
     [ObservableProperty] private bool _isScanningOrphans;
     [ObservableProperty] private string _statusText = "";
@@ -547,7 +547,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private async Task ScanAsync(CancellationToken ct)
     {
         // The gate keeps Scan from starting while UpdateAll is suspended at an await: its
-        // Games.Clear() below would invalidate UpdateAll's enumerator. (AE7)
+        // Games.Clear() below would invalidate UpdateAll's enumerator.
         using var busy = TryBeginExclusive("Scan Steam");
         if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
@@ -1357,8 +1357,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     {
         if (Games.Count == 0) return;
 
-        // Refresh neither tested nor set the guard, so it could run under a scan that was
-        // about to Games.Clear() beneath it, and a deploy could start on top of it. (AE5)
+        // Refresh takes the guard too: without it, it could run under a scan that is
+        // about to Games.Clear() beneath it, and a deploy could start on top of it.
         using var busy = TryBeginExclusive("Refresh");
         if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
@@ -1608,11 +1608,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
         catch (OperationCanceledException)
         {
-            // [A3-DEPLOY-CANCEL] The user's own Cancel (AE20 made it reach this command). Without
-            // this catch it rethrew out of the AsyncRelayCommand onto the dispatcher, where
-            // DispatcherFaultGuard refuses to swallow it and the process died -- a one-game deploy
-            // included, through the refresh's token. Report what DID happen, keep a changed pick,
-            // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
+            // [A3-DEPLOY-CANCEL] The user's own Cancel. Without this catch it would rethrow out
+            // of the AsyncRelayCommand onto the dispatcher, where DispatcherFaultGuard refuses to
+            // swallow it and the process would die -- a one-game deploy included, through the
+            // refresh's token. Report what DID happen, keep a changed pick, and bring the grid
+            // back in line WITHOUT the cancelled token (it would throw again).
             if (pickChanged) RequestOptionSave?.Invoke();
             await RefreshAfterCancelAsync(failedDirs);
             WriteNotes();
@@ -1660,8 +1660,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
         StatusColor = StatusNeutral;
         LastOperationColor = StatusNeutral;
         // Deploy and Undeploy are DIFFERENT commands, so the toolkit's per-command
-        // CanExecute block never applied between them — they could run over the same
-        // Binaries folder at once and both write the single result line. (AE6)
+        // CanExecute block does not apply between them — without the guard they could run
+        // over the same Binaries folder at once and both write the single result line.
         using var busy = TryBeginExclusive("Remove");
         if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
@@ -1886,7 +1886,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             // This is an AsyncRelayCommand: a faulted task on the button path is rethrown onto the
             // UI thread, so an uncaught exception here would be a crash risk, not merely a tally
-            // that never appears. (AE7)
+            // that never appears.
             SetOperationResult($"Update All failed — updated: {updated}, failed: {fail}", fail + 1);
             SetError(ex);
             _log.Error("ProxyDeploy", $"Update All failed: {ex.Message}");

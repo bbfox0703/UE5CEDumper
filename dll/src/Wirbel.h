@@ -218,7 +218,7 @@ int32_t GetPov(Pov& out);
 
 // Teleport to an explicit pose (BugItGo interop, pipe-only path). Bypasses
 // the marker store and the map check. hasRot: also restore Pitch/Yaw/Roll.
-// keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: the slot is one for the whole
+// keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] The slot is one for the whole
 // process, and an AI's teleport through the MCP server must not replace the place the user's "Recall last" returns to.
 [[nodiscard]] int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo = false);
 

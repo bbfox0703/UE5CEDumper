@@ -52,13 +52,13 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// <summary>Another function took this address DURING the recording: the count is both functions',
     /// and the name the latest one's.</summary>
     public bool   IsReused   { get; init; }
-    /// <summary>[LIVEFUNCS-STEP2] The name key the row's names are rendered from (T10): what a tick or a snapshot
+    /// <summary>[LIVEFUNCS-STEP2] The name key the row's names are rendered from: what a tick or a snapshot
     /// choice by name sends back. Null from a DLL that predates it.</summary>
     public NameKey? FnameKey { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The function fired every frame through the recording (the DLL's IsPerFrame).</summary>
     public bool   IsPerFrame { get; init; }
 
-    /// <summary>[LIVEFUNCS-STEP2] A row the trace can tick: by name when it has a key, else by a live address (D1).</summary>
+    /// <summary>[LIVEFUNCS-STEP2] A row the trace can tick: by name when it has a key, else by a live address.</summary>
     public bool IsTickable => FnameKey != null || (!IsUnloaded && !string.IsNullOrEmpty(FuncAddr));
 
     /// <summary>[LIVEFUNCS-STEP2] A row whose parameters can be chosen: chosen by name, so it needs a key, unloaded or
@@ -67,7 +67,7 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public bool CanChooseSnapshot => FnameKey != null && !(NumParms == 0 && FunctionFlags != 0);
 
     /// <summary>[LIVEFUNCS-STEP3] A row whose native stack can be chosen: by name, so it needs a key. Every call has a
-    /// stack, so <see cref="CanChooseSnapshot"/>'s parameters rule does not apply (D1).</summary>
+    /// stack, so <see cref="CanChooseSnapshot"/>'s parameters rule does not apply.</summary>
     public bool CanChooseStack => FnameKey != null;
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
@@ -101,7 +101,7 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// <summary>"NumParms (ParmsSize B)" e.g. "2 (5B)"; empty for no-arg funcs.</summary>
     public string ParamsLabel => NumParms == 0 ? "" : $"{NumParms} ({ParmsSize}B)";
 
-    // --- Cadence (Phase E): inter-arrival stats from the DLL, so the UI can flag a
+    // --- Cadence: inter-arrival stats from the DLL, so the UI can flag a
     // regularly-firing TIMER callback vs Tick vs an input-driven one-off. ---
 
     /// <summary>Mean inter-arrival gap between fires (ms); 0 with fewer than 2 fires.</summary>

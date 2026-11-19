@@ -24,8 +24,8 @@
 #include "Solide.h"
 #include "Dunste.h"
 #include "Schlacht.h"
-#include "Grausam.h"  // Grausam::SetForegroundLock — soft-disable the foreground lock on shutdown (L10)
-#include "Tot.h"     // Tot::RequestShutdown — enter the shutdown window before joining workers (M5)
+#include "Grausam.h"  // Grausam::SetForegroundLock — soft-disable the foreground lock on shutdown
+#include "Tot.h"     // Tot::RequestShutdown — enter the shutdown window before joining workers
 #include "Routine.h" // Routine::SafeThread — the pipe-claim watcher
 #include "Voll.h"    // Voll::DecideStart — who owns the pipe at startup (RELAUNCHPIPE)
 #include "Land.h"    // Land: a later copy of the dumper in this process takes over [DUMPER-SECOND-COPY-AUTOSTART]
@@ -109,7 +109,7 @@ std::atomic<bool> g_initInProgress{false};
 std::atomic<uint32_t> g_initRun{0};
 
 // [R7-C-05] apply_rescan is a SECOND producer of the init globals: it publishes g_cachedGObjects, then runs Aura::Init
-// and (the first time) ValidateAndFixOffsets, the same tail g_initInProgress fences inside UE5_Init (A3). It holds this
+// and (the first time) ValidateAndFixOffsets, the same tail g_initInProgress fences inside UE5_Init. It holds this
 // for that span; UE5_Init's already-initialised return waits on the mutex while the flag is up, so a mailbox command's
 // EnsureInitialized runs after the apply, not on a half-applied pool.
 namespace FrierenInit {
@@ -159,7 +159,7 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 namespace FrierenInit {
 // The live half of DynOff::ApplyVersionLadder: the probe's facts, the reads its rungs ask for and the log lines.
 // Every path that settles the session's version after an offsets probe runs it, so each lands on the version the
-// same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
+// same evidence proves. `who` prefixes the log lines, which tools/verify/a4_raise_ladder.py greps for.
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who) {
     DynOff::StructuralVersionFacts f;
     f.measured            = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
@@ -721,7 +721,7 @@ bool UE5_Init() {
     // whole session on them. Refuse the latch instead; the next enable re-scans. Safe
     // against a false positive: UE5_AutoStart calls Tot::ResetShutdown() before this.
     //
-    // (MA1) The same argument covers a PER-COMMAND cancel — a pipe client dropping
+    // The same argument covers a PER-COMMAND cancel — a pipe client dropping
     // mid-scan — which g_shutdown alone does not show.
     // ⚠ Do NOT "simplify" `ptrs.bScanCancelled` to Tot::Requested(). g_perCommand stays latched
     // until Fern::ReevaluatePerCommandCancel finds no connection that raised it still
@@ -800,7 +800,7 @@ static void ShutdownBody(bool handingOver) {
     // joins below complete fast, and (b) every module's StartWorker* refuses to
     // (re)spawn, so a pipe/mailbox command landing between the joins and the pipe
     // stop can't revive a just-joined worker that nothing would join again. Cleared
-    // by Fern::Start (ResetShutdown) on re-enable in the same process. (M5)
+    // by Fern::Start (ResetShutdown) on re-enable in the same process.
     Tot::RequestShutdown();
     Mimic::StopThread(!handingOver);
     Solitar::StopWorker();   // join the GodMode re-assert worker before unload
@@ -810,8 +810,8 @@ static void ShutdownBody(bool handingOver) {
     Dunste::StopWorker();    // join the fly worker before unload
     // Both OFFs below return 0 by contract (only an enable can fail), and See-through reports what it could not
     // un-hide itself (its log line and restoreAbandoned), so their results carry nothing to act on here.
-    std::ignore = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3). On a stalled game thread nothing can dispatch: the record is kept for the next ON -- in a hand-off, for the later copy to take ([SEETHRU-HANDOFF-LEFTOVER]) -- and the shutdown flag set above cuts the waits that would hold this call ([SHUTDOWN-SEETHRU-WAIT])
-    std::ignore = Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
+    std::ignore = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch. On a stalled game thread nothing can dispatch: the record is kept for the next ON -- in a hand-off, for the later copy to take ([SEETHRU-HANDOFF-LEFTOVER]) -- and the shutdown flag set above cuts the waits that would hold this call ([SHUTDOWN-SEETHRU-WAIT])
+    std::ignore = Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable
     // Teardown: soft RemoveHook + drain the pending invoke queue (MinHook stays
     // initialised -- see Stark::Shutdown). Pipe server is stopped after Shutdown() so any in-flight pipe thread
     // blocked on EnqueueInvoke receives its -7 result and unwinds cleanly.
@@ -833,7 +833,7 @@ static void ShutdownBody(bool handingOver) {
 void UE5_Shutdown() {
     // [DUMPER-SECOND-COPY-AUTOSTART] Not forwarded. A copy that is handing over, or has handed over, is shut down by
     // the hand-off itself; a CE untick that reaches it must not stop the copy that took over, which this record never
-    // started (B30's rule). A second shutdown during the hand-off's own would also race it.
+    // started. A second shutdown during the hand-off's own would also race it.
     if (Land::RefusesStart(Land::State())) {
         LOG_INFO("UE5_Shutdown: this copy handed the process to a later copy of the dumper -- nothing to stop here");
         return;
@@ -1201,7 +1201,7 @@ bool UE5_AutoStart() {
     }
 
     HANDLE h = CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
-        // A throw out of a raw thread proc is std::terminate (B14).
+        // A throw out of a raw thread proc is std::terminate.
         Routine::RunThreadGuarded("UE5_AutoStart", [] { UE5_AutoStartBlocking(); });
         return 0;
     }, nullptr, 0, nullptr);
@@ -1393,7 +1393,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     // FindLiveOrDefaultOf, not the user-facing ResolveUserInstance: a STATE read must never take the Debug Camera's
     // own CheatManager, where an invoke takes it when nothing else is live. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
     // below: when its CDO sits first, it has no OriginalControllerRef, so the state would read -1 and a Force ON
-    // refuse (L83). [SEETHRU-PROBE-SUBSTRING]
+    // refuse. [SEETHRU-PROBE-SUBSTRING]
     // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
     // non-Shipping builds), and on UE 5.8 a toggle there never enables the camera -- once slot reuse puts that
     // CheatManager below the player's, a second Force ON is a no-op. The player's toggles in both directions on 5.8,
@@ -2236,7 +2236,7 @@ static constexpr uint64_t kHookRetryCooldownMs = 5000;
 static std::atomic<int>      s_hookAttempts{0};
 static std::atomic<uint64_t> s_lastHookAttemptMs{0};
 // Did the PREVIOUS install attempt fail? Set on any failed attempt, cleared on success -- the one signal that a
-// success is a RECOVERY. The automatic counter cannot stand in: a forced attempt does not spend it (B24) and a
+// success is a RECOVERY. The automatic counter cannot stand in: a forced attempt does not spend it and a
 // recovery that skips the cooldown's automatic attempt leaves it at 1, so gating RECOVERED on `attempts > 1` drops
 // the case where two Starts fail and the third succeeds. ([MH-PRERESERVE-PROXY])
 static std::atomic<bool>     s_lastInstallFailed{false};
@@ -2784,7 +2784,7 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
 }  // namespace FrierenInvoke
 }  // extern "C++"
 
-// Force the game-thread ProcessEvent hook to install NOW (reuses the audit-#3
+// Force the game-thread ProcessEvent hook to install NOW (reuses EnsureProcessEventReady's
 // call_once, so it is race-safe and idempotent). Normally the hook installs
 // lazily on the first invoke; the Live PE profiler (Linie) needs it up before
 // any invoke so it can record the game's own PE calls. Returns whether the hook
@@ -2881,9 +2881,10 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
 
     // [A3-ST1-SUPER-DRAIN] Failing open to the override is right -- but the override is not the end of
     // the call. AActor::ProcessEvent (every actor) calls Super::ProcessEvent, which IS the address
-    // MinHook patched, so the unmarked call re-entered our detour here, on the mailbox thread, with
-    // InOwnPeCall() false -- and its drain ran every queued request off the game thread: ST1's crash
-    // class, one frame down. The helper holds the same "our own PE call" mark CallOriginalSEH does.
+    // MinHook patched, so an unmarked call re-enters our detour here, on the mailbox thread, with
+    // InOwnPeCall() false -- and its drain runs every queued request off the game thread: the crash
+    // class the trampoline branch above avoids, one frame down. The helper holds the same "our own
+    // PE call" mark CallOriginalSEH does.
     // ⛔ Not the trampoline (it skips AActor's world, GC and delegate checks), and not a queue (it
     // brings back the idle-menu timeouts): the recorded harmful fixes.
     const int32_t rc = Stark::CallAddressAsOwnSEH(peAddr, instance, ufunc, params);

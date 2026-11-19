@@ -79,9 +79,9 @@ public partial class ClassPivotViewModel : ViewModelBase
     private string _resultsSessionId = "";
     private readonly List<PivotClassInfo> _allClasses = new();
     /// <summary>Rows of the selected DataTable, cached so Run projects without a
-    /// second pipe round-trip (Phase C4).</summary>
+    /// second pipe round-trip.</summary>
     private DataTableWalkResult? _dataTable;
-    /// <summary>Rows requested per DataTable walk. A single page keeps C4 simple;
+    /// <summary>Rows requested per DataTable walk. A single page keeps the DataTable source simple;
     /// the status row reports when a table exceeds it.</summary>
     private const int DataTableRowLimit = 2000;
     // Monotonic guards so a stale (superseded) async load can't clobber the
@@ -157,7 +157,7 @@ public partial class ClassPivotViewModel : ViewModelBase
             : $"{SelectedDiscoverCount} snapshots selected.";
 
     /// <summary>Pivot data source: persisted snapshots (scalar), persisted
-    /// snapshot struct-arrays (inner-key pivot — Phase C6), or a live DataTable
+    /// snapshot struct-arrays (inner-key pivot), or a live DataTable
     /// (zero-config — RowName is the key). DataTable mode needs a live connection.</summary>
     public IReadOnlyList<string> SourceOptions { get; } =
         new[] { "Snapshot", "Snapshot Array", "DataTable" };
@@ -315,7 +315,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         RaiseResultRowActionGates();
     }
 
-    // --- N1: Pivot-scope class denylist (right-click "Hide this class") ---
+    // --- Pivot-scope class denylist (right-click "Hide this class") ---
     // Independent from the SPC / Diff lists — hiding a class here only affects
     // the Pivot class picker.
     private HashSet<string> _excludedClasses = new(StringComparer.Ordinal);
@@ -451,7 +451,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         _classFilterMemory.Schedule(value);
     }
 
-    /// <summary>C5 right-click handoff target: switch to scalar Snapshot source,
+    /// <summary>Right-click handoff target: switch to scalar Snapshot source,
     /// select <paramref name="className"/> in the newest snapshot, and surface
     /// <paramref name="propName"/> (ticked as a value field unless it became the
     /// auto-suggested key). No-op with a hint if no snapshot or class match. The
@@ -545,7 +545,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// snapshot and tick <paramref name="propName"/> as a value field. Assumes the
     /// snapshot + class list are already loaded; awaits the field load it triggers.
     /// Returns false (with a status hint) when the class isn't in the snapshot.
-    /// Shared by the C5 right-click handoff (<see cref="PivotForAsync"/>) and the
+    /// Shared by the right-click handoff (<see cref="PivotForAsync"/>) and the
     /// change-driven discovery "Use →" (<see cref="UseDiscoverCandidateAsync"/>).</summary>
     private async Task<bool> SelectClassAndTickPropAsync(string className, string? propName, int propOffset)
     {
@@ -554,7 +554,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // view, which might not contain the handoff target.
         // Flush before blanking: this is the navigation case CLAUDE.md's keyword-search
         // rule names explicitly, and a cross-tab handoff arriving right after the user
-        // typed a class keyword is exactly when the debounce is still pending. (AE16)
+        // typed a class keyword is exactly when the debounce is still pending.
         if (!string.IsNullOrEmpty(ClassFilter))
         {
             _classFilterMemory.Flush();
@@ -775,7 +775,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     // Apply a (cached or fresh) class list to the picker, filtered by the
-    // Pivot-scope denylist. N1: hidden classes never appear (independent of the
+    // Pivot-scope denylist. Hidden classes never appear (independent of the
     // SPC / Diff denylists — per-tab isolation).
     private void ApplyClassList(IReadOnlyList<PivotClassInfo> list)
     {
@@ -928,7 +928,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         StatusText = $"{Fields.Count} fields · suggested key: {SelectedKeyField ?? "(none)"}  {CacheNote()}";
     }
 
-    /// <summary>List live DataTable instances (and subclasses) for the C4 picker.</summary>
+    /// <summary>List live DataTable instances (and subclasses) for the DataTable picker.</summary>
     [RelayCommand]
     private async Task RefreshDataTablesAsync()
     {
@@ -1006,7 +1006,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         }
     }
 
-    /// <summary>List the captured struct-array fields of the selected class (C6).</summary>
+    /// <summary>List the captured struct-array fields of the selected class.</summary>
     private async Task LoadArrayFieldsAsync()
     {
         // Bump at entry so a null selection also supersedes in-flight loads.
@@ -1039,7 +1039,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     /// <summary>List the inner numeric props of the selected struct-array as the
-    /// value-field picker. The inner-key value is the implicit group key (C6).</summary>
+    /// value-field picker. The inner-key value is the implicit group key.</summary>
     private async Task LoadArrayPropsAsync()
     {
         // Bump at entry so a null selection also supersedes in-flight loads.

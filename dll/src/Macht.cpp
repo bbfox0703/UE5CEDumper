@@ -528,7 +528,7 @@ static void ScanRegionAll(
 // Public: AOBScanAll
 // ============================================================
 
-// (R10-02) Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
+// Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
 // in the product. dll_core_test, which #includes this file, sets it to drop the test's own reference mid-scan -- the
 // only way to prove the pin HOLDS the image and is released exactly once. Not declared in Macht.h, so nothing outside
 // this translation unit can set it.
@@ -557,7 +557,7 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
     // GetModuleHandleExW from the base adds a reference, so the image stays mapped until FreeLibrary below; if the
     // module is already gone the call fails, and if another module now sits at that address its handle differs from
     // the base -- either way this module has nothing left to scan.
-    // (R10-03) The trade: while pinned, the owner's own FreeLibrary returns without unloading,
+    // The trade: while pinned, the owner's own FreeLibrary returns without unloading,
     // so OUR FreeLibrary may be the last one -- the module's DLL_PROCESS_DETACH then runs on this scan thread, and its
     // unload waits one module scan. A module already part-way through unloading is not pinnable (GetModuleHandleExW
     // fails at once, error 126) and takes the skip above. An SEH guard alone would not do instead: it cannot tell an
@@ -686,7 +686,7 @@ static std::vector<uintptr_t> ScanAllModulesExcept(const char* pattern, uintptr_
             // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — see the long note at
             // Methode.cpp's copy of this. ⭐ THIS is the most exposed of the four sites:
             // despite the field name and the "in '%ls'" wording, `m.name` is a FULL install
-            // path (GetModuleFileNameW in GetLoadedModules), and it is reached from the ordinary MA1
+            // path (GetModuleFileNameW in GetLoadedModules), and it is reached from the ordinary multi-module
             // fallback — no CE plugin and no third-party DLL required, just a game installed
             // under a non-ASCII folder. Conversion stays INSIDE this branch so it costs one
             // allocation per MATCHING module, not per module scanned.
@@ -954,9 +954,9 @@ std::vector<BatchScanResult> AOBScanBatch(
     return results;
 }
 
-// [LIVEFUNCS-STEP3] S3-M1: the capture. Plain C inside: a __try may not share a function with a C++ object that needs
+// [LIVEFUNCS-STEP3] The capture. Plain C inside: a __try may not share a function with a C++ object that needs
 // unwinding (the test target builds with /EHsc), the CallProcessEventSEH pattern. Not inlined, so `here` -- its own
-// return slot -- always lies below the caller's `retSlot` (M5).
+// return slot -- always lies below the caller's `retSlot`.
 __declspec(noinline) uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags,
                                                    uintptr_t headroom, StackWalker walk) {
     flags = 0;
@@ -1007,7 +1007,7 @@ __declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* ou
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
-// [LIVEFUNCS-STEP3] S3-M3. The x64 unwind format: UNWIND_INFO is 4 bytes (version and flags, prolog size, the code
+// [LIVEFUNCS-STEP3] The x64 unwind format: UNWIND_INFO is 4 bytes (version and flags, prolog size, the code
 // count, the frame register), then the unwind codes, 2 bytes each and padded to an even count; with
 // UNW_FLAG_CHAININFO the parent's RUNTIME_FUNCTION follows them.
 uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData) {
@@ -1063,7 +1063,7 @@ std::string ModuleLeafUtf8(HMODULE h) {
     return Utf8Helpers::LeafUtf8(path.data(), len);
 }
 
-// [LIVEFUNCS-STEP3] S3-M2. `own` compares bases (__ImageBase, declared at the top of this file): in the game this
+// [LIVEFUNCS-STEP3] `own` compares bases (__ImageBase, declared at the top of this file): in the game this
 // module is UE5Dumper.dll or a proxy under a system DLL's name, and in dll_core_test it is the test exe itself.
 bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     out = CodeSite{};
@@ -1074,7 +1074,7 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     out.own = out.moduleBase == reinterpret_cast<uintptr_t>(&__ImageBase);
     out.moduleUtf8 = ModuleLeafUtf8(h);
     // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end. A
-    // chained fragment names its primary function (S3-M3), so a call in ProcessEvent's cold part is still ProcessEvent.
+    // chained fragment names its primary function, so a call in ProcessEvent's cold part is still ProcessEvent.
     uintptr_t begin = 0;
     if (PrimaryFunctionStart(retAddr - 1, begin)) {
         out.fnBegin = begin;

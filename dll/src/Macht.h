@@ -560,7 +560,7 @@ inline constexpr uint16_t kStackLowStack = 16;   // too little stack left to wal
 inline constexpr uint32_t kStackOwnSlack  = 12;          // our frames above the anchor, at most (Release about 5)
 inline constexpr uint32_t kStackMaxFrames = 62;          // the most frames one capture keeps
 inline constexpr uint32_t kStackRawFrames = kStackOwnSlack + kStackMaxFrames + 1;
-inline constexpr uintptr_t kStackHeadroom = 32 * 1024;  // D16: the walk's CONTEXT and buffers, with margin
+inline constexpr uintptr_t kStackHeadroom = 32 * 1024;  // the walk's CONTEXT and buffers, with margin
 
 // The first i below min(n, window) with raw[i] == ret; n when there is none. Pure.
 inline uint32_t AnchorIndex(void* const* raw, uint32_t n, uintptr_t ret, uint32_t window) {
@@ -588,8 +588,9 @@ HMODULE ModuleOfAddress(uintptr_t addr);
 // be read.
 std::string ModuleLeafUtf8(HMODULE h);
 
-// [LIVEFUNCS-STEP3] What a captured return address is (design section 2.5; ledger S3-M2). It asks the loader, so it
-// runs on the pipe thread over addresses already copied out of a ring, never in the hook.
+// [LIVEFUNCS-STEP3] What a captured return address is (docs/live-funcs-step3-design.md, section 2.5; ledger
+// S3-M2). It asks the loader, so it runs on the pipe thread over addresses already copied out of a ring, never in the
+// hook.
 struct CodeSite {
     uintptr_t moduleBase = 0;   // 0 when the address is in no module
     std::string moduleUtf8;     // the module file's leaf name; "" when in no module
@@ -600,7 +601,7 @@ struct CodeSite {
 // False, with `out` reset, when the address is in no module.
 bool DescribeCode(uintptr_t retAddr, CodeSite& out);
 
-// [LIVEFUNCS-STEP3] S3-M3. The primary function of a .pdata entry that may be a chained fragment (shrink-wrapped or
+// [LIVEFUNCS-STEP3] The primary function of a .pdata entry that may be a chained fragment (shrink-wrapped or
 // hot/cold code): follows UNW_FLAG_CHAININFO, and an entry whose UnwindData has bit 0 set (an indirect entry), to the
 // entry whose unwind info chains no further, and returns its BeginAddress (an RVA). Pure over memory the caller
 // knows is readable; at most kChainMaxHops links, so a corrupt chain still ends.

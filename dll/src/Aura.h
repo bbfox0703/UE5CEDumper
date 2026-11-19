@@ -39,10 +39,10 @@ struct FUObjectItem {
 
 namespace Aura {
 
-// [PIPE-PER-PROCESS-2026-11-06] Stage D: work a client runs in the background. A pipe request carrying
+// [PIPE-PER-PROCESS-2026-11-06] Work a client runs in the background. A pipe request carrying
 // "background": true (the MCP server marks every request it sends) makes each GObjects walk it starts take at most half
 // of the worker budget that is free, so a walk the user starts in the UI meanwhile still gets the other half. Without
-// it, an AI's long value scan held every worker and the UI's own scan or snapshot ran on one thread into its deadline.
+// it, an AI's long value scan holds every worker and the UI's own scan or snapshot runs on one thread into its deadline.
 // Scoped to the thread dispatching the request; restores the previous state when the dispatch returns.
 class BackgroundWalkScope {
 public:
@@ -58,7 +58,7 @@ private:
 // Whether the walk about to start on this thread is background work (see BackgroundWalkScope).
 bool IsBackgroundWalk() noexcept;
 
-// === Encrypted GObjects Support (GAP #1) ===
+// === Encrypted GObjects Support ===
 // Some anti-cheat games encrypt the Objects pointer in FUObjectArray.
 // Set a custom decryption function BEFORE calling Init().
 // Default: nullptr (identity, zero overhead for non-encrypted games).
@@ -605,7 +605,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 // Discovery is STRUCTURAL — EnumerateOutgoingObjectPtrs (direct ObjectProperty
 // fields AND object-pointer containers: OwnedComponents TSet, SpawnedAttributes
 // TArray) gated by IsOwnedBy (Outer chains back to the target within 2 hops) —
-// the SAME mechanism the cross-object group scan (P4) uses. So a game's custom
+// the SAME mechanism the cross-object group scan uses. So a game's custom
 // component is found the same way as the engine ASC; the "AbilitySystem (ASC)" /
 // "AttributeSet" / "Owned Component" *labels* are a class-name convenience on top
 // of the structural walk, not the discovery filter.
@@ -630,7 +630,7 @@ struct RelatedObject {
 };
 
 // [W4-RELATED-STOPS] Why a related-object walk stopped short -- one flag PER CAUSE, never one "stopped early"
-// bool (P5: four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
+// bool (four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
 // A cap flag means a qualifying object was actually REFUSED: a list that exactly fills its cap is complete.
 struct RelatedObjectsStats {
     bool    resultCapHit = false;   // a related object was found with the list already at maxResults
@@ -933,7 +933,7 @@ struct ClassListResult {
 // List all UClass objects, optionally filtering out engine packages.
 ClassListResult ListClasses(bool gameOnly, int maxResults = 5000);
 
-// === Class-noise auto-detect (class-filter Phase 3) ===
+// === Class-noise auto-detect ===
 //
 // SAFE-by-construction classifier for the opt-in "auto-detect system classes"
 // suggestion in the class-noise picker. Given a set of class names (from a
@@ -1388,7 +1388,7 @@ struct AllFunctionEntry {
     uint32_t    functionFlags = 0;
     uint8_t     numParms    = 0;
     uint16_t    parmsSize   = 0;
-    // [UE-OVERRIDE-411] review 2: where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
+    // [UE-OVERRIDE-411] Where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
     // built from this list carries it as the CE helper's parmsSize, which gates the 1 KB mailbox slab; parmsSize is
     // the tail read, another field under a wrong UE version.
     uint32_t    bufferBytes = 0;
@@ -1492,7 +1492,7 @@ struct PropertyXrefStats {
     int64_t durationMs          = 0;
     bool    deadlineHit         = false;
     // [W3-XREF-CAP] A worker stopped at maxResults, or the merged total passed it: `xrefs` is a PREFIX and more
-    // may exist. Its own flag -- never folded into deadlineHit (P5: a different cause, different advice).
+    // may exist. Its own flag -- never folded into deadlineHit (a different cause, different advice).
     bool    capHit              = false;
     int32_t cap                 = 0;       // the effective maxResults
 };
@@ -1713,7 +1713,7 @@ struct ValueScanStats {
 
 struct ValueScanResult {
     std::vector<Radar::Candidate>       candidates;
-    // Shared metadata pools the candidates index into (V3-A). Moved into
+    // Shared metadata pools the candidates index into. Moved into
     // the Radar::Session alongside the candidates by SessionManager::Begin.
     std::vector<Radar::FieldDescriptor> descriptors;
     std::vector<Radar::InstanceRecord>  instances;
@@ -1787,7 +1787,7 @@ ValueScanResult ScanForValue(
     // `needsDeepWalk` heuristic). Reaches values buried in deeply-nested containers
     // the heuristic misses. Heavier per object — exposed via the "Deep" toggle.
     bool                deep          = false,
-    // Native-C (P1, opt-in, default off): ALSO scan each object's UNMANAGED holes
+    // Native-C (opt-in, default off): ALSO scan each object's UNMANAGED holes
     // — the byte ranges within [UObject header, class PropertiesSize) that no
     // reflected property covers — for the requested numeric value, interpreting
     // the raw bytes at the user's width. Finds native (non-UPROPERTY) C++ members
@@ -1895,7 +1895,7 @@ struct GroupScanResult {
 // MsTunes[0].WeaponTuneList[0].Tunes[N]) is found. Matches WITHIN one array/element
 // (the user's "array as a block" rule). Bounded by the same depth/element caps as
 // snapshot capture; only runs for objects that actually own containers.
-// `crossObject` (P4, opt-in, default off): merge the numeric leaves of the
+// `crossObject` (opt-in, default off): merge the numeric leaves of the
 // sub-objects each actor OWNS (its components + a GAS ASC's SpawnedAttributes,
 // reached via EnumerateOutgoingObjectPtrs and gated by an Outer-chains-back test)
 // INTO the actor's own block, so a group whose values are distributed across
@@ -1907,7 +1907,7 @@ GroupScanResult ScanForValueGroup(
     int32_t                             maxResults  = kValueScanDefaultMaxResults,
     bool                                deep        = false,
     bool                                crossObject = false,
-    // Native-C (P2, opt-in, default off): also fold each object's unmanaged-hole
+    // Native-C (opt-in, default off): also fold each object's unmanaged-hole
     // leaves (non-UPROPERTY bytes within [header, PropertiesSize)) into its block,
     // so a group including a native value matches. Object block only (never deep);
     // EMIT-ON-MATCH (a raw leaf is kept only when its bytes satisfy a slot), bounded
@@ -1984,13 +1984,13 @@ inline NumericFamily ParseNumericFamily(const std::string& s) {
     return NumericFamily::Any;
 }
 
-// Snapshot capture (experimental — Phase A1a). A type-agnostic, streamed
+// Snapshot capture (experimental). A type-agnostic, streamed
 // capture of every numeric UPROPERTY of every (scoped) UObject, used by the
 // UI to persist snapshots for diff / SPC / pivot. Stateless cursor
 // pagination (mirrors GetCount/GetByIndex + get_object_list): each chunk
 // walks [offset, offset+limit) GObjects indices. Reuses Ubel::WalkClassEx
-// (cached) + Radar::SelectSnapshotNumericFields. Array elements are
-// captured in Phase A1b.
+// (cached) + Radar::SelectSnapshotNumericFields. Struct-array elements are
+// captured too, keyed by an inner field (SnapshotArrayElement).
 // ------------------------------------------------------------------
 struct SnapshotField {
     std::string name;
@@ -1999,7 +1999,7 @@ struct SnapshotField {
     std::string hex;        // little-endian raw bytes, hex (no 0x prefix)
 };
 
-// One element of a struct-array (Phase A1b). Carries an inner-key (e.g.
+// One element of a struct-array. Carries an inner-key (e.g.
 // FCargoSlot.ItemID = "Fuel") so the same logical slot joins across snapshots
 // regardless of array reordering, plus the element's numeric inner fields.
 struct SnapshotArrayElement {
@@ -2022,13 +2022,13 @@ struct SnapshotObject {
     std::string outerClassName;    // immediate outer's UClass name (loose join)
     std::string path;              // Ubel::GetFullName (cross-session identity)
     std::vector<SnapshotField> fields;
-    std::vector<SnapshotArray>  arrays;   // struct-array inner-key capture (A1b)
+    std::vector<SnapshotArray>  arrays;   // struct-array inner-key capture
 };
 
 struct SnapshotChunkResult {
     int32_t total   = 0;   // GObjects count
     int32_t scanned = 0;   // indices iterated this chunk (advance offset by this)
-    int64_t walkMs  = 0;   // Phase-0 telemetry: parallel walk+merge wall-time for this chunk
+    int64_t walkMs  = 0;   // telemetry: parallel walk+merge wall-time for this chunk
     // A scan worker THREW while walking this chunk, so part of [offset, offset+scanned) was
     // never captured. `scanned` still reports the full range (the pager must advance past the
     // hole), which is exactly why this has to travel separately: without it a faulted chunk
@@ -2044,7 +2044,7 @@ struct SnapshotChunkResult {
 // multi-numeric meta type (NumericNoByte default / NumericAll); a non-meta
 // type captures nothing. arrayCap bounds elements captured per struct array.
 //
-// captureNativeC (P3, opt-in, default off): ALSO append each object's
+// captureNativeC (opt-in, default off): ALSO append each object's
 // unmanaged-hole guesses (non-UPROPERTY raw bytes interpreted via the Guess-What
 // engine, normalized to canonical property types, Pointer/Padding dropped) as
 // synthetic "<raw@0xNN>" fields, so the snapshot carries native values for SPC

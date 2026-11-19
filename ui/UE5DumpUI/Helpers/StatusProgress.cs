@@ -7,13 +7,12 @@ namespace UE5DumpUI.Helpers;
 /// [EXPORT-STATUS-LATE-PROGRESS] The status-line progress sink of a long export. Each report is queued to the UI
 /// thread ONCE, and once <see cref="Complete"/> has set the final status, a report still in the queue is dropped.
 ///
-/// <para>What it replaces: <c>new Progress&lt;string&gt;(msg =&gt; Dispatcher.UIThread.Post(() =&gt; StatusText = msg))</c>
-/// queued every report twice (<c>Progress&lt;T&gt;</c> posts to the captured context, and the handler posted again),
-/// while the final <c>StatusText = …</c> was a plain assignment after <c>await File.Write…Async</c>. Nothing ordered
-/// the two, so a report queued before the service returned could land after the final status and replace it.
-/// Observed 2026-09-23 (L41 step 1, red run): the USMAP export ended on the service's last report, "Generated USMAP
-/// (1412624 bytes, 7692 structs, 1569 enums)", and its own final status, which since [P1-ENUMNAMES] also carries
-/// the enum-names warning, never showed.</para>
+/// <para>The hazard: <c>new Progress&lt;string&gt;(msg =&gt; Dispatcher.UIThread.Post(() =&gt; StatusText = msg))</c>
+/// queues every report twice (<c>Progress&lt;T&gt;</c> posts to the captured context, and the handler posts again),
+/// while a final <c>StatusText = …</c> after <c>await File.Write…Async</c> is a plain assignment. Nothing orders
+/// the two, so a report queued before the service returned can land after the final status and replace it: a USMAP
+/// export would end on the service's last "Generated USMAP …" report, and its own final status, which carries the
+/// [P1-ENUMNAMES] enum-names warning, would never show.</para>
 ///
 /// <para>The caller's rule: create it before the <c>try</c>. Once the service holds it, set every status through
 /// it: <see cref="Report"/> for an intermediate one, and <see cref="Complete"/> for the final one on EVERY exit,

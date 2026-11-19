@@ -27,11 +27,11 @@
 // light command on one lane must not clear a running scan's cancel on another
 // lane; shutdown is sticky. Background
 // re-assert workers opt out of the per-command cancel via MarkBackgroundWorker()
-// (they live for the game process, not a single pipe command). (M4)
+// (they live for the game process, not a single pipe command).
 //
 // The CE mailbox poller (Mimic) opts out too, via MarkCancelImmune() — it serves CE,
 // so a PIPE client's death must not cancel its work — but it is NOT a background
-// worker, because it carries the user's one-shot invokes. See t_cancelImmune. (B4)
+// worker, because it carries the user's one-shot invokes. See t_cancelImmune.
 //
 // Fern's release of a departed AI client's holds, and its owed debug-camera release,
 // read under an immune CancelContextScope: they exist BECAUSE a client left, so the
@@ -54,7 +54,7 @@ inline std::atomic<bool> g_perCommand{false};
 // ops abort and the accept-thread join completes quickly, AND so every module's
 // StartWorker* refuses to (re)spawn a re-assert worker during the shutdown window
 // (join → Stark::Shutdown → pipe stop) — otherwise a pipe/mailbox command landing
-// in that window could revive a just-joined worker that nothing joins again (M5).
+// in that window could revive a just-joined worker that nothing joins again.
 // A queued game-thread invoke's wait reads it too: on a stalled game thread only Stark::Shutdown would answer that wait,
 // and the teardown joins the workers waiting in it first ([SHUTDOWN-SEETHRU-WAIT]). So it must be up before anything
 // is joined or drained. Cleared when the server or the DLL starts again (ResetShutdown) so re-enabling the CE script in
@@ -68,7 +68,7 @@ inline std::atomic<bool> g_shutdown{false};
 // when a pipe client drops mid-command) and aborts only on real shutdown —
 // otherwise a client disconnect silently freezes every hold. Notably Solide's
 // only instance source (Aura::FindInstancesDerivedFrom) polls Requested() at i=0 and
-// would bail to an EMPTY set every re-assert tick while a client is gone. (M4)
+// would bail to an EMPTY set every re-assert tick while a client is gone.
 inline thread_local bool t_backgroundWorker = false;
 
 // Immunity from the PER-COMMAND cancel, split out from "is a background worker"
@@ -79,7 +79,7 @@ inline thread_local bool t_backgroundWorker = false;
 // until the CE mailbox poller (Mimic) needed (a) without (b). It serves CE, not the
 // pipe, so a pipe disconnect must not cancel its work; but it carries the user's
 // ONE-SHOT CE invokes, so marking it a background worker would make
-// UE5_CallProcessEventEx refuse them with -8 whenever the PE hook is down. (B4)
+// UE5_CallProcessEventEx refuse them with -8 whenever the PE hook is down.
 inline thread_local bool t_cancelImmune = false;
 inline void MarkCancelImmune() { t_cancelImmune = true; }
 
@@ -92,15 +92,16 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 // -- was designed, reviewed and REJECTED 2026-09-07. It makes "unbound" behaviourally
 // identical to "cancel-immune", which inverts this module's default from FAIL-SAFE to
 // FAIL-SILENT: every thread that does not bind silently stops being cancellable, and
-// t_cancelImmune becomes semantically dead (so M4's and B4's distinctions vanish without
-// a line of them being deleted). That is not hypothetical -- the DLL has at least three
-// populations that reach Requested() on threads no connection owns:
+// t_cancelImmune becomes semantically dead (so the background-worker and CE-poller
+// distinctions above vanish without a line of them being deleted). That is not
+// hypothetical -- the DLL has at least three populations that reach Requested() on
+// threads no connection owns:
 //   * Aura's ParallelIndexRanges workers (Aura.cpp) and its cancelWatcher
 //     (Aura.cpp `ParallelGObjectsScan`) -- and the watcher's ONLY job is to turn a client disconnect into
 //     deadlineHit for the parallel path, which is the default path for every real game
 //     (ScanThreadCount, Aura.cpp, goes parallel at >= 8192 objects);
-//   * Frieren's UE5_AutoStart (Fern's scan jobs bind their own token since
-//     [PIPE-PER-PROCESS-2026-11-06] Stage C: Routine::SingleFlightJob);
+//   * Frieren's UE5_AutoStart (Fern's scan jobs bind their own token in
+//     Routine::SingleFlightJob, [PIPE-PER-PROCESS-2026-11-06]);
 //   * the CE remote thread entering the Frieren C-ABI exports.
 // Binding those to &conn->cancel is NOT the fix either: the connection can be erased
 // while such a thread still runs, so the pointer would dangle in exactly the disconnect
@@ -188,7 +189,7 @@ inline bool Requested() {
         || g_shutdown.load(std::memory_order_relaxed);
 }
 
-// True once teardown has begun (g_shutdown): no re-assert worker may be (re)spawned during the shutdown window (M5),
+// True once teardown has begun (g_shutdown): no re-assert worker may be (re)spawned during the shutdown window,
 // and a queued invoke's wait on a stalled game thread may end early.
 inline bool ShutdownRequested() { return g_shutdown.load(std::memory_order_relaxed); }
 

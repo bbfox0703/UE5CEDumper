@@ -52,7 +52,8 @@ enum Cmd : int32_t {
                               //           an OFF did not complete -- send it again once the game responds.
                               //           -6 = not sent: an earlier toggle of the other direction is still
                               //           queued -- send again once the game responds.
-                              //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
+                              //           [W3-DEBUGCAM-QUEUED]; no contract bump, see
+                              //           MB_ERR_HANDLER_THREW in Mimic.cpp)
                               //           -17 = an ON not sent: no CheatManager is live, and the toggle does
                               //           nothing on its class default object (DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
                               //           an OFF is never refused). [DEBUGCAM-FORCEON-CDO]
@@ -433,8 +434,9 @@ struct MailboxData {
                                         //   instances of many concrete classes, so one page witness
                                         //   would refuse every write except the one class it named.
                                         //   Dropping the witness instead was not an option — that IS
-                                        //   the AA2 defect — so the derived format carries the UClass*
-                                        //   per entry and halves the page to 64.
+                                        //   the recycled-slot write it exists to refuse — so the
+                                        //   derived format carries the UClass* per entry and halves
+                                        //   the page to 64.
 
     volatile uint32_t cmdFlags;         // 0x728: IN  — per-command input flags (contract 3+).
                                         //        Today only CMD_LIST_INSTANCES reads it

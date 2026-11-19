@@ -13,7 +13,7 @@ public static class Constants
     /// <summary>The one name every DLL served before the per-process name. A game whose DLL predates it (typically a
     /// proxy left in its folder) still serves this; the UI never connects to it and says why.</summary>
     public const string LegacyPipeName = "UE5DumpBfx";
-    // [PIPE-PER-PROCESS-2026-11-06] Stage C. The DLL's at-capacity pipe-log line and the holders it carries, read when
+    // [PIPE-PER-PROCESS-2026-11-06] The DLL's at-capacity pipe-log line and the holders it carries, read when
     // every connection is taken: Grimoire.h's PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN / PIPE_HOLDERS_MORE_TOKEN /
     // PIPE_SLOT_FREED_TEXT, pinned equal by PipePerProcessSourceTests.
     public const string PipeAtCapacityText = "pipe instances in use";
@@ -44,7 +44,7 @@ public static class Constants
     public const int HoldsMinDllBuild = 3704;
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
-    // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5
+    // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04]
     // A branch below tells another program's reply apart by its text, because that reply carries no code. The words
     // are the other side's: translated, the match stops and the branch silently takes its other arm. ProtocolTextTests
     // pins the DLL's three to the source that sends them. A proxy DLL left in a game folder outlives a UI upgrade, so
@@ -64,7 +64,7 @@ public static class Constants
     public const string WindowsIoBeingUsed = "being used";
 
     // ── MCP server mode (`UE5DumpUI.exe --mcp`) ─────────────────────────────────────────────────────────
-    // [PIPE-PER-PROCESS-2026-11-06] Stage D. A stdio Model Context Protocol server for an AI client, branched in
+    // [PIPE-PER-PROCESS-2026-11-06] A stdio Model Context Protocol server for an AI client, branched in
     // Program.Main before the single-instance mutex. ⛔ DO NOT LOCALIZE: these are protocol words the client matches.
     /// <summary>The command-line switch that starts the MCP server instead of the window.</summary>
     public const string McpSwitch = "--mcp";
@@ -88,7 +88,7 @@ public static class Constants
     /// each hold (if_free, get_holds) and keeps the user's undo point on an AI's teleport (keep_undo). An older DLL
     /// ignores those keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
     public const int McpMinDllBuildForWrites = 3705;
-    /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through (Stage D2-3): write_mem refuses
+    /// <summary>The first DLL build a raw write (write_mem) or an invoke may go through: write_mem refuses
     /// code and read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
     /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
     /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
@@ -97,11 +97,11 @@ public static class Constants
     /// ([MCP-WRITE-GRANTS-2026-11-14]). An older DLL ignores the key and runs an explicit OFF, which drops every claim,
     /// the user's and CE's too, so the AI's See-through OFF is refused there.</summary>
     public const int McpMinDllBuildForOwnClaim = 3714;
-    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b): its
+    /// <summary>The first DLL build an invoke grant may call through ([MCP-WRITE-GRANTS-2026-11-14]): its
     /// invoke_function checks a call under a grant (grant, expect_func_full) against the function the grant names, its
     /// parameters and a template. An older DLL ignores both keys and would run whatever function it resolves.</summary>
     public const int McpMinDllBuildForInvokeGrants = 3717;
-    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14] Phase 2): its
+    /// <summary>The first DLL build a field grant may write through ([MCP-WRITE-GRANTS-2026-11-14]): its
     /// get_object names the template verdict (template), so write_field can refuse a class default and an archetype. An
     /// older DLL sends no verdict, and an archetype is named like any component.</summary>
     public const int McpMinDllBuildForFieldWrites = 3718;
@@ -122,16 +122,16 @@ public static class Constants
     /// such click on a grant tool would make every later grant silent, so an older or unparseable version gets every
     /// write marked per call instead of grants.</summary>
     public static readonly Version McpClaudeCodeMinVersion = new(2, 1, 246);
-    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name (Phase 0, M10), so each name states what
+    /// <summary>The grant tools. Claude Code's prompt shows only a tool's name, so each name states what
     /// it unlocks; refusals and the server's instructions quote these, so the model asks for the exact grant.</summary>
     public const string McpGrantToolToggles = "grant_god_mode_camera_cursor_time_see_through_foreground";
     public const string McpGrantToolMovement = "grant_movement_fly_teleport_may_kill_or_lose_pawn";
-    /// <summary>Phase 1b's grant: one UFunction, named by its function and class arguments, which the prompt shows.
+    /// <summary>The invoke grant: one UFunction, named by its function and class arguments, which the prompt shows.
     /// </summary>
     public const string McpGrantToolInvoke = "grant_invoke_one_function_any_object_and_args";
     /// <summary>The tool that calls a function an invoke grant names, without a prompt per call.</summary>
     public const string McpInvokeGrantedTool = "write_invoke_granted_function";
-    /// <summary>Phase 2's grant: one field of one class, on every instance of it and its subclasses.</summary>
+    /// <summary>The field grant: one field of one class, on every instance of it and its subclasses.</summary>
     public const string McpGrantToolField = "grant_write_field_one_property_every_instance";
     /// <summary>The tool that writes a field a field grant names, without a prompt per call.</summary>
     public const string McpFieldGrantedTool = "write_field";
@@ -155,7 +155,7 @@ public static class Constants
     /// <summary>See-through's pierce count: the DLL's SCHLACHT_PIERCE_MAX and the UI's box.</summary>
     public const int McpSeeThroughCountMax = 10;
     /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
-    /// prompt shows a call's arguments in full (Phase 0, M1), so the user approves these words, not the model's own.
+    /// prompt shows a call's arguments in full, so the user approves these words, not the model's own.
     /// </summary>
     public const string McpGrantAckToggles =
         "The user asked for this. Until this game run or this session ends, the AI may turn on and off: god mode, "
@@ -573,8 +573,8 @@ public static class Constants
     public const int DefaultPropertySearchCap = 200;
 
     // Default Classes-tab row cap (GameClassFilterUiOptions.ClassListCap and the panel's own
-    // default). [CLASSCAP] — the panel's own status line has always advised "raise
-    // the cap" and there was no control to raise, the third instance of the Z10 shape.
+    // default). [CLASSCAP] — the panel's own status line advises "raise the cap", so
+    // there must be a control to raise it.
     //
     // ⚠ 5,000 is the long-standing wire default and stays the default: a class row carries a
     // walked property/function summary, so a big pool is not free. Avowed has 7,409 game classes

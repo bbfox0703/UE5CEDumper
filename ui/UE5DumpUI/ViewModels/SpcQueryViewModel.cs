@@ -299,7 +299,7 @@ public partial class SpcQueryViewModel : ViewModelBase
     /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.</summary>
     public FilterViewKeeper ResultsView { get; } = new();
 
-    // --- N1: per-game class denylist (noise picker) ---
+    // --- Per-game class denylist (noise picker) ---
 
     /// <summary>Top-N classes ranked by hit count over the last result set, each
     /// row toggleable. Apply pushes the selection into the per-game denylist and
@@ -578,12 +578,12 @@ public partial class SpcQueryViewModel : ViewModelBase
     /// launch as a fake user override. Strict, the default, is written in its place.</summary>
     public string JoinModeForOptions => SelectedJoinMode == "In-session" ? "Strict" : SelectedJoinMode;
 
-    /// <summary>[W1-SPC-JOINMODE] Restore a persisted join mode. In-session is dropped (an options file
-    /// written before this fix can still hold it), and so is anything not in
+    /// <summary>[W1-SPC-JOINMODE] Restore a persisted join mode. In-session is dropped (an older options
+    /// file can still hold it), and so is anything not in
     /// <see cref="JoinModeOptions"/>. So is Strict: it is the default, what auto-selection falls back to,
     /// AND what <see cref="JoinModeForOptions"/> writes for an auto In-session, so a persisted Strict
     /// cannot be told from a pick nobody made -- restoring it through the setter would latch the very
-    /// fake override this fix removes (review of de4a7e05). Any other value only a user can have
+    /// fake override this guard prevents. Any other value only a user can have
     /// chosen, so it restores through the public setter and latches, as a combo pick does.</summary>
     public void RestoreJoinModeFromOptions(string? persisted)
     {
@@ -648,7 +648,7 @@ public partial class SpcQueryViewModel : ViewModelBase
                 ClassContains = ClassFilter.Trim(),
                 PropContains  = PropFilter.Trim(),
                 RoundMode     = SelectedRoundingMode,
-                // N1: hand the current denylist to the store so denylisted classes
+                // Hand the current denylist to the store so denylisted classes
                 // never enter the candidate dict (cuts memory + match cost both).
                 ExcludedClasses = _excludedClasses.Count > 0 ? _excludedClasses : null,
             };
@@ -887,7 +887,7 @@ public partial class SpcQueryViewModel : ViewModelBase
         _            => SpcJoinMode.Strict,
     };
 
-    // --- N1: noise picker helpers ---
+    // --- Noise picker helpers ---
 
     /// <summary>Rebuild the noise rows from a fresh result's Top-N contributors.
     /// All rows start unchecked — the user opts in by ticking + Apply.</summary>

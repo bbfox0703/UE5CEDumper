@@ -14,9 +14,9 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.ViewModels;
 
 /// <summary>
-/// Experimental "Detect Player Stats" panel (P4 — Layer 3 confirmation).
+/// Experimental "Detect Player Stats" panel: live confirmation on top of the scorer.
 ///
-/// One button that runs the shipped structural scorer (P2a/P2b), takes the
+/// One button that runs the structural scorer, takes the
 /// top-scoring candidate stat fields, and CONFIRMS each against the live game:
 ///   - a live object of the owning class or a subclass exists (never a template), and
 ///   - the field holds a plausible numeric value right now (or is a GAS attribute),
@@ -87,14 +87,11 @@ public partial class DetectStatsViewModel : ViewModelBase
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
-    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
-    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
-    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
-    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
-    /// is strictly worse than the call-site cases the same sweep found -- there the result
-    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
-    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
-    /// by the VM."</para>
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler would be an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returns at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> would run BEFORE the
+    /// copy was even attempted, and the bool the handler eventually got would have nowhere
+    /// to go.</para>
     ///
     /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
     /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second

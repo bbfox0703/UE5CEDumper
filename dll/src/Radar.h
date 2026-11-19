@@ -54,12 +54,12 @@
 //     - First scan: Exact / Bigger / Smaller (component-wise; Between
 //                   takes a single second vector for upper bound)
 //     - Next scan:  + Changed / Unchanged / Increased / Decreased
-//   Containers:     TArray<T> + TSet<T> / TMap<K,V> key|value (V1a) are all
+//   Containers:     TArray<T> + TSet<T> / TMap<K,V> key|value are all
 //                   walked element-wise for any supported leaf DataType. Sparse
 //                   containers iterate allocated slots only. Element addresses
 //                   are raw, so a container change can move them: see the
-//                   container-element refine anchoring (A11) below. TOptional
-//                   is still deferred (V1c).
+//                   container-element refine anchoring below. A TOptional leaf
+//                   is read behind Ubel::V1cOptionalGate.
 //   Excluded:       Native C++ fields (non-UPROPERTY) — UI must show banner
 //
 
@@ -83,7 +83,7 @@ namespace Radar {
 // Data types supported by the scan engine: numeric primitives, string types
 // (FString/FName/FText), vector types (FVector/FRotator/FTransform) and the
 // multi-numeric meta types. Containers (TArray / TSet / TMap) are walked
-// element-wise by Aura for any leaf type here; TOptional is still deferred (V1c).
+// element-wise by Aura for any leaf type here; a TOptional leaf is read behind Ubel::V1cOptionalGate.
 // The references are docs/native-c-value-scan-spec.md and
 // docs/group-value-scan-spec.md.
 enum class DataType : uint8_t {
@@ -157,7 +157,7 @@ enum class ScanType : uint8_t {
     Increased,
     Decreased,
 
-    // String-only targeted predicates (Phase 2A). Reject DLL-side for
+    // String-only targeted predicates. Reject DLL-side for
     // numeric / vector types since there's no natural substring concept.
     Contains,
     StartsWith,
@@ -260,12 +260,12 @@ bool IsPrevValueScanType(ScanType st);
 // Vector:  Exact / Bigger / Smaller / Between (component-wise).
 bool IsFirstScanType(ScanType st);
 
-// True when the data type is one of the Phase 2 string family
+// True when the data type is one of the string family
 // (FString / FName / FText) — those use the candidate's prevStr and
 // the CompareStringPredicate path instead of byte comparisons.
 bool IsStringDataType(DataType dt);
 
-// True when the data type is one of the Phase 2 vector family
+// True when the data type is one of the vector family
 // (FVector / FRotator / FTransform). Reads SizeOf(dt) bytes per
 // candidate and compares X / Y / Z component-wise with the shared rounding mode.
 bool IsVectorDataType(DataType dt);
@@ -307,7 +307,7 @@ bool TryDataTypeFromPropertyTypeName(const std::string& propTypeName, DataType& 
 // a fieldType the refine path (TryDataTypeFromPropertyTypeName) round-trips.
 const char* PropertyTypeNameOf(DataType dt);
 
-// Snapshot capture (Phase A1a): given the property type-name of each field
+// Snapshot capture: given the property type-name of each field
 // of a class (in ClassInfo.Fields order), select those whose declared type
 // is a member of the given numeric meta scope (NumericNoByte / NumericAll),
 // pairing each selected field's index with its resolved concrete DataType.
@@ -323,7 +323,7 @@ struct SnapshotFieldPick {
 std::vector<SnapshotFieldPick> SelectSnapshotNumericFields(
     const std::vector<std::string>& propTypeNames, DataType numericScope);
 
-// Snapshot array capture (Phase A1b): pick the index of the best "inner key"
+// Snapshot array capture: pick the index of the best "inner key"
 // field for a struct-array element, given the element struct's field type names
 // + field names (parallel vectors). Prefers a NameProperty (FName) whose name
 // looks like an id/name/tag/key/row; then any NameProperty; then the first
@@ -447,7 +447,7 @@ const std::vector<std::string>& PropertyTypeNames(DataType dt);
 // for non-vector data types.
 const std::vector<std::string>& VectorStructNames(DataType dt);
 
-// ---- Interned candidate metadata (V3-A) -------------------------------
+// ---- Interned candidate metadata --------------------------------------
 //
 // A First Scan can return tens of thousands of candidates. className /
 // definingClassName / fieldName / fieldType / boolFieldMask / fieldOffset are
@@ -461,7 +461,7 @@ const std::vector<std::string>& VectorStructNames(DataType dt);
 // Per-(class, field) display metadata. One entry per distinct field the
 // scan emits a candidate for; shared via Candidate::descriptorIdx.
 // ============================================================
-// Container-element refine anchoring (A11)
+// Container-element refine anchoring
 //
 // A candidate remembers its value's ABSOLUTE address, and refine (Next Scan)
 // re-reads that address. For a DIRECT field that is stable for the object's life.
@@ -554,15 +554,12 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
     // and returned an empty container, i.e. TArray::Empty()/Reset() released the
     // allocation. Every element candidate then refers to a slot that no longer
     // exists.
-    //   Until 2026-08-23 this sat inside the guard above and returned KeepAddress,
-    // short-circuiting BOTH Drop rules below that would otherwise have caught it
-    // (`elementIndex >= nowNum` with nowNum == 0, and the shrink test). The
-    // candidate was left pinned to freed memory, and freed memory that still
-    // happens to hold the scanned value reads back as a perfectly good hit — a
-    // stale address reported as a live one, which is the exact failure V1a exists
-    // to catch. Found by v1a_container_realloc.py; the live half was inconclusive
-    // because the allocator had already reused the block, so the decisive evidence
-    // is the pure-function test, not the game.
+    //   Returning KeepAddress here would short-circuit BOTH Drop rules below that
+    // would otherwise catch it (`elementIndex >= nowNum` with nowNum == 0, and the
+    // shrink test), leaving the candidate pinned to freed memory, and freed memory
+    // that still happens to hold the scanned value reads back as a perfectly good
+    // hit — a stale address reported as a live one, which is the exact failure
+    // container anchoring exists to catch.
     if (!nowData) return RefineAnchorVerdict::Drop;
 
     // The slot no longer exists.
@@ -665,7 +662,7 @@ struct FieldDescriptor {
     // BoolProperty bitfield support: when boolFieldMask != 0xFF the field
     // shares a byte with siblings. Read as `(byte & mask) != 0`.
     uint8_t     boolFieldMask = 0xFF;
-    // Native-C (P1): true when this descriptor is a synthetic raw-hole leaf
+    // Native-C: true when this descriptor is a synthetic raw-hole leaf
     // (an unmanaged, non-UPROPERTY offset) rather than a reflected field. The
     // refine path is identical (re-read addr, re-resolve width from fieldType);
     // this flag + guessedType only drive UI badging (className stays the owning
@@ -682,7 +679,7 @@ struct FieldDescriptor {
     // (The multi-numeric family re-resolves its width from fieldType, which is
     // a concrete property-type name there; vectors have no such equivalent.)
     int32_t     vectorWidth = 0;
-    // [A2-TOPTIONAL-REFINE] V1c TOptional leaves only, and the reason they live HERE is the one vectorWidth
+    // [A2-TOPTIONAL-REFINE] TOptional leaves only, and the reason they live HERE is the one vectorWidth
     // gives above: refine is handed nothing but the candidate and this descriptor, so a fact the FIRST scan
     // used must travel or the second scan cannot apply it. -1 / 0 = not an optional, which is every other
     // field. The sentinel is `Ubel::OptionalUnsetSentinel` cast to its int8_t base -- Radar.h deliberately
@@ -709,11 +706,10 @@ struct FieldDescriptor {
 // change (Changed/Increased/…), so there are no stable input bytes to witness. The
 // only real identity check left is re-reading the UObject's class pointer to catch
 // a slot recycled by a DIFFERENT class — a new, behaviour-changing feature with an
-// open product question (AA2 established class-wide targeting can be by design) and
-// no unit-test seam (needs a live recycled slot). Deferred as its own item rather
-// than forced in a LOW batch. Current mitigations: SEH-safe reads drop a candidate
-// whose address became unreadable, and the container anchor (A11/A12) handles
-// element relocation.
+// open product question (class-wide targeting can be by design) and no unit-test
+// seam (needs a live recycled slot), so it is not done here. Current mitigations:
+// SEH-safe reads drop a candidate whose address became unreadable, and the
+// container anchor handles element relocation.
 struct InstanceRecord {
     uintptr_t   instanceAddr  = 0;  // owning UObject
     int32_t     instanceIndex = -1; // GObjects index (-1 if not enumerated)
@@ -726,7 +722,7 @@ struct InstanceRecord {
 // updated to the latest-observed bytes on every successful refine so
 // Changed/Unchanged/etc. always compare against "what we saw last time".
 //
-// For Phase 2 string data types (FString / FName / FText) `prevStr` holds
+// For string data types (FString / FName / FText) `prevStr` holds
 // the resolved UTF-8 value and `prevValue` is unused. For vector data
 // types (FVector / FRotator) `prevValue` holds the CANONICAL decoded triple —
 // VECTOR_CANON_BYTES (3 little-endian doubles), whatever the field's own
@@ -761,7 +757,7 @@ struct Session {
     std::vector<InstanceRecord>           instances;    // shared via Candidate::instanceIdx
     std::chrono::steady_clock::time_point lastUse;
 
-    // V3-C: cached ordered view (filtered + sorted candidate indices) so pure
+    // Cached ordered view (filtered + sorted candidate indices) so pure
     // paging doesn't re-sort. Recomputed by SessionManager::QueryWith only when a
     // query's view parameters differ from those recorded in the view* fields below,
     // and invalidated (viewValid=false) after a refine mutates `candidates`.
@@ -782,11 +778,11 @@ struct Session {
 // group leaf's "...Leaves[]" -> "...Leaves[26]"). Pure / std-only (unit-tested).
 std::string FieldDisplayName(const FieldDescriptor& desc, int32_t elementIndex);
 
-// [A2-TOPTIONAL-VALUESCAN] V1c's TOptional gate is Ubel::V1cOptionalGate now, from the RESOLVED layout. The loose
-// "optionalSize > innerSize means a trailing flag at innerSize" rule that lived here (OptionalFlagOffset) is gone: it
-// never gated an intrusive optional, and read a neighbour's byte as a flag whenever the sizes merely differed.
+// [A2-TOPTIONAL-VALUESCAN] The TOptional gate is Ubel::V1cOptionalGate, from the RESOLVED layout. A rule on sizes
+// alone ("optionalSize > innerSize means a trailing flag at innerSize") never gates an intrusive optional, and reads a
+// neighbour's byte as a flag whenever the sizes merely differ.
 
-// --- V3-C: server-side value rendering / filter / sort over a candidate pool ---
+// --- Server-side value rendering / filter / sort over a candidate pool ---
 //
 // The session owns the full candidate set inside the injected DLL; the UI is a
 // windowed view. Filter / sort therefore run here (over the DLL's own pools —
@@ -859,12 +855,13 @@ std::vector<std::pair<std::string, int>> BuildClassHistogram(
 // (SessionManager) and group (GroupSessionManager) session managers.
 inline constexpr std::chrono::seconds kScanSessionIdleExpiry{300};
 
-// ── A scan session is its connection's ([PIPE-PER-PROCESS-2026-11-06] Stage C) ──
+// ── A scan session is its connection's ([PIPE-PER-PROCESS-2026-11-06]) ──
 // The owner is the connection that began it (Fern's Connection::seq). Only that connection can use or end it: to any
 // other, its id names no session. The idle sweep reaps only the sweeping owner's sessions, and a connection's sessions
-// go when it disconnects (DropOwner). Before, ids were global and the sweep reaped anyone's: another client could end
-// or refine the UI's session, a client's scan reaped the UI's session while the UI sat connected and idle, and a client
-// that crashed while another stayed connected left up to a gigabyte of group-scan leaves until somebody's next scan.
+// go when it disconnects (DropOwner). With global ids and a sweep that reaped anyone's, another client could end or
+// refine the UI's session, a client's scan would reap the UI's session while the UI sat connected and idle, and a
+// client that crashed while another stayed connected would leave up to a gigabyte of group-scan leaves until
+// somebody's next scan.
 //
 // Each owner keeps at most this many sessions per manager; a Begin past it drops that owner's least recently used one.
 // The UI holds one of each kind; this bounds a client that begins in a loop and never ends.
@@ -950,7 +947,7 @@ public:
         return true;
     }
 
-    // V3-C server-side window query. Ensures the session's cached ordered view
+    // Server-side window query. Ensures the session's cached ordered view
     // was built for this call's view parameters (every argument but sessionId and
     // fn; the exclude list compared order-insensitively via CanonicalExcludeKey) —
     // recomputing via BuildOrderedView only when one of them changed or the view
@@ -1018,7 +1015,7 @@ private:
     // can protect its session (bump lastUse) BEFORE sweeping.
     void ExpireOldSessionsLocked(uint64_t owner);
 
-    // 5-minute idle expiry — matches discrete's Phase 27b precedent.
+    // 5-minute idle expiry.
     // Long enough that a user can step away mid-refine without losing
     // candidates; short enough that abandoned sessions clear on the next
     // value-scan operation (Begin / RefineWith / End all sweep).
@@ -1054,7 +1051,7 @@ private:
 //
 // Descriptor / instance pools are reused exactly as the single-value Session,
 // so a slot match is a lean index pair. GroupSessionManager mirrors
-// SessionManager (same 300s expiry, coarse lock, V3-C view cache). Kept a
+// SessionManager (same 300s expiry, coarse lock, view cache). Kept a
 // SIBLING of SessionManager — not folded in — so the battle-tested single-value
 // path is untouched.
 // ============================================================
@@ -1095,11 +1092,11 @@ struct GroupSlotMatch {
                                    // the read and returns the WRONG value. `anchor` below is what
                                    // lets refine re-read the container instead of trusting this.
     uintptr_t ownerAddr     = 0;   // object directly holding the leaf: the candidate actor for an
-                                   // own-block leaf, or an OWNED sub-object for a cross-object leaf
-                                   // (P4). Drives the per-slot handoffs to the right object.
+                                   // own-block leaf, or an OWNED sub-object for a cross-object leaf.
+                                   // Drives the per-slot handoffs to the right object.
     std::string ownerClass;        // class name of ownerAddr's object: the candidate class for an
                                    // own-block leaf, the OWNED sub-object's class for a cross-object
-                                   // leaf (P4 inc 2). Drives the per-slot Pivot handoff to the right class.
+                                   // leaf. Drives the per-slot Pivot handoff to the right class.
     // The container this leaf lives in, as it was AT SCAN TIME, so refine
     // can re-read the header and re-anchor instead of trusting `leafAddr`. Defaults to
     // `Unknown`/-1, which the rule refuses to act on: this struct is default-initialised
@@ -1147,7 +1144,7 @@ size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candid
 // overhead, none of which the budget sees. A raise of this constant must be made against
 // that, not against the record size alone.
 //
-// The proper fix is to intern ownerClass the way V3-A interns the per-candidate metadata
+// The proper fix is to intern ownerClass the way the per-candidate metadata is interned
 // (GroupSession already carries `descriptors` and `instances` pools for exactly this).
 // Not done here: the producers live in Aura.cpp and the reader in Fern.cpp. Fern.cpp is
 // compiled by no test target; Aura.cpp reaches only `dll_core_test`'s fake pool. So it is a
@@ -1187,7 +1184,7 @@ struct GroupSession {
     bool                                  perSlotCapHit = false;
     int                                   perSlotCap = 0;
 
-    // V3-C cached ordered view (same contract as Session::view*).
+    // Cached ordered view (same contract as Session::view*).
     bool                                  viewValid    = false;
     std::string                           viewFilter;
     uint8_t                               viewSortKey  = 0;
@@ -1279,15 +1276,15 @@ std::vector<size_t> PickGroupWitnessAssignment(
 // Leaves are collected base-class-first, so an actor's list opens with
 // `PrimaryActorTick.TickInterval`, `InitialLifeSpan`, `CustomTimeDilation`,
 // `AttachmentReplication.*` … and the fields a user was actually looking for —
-// `FrozenInt`, `TickCount`, `I32` — sit thirty rows down a scrolling box. Same
-// observation that made `perSlotCap = 8` hide every derived-class field (D2); this
-// is its display half. NOT a re-ranking of the witness: ordering a list cannot take
+// `FrozenInt`, `TickCount`, `I32` — sit thirty rows down a scrolling box. The same
+// ordering is why a small `perSlotCap` can hide every derived-class field; this is its
+// display half. NOT a re-ranking of the witness: ordering a list cannot take
 // a pairing away from anyone.
 //
 // Tier is decided by the descriptor's own `definingClassName == className`, not by
 // guessing from the offset — a high offset correlates with "declared late" but is
-// not that predicate, and substituting a cheap proxy for a predicate the data
-// already carries is how this area's last regression happened.
+// not that predicate, and a cheap proxy must not stand in for a predicate the data
+// already carries.
 std::vector<size_t> OrderGroupSlotLeaves(
     const std::vector<GroupSlotMatch>&  matches,
     const std::vector<FieldDescriptor>& descriptors);
@@ -1341,7 +1338,7 @@ public:
         return true;
     }
 
-    // V3-C window query — same view-cache contract as SessionManager::QueryWith,
+    // Window query — same view-cache contract as SessionManager::QueryWith,
     // then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
     template <typename Fn>
     bool QueryWith(uint64_t owner, uint64_t sessionId, const std::string& filter,

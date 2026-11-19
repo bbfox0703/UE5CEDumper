@@ -73,7 +73,7 @@ inline uint8_t WriteBoolValue(uint8_t cur, const BoolBits& b, bool value) {
     return static_cast<uint8_t>((cur & ~b.fieldMask) | (value ? b.byteMask : 0));
 }
 
-// [SOLIDE-NATIVE-BOOL] review: the mask a standalone trainer bakes for a protection bool. Its Lua sets and clears ONE
+// [SOLIDE-NATIVE-BOOL] The mask a standalone trainer bakes for a protection bool. Its Lua sets and clears ONE
 // bit by arithmetic -- isSet = floor(byte / mask) % 2, then byte + mask or byte - mask -- so the mask must be a single
 // bit, and true must land as UE's own value: a packed bool's bit, a native bool's ByteMask 0x01, which over the 0 / 1 a
 // C++ bool holds writes exactly 0x01 / 0x00. A native bool's FieldMask 0xFF would write 0xFF over 0x00 (the value
@@ -87,7 +87,7 @@ inline uint8_t TrainerMaskFor(const BoolBits& b) {
 // this probe has always applied -- one FieldMask bit, a ByteOffset inside the 8-byte bitfield word, a one-bit
 // ByteMask -- so a packed bool resolves exactly as it did. Only when there is none does Ubel::ClassifyBoolLayout's
 // Native verdict count. Anything else is refused: the all-zero a missed probe reads is never native, and a whole-byte
-// write there is the AA1 corruption of up to 7 sibling bools.
+// write there corrupts up to 7 sibling bools.
 // This precedence deliberately differs from Ubel's walk probe (ProbeBoolLayout, behind walk_instance's bool_native /
 // bool_mask), which takes the FIRST offset that classifies either way. Taking a native verdict ahead of a packed layout
 // further down the probe would turn a packed bool whose base offset reads native-looking bytes into a whole-byte write;

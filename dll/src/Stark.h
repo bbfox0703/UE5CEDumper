@@ -541,8 +541,8 @@ InvokeWaitEnd WaitQueuedInvoke(int32_t timeoutMs, WaitSlice&& waitSlice, NowMs&&
 //      UE5_EnsureGameThreadHook. Nothing here touches it.
 
 /// How TryInstallGameThreadHook names an install attempt in its log lines ([MH-PRERESERVE-PROXY]). A forced attempt
-/// (a feature being switched on) is not counted against the automatic budget (B24), so printing the automatic counter
-/// beside it as "attempt N/M" read as a second attempt with the same number.
+/// (a feature being switched on) is not counted against the automatic budget, so printing the automatic counter
+/// beside it as "attempt N/M" would read as a second attempt with the same number.
 inline std::string DescribeHookAttempt(bool forced, int automaticAttempts, int maxAttempts) {
     const std::string budget = std::to_string(automaticAttempts) + "/" + std::to_string(maxAttempts);
     return forced ? "forced attempt, not counted -- " + budget + " automatic attempt(s) used"

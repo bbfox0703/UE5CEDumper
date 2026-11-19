@@ -53,7 +53,7 @@ public class App : Application
                 // runs before the logger exists, so a silent Shutdown(1) gives the user
                 // no window, no dialog and no log line, and a double-click reads as
                 // "the app did nothing". Bringing the first instance forward is both the
-                // useful outcome and the visible one. (B42)
+                // useful outcome and the visible one.
                 _platform.ActivateExistingInstance();
                 desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
                 desktop.Shutdown(1);

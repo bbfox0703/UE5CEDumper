@@ -66,7 +66,7 @@ HWND FindGameWindow() {
 }
 
 // Fwd decl: the GFW hook re-subclasses newly-created game windows on a window
-// re-find (L10); SubclassAllGameWindows is defined further down.
+// re-find; SubclassAllGameWindows is defined further down.
 void SubclassAllGameWindows();
 
 // ── (1) GetForegroundWindow hook ─────────────────────────────────────
@@ -91,7 +91,7 @@ HWND WINAPI HookedGetForegroundWindow() {
         // SubclassEnumProc skips already-subclassed windows. Non-blocking try_lock on
         // g_mutex serializes with the enable-path subclass so concurrent GFW-hook threads
         // can't race SubclassEnumProc's check-then-act (which would corrupt the saved
-        // WNDPROC), and the hot hook never blocks. (L10)
+        // WNDPROC), and the hot hook never blocks.
         if (g_mutex.try_lock()) {
             SubclassAllGameWindows();
             g_mutex.unlock();
@@ -175,7 +175,7 @@ BOOL CALLBACK SubclassEnumProc(HWND hwnd, LPARAM /*lp*/) {
 
     // NB: no GetWindowTextW here — a synchronous same-process WM_GETTEXT under g_mutex
     // can hang the pipe/mailbox thread if the window's owning thread isn't pumping
-    // (the paused/backgrounded game this feature targets), and the title was unused. (L8)
+    // (the paused/backgrounded game this feature targets), and the title is unused.
     RECT rc{}; ::GetWindowRect(hwnd, &rc);
     Sein::Info("Grausam", "Subclassed window 0x%p (%dx%d, unicode=%d)",
                reinterpret_cast<void*>(hwnd),

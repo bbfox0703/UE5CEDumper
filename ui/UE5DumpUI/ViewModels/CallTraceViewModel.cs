@@ -22,7 +22,7 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly ILoggingService _log;
     private readonly IPlatformService? _platform;
 
-    /// <summary>The panel the trace's settings and ticks belong to; this tab shows a read-only copy of them (T8).</summary>
+    /// <summary>The panel the trace's settings and ticks belong to; this tab shows a read-only copy of them.</summary>
     public LiveFuncsViewModel LiveFuncs { get; }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] Records a page asks for. A page arrives as ONE pipe line, and StreamReader keeps
@@ -103,7 +103,7 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
-    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by the header and every row ----
+    // ---- the list's widths ([LIVEFUNCS-STEP2]): dragged from the header, shared by the header and every row ----
 
     // Each width's floor keeps its header wide enough to grab and drag back: a column dragged, or hand-edited in
     // ui-options.json, down to nothing would leave no edge to pull it out by.
@@ -644,8 +644,8 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>[LIVEFUNCS-STEP2] Which sentence says what the trace followed: ticked functions (by address, or by
-    /// name), and outside them the chosen calls when it had rings for parameters or a stack; only the chosen calls
-    /// (T11); or every call -- that one only when nothing was left out. A DLL that predates names sends no `scoped`:
+    /// name), and outside them the chosen calls when it had rings for parameters or a stack; only the chosen calls;
+    /// or every call -- that one only when nothing was left out. A DLL that predates names sends no `scoped`:
     /// its ticks by address say it.</summary>
     internal static string? ScopeKey(TraceInfo i)
     {
@@ -679,7 +679,7 @@ public partial class CallTraceViewModel : ViewModelBase
 
     partial void OnFilterTextChanged(string value) => ApplyCallFilter(value);
 
-    /// <summary>[LIVEFUNCS-STEP2] U13: list only the calls that carry a parameter copy -- with the filter's text, or alone
+    /// <summary>[LIVEFUNCS-STEP2] List only the calls that carry a parameter copy -- with the filter's text, or alone
     /// with none (an empty box would otherwise mean "the tree").</summary>
     [ObservableProperty] private bool _onlyWithParams;
     partial void OnOnlyWithParamsChanged(bool value) => ApplyCallFilter(FilterText);
@@ -735,7 +735,7 @@ public partial class CallTraceViewModel : ViewModelBase
         ShowStack(call);
     }
 
-    // ---- [LIVEFUNCS-STEP2] U13: the selected call's parameters (view C) ----
+    // ---- [LIVEFUNCS-STEP2] the selected call's parameters ----
 
     [ObservableProperty] private IReadOnlyList<ParamRow> _paramRows = Array.Empty<ParamRow>();
     [ObservableProperty] private string _paramsNote = "";
@@ -889,7 +889,7 @@ public partial class CallTraceViewModel : ViewModelBase
         _ => "",
     };
 
-    // ---- [LIVEFUNCS-STEP3] S3-U5: the selected call's native stack (view A), and a frame to Cheat Engine (view D) ----
+    // ---- [LIVEFUNCS-STEP3] the selected call's native stack, and a frame to Cheat Engine ----
 
     [ObservableProperty] private IReadOnlyList<StackFrameRow> _stackRows = Array.Empty<StackFrameRow>();
     [ObservableProperty] private string _stackNote = "";
@@ -949,7 +949,7 @@ public partial class CallTraceViewModel : ViewModelBase
             };
         }
         if (doubtful >= 0) notes.Add(Say("str.CT.Stack.MayBeWrong", doubtful));
-        // The walk ran after the entry was timed (D11): its cost is part of the duration the Call tab shows.
+        // The walk ran after the entry was timed: its cost is part of the duration the Call tab shows.
         if (slot.Ticks > 0 && t.Info.QpcFreq > 0)
             notes.Add(Say("str.CT.Stack.Cost", slot.Ticks * 1e6 / t.Info.QpcFreq));
         return (rows, notes);
@@ -985,7 +985,7 @@ public partial class CallTraceViewModel : ViewModelBase
     internal static string FrameAddress(StackSite s, AddressFormat f)
         => AddressHelper.FormatAddress(s.Addr.ToString("X", CultureInfo.InvariantCulture), s.CeModule, s.ModuleBaseHex, f);
 
-    /// <summary>What Copy puts on the clipboard, whatever the Address setting (D13): CE's module+RVA form, which names
+    /// <summary>What Copy puts on the clipboard, whatever the Address setting: CE's module+RVA form, which names
     /// the same code after a relaunch moves the module; outside every module, this run's absolute address.</summary>
     internal static string FrameCopyText(StackSite s)
         => s.CeModule.Length > 0 ? CeForm(s.CeModule, s.Rva) : $"0x{s.Addr.ToString("X", CultureInfo.InvariantCulture)}";
@@ -1022,7 +1022,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return StringLookup(s.Module.Length > 0 ? "str.CT.Stack.NoUnwind" : "str.CT.Stack.NoModule");
     }
 
-    /// <summary>[LIVEFUNCS-STEP3] D13: the frame in CE's module form. The status says whether it arrived: a copy that
+    /// <summary>[LIVEFUNCS-STEP3] The frame in CE's module form. The status says whether it arrived: a copy that
     /// silently failed would leave an older address to paste.</summary>
     [RelayCommand]
     private async Task CopyFrameAsync(StackFrameRow? r)
@@ -1032,7 +1032,7 @@ public partial class CallTraceViewModel : ViewModelBase
         StatusText = Say(copied ? "str.CT.Stack.Copied" : "str.CT.Stack.CopyFailed", r.CopyText);
     }
 
-    /// <summary>[LIVEFUNCS-STEP3] D13: CE's disassembler at the frame's absolute address. That address belongs to the
+    /// <summary>[LIVEFUNCS-STEP3] CE's disassembler at the frame's absolute address. That address belongs to the
     /// process the trace was read from, so a trace kept past its connection sends nothing: the game now running may
     /// hold anything there.</summary>
     [RelayCommand]
@@ -1138,7 +1138,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return template.Length == 0 ? "" : Res.FormatTemplate(template, args);
     }
 
-    // ---- the detail's addresses ([LIVEFUNCS-STEP2] U11) ----
+    // ---- the detail's addresses ([LIVEFUNCS-STEP2]) ----
 
     /// <summary>The toolbar's Address setting (an <see cref="AddressFormat"/>), fanned out by the main window as to the
     /// other tabs that show addresses.</summary>
@@ -1295,7 +1295,7 @@ public sealed class CallTraceRow
     /// <summary>Its address held another function during the recording: marked too.</summary>
     public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
-    /// <summary>[LIVEFUNCS-STEP2] U10: the Object cell's tooltip: its whole text, which a narrow column cuts; none for a
+    /// <summary>[LIVEFUNCS-STEP2] The Object cell's tooltip: its whole text, which a narrow column cuts; none for a
     /// call with no object, where an empty tooltip would still pop up.</summary>
     public string? ObjectTip => ObjectText.Length > 0 ? ObjectText : null;
     public bool ObjectStale { get; init; }

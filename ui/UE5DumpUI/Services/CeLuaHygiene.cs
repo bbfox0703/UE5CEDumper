@@ -131,7 +131,7 @@ public static class CeLuaHygiene
     /// chunk runs. In an autorun script that point is CE start-up, so the file's own
     /// instruction — "set UE5_DEBUG = 1 in the Lua console" — could never work: by the
     /// time the console exists, <c>DEBUG</c> has already been fixed at 0 and nothing
-    /// re-reads it. Here <c>dbg</c> reads the global on every call instead. (B23)</para>
+    /// re-reads it. Here <c>dbg</c> reads the global on every call instead.</para>
     ///
     /// <para>Emits no <c>DEBUG</c> local, deliberately: a stale local is exactly the
     /// bug. Anything needing the value at call time uses <c>ue5_debugOn()</c>.</para>
@@ -157,7 +157,7 @@ public static class CeLuaHygiene
     ///
     /// <para><paramref name="onBusy"/> is the Lua statement to run on timeout — the
     /// callers differ (a <c>return nil, msg</c> inside a helper vs. setting
-    /// <c>hadError</c> in a flat block), so the emitter does not assume one. (R3)</para>
+    /// <c>hadError</c> in a flat block), so the emitter does not assume one.</para>
     ///
     /// <para>The bound is a REAL <c>getTickCount()</c> deadline, for the same reason
     /// <see cref="AppendMailboxWait"/>'s is: <c>sleep(1)</c> costs 15.47 ms in CE, so

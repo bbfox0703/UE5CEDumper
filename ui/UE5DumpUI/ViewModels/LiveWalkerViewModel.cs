@@ -705,7 +705,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private string _lastScrolledSearchText = "";
 
     /// <summary>Raised to pivot the selected field's owning class in the
-    /// experimental Class Pivot tab (className, fieldName, fieldOffset). C5 right-click handoff.</summary>
+    /// experimental Class Pivot tab (className, fieldName, fieldOffset). The right-click handoff.</summary>
     public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>
@@ -1659,7 +1659,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (field.ArrayCount == 0)
             return (new List<ArrayElementValue>(), 0, 0);
 
-        // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
+        // Pointer/struct arrays: use the inline elements, which carry resolved names.
         // read_array_elements is scalar-only and cannot resolve pointer names.
         // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
         // walked lower, and then a short reply is the old slider value, not the DLL's cap.
@@ -1667,7 +1667,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
             return (field.ArrayElements, inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1, field.ArrayCount);
 
-        // Scalar arrays: fetch full element list from DLL (Phase B)
+        // Scalar arrays: fetch full element list from DLL
         if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
             var result = await _dump.ReadArrayElementsAsync(
@@ -2465,8 +2465,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Check if an array inner type requires Phase D/E/F resolution (pointer names, struct fields).
-    /// read_array_elements (Phase B) only handles scalars; pointer/struct arrays must use
+    /// Check if an array inner type needs its elements resolved (pointer names, struct fields).
+    /// read_array_elements only handles scalars; pointer/struct arrays must use
     /// the inline elements from walk_instance which have full resolution.
     /// </summary>
     private static bool IsPointerOrStructArrayType(string innerType)
@@ -3680,7 +3680,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // Fall back to the byte-offset scroll ONLY when the drill failed
                 // WITHOUT navigating away — i.e. the first path segment isn't a field
                 // on THIS object, so we're still on the owner. That's the cross-object
-                // case (P4): the field name is the path FROM THE CANDIDATE to the owner
+                // case: the field name is the path FROM THE CANDIDATE to the owner
                 // (e.g. "GameCharacters[0].MP" on a manager — the owner IS the find_path
                 // target and holds MP as a DIRECT field at scrollFieldOffset). If the
                 // drill instead navigated partway in before failing (e.g. a single-value
@@ -5219,7 +5219,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // The status below counts objects and XML lines from what was BUILT, not
                 // from what arrived, so it reads identically over a clipboard that never
-                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                // took the write.
                 StatusText = "";
                 SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
                 _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
@@ -5690,7 +5690,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // The status below counts objects and XML lines from what was BUILT, not
                 // from what arrived, so it reads identically over a clipboard that never
-                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                // took the write.
                 StatusText = "";
                 SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
                 _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
@@ -6969,7 +6969,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// those are reloaded on reconnect and must survive a disconnect.</summary>
     public void ClearOnDisconnect()
     {
-        // resumable: the PIPE stopped auto-refresh, not the user. X5 stops the
+        // resumable: the PIPE stopped auto-refresh, not the user. A disconnect stops the
         // timer (it would otherwise re-walk a dead pipe, and after a reconnect to a
         // DIFFERENT game it would walk the previous game's addresses) — but stopping it
         // with no way back would leave Auto silently off for the rest of the session. The panel
@@ -7214,9 +7214,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// exists to preserve.
     /// </para>
     /// <para>
-    /// <c>internal</c> for the tests (InternalsVisibleTo): the V6 defect was that this
-    /// step did not run on a refresh, which is a fact about a pure function over a field
-    /// list and needs no live pipe to pin.
+    /// <c>internal</c> for the tests (InternalsVisibleTo): whether this step runs on a
+    /// refresh is a fact about a pure function over a field list and needs no live pipe
+    /// to pin.
     /// </para>
     /// </summary>
     internal static int MarkSearchMatches(IEnumerable<LiveFieldValue> target, string query)
@@ -7333,7 +7333,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <para>Back, a breadcrumb jump, Forward and Parent change the spine FIRST and then await their
     /// walk, and the grid keeps showing the level just left until it lands. Unchecked, a drill of one
     /// of those rows would capture the NEW crumb as its parent (<see cref="CurrentCrumb"/> at gesture
-    /// time), pass V4's gesture-time check, and graft the old level's offset under the new parent —
+    /// time), pass the gesture-time check (<see cref="IsStillOnParent"/>), and graft the old level's offset under the new parent —
     /// into CE XML, CSX, the AA script and a saved bookmark.</para>
     /// <para>Stamped by EVERY site that repopulates the grid — <see cref="UpdateDisplay"/>,
     /// <see cref="PopulateFromWorld"/> and the DataTable / Array / Map / Set views, which bypass
@@ -8299,7 +8299,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Clear filter first — a previously typed filter could hide the
         // target row even though it's in the underlying list. Flush before blanking:
-        // this is a NAVIGATION clear, the case the keyword-search rule names. (AE16)
+        // this is a NAVIGATION clear, the case the keyword-search rule names.
         if (!string.IsNullOrEmpty(FunctionFilter))
         {
             _functionFilterMemory.Flush();

@@ -118,7 +118,7 @@ public sealed class SpcQuery
     /// probed to set <see cref="SpcResult.Truncated"/>.</summary>
     public int MaxRows { get; set; } = Constants.DefaultMaxQueryRows;
 
-    /// <summary>Per-game class denylist (N1). Class FQNs in this set are skipped
+    /// <summary>Per-game class denylist. Class FQNs in this set are skipped
     /// at the anchor-load step and every subsequent snapshot pass, before the cap
     /// is evaluated. Null / empty = no filtering. Ordinal comparison.</summary>
     public HashSet<string>? ExcludedClasses { get; set; }
@@ -158,7 +158,7 @@ public sealed class SpcResult
     public bool Truncated   { get; set; }
     /// <summary>Number of snapshots in the evaluated sequence.</summary>
     public int  SnapshotCount { get; set; }
-    /// <summary>Top-N classes by hit count across <see cref="Rows"/> (N1 noise
+    /// <summary>Top-N classes by hit count across <see cref="Rows"/> (the noise
     /// picker). Sorted desc by count. Classes already in the query's
     /// <see cref="SpcQuery.ExcludedClasses"/> are NOT included here (they didn't
     /// produce rows anyway). Empty when no rows matched.</summary>

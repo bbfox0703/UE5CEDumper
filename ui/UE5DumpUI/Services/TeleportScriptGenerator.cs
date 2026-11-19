@@ -111,7 +111,7 @@ public static class TeleportScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Teleport");
         Line(sb);
         Line(sb, "local hadError = false");
-        // Bounded wait for IDLE before sampling cmd (R3). Back-to-back firing is the
+        // Bounded wait for IDLE before sampling cmd. Back-to-back firing is the
         // ORDINARY use here: hotkey-spamming "TP facing direction", or Save immediately
         // followed by Recall. With a single sample the whole round-trip below would be
         // skipped with no else branch: nothing written, no message, hadError still false —
@@ -151,7 +151,7 @@ public static class TeleportScriptGenerator
         // A timeout is an ERROR (CLAUDE.md's CE-Lua hygiene rule). A bare `break` would
         // fall straight through to the auto-close, so the Lua Engine window would shut on
         // the one outcome the user needs to see. A bare `return` would be wrong too — it
-        // would strand the record ticked — so set hadError, say so, and leave the loop. (B15)
+        // would strand the record ticked — so set hadError, say so, and leave the loop.
         //
         // That reasoning is why this passes FlagAndBreak rather than the toggles'
         // UntickAndReturn: these rows are MOMENTARY, and the deferred timer below both

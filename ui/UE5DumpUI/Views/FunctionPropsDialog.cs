@@ -485,7 +485,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             ? "  [its bytecode buffer could not be read — NOTHING was analysed, "
               + "so this is not \"no properties\"]"
             : "";
-        // AF7: and say so when the decoder stopped early, because "no writer found"
+        // And say so when the decoder stopped early, because "no writer found"
         // is what this dialog is read for. Amber, not green — a truncated list must
         // not look like a settled answer.
         var budgetNote = _lastBudgetHit ? PartialResultNotice.DisassemblyBudget() : "";

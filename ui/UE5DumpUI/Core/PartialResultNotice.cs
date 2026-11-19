@@ -40,20 +40,19 @@ public static class PartialResultNotice
     /// <param name="thing">Plural noun for what exists beyond the cap ("matches",
     /// "functions", "classes").</param>
     /// <param name="advice">What the user can do about it. MUST be reachable from the
-    /// panel showing the message: Z10 was this exact string advising "raise Max" on a
-    /// panel that has no Max control, because it had been copied from Instance Finder,
-    /// which does.</param>
+    /// panel showing the message: advice copied from another panel can name a control
+    /// ("raise Max") that this panel does not have.</param>
     public static string RowCap(int cap, string thing, string advice)
         => $"  ⚠ STOPPED at the {cap:N0}-row cap — more {thing} exist; {advice}";
 
     /// <summary>
     /// The ", or raise Max above N" clause — <b>empty at the ceiling</b>, where raising is not
-    /// possible and saying so would be the Z10 lie in a new place.
+    /// possible and saying so would advise raising a control that cannot go higher.
     ///
     /// <para>⚠ <b>Shared on purpose.</b> A panel with a Max control calls this rather
     /// than writing the rule again; <c>RaiseMaxClauseTests</c> checks the panels it lists.
-    /// The Z10 family is specifically the
-    /// failure of ADVICE drifting from the CONTROLS a panel actually has, so its guard belongs
+    /// What it guards against is ADVICE drifting from the CONTROLS a panel actually has,
+    /// so its guard belongs
     /// beside the sentence it guards, not beside each control.</para>
     ///
     /// <para>Returns "" — never null — so a caller can concatenate it unconditionally.</para>
@@ -86,13 +85,13 @@ public static class PartialResultNotice
     /// <param name="unit">What is being counted, singular: the thing the loop scans once per, such as a row or a
     /// class. A loop whose one scan of a class serves many rows counts classes, not rows.</param>
     /// <param name="cause">What truncated them, as it reads in "N rows {cause} and are
-    /// marked partial". Defaults to the scan deadline, which is what every Z9 caller
-    /// means. AF7 needed a second cause — the disassembler's instruction budget — and
-    /// reusing the deadline wording would have named the wrong one, which this class's
-    /// own rule ("name the CAUSE before the consequence") exists to prevent.</param>
+    /// marked partial". Defaults to the scan deadline. A caller truncated by something
+    /// else (the disassembler's instruction budget) passes its own: the deadline wording
+    /// would name the wrong cause, which this class's own rule ("name the CAUSE before
+    /// the consequence") exists to prevent.</param>
     /// <param name="units">The plural of <paramref name="unit"/>, whole; null = unit + "s", right for "row" and
-    /// "function". [PARTIAL-UNIT-PLURAL] It was built from fragments -- "{unit}(s)", "{unit}s" -- so "class" read
-    /// "class(s)" and "classs"; a whole word per number is also the only shape a translation can take.</param>
+    /// "function". [PARTIAL-UNIT-PLURAL] Whole, because a plural built from fragments ("{unit}(s)", "{unit}s")
+    /// misspells "class", and a whole word per number is also the only shape a translation can take.</param>
     public static string BatchPartialClause(int partialUnits, int totalUnits, string unit = "row",
                                             string cause = "hit the scan deadline", string? units = null)
     {
@@ -264,12 +263,10 @@ public static class PartialResultNotice
     /// The <c>[scanned X/Y in Zms]</c> suffix for a reverse-address container scan.
     ///
     /// <para>
-    /// Its stated purpose has always been "so the user can tell a clean miss from a
-    /// deadline-truncated scan", and it could not do that (Z12): the numbers came from
-    /// the SHALLOW pass even when the recursive DEEP pass was the one that ran, and the
-    /// deep pass's second bound — a per-container element probe cap — was never
-    /// mentioned at all, so a deep miss caused by the cap looked exactly like proof of
-    /// absence. Both bounds are named here.
+    /// So the user can tell a clean miss from a truncated scan, it says when the
+    /// recursive DEEP pass ran and names both of its bounds — the deadline and a
+    /// per-container element probe cap — so a deep miss caused by the cap does not
+    /// read as proof of absence.
     /// </para>
     /// </summary>
     /// <param name="scanned">Objects the reported pass walked.</param>

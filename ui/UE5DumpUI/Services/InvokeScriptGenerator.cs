@@ -138,7 +138,7 @@ public static class InvokeScriptGenerator
         Line(sb, "end");
         // ONE emitted helper for the idle wait, called from every round-trip, rather
         // than an inline copy of the loop per call site: hand-placed copies of a rule
-        // drift apart (R3). The BODY comes
+        // drift apart. The BODY comes
         // from CeLuaHygiene so it stays byte-identical with the other generators; only
         // the bail differs per call site, which is why the helper returns a boolean
         // instead of deciding for its callers.
@@ -193,7 +193,7 @@ public static class InvokeScriptGenerator
         //
         // Both spellings are mandatory and the order is not a preference: depending on how CE
         // picked the module up, an export is reachable bare or only as "<module>.<name>", and
-        // which one works is not predictable from here (lessons-learned B33). The sibling
+        // which one works is not predictable from here. The sibling
         // generators already do this -- BakedScriptGenerator via getAddressSafe, CeReadinessLua
         // via pcall(getAddress, ...).
         Line(sb, "-- Find mailbox symbol (exported by UE5Dumper DLL)");
@@ -860,7 +860,7 @@ public static class InvokeScriptGenerator
     }
 
     /// <summary>Escape for a Lua single-quoted literal. Forwards to the one
-    /// implementation (R2), which escapes CR, TAB and a closing long bracket too -- the
+    /// implementation, which escapes CR, TAB and a closing long bracket too -- the
     /// last would otherwise terminate AOBMaker's <c>[==[ … ]==]</c> wrapper around the
     /// whole script.</summary>
     private static string EscapeLua(string s) => CeLuaHygiene.EscapeLuaString(s);

@@ -123,13 +123,13 @@ struct FunctionParam {
     // also holds its locals after the parameters (CallFunc_*_ReturnValue, K2Node_*, Temp_*), which are not.
     bool        isParm = false;
     std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
-    // Stage 1 (Invoke param picker): target UClass name for pointer-flavoured
+    // For the Invoke param picker: target UClass name for pointer-flavoured
     // params (ObjectProperty / ClassProperty / Soft* / Weak* / Lazy* /
     // InterfaceProperty). Mirrors FieldInfo::objClassName. Empty for scalar,
     // struct, container, and bool params.
     std::string objClassName;
 
-    // Phase B: sub-field layout for StructProperty params (dynamic discovery)
+    // Sub-field layout for StructProperty params (dynamic discovery)
     struct StructSubField {
         std::string name;
         std::string typeName;
@@ -219,7 +219,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
 //
 // What is NOT done here, deliberately: the enriched WalkClassEx memo (its
 // `const&` return is the real blocker), and Aura's s_classContainerCache, which
-// is the same shape with the same blocker and is tracked as A10.
+// is the same shape with the same blocker.
 
 /// Rough heap cost of one cached ClassInfo, for the get_diagnostics counter.
 /// Pure and approximate on purpose — it exists to turn "unbounded" into a
@@ -527,7 +527,7 @@ bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
 uint32_t ParamBufferSize(const FunctionInfo& fi);
 uint32_t ParamBufferSize(uintptr_t funcAddr, uint16_t parmsSize);
 
-// [TRACE-UNLOADED-NAMES] D1: a function the game unloads before Stop keeps the name it had when it fired.
+// [TRACE-UNLOADED-NAMES] A function the game unloads before Stop keeps the name it had when it fired.
 //
 // What CaptureFunctionIdentity reads beyond the FNames, decided on the pipe thread before a recording starts: the
 // FunctionFlags offset (deciding it can run a GObjects vote, which must never happen on the game thread), where
@@ -594,11 +594,11 @@ bool ReadNameKey(uintptr_t func, Linie::NameKey& out);
 // Linie's ObjectNameReader: an object's FName ints. Loads only -- no lock, no string -- on the hook.
 bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber);
 // Whether `key` still names what the UI showed: the function's and its class's names as Serie renders them, the
-// Number included ("Fire_2"). The Start's check of every tick and choice by name (T10).
+// Number included ("Fire_2"). The Start's check of every tick and choice by name.
 bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName);
 
 // One parameter of a chosen function, by value: nothing in it points into the engine, so it stays true after the
-// function unloads (T10, the D1 lesson).
+// function unloads.
 struct ParamField {
     std::string name;
     std::string typeName;
@@ -641,7 +641,7 @@ struct ParamLayout {
 // UFunction, has no parameter, or reads as an implausible layout.
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why);
 
-// [LIVEFUNCS-STEP2] The background read of the arms' layouts (T10). The checks one arm goes through, injectable so a
+// [LIVEFUNCS-STEP2] The background read of the arms' layouts. The checks one arm goes through, injectable so a
 // test needs no game memory: is it still the function that was armed, before and after its layout is read.
 struct ArmCaptureOps {
     FuncState (*classify)(uintptr_t func, const Linie::FuncIdentity& ident) = nullptr;
@@ -747,7 +747,7 @@ inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_
     // goes through as it always did.
     if (leadingQword == 0 || !leadsWithLiveObject) return ObjectParamAction::Leave;
     // A lazy pointer resolves by a GUID nothing here can make (UHT refuses lazy UFunction parameters anyway), and a weak
-    // pointer of any size but 8 is the remote-handle shape (VND583-15) this does not model.
+    // pointer of any size but 8 is the remote-handle shape [VND583-15] this does not model.
     if (lazy || (weak && size != 8)) return ObjectParamAction::Refuse;
     return weak ? ObjectParamAction::ConvertWeak : ObjectParamAction::ConvertSoft;
 }
@@ -871,7 +871,7 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
 // Get the internal index of a UObject
 int32_t GetIndex(uintptr_t uobjectAddr);
 
-// --- String-reading helpers (Phase 2 Value Search) ---
+// --- String-reading helpers (Value Search) ---
 //
 // Read an FString (TArray<TCHAR>) at instanceAddr + offset into UTF-8.
 // Returns "" on failure or out-of-range length. Caps at kMaxFStringChars
@@ -953,8 +953,8 @@ struct LiveFieldValue {
     std::string arrayInnerStructType;  // For struct arrays: UScriptStruct name (e.g., "FVector")
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
-    uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
-    // Phase G layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
+    uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays
+    // Layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
     // Lets the CE XML / CSX exporter emit per-element struct groups with
     // FName leaf(s) at the FSoftObjectPath sub-offset instead of
     // a single 8B WeakPtr-only hex. 0 means "not a soft array".
@@ -991,18 +991,18 @@ struct LiveFieldValue {
     // For ArrayProperty: base address of TArray::Data (for computing element addresses)
     uintptr_t   arrayDataAddr = 0;
 
-    // For ArrayProperty Phase B/D/E/F: inline element values (up to 64)
+    // For ArrayProperty: inline element values (up to 64)
     struct ArrayElement {
         int32_t     index = 0;
         std::string value;      // Human-readable typed value
         std::string hex;        // Per-element hex string
         std::string enumName;   // Only for enum arrays
         int64_t     rawIntValue = 0;   // Raw integer for CE DropDownList (enum value or FName index)
-        // Phase D: pointer array fields
+        // Pointer array fields
         uintptr_t   ptrAddr = 0;       // UObject* value (0 = null)
         std::string ptrName;           // Object name
         std::string ptrClassName;      // Class name
-        // Phase F: struct array sub-fields
+        // Struct array sub-fields
         struct StructSubField {
             std::string name;
             std::string typeName;
@@ -1120,7 +1120,7 @@ inline bool IsPlausiblePropertiesSize(int32_t propertiesSize) {
 }
 
 // True when a completed WalkClass result may be MEMOIZED. The class caches are
-// keyed by a raw UClass* the engine recycles and are never erased (see the B10
+// keyed by a raw UClass* the engine recycles and are never erased (see the
 // note at WalkClass's try_emplace), so a single bad walk is served for the rest
 // of the process — WalkInstance already owns the identical predicate but applies
 // it AFTER the walk has been published, i.e. the one code path that knows the
@@ -1169,7 +1169,7 @@ struct InstanceWalkResult {
     // isStale, which means a class pointer that read back implausible -- a narrower verdict.
     bool        unreadable = false;
     // [WALK-NULLCLASS-SILENT] A walk that resolved its own class found none: the header's ClassPrivate is null or
-    // unmapped. Freed and re-committed (a zeroed page, L47), or never an object -- the Go box takes any
+    // unmapped. Freed and re-committed (a zeroed page), or never an object -- the Go box takes any
     // address -- so neither isStale's "implausible PropertiesSize" nor a "freed" claim fits it.
     bool        noHeader = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
@@ -1386,7 +1386,7 @@ enum class BoolLayout { Unresolved, Packed, Native };
 /// every Blueprint bool and container element, written 0x01 / 0x00. UE's own IsNativeBool() tests
 /// FieldMask alone; ByteMask 0x01 is held as well, so an all-0xFF read (a probe landing on fill)
 /// is not taken for one. ⚠ Never require ByteMask 0xFF: no engine writes it, so that test refuses
-/// every native bool on a real game (B05). PACKED is a bitfield bool that owns
+/// every native bool on a real game. PACKED is a bitfield bool that owns
 /// exactly one bit. Anything else — including all-zero, which is what a missed probe reads — is
 /// UNRESOLVED and must never be treated as either.
 inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
@@ -1445,7 +1445,7 @@ inline uint32_t OptionalLoadLe32(const uint8_t* p) {
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
 
-/// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c's decision for one TOptional<T> leaf, from its RESOLVED layout (never the
+/// [A2-TOPTIONAL-VALUESCAN] Value Scan's decision for one TOptional<T> leaf, from its RESOLVED layout (never the
 /// loose "bigger than T means a trailing flag" rule). TrailingFlag: gate on the byte at sizeof(T). Intrusive: gate on
 /// the wrapped type's unset sentinel -- FString / FName / FText. Anything else -- Unknown, or an intrusive T with no
 /// known sentinel -- has an unreadable set state, so its bytes are not a value: false = SKIP the field.
@@ -1559,7 +1559,7 @@ inline std::string NormalizeGuessedTypeToProperty(const std::string& guessedType
 inline int64_t ReadEnumRawValue(const uint8_t* p, int32_t size) {
     if (!p) return 0;
     switch (size) {
-        case 1: { uint8_t  v; std::memcpy(&v, p, 1); return v; }   // UNSIGNED (U9)
+        case 1: { uint8_t  v; std::memcpy(&v, p, 1); return v; }   // UNSIGNED
         case 2: { int16_t  v; std::memcpy(&v, p, 2); return v; }
         case 4: { int32_t  v; std::memcpy(&v, p, 4); return v; }
         case 8: { int64_t  v; std::memcpy(&v, p, 8); return v; }
@@ -1694,7 +1694,7 @@ std::string InterpretStructAt(const uint8_t* buf, int32_t size,
 
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);
 
-// --- Array Element Reading (Phase B) ---
+// --- Array Element Reading ---
 
 // Result of reading array elements
 struct ReadArrayResult {
@@ -1721,16 +1721,16 @@ ReadArrayResult ReadArrayElements(
     uintptr_t innerFFieldAddr, const std::string& innerTypeName,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase D: check if inner type is a pointer type (ObjectProperty, ClassProperty)
+// Check if inner type is a pointer type (ObjectProperty, ClassProperty)
 bool IsPointerArrayType(const std::string& innerTypeName);
 
-// Phase D: read pointer elements from a TArray of UObject pointers.
+// Read pointer elements from a TArray of UObject pointers.
 // For each element, reads the pointer, then resolves name + class name.
 ReadArrayResult ReadPointerArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase E: resolve FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
+// Resolve FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
 // Returns the UObject* if valid (serial matches), or 0 if stale/invalid.
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber);
 
@@ -1759,10 +1759,10 @@ std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetN
                                     int32_t objIdx, int32_t serial, const std::string& funcName,
                                     const char* (*garbageTag)(uintptr_t, int32_t) = &WeakTargetGarbageTag);
 
-// Phase E: check if inner type is a weak-pointer type
+// Check if inner type is a weak-pointer type
 bool IsWeakPointerArrayType(const std::string& innerTypeName);
 
-// Phase E: read weak object pointer elements from a TArray of FWeakObjectPtr.
+// Read weak object pointer elements from a TArray of FWeakObjectPtr.
 ReadArrayResult ReadWeakObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
@@ -1771,17 +1771,17 @@ ReadArrayResult ReadWeakObjectArrayElements(
 // Triggers cache population if not yet cached.
 std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr);
 
-// Phase F: check if inner type is a struct type
+// Check if inner type is a struct type
 bool IsStructArrayType(const std::string& innerTypeName);
 
-// Phase F: read struct array elements, expanding each element's scalar fields.
+// Read struct array elements, expanding each element's scalar fields.
 // innerStructAddr: UScriptStruct* for the inner element type.
 ReadArrayResult ReadStructArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     uintptr_t innerStructAddr, int32_t elemSize,
     int32_t offset = 0, int32_t limit = 64);
 
-// Phase G: TSoftObjectPtr / TSoftClassPtr arrays — resolves FSoftObjectPath
+// TSoftObjectPtr / TSoftClassPtr arrays — resolves FSoftObjectPath
 // asset name and embedded FWeakObjectPtr (when loaded) per element. `assetPtr`
 // reads 4.11-4.17's TAssetPtr elements instead (IsAssetPtrProperty).
 bool IsSoftObjectArrayType(const std::string& innerTypeName);
@@ -1789,19 +1789,19 @@ ReadArrayResult ReadSoftObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64, bool assetPtr = false);
 
-// Phase H: TLazyObjectPtr arrays — resolves FGuid + embedded FWeakObjectPtr.
+// TLazyObjectPtr arrays — resolves FGuid + embedded FWeakObjectPtr.
 bool IsLazyObjectArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadLazyObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase I: TScriptInterface arrays — exposes underlying UObject* + iface ptr.
+// TScriptInterface arrays — exposes underlying UObject* + iface ptr.
 bool IsInterfaceArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase L: FString-family arrays (TArray<FString> / <FUtf8String> / <FAnsiString>). Each element is an
+// FString-family arrays (TArray<FString> / <FUtf8String> / <FAnsiString>). Each element is an
 // inline string header { Data*, int32 Num, int32 Max } -- 16 bytes -- decoded to UTF-8. An element whose
 // header cannot be read is "???", never "". [W5-STRARRAY-ELEMENTS]
 bool IsStringArrayType(const std::string& innerTypeName);
@@ -1809,7 +1809,7 @@ ReadArrayResult ReadStringArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase M: TFieldPath arrays (`TArray<TFieldPath<FProperty>>`). [WALK-FIELDPATH-ARRAY-NOELEMS]
+// TFieldPath arrays (`TArray<TFieldPath<FProperty>>`). [WALK-FIELDPATH-ARRAY-NOELEMS]
 //
 // ⭐ THE STRIDE IS THE ENGINE'S `ElementSize`, NOT A CONSTANT, and `Path` is found from it rather
 // than at a fixed offset. `FFieldPath` is
@@ -1842,7 +1842,7 @@ inline std::string DescribeScriptDelegate(bool hasTarget, const std::string& tar
                                           const std::string& funcName) {
     // NAME_None reads back as the STRING "None", not as an empty string.
     const bool named = !funcName.empty() && funcName != "None";
-    // [R7-B-02] Serial 0 is UE's null whatever the index (VND583-08): UE4 / 5.0 Reset() writes {INDEX_NONE, 0},
+    // [R7-B-02] [VND583-08] Serial 0 is UE's null whatever the index: UE4 / 5.0 Reset() writes {INDEX_NONE, 0},
     // and TScriptDelegate() / Unbind() go through it, so {-1, 0} is every never-bound C++ delegate there.
     (void)objIdx;
     if (!named && serial == 0) return "(unbound)";
@@ -1867,17 +1867,13 @@ inline bool IsNamedDelegateBinding(const std::string& described) {
 /// `Macht::ReadSafe` the out-param keeps its initialised 0, and 0 is not "unknown" to anything
 /// downstream — it is `0000000000000000` in the hex column, `(unset)` on a TOptional, and the
 /// NAME of enumerator 0 on an enum. Each of those says something about memory nobody could read.
-/// The shape has been confirmed here five times in 2026-09 (the D3/D5 delegate readers,
-/// `GetMapPairLayout`, `WalkInstance`'s two inlined map copies, `delegate_pad`, and
-/// `InterfaceProperty`), and `BoolProperty` three blocks above the enum handlers has always had
-/// it right: it builds hex and typedValue INSIDE `if (Macht::ReadSafe(...))`.
+/// `BoolProperty`'s handler has the right shape: it builds hex and typedValue INSIDE
+/// `if (Macht::ReadSafe(...))`.
 ///
 /// ⚠ snprintf("%X"), NOT std::to_string — and this is why the formatting is centralised rather
-/// than repeated. The InterfaceProperty refusal first shipped as
-/// `"+0x" + std::to_string(fi.Offset)`: DECIMAL digits behind a hex prefix, so offset 0xFF8
-/// rendered as "+0x4088". A refusal written to stop an unbacked claim about an address, which
-/// then states the wrong address, is the same class of defect it was written to remove. Caught
-/// only because the fixture asserts the message names the offset the field is actually at.
+/// than repeated. `"+0x" + std::to_string(offset)` puts DECIMAL digits behind a hex prefix, so
+/// offset 0xFF8 would render as "+0x4088": a refusal written to stop an unbacked claim about an
+/// address would then state the wrong address.
 ///
 /// Pure and header-inline so `dll_helpers_test` can pin it without a live object pool.
 inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
@@ -1886,7 +1882,7 @@ inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
     return std::string("(") + what + " — unreadable at +0x" + offHex + ", not read)";
 }
 
-// Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
+// TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
 // [A4-DELEGATE-ARRAY-PAD] The access-detector pad of ONE element of a TArray<FScriptDelegate>, from the inner's own
@@ -1896,7 +1892,7 @@ ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
-// Phase K: TArray<FMulticastScriptDelegate> — preview only (each element is
+// TArray<FMulticastScriptDelegate> — preview only (each element is
 // a TArray<FScriptDelegate>; no per-binding drill-down at this depth).
 bool IsMulticastDelegateArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadMulticastDelegateArrayElements(

@@ -95,23 +95,20 @@ static fs::path MakeTempPath(const fs::path& path) {
 }
 
 // ============================================================
-// Atomic publish — ONE implementation, four call sites
+// Atomic publish — ONE implementation
 // ============================================================
 //
-// The block this replaces was repeated verbatim four times:
-//     { std::ofstream ofs(temp, trunc); if (!ofs) return; ofs << root.dump(2); }
-//     fs::rename(temp, path);
-// and carried two defects that only surface when the disk or the UI does.
+// It guards against two defects that only surface when the disk or the UI does.
 //
-// FL1 — the stream's error state was NEVER tested. No exceptions() mask, no good(),
-// no explicit close(). A short write is swallowed by the destructor and the rename
+// The stream's error state must be tested. Without an exceptions() mask, good() or an
+// explicit close(), a short write is swallowed by the destructor and the rename
 // publishes the TRUNCATED document over the only good copy. The C# twin
 // structurally cannot do this: `await File.WriteAllTextAsync` throws BEFORE
 // `File.Move` (AobUsageService.cs `SaveFileAsync`).
 //
-// FL2 — `fs::rename(a, b)` is the THROWING overload, and each caller's catch-all
-// logged it and returned, leaking `<file>.tmp.<pid>`. The suffix is the PID, so
-// every affected launch left a DISTINCTLY NAMED full copy of the cache in
+// `fs::rename(a, b)` is the THROWING overload, and a caller's catch-all that logs it
+// and returns leaks `<file>.tmp.<pid>`. The suffix is the PID, so every affected
+// launch would leave a DISTINCTLY NAMED full copy of the cache in
 // %LOCALAPPDATA%\UE5CEDumper\ forever — against the app-data rule that the root
 // holds only files "app-wide and fixed in number". It needs no disk fault either:
 // the UI holds this file with FileShare.Read and NOT FileShare.Delete, so a
@@ -224,14 +221,14 @@ static void SweepOrphanTemps(const fs::path& path) {
 }
 
 // ============================================================
-// The cache's lock ([PIPE-PER-PROCESS-2026-11-06] Stage C)
+// The cache's lock ([PIPE-PER-PROCESS-2026-11-06])
 // ============================================================
 // Every writer reads the file, changes one game's record and publishes the whole file. Two at once -- two pipe
-// clients setting an override and an invoke timeout, or one of them beside a scan -- each published its own read,
-// so the later rename dropped the earlier change while its reply said persisted; both also staged through the one
+// clients setting an override and an invoke timeout, or one of them beside a scan -- would each publish its own read,
+// so the later rename drops the earlier change while its reply says persisted; both also stage through the one
 // .tmp.<pid>, so one could delete the other's staged file. A NAMED mutex rather than a std::mutex: a second copy of
 // the DLL in this process shares the staging name, and a second injected game shares the file. A crashed holder
-// (WAIT_ABANDONED) left a whole file -- the publish is a rename -- so its lock is taken as held.
+// (WAIT_ABANDONED) leaves a whole file -- the publish is a rename -- so its lock is taken as held.
 class CacheLock {
 public:
     explicit CacheLock(const fs::path& path, unsigned long waitMs = Grimoire::HINTCACHE_LOCK_WAIT_MS) {
@@ -303,7 +300,7 @@ private:
     }
     mutate(root, rec);
     root["games"][peHash] = rec;
-    // Atomic write: staged temp, verified, then renamed. (FL1/FL2)
+    // Atomic write: staged temp, verified, then renamed.
     return WriteJsonAtomic(path, root.dump(2), who);
 }
 

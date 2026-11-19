@@ -131,8 +131,8 @@ inline bool IsIntType(const std::string& typeName) {
 
 // The inclusive value range a held integer field can represent. A target outside
 // it cannot be held: the write truncates and the read then disagrees forever, which
-// is the same non-convergence AF8 produced by a different route. Callers clamp (and
-// say so) rather than spin.
+// is the same non-convergence a read/write signedness mismatch produces by a
+// different route. Callers clamp (and say so) rather than spin.
 inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
     switch (w.bytes) {
         case 1: lo = w.isSigned ? -128.0 : 0.0;  hi = w.isSigned ? 127.0 : 255.0; break;
@@ -140,7 +140,8 @@ inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
         // 2^63 is not representable as a double bound that round-trips; the widest
         // exactly-representable integer either side is used instead. Solide's wire is
         // a double end to end (AddForce takes one), so nothing past 2^53 was ever
-        // holdable exactly — see the AF6 fix for the same limit stated UI-side.
+        // holdable exactly — PropertySearchPanel's ParseForceLiteral states the same
+        // limit UI-side.
         case 8: lo = -9007199254740992.0;        hi =  9007199254740992.0;        break;
         default: lo = 0.0; hi = 0.0; break;
     }

@@ -48,7 +48,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     /// <summary>Raise the first instance's main window. Matched by PROCESS, not by
     /// window title — the title carries the connected game's module name, so a
     /// title-based search would miss whenever the first instance is connected, which is
-    /// exactly when the user is most likely to double-click the exe again. (B42)</summary>
+    /// exactly when the user is most likely to double-click the exe again.</summary>
     public bool ActivateExistingInstance()
     {
         try
@@ -1094,7 +1094,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
             // Refuse instead. The caller logs the refusal; this layer stays free of a logging
             // dependency.
             //
-            // A DriveType test is NOT a recycler test — that was the whole defect (B13/B41). A
+            // A DriveType test is NOT a recycler test. A
             // fixed drive can have the recycler disabled per-volume (`NukeOnDelete=1`, or Group
             // Policy), and then FOF_ALLOWUNDO is best-effort with no way to tell after the fact.
             // Ask the shell directly instead, via the volume the path actually lives on.

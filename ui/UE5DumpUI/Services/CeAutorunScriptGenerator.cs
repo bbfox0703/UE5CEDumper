@@ -70,7 +70,7 @@ public static class CeAutorunScriptGenerator
         // LATE-BOUND on purpose. This file is loaded by CE's autorun at start-up, so the
         // eager preamble would bind DEBUG to whatever UE5_DEBUG was before the Lua console
         // even existed — making line 61's own instruction ("set UE5_DEBUG = 1 in the Lua
-        // console") impossible to follow. (B23)
+        // console") impossible to follow.
         CeLuaHygiene.AppendLateBoundDebugPreamble(sb);
         Line(sb);
         CeInjectPathLua.AppendLocals(sb, dllPath, codePage ?? new WindowsSystemCodePage());
@@ -116,10 +116,9 @@ public static class CeAutorunScriptGenerator
         Line(sb, "  local alreadyLoaded = okGet and probe and probe ~= 0");
         Line(sb, "  if alreadyLoaded then");
         Line(sb, $"    local READY, SKIPPED = {CeMailboxLayout.InitReady}, {CeMailboxLayout.InitSkipped}");
-        // BOTH spellings — see the twin in CeInjectScriptGenerator. These two sites
-        // were the last holdouts of the B33 rule; a single-spelling miss leaves `pre`
-        // nil, so a serving DLL is misread as "parked" and UE5_AutoStart is fired at
-        // a pipe that is already up.
+        // BOTH spellings — see the twin in CeInjectScriptGenerator. A single-spelling
+        // miss leaves `pre` nil, so a serving DLL is misread as "parked" and
+        // UE5_AutoStart is fired at a pipe that is already up.
         Line(sb, "    local mbNow = getAddressSafe('g_invokeMailbox')");
         Line(sb, "    if not mbNow or mbNow == 0 then mbNow = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "    local pre = nil");
@@ -188,7 +187,7 @@ public static class CeAutorunScriptGenerator
     // [B30-REOPEN] reintroduced through the back door. The flag means
     // "the inject RECORD's own enable brought this up", and only that enable may set it.
     //
-    // ⚠ This function is also NOT the B30 shape: it is reached from the CE menu, i.e.
+    // ⚠ This function is also NOT the [B30-REOPEN] shape: it is reached from the CE menu, i.e.
     // the user explicitly asked to shut down, rather than from an untick that CE fired
     // on their behalf. Consent is the difference, so it keeps the plain symbol probe.
     private static void EmitShutdown(StringBuilder sb)

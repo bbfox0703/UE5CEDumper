@@ -59,7 +59,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 var paths = VdfParser.ParseLibraryFolders(vdfContent, out string? vdfError);
 
                 // A structural fault stops extraction, so "0 libraries" below could mean
-                // either "Steam lists none" or "the file is broken". Say which. (AC12)
+                // either "Steam lists none" or "the file is broken". Say which.
                 if (vdfError != null)
                     _log.Warn("ProxyDeploy",
                         $"libraryfolders.vdf is malformed ({vdfError}) — using the {paths.Count} " +
@@ -1275,7 +1275,7 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     /// <summary>[PROXY-DOUBLE-GUARD] OUR proxy DLLs present in <paramref name="binariesDir"/>: one of our four
     /// names, on disk, and ours by <paramref name="isOurs"/> (ProductName). Another program's file at one of those
-    /// names is AC1's business, not a double.</summary>
+    /// names is the foreign-overwrite consent's business (ForeignConsent), not a double.</summary>
     internal static IReadOnlyList<string> OursPresent(string binariesDir, Func<string, bool> isOurs) =>
         AllProxyDllNames()
             .Where(name =>
@@ -2264,7 +2264,7 @@ public sealed class ProxyDeployService : IProxyDeployService
         catch (IOException) { return DllOwner.Unreadable; }               // sharing violation, and the like
     }
 
-    /// <summary>[I18N-READINESS-2026-11-04] P3. The one copy of the unreadable sentence: <see cref="DescribeUnreadable"/>
+    /// <summary>[I18N-READINESS-2026-11-04] The one copy of the unreadable sentence: <see cref="DescribeUnreadable"/>
     /// writes it and <see cref="DetailNamesUnreadable"/> reads it back, so a translation changes both at once. With
     /// anchors of its own the parse would stop matching a translated sentence, silently.</summary>
     internal const string UnreadableTemplate =

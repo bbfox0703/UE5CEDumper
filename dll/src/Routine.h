@@ -150,7 +150,7 @@ inline bool SleepSliced(int totalMs, const std::atomic<bool>& stop) {
 template <typename TickFn>
 inline void ReassertLoop(const char* tag, int periodMs,
                          const std::atomic<bool>& stop, TickFn&& tick) {
-    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown (M4)
+    Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown
     LOG_INFO("%s: re-assert worker started (%d ms)", tag, periodMs);
     bool warnedThrow = false;
     while (SleepSliced(periodMs, stop))
@@ -161,7 +161,7 @@ inline void ReassertLoop(const char* tag, int periodMs,
 // ============================================================
 // SingleFlightJob — one background job at a time, started by whichever client asks first.
 // ============================================================
-// [PIPE-PER-PROCESS-2026-11-06] Stage C. trigger_scan and rescan each start a background job, and a pipe with six
+// [PIPE-PER-PROCESS-2026-11-06] trigger_scan and rescan each start a background job, and a pipe with six
 // clients can be asked twice at once. The job keeps running when the client that started it leaves: its result is
 // the process's, read by every later client and by CE, and the UI starts it on one lane, polls it on the other and
 // reconnects both together. Only Stop (and shutdown) cancel it.

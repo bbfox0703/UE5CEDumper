@@ -95,8 +95,8 @@ public sealed class CoordCsvParseResult
 ///  * <b>Header is authoritative and matched by NAME</b>, so reordered/extra columns
 ///    and a future v2 column are all handled — the same forward-compatibility the
 ///    named-field Lua format has over a positional one.
-///  * <b>Quotes are read strictly, and an unpaired one stops the import.</b> No repair
-///    (B21): a lenient reader has to guess where the stray quote's field ends, and a
+///  * <b>Quotes are read strictly, and an unpaired one stops the import.</b> No repair:
+///    a lenient reader has to guess where the stray quote's field ends, and a
 ///    wrong guess can merge every later record into one.
 /// </summary>
 public static class CoordCsvCodec
@@ -298,8 +298,8 @@ public static class CoordCsvCodec
             }
 
             // Through the same gate as label/group. A uid is a text field read from a
-            // user-editable CSV; it was the only one that skipped Normalize, so a control
-            // character or a 4 KB cell went straight into the persisted library. (B7)
+            // user-editable CSV; without Normalize a control character or a 4 KB cell
+            // would go straight into the persisted library.
             entry.Uid = CoordText.Normalize(Cell("uid"), CoordText.MaxUidLength);
 
             foreach (var (col, maxLen, set) in new (string, int, Action<string>)[]

@@ -16,8 +16,8 @@
 #include "Grimoire.h"
 #include "Macht.h"
 #include "Aura.h"
-#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel (M4)
-#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick (R5/B14)
+#include "Tot.h"     // Tot::MarkBackgroundWorker — re-assert worker ignores per-command cancel
+#include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick
 #include "Ubel.h"
 
 #include <algorithm>
@@ -244,7 +244,7 @@ void ApplyDilLocked(int32_t target, bool* drifted) {
     // level load, or a respawned pawn): that owner's value is untouched by us.
     // Unlike Laufen the base is not a multiplicand here — it is what Reset RESTORES,
     // so capturing 0 means Reset leaves the game permanently frozen. Fall back to the
-    // engine default rather than store a value we know is unusable. (B22)
+    // engine default rather than store a value we know is unusable.
     if (f.owner != d.capturedOwner) {
         d.base = (current > 0.0 && std::isfinite(current)) ? current : 1.0;
         d.capturedOwner = f.owner;
@@ -278,7 +278,7 @@ void FillDilLocked(int32_t target, DilationInfo& info) {
 
 void WorkerLoop() {
     // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop (R5 / B14). Only the tick is ours.
+    // all live in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("Time", Grimoire::TIME_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -301,7 +301,7 @@ void WorkerLoop() {
 // StopWorkerLocked runs with s_mutex RELEASED because WorkerLoop takes s_mutex
 // every tick (joining under it deadlocks). Identical to Laufen.
 void StartWorkerLocked() {
-    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window (M5)
+    if (Tot::ShutdownRequested()) return;   // don't (re)spawn during the shutdown window
     if (s_worker.joinable()) return;   // already running
     s_workerStop.store(false);
     s_worker = std::thread(WorkerLoop);
@@ -376,7 +376,7 @@ int32_t SetDilation(int32_t target, double value) {
         if (!d.active || f.owner != d.capturedOwner) {
             // See the worker's note: base is the RESTORE value, so 0 / NaN would make
             // Reset freeze the game forever. 1.0 is the engine default for both
-            // AWorldSettings::TimeDilation and AActor::CustomTimeDilation. (B22)
+            // AWorldSettings::TimeDilation and AActor::CustomTimeDilation.
             if (current > 0.0 && std::isfinite(current)) {
                 d.base = current;
             } else {

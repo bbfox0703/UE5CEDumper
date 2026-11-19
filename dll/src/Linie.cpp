@@ -187,7 +187,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         // ufunc out of timestamp order (nowMs is stamped before the g_mu lock), and an
         // unsigned nowMs - s.lastMs would underflow to a ~1.8e19 gap that poisons the
         // Welford mean/cv for the rest of the window. Skip the reordered sample and don't
-        // let it lower the base. (L5)
+        // let it lower the base.
         const uint64_t gapMs = nowMs - s.lastMs;
         if (gapMs <= kActiveGapMaxMs) s.activeMs += gapMs;   // still firing at frame cadence
         double gap = static_cast<double>(gapMs);
@@ -349,7 +349,7 @@ std::vector<uintptr_t> PerFrameFuncs() {
 
 // ---- [LIVEFUNCS-TIMELINE-2026-10-04] the call trace ----
 //
-// Lifetime (TR2). The hook never holds a pointer into the ring across the game's own ProcessEvent: every write sits
+// Lifetime. The hook never holds a pointer into the ring across the game's own ProcessEvent: every write sits
 // inside a short section bracketed by g_inflight, and checks g_tracing INSIDE it. StopTrace clears g_tracing, then
 // waits for g_inflight to reach 0. Both sides use seq_cst on the counter and the flag, so either the hook sees the
 // flag cleared and touches nothing, or Stop sees the hook inside and waits for it -- after Stop returns no write
@@ -517,7 +517,7 @@ bool SnapAdmit(int32_t ring, uint64_t ticks) {
 
 // [LIVEFUNCS-STEP2] One slot of ring `ring`, inside the hook's in-flight section: the header, the copy, the slot's
 // number last -- a reader keeps a slot only when its number is the one it expects. Never a write-back: the copy after
-// the call takes a slot of its own (TR3).
+// the call takes a slot of its own.
 // [LIVEFUNCS-STEP3] Stack ring `s` among the stack rings.
 SnapRing& StackRingAt(int32_t s) { return g_trace.snapRings[g_trace.snapCount + static_cast<uint32_t>(s)]; }
 
@@ -531,7 +531,7 @@ bool StackAdmit(int32_t s, uint64_t ticks) {
 
 // One stack slot, inside the hook's in-flight section, with SnapWrite's discipline: the slot's number is written last,
 // so a walk that throws out of here leaves a slot no reader hands out. The capturer is asked for frames, never the
-// slot's bytes, and a count past the slot is never trusted. Its cost is measured around it (D9): the slot keeps its
+// slot's bytes, and a count past the slot is never trusted. Its cost is measured around it: the slot keeps its
 // own, the ring the sum, the trace the dearest.
 void StackWrite(int32_t s, uint64_t entrySeq, uintptr_t sp) {
     SnapRing& r = StackRingAt(s);
@@ -632,7 +632,7 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
 
     // [LIVEFUNCS-STEP2] The snapshot rings: K slots each, K the same for every ring, each ring 64-aligned (the 64 per
     // ring the formula sets aside). A buffer that cannot keep kSnapMinSlots calls a ring refuses the Start, the ring
-    // just made freed with it: the trace never records without what was asked (T1). [LIVEFUNCS-STEP3] The stack rings
+    // just made freed with it: the trace never records without what was asked. [LIVEFUNCS-STEP3] The stack rings
     // come after the parameter rings, in the same block and with the same K.
     uint8_t* snapBlock = nullptr;
     uint64_t snapSize = 0, snapK = 0;
@@ -771,7 +771,7 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
                 t_scopeSp = sp;
                 open = true;
             } else if (ring >= 0 || sring >= 0) {
-                lone = true;        // [LIVEFUNCS-STEP2] T11: alone, for what it was chosen for; it opens no scope
+                lone = true;        // [LIVEFUNCS-STEP2] Alone, for what it was chosen for; it opens no scope
             } else {
                 return;
             }
@@ -784,7 +784,7 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     const uint64_t ticks = g_clock();   // one read: the record's time and the budget's second
     // [LIVEFUNCS-STEP2] The budgets, the parameters' and [LIVEFUNCS-STEP3] the stack's. Over them, a call the scope
     // records anyway keeps its record, flagged. One recorded only for what it was chosen for (lone, or kept from the
-    // exclusion) is dropped -- no record only to say "skipped" -- when NOTHING it was chosen for was taken (D10);
+    // exclusion) is dropped -- no record only to say "skipped" -- when NOTHING it was chosen for was taken;
     // otherwise it is recorded, and each kind left out counts as skipped.
     const bool taken      = ring >= 0 && SnapAdmit(ring, ticks);
     const bool stackTaken = sring >= 0 && StackAdmit(sring, ticks);
@@ -951,7 +951,7 @@ bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
 }
 
 // [LIVEFUNCS-STEP3] CopySnaps' loop, copied rather than shared: a stack slot carries no after bit and its payload is
-// frames, and step 2's tested reader stays as it was.
+// frames, and the parameter snapshots' tested reader stays as it was.
 bool CopyStacks(uint32_t s, uint64_t from, size_t maxSlots, std::vector<StackCopy>& out, uint64_t* next,
                 uint64_t* orphans) {
     if (orphans) *orphans = 0;

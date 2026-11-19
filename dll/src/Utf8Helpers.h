@@ -255,7 +255,7 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
         sawMultiByte = true;
         i += need + 1;
     }
-    hasMultiByte = sawMultiByte;   // committed only here — see the AD25 note above
+    hasMultiByte = sawMultiByte;   // committed only here — see the header note above
     return true;
 }
 

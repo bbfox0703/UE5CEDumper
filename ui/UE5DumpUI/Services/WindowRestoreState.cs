@@ -53,7 +53,7 @@ public sealed class WindowRestoreState
     private IReadOnlyList<(int X, int Y, int W, int H)> _screens = Array.Empty<(int, int, int, int)>();
 
     // [W3-DIP-PIXELS] The window's RenderScaling. The stash's width/height are DIPs (Avalonia Width/Height), and
-    // WindowPlacement works in PHYSICAL pixels -- the AF21 unit fix MainWindow got and this twin never did.
+    // WindowPlacement works in PHYSICAL pixels -- the same unit conversion MainWindow makes.
     private double _scale = 1.0;
 
     /// <summary>True once <see cref="Seed"/> has run (the window has opened in Normal

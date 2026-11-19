@@ -5,10 +5,10 @@ using System.Text.RegularExpressions;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1. <c>UE5DumpUI.exe --mcp-agent-guard</c> as a Claude Code PreToolUse hook:
+/// [MCP-WRITE-GRANTS-2026-11-14] <c>UE5DumpUI.exe --mcp-agent-guard</c> as a Claude Code PreToolUse hook:
 /// it refuses a write or a grant asked for by a subagent or a workflow agent.
 ///
-/// Measured in Phase 0 (M6, M6b): subagents and workflow agents call the session's own MCP server, so they hold the
+/// Subagents and workflow agents call the session's own MCP server, so they hold the
 /// grants the user gave the main conversation, and a subagent's grant prompt looks exactly like the main one's. The
 /// server cannot tell them apart; the hook input can, since Claude Code gives a call made inside a subagent an
 /// <c>agent_id</c>. The exe is the hook so that every user of a release has it, with nothing else installed.

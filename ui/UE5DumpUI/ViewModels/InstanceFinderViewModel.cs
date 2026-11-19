@@ -143,11 +143,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         set
         {
             InstanceSearchCap = NumericInput.KeepCurrentIfEmpty(value, InstanceSearchCap);
-            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
-            // unchanged, so nothing else would raise a change and the control would keep
-            // painting an empty box while a different value was in force. Round 1 of
-            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
-            // the live check is what caught it.
+            // [SNAPINTERVAL-2026-08-20] Notify UNCONDITIONALLY. A rejected or emptied entry
+            // leaves the backing value unchanged, so nothing else would raise a change and the
+            // control would keep painting an empty box while a different value was in force.
             OnPropertyChanged();
         }
     }
@@ -166,7 +164,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// <summary>Keeps the instances grid's selection and scroll position across filter edits
     /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.
     /// Not keyed on the address: selecting a NEW row object walks it, so a row a server re-run
-    /// replaced is left unselected rather than re-selected by the View (Z7).</summary>
+    /// replaced is left unselected rather than re-selected by the View.</summary>
     public FilterViewKeeper InstancesView { get; } = new();
     [ObservableProperty] private bool _isXrefBatchRunning;
     [ObservableProperty] private InstanceResult? _selectedInstance;
@@ -1126,7 +1124,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             if (!ok) return;
         }
 
-        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS
         _xrefBatchCts = new CancellationTokenSource();
         oldCts?.Cancel();
         oldCts?.Dispose();
@@ -1178,7 +1176,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         {
             StatusText = $"Find Func cancelled ({classesScanned} classes scanned).";
         }
-        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled) (L14)
+        catch (Exception ex)   // incl. a bare disconnect-OCE (token NOT cancelled)
         {
             _log.Error("Batch Find Func failed", ex);
             StatusText = $"Find Func failed ({classesScanned} classes scanned).";
