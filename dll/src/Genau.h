@@ -110,7 +110,9 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // case) holding a whole "M.m" token of that major which is a kVersionNeedles row, so the 4.18 floor
 // holds here too.
 // It runs after Epic's tag, never before, because its grammar admits that tag as well.
-constexpr uint32_t kVersionDetectLogicRev = 11;
+// rev 12 (2026-11-19, [VND9-05]): a "5.9." needle heads kVersionNeedles, so a 5.9 title reads 509 at every tier
+// instead of the structural ladder's 508.
+constexpr uint32_t kVersionDetectLogicRev = 12;
 
 // ============================================================
 // Multi-module candidate admission
