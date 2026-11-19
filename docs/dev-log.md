@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3773) — Phantom Blade Zero's engine layout is supported, untested on the game `[VND10-A1]` `[VENDOR-AUDIT10-2026-11-19]`
+
+- **What changes:**
+  - **Phantom Blade Zero** (UE 5.7.4, a licensee layout): the DLL reads its object array (a reordered
+    `TUObjectArray`, at the FUObjectArray base, at ObjObjects, and through the Count == 0 recovery when an AOB hands
+    over its Objects field), its property type names (`FFieldClass::Name` at +0x30; `FField::Next` and `Owner`
+    swapped), `UStruct::PropertiesSize` and `UFunction::FunctionFlags` past its 0x50-byte insert, and finds
+    `ProcessEvent` by its flag tests at +0x100. The layout is RE-UE4SS's config for the game; **nobody here owns it, so
+    it is tested on synthetic shapes only.**
+  - **Stock engines read as before:** every licensee reading runs only where the stock readings find nothing, or is
+    appended after the stock rows and held to stricter rules; each test pairs the PBZ shape with the stock shapes.
+- **Not done:** audit #10's upstream lea + three-call GUObjectArray AOB. It helps PBZ only ranked ahead of the stock mov
+  rows, where it moves the winning pattern on stock titles and meets a decoy in FF7 Rebirth; PBZ goes through the
+  recovery instead. Extra Scan on a published GObjects of 0 objects was tried and reverted (todo `[RESCAN-DECOY-REINIT]`).
+- **Rules recorded** (working-lessons §7.3): a licensee layout never moves the stock logic (#5); a file outside every
+  test target is no reason to leave a change untested (#6).
+- **Tests:** each part red, then green; an independent review's findings fixed; three mutations (the whole-chunks rule
+  removed, +0x30 added to the stock FFieldClass probes, the PropertiesSize search run before the stock offset) each turn
+  their checks red. dll_core_test 1761, dll_helpers_test 4305, C# 8523 (1 skipped), headless 74, 40 gates.
+- AOT UI 62,868,992 bytes (sha256 bda90a049b8b6c52...); UE5Dumper.dll 3,860,992 bytes (sha256 eac54186f0848652...).
+- **Release notes:** "Added support for Phantom Blade Zero's engine layout (not tested on the game)."
+
 ## 2026-11-19 (no build change) — The zydis bump rig prints all of Denken's output again `[VND10-A4]`
 
 - **What changes:** `tools/verify/zydis_bump_diff/` prints each field access's write sites, so a Zydis bump that moved

@@ -1151,6 +1151,23 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
     row 1's proxy-mode `trigger_scan`.
 
+### ⬜ Phantom Blade Zero's layout (build 3773) — `[VND10-A1]`
+
+The layout is RE-UE4SS's `MemberVariableLayout.ini` for the game, which nobody here owns: every part is tested on
+synthetic shapes only (dll_core_test `VND10-A1-01` / `-02` / `-03`, dll_helpers_test), each beside the stock shapes it
+must not move, and the release notes say it is untested.
+
+1. ⬜ **The first run on Phantom Blade Zero** (a user's log, or the game installed here). Acceptance: GObjects read
+   whole, through a `PBZ` / `PBZ-Base` preset or `Recovery SUCCESS (static struct scan)` after a `licensee array` line,
+   with an object count in the hundred thousands; `ChildProperties found ... licensee FFieldClass::Name at +0x30`;
+   `FField::Next at FField+0x10`; `UStruct::PropertiesSize at +0xA8`; the FunctionFlags vote at `+0x100`;
+   `DetectProcessEvent (pattern, FunctionFlags past +0xFF)`; a class walk with typed properties; an invoke that returns.
+   A line that differs names the part to reopen.
+2. ⬜ **The property family past FStructProperty** (map, set, enum, byte, class, soft-object, interface, delegate
+   properties). The ini checks FProperty, FObjectPropertyBase, FStructProperty, FBoolProperty and FArrayProperty only;
+   the rest are derived from sizeof(FProperty) as on stock. Acceptance: a map, a set and an enum field read right in
+   the Live Walker.
+
 ### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
 
 A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
