@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (no build change) — The tests' comments cleaned and gated; the touched product files re-swept; CE 7.7 AutoAssembler defects documented `[COMMENT-NO-HISTORY-2026-11-18]`
+
+- **Test code:** `check_comment_history` also counts the comments of `dll/tests`, `ui/UE5DumpUI.Tests` and
+  `ui/UE5DumpUI.HeadlessTests`. Their 872 counted lines and the finding codes beside them are rewritten in 185
+  files: a test's doc says what it pins and why its assertions have their shape; review ids, dated measurements,
+  build numbers and bug stories are gone. A comment that claimed no test target compiles Genau.cpp
+  (dll_core_test does) is corrected.
+- **Re-sweep:** a loose scan flagged 4,886 candidate lines in the 244 product files earlier passes touched; each
+  was judged in context and 141 files changed (history without keywords, plan wording, claims the code
+  contradicts, e.g. Schlacht's header, LiveWalker's CSX depth range, AppLifecycle's writer count). The baseline
+  is 0 across product and test code.
+- **docs/CE-Bugs-Minesweeper.md:** a new appendix section carries what the AOBMaker project measured in CE 7.7:
+  `reassemble()` refusing, silently changing and dropping prefixes of instructions, the x64 RIP-relative
+  rewrite's borrowed register, RIP text in a far cave, what the syntax check cannot see, disassembler text quirks
+  and CE Lua defects. 44 CE source cites checked and corrected. The AutoAssembler groups do not reach this repo
+  (our scripts are Lua-only); three follow-ups went to todo.md: `[CE-LUA-FLOAT-LOCALE]`, `[CE76-PROCESS-GLOBAL]`,
+  `[CEXML-STRING-CAPACITY]`.
+- Comments and docs only: `comment_only_diff` passes for every file (one verbatim-string false positive checked
+  by hand); the DLL and the C++ suites (1663 / 4262 / 22 / 37 / 287) pass, C# 8497 passed (1 skipped), the
+  headless tests build; 40 gates.
+
 ## 2026-11-19 (no build change) — Bare finding codes cut from the comments (pass 4), the untouched files swept, Genau.h's version log stripped `[COMMENT-NO-HISTORY-2026-11-18]`
 
 - **Pass 4:** bare finding ids and plan-phase labels with no `audit` / `review` word (`(A12)`, `(AE13)`, `(B10)`,
