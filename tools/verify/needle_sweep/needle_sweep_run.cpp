@@ -1,8 +1,8 @@
 // The version-string tiers of one VersionNeedleScan.h, run over whole files: needle_sweep.py compiles this against
 // two copies of the header and compares what each reads. One path per stdin line; one output line per path:
 //   <path> \t <tier1 value>/<tier> \t <branch value>/<tier> \t <tier23 value>/<tier>
-// A value is the kVersionNeedles row's code (0: no hit). The DLL scans the mapped image; the strings these tiers read
-// sit in .rdata, whose bytes the file holds as they are.
+// A value is the kVersionNeedles row's code (0: no hit). The DLL scans the mapped image, the file holds its sections'
+// initial bytes: the same strings for an unpacked exe, nothing for one that is packed or writes them at run time.
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
