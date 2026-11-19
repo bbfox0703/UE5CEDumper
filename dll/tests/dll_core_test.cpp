@@ -59,8 +59,8 @@ uint32_t g_cachedUEVersion = 0;
 // Each of these .cpp files is its own translation unit in the real DLL, and each either
 // #defines LOG_CAT itself or inherits Sein.h's `#ifndef LOG_CAT -> ""` default. Concatenated
 // into ONE TU here, the second and later #defines are redefinitions (C4005) -- and worse, the
-// two files that define NOTHING (Radar.cpp, Denken.cpp) silently inherited whatever the
-// PREVIOUS include happened to leave behind, so their log lines were attributed to another
+// two files that define NOTHING (Radar.cpp, Denken.cpp) would silently inherit whatever the
+// PREVIOUS include happened to leave behind, so their log lines would be attributed to another
 // module's category in a way the shipping build never does. Undef-ing makes this harness
 // match the real build instead of merely compiling quietly.
 #undef LOG_CAT
@@ -575,8 +575,8 @@ int main() {
         check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
               Genau::kVersionDetectLogicRev >= 9);
 
-        // [VER-410-FIXED-VS-STRING] A game version in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 was taken
-        // before any string was read, so it beat the exe's own engine build string -- the engine-stamped signal. Where
+        // [VER-410-FIXED-VS-STRING] A game version in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 must not
+        // beat the exe's own engine build string -- the engine-stamped signal -- just because it is read first. Where
         // the two name different versions the build string's code is taken, as a string reading (fromFixedField false):
         // at or above the floor that is tier 1, below it only an agreeing CrashReportClient can make it one.
         const std::wstring fixed405 = res(L"game_fixed405_buildstring_415");
@@ -724,7 +724,7 @@ int main() {
         check("...at the index we planted it", hit.index == kIdx,
               std::to_string(hit.index).c_str());
 
-        // (b) THE CASE A7 FIXED. The exact-match return is unconditional, so the ONLY thing that
+        // (b) THE CANCELLED CASE. The exact-match return is unconditional, so the ONLY thing that
         // can turn this same address into a miss is the poll at Aura.cpp `FindByAddress`.
         ResetCancel();
         Tot::g_perCommand.store(true);
@@ -805,13 +805,13 @@ int main() {
         }
     }
 
-    // ── A10 — IS THE RECYCLED-UClass* DEFECT REPRODUCIBLE AT ALL? ─────────────────
+    // ── [A10-SCOPE-2026-08-24] IS THE RECYCLED-UClass* DEFECT REPRODUCIBLE AT ALL? ──
     //
     // Showing that a fix for this defect works, or that a test for it fails, needs a UClass*
     // recycled on demand. This target makes it checkable: the fixture's memory is OURS, so an address
     // can be made to hold a different class simply by overwriting the bytes.
     //
-    // This case does NOT fix A10 and does not assert the code is correct. It answers the
+    // This case does NOT fix the defect and does not assert the code is correct. It answers the
     // prior question: does the defect actually reproduce?
     {
         blk("A10 - can a recycled class address be made to serve STALE metadata?");
@@ -871,7 +871,7 @@ int main() {
         // ONE CLASS BLOB PER CASE, and it is not tidiness: s_walkClassExCache is keyed
         // by the class address (per family epoch) and NOTHING erases it (that unboundedness is exactly
         // why the plausibility ceiling has to stay a bound). Reusing one address makes
-        // every case after the first read the FIRST case's memoised answer -- the A10
+        // every case after the first read the FIRST case's memoised answer -- the recycled-address
         // defect the fixture above demonstrates.
         // STATIC blobs, for the same reason one step further: a heap buffer can be handed the
         // address of a class an EARLIER test walked and freed, and then reads that test's memoised
@@ -916,12 +916,12 @@ int main() {
 
     {   blk("A1 follow-up — sizeof(TLazyObjectPtr) is DERIVED, and is 0x20 in NO era");
         // ⭐ WHY THIS TEST EXISTS, AND WHY IT IS OFFLINE. A 0x20 element size -- the
-        // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model -- coming out of `InferScalarSize` cannot
-        // be corrected downstream, because `ResolveInnerSize` consults InferScalarSize BEFORE it
-        // ever asks the engine. Two costs: every array element from index 1 drifts, and
-        // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS — so the
-        // `payload envelope measured` line could never be emitted from an array walk, and an
-        // operator reaching lazy that way would score a CORRECT fix as FAILED.
+        // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model -- coming out of `InferScalarSize` is
+        // substituted for the engine's right size wherever a caller overrides a mismatch with it.
+        // Two costs: every array element from index 1 drifts, and LazyGuidOffset(0x20) computes
+        // 0x10, which PersistentPtrEnvelopeFor REJECTS — so the `payload envelope measured` line
+        // could never be emitted from an array walk, and a live check looking for that line there
+        // would read a correct reader as FAILED.
         //
         // It is offline because no installed title has a TArray<TLazyObjectPtr> (OCTOPATH has 5
         // scalar lazy properties and zero arrays).
@@ -1262,7 +1262,7 @@ int main() {
 
 
     {   blk("W5-STRARRAY-ELEMENTS -- a string array's elements are read and decoded");
-        // IsScalarArrayType admits no string type and no other phase read one, so the walk sent a
+        // IsScalarArrayType admits no string type, so without a phase of its own the walk would send a
         // TArray<FString> with its count and NO elements. ⭐ The index is encoded in each string, so a
         // stride drift reads the wrong text rather than merely "a" text.
         struct FakeFString { uintptr_t Data; int32_t Num; int32_t Max; };
@@ -1329,7 +1329,7 @@ int main() {
 
     {   blk("W3-XREF-CAP -- MergedScanCapHit: is a capped parallel scan's merged result a prefix?");
         // Each worker stops at maxResults, leaving the rest of its index range UNSCANNED, and ConcatTruncate then
-        // cuts the merge to maxResults. Neither was published: a capped page read as a complete answer.
+        // cuts the merge to maxResults. Both must be published, or a capped page reads as a complete answer.
         struct CapTR { std::vector<int> items; };
         std::vector<CapTR> fin(2);  fin[0].items.assign(100, 0);  fin[1].items.assign(100, 0);
         check("XREFCAP control: two workers that each finished, exactly at the cap, are NOT capped",
@@ -1541,7 +1541,7 @@ int main() {
         check("BACKGROUND: every worker is back after both", pb.InUse() == 0, std::to_string(pb.InUse()).c_str());
     }
 
-    // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] Stage C: trigger_scan / rescan start one job at a time, and
+    // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] trigger_scan / rescan start one job at a time, and
     // only Stop cancels it. Here, not in dll_helpers_test, because RunThreadGuarded logs through Sein, whose stubs
     // this target defines.
     {
@@ -1636,7 +1636,7 @@ int main() {
         Tot::ResetShutdown();
     }
 
-    // -- HINTCACHELOCK -- [PIPE-PER-PROCESS-2026-11-06] Stage C: the hint cache is changed under one lock. On a temp
+    // -- HINTCACHELOCK -- [PIPE-PER-PROCESS-2026-11-06] The hint cache is changed under one lock. On a temp
     // file, never the user's real cache (GetCacheFilePath), so only UpdateCacheRecord is called, never a public Save*.
     {
         blk("HINTCACHELOCK - two writers at once both keep their change");
@@ -1775,13 +1775,12 @@ int main() {
 
     // -- UFUNCTAIL-2026-09-11 -- NumParms / ParmsSize / ReturnValueOffset on UE 4.11-4.17 ----
     //
-    // [A2-UFUNC-TAIL-4X]. FunctionFlags is measured per version, but the three fields behind it
-    // were read at a flat +4/+6/+8, under a comment calling that "stable across all UE versions".
-    // It is not: RE-UE4SS's MemberVariableLayout templates put a uint16 RepOffset first on every
-    // version from 4.11 to 4.17 (4.11: FunctionFlags 0x88, RepOffset 0x8C, NumParms 0x8E) and drop
-    // it at 4.18 (NumParms 0x8C). So on 4.11-4.17 `parmsSize` was really NumParms, and every
-    // invoke buffer sized from it was undersized inside the game. Pure (no name pool), so it sits
-    // above the pool-faking tail.
+    // [A2-UFUNC-TAIL-4X]. FunctionFlags is measured per version, and the three fields behind it
+    // are not at a flat +4/+6/+8 on every UE version: RE-UE4SS's MemberVariableLayout templates put
+    // a uint16 RepOffset first on every version from 4.11 to 4.17 (4.11: FunctionFlags 0x88,
+    // RepOffset 0x8C, NumParms 0x8E) and drop it at 4.18 (NumParms 0x8C). Read flat, `parmsSize`
+    // on 4.11-4.17 is really NumParms, and every invoke buffer sized from it is undersized inside
+    // the game. Pure (no name pool), so it sits above the pool-faking tail.
     {
         blk("UFUNCTAIL - the UFunction tail follows the version's RepOffset");
 
@@ -2259,19 +2258,18 @@ int main() {
     // "EnumProperty" / "ByteProperty" / "OptionalProperty" out of a fake pool. Own chunks,
     // like IFACEREAD; nothing needing the real pool may follow.
     //
-    // THE DEFECT, and it is IFACEREAD's exactly, in three more places. Slice C of the
-    // unadjudicated sweep claims ranked `Ubel.cpp` OptionalProperty's isObjectLike read as
-    // PUBLISHED-tier; reading it found the same discarded-read shape in the two enum
-    // handlers beside it. On a faulted read the out-param keeps its initialised 0, and 0
-    // is never "unknown" downstream:
+    // THE HAZARD, and it is IFACEREAD's exactly, in three more places: `Ubel.cpp`
+    // OptionalProperty's isObjectLike read and the two enum handlers beside it. A handler
+    // that discards the read's result leaves the out-param at its initialised 0 on a
+    // faulted read, and 0 is never "unknown" downstream:
     //   * EnumProperty  -> hexValue "00" and typedValue "0" (or, with a UEnum, the NAME of
     //                      enumerator 0) for a byte nobody could read;
     //   * ByteProperty  -> the same, one handler down;
     //   * TOptional     -> "(unset)", an AFFIRMATIVE claim that the option provably holds
-    //                      no value -- the identical claim "(unbound)" made for delegates
-    //                      in D3/D5. And its FString/FName arms fail the OTHER way: their
-    //                      sentinels are -1 / 0xFFFFFFFF, so a faulted 0 reads as SET.
-    // `BoolProperty`, three blocks above the enum handlers, has always had it right.
+    //                      no value -- the identical claim "(unbound)" would make for an
+    //                      unreadable delegate. And its FString/FName arms fail the OTHER way:
+    //                      their sentinels are -1 / 0xFFFFFFFF, so a faulted 0 reads as SET.
+    // `BoolProperty`, three blocks above the enum handlers, already checks its read.
     //
     // ⭐ THE DISCRIMINATOR IS AGAIN WHAT MATTERS. Every refusal check below can be passed
     // by code that simply blanks the field; what cannot is "a byte that genuinely holds 0
@@ -2548,7 +2546,7 @@ int main() {
     // ⛔ POOL-FAKING, like IFACEREAD / UNREADVAL / BOOLNATIVE: WalkFunctions keeps a child only if
     // its class is NAMED "Function", and types each param by its class's NAME. Own pool, first.
     //
-    // [A2-UFUNC-TAIL-4X]'s lead. In UProperty mode (UE4 < 4.25) WalkFunctions read a param's
+    // [A2-UFUNC-TAIL-4X]. In UProperty mode (UE4 < 4.25) WalkFunctions must not read a param's
     // UStructProperty::Struct / UObjectPropertyBase::PropertyClass at a flat
     // UPROPERTY_OFFSET + 0x2C. That is the 4.18+ delta: on 4.11-4.17 Offset_Internal and
     // RepNotifyFunc sit the other way round and the first subclass field is at +0x28 (the measured
@@ -2722,10 +2720,10 @@ int main() {
     // ⛔ POOL-FAKING, like UFUNCWALK: WalkFunctions keeps a child only if its class is NAMED "Function", and
     // types each entry by its class's NAME. Own pool, first.
     //
-    // [EXTPR-539-540-2026-10-02] D3. A UFunction's property chain holds its parameters (CPF_Parm, the return
+    // [EXTPR-539-540-2026-10-02] A UFunction's property chain holds its parameters (CPF_Parm, the return
     // included) and, on a Blueprint function, its locals after them (CallFunc_*_ReturnValue, K2Node_*,
-    // Temp_*): the 2026-08 Y1 trap, where the Invoke form offered two frame locals past parmsSize as
-    // arguments. WalkFunctions still lists every entry; it now also says which ones are parameters, from the
+    // Temp_*): an Invoke form that took the whole chain would offer frame locals past parmsSize as
+    // arguments. WalkFunctions lists every entry and says which ones are parameters, from the
     // PropertyFlags word it already reads for out / ret. Both property models: FField and UProperty.
     {
         blk("UFUNCPARM - WalkFunctions flags the CPF_Parm entries, so a Blueprint local is not a parameter");
@@ -2853,10 +2851,10 @@ int main() {
     // [A2-TOPTIONAL-INTRUSIVE]. UE decides "set" through ValueProperty->HasIntrusiveUnsetOptionalState()
     // and sizes the property by FOptionalPropertyLayout::CalcSize (UE 5.8 PropertyOptional.h):
     // intrusive -> sizeof(T); otherwise Align(sizeof(T) + 1, alignof(T)) with the bIsSet byte at
-    // +sizeof(T). The walker instead decided by the inner type's NAME: an object optional was
-    // "unset" when its pointer was null (a TOptional<AActor*> set to null showed (unset); after
-    // Reset(), which writes no bytes, the stale pointer was published), and a container optional read
-    // its bIsSet at field + sizeof(T) -- the NEXT property's first byte. Find Refs held the same belief.
+    // +sizeof(T). Deciding by the inner type's NAME instead gets both wrong: an object optional would
+    // be "unset" when its pointer is null (a TOptional<AActor*> set to null shows (unset); after
+    // Reset(), which writes no bytes, the stale pointer is published), and a container optional would read
+    // its bIsSet at field + sizeof(T) -- the NEXT property's first byte. Find Refs follows the same layout.
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
@@ -3847,8 +3845,8 @@ int main() {
 
     // -- CONTAINERENUM-2026-09-12 -- a container inner's UEnum reaches FieldInfo -------------------------------
     //
-    // ⛔ POOL-FAKING (own pool, last). [A4-USMAP-CONTAINER-ENUM] The walker named a container inner's type, struct and
-    // object class, never its enum -- so USMAP wrote a TArray<TEnumAsByte<E>> as a bare byte array.
+    // ⛔ POOL-FAKING (own pool, last). [A4-USMAP-CONTAINER-ENUM] The walker names a container inner's enum beside its
+    // type, struct and object class -- without it USMAP writes a TArray<TEnumAsByte<E>> as a bare byte array.
     {
         blk("CONTAINERENUM - WalkClassEx publishes a container inner's UEnum (Array / Set / Map)");
 
@@ -4073,10 +4071,10 @@ int main() {
 
     // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
     //
-    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [USMAP-ENUM-SIGNEDNESS] The .usmap took an enum's underlying type
-    // from its SIZE alone, so a `: int8` enum was written unsigned and a `: uint32` one signed. Both canonical writers
-    // write the UnderlyingProp's own type. It sits one pointer before the Enum slot, and is read only when that Enum
-    // slot validated (the family is right there) and only when it names an integer property.
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [USMAP-ENUM-SIGNEDNESS] The .usmap cannot take an enum's
+    // underlying type from its SIZE alone: a `: int8` enum would be written unsigned and a `: uint32` one signed. Both
+    // canonical writers write the UnderlyingProp's own type. It sits one pointer before the Enum slot, and is read only
+    // when that Enum slot validated (the family is right there) and only when it names an integer property.
     {
         blk("ENUMUNDERLYING - WalkClassEx publishes an EnumProperty's underlying integer type, and refuses a bad read");
 
@@ -4160,8 +4158,8 @@ int main() {
 
     // -- METACLASS-2026-09-27 -- a ClassProperty's MetaClass reaches FieldInfo, validated ---------------------------
     //
-    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class published a ClassProperty's
-    // PropertyClass -- `Class` -- and never its MetaClass, so the SDK header could only write TSubclassOf<class Class>.
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class publishes a ClassProperty's MetaClass
+    // beside its PropertyClass -- `Class` -- without which the SDK header could only write TSubclassOf<class Class>.
     // MetaClass is the next pointer after PropertyClass in every supported layout (4.18..5.8 UnrealType.h; RE-UE4SS
     // templates; Dumper-7 Offsets.cpp). The read is refused unless the PropertyClass slot really holds a class of
     // classes AND the pointer after it is a UClass.
@@ -4489,8 +4487,8 @@ int main() {
     // -- DELEGATEARRAYPAD-2026-09-12 -- a TArray<FScriptDelegate> publishes its PER-ELEMENT detector pad -----------
     //
     // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. [A4-DELEGATE-ARRAY-PAD] The elements of a TArray<FScriptDelegate>
-    // are the standalone unicast delegate, padded on a checked build. The reader always knew (its stride); the wire
-    // never said, so CE XML / CSX element leaves read the detector.
+    // are the standalone unicast delegate, padded on a checked build. The reader knows (its stride); the wire must say
+    // so too, or CE XML / CSX element leaves read the detector.
     {
         blk("DELEGATEARRAYPAD - the helper and the walk publish a delegate array's per-element pad");
         ResetCancel();
@@ -4704,8 +4702,8 @@ int main() {
 
     // -- UPROPDELEGATE-2026-09-12 -- the UProperty-mode delegate-array arms name the readers' refusal ---------------
     //
-    // ⛔ POOL-FAKING (own pool, last). [P1-UPROP-DELEGATE] e16d2052 fixed the FProperty arms; the UProperty-mode
-    // (UE4 < 4.25) twins kept dropping the refusal. A 20-byte element is neither 16 nor 24, so both readers refuse it.
+    // ⛔ POOL-FAKING (own pool, last). [P1-UPROP-DELEGATE] The UProperty-mode (UE4 < 4.25) twins of the FProperty arms
+    // must carry the readers' refusal too. A 20-byte element is neither 16 nor 24, so both readers refuse it.
     {
         blk("UPROPDELEGATE - a UProperty-mode delegate array names the reader's refusal, as the FProperty arm does");
         ResetCancel();
@@ -4783,8 +4781,9 @@ int main() {
 
     // -- WALKUNREADABLE-2026-09-12 -- a walk of an unreadable instance SAYS so ---------------------------------------
     //
-    // [P1-WALK-UNREADABLE] WalkInstance knew ("not readable (freed?)") and returned a result carrying only addr: no
-    // stale, no error, so Live Walker showed a silently blank grid. A reserved, uncommitted page is the freed object.
+    // [P1-WALK-UNREADABLE] WalkInstance knows ("not readable (freed?)") and must say so: a result carrying only
+    // addr, no stale and no error, leaves Live Walker a silently blank grid. A reserved, uncommitted page is the
+    // freed object.
     {
         blk("WALKUNREADABLE - WalkInstance marks an instance it cannot read");
         uint8_t* wuPage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE, PAGE_NOACCESS));
@@ -4802,8 +4801,8 @@ int main() {
 
     // -- WALKNOHEADER-2026-10-27 -- a walk that resolves its own class says when the header names none ----------------
     //
-    // [WALK-NULLCLASS-SILENT] L47: a released page re-committed as zeros walked to a classless, field-less reply with no
-    // stale and no unreadable key, so Live Walker showed a blank 'None' grid with no status. WalkClass(0) gives
+    // [WALK-NULLCLASS-SILENT] A released page re-committed as zeros must not walk to a classless, field-less reply with
+    // no stale and no unreadable key, or Live Walker shows a blank 'None' grid with no status. WalkClass(0) gives
     // PropertiesSize 0, which the plausibility gate accepts; an unmapped ClassPrivate takes WalkClass's fault exit to the
     // same 0. A live UObject never has either.
     {
@@ -4869,7 +4868,7 @@ int main() {
     // -- SPARSEREFS-2026-09-12 -- Find References counts the sparse delegates it could not read ----------------------
     //
     // ⛔ POOL-FAKING (own pool, last). [P1-SPARSEDELEGATE-REFS] A sparse delegate whose InvocationList cannot be located
-    // was skipped, and the sweep still reported itself complete -- so the UI blamed the game for our gap. A planted
+    // is skipped, and the sweep must count it: reported complete, it makes the UI blame the game for our gap. A planted
     // FSparseDelegateStorage map holds two unreadable delegates and one readable one: exactly two must be counted.
     {
         blk("SPARSEREFS - the sweep counts the sparse delegates it could not read");
@@ -5014,10 +5013,10 @@ int main() {
 
     // -- WALKCLASSEXUNMAPPED-2026-09-12 -- an unreadable class is refused, and NOT memoized --------------------------
     //
-    // [A2-WALKCLASSEX-UNMAPPED] WalkClass returns {Address, PropertiesSize 0} from its read-fault exit, and WalkClassEx
-    // passed `true` as the read verdict, so the value test accepted and memoized that empty walk FOREVER -- and Aura's
-    // two refusal gates (`WalkClassEx(cls).Address != cls`) passed with it. A decommitted page is the transient fault;
-    // re-committing it is the page coming back. GetCachedStructFields is the twin.
+    // [A2-WALKCLASSEX-UNMAPPED] WalkClass returns {Address, PropertiesSize 0} from its read-fault exit, so WalkClassEx
+    // must not pass `true` as the read verdict: the value test would accept and memoize that empty walk FOREVER -- and
+    // Aura's two refusal gates (`WalkClassEx(cls).Address != cls`) would pass with it. A decommitted page is the
+    // transient fault; re-committing it is the page coming back. GetCachedStructFields is the twin.
     {
         blk("WALKCLASSEXUNMAPPED - an unreadable class is refused and not memoized, so it walks when it comes back");
         ResetCancel();
@@ -5062,9 +5061,9 @@ int main() {
     // -- LAZYLATCHGUESS-2026-09-12 -- a lazy array's size is the engine's, and only a real one is latched ----------
     //
     // [A2-LAZY-LATCH-GUESS] InferScalarSize("LazyObjectProperty") is a VERSION GUESS (>= 503 ? 0x18 : 0x1C).
-    // ValidateArrayElemSize and ResolveInnerSize let it override the engine's raw ElementSize, and the array reader fed
-    // the result into the envelope latch, which logged "payload envelope measured". A 5.0-5.2 title mis-resolved as 504
-    // strode 0x18 over 0x1C elements and latched a false +0x08.
+    // It must not override the engine's raw ElementSize in ValidateArrayElemSize or ResolveInnerSize, nor reach the
+    // envelope latch through the array reader, which logs "payload envelope measured": a 5.0-5.2 title mis-resolved as
+    // 504 would stride 0x18 over 0x1C elements and latch a false +0x08.
     {
         blk("LAZYLATCHGUESS - a lazy array's size comes from the engine, and only a real one is latched");
         ResetCancel();
@@ -5094,7 +5093,8 @@ int main() {
         check("LAZYLATCHGUESS guard: ...and latches nothing -- a fallback is not a measurement",
               DynOff::LAZYPTR_GUID == -1, std::to_string(DynOff::LAZYPTR_GUID).c_str());
 
-        // The reader is handed a size its caller already derived; re-measuring THAT latched a fallback as "measured".
+        // The reader is handed a size its caller already derived; re-measuring THAT would latch a fallback as
+        // "measured".
         alignas(8) static uint8_t lzData[2 * 0x18] = {};
         alignas(8) static uint8_t lzInst[0x20] = {};
         const uintptr_t lzDataAddr = reinterpret_cast<uintptr_t>(lzData);
@@ -5506,10 +5506,10 @@ int main() {
     // -- USERPICK-2026-11-03 -- the USER-facing "an instance of class X" lookup picks by derivation ---------------------
     //
     // ⛔ POOL-FAKING, like PROBECLASS / DBGCAM58: own object pool AND own name pool. [FINDINSTANCE-SUBSTRING-USERFACING]
-    // The C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE matched a class-name
-    // SUBSTRING and took the first non-CDO match, else the first match -- so "CheatManager" landed on a cheat EXTENSION
-    // (GAS's included) or on the Debug Camera's own CheatManager, whichever sat lower in GObjects. Every wrong object
-    // here sits BELOW the right one.
+    // The C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE must not match a
+    // class-name SUBSTRING and take the first non-CDO match, else the first match -- that lands "CheatManager" on a
+    // cheat EXTENSION (GAS's included) or on the Debug Camera's own CheatManager, whichever sits lower in GObjects.
+    // Every wrong object here sits BELOW the right one.
     {
         blk("USERPICK - the user-facing class lookup picks by derivation, ranks the Debug Camera's objects last");
         ResetCancel();
@@ -5974,10 +5974,10 @@ int main() {
 
     // -- LOCALPC-2026-11-03 -- the internal local-PlayerController fallback picks by derivation ------------------------
     //
-    // ⛔ POOL-FAKING, like USERPICK: own object pool AND own name pool. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Seven
-    // modules fell back, when their GWorld chain gave no controller, to the first object whose CLASS NAME contains
-    // "PlayerController" and whose fuzzy 'Player' field was set, else the first such object at all: a widget named after
-    // the word won with its OwningPlayer, a game PC named without it was missed, and an active Debug Camera never was.
+    // ⛔ POOL-FAKING, like USERPICK: own object pool AND own name pool. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] A
+    // module whose GWorld chain gives no controller must not fall back to the first object whose CLASS NAME contains
+    // "PlayerController" and whose fuzzy 'Player' field is set, else the first such object at all: a widget named after
+    // the word wins with its OwningPlayer, a game PC named without it is missed, and an active Debug Camera never is.
     // Every wrong object here sits BELOW the right one.
     {
         blk("LOCALPC - the local PlayerController fallback picks by derivation, the local player first");
@@ -6443,10 +6443,10 @@ int main() {
     // ⛔ POOL-FAKING, like UFIELDNEXT: the vote samples GObjects for objects whose class is NAMED "Function". Own
     // pool and name pool; the main fixture goes back at the end.
     //
-    // The override now reaches 4.11-4.17, whose UFunction tail sits 2 later (a uint16 RepOffset first). A wrong pick
-    // on a 4.18 title moved every NumParms / ParmsSize / ReturnValueOffset read, and nothing measured the tail itself:
-    // the vote adds only the version's own shift. Ten built UFunctions with one to three 4-byte parameters each, in
-    // UProperty mode, FunctionFlags at 0x88 -- the offset both sides of 4.18 share.
+    // The override reaches 4.11-4.17, whose UFunction tail sits 2 later (a uint16 RepOffset first). A wrong pick on a
+    // 4.18 title would move every NumParms / ParmsSize / ReturnValueOffset read, and the vote adds only the version's
+    // own shift, so the override is checked against the tail itself. Ten built UFunctions with one to three 4-byte
+    // parameters each, in UProperty mode, FunctionFlags at 0x88 -- the offset both sides of 4.18 share.
     {
         blk("OVERRIDETAIL - an override is held to where the sampled UFunctions keep their tail");
         ResetCancel();
@@ -6660,8 +6660,8 @@ int main() {
 
         // [OVERRIDE-REVIEW2-LOWS] What get_pointers publishes as override_contradicted. An override persisted before
         // the refusal existed, or chosen before any scan, is handed in ahead of the scan at every launch; the vote
-        // then measured the contradiction and said so in the log alone. Nothing has read a function yet here: the
-        // judgement runs the vote itself, under the version in force, as the first function read would.
+        // then measures the contradiction, and the flag carries it past the log. Nothing has read a function yet
+        // here: the judgement runs the vote itself, under the version in force, as the first function read would.
         DynOff::bOffsetsProbeRan.store(true);
         build(0x88);
         resetVote();
@@ -6996,7 +6996,7 @@ int main() {
         g_cachedUEVersion              = svVerE;
     }
 
-    // -- [VND583-07, A9 step 11] FName::Number's offset is measured from NamePrivate on a case-preserving build ----
+    // -- [VND583-07] FName::Number's offset is measured from NamePrivate on a case-preserving build ----
     // Built: 16 "Thing" objects with a 12-byte (CPN) NamePrivate and OuterPrivate at +0x28, in either member order.
     // UE4 / 5.0: {ComparisonIndex, DisplayIndex, Number}; 5.1+: {ComparisonIndex, Number, DisplayIndex}. Number is
     // 5 on every one, so the right read renders "Thing_4". Own pool and name pool, like FNAMEMEASURE.
@@ -7127,7 +7127,7 @@ int main() {
         build(false, 3, 4);
         check("FNAMESIZE control: three fields are too few -> the rule's 8", Ubel::FNameSize() == 8);
 
-        // A9 step 7. Unmeasured (the latch set, nothing found), validated: a plausible engine size is kept.
+        // Unmeasured (the latch set, nothing found), validated: a plausible engine size is kept.
         build(false, 0, 0);
         DynOff::bFNameSizeProbed = true;
         const int32_t v4 = Ubel::ValidateArrayElemSize(4, "NameProperty");
@@ -7309,7 +7309,7 @@ int main() {
         }
 
         // [VND9-01] The sub-path names an object INSIDE the asset -- an actor in a level is
-        // "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- and the live reader dropped it, so a soft reference to the actor
+        // "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- and a reader that drops it makes a soft reference to the actor
         // read as one to the map. SubPathString is an FString through 5.5 and an FUtf8String from 5.6 (SoftObjectPath.h):
         // the width comes from the reflected field when it was measured, the FString rule only where nothing else can be
         // there, and nothing at all on an unmeasured 5.6+ -- UTF-8 read as UTF-16 is garbage, worse than no sub-path.
@@ -7402,9 +7402,10 @@ int main() {
     }
 
     // -- [VND9-03] FIRE reads a returned or out string's TEXT from the post-call buffer -------------------------------
-    // Its 16 bytes are { Data, Num, Max } with Data in the engine's heap, which the UI cannot follow, so FIRE showed the
-    // header's raw bytes where the CE route showed the text. Only return / out slots of the three string types are read:
-    // an input slot -- and a const-ref one the caller filled -- points at the caller's own buffer, freed by then.
+    // Its 16 bytes are { Data, Num, Max } with Data in the engine's heap, which the UI cannot follow, so FIRE would
+    // show the header's raw bytes where the CE route shows the text. Only return / out slots of the three string types
+    // are read: an input slot -- and a const-ref one the caller filled -- points at the caller's own buffer, freed by
+    // then.
     {
         blk("STRRESULTS - FIRE reads a returned or out string's text, never an input's freed buffer");
         static const wchar_t kIn[] = L"input";
@@ -7569,7 +7570,7 @@ int main() {
             b.table.assign(4, 0);
             b.table[0] = reinterpret_cast<uintptr_t>(b.chunk0.data());
             // The array sits 0x40 into its buffer, so a probe BELOW the real base reads this struct's own
-            // bytes -- which is how the live 5.8 decoy below was met. Every count field is set, as a real
+            // bytes -- the shape of the live 5.8 decoy below. Every count field is set, as a real
             // array's are: Max 2,162,688 (33 chunks of 64K), one chunk in use.
             b.arr.assign(0xC0, 0);
             uint8_t* a = b.arr.data() + 0x40;
@@ -7696,8 +7697,8 @@ int main() {
                   staleW.typedValue.c_str());
 
             // [R7-B-02] A SET TOptional<TWeakObjectPtr> (12 bytes: the pointer, then bIsSet at +8) whose pointer does
-            // not resolve takes the same null / null (stale) rule as every other weak reader -- it said "(stale)"
-            // for both, including a pointer explicitly set to null.
+            // not resolve takes the same null / null (stale) rule as every other weak reader -- not "(stale)" for
+            // both, which would include a pointer explicitly set to null.
             static uint8_t wkOptFC[0x20] = {};
             *reinterpret_cast<int32_t*>(wkOptFC + DynOff::FFIELDCLASS_NAME) = 3;
             static uint8_t wkOptInner[0x80] = {};
@@ -7834,7 +7835,7 @@ int main() {
                 check("WEAKLABEL control VND583-06: the same item bit on UE5 is not PendingKill -> no label",
                       c5.ptrValue == o1 && c5.typedValue.empty(), c5.typedValue.c_str());
 
-                // [R7-B-04] The three weak display sites that never showed the tag, on a UE5 Garbage target. The
+                // [R7-B-04] Three more weak display sites that must show the tag, on a UE5 Garbage target. The
                 // target gets a name ("Wk", pool index 2) so the readers that print a NAME print one.
                 int32_t svName1 = 0;
                 memcpy(&svName1, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), 4);
@@ -7844,14 +7845,14 @@ int main() {
                 memcpy(&svObjF, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), 4);
                 memcpy(&svItemF, item1 + 8, 4);
                 setFlags(0x40000000u, 0);
-                // (1) A SET TOptional<TWeakObjectPtr>: the tag it added was overwritten by the display builder.
+                // (1) A SET TOptional<TWeakObjectPtr>: the tag it adds must survive the display builder.
                 *reinterpret_cast<int32_t*>(wpage + 0x660) = 1;
                 *reinterpret_cast<int32_t*>(wpage + 0x664) = Aura::GetSerialNumber(1);
                 wpage[0x668] = 1;
                 const auto optG = optField("optional weak garbage", Ubel::WalkInstance(winst, makeOptClass(3, 0x660), 64, 2, false));
                 check("WEAKLABEL ⭐ R7-B-04: a SET TOptional<weak> to a Garbage target shows [garbage]",
                       optG.ptrValue == o1 && optG.typedValue.find("[garbage]") != std::string::npos, optG.typedValue.c_str());
-                // (2) The delegate-binding label every reader uses (the sparse-binding loop did not add the tag).
+                // (2) The delegate-binding label every reader uses, the sparse-binding loop's included.
                 const std::string dbG = Ubel::DescribeDelegateBinding(o1, "Obj", 1, Aura::GetSerialNumber(1), "OnHit");
                 check("WEAKLABEL ⭐ R7-B-04: a delegate binding to a Garbage target shows [garbage]",
                       dbG == "Obj::OnHit [garbage]", dbG.c_str());
@@ -7896,7 +7897,7 @@ int main() {
                 g_cachedUEVersion = svVerG;
 
                 // [VND583-08] serial 0 is UE's explicit null: {1, 0} must not resolve to object 1 --
-                // it did, whenever object 1's own serial had never been assigned (most read 0).
+                // a bare serial compare resolves it whenever object 1's own serial was never assigned (most read 0).
                 memcpy(item1s + 0x10, &svSerial1, 4);   // item 1 back to serial 0, as unassigned
                 check("WEAKLABEL ⭐ VND583-08: {1, 0} does NOT resolve, even to an object whose serial is 0",
                       Ubel::ResolveWeakObjectPtr(1, 0) == 0);
@@ -8446,10 +8447,10 @@ int main() {
 
     // -- UPROPINNER-2026-09-27 -- a UProperty engine's container inners are named -------------------------------------
     //
-    // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx typed a container's inner / key / value /
-    // element with the FField reader, which on a UProperty (a UObject) reads ObjectFlags | InternalIndex at +0x8 and
-    // never names anything: UE423_Flying's export had 1,016 TArray<uint8_t> and 52 TMap<uint8_t, uint8_t>, and DQ XI S
-    // typed 0 of 77 array inners. Objects are sized as 4.23's: subclass start 0x70 (the family, since UPROPSLOT).
+    // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx must not type a container's inner / key /
+    // value / element with the FField reader on a UProperty engine: on a UProperty (a UObject) it reads ObjectFlags |
+    // InternalIndex at +0x8 and never names anything, so every inner would export as uint8_t. Objects are sized as
+    // 4.23's: subclass start 0x70 (the family, since UPROPSLOT).
     {
         blk("UPROPINNER - on a UProperty engine WalkClassEx names Array / Map / Set inners, and reads their classes");
 
@@ -8542,7 +8543,7 @@ int main() {
     // ⛔ OWN name table (after UPROPINNER). [UE4-ASSETPTR-PROPS] AssetObjectProperty / AssetClassProperty, the soft
     // pointers before 4.18 renamed them, hold an FAssetPtr: FWeakObjectPtr +0, TagAtLastTest +8, and the path as ONE
     // FString (FStringAssetReference::AssetLongPathname) at +0x10, 0x20 in all (UE_4.10 PersistentObjectPtr.h /
-    // StringAssetReference.h; UE415_Flyinh's 4.15 PDB). Nothing read them: a walk row showed bytes, the class no
+    // StringAssetReference.h; UE415_Flyinh's 4.15 PDB). Unread, a walk row shows bytes and the class no
     // PropertyClass / MetaClass. And the 4.18+ reader must not take them either -- its envelope arithmetic reads a 0x20
     // element as a 5.3+ untagged pointer (0x20 - an FName/FString path's 0x18 = 0x08) and LATCHES that for the session.
     // A 4.15-sized class: Next +0x28, ElementSize +0x34, Offset_Internal +0x50, subclass start 0x78.
@@ -8980,10 +8981,10 @@ int main() {
 
     // -- UPROPFLAT-2026-09-28 -- WalkInstance's UProperty container arms read an inner's struct at the family slot -------
     //
-    // ⛔ OWN name table (after FAMILYEPOCH). [UPROP-CONTAINER-FLAT-2C] The UProperty TArray / TMap / TSet arms probed the
-    // inner pointer around a flat UPROPERTY_OFFSET + 0x2C and then read the inner's UScriptStruct at that SAME flat
-    // offset, unprobed. It is right on stock 4.18-4.24 only: 4.11-4.17 put the subclass start at Offset_Internal + 0x28
-    // and a case-preserving build at + 0x34, so a struct element's type came from the wrong slot.
+    // ⛔ OWN name table (after FAMILYEPOCH). [UPROP-CONTAINER-FLAT-2C] The UProperty TArray / TMap / TSet arms must
+    // not read the inner's UScriptStruct at a flat UPROPERTY_OFFSET + 0x2C, unprobed. That offset is right on stock
+    // 4.18-4.24 only: 4.11-4.17 put the subclass start at Offset_Internal + 0x28 and a case-preserving build at + 0x34,
+    // so a struct element's type would come from the wrong slot.
     {
         blk("UPROPFLAT - a UProperty TArray<struct>'s element struct is read at the family slot on 4.15 and case-preserving 4.23");
 
@@ -9058,10 +9059,11 @@ int main() {
 
     // -- CONTAINEROBJ-2026-09-28 -- a Map key / value, a Set element and every object-family inner carry their class ------
     //
-    // ⛔ OWN name table (after UPROPFLAT). [SDK-CONTAINER-OBJCLASS] walk_class published an object property's class for
-    // an Array inner of Object / Class type only, so EVERSPACE 2's SDK header had 20 TMap<FName, class UObject*>, 28
-    // TSet<class UObject*> and 50 TSoftObjectPtr<UObject>, and a class-valued map key whose PropertyClass is a UClass
-    // subclass -- ALevelVariantSetsActor::DirectorInstances -- came out UClass* (the source oracle's one MISMATCH).
+    // ⛔ OWN name table (after UPROPFLAT). [SDK-CONTAINER-OBJCLASS] walk_class publishes an object property's class
+    // for every container slot and every object-family type, not an Array inner of Object / Class type alone: without
+    // it the SDK header writes TMap<FName, class UObject*>, TSet<class UObject*> and TSoftObjectPtr<UObject>, and a
+    // class-valued map key whose PropertyClass is a UClass subclass -- ALevelVariantSetsActor::DirectorInstances --
+    // comes out UClass*.
     {
         blk("CONTAINEROBJ - Map key / value, Set element and object-family Array inners publish their PropertyClass");
 
@@ -9790,11 +9792,11 @@ int main() {
 
     // -- PROBEOVERRUN-2026-09-28 -- the C-ABI subclass getters read no further than a proven slot ---------------------
     //
-    // ⛔ OWN name table (after STRUCTKIND). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
-    // FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned) and returned the first object of the wanted kind. On
-    // EVERSPACE 2 the PropertyClass getter, asked about a Blueprint UberGraphFrame StructProperty (0x78 bytes), returned
-    // the component class at +0x80 -- the NEXT heap block -- and a null PropertyClass would have done the same. A slot a
-    // real struct was read out of now gives the final answer; an unproven one is tried one aligned pointer either side
+    // ⛔ OWN name table (after STRUCTKIND). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot must not try a wide spread of
+    // slots around FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned) and return the first object of the
+    // wanted kind: asked about a Blueprint UberGraphFrame StructProperty (0x78 bytes), the PropertyClass getter would
+    // return the component class at +0x80 -- the NEXT heap block -- and a null PropertyClass would do the same. A slot
+    // a real struct was read out of gives the final answer; an unproven one is tried one aligned pointer either side
     // and no further (the UE423 0x78 -> 0x70 and DQ XI S 0x78 -> 0x80 moves).
     {
         blk("PROBEOVERRUN - the subclass getters read no further than a proven slot");
@@ -9971,9 +9973,10 @@ int main() {
         check("PROBEOVERRUN: a proof filed late under an older epoch leaves the newer one standing",
               Ubel::IsSubclassSlotConfirmed(), std::to_string(Ubel::s_subclassSlotConfirmed.load()).c_str());
 
-        // [DYNOFF-LATCH-STALE] CorrectSubclassOffsets latched once per process, so a family published after it -- Genau's
-        // measured arm on a later UE5_Init (TQ2 derived 0x74 with the struct at 0x78), the defaults a re-run init
-        // applies first -- was never checked again. Called directly, as above: only CorrectSubclassOffsets is under test.
+        // [DYNOFF-LATCH-STALE] CorrectSubclassOffsets must not latch once per process: a family published after it --
+        // Genau's measured arm on a later UE5_Init (TQ2 derives 0x74 with the struct at 0x78), the defaults a re-run
+        // init applies first -- would never be checked again. Called directly, as above: only CorrectSubclassOffsets is
+        // under test.
         auto hx = [](int v) { char b[16]; snprintf(b, sizeof(b), "0x%X", v); return std::string(b); };
         FieldInfo lsFi{};
         lsFi.Address = A(poPos);   // its struct at 0x78
@@ -12010,7 +12013,8 @@ int main() {
             Linie::FreeTrace();
         }
 
-        // What step 2 costs on the hook: printed, not checked (a timing is the machine's).
+        // What [LIVEFUNCS-STEP2]'s name table and trace cost on the hook: printed, not checked (a timing is the
+        // machine's).
         {
             constexpr int N = 1 << 20;
             LARGE_INTEGER f, t0, t1;
@@ -12981,7 +12985,8 @@ int main() {
               vs.size() == 1 && vs[0].text == "/Game/Maps/Arena.Arena:<sub-path, 33 chars, not copied>" &&
               vs[0].mark == SM::Header, vs.empty() ? "" : vs[0].text.c_str());
         // [UE4-ASSETPTR-PROPS] A 4.11-4.17 asset pointer's path is ONE FString at +0x10, whose text is on the heap, not
-        // in the copy: said, with its length. Read with the 4.18+ arm, its Data pointer's halves were taken for FNames.
+        // in the copy: said, with its length. Read with the 4.18+ arm, its Data pointer's halves would be taken for
+        // FNames.
         alignas(8) uint8_t ap[0x40] = {};
         const uint64_t apData = 0xA550;
         const int32_t apNum = 19;
@@ -13593,8 +13598,8 @@ int main() {
     // ⛔ POOL-FAKING: installs its own UE4 name table first, and Serie's pool state cannot be restored -- keep it last.
     // UE 4.10-4.22 entries as NameTypes.h declares them (4.10 and 4.18 alike, x64): `NAME_INDEX Index` at +0x00,
     // `FNameEntry* HashNext` at +0x08, the AnsiName / WideName union at +0x10. AllocateNameEntry (UnrealNames.cpp)
-    // stores Index = (slot << NAME_INDEX_SHIFT) | wide. Serie never read the bit: a wide name was read as narrow bytes,
-    // cut at its first zero byte ("Café" came back "C") or rejected outright (any CJK name came back empty).
+    // stores Index = (slot << NAME_INDEX_SHIFT) | wide. Serie must read the bit: read as narrow bytes, a wide name is
+    // cut at its first zero byte ("Café" comes back "C") or rejected outright (any CJK name comes back empty).
     {
         blk("UE4WIDE - a pre-4.23 wide FName decodes as UTF-16; the narrow read keeps its window, up to a page's edge");
         auto makeEntry = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
@@ -13685,7 +13690,7 @@ int main() {
             memset(e10 + 0x10, 'C', 255);
             chunk[10] = reinterpret_cast<uintptr_t>(e10);
         }
-        // Longer than the window, all readable: cut to its first 255 bytes, as it always was.
+        // Longer than the window, all readable: cut to its first 255 bytes.
         {
             std::string longAnsi(300, 'A');
             chunk[11] = makeEntry(eLongAnsi, 11 << 1, longAnsi.data(), longAnsi.size());
@@ -14043,8 +14048,9 @@ int main() {
 
     // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter": an FUObjectArray (base-relative) with the
     // chunk counts BEFORE Objects -- MaxChunks +0x04, NumChunks +0x08, Objects +0x10, MaxElements +0x20,
-    // NumElements +0x24. No strict row fit it, and the relaxed A/C row took it: NumElements read from +0x14, the high
-    // dword of the Objects pointer, so every GObjects walk saw a few hundred objects through a garbage table.
+    // NumElements +0x24. It needs a strict row of its own: the relaxed A/C row would take it, reading NumElements from
+    // +0x14, the high dword of the Objects pointer, so every GObjects walk would see a few hundred objects through a
+    // garbage table.
     {
         blk("VND584-03: a chunk-counts-first UE 5.7 FUObjectArray is read whole, and the relaxed rows have a floor");
         alignas(16) static uint8_t mist[0x40] = {};
@@ -14316,12 +14322,12 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
-    // [UE58-PREALLOC-NO-ROW] UE 5.8 put ObjObjects first in FUObjectArray -- Objects +0x00, NumElements +0x08,
+    // [UE58-PREALLOC-NO-ROW] UE 5.8 puts ObjObjects first in FUObjectArray -- Objects +0x00, NumElements +0x08,
     // MaxElements +0x0C, NumChunks +0x10, MaxChunks +0x14, PreAllocatedObjects +0x18, then ObjFirstGCIndex +0x20 and
-    // ObjLastNonGCIndex +0x24 (UObjectArray.h, 5.8.4) -- and Aura's relaxed tier had no row for it. Any 5.8 array its
-    // strict row refuses was then misread: relaxed E latched ObjLastNonGCIndex as the count with Objects = NumChunks |
-    // MaxChunks, relaxed D a PreAllocatedObjects high dword, or the default layout MaxChunks -- each above 0, so the
-    // Count == 0 recovery never ran.
+    // ObjLastNonGCIndex +0x24 (UObjectArray.h, 5.8.4) -- so Aura's relaxed tier needs a row for it. Without one, a 5.8
+    // array its strict row refuses is misread: relaxed E latches ObjLastNonGCIndex as the count with Objects =
+    // NumChunks | MaxChunks, relaxed D a PreAllocatedObjects high dword, or the default layout MaxChunks -- each above
+    // 0, so the Count == 0 recovery never runs.
     {
         blk("UE58-PREALLOC-NO-ROW: a UE 5.8 array its strict row refuses is still read whole");
         alignas(16) static uint8_t u8[0x40] = {};

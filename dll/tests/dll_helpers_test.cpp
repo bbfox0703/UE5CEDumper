@@ -102,9 +102,9 @@ static int g_fail = 0;
 // [INVOKEINHERIT-2026-08-20] Resolving a UFunction by name must climb SuperStruct.
 //
 // The traversal lives in Ubel.h precisely so it can be driven here: no test target compiles
-// Ubel.cpp, Frieren.cpp or Mimic.cpp, so a rule left in any of those is untestable. These
-// fakes stand in for a class chain and its per-class function lists, which is the whole of
-// what the resolver is allowed to know.
+// Frieren.cpp or Mimic.cpp, and this leaf target does not compile Ubel.cpp, so a rule left in
+// any of those is out of reach of these fakes. They stand in for a class chain and its
+// per-class function lists, which is the whole of what the resolver is allowed to know.
 
 namespace {
 
@@ -168,7 +168,7 @@ static void Test_Ubel_ResolveFunctionInChain() {
     EXPECT("inherited function resolves", Resolve(c, "SetActorHiddenInGame", hit));
     EXPECT_EQ_U64("...to the base class's copy", hit.address, 0x20 * 0x100 + 1);
 
-    // The two controls from the field measurement, so the test reproduces its discriminator.
+    // The two controls, so the test holds its discriminator: an own function, and an absent name below.
     EXPECT("own function still resolves", Resolve(c, "SetMobility", hit));
     EXPECT_EQ_U64("...to the derived class's copy", hit.address, 0x10 * 0x100 + 1);
 
@@ -258,8 +258,8 @@ static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
 // back to `(CDO default)` could say "nothing is live" while the action on the same row
 // reports `on 2 instance(s)`.
 //
-// The ordering rule lives in Aura.h so it can be compiled here; no test target builds
-// Aura.cpp, so a rule left in the walk itself would be unpinnable.
+// The ordering rule lives in Aura.h so it can be compiled here; this leaf target does not
+// build Aura.cpp, and a rule left in the walk itself could be reached only through a fake pool.
 
 // ----- Ubel::DecodedLengthMatchesFString ------------------------------------
 //
@@ -313,7 +313,7 @@ static void Test_Aura_ChoosePreviewSource() {
     EXPECT("exact alone", Aura::ChoosePreviewSource(true, false, false) == PS::Exact);
 
     // THE DEFECT: a live subclass instance must beat the class default. Getting this pair
-    // backwards is precisely what the row was doing.
+    // backwards previews the CDO while the row's actions hit the live subclass instance.
     EXPECT("derived beats the CDO",
            Aura::ChoosePreviewSource(false, true, true) == PS::Derived);
     EXPECT("derived alone", Aura::ChoosePreviewSource(false, true, false) == PS::Derived);
@@ -335,7 +335,7 @@ static void Test_Aura_PreviewSourceSuffix() {
     EXPECT_EQ_STR("derived is marked as a subclass sample",
                   Aura::PreviewSourceSuffix(Aura::PreviewSource::Derived), " (subclass instance)");
 
-    // ⚠ The wording is unchanged but the CLAIM is stronger: subclasses really were searched
+    // ⚠ The wording is plain but the CLAIM is strong: subclasses really were searched
     // and none was live, so the actions will find nothing either. Users grep this string, and
     // the UI binds preview as free text, so it must stay exactly this.
     EXPECT_EQ_STR("CDO keeps its greppable wording",
@@ -1035,8 +1035,8 @@ static void Test_Schlacht_Owners() {
 }
 
 // [SHUTDOWN-SEETHRU-WAIT] A trace or an un-hide that did not run must not cost the hidden record. A cut LineTrace read
-// as "nothing occludes" and the tick un-hid and dropped every recorded actor; an un-hide that never ran dropped its
-// actor anyway -- either way an actor stayed hidden with nothing left to restore it.
+// as "nothing occludes" would make the tick un-hide and drop every recorded actor, and an un-hide that never ran would
+// drop its actor anyway -- either way an actor stays hidden with nothing left to restore it.
 static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
     EXPECT("DIFF: every trace ran, no stop: apply the diff", Schlacht::ShouldApplyOccluderDiff(false, false));
     EXPECT("DIFF ⭐: a trace did not run (cut, timed out, no hook): leave the record alone",
@@ -1051,8 +1051,9 @@ static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
            Schlacht::UnhideLeftItHidden(-5));
     EXPECT("UNHIDE ⭐: the hook was down (-7): it never ran: keep it", Schlacht::UnhideLeftItHidden(-7));
     EXPECT("UNHIDE ⭐: a background worker with no hook (-8): keep it", Schlacht::UnhideLeftItHidden(-8));
-    // -4 is the one failure that RAN: the call entered the engine and faulted there. Kept, it was retried every 100 ms
-    // tick for as long as See-through stayed on (a stale actor that still passes the class check faults every time).
+    // -4 is the one failure that RAN: the call entered the engine and faulted there. Kept, it would be retried every
+    // 100 ms tick for as long as See-through stays on (a stale actor that still passes the class check faults every
+    // time).
     EXPECT("UNHIDE ⭐: it faulted inside the call (-4): a retry faults again: drop it, as before",
            !Schlacht::UnhideLeftItHidden(-4));
 
@@ -1415,9 +1416,9 @@ static void Test_Aura_DeepLeafCoverage() {
 // "tuned" later by someone reading the wrong denominator.
 
 static void Test_Ubel_ClassCacheBound() {
-    // 512 was the first proposal, sized against "~50x the deepest super chain".
-    // That is the wrong denominator: the working set is the classes touched in
-    // ONE scan pass, and the reference log touches 10,046 distinct classes.
+    // 512 is what sizing against "~50x the deepest super chain" gives, and that is
+    // the wrong denominator: the working set is the classes touched in ONE scan
+    // pass, and the reference log touches 10,046 distinct classes.
     EXPECT("cap is not the 512 that the wrong denominator produced",
            Ubel::kMaxWalkClassCacheEntries != 512);
     EXPECT("cap is 2048", Ubel::kMaxWalkClassCacheEntries == 2048);
@@ -1726,7 +1727,7 @@ static void Test_Stark_PeOffsetSentinels() {
 static void Test_Stark_ShouldRetryPeDetection() {
     constexpr int kNotDetected = Stark::kPeOffsetNotDetected;
 
-    // THE FIX. An armed sentinel retries -- this is the path that was unreachable.
+    // THE SEPARATION. An armed sentinel retries -- the path a stored hard failure would make unreachable.
     EXPECT("armed sentinel, first attempt -> retry",
            Stark::ShouldRetryPeDetection(kNotDetected, 0, 10'000, 0, false));
 
@@ -1877,7 +1878,7 @@ static void Test_Lineal_StrideSweepRules() {
                PreferStride(realScore, aliasScore, 40, 20));
     }
 
-    // ⚠ THE OTHER DIRECTION, which is why a bare `score > best` was not enough. Every
+    // ⚠ THE OTHER DIRECTION, which is why a bare `score > best` is not enough. Every
     // candidate is probed against the same NUMBER of items, not the same byte range, so on
     // a REAL 20-byte item stride 40 reads every other item -- all of them valid. Identical
     // named, identical bad, identical score. Nothing but the tie-break separates them, and
@@ -2172,8 +2173,9 @@ static void Test_Wirbel_RecallMarkerRefusal() {
                   "RecallMarkerRefusal must be constexpr-evaluable");
 }
 
-// [TELEPORT-RECALL-PARENTREL] The undo slot took a parent-relative pose, so Recall last drove relative numbers into the
-// pawn as world coordinates. It keeps its previous pose instead, as it already did for a pose it could not read.
+// [TELEPORT-RECALL-PARENTREL] The undo slot must not take a parent-relative pose, or Recall last drives relative
+// numbers into the pawn as world coordinates. It keeps its previous pose instead, as it does for a pose it could not
+// read.
 static void Test_Wirbel_StoresUndoPoint() {
     EXPECT("RECALL-PARENTREL: a parent-relative pose does not become the undo point",
            !Wirbel::StoresUndoPoint(true, true));
@@ -3784,8 +3786,8 @@ static void Test_ValueScan_V1cOptionalGate() {
            !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
 }
 
-// [W3-DEBUGCAM-QUEUED] UE5_SetDebugCamera folded every failed toggle call into -1 -- a TIMED-OUT one (-5) included,
-// which STAYS QUEUED and still runs. Read as "nothing happened", it invited a second toggle; the two drained ON then OFF.
+// [W3-DEBUGCAM-QUEUED] UE5_SetDebugCamera must not fold every failed toggle call into -1: a TIMED-OUT one (-5) STAYS
+// QUEUED and still runs. Read as "nothing happened", it invites a second toggle, and the two drain ON then OFF.
 static void Test_Stark_StatefulToggleFailure() {
     EXPECT("DBGCAMQ a timed-out toggle passes through as queued (-5)", Stark::StatefulToggleFailure(-5) == -5);
     EXPECT("DBGCAMQ the queued code is EnqueueInvoke's timeout", Stark::kInvokeTimedOutStillQueued == -5);
@@ -4927,7 +4929,7 @@ static void Test_ValueScan_OrderedViewScale() {
 
     // Generous bounds catch an O(n^2) regression; the printed numbers are far
     // lower. The filter is allocation-heavier than the sort (lowercases each
-    // displayed column) — if it ever creeps past this, the follow-up is an
+    // displayed column) — if it ever creeps past this, the answer is an
     // incremental/top-k path.
 #ifdef __SANITIZE_ADDRESS__
     // [CPP-HARDENING-2026-11-14] AddressSanitizer slows the allocation-heavy filter about 20x. An O(n^2) regression
@@ -6509,9 +6511,9 @@ static void Test_Neu_Edge() {
     }
     {   // the count is range-checked BEFORE the narrowing cast.
         //
-        // The FNameData57 branch tested `static_cast<int32_t>(numNew) > maxCount`, so the
-        // entire upper half of the uint32 range slipped past: 0x80000000 casts to
-        // -2147483648, which is not greater than maxCount. `out.count` then came back
+        // Tested after the cast, as `static_cast<int32_t>(numNew) > maxCount`, the FNameData57
+        // branch would let the entire upper half of the uint32 range slip past: 0x80000000 casts
+        // to -2147483648, which is not greater than maxCount. `out.count` would then come back
         // NEGATIVE from a function whose contract is "parses sanely".
         //
         // The arrays ARE mapped here, so the only thing that can reject these headers is
@@ -6950,7 +6952,7 @@ static void Test_Orden_RoundedFloatExact() {
     // Multi-value (group / "multi value search") scan inherits the CE-style rounded
     // float Exact through LeafSatisfiesSlot -> Radar::ComparePredicate: a whole-number
     // target matches a float that ROUNDS to it, so a GAS Health.BaseValue=513.36 is
-    // found by Exact "513" (the same gap the snapshot fix closed for Group Match).
+    // found by Exact "513", as the single-value scan finds it.
     std::vector<Orden::Leaf> leaves = {
         OrdenLeafFloat(0x10, 513.36f),   // e.g. AttributeSet "Health.BaseValue"
         OrdenLeafFloat(0x14, 99.6f),     // e.g. AttributeSet "Mana.BaseValue"
@@ -7097,9 +7099,8 @@ static void Test_Holes_ComputeClassHoles_ArrayDim() {
 }
 
 static void Test_CountContributingClasses() {
-    // NOTE: these are unit tests of a NEW pure function, not negative controls -- they
-    // cannot go red against unfixed code, because the function does not exist there.
-    // The controls that CAN go red are the C# BuildStatusLine pins.
+    // NOTE: these are unit tests of a pure function, not negative controls. The controls
+    // that CAN go red are the C# BuildStatusLine pins.
     // (FUNCDENOM-2026-08-26)
     auto mk = [](std::initializer_list<uintptr_t> addrs) {
         std::vector<Aura::AllFunctionEntry> v;
@@ -7335,8 +7336,8 @@ static void Test_VersionNeedleScan_Equivalence() {
         ExpectEquivalent23("G2 equiv: Tier 2 beats a deferred Tier 3 -> 427/t2", b);
     }
     {   // same-pattern retirement: a Tier 3 at a LOW offset hides a Tier 2 at a HIGH one.
-        // Reproduces a real (separately filed) quirk of the original `break`; the point
-        // here is only that the rewrite reproduces it rather than silently "fixing" it.
+        // A known quirk of the per-pattern `break`, pinned so that changing it is a
+        // decision rather than a silent "fix".
         auto b = fresh(8192);
         Plant(b, 900, "Unreal");
         Plant(b, 1000, " 4.27.0 ");
@@ -7792,8 +7793,8 @@ static void Test_FunctionFlagsOffset() {
     EXPECT("A3: 4.24 = 0x98", DynOff::FunctionFlagsOffsetFor(424, false) == 0x98);
     EXPECT("A3: 4.25 = 0xB0", DynOff::FunctionFlagsOffsetFor(425, false) == 0xB0);
 
-    // --- FLAT for nine consecutive versions, 4.25 through 5.8. This is the property the
-    //     dead 0xC0 band contradicted, so assert it across the whole range. ---
+    // --- FLAT for nine consecutive versions, 4.25 through 5.8. This is the property a
+    //     0xC0 band would contradict, so assert it across the whole range. ---
     for (unsigned v : { 425u, 426u, 427u, 500u, 501u, 502u, 503u, 504u, 505u, 506u, 507u, 508u }) {
         EXPECT("A3: FunctionFlags is 0xB0 for every version 4.25-5.8",
                DynOff::FunctionFlagsOffsetFor(v, false) == 0xB0);
@@ -7813,8 +7814,7 @@ static void Test_FunctionFlagsOffset() {
     }
 
     // --- case-preserving adds a uniform +8 (measured: 4_27_CasePreserving = 0xB8 vs
-    //     4_27's 0xB0). Neither reader consulted it before, and 0xB8 sat LAST in the
-    //     old sweep, behind the 0xC0 that would have matched first. ---
+    //     4_27's 0xB0), and both readers must apply it. ---
     EXPECT("A3: 4.27 CPN = 0xB8", DynOff::FunctionFlagsOffsetFor(427, true) == 0xB8);
     for (unsigned v = 411; v <= 508; ++v) {
         if (v % 100 > 27 && v < 500) continue;
@@ -8839,7 +8839,7 @@ static void Test_ProcessEventVTableSlot() {
     // UE5 game would take 0x220. These assertions exist to make that class of defect
     // loud rather than silent.
 
-    // --- the six values this repo already had, from sources independent of the oracle ---
+    // --- six values from sources independent of the oracle ---
     EXPECT("A2: 4.26 = 0x218 (FF7R note's stock 4.26)",
            DynOff::ProcessEventVTableSlotFor(426) == 0x218);
     EXPECT("A2: 4.27 = 0x220 (DropIn PDB + Geri/SBDR/P3R/Elliot)",
@@ -9386,14 +9386,13 @@ static void Test_Routine_SafeThread() {
     // that to the ~15.6 ms timer tick, so it lives ~780 ms while the function returns
     // in ~25 ms.
     //
-    // A by-reference capture of a plain local therefore left it doing `lock xadd`
+    // A by-reference capture of a plain local would therefore leave it doing `lock xadd`
     // into a RECLAIMED STACK FRAME for ~750 ms — across the frames of every later
     // test and then the CRT exit path. When one of those increments lands on a /GS
     // cookie the process dies with STATUS_STACK_BUFFER_OVERRUN (0xC0000409), with no
-    // output and no assertion. That is exactly what PR #503's CI hit, twice
-    // unreproducible locally: which byte gets hit depends on stack layout and timing,
-    // so it is intermittent by construction. Adding unrelated tests moved the layout
-    // enough to surface a defect that had been latent.
+    // output and no assertion. Which byte gets hit depends on stack layout and timing,
+    // so it is intermittent by construction: a local run can stay clean, and adding
+    // unrelated tests can move the layout enough to surface it.
     //
     // ⚠ ASAN does NOT catch this by default — `detect_stack_use_after_return` is off
     // unless asked for. A clean ASAN run is not evidence against a stack UAF.
@@ -9425,8 +9424,8 @@ static void Test_Routine_SafeThread() {
     EXPECT("survived destruction of a finished thread", true);
 
     // 3. Move-assigned OVER a live thread. std::thread's own move-assign terminates
-    //    when the target is joinable — the exact shape Fern's m_stopping flag was
-    //    added to dodge by hand.
+    //    when the target is joinable — the exact shape Fern's m_stopping flag
+    //    dodges by hand.
     {
         Routine::SafeThread t;
         t = std::thread([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
@@ -9718,8 +9717,8 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
         EXPECT("handler override wins", res["game_thread_stalled"] == true);
     }
 
-    // 5. A non-object payload cannot destroy the envelope. merge_patch REPLACED the
-    //    target with it, i.e. "id" and "ok" simply ceased to exist.
+    // 5. A non-object payload cannot destroy the envelope. merge_patch REPLACES the
+    //    target with it, i.e. "id" and "ok" would simply cease to exist.
     {
         nlohmann::json res = envelope();
         nlohmann::json arr = nlohmann::json::array({1, 2, 3});
@@ -9929,8 +9928,8 @@ static void Test_Ubel_DescribeScriptDelegate() {
     EXPECT("R7-B-02: any index with serial 0 is null, so unbound",
            DescribeScriptDelegate(false, "", 5, 0, "None") == "(unbound)");
 
-    // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the repair is only an
-    // improvement if it did not simply delete the state it was meant to narrow.
+    // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the rule narrows the
+    // state, it must not simply delete it.
     EXPECT("stale control: a real name with no live target is still stale",
            DescribeScriptDelegate(false, "", 5, 7, "OnFire") == "(stale)::OnFire");
     EXPECT("stale control: an object index with no name is still stale",
@@ -10030,7 +10029,7 @@ static void Test_Delegate_Hex() {
     EXPECT("hex: a padded 32-byte element shows all 32 bytes and one space", sdHex.size() == 65);
     EXPECT("hex: ...opening on the detector's first byte", sdHex.compare(0, 2, "AA") == 0);
     EXPECT("hex: ...and closing on the alignment tail's last", sdHex.size() == 65 && sdHex.compare(63, 2, "BB") == 0);
-    // ⭐ The control: a Shipping value has no detector, and its hex is what it always was.
+    // ⭐ The control: a Shipping value has no detector, so its hex is the bare header.
     EXPECT_EQ_STR("hex control: a Shipping multicast is its 16-byte header, no space",
                   DynOff::DelegateHex(mcd + 8, 16, 0), "405CBFF5D50100000100000004000000");
     EXPECT_EQ_STR("hex control: an unread Shipping value is 32 '?'",
@@ -10794,7 +10793,7 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
 
     // --- GObjects' OWN Pass 2 must still be admitted --------------------------
     // It runs before any anchor can exist. Refusing it would break the modular
-    // builds (Satisfactory 4.25) that multi-module scanning was added for.
+    // builds (Satisfactory 4.25) that multi-module scanning exists for.
     EXPECT("AA38: the anchor producer is exempt while unanchored",
            admit(AnchorState::None, false, /*producesAnchor=*/true)
                == ModuleAdmission::Accept);
@@ -10812,9 +10811,10 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
            admit(AnchorState::ForeignDll, false, true) == ModuleAdmission::Accept);
 
     // --- [A2-HEAP-ANCHOR-TEXT] a HEAP anchor: validated, and in no module --------------
-    // A data-scan GObjects is a heap FUObjectArray by design, so it has no module. It classified as None, and every
-    // later refusal printed "GObjects never validated this run" on a run where it DID. Refused where None refuses -- a
-    // heap anchor is never modular, which would re-admit the Bitdefender GWorld candidate -- with its own verdict.
+    // A data-scan GObjects is a heap FUObjectArray by design, so it has no module. Classified as None, it would make
+    // every later refusal print "GObjects never validated this run" on a run where it DID. Refused where None
+    // refuses -- a heap anchor is never modular, which would re-admit the Bitdefender GWorld candidate -- with its own
+    // verdict.
     EXPECT("HEAPANCHOR: a validated anchor in no module is HEAP, not None",
            Genau::ClassifyAnchor(/*haveAnchor=*/true, /*inAnyModule=*/false, /*inMainExe=*/false)
                == AnchorState::Heap);
@@ -10949,7 +10949,7 @@ static void Test_Macht_ParsePattern_Nibble() {
 // init (UnrealNames.cpp). LLM is compiled out of Shipping, so only Development / DebugGame
 // codegen changed -- and every GNames pattern but the 4-byte GNAM_V1 stopped reaching
 // NamePoolData there, after ~2,200-2,400 rejected candidates (tools/ghidra/GROUND-TRUTH.md).
-// The fixtures are REAL bytes cut from PDB-paired binaries (out/gnames_mine, 2026-09-26), and
+// The fixtures are REAL bytes cut from PDB-paired binaries, and
 // each resolution is checked against that binary's PDB truth, not against the pattern's own
 // description: the RIP arithmetic is the DLL's (target = site + io + tot + disp32 + adj).
 static const AobSignature* FindGNamesSig(const char* id) {
@@ -11311,9 +11311,9 @@ static void Test_Ubel_InterpretStructBytes() {
         EXPECT("beyond 16 floats yields no hint", Ubel::InterpretStructBytes(big, 128).empty());
     }
 
-    // --- 6. DOCUMENTED REMAINING GAP, asserted so it cannot be
-    //     mistaken for fixed: a 24-byte LWC FVector is 3 doubles, but the bytes
-    //     cannot say that, so this still decodes 6 floats. Only the reflected
+    // --- 6. DOCUMENTED GAP, asserted so it cannot be
+    //     mistaken for covered: a 24-byte LWC FVector is 3 doubles, but the bytes
+    //     cannot say that, so this decodes 6 floats. Only the reflected
     //     layout can settle 3-doubles vs 6-floats.
     {
         uint8_t b[24];
@@ -11341,8 +11341,8 @@ static void Test_Ubel_InterpretStructBytes() {
 // Property-Search-Deep, which scope to the path, find it, which is the
 // observable tell.
 //
-// No target compiles Aura.cpp, so the semantics live in a header-inline RAII
-// type and are pinned here. The two cases below are the entire contract, and
+// The semantics live in a header-inline RAII type so this leaf target can pin
+// them without a fake object pool. The two cases below are the entire contract, and
 // they pull in opposite directions: a *sibling* re-entry MUST be allowed, a
 // re-entry *along the active path* MUST NOT.
 // ================================================================
@@ -11451,7 +11451,7 @@ static void Test_VersionMarkers() {
     EXPECT("A4: no other offset raises", !IsVirtualDtorFFieldClass58(0x10));
 
     // --- the two markers are INDEPENDENT: a 5.8 binary satisfies BOTH, which is exactly
-    //     why 507 alone was not enough to stop at the right version. ---
+    //     why 507 alone is not enough to stop at the right version. ---
     EXPECT("A4: a 5.8 Shipping binary satisfies the 5.7 predicate too",
            IsReorderedFUObjectItem57(0x08, 24) && IsVirtualDtorFFieldClass58(0x08));
     EXPECT("A4: a genuine 5.7 satisfies only the first",
@@ -11500,7 +11500,7 @@ static void Test_FFieldClassName_Probe() {
 
     // Suffix, not substring, on the 0x08 arm. "PropertyBag" contains "Property"
     // but is not a field-class name; accepting it would let garbage latch +0x08
-    // on a <=5.7 build, which is the one way this change could regress.
+    // on a <=5.7 build, the one way the 0x08 arm can misfire there.
     {
         auto r = DynOff::PickFFieldClassNameOffset([](int off) -> std::string {
             return off == 0x08 ? "PropertyBag" : std::string();
@@ -11643,7 +11643,7 @@ static void Test_Serie_BlockBitsProbe() {
 // The lowest non-zero FName index that is a real entry BOUNDARY. An FName index is a
 // stride-quantised BYTE OFFSET, not an ordinal, so entry 0 ("None", prefix + 4 chars)
 // swallows more than one stride unit and index 1 is ALWAYS interior to it — which is why
-// `FName[1]=''` appeared in every log this repo produced, on every game, at every build.
+// a read of index 1 logs `FName[1]=''` on every game, at every build.
 // Pinned against the block[0] bytes observed byte-identically on five games:
 //   1E 01 | "None" | 10 03 | "ByteProperty" | C0 02 | "IntProperty" | 00 | 34 03 | "Bool…"
 //   idx 0 ───────── idx 3 ─────────────────── idx 10 ──────────────────── idx 17
@@ -12409,8 +12409,9 @@ static void Test_Lager_BufferCBoundaryRules() {
 
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
-// [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
-// quote and the RVA silently, and once the name is UTF-8 a cut can split a sequence that json::dump throws on.
+// [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base is never cut: snprintf'd into a char[128], a long stem
+// would lose the closing quote and the RVA silently, and on a UTF-8 name a cut can split a sequence that json::dump
+// throws on.
 static void Test_Renge_CeModuleRelative_NeverTruncates() {
     EXPECT_EQ_STR("short", Renge::CeModuleRelative("Game-Win64-Shipping.exe", 0x8A12340ull),
                   "\"Game-Win64-Shipping.exe\"+8A12340");
@@ -12881,12 +12882,12 @@ static void Test_Falsch_GrausamTargetsOnThisWindows() {
 }
 
 int main() {
-    // UNBUFFERED, and this is not a style choice. When this exe died on CI with
-    // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
-    // output -- not even the banner below -- because stdout to a pipe is fully
-    // buffered and the buffer dies with the process. A harness whose output vanishes
-    // exactly when something goes wrong tells you nothing at the only moment it
-    // matters, and it passed locally, so there was nothing else to go on.
+    // UNBUFFERED, and this is not a style choice. stdout to a pipe is fully buffered
+    // and the buffer dies with the process, so a crash on CI with 0xC0000409
+    // (STATUS_STACK_BUFFER_OVERRUN) would leave NOT ONE LINE of this exe's output in
+    // the log -- not even the banner below. A harness whose output vanishes exactly
+    // when something goes wrong tells you nothing at the only moment it matters, and
+    // a crash that does not reproduce locally leaves nothing else to go on.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     // getenv_s, not std::getenv: the shipping DLL target defines _CRT_SECURE_NO_WARNINGS
     // (dll/CMakeLists.txt) but the test targets deliberately do not, so the deprecation is

@@ -44,8 +44,8 @@ static int g_pass = 0, g_fail = 0;
 
 // Print each case as it STARTS, house style (freeze_helper_test does the same). Not
 // decoration: this test drives recursive deletion and can crash, and a crash with no
-// output cannot be located -- build.ps1's `DLL_TEST_TRACE` note records that exact shape costing a CI
-// investigation in dll_helpers_test.
+// output cannot be located -- build.ps1 sets `DLL_TEST_TRACE` under CI for the same shape in
+// dll_helpers_test.
 static void blk(const char* name) { printf("- %s\n", name); }
 
 static void check(const char* label, bool cond, const char* got = nullptr) {
@@ -294,9 +294,10 @@ int main() {
 
     {   // ---- [PATH-SEIN-TRAILING-SPACE] the per-process folder name ----
         //
-        // A stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gave Logs\Game \: create_directories
-        // succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened INSIDE "Game " fails,
-        // because an intermediate segment is not trimmed. The whole session then went unlogged, with no notice.
+        // Taken raw, a stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gives Logs\Game \:
+        // create_directories succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened
+        // INSIDE "Game " fails, because an intermediate segment is not trimmed. The whole session would go unlogged,
+        // with no notice.
         Fixture fx;
         blk("the process folder name");
         check("P1 'Game .exe' -> 'Game'", Sein::ProcessFolderName(L"Game .exe") == L"Game");
