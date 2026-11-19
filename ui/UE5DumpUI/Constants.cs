@@ -154,6 +154,11 @@ public static class Constants
     public const double McpFlySpeedMax = 20000.0;
     /// <summary>See-through's pierce count: the DLL's SCHLACHT_PIERCE_MAX and the UI's box.</summary>
     public const int McpSeeThroughCountMax = 10;
+
+    /// <summary>[LIVEFUNCS-UI-SNAP-MEMORY] The most a Call Trace load holds of decoded parameter values, after sharing what
+    /// recurs. Past it the oldest calls keep only their raw bytes. A decoded copy weighs about 27 times its raw bytes
+    /// (measured on a full 32 MB buffer of a 1,984-byte struct), so without it the largest buffer could take gigabytes.</summary>
+    public const int SnapDecodedBudgetMb = 256;
     /// <summary>The sentence each grant tool requires as <c>scope_ack</c>, its schema's one allowed value. Claude Code's
     /// prompt shows a call's arguments in full, so the user approves these words, not the model's own.
     /// </summary>

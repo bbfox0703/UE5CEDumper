@@ -198,6 +198,9 @@ public sealed class SnapSlot
     public IReadOnlyList<SnapValue>? Values { get; init; }
     /// <summary>Why there are no values: the arm's layout state.</summary>
     public string RawOnly  { get; init; } = "";
+    /// <summary>The decoded values were let go to keep the UI within its budget for them (<see cref="SnapCopyKeeper"/>);
+    /// <see cref="Data"/> still holds the copy.</summary>
+    public bool ValuesDropped { get; init; }
 }
 
 /// <summary>A page of pe_snap_get.</summary>

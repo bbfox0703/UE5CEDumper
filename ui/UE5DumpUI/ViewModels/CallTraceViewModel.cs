@@ -33,6 +33,9 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const int NamesPage = 20000;
     /// <summary>[LIVEFUNCS-STEP2] Slots a snapshot page asks for; the DLL also ends a page at about 1 MB of JSON.</summary>
     internal const int SnapPage = 4096;
+    /// <summary>[LIVEFUNCS-UI-SNAP-MEMORY] What a load may hold of decoded parameter values (<see cref="SnapCopyKeeper"/>);
+    /// a test narrows it.</summary>
+    internal long SnapDecodedBudgetBytes { get; set; } = (long)Constants.SnapDecodedBudgetMb << 20;
     /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
     /// page), and nothing collects them during a load of hundreds of pages, so the working set climbs with every page.
     /// A collection at least every this many pages -- about 21 MB of records -- keeps them to ~85 MB; it takes
