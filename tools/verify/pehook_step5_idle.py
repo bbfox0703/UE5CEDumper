@@ -9,7 +9,7 @@ paused, loading or minimised, so acting on every zero would disable a GOOD hook.
 came from the PATTERN scan (which fingerprints ProcessEvent's own body) the verdict is REPORTED
 and the hook is **KEPT**.
 
-Steps 1b/2/3 already exercised the TABLE arm, by temporarily removing the SIB alternates so
+Steps 1b/2/3 exercise the TABLE arm, with the SIB alternates removed from a staged DLL so
 DumperTest mis-detects. This is the other arm, and it needs the opposite staging: a host that
 detects by PATTERN, whose game thread then goes quiet across the validator window.
 

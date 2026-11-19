@@ -178,7 +178,7 @@ def report(libs=None, dist=None, owner=product_name):
         cur = dm.get(q.name.lower())
         if not cur:
             # Counted and named, never skipped: a row left out of the comparison is not a current one, and a silent
-            # skip is how "0 stale" came to be printed over proxies nobody had compared.
+            # skip prints "0 stale" over proxies nobody compared.
             uncompared += 1
             say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
                 f"UNCOMPARED (dist has no {q.name.lower()})   exe={_exe_list(exes)}")
@@ -194,7 +194,7 @@ def report(libs=None, dist=None, owner=product_name):
 
 
 def _backup_path(backups, game, proxy, stamp):
-    """A name no earlier backup holds. One game can now carry our proxy in more than one folder, and the two would
+    """A name no earlier backup holds. One game can carry our proxy in more than one folder, and the two would
     share a game-name + DLL-name + second key: the second copy would overwrite the first one's backup AFTER the
     first was refreshed, so the old bytes would be gone."""
     base = f"{game.name.replace(' ', '_')[:40]}.{proxy.name}.{stamp}"
@@ -259,10 +259,9 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
         shutil.copy2(cur, q)
         if sha(q) != sha(cur):
             raise SystemExit(f"proxy_refresh: FAILED -- copy of {cur} to {q} did not verify")
-        # DERIVED, not a literal. This line said "(dist 3263)" for every refresh
-        # regardless of what it actually copied -- a verification tool quoting a build
-        # number it never read, which is the one thing this repo's rules forbid. It
-        # would have reported "3263" while deploying 3334.
+        # DERIVED, not a literal: a literal build number here is a verification tool
+        # quoting a build it never read, which is the one thing this repo's rules forbid,
+        # and it goes on reporting that build while deploying a newer one.
         say(f"  refreshed {d.name} :: {q.relative_to(d)} -> {q.stat().st_size:,} B  (dist {_dist_build(dist)})")
         done += 1
     say(f"\nrefreshed {done} file(s)" + (f", {uncompared} NOT compared (no counterpart in dist)" if uncompared else ""))

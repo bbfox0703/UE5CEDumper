@@ -3,14 +3,13 @@
     py tools/verify/seethrough_arm_b.py --tid <game thread id>
 
 THE ARM. `WorkerLoop`'s catch exists for the "See-through then close the game"
-`std::terminate` / `0xC0000409` crash. Arm (d) covered a graceful close on a HEALTHY game;
+`std::terminate` / `0xC0000409` crash. Arm (d) covers a graceful close on a HEALTHY game;
 arm (b) is the same close on a game whose thread has STALLED - the harder case, because
 See-through's ~10 Hz worker invokes on the game thread via Stark, so a stalled thread is
 exactly when the worker is mid-flight and cannot complete.
 
-The register classified this human-only ("needs a human ... stalling the game"). It is not:
-`suspend.py suspend-tid` stalls the UE game thread deterministically, which is the same
-technique the B8 and L8 rows ended up using.
+It needs no human to stall the game: `suspend.py suspend-tid` stalls the UE game thread
+deterministically, which is the same technique the B8 and L8 rows use.
 
 WITNESS THE HANG BEFORE CONCLUDING ANYTHING. The row says so explicitly, and it matters: if
 the thread never actually stalled, a clean close afterwards is just arm (d) run again. Two
@@ -20,8 +19,8 @@ first:
   * `IsHungAppWindow(hwnd)`         - the OS's own view, from user32
   * `get_pointers.game_thread_stalled` - the DLL's view (Stark's hook heartbeat)
 
-⚠ `game_thread_stalled` is now ABSENT when no ProcessEvent hook is installed -- the DLL
-withholds the key rather than defaulting it to False, so an unmeasured liveness can no longer
+⚠ `game_thread_stalled` is ABSENT when no ProcessEvent hook is installed -- the DLL
+withholds the key rather than defaulting it to False, so an unmeasured liveness cannot
 pose as a healthy one (STALLDEFAULT-2026-08-26). The rig forces the hook first; enabling
 See-through does that anyway, but it is asserted rather than assumed.
 

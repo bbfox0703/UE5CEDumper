@@ -8,8 +8,9 @@ buffered early lines are destroyed. A later grep for one of those lines then rea
 "that code path never ran" — an absence caused by the logger, indistinguishable from
 an absence caused by the code.
 
-⚠ `Sein.cpp` is compiled by NO test target, so no unit test runs this path; a live run like
-this one is the check.
+⚠ `sein_retention_test` compiles `Sein.cpp` but covers the retention sweep and the process
+folder, not this reroute, so no unit test runs this path; a live run like this one is the
+check.
 
 HOW THE EXCLUSIVE HANDLE IS TAKEN. Python's `open()` uses the CRT, which shares the
 file — the DLL would open it happily and nothing would be tested. This calls

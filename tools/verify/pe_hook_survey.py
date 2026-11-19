@@ -6,9 +6,9 @@ Answers which of the swept titles CAN carry an invoke-dependent row: a title who
 ProcessEvent hook never fires cannot. The DLL logs its own verdict, so this needs no
 relaunch -- every folder under Logs\\ already holds it.
 
-⚠ A LOG IS ONLY AS CURRENT AS THE DLL THAT WROTE IT. The DumperTest miss is fixed
-(SIB-tolerant pattern; true slot +0x268, not the version table's 0x220), so logs
-written by a DLL with that fix should not report it, while older logs still will --
+⚠ A LOG IS ONLY AS CURRENT AS THE DLL THAT WROTE IT. A DLL with the SIB-tolerant
+pattern finds DumperTest's true slot (+0x268, not the version table's 0x220) and
+logs no miss there, while a log from a DLL without it still reports one --
 read the build stamp before drawing a conclusion.
 
 Reads three independent markers rather than one, because they fail differently:

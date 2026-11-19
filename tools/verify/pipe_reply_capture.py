@@ -1,17 +1,17 @@
-r"""`[A4-ASSESS-2026-09-09]` phase 3 — capture what each command ACTUALLY replies, on a live game.
+r"""`[A4-ASSESS-2026-09-09]` — capture what each command ACTUALLY replies, on a live game.
 
     py tools/verify/pipe_reply_capture.py                 # capture, then diff against the tree
     py tools/verify/pipe_reply_capture.py --out out/reply_shapes.json
 
-⛔ WHY A LIVE CAPTURE AND NOT ANOTHER REGEX. Phase 2 answered the reply-key question statically and
-answered it well in one direction, but two things a static pass CANNOT do:
+⛔ WHY A LIVE CAPTURE AND NOT ANOTHER REGEX. `pipe_command_contract.py` answers the reply-key
+question statically, and well in one direction, but two things a static pass CANNOT do:
 
   1. **Delegating handlers are invisible.** `pipe_command_contract.py` brace-matches the dispatch
      block, so a handler that builds its reply in a helper looks reply-less. 7 commands are in that
      state and the tool says so rather than reporting them as empty.
-  2. **The reverse direction had no usable instrument.** "Keys the UI reads that this command never
-     publishes" needs the real key set. Grepping a +/-line window over a 3,500-line DumpService
-     produced 93 "sites" that were an artifact of the window, and they were discarded, not filed.
+  2. **The reverse direction has no static instrument.** "Keys the UI reads that this command never
+     publishes" needs the real key set. Grepping a +/-line window over DumpService yields "sites"
+     that are an artifact of the window.
 
 A live reply is ground truth for both. This sends each command, keeps the exact key set that came
 back, and diffs it against the static extraction and against what the C# side names.
@@ -97,9 +97,9 @@ def build_args(c: PipeClient) -> dict:
     addr = next((o.get('addr') for o in objs if o.get('addr')), None)
     cls = next((o.get('class') for o in objs if o.get('class')), None)
     # ⛔ A REPLY IS ONLY AS RICH AS THE OBJECT YOU WALK. The first pool object is engine
-    # boilerplate, so `walk_instance` never emitted a delegate/map/set/enum field and 134
-    # C# keys looked like "reads something that never arrives" -- all of them just branches
-    # this walk did not take. Pull instances that actually DECLARE those types so every
+    # boilerplate, so `walk_instance` on it emits no delegate/map/set/enum field and every
+    # C# key for one looks like "reads something that never arrives" -- all of them just
+    # branches this walk did not take. Pull instances that actually DECLARE those types so every
     # field-type handler runs at least once. The rig's own coverage is the measurement.
     rich = []
     for fam in ('DelegateProperty', 'MulticastInlineDelegateProperty', 'MapProperty',
@@ -161,12 +161,12 @@ def build_args(c: PipeClient) -> dict:
 def collect_keys(node, depth: int = 0, acc: set | None = None) -> set:
     """Every key ANYWHERE in the reply, not only the top level.
 
-    ⛔ THE TOP LEVEL IS THE WRONG UNIT, and a first run proved it: comparing top-level keys
-    against what C# indexes produced 170 "the UI reads something that never arrives" hits,
-    and essentially all of them -- `delegate_pad`, `array_dim`, `enum_name`, the whole
-    `map_*` / `set_*` family -- are fields of NESTED rows inside `fields[]` / `objects[]`.
-    They arrive on every walk. Measuring the envelope and concluding about the contents is
-    the same error as phase 2's +/-line window, one layer down.
+    ⛔ THE TOP LEVEL IS THE WRONG UNIT: comparing top-level keys against what C# indexes
+    reports "the UI reads something that never arrives" for keys -- `delegate_pad`,
+    `array_dim`, `enum_name`, the whole `map_*` / `set_*` family -- that are fields of
+    NESTED rows inside `fields[]` / `objects[]`. They arrive on every walk. Measuring the
+    envelope and concluding about the contents is the same error as a +/-line grep window,
+    one layer down.
     """
     if acc is None:
         acc = set()
@@ -258,15 +258,12 @@ def main() -> int:
                 pass
     print('\n%s\nLIVE KEYS NO CONSUMER READS\n%s' % ('=' * 78, '=' * 78))
 
-    # ⛔ "IS THE NAME PRESENT" IS THE WRONG PREDICATE, AND IT FAILED HERE WITHIN HOURS.
-    # A first version asked whether the key appears anywhere in the tree. `mode_resolved`
-    # and `cmc_addr` came back CONSUMED -- and their only occurrence in the whole repo was
-    # a docstring line in tools/verify/pipe_wire_parity.py, written earlier the same night,
-    # naming them as EXAMPLES of unread keys. The report of the orphan made the orphan
-    # disappear: working-lessons 1.w3, a second time, in a second tool.
-    # So the predicate is now CONSUMPTION SHAPE, not presence -- a form that could actually
-    # read the value. Prose, comments and docstrings no longer count, which is both the fix
-    # for the self-reference and a stricter question to begin with.
+    # ⛔ "IS THE NAME PRESENT" IS THE WRONG PREDICATE. Asking whether the key appears
+    # anywhere in the tree counts a docstring that names it as an EXAMPLE of an unread key
+    # as CONSUMED, so the report of the orphan makes the orphan disappear (working-lessons
+    # 1.w3). So the predicate is CONSUMPTION SHAPE, not presence -- a form that could
+    # actually read the value. Prose, comments and docstrings do not count, which both
+    # removes the self-reference and asks a stricter question to begin with.
     def consumed(k: str) -> bool:
         pascal = ''.join(p.capitalize() for p in k.split('_'))
         pats = [

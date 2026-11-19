@@ -2,11 +2,11 @@
 
     py tools/verify/proxy_force_live.py backup                 # copy every deployed proxy of ours to out/proxy-backups/
     py tools/verify/proxy_force_live.py report                 # per game: FileVersion, size, SHA-256, == dist?
-    py tools/verify/proxy_force_live.py tamper "Lushfoil"      # same FileVersion, DIFFERENT bytes (the reported case)
+    py tools/verify/proxy_force_live.py tamper "Lushfoil"      # same FileVersion, DIFFERENT bytes (the case under test)
     py tools/verify/proxy_force_live.py restore <backup-dir>   # put a backup set back
 
-WHY. The maintainer's report: a DLL rebuilt without a build-number bump keeps FileVersion 1.0.0.<build_number>,
-so Update All said "already up-to-date" even with Force Overwrite ticked. `tamper` reproduces that exactly: it
+WHY. A DLL rebuilt without a build-number bump keeps FileVersion 1.0.0.<build_number>, so a version compare
+reads "already up-to-date", and only Force Overwrite can put dist's bytes back. `tamper` reproduces that exactly: it
 appends 16 bytes to a deployed proxy of ours -- the PE and its VERSIONINFO are untouched (FileVersionInfo reads the
 resource section, not the file length), so the UI sees the same version while the SHA no longer matches dist.
 A forced Update All must then write dist's bytes back; an unforced one must leave the tampered file alone.

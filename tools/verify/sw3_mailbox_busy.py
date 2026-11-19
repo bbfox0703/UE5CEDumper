@@ -55,9 +55,9 @@ CANDIDATES = ["UE5Dumper.dll", "version.dll", "dxgi.dll", "winmm.dll", "dinput8.
 def mailbox_addr(pid: int) -> int:
     """base + RVA, with the RVA read from the file ACTUALLY MAPPED in the target.
 
-    Both halves matter and both were learned the hard way in `sw1_worker_fault.py`: a proxy is a
-    different binary from `dist/UE5Dumper.dll` (taking the RVA from the wrong one crashed a
-    game), and the system owns `dxgi`/`version`/`winmm`/`dinput8` too — so the module is chosen
+    Both halves matter (as in `sw1_worker_fault.py`): a proxy is a different binary from
+    `dist/UE5Dumper.dll` (an RVA taken from the wrong one can crash the game), and the system
+    owns `dxgi`/`version`/`winmm`/`dinput8` too — so the module is chosen
     by which one actually EXPORTS the symbol, never by name."""
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.LoadLibraryExW.restype = wt.HMODULE

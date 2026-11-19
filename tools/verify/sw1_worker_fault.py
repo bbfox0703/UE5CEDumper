@@ -8,39 +8,40 @@ than a complete one. Nothing on the pipe command surface can make a worker throw
 `dll_core_test` pins only the pure result struct — so this rig is what sets the flag in a live
 process and runs the branch that consumes it.
 
-⭐ HOW IT IS REACHED. The DLL is built `/EHa` (`dll/CMakeLists.txt:155,186`), so the `catch (...)`
-at `Aura.cpp:278` catches a hardware ACCESS VIOLATION as well as a C++ throw. `Aura::DecryptObjectPtr`
-(`Aura.cpp:311-314`) is `if (!rawPtr || !s_decryptFunc) return rawPtr; return s_decryptFunc(rawPtr);`
+⭐ HOW IT IS REACHED. The DLL is built `/EHa` (`dll/CMakeLists.txt`), so the `catch (...)` around
+each worker body in `ParallelGObjectsScan` (Aura.cpp) catches a hardware ACCESS VIOLATION as well
+as a C++ throw. `Aura::DecryptObjectPtr` is
+`if (!rawPtr || !s_decryptFunc) return rawPtr; return s_decryptFunc(rawPtr);`
 — a raw indirect call that `GetByIndex` makes for EVERY object a worker touches — and
-`UE5_SetObjectDecryption` (`Frieren.h:81`) is an exported C ABI setter for that pointer. Point it
+`UE5_SetObjectDecryption` (`Frieren.h`) is an exported C ABI setter for that pointer. Point it
 at `0x1000` (inside Windows' permanently-reserved low 64 KiB, so the call faults on instruction
 fetch), let the scan run into it, then set it back to NULL. Manufacture-and-restore, no DLL edit.
 
 ⛔ TRAP 1 — `deadline_hit` HAS THREE OTHER CAUSES. It is the same boolean for a real deadline
-(`Aura.cpp:7414`), a cancel, and — silently — a `max_results` CAP HIT, which `Aura.cpp:8244-8247`
-forces unconditionally once `candidates >= maxResults`. A rig that only asserts `deadline_hit ==
-true` proves nothing. The control run below must come back with `deadline_hit == false` AND
-`total < max_results`, or the run is void before it starts.
+(the `kDeadline` check in `ScanForValue`'s worker body), a cancel, and — silently — a `max_results`
+CAP HIT, which `ScanForValue`'s merge forces unconditionally once `candidates >= maxResults`. A
+rig that only asserts `deadline_hit == true` proves nothing. The control run below must come
+back with `deadline_hit == false` AND `total < max_results`, or the run is void before it starts.
 
 ⛔ TRAP 2 — AN EMPTY RESULT IS NOT A PARTIAL ONE. Arming BEFORE the scan starts faults every
 worker on its first object and yields `deadline_hit` over an EMPTY set, which cannot show that a
-set is *partial*. The arm must land MID-SCAN. `parallel=false` (one inline chunk) makes the window
-unambiguous: there is exactly one worker, its per-thread results accumulate into a vector the
-unwind does not destroy, so everything found before the fault survives into the response.
+set is *partial*. The arm must land MID-SCAN, on the PARALLEL form: `parallel=false` is one chunk,
+and its fault discards the whole walk (see THE SERIAL FORM below).
 
-⛔ TRAP 3 — THE WRONG LOG FILE. The register said "a SCAN-category log line". It is not: `Aura.cpp`
+⛔ TRAP 3 — THE WRONG LOG FILE. The worker line is not a SCAN-category line: `Aura.cpp`
 declares `LOG_CAT "OARR"` and Sein.cpp's `s_catMap` routes OARR to `LF_Offsets`, so the worker
 line lands in **offsets-*.log**. "SCAN" is a real category mapping to scan.log, so an operator
-following the register greps a file that will never contain it.
+who expects a scan line greps a file that will never contain it.
 
 ⛔ TRAP 4 — THE WRONG MODULE. `call_export.py` defaults `--module UE5Dumper.dll`, but most games
 here run our code through a deployed PROXY (`dxgi`/`version`/`winmm`/`dinput8`). This rig resolves
 the module by asking which of the five actually carries the export in the target.
 
 ⚠ BLAST RADIUS. The armed pointer is global, so any other subsystem calling `GetByIndex` during
-the window faults too. Most are guarded (`Fern::DispatchCommand`'s `catch(...)` at `Fern.cpp:6425`,
-`Routine::RunThreadGuarded`, `Mimic.cpp:358`, `Stark.cpp:205`, `Schlacht.cpp:561`) and merely lose
-a tick; the genuinely unguarded paths are the raw C ABI exports, i.e. a CE-Lua-driven session.
+the window faults too. Most are guarded (`Fern::DispatchCommand`'s `catch(...)`,
+`Routine::RunThreadGuarded`, Mimic's per-command `Routine::RunTickGuarded`, Stark's `CallAddressSEH`,
+Schlacht's `WorkerLoop`) and merely lose a tick; the genuinely unguarded paths are the raw C ABI
+exports, i.e. a CE-Lua-driven session.
 Keep the window short, and do not run this with gameplay features enabled.
 
 ACCEPTANCE (all four, and the first two are the ones that make it a PARTIAL rather than an EMPTY
@@ -71,9 +72,9 @@ variant can never show. `scanned_objects` drops, and `deadline_hit` flips false 
   * a SECOND scan in the same process runs about twice as fast and does not fault, even when
     armed across the ENTIRE scan.
 So a first scan establishes something a later scan then reuses instead of re-walking. ⚠ That is
-an OBSERVATION, not a mechanism: `Aura.h:1741` refers to "ScanForValue's index builder", which
-fits, but a `--serial` second scan can still fault, so the two forms do not behave the same way
-and nothing here identifies why. Do not write the index down as the cause.
+an OBSERVATION, not a mechanism: some state a first scan leaves behind would fit, but a
+`--serial` second scan can still fault, so the two forms do not behave the same way and nothing
+here identifies why. Do not write any cache or index down as the cause.
 
 ⚠ THE SERIAL FORM CANNOT PRODUCE A PARTIAL RESULT AT ALL, and that is structural rather than a
 timing failure. `parallel=false` is ONE chunk covering the whole array, so the unwind discards the
@@ -190,14 +191,12 @@ def modules(pid: int):
 
 
 def export_rva(dll_path: str) -> int:
-    """⛔ THE RVA MUST COME FROM THE EXACT FILE THAT IS MAPPED IN THE TARGET, and this rig
-    learned that the expensive way on 2026-09-09: it took the RVA from dist/UE5Dumper.dll and
-    added it to the base of the deployed **proxy** dxgi.dll. A proxy is a DIFFERENT binary --
-    same exports, different layout -- so the remote thread started at a wrong address inside
-    dxgi and Titan Quest II died with "EXCEPTION_ACCESS_VIOLATION 0x00007ffe0b0ece10 /
-    dxgi_7ffe0b000000 / kernel32 / ntdll" -- a crash-reporter stack that names the remote thread
-    we started, at base + the RVA of a DIFFERENT file. Toolhelp32 hands us szExePath, so we load
-    THAT file and cannot be wrong."""
+    """⛔ THE RVA MUST COME FROM THE EXACT FILE THAT IS MAPPED IN THE TARGET. An RVA taken from
+    dist/UE5Dumper.dll and added to the base of a deployed **proxy** dxgi.dll is wrong: a proxy is
+    a DIFFERENT binary -- same exports, different layout -- so the remote thread starts at a wrong
+    address inside dxgi and the game dies with an EXCEPTION_ACCESS_VIOLATION in dxgi -- a
+    crash-reporter stack that names the remote thread we started, at base + the RVA of a DIFFERENT
+    file. Toolhelp32 hands us szExePath, so we load THAT file and cannot be wrong."""
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.LoadLibraryExW.restype = wt.HMODULE
     h = k32.LoadLibraryExW(dll_path, None, 0x00000001)       # DONT_RESOLVE_DLL_REFERENCES
@@ -367,9 +366,9 @@ def main() -> int:
             box["err"] = repr(e)
 
     th = threading.Thread(target=run_scan, daemon=True)
-    # ⛔ NO 0.5s FLOOR. It was one, and on a 457 ms parallel scan that pushed the arm past the
-    # END of the run: the armed pass came back byte-identical to the control and the rig
-    # correctly reported that nothing had been measured.
+    # ⛔ NO 0.5s FLOOR. A parallel scan can finish in under half a second, and a floor then
+    # pushes the arm past the END of the run: the armed pass comes back byte-identical to the
+    # control and the rig reports that nothing was measured.
     delay = max(0.02, (c_dur / 1000.0) * a.arm_at)
     print("armed run  : arming %.1fs in, holding %dms" % (delay, a.hold_ms))
     th.start()

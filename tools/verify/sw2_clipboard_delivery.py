@@ -6,9 +6,9 @@ r"""SW2 — a clipboard DELIVERY that fails must say so, and must be seen to hav
 
 THE ROW. 14 delivery sites, the `Action<string>` -> `Func<string,Task<bool>>` split and 5
 async-void handlers, pinned only by **gate 17b — a static source check that executes nothing**
-(regex over `ui/UE5DumpUI/**/*.cs`; no C# is compiled, no bool is produced, no message rendered),
-and 9 of the 14 shipped with no test changes at all. Acceptance: with the clipboard held open by
-another process, the UI must say the copy FAILED and tell the user not to paste, AND
+(regex over `ui/UE5DumpUI/**/*.cs`; no C# is compiled, no bool is produced, no message rendered).
+Acceptance: with the clipboard held open by another process, the UI must say the copy FAILED and
+tell the user not to paste, AND
 `IPlatformService.CopyToClipboardAsync` must actually have returned false.
 
 ⭐ BOTH HALVES ARE FILE-OBSERVABLE, which is what makes this a real two-sided check rather than a
@@ -21,12 +21,12 @@ screenshot. `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\view-0.log` carries:
 (Serilog opens the file `FileShare.Read`, so Python can read it live; the "we cannot read our own
 live log" lesson is a C#-only trap — `File.ReadLines` opens with the wrong share mode.)
 
-⛔ TRAP 1 — THE PLATFORM LINE PREDATES THE FIX. It shipped with `[PASTECRASH-2026-08-18]`, long
-before `ClipboardDelivery` existed. So an exe that predates the fix still writes it, and the run
-would go green over a binary without the behaviour under test — the SW8 stale-proxy shape exactly.
+⛔ TRAP 1 — THE PLATFORM LINE DOES NOT PROVE THE FIX. It belongs to `[PASTECRASH-2026-08-18]`, not
+to `ClipboardDelivery`, so an exe without `ClipboardDelivery` still writes it, and the run would
+go green over a binary without the behaviour under test — the SW8 stale-proxy shape exactly.
 `prepare` BYTE-GREPS the exe for strings the FIX introduced and refuses if they are missing.
 
-⛔ TRAP 2 — FAILURE WITHOUT A PLATFORM CALL. `ClipboardDelivery.cs:62` returns false when
+⛔ TRAP 2 — FAILURE WITHOUT A PLATFORM CALL. `ClipboardDelivery.TryAsync` returns false when
 `platform is null || string.IsNullOrEmpty(payload)` **without ever calling the platform**. An empty
 generated payload therefore produces the identical status text and the identical site warn while
 the clipboard refusal under test never happens. The PLATFORM line is required for exactly this.
@@ -53,7 +53,7 @@ the lock and must STILL be on the clipboard afterwards.
 
 ⛔ TRAP 7 — LOG SCOPING. The logger ARCHIVES the previous file on startup, so byte offsets taken
 before the launch point into a file that no longer exists. Scoping is by TIMESTAMP >= t0, the
-discipline `retention_backdate.py:386-397` records as a mistake already made once here.
+same discipline as the witness in `retention_backdate.py`'s `csharp()`.
 """
 from __future__ import annotations
 

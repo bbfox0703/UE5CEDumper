@@ -25,8 +25,9 @@ the target page is MEM_FREE or MEM_RESERVE. There are exactly two ways to arrang
 
 ⭐⭐ THE NULL RESULT IS THE POINT: it reproduces `[CLASSCACHE-FRONTED-2026-09-09]` from a
 SECOND, unrelated experiment. `FindField` -> `WalkClass` is memoised in a 2048-entry LRU that
-nothing invalidates, and `CharacterMovementComponent` is already in it, so a patched FField is
-invisible to both `Dunste` and the walker. That cache blocks the whole family of layout
+a patched FField does not invalidate (its witness reads the class's identity, not its fields), and
+`CharacterMovementComponent` is already in it, so a patched FField is invisible to both `Dunste`
+and the walker. That cache blocks the whole family of layout
 experiments, among them the two scalar delegate-refusal arms, the Fly write arm and a live
 `ByteProperty` refusal arm. A `--force` / debug-only `invalidate_class_cache` would unblock all four at once.
 
@@ -54,8 +55,8 @@ FFIELD = 0x2A390791C80          # MovementMode FField on CharacterMovementCompon
 FPROPERTY_OFFSET = 0x44         # DynOff::FPROPERTY_OFFSET, taken from the LIVE
                                 # get_offsets table (68). ⚠ Grimoire.h's 0x4C is the
                                 # compile-time DEFAULT; Genau derives the real one per
-                                # title, and the sanity guard below is what caught the
-                                # difference before anything was written into the game.
+                                # title, and the sanity guard below refuses a write
+                                # through the DEFAULT before anything reaches the game.
 BOGUS = 0x400000                # 4 MiB past the CMC -- certainly not committed
 
 

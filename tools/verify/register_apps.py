@@ -1,6 +1,6 @@
 """Register our loose exes as per-user installed applications, so computer-use can grant them.
 
-WHY: computer-use refused UE5DumpUI and both DumperTest packages. Measured behaviour (see
+WHY: computer-use refuses UE5DumpUI and both DumperTest packages. Measured behaviour (see
 docs/auto-verification-session-plan.md §1): a Start-menu entry alone is not enough -- Hollow Knight:
 Silksong is Steam-installed with no shortcut and also fails, so the working model is that a name
 resolves only when the app is a REGISTRY-INSTALLED application *and* a Start-menu entry supplies its

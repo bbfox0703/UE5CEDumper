@@ -11,7 +11,7 @@ A spec is JSON:
 
 WHY THIS EXISTS. Several LOW live rows can only be reached with a DLL that forces a branch the
 installed titles never take (a fallback tier, an unmeasured-offsets verdict, a stalled first walk).
-Each was being staged by hand, and the two ways that goes wrong are both silent:
+Staged by hand, each goes wrong in two ways, and both are silent:
 
   * the source is not restored byte-exact -- CLAUDE.md's NUL-byte incidents, or a CRLF rewrite that
     `git checkout` cannot be trusted to undo -- so the NEXT build ships the staging;
@@ -116,9 +116,9 @@ def main():
             originals_after_reverse = originals
         for f in files:
             text = originals_after_reverse[f].decode("utf-8")
-            # ⚠ A tracked file can be CRLF in the WORK TREE while its blob is LF: `git ls-files --eol`
-            # listed 616 such files on 2026-09-22 (checked out before the eol=lf pin, never rewritten
-            # since), and `git status` calls them clean. Specs are written LF, so speak the file's own
+            # ⚠ A tracked file can be CRLF in the WORK TREE while its blob is LF (checked out before
+            # the eol=lf pin and never rewritten; `git ls-files --eol` lists them), and `git status`
+            # calls it clean. Specs are written LF, so speak the file's own
             # line ending rather than refusing -- the restore below is byte-exact either way.
             crlf = "\r\n" in text
             for s in (x for x in subs if x["file"] == f):

@@ -11,19 +11,19 @@ ElementSize is neither" — i.e. never, without help.
 
 ⭐ BUT THE HOUSE TECHNIQUE REACHES IT. The size the array readers validate is the engine's own
 `FProperty::ElementSize` on the ArrayProperty's **Inner** property, read LIVE on every walk
-(`Ubel.cpp:4370-4372`), and the wire already hands us that Inner's address as `array_inner_addr`
-(`Fern.cpp:1538`, non-lean). One 4-byte write makes 28 — a size no build has for either reader,
-whatever the FName width (the multicast is 16 / 24; the unicast 12 / 16 / 20, or 24 / 32 behind the
-detector) — and both array readers must refuse. (Not 32: a 12-byte-FName checked build has that size
-with [DELEGATE-PAD-ALIGN].) The refusal itself is unit-pinned (`Test_Delegate_AccessDetectorPad` in
-dll_helpers_test); what this rig adds is a CALL SITE reaching it.
+(`WalkInstance`'s ArrayProperty branch), and the wire already hands us that Inner's address as
+`array_inner_addr` (`Fern.cpp` SerializeField, non-lean). One 4-byte write makes 28 — a size no
+build has for either reader, whatever the FName width (the multicast is 16 / 24; the unicast
+12 / 16 / 20, or 24 / 32 behind the detector) — and both array readers must refuse. (Not 32: a
+12-byte-FName checked build has that size with [DELEGATE-PAD-ALIGN].) The refusal itself is
+unit-pinned (`Test_Delegate_AccessDetectorPad` in dll_helpers_test); what this rig adds is a CALL
+SITE reaching it.
 
 ⛔ THE SCALAR ARMS ARE NOT REACHABLE, and `--scalar` exists to MEASURE that rather than to assume
-it. `Ubel.cpp:5499` / `:5996` validate `fi.Size`, which `EnumerateFields` reads ONCE
-(`Ubel.cpp:761`) and `WalkClass` memoises into `s_walkClassCache` (`Ubel.cpp:879`) — a 2048-entry
-LRU with **no invalidation command anywhere in the DLL**. `WalkInstance` iterates that cached copy
-(`Ubel.cpp:4100`), so a poke landing after the class has been walked is invisible, and so is its
-restore.
+it. `WalkInstance`'s DelegateProperty and MulticastDelegateProperty branches validate `fi.Size`,
+which `WalkFFieldChain` reads ONCE and `WalkClass` memoises into `s_walkClassCache` — a 2048-entry
+LRU with **no invalidation command anywhere in the DLL**. `WalkInstance` iterates that cached copy,
+so a poke landing after the class has been walked is invisible, and so is its restore.
 
 Evicting the LRU looks like the way in. It is not, and the reason is not obvious from either
 cache's own comments. On a COLD process:
@@ -35,7 +35,7 @@ cache's own comments. On a COLD process:
 
 The second half of that pass changes nothing at all. `walk_class_batch` goes through
 `Ubel::WalkClassEx` (`Aura.cpp` WalkClassesBatch), which consults the **separate, UNBOUNDED**
-`s_walkClassExCache` (`Ubel.cpp:1200`) and only calls `WalkClass` on a MISS (`Ubel.cpp:1211-1214`).
+`s_walkClassExCache` (Ubel.cpp) and only calls `WalkClass` on a MISS.
 Once that front cache is warm — which 600 classes achieve, because each walk pulls in super chains
 and struct types — no later class walk reaches `WalkClass` at all, so the LRU stops taking inserts
 and therefore stops evicting. Our class, inserted early, simply never reaches the back.
@@ -92,9 +92,9 @@ def fname_of(off: dict) -> int:
     return int(off.get("fname_size") or (12 if off.get("case_preserving") else 8))
 
 # Each reader validates against its OWN FIXED base, not against whatever the field currently
-# reports. ⛔ Deriving the legal set from the LIVE value is wrong and this rig did it that way
-# first: on a checked build the live size is 24, and `{live, live±8}` wrongly admits 32, so the
-# guard refused a poke that the readers do in fact reject. The bases are:
+# reports. ⛔ Deriving the legal set from the LIVE value is wrong: on a checked build the live
+# size is 24, and `{live, live±8}` wrongly admits 32, so the guard would refuse a poke that the
+# readers do in fact reject. The bases are:
 #   ReadMulticastDelegateArrayElements -> kMcdBaseSize, a literal 16   (Ubel.cpp)
 #   ReadDelegateArrayElements          -> kSdBase = 8 + sizeof(FName)  (Ubel.cpp)
 SUBJECTS = [
@@ -174,14 +174,15 @@ SCALARS = [
 
 
 def evict_class_cache(skip_addr: str, want: int = 0) -> int:
-    """⭐ THE ONLY WAY TO REACH THE SCALAR ARMS. `fi.Size` is read once by EnumerateFields and
-    memoised by WalkClass into `s_walkClassCache` (Ubel.cpp:879), and the DLL exposes NO
+    """⭐ THE ONLY WAY TO REACH THE SCALAR ARMS. `fi.Size` is read once by WalkFFieldChain and
+    memoised by WalkClass into `s_walkClassCache` (Ubel.cpp), and the DLL exposes NO
     invalidation command -- so a poke landing after the class has been walked is invisible, and
-    so would its restore be. The cache is a 2048-entry LRU (Ubel.h:204), so ageing our class out
-    and letting the next walk re-read memory is possible -- but only with enough pressure.
+    so would its restore be. The cache is a 2048-entry LRU (`Ubel::kMaxWalkClassCacheEntries`), so
+    ageing our class out and letting the next walk re-read memory is possible -- but only with
+    enough pressure.
 
     ⛔ 2200 CLASSES IS NOT ENOUGH. Eviction runs ONLY on an INSERT --
-    `PublishWalkClass` returns early on a cache HIT (Ubel.cpp:906), and walking an
+    `PublishWalkClass` returns early on a cache HIT, and walking an
     already-cached class merely touches it. After 2200 others our class can still be inside the
     2048 most-recent, so it is never at the back when an insert pops one, and the wire keeps
     reporting the STALE size. Walking EVERY other class makes it the oldest entry by

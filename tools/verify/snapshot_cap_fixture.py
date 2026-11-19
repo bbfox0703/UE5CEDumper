@@ -26,11 +26,9 @@ two caps**: over 256 and under 1024. Then
 are visibly different outcomes. This tool reports whether your corpus lands in that window, because
 outside it step 4 is vacuous no matter how carefully you click.
 
-MEASURED 2026-08-21 on this machine's only non-empty corpus (`snapshots.6A7EA60310F17000.db`,
-DumperTest, 2 snapshots x 644 objects x 12,155 fields): exactly TWO qualifying groups, both
-`TraceQueryTestResults` (gobjects index 22738, outer `Package`) holding **264 fields at 0.0** out of
-288 — the same object in both captures. Margin over the cap is 8 fields, and nothing anywhere
-exceeds 1024, so the corpus sits in the discriminating window.
+A known qualifying shape: on DumperTest, `TraceQueryTestResults` (outer `Package`) holds
+**264 fields at 0.0** out of 288 — 8 over the cap and nowhere near 1024 — so a DumperTest corpus
+that captured it sits in the discriminating window. The tool says whether yours does.
 """
 import argparse
 import glob

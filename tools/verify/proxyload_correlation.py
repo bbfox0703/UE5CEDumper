@@ -16,7 +16,7 @@ base names, then cross-references two independent facts already on disk:
   * which proxy flavour is actually DEPLOYED next to the exe, and
   * whether the DLL ever LOADED there -- i.e. whether
     `%LOCALAPPDATA%\\UE5CEDumper\\Logs\\<exe-base-name>` exists, which is exactly the
-    join the panel's new "Loaded?" column uses (`ProcessLogFolderName`, mirroring
+    join the panel's "Loaded?" column uses (`ProcessLogFolderName`, mirroring
     `Sein.cpp InitProcessMirror`).
 
 ⚠ WHAT THIS CAN AND CANNOT SETTLE. It is **observational**, not a controlled

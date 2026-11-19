@@ -6,7 +6,8 @@ Needs the fixture repackaged on 2026-09-25 (tools/ue-sample/README.md, "Review 7
 stale arms, the `-DumperTestWeakGarbage` switch with at least ~75 s since launch (the first GC purge is ~61 s in).
 Walks the live DumperTestActor --rounds times, --gap seconds apart, and prints every Opt_Weak_* / Opt_Soft* / Opt_Lazy
 field next to WeakToGarbage / WeakToGarbageCount (the garbage twin to compare with). Opt_Soft's raw first 16 bytes are
-read with ReadProcessMemory: its embedded weak cache must be all zero, which is why the pre-R7-S1 label was wrong.
+read with ReadProcessMemory: its embedded weak cache must be all zero, the case where reading it as a weak pointer
+says "holds nothing" and only its soft path shows what it holds ([R7-S1]).
 """
 import argparse
 import ctypes

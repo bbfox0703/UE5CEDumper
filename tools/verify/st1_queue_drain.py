@@ -78,8 +78,8 @@ def loglen():
 
     Counting lines across several *-0.log files and slicing the concatenation is
     wrong the moment more than one of them grows: new lines land in the middle of
-    the list, not at the end, so the slice misses them. That is why a first run
-    reported 0 'enqueued invoke' lines while the log plainly contained one.
+    the list, not at the end, so the slice misses them and reports 0 'enqueued
+    invoke' lines while the log plainly contains one.
     """
     return time.strftime("%Y-%m-%d %H:%M:%S")
 

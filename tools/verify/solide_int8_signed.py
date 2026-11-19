@@ -48,7 +48,7 @@ def main():
         c.ensure_scanned()
 
         # ⚠ get_pointers has NO "data" wrapper — the keys are top level. Reading through a
-        # non-existent "data" gave a silent 0 and would have been reported as "no GWorld".
+        # non-existent "data" gives a silent 0 that reads as "no GWorld".
         _p = c.request("get_pointers")
         gw = str(_p.get("gworld") or (_p.get("data") or {}).get("gworld") or "0")
         say("gworld = %s" % gw)

@@ -328,12 +328,12 @@ class PipeClient:
         self._f.write((json.dumps(msg) + "\n").encode("utf-8"))
 
         deadline = time.time() + self.timeout
-        # Read in BLOCKS, not bytes. The byte-at-a-time version was quadratic on a
-        # large reply (a per-byte pipe read, `buf += chunk`, and a clock call each
-        # time). The DLL finishes list_all_functions on a 281K-object title in 0.34 s
-        # and then BLOCKS writing the multi-MB reply into a pipe this drains one byte
-        # at a time -- which is the whole of the "~10 minute" stall, and it read as a
-        # DLL hang. Leftovers live in self._buf so they survive across requests.
+        # Read in BLOCKS, not bytes. Byte-at-a-time is quadratic on a large reply (a
+        # per-byte pipe read, `buf += chunk`, and a clock call each time): the DLL
+        # finishes list_all_functions on a large title in well under a second and then
+        # BLOCKS writing the multi-MB reply into a pipe drained one byte at a time --
+        # a stall of minutes that reads as a DLL hang. Leftovers live in self._buf so
+        # they survive across requests.
         while time.time() < deadline:
             chunk = self._f.read(65536)
             if not chunk:
@@ -406,9 +406,9 @@ class PipeClient:
 
 def selftest() -> int:
     """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
-    it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
-    The DLL served three then (six since [PIPE-PER-PROCESS-2026-11-06] Stage B) and the UI holds two, so with the UI up the rig failed after ten
-    retries. A handle closed
+    a second handle while the first is still held takes a second pipe instance at the same moment, and the DLL's
+    instances (Fern's kMaxPipeInstances) are shared with the UI's two lanes and every other client, so it can leave
+    one of them, or the rig itself, with none. A handle closed
     behind the client's back is reopened, not handed back, and the reopened connection starts with no bytes of the old
     one -- while a connect() on an open client keeps them, since they belong to the live connection. No pipe is
     opened -- `open` is replaced for the duration."""

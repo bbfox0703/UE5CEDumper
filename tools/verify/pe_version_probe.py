@@ -195,7 +195,7 @@ def build_string_of(strs):
 
 def fixed_reading(fixed_key, fixed_code, strs):
     """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports.
-    ([VER-410-FIXED-VS-STRING] rev 10) The fixed fields are the game's to set; where the file's own engine build string
+    [VER-410-FIXED-VS-STRING] The fixed fields are the game's to set; where the file's own engine build string
     names another version, the string's is taken, as a 'build string' reading that records the code it `overruled`."""
     b = build_string_of(strs)
     if b and b[2] != fixed_code:
@@ -207,9 +207,9 @@ def decide(pmaj, pmin, fmaj, fmin, strs):
     """What ReadUeVersionFromFile takes from one file once its VS_FIXEDFILEINFO and strings are in hand: the fixed
     ProductVersion, then the fixed FileVersion, each through `fixed_reading`; with neither a version code, the strings
     (`string_reading`); else 'unrecognised'. -> the decision fields read_resource() reports (kind, code, key, string,
-    overruled). Pure, and split from the reading, so --selftest runs the whole decision: while it sat inline in
-    read_resource, the fixed-field branch could be reverted to rev 9 with every selftest case still green
-    ([VER-410-FIXED-VS-STRING] review)."""
+    overruled). Pure, and split from the reading, so --selftest runs the whole decision: were it inline in
+    read_resource, the fixed-field branch could be reverted with every selftest case still green
+    ([VER-410-FIXED-VS-STRING])."""
     for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
         code = ue_version_code(maj, mnr)
         if code:

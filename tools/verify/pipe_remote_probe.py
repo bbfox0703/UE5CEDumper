@@ -212,8 +212,8 @@ def say(line):
 
 def sddl_of(handle):
     """The handle's owner, group, DACL and label as SDDL. SE_KERNEL_OBJECT, not SE_FILE_OBJECT: on a
-    probe pipe with the DEFAULT descriptor the file-object path failed with err 87 for every request,
-    the DACL alone included, while the kernel-object path read the same handle (2026-11-06)."""
+    probe pipe with the DEFAULT descriptor the file-object path fails with err 87 for every request,
+    the DACL alone included, while the kernel-object path reads the same handle."""
     what = (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
             | LABEL_SECURITY_INFORMATION)
     psd = ctypes.c_void_p()

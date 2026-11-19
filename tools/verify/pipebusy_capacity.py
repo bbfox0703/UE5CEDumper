@@ -13,15 +13,15 @@ errno still ERRORs every time.
 
 **This rig needs no UI**: it opens as many connections as the DLL takes, which fills the
 pool exactly as a UI plus rigs would. How many is DERIVED, not assumed
-([PIPE-PER-PROCESS-2026-11-06] Stage B changed it, and a game with an older DLL keeps
-its own): the DLL's log states the limit in force ("takes N clients at once", or, from a
-DLL without that line, the start line's `maxInstances=N`), and the rig then MEASURES it --
-with N connected, one more open must find every instance taken (WaitNamedPipeW, which
-does not connect).
+([PIPE-PER-PROCESS-2026-11-06]: the limit differs between DLL builds, and a game with an
+older DLL keeps its own): the DLL's log states the limit in force ("takes N clients at
+once", or, from a DLL without that line, the start line's `maxInstances=N`), and the rig
+then MEASURES it -- with N connected, one more open must find every instance taken
+(WaitNamedPipeW, which does not connect).
 
 WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
   * the at-capacity line must appear **exactly once**, not merely "at least once" --
-    the defect was repetition, so a count of 1 is the whole assertion;
+    the defect is repetition, so a count of 1 is the whole assertion;
   * `CreateNamedPipe failed` must appear **zero** times while at capacity;
   * releasing one client must produce **exactly one** recovery line -- proving the
     latch resets rather than sticking;

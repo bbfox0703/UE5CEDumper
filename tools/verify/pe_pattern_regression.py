@@ -1,8 +1,8 @@
 """CURRENT vs PROPOSED ProcessEvent pattern -- regression sweep over the real corpus.
 
-Committed as the artifact behind the [PEHOOK-2026-08-17] claim in docs/todo.md:
-"over the 22 shipped UE games in the local corpus plus both DumperTest configs,
-60 candidate vtables each, not one binary changed a first match it already had."
+The artifact behind the [PEHOOK-2026-08-17] claim in docs/verification-register.md:
+over the shipped UE games in the local corpus plus both DumperTest configs, no
+binary changes a first match it already had.
 Re-run it before touching the patterns in Frieren.cpp:
 
   py -c "import io,os;print('\\n'.join(os.path.join(d,f) \
@@ -15,9 +15,9 @@ the per-offset tallies below are NOT "the ProcessEvent slot" -- only the
 current-vs-proposed COMPARISON per base is meaningful. Binaries reporting
 vtables=0 are packed/obfuscated and are simply not covered.
 
-[VND584-05, 2026-10-27] CURRENT is now the shipped first pass (dword forms, SIB included) and PROPOSED adds the
+[VND584-05, 2026-10-27] CURRENT is the shipped first pass (dword forms, SIB included) and PROPOSED adds the
 byte-narrowed second pass that runs only when the first found nothing; the sweep reports where that second pass
-adds a match. The paragraph below is the [PEHOOK-2026-08-17] change this rig was written for.
+adds a match. The paragraph below is the [PEHOOK-2026-08-17] change, the same comparison's first subject.
 
 The change under test relaxes pattern 1 to tolerate a mandatory SIB byte. Relaxing a
 pattern can only do two things: find a slot the strict pattern misses (the fix), or find an
