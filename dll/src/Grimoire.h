@@ -403,8 +403,8 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
 
 // [VND10-A1] Licensee FFieldClass layouts: Phantom Blade Zero keeps ConstructFn at +0x00, ClassFlags at +0x08 and Name at
 // +0x30. A separate list with its own picker, not a third stock candidate: Genau consults it only after every stock
-// reading and the UProperty retry found no ChildProperties, so no stock engine ever reads these offsets. Suffix test
-// only, the stronger one.
+// reading and the UProperty retry found no ChildProperties, so a stock engine those readings measure never reads these
+// offsets. Suffix test only, the stronger one.
 inline constexpr int kFFieldClassNameLicenseeProbes[] = { 0x30 };
 
 template <class Resolve>

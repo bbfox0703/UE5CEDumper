@@ -80,6 +80,12 @@ void Init(uintptr_t gobjectsAddr);
 // stride auto-detection can mis-read as 24. 0 = auto-detect the stride.
 void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize = 0);
 
+// Initialize from the static FUObjectArray Genau::FindGObjectsStaticStruct found, with what it reported about it.
+// A UE 5.8 array (ObjObjects first) and a licensee one ([VND10-A1]) go through Init, whose presets carry their rows;
+// a 5.0-5.7 one goes through InitWithExtendedLayout, its stride forced only for a classic item (UObject* @+0x00) --
+// a 5.7+ item is left to the item auto-detection, which knows that shape.
+void InitRecoveredStaticArray(uintptr_t base, int itemStride, int itemObjOffset, bool ue58, bool licensee);
+
 // Get total number of allocated objects
 int32_t GetCount();
 

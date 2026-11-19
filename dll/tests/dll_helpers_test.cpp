@@ -8488,10 +8488,6 @@ static void Test_EnumPackageProbe() {
     }
 }
 
-// [VER-MARKERS-PAST-504] The 5.6 rung's evidence: the word behind UStruct::PropertiesSize + 4. Through 5.5 it is the high
-// half of an int32 MinAlignment, 0; from 5.6 MinAlignment is int16 and StructStateFlags follows, which UStruct::Link sets
-// to PropertyDataAvailable (1). The fakes copy the fixture PDBs' UStruct: DumperTest (5.4) and DumperTest51 (5.1) put
-// an int32 MinAlignment at 0x5C, DumperTest56 (5.6) and DumperTest58 (5.8) an int16 at 0x5C and the flags at 0x5E.
 // [VND10-A1] UStruct::PropertiesSize, found on Guid: ChildProperties + 8 answers whenever it fits, and a licensee
 // insert behind it is found only when it does not.
 static void Test_PropertiesSizeProbe() {
@@ -8566,6 +8562,10 @@ static void Test_PropertiesSizeProbe() {
     }
 }
 
+// [VER-MARKERS-PAST-504] The 5.6 rung's evidence: the word behind UStruct::PropertiesSize + 4. Through 5.5 it is the high
+// half of an int32 MinAlignment, 0; from 5.6 MinAlignment is int16 and StructStateFlags follows, which UStruct::Link sets
+// to PropertyDataAvailable (1). The fakes copy the fixture PDBs' UStruct: DumperTest (5.4) and DumperTest51 (5.1) put
+// an int32 MinAlignment at 0x5C, DumperTest56 (5.6) and DumperTest58 (5.8) an int16 at 0x5C and the flags at 0x5E.
 static void Test_StructStateProbe() {
     std::printf("\n--- VER-MARKERS-PAST-504: the 5.6 rung's UStruct::StructStateFlags probe ---\n");
     using DynOff::StructStateTally;

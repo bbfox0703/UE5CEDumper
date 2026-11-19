@@ -8491,9 +8491,9 @@ int main() {
         Serie::InitUE4(reinterpret_cast<uintptr_t>(lfChunks), 0x10);
 
         static uint8_t lfScriptStructCls[0x100] = {}, lfField[4][0x100] = {}, lfFc[0x80] = {}, lfZero[0x100] = {};
-        static uint8_t lfDecoy[0x100] = {}, lfDecoyFc[0x80] = {};
-        // One Guid per walked shape: the class-walk memo is keyed by address, not by the FField offsets.
-        static uint8_t lfGuid[6][0x200] = {};
+        static uint8_t lfDecoy[0x100] = {}, lfDecoy2[0x100] = {}, lfDecoyFc[0x80] = {};
+        // One Guid per run, so each run's struct stays as that run built it.
+        static uint8_t lfGuid[7][0x200] = {};
         constexpr uintptr_t kCodeLike = 0x00007FF6C166C147ull;   // a code address: its low dword is no name index
 
         enum class Shape { Pbz, Stock57, Stock58, Stock50 };
@@ -8679,11 +8679,14 @@ int main() {
               ustruct().c_str());
 
         // The ordering decoy: a stock 5.7 Guid whose earlier slot (+0x38, where a case-preserving build keeps its
-        // StructBaseChainArray) points at memory reading as an FField whose class names a *Property at +0x30 only. A
-        // licensee offset consulted per pointer would latch +0x38 / +0x30 there, before the real ChildProperties. Its
-        // tail also carries a PBZ-shaped PropertiesSize at +0xA8 behind the stock one.
+        // StructBaseChainArray) points at a two-field chain whose class names a *Property at +0x30 only -- a licensee
+        // reading it corroborates. A licensee reading run before the stock one, or per pointer, latches +0x38 / +0x30
+        // there, before the real ChildProperties. Its tail also carries a PBZ-shaped PropertiesSize at +0xA8 behind the
+        // stock one.
         build(lfGuid[3], Shape::Stock57);
         putP(lfDecoy, DynOff::FFIELD_CLASS, A(lfDecoyFc));
+        putP(lfDecoy, 0x18, A(lfDecoy2));
+        putP(lfDecoy2, DynOff::FFIELD_CLASS, A(lfDecoyFc));
         put32(lfDecoyFc, 0x00, 0x7FFFFFF0); put32(lfDecoyFc, 0x08, 0x00F00000); put32(lfDecoyFc, 0x30, 3);
         putP(lfGuid[3], 0x38, A(lfDecoy));
         putTail(lfGuid[3], 0xA8, true);
@@ -8692,6 +8695,13 @@ int main() {
               rDecoy && clean() && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
         check("VND10-A1-03 control ⭐: a fitting stock PropertiesSize wins over a PBZ-shaped one behind it", stockTail(),
               ustruct().c_str());
+
+        // A stock 5.7 FFieldClass whose +0x30 also names a *Property: the stock reading at +0x00 answers first.
+        build(lfGuid[6], Shape::Stock57);
+        put32(lfFc, 0x30, 3);
+        const bool rBoth = run(lfGuid[6], 507);
+        check("VND10-A1-02 control ⭐: a stock class that names a *Property at +0x30 as well keeps +0x00",
+              rBoth && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x18, got().c_str());
 
         // Phantom Blade Zero.
         build(lfGuid[4], Shape::Pbz);
@@ -14887,11 +14897,27 @@ int main() {
                   score >= 32 && stride == 0x18 && objOff == 0 && !ue58,
                   ("score " + std::to_string(score) + " stride " + std::to_string(stride)).c_str());
             check("VND10-A1-01 ⭐: ...as a licensee array, which Frieren hands to Aura::Init", licensee);
-            // The licensee geometry is held to whole chunks: the same array one chunk short of its MaxElements is not one.
+            // Frieren hands what the scorer reported to Aura::InitRecoveredStaticArray: a licensee array is read by its
+            // own row. Without the licensee bit it would get the forced 5.0-5.7 layout, MaxChunks|NumChunks as Objects.
+            Aura::InitRecoveredStaticArray(B, stride, objOff, ue58, licensee);
+            check("VND10-A1-01 ⭐: the recovery reads the PBZ array it found whole, through its own row",
+                  latched(153466, 0x18, 0x24, 0x20, 0x10, 0x14), layoutText().c_str());
+            Aura::InitRecoveredStaticArray(B, stride, objOff, ue58, false);
+            check("VND10-A1-01 control: ...which the forced 5.0-5.7 layout would not",
+                  Aura::GetCount() != 153466, layoutText().c_str());
+
+            // The licensee rows are held to whole chunks: the same array one chunk short of its MaxElements is not one,
+            // to the scorer or to Genau at either anchor.
             buildPbz(table, 65, 3, 153466, 4259840 - 0x10000);
             const int shortScore = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58, &licensee);
             check("VND10-A1-01 control: a PBZ-shaped array whose MaxElements is not MaxChunks * 64K scores 0",
                   shortScore == 0, ("score " + std::to_string(shortScore)).c_str());
+            check("VND10-A1-01 control: ...Genau refuses it at its base", !Genau::ValidateGObjects(B));
+            check("VND10-A1-01 control: ...and at ObjObjects", !Genau::ValidateGObjects(B + 0x10));
+            // NumChunks that does not follow from Num: refused too.
+            buildPbz(table, 65, 2, 153466, 4259840);
+            check("VND10-A1-01 control: a PBZ-shaped array whose NumChunks is not Num / 64K + 1 is refused at both anchors",
+                  !Genau::ValidateGObjects(B) && !Genau::ValidateGObjects(B + 0x10));
         }
 
         // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
@@ -14946,6 +14972,29 @@ int main() {
                 check("VND10-A1-01 control: ...and Genau validates it", Genau::ValidateGObjects(addr));
                 VirtualFree(hi, 0, MEM_RELEASE);
             }
+        }
+        // Stock shapes no strict chunked row takes, which therefore reach the licensee rows in Aura's order before their
+        // own: a flat 4.18-4.19 array at its base, and a base-anchored 4.20-5.7 array with more than 0x14 live chunks.
+        {
+            std::vector<uint8_t> flatItems(static_cast<size_t>(kA1Items) * 24, 0);
+            memcpy(flatItems.data(), a1Chunk0.data(), flatItems.size());
+            memset(a1, 0, sizeof(a1));
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+            pP(0x10, reinterpret_cast<uintptr_t>(flatItems.data())); p32(0x18, 0x10000); p32(0x1C, 0x2000);
+            pP(0x20, ~0ull); p32(0x28, -1);   // the critical section behind it
+            Aura::Init(B);
+            check("VND10-A1-01 control: a flat 4.18-4.19 array at its base is still Flat-Base's",
+                  Aura::GetCount() == 0x2000 && Aura::s_layout.objectsOffset == 0x10
+                  && Aura::s_layout.numElementsOffset == 0x1C && Aura::s_layout.maxChunksOffset < 0,
+                  layoutText().c_str());
+
+            const uintptr_t many = buildStock(stock[1], table, 0x20, 0x16, 0x150005, 0x200000);
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+            Aura::Init(many);
+            check("VND10-A1-01 control: a UE5-Extended array of 22 live chunks is still read whole, not by a PBZ row",
+                  Aura::GetCount() == 0x150005 && Aura::s_layout.objectsOffset == 0x10
+                  && Aura::s_layout.numElementsOffset == 0x24, layoutText().c_str());
+            check("VND10-A1-01 control: ...and Genau still validates it", Genau::ValidateGObjects(many));
         }
         {
             // The static scorer's stock geometries still answer for their own arrays, and say so.

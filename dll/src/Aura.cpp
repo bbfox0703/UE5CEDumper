@@ -1612,6 +1612,13 @@ void Init(uintptr_t gobjectsAddr) {
              static_cast<unsigned long long>(gobjectsAddr), GetCount(), s_itemSize);
 }
 
+void InitRecoveredStaticArray(uintptr_t base, int itemStride, int itemObjOffset, bool ue58, bool licensee) {
+    if (ue58 || licensee)
+        Init(base);
+    else
+        InitWithExtendedLayout(base, itemObjOffset == 0 ? itemStride : 0);
+}
+
 void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize) {
     s_arrayAddr = gobjectsAddr;
     // UE5 chunked-extended: { Objects@+0x10, MaxElements@+0x20, NumElements@+0x24,
