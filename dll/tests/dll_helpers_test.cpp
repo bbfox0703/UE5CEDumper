@@ -1618,6 +1618,66 @@ static void Test_Stark_NarrowedFlagTests() {
            Stark::NarrowedFlagTestsFunctionFlags(otherReg.data(), otherReg.size(), 0x400) == -1);
 }
 
+// [VND10-A1] Phantom Blade Zero's FunctionFlags sits at +0x100, so its dword tests carry a disp32 of 00 01 00 00, which
+// the first pass's patterns (disp32 bytes 1-3 pinned to 0) and the byte-narrowed pass cannot match.
+static void Test_Stark_WideFlagTests() {
+    const uint8_t w1[] = { 0xF7, 0x82, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // test dword [rdx+0x100], 0x400
+    const uint8_t w2[] = { 0xF7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };   // test dword [rbx+0x100], 0x400000
+    std::vector<uint8_t> pbz(0x2000, 0x90);
+    memcpy(pbz.data() + 0x2E, w1, sizeof(w1));
+    memcpy(pbz.data() + 0xDD1, w2, sizeof(w2));
+    EXPECT("WIDE ⭐: PBZ's pair implies FunctionFlags +0x100",
+           Stark::WideFlagTestsFunctionFlags(pbz.data(), pbz.size(), 0x400) == 0x100);
+    EXPECT("WIDE: the byte-narrowed pass does not see PBZ's dword tests",
+           Stark::NarrowedFlagTestsFunctionFlags(pbz.data(), pbz.size(), 0x400) == -1);
+
+    std::vector<uint8_t> sib(0x2000, 0x90);
+    const uint8_t s1[] = { 0x41, 0xF7, 0x84, 0x24, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // [r12+0x100]
+    memcpy(sib.data() + 0x40, s1, sizeof(s1));
+    memcpy(sib.data() + 0x300, w2, sizeof(w2));
+    EXPECT("WIDE: a SIB-form FUNC_Native test pairs too",
+           Stark::WideFlagTestsFunctionFlags(sib.data(), sib.size(), 0x400) == 0x100);
+
+    // A stock body (+0xB0) agrees as well: the pass is stricter than the first, not different. Frieren reaches it only
+    // after the first passes failed on every vtable, which a stock body never lets happen.
+    std::vector<uint8_t> stock(0x2000, 0x90);
+    const uint8_t b1[] = { 0xF7, 0x82, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
+    const uint8_t b2[] = { 0xF7, 0x83, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };
+    memcpy(stock.data() + 0x2E, b1, sizeof(b1));
+    memcpy(stock.data() + 0xDD1, b2, sizeof(b2));
+    EXPECT("WIDE control: a stock pair at +0xB0 reads +0xB0",
+           Stark::WideFlagTestsFunctionFlags(stock.data(), stock.size(), 0x400) == 0xB0);
+
+    // CONTROLS: what must not count.
+    std::vector<uint8_t> lone(0x2000, 0x90);
+    memcpy(lone.data() + 0x2E, w1, sizeof(w1));
+    EXPECT("WIDE control: a lone FUNC_Native test is not enough",
+           Stark::WideFlagTestsFunctionFlags(lone.data(), lone.size(), 0x400) == -1);
+    std::vector<uint8_t> apart(0x2000, 0x90);
+    memcpy(apart.data() + 0x2E, w1, sizeof(w1));
+    memcpy(apart.data() + 0xDD1, b2, sizeof(b2));
+    EXPECT("WIDE control: the two tests must name the same field",
+           Stark::WideFlagTestsFunctionFlags(apart.data(), apart.size(), 0x400) == -1);
+    std::vector<uint8_t> late(0x2000, 0x90);
+    memcpy(late.data() + 0x500, w1, sizeof(w1));
+    memcpy(late.data() + 0x900, w2, sizeof(w2));
+    EXPECT("WIDE control: the FUNC_Native test must sit in the prologue window",
+           Stark::WideFlagTestsFunctionFlags(late.data(), late.size(), 0x400) == -1);
+    std::vector<uint8_t> huge(0x2000, 0x90);
+    const uint8_t f1[] = { 0xF7, 0x82, 0x00, 0x01, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00 };   // disp 0x10100
+    const uint8_t f2[] = { 0xF7, 0x83, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x40, 0x00 };
+    memcpy(huge.data() + 0x2E, f1, sizeof(f1));
+    memcpy(huge.data() + 0xDD1, f2, sizeof(f2));
+    EXPECT("WIDE control: a disp at or past 0x10000 is no UFunction field",
+           Stark::WideFlagTestsFunctionFlags(huge.data(), huge.size(), 0x400) == -1);
+    std::vector<uint8_t> notTest(0x2000, 0x90);
+    const uint8_t n1[] = { 0xF7, 0x8A, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // ModRM reg=001: not TEST
+    memcpy(notTest.data() + 0x2E, n1, sizeof(n1));
+    memcpy(notTest.data() + 0xDD1, w2, sizeof(w2));
+    EXPECT("WIDE control: F7 with ModRM.reg != 0 is not a TEST",
+           Stark::WideFlagTestsFunctionFlags(notTest.data(), notTest.size(), 0x400) == -1);
+}
+
 // [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
 // first decides, and the other learns it lost.
 static void Test_Stark_ClaimRequest() {
@@ -13095,6 +13155,7 @@ int main() {
     RUN(Test_Stark_CutInvokeWait);
     RUN(Test_Stark_WaitQueuedInvoke);
     RUN(Test_Stark_NarrowedFlagTests);
+    RUN(Test_Stark_WideFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);

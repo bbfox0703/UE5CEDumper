@@ -1923,7 +1923,8 @@ int32_t UE5_SetFlyNoclip(int32_t enable) {
 // 10-byte signatures for `F7 /0 disp32, imm32` (TEST [reg+disp32], imm32):
 //   [F7] [ModRM] [disp32 low byte = FF_off] [disp32 high 3 bytes = 0] [imm32]
 // ModRM and the FF_off byte are wildcarded — FF_off varies by UE version
-// (0x88..0xC0, always < 0x100 so the high 3 bytes of disp32 are 0).
+// (0x88..0xC0 on every stock layout, < 0x100 so the high 3 bytes of disp32 are 0; a
+// licensee FunctionFlags past it is DetectProcessEventVTableOffsetByWideFlagTests').
 // The remaining 7 bytes pin the instruction shape and the literal imm32.
 namespace {
     constexpr uint8_t kPePat1Bytes[10] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
@@ -2057,6 +2058,27 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
     return -1;
 }
 
+// [VND10-A1] FunctionFlags at or past +0x100 (Stark::WideFlagTestsFunctionFlags). The caller runs it only after
+// DetectProcessEventVTableOffsetByPattern found nothing on EVERY candidate vtable, so a binary any earlier pass answers
+// keeps that answer, whichever vtable gave it.
+static int DetectProcessEventVTableOffsetByWideFlagTests(uintptr_t vtable) {
+    constexpr int kMinOffset = 0x100;
+    constexpr int kMaxOffset = 0x300;
+    constexpr size_t kBodySize = 0x2000;
+    uint8_t body[kBodySize];
+    for (int off = kMinOffset; off <= kMaxOffset; off += 8) {
+        uintptr_t funcAddr = 0;
+        if (!Macht::ReadSafe(vtable + off, funcAddr) || !funcAddr) continue;
+        if (!Macht::ReadBytesSafe(funcAddr, body, kBodySize)) continue;
+        const int flagsOff = Stark::WideFlagTestsFunctionFlags(body, kBodySize, 0x400);
+        if (flagsOff < 0) continue;
+        LOG_INFO("DetectProcessEvent (pattern, FunctionFlags past +0xFF): match at vtable+0x%X -> 0x%llX "
+                 "(FunctionFlags +0x%X)", off, (unsigned long long)funcAddr, flagsOff);
+        return off;
+    }
+    return -1;
+}
+
 // Legacy version-based detection — kept as a fallback for cases where the
 // pattern scanner whiffs (unusual compiler output, heavily-optimised LTO,
 // custom publisher fork). Not authoritative: a "success" return here is
@@ -2159,6 +2181,10 @@ static int DetectProcessEventVTableOffset(bool* fromVersionTable) {
                          "(earlier ones override ProcessEvent)", i);
             return off;
         }
+    }
+    for (size_t i = 0; i < vtables.size(); ++i) {
+        const int off = DetectProcessEventVTableOffsetByWideFlagTests(vtables[i]);
+        if (off > 0) return off;
     }
 
     int off = DetectProcessEventVTableOffsetByVersion(vtables[0]);
