@@ -12673,6 +12673,105 @@ static void Test_Renge_CeModuleRelative_NeverTruncates() {
     EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
 }
 
+// [CEPTR-OBJECTS-2026-11-19] get_ce_pointer_info's chain, resolved the way Cheat Engine resolves a pointer record
+// (MemoryRecordUnit.pas, TMemoryRecord.GetRealAddress): [base] is read before the first offset is added, then one more
+// read per offset but offsets[0], which is only added. Each layout row's fake FUObjectArray holds its chunk table at
+// that row's Objects offset and a decoy table, of the same shape, in every other qword: a chain that starts from the
+// wrong field lands on a decoy object or leaves the fake memory, never on the right object by accident.
+namespace {
+
+struct CeFakeMemory {
+    std::vector<std::pair<uintptr_t, size_t>> regions;
+    void Add(const void* p, size_t n) { regions.emplace_back(reinterpret_cast<uintptr_t>(p), n); }
+    bool ReadPtr(uintptr_t addr, uintptr_t& out) const {
+        for (const auto& [start, size] : regions) {
+            if (addr >= start && size >= sizeof(uintptr_t) && addr - start <= size - sizeof(uintptr_t)) {
+                std::memcpy(&out, reinterpret_cast<const void*>(addr), sizeof(out));
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+// The address CE shows for the record; 0 when one of its reads leaves the fake memory.
+uintptr_t CeResolve(const CeFakeMemory& mem, uintptr_t base, const std::vector<int>& offsets) {
+    uintptr_t addr = base;
+    for (size_t i = offsets.size(); i-- > 0;) {
+        uintptr_t value = 0;
+        if (!mem.ReadPtr(addr, value)) return 0;
+        addr = value + static_cast<uintptr_t>(static_cast<intptr_t>(offsets[i]));
+    }
+    return addr;
+}
+
+}  // namespace
+
+static void Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt() {
+    struct Row { const char* name; int objectsOffset; int itemSize; int itemObjOffset; };
+    // Each Objects offset a preset row latches, with the item geometries Aura detects.
+    const Row rows[] = {
+        { "Default (ObjObjects)",                    0x00, 16, 0x00 },
+        { "UE5-Extended (base)",                     0x10, 24, 0x00 },
+        { "UE5-Extended (base), 5.7+ unpacked item", 0x10, 24, 0x08 },
+        { "MindsEye (ObjObjects)",                   0x18, 32, 0x10 },
+        { "MindsEye-Extended (base)",                0x28, 32, 0x10 },
+        { "PBZ (ObjObjects)",                        0x08, 24, 0x00 },
+        { "PBZ-Base (base)",                         0x18, 24, 0x00 },
+    };
+    constexpr int kPerChunk = Grimoire::OBJECTS_PER_CHUNK;
+    const int32_t indices[] = { 0, 5, kPerChunk + 77, 2 * kPerChunk + 127 };
+    constexpr int kChunks = 3, kItemsUsed = 128, kObjBytes = 0x80;
+    auto addrOf = [](const void* p) { return reinterpret_cast<uintptr_t>(p); };
+
+    for (const Row& r : rows) {
+        CeFakeMemory mem;
+        // [0] the real table, [1] the decoy.
+        std::vector<uint8_t> objs[2];
+        std::vector<std::vector<uint8_t>> chunks[2];
+        std::vector<uintptr_t> tables[2];
+        for (int t = 0; t < 2; ++t) {
+            objs[t].assign(std::size(indices) * kObjBytes, 0);
+            chunks[t].assign(kChunks, std::vector<uint8_t>(static_cast<size_t>(kItemsUsed) * r.itemSize, 0));
+            tables[t].resize(kChunks);
+            for (int c = 0; c < kChunks; ++c) {
+                tables[t][c] = addrOf(chunks[t][c].data());
+                mem.Add(chunks[t][c].data(), chunks[t][c].size());
+            }
+            mem.Add(tables[t].data(), tables[t].size() * sizeof(uintptr_t));
+            mem.Add(objs[t].data(), objs[t].size());
+            for (size_t k = 0; k < std::size(indices); ++k) {
+                const int32_t i = indices[k];
+                const uintptr_t obj = addrOf(objs[t].data() + k * kObjBytes);
+                std::memcpy(chunks[t][i / kPerChunk].data() + static_cast<size_t>(i % kPerChunk) * r.itemSize
+                                + r.itemObjOffset, &obj, sizeof(obj));
+            }
+        }
+        alignas(8) uint8_t array[0x40] = {};
+        for (int q = 0; q < static_cast<int>(sizeof(array)); q += 8) {
+            const uintptr_t tbl = addrOf(tables[q == r.objectsOffset ? 0 : 1].data());
+            std::memcpy(array + q, &tbl, sizeof(tbl));
+        }
+        mem.Add(array, sizeof(array));
+        const uintptr_t anchor = addrOf(array);
+
+        for (size_t k = 0; k < std::size(indices); ++k) {
+            const int32_t i = indices[k];
+            for (int field : { 0x00, 0x44 }) {
+                const Aura::CeChunkedChain chain =
+                    Aura::BuildCeChunkedChain(anchor, r.objectsOffset, i, r.itemSize, r.itemObjOffset, field);
+                char lbl[192];
+                std::snprintf(lbl, sizeof lbl, "[CEPTR-OBJECTS] %s: CE resolves slot %d +0x%X onto that object's field",
+                              r.name, i, field);
+                EXPECT_EQ_U64(lbl, CeResolve(mem, chain.base, chain.offsets),
+                              addrOf(objs[0].data() + k * kObjBytes) + static_cast<uintptr_t>(field));
+                std::snprintf(lbl, sizeof lbl, "[CEPTR-OBJECTS] %s: slot %d's chunk and place in it", r.name, i);
+                EXPECT(lbl, chain.chunkIndex == i / kPerChunk && chain.withinChunk == i % kPerChunk);
+            }
+        }
+    }
+}
+
 // [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrows the long path with WC_NO_BEST_FIT_CHARS and
 // falls back to the 8.3 alias -- which must be narrowed under the same check. On a volume without 8.3 names
 // GetShortPathNameW returns the long path, so a re-narrowing with flags 0 and no used-default check would send a
@@ -13161,6 +13260,7 @@ int main() {
 #endif
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
+    RUN(Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt);
     RUN(Test_Methode_NarrowForAnsiLoad);
     RUN(Test_Methode_FolderAliasOf);
     RUN(Test_Methode_MaintainersShapes);

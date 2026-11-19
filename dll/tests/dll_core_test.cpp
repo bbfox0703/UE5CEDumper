@@ -14863,6 +14863,35 @@ int main() {
                 && Aura::s_layout.numElementsOffset == num && Aura::s_layout.maxChunksOffset == maxC
                 && Aura::s_layout.numChunksOffset == numC;
         };
+        // [CEPTR-OBJECTS-2026-11-19] get_ce_pointer_info's chain for the row Aura latched, resolved as Cheat Engine
+        // resolves a pointer record ([base] is read before the first offset is added; offsets[0] is only added), lands
+        // on the field of the object Aura reads at that slot: slot 5, and a slot in chunk 2 where the count reaches it.
+        // "" when it does; else where it went.
+        auto ceChainMiss = [](uintptr_t anchor) -> std::string {
+            for (int32_t idx : { 5, 2 * Grimoire::OBJECTS_PER_CHUNK + 7 }) {
+                if (idx >= Aura::GetCount()) continue;
+                const uintptr_t obj = Aura::GetByIndex(idx);
+                if (!obj) return "Aura reads no object at slot " + std::to_string(idx);
+                const Aura::CeChunkedChain chain = Aura::BuildCeChunkedChain(
+                    anchor, Aura::GetObjectsOffset(), idx, Aura::GetItemSize(), Aura::GetItemObjOffset(), 0x30);
+                char b[128];
+                uintptr_t at = chain.base;
+                for (size_t i = chain.offsets.size(); i-- > 0;) {
+                    uintptr_t v = 0;
+                    if (!Macht::ReadSafe(at, v)) {
+                        snprintf(b, sizeof b, "slot %d: CE's read at 0x%llX fails", idx, (unsigned long long)at);
+                        return b;
+                    }
+                    at = v + static_cast<uintptr_t>(static_cast<intptr_t>(chain.offsets[i]));
+                }
+                if (at != obj + 0x30) {
+                    snprintf(b, sizeof b, "slot %d: CE lands on 0x%llX, Aura's object +0x30 is 0x%llX", idx,
+                             (unsigned long long)at, (unsigned long long)(obj + 0x30));
+                    return b;
+                }
+            }
+            return {};
+        };
 
         struct Numbers { const char* what; int32_t maxChunks, numChunks, num, maxE; };
         const Numbers sets[] = {
@@ -14877,9 +14906,18 @@ int main() {
             Aura::Init(B);
             check(("VND10-A1-01 ⭐: Aura reads it whole at its base" + tag).c_str(),
                   latched(n.num, 0x18, 0x24, 0x20, 0x10, 0x14), layoutText().c_str());
+            {
+                const std::string miss = ceChainMiss(B);
+                check(("CEPTR-OBJECTS ⭐: a CE pointer from a PBZ array's base reaches Aura's object" + tag).c_str(),
+                      miss.empty(), miss.c_str());
+            }
             Aura::Init(B + 0x10);
             check(("VND10-A1-01 ⭐: ...and at ObjObjects" + tag).c_str(),
                   latched(n.num, 0x08, 0x14, 0x10, 0x00, 0x04), layoutText().c_str());
+            {
+                const std::string miss = ceChainMiss(B + 0x10);
+                check(("CEPTR-OBJECTS ⭐: ...and from its ObjObjects" + tag).c_str(), miss.empty(), miss.c_str());
+            }
             // What the mov rows deliver, the Objects field: relaxed F takes it (pass 2), and Aura reads 0 objects, so
             // Frieren's Count == 0 recovery runs. Pinned, not a goal: a change that moves either must do it on purpose.
             check(("VND10-A1-01 pin: Genau takes PBZ's Objects field through relaxed F" + tag).c_str(),
@@ -14951,6 +14989,9 @@ int main() {
                 check(("VND10-A1-01 control: " + tag + " -- Aura latches its own row").c_str(),
                       latched(n.num, s.obj, s.maxE, s.num, s.maxC, s.numC), layoutText().c_str());
                 check(("VND10-A1-01 control: " + tag + " -- Genau validates it").c_str(), Genau::ValidateGObjects(addr));
+                const std::string miss = ceChainMiss(addr);
+                check(("CEPTR-OBJECTS ⭐: " + tag + " -- a CE pointer from it reaches Aura's object").c_str(),
+                      miss.empty(), miss.c_str());
             }
         }
 

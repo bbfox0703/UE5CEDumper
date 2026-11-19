@@ -1668,6 +1668,10 @@ bool IsFlat() {
     return s_isFlat;
 }
 
+int GetObjectsOffset() {
+    return s_layout.objectsOffset;
+}
+
 // Within-item byte offset of the UObject* for the two DIRECT layouts (0x00 classic,
 // 0x08 UE5.7+ unpacked). Meaningless under Packed57 (reconstructed, not stored) — the
 // CE-chain caller in Fern guards on IsPacked() before using this.

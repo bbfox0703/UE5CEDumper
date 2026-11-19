@@ -271,6 +271,30 @@ void SetPackedConsts(int alignBits, uint64_t ptrMaskBits, bool force, int serial
 // Flat arrays were used in UE4.11-4.20; chunked arrays in UE4.21+ and all UE5.
 bool IsFlat();
 
+// Byte offset of the Objects field (the FUObjectItem** every chunk or item read starts from) from the address Init was
+// given. 0x00 only for a stock array published at ObjObjects; an array published at the FUObjectArray base, or a fork
+// that reorders ObjObjects, puts it further in.
+int GetObjectsOffset();
+
+// [CEPTR-OBJECTS-2026-11-19] The Cheat Engine pointer get_ce_pointer_info hands out for byte `fieldOffset` of the
+// object in slot `internalIndex` of a CHUNKED array whose items store the UObject* directly (`itemSize`-byte items,
+// the pointer at `itemObjOffset`). `offsets` is in CE's order: offsets[0] is added last.
+struct CeChunkedChain {
+    uintptr_t        base = 0;
+    int32_t          chunkIndex = 0;
+    int32_t          withinChunk = 0;
+    std::vector<int> offsets;
+};
+inline CeChunkedChain BuildCeChunkedChain(uintptr_t arrayAddr, [[maybe_unused]] int objectsOffset,
+                                          int32_t internalIndex, int itemSize, int itemObjOffset, int fieldOffset) {
+    CeChunkedChain c;
+    c.base        = arrayAddr;
+    c.chunkIndex  = internalIndex / Grimoire::OBJECTS_PER_CHUNK;
+    c.withinChunk = internalIndex % Grimoire::OBJECTS_PER_CHUNK;
+    c.offsets     = { fieldOffset, c.withinChunk * itemSize + itemObjOffset, c.chunkIndex * 8, 0 };
+    return c;
+}
+
 // [W4-STRIDE-TENTATIVE] How the FUObjectItem stride was arrived at -- ORTHOGONAL to the layout mode (a guessed
 // stride is still classed classic / unpacked57 / packed57, which is why this is not a fourth mode):
 //   "detected"   -- a probe pass cleared the confidence gate (or the preset hint, or the packed probe, did)
