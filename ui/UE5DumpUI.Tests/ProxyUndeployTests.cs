@@ -8,11 +8,11 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Locks the Undeploy policy. The rule that motivated it: undeploy is a CLEAN-UP
+/// Locks the Undeploy policy. The rule: undeploy is a CLEAN-UP
 /// and must sweep every proxy flavour we ship, not the one selected in the UI —
-/// scoping it to the selection left a user who deployed dxgi.dll and later moved
-/// the radio to version.dll unable to remove it at all, while the grid reported
-/// DeployedOtherType at them.
+/// scoped to the selection, it would leave a user who deployed dxgi.dll and later
+/// moved the radio to version.dll unable to remove it at all, while the grid
+/// reported DeployedOtherType at them.
 ///
 /// The decision is tested through the pure helpers rather than the file-touching
 /// method, because ownership is decided by <c>FileVersionInfo.ProductName</c> and
@@ -44,7 +44,7 @@ public class ProxyUndeployTests
     [Fact]
     public void Plan_removes_our_dll_of_a_type_other_than_the_selected_one()
     {
-        // THE reported bug: dxgi deployed, version selected → dxgi must still go.
+        // THE case: dxgi deployed, version selected → dxgi must still go.
         var plan = ProxyDeployService.PlanUndeploy(new[]
         {
             Absent("version.dll"), Absent("dinput8.dll"), Ours("dxgi.dll"),

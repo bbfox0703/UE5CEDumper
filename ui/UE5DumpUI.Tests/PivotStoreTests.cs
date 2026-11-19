@@ -129,10 +129,10 @@ public class PivotStoreTests : IDisposable
         Assert.Equal("Quantity=⟨3: 10,20,5⟩", g.ValuesDisplay);
     }
 
-    // [SNAPDIFF-SHADOWED-PROP] review: a class can carry two properties of one name at different offsets (measured on
-    // DumperTest: MovieSceneCinematicShotSection's PrerollTime at +196 and +296). The pivot field list grouped by
-    // (name, type), so the two copies were ONE picker entry with a doubled instance count and a distinct count pooled
-    // over both -- and that pooled count fed the key scorer.
+    // [SNAPDIFF-SHADOWED-PROP] A class can carry two properties of one name at different offsets (on DumperTest:
+    // MovieSceneCinematicShotSection's PrerollTime at +196 and +296). A pivot field list grouped by (name, type) would
+    // make the two copies ONE picker entry with a doubled instance count and a distinct count pooled over both -- and
+    // that pooled count would feed the key scorer.
     internal static SnapshotCapturedObject ShotSection(int idx, string path, int preroll296)
     {
         var o = new SnapshotCapturedObject

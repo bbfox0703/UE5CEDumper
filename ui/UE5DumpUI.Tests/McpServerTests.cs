@@ -204,10 +204,10 @@ public sealed class McpServerTests
         string instructions = await InstructionsFor(ClaudeCode, RecentClaudeCode);
         Assert.Contains(Constants.McpGrantToolToggles, instructions);
         Assert.Contains(Constants.McpGrantToolMovement, instructions);
-        // Phase 1b: the invoke grant and the tool that calls under it, so the model asks for it by name.
+        // The invoke grant and the tool that calls under it, so the model asks for it by name.
         Assert.Contains(Constants.McpGrantToolInvoke, instructions);
         Assert.Contains(Constants.McpInvokeGrantedTool, instructions);
-        // Phase 2: the field grant and its tool, by name too.
+        // The field grant and its tool, by name too.
         Assert.Contains(Constants.McpGrantToolField, instructions);
         Assert.Contains(Constants.McpFieldGrantedTool, instructions);
         // Each per-call exception goes with its own refused grant, and none follows the user's block.

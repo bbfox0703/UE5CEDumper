@@ -254,7 +254,7 @@ public class PropertySearchFilterTests
 
         Assert.Contains("STOPPED at the 200-row cap", vm.StatusText);
         Assert.Contains("raise Max above 200", vm.StatusText);
-        // ...and it still names the levers it always did.
+        // ...and it still names the panel's other levers.
         Assert.Contains("Type filter", vm.StatusText);
         vm.Dispose();
     }

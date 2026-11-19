@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// VM-level tests for the Related Objects panel's Phase 2 current-target
+/// VM-level tests for the Related Objects panel's current-target
 /// auto-detect (Edel). Verifies the auto-pick-and-load happy path and the
 /// graceful-degradation path (weak / unresolved → no auto-load).
 /// Uses a stub IDumpService scoped to this file.
@@ -142,10 +142,10 @@ public class RelatedObjectsViewModelTests
 
     // ---- [W4-RELATED-RACE] two overlapping loads must not concatenate their graphs ----
     //
-    // LoadAsync cleared before its await and appended after, with no generation ticket -- the only VM in
-    // its cluster without one. A handoff or a candidate pick landing while a load was in flight made both
-    // pass their Clear() and both Add(): object A's graph concatenated with B's under one header.
-    // ⛔ `if (IsBusy) return;` is not the fix: DetectTargetAsync sets IsBusy, then awaits this very load.
+    // LoadAsync clears before its await and appends after, so without a generation ticket a handoff or a
+    // candidate pick landing while a load is in flight would make both pass their Clear() and both Add():
+    // object A's graph concatenated with B's under one header.
+    // ⛔ `if (IsBusy) return;` is no guard: DetectTargetAsync sets IsBusy, then awaits this very load.
 
     /// <summary>Each call parks on its own gate, so a test decides the order the loads finish in.</summary>
     private sealed class GatedDumpService : StubDumpService
@@ -245,8 +245,8 @@ public class RelatedObjectsViewModelTests
     [Fact]
     public async Task ALoadLandingAfterADisconnect_IsDropped()
     {
-        // X5 promises a reconnect never shows the previous game's addresses; a load in flight at
-        // disconnect repopulated the grid with them.
+        // A reconnect must never show the previous game's addresses; a load in flight at
+        // disconnect would repopulate the grid with them.
         var dump = new GatedDumpService();
         var vm = CreateVm(dump);
 
@@ -259,7 +259,7 @@ public class RelatedObjectsViewModelTests
         Assert.Equal("", vm.QueryClassName);
     }
 
-    // ---- review of c1c30d51: the busy flag, and the un-ticketed Detect ----
+    // ---- the busy flag, and a Detect that takes its own ticket ----
 
     private static CurrentTargetResult OneCandidate(bool resolved) => new()
     {
@@ -273,8 +273,8 @@ public class RelatedObjectsViewModelTests
     [Fact]
     public async Task ADisconnectDuringALoad_LeavesTheBusyFlagClear()
     {
-        // ClearOnDisconnect bumped the generation but never took over IsBusy, and the superseded load's
-        // finally skips it by design -- so a load in flight at disconnect left it stuck on.
+        // ClearOnDisconnect bumps the generation, and the superseded load's finally skips IsBusy by design --
+        // so unless the disconnect takes IsBusy over, a load in flight at disconnect leaves it stuck on.
         var dump = new GatedDumpService();
         var vm = CreateVm(dump);
 
@@ -327,7 +327,7 @@ public class RelatedObjectsViewModelTests
     public async Task ADetect_SupersedesAnEarlierLoad_EvenWhenItFindsNothing()
     {
         // The latest action owns the panel: a load handed off BEFORE Detect must not land over Detect's
-        // result, nor clear the busy state Detect now owns.
+        // result, nor clear the busy state Detect owns.
         var dump = new GatedDumpService();
         var vm = CreateVm(dump);
 

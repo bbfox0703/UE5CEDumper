@@ -70,8 +70,9 @@ public class ProtectionScriptGeneratorTests
     }
 
     // [W2-CEGEN-MODAL] Unticking must not put a modal over a fullscreen game (MailboxTimeout.SilentReturn's own doc).
-    // Both blocks came from one emitter, so every [ENABLE] bail -- the missing mailbox, the contract check (two
-    // messages), the idle wait, the timeout, the result check -- was a showMessage in [DISABLE] too.
+    // Both blocks come from one emitter, so unless [DISABLE] asks for silence every [ENABLE] bail -- the missing
+    // mailbox, the contract check (two messages), the idle wait, the timeout, the result check -- is a showMessage
+    // there too.
     [Fact]
     public void Disable_block_never_pops_a_modal()
     {
@@ -81,11 +82,11 @@ public class ProtectionScriptGeneratorTests
         Assert.Contains("dbg('[GodMode]", disable);   // a DEBUG session still sees why it gave up
     }
 
-    // GODMODE-FAILED-TICK-LATCHES-WANT (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]): Solitar::SetGodMode
-    // stores the want BEFORE it applies anything and keeps the re-assert worker running whatever it answered, so a
-    // negative answer to a tick is armed, not nothing -- the hold engages as soon as a pawn resolves, which the UI card
-    // calls "ON (pending)". Unticking that row without running [DISABLE] left a live hold under an OFF row. The row
-    // stays ticked and says how to cancel. Negative control: put any untick back in this branch and this fails.
+    // GODMODE-FAILED-TICK-LATCHES-WANT: Solitar::SetGodMode stores the want BEFORE it applies anything and keeps the
+    // re-assert worker running whatever it answered, so a negative answer to a tick is armed, not nothing -- the hold
+    // engages as soon as a pawn resolves, which the UI card calls "ON (pending)". Unticking that row without running
+    // [DISABLE] would leave a live hold under an OFF row. The row stays ticked and says how to cancel. Negative
+    // control: put any untick in this branch and this fails.
     [Fact]
     public void A_tick_answered_negative_stays_ticked_because_the_hold_is_armed()
     {
@@ -100,7 +101,7 @@ public class ProtectionScriptGeneratorTests
         Assert.Contains("untick", branch);
     }
 
-    // The control: ticking keeps every announced, unticking bail -- the fix is [DISABLE]-only.
+    // The control: ticking keeps every announced, unticking bail -- the silence is [DISABLE]-only.
     [Fact]
     public void Enable_block_still_announces_and_unticks_its_bails()
     {

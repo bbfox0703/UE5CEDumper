@@ -168,8 +168,8 @@ public class LogCompressionPolicyTests
     }
 
     // [LOG-RESUME-LIVE-ROLLED] A session that rolls a category past 8 MB writes the highest-numbered
-    // `{prefix}-0_NNN.log`, which IsLiveLog does not name; once it was quiet an hour, the sweep tried it and reported
-    // a failure. In our own folder the newest rolled file of each category is the live one; an older one is finished.
+    // `{prefix}-0_NNN.log`, which IsLiveLog does not name; quiet an hour, the sweep would try it and report a
+    // failure. In our own folder the newest rolled file of each category is the live one; an older one is finished.
 
     [Fact]
     public void Plan_OurNewestRolledFileOfACategory_IsLive()
@@ -302,8 +302,8 @@ public class LogCompressionServiceTests : IDisposable
     [Fact]
     public async Task Compress_ShrinksArchives_SkipsLiveAndSmall_AndNEVERMovesTheWriteTime()
     {
-        // A per-game subfolder whose name contains SPACES — the exact shape that silently
-        // lost 23 files to an unquoted command line during the evaluation.
+        // A per-game subfolder whose name contains SPACES — the shape an unquoted command
+        // line silently loses files on.
         var archive = WriteLog(Path.Combine("SEED BATTLE DESTINY REMASTERED", "walk-20260701-101010.log"), 48);
         var live    = WriteLog("walk-0.log", 48);
         var small   = Path.Combine(_dir, "init-20260701-101010.log");

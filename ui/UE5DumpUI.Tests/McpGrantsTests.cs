@@ -6,7 +6,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [MCP-WRITE-GRANTS-2026-11-14] Phase 1. The grant core on its own, with no pipe and no tool: which host gets writes,
+/// [MCP-WRITE-GRANTS-2026-11-14] The grant core on its own, with no pipe and no tool: which host gets writes,
 /// how a DLL command is classed, what counts as a release, and what a grant admits. The plan and the measurements
 /// behind each rule are docs/mcp-write-approval-eval.md.
 /// </summary>
@@ -322,7 +322,7 @@ public sealed class McpGrantsTests
         Assert.Null(g.Admit(role, McpGrantKind.Toggles, Ptrs(), out _));
     }
 
-    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] §4.4) ──────────────────────────────────────────────
 
     // Ubel::GetFullName's form, as walk_functions sends it in `full`: the function comes last.
     private const string SetHidden = "//Script/Engine/Actor.SetActorHiddenInGame";
@@ -435,7 +435,7 @@ public sealed class McpGrantsTests
         Assert.Null(marked.Admit(McpToolRole.GrantedInvoke, McpGrantKind.Invoke, Ptrs(), out _, SetHidden));
     }
 
-    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] §4.5) ─────────────────────────────────────────────
 
     // A class's full path (walk_class' full_path), a colon, the field.
     private const string HolderValue = "//Script/DumperTest/DumperTestHolder:HolderValue";

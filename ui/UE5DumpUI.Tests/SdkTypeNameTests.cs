@@ -53,11 +53,11 @@ internal sealed class SdkPoolDump : StubDumpService
 
 /// <summary>
 /// TYPE names in the SDK header — a struct's own name, its super, and every type a member spells —
-/// were emitted verbatim.
+/// must not be emitted verbatim.
 ///
-/// <para>Measured on a real whole-pool export (DumperTest 5.4, 7,894 structs): every AnimBlueprint
+/// <para>On a real whole-pool export (DumperTest 5.4, 7,894 structs) every AnimBlueprint
 /// carries its own <c>AnimBlueprintGeneratedConstantData</c>, so ABP_Manny's and ABP_Quinn's collide,
-/// and because Quinn is a child AnimBP its struct came out as
+/// and because Quinn is a child AnimBP a verbatim name makes its struct
 /// <c>struct AnimBlueprintGeneratedConstantData : public AnimBlueprintGeneratedConstantData</c>.
 /// <c>NameTypes.h</c>'s <c>INVALID_OBJECTNAME_CHARACTERS</c> does not include <c>-</c>, so an asset
 /// name can carry one into a class name.</para>
@@ -547,9 +547,9 @@ public class SdkTypeNameTests
     public void Pool_TheMetaclassesDefaultObjects_AreNotTypes()
     {
         // A class-default object's GObjects row reads its metaclass, so `Default__ScriptStruct`,
-        // `Default__Class` and `Default__UserDefinedStruct` pass a meta filter -- and were emitted as
-        // empty `struct Default__X {}` of size 0. Measured live on EVERSPACE 2 (UE 5.6): five of them
-        // before admitting UserDefinedStruct, six after.
+        // `Default__Class` and `Default__UserDefinedStruct` pass a meta filter -- and must not be emitted
+        // as empty `struct Default__X {}` of size 0. A real UE 5.6 pool (EVERSPACE 2) holds six such
+        // rows once UserDefinedStruct is admitted.
         var n = new SdkPoolDump()
             .Add("0x1", "Default__ScriptStruct", "ScriptStruct", "//Script/CoreUObject/Default__ScriptStruct", size: 0)
             .Add("0x2", "Default__Class", "Class", "//Script/CoreUObject/Default__Class", size: 0)

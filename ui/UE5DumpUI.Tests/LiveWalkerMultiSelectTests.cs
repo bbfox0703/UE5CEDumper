@@ -353,7 +353,7 @@ public class LiveWalkerMultiSelectTests
 
         // Exactly one CE document
         Assert.Equal(1, CountOccurrences(xml, "<?xml"));
-        // Array group description is now the bare field name (no array descriptor)
+        // Array group description is the bare field name (no array descriptor)
         Assert.Contains("\"Scores\"", xml);
         Assert.DoesNotContain("[5 x IntProperty", xml);
         // Both selected elements appear; the unselected ones do not
@@ -667,7 +667,7 @@ public class LiveWalkerMultiSelectTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"game.exe\"+1000", "GWorld", breadcrumbs, fields);
 
-        // The element [0] deref node must exist (was missing → the bug).
+        // The element [0] deref node must exist.
         int elemIdx = xml.IndexOf("\"[0]\"", StringComparison.Ordinal);
         Assert.True(elemIdx >= 0, "element [0] deref node missing from the chain");
         Assert.Contains("<Address>+2E0</Address>", xml);  // PlayerArray (deref Data)
@@ -743,7 +743,7 @@ public class LiveWalkerMultiSelectTests
         Assert.Equal(1, CountOccurrences(xml, "<Address>+10A8</Address>"));
     }
 
-    // Deep distinct chain (the Gundam SEED repro) must pass through the dedup +
+    // Deep distinct chain (the Gundam SEED shape) must pass through the dedup +
     // clean passes UNTOUCHED — guards DedupeConsecutiveBreadcrumbs / CleanBreadcrumbs
     // against over-collapsing a legitimate deeply-nested export.
     private static List<BreadcrumbItem> SeedDeepChain() => new()
@@ -1006,8 +1006,8 @@ public class LiveWalkerMultiSelectTests
     }
 
     // [LW-SYNTH-EMPTIED-BACK] A container emptied since the path was found is still its kind: a count of 0, which
-    // RepopulateContainerView renders as the empty container ([LW-EMPTIED-CONTAINER-REFRESH]). The synthetic hop
-    // demanded elements before handing it over, so Back fell through to the parent grid under the container's crumb.
+    // RepopulateContainerView renders as the empty container ([LW-EMPTIED-CONTAINER-REFRESH]). The synthetic hop must
+    // hand it over without demanding elements, or Back falls through to the parent grid under the container's crumb.
 
     [Theory]
     [InlineData("array", "Array<ObjectProperty>")]

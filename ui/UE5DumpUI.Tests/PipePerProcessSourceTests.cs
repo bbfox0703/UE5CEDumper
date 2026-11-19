@@ -313,8 +313,8 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotMatch(@"\bDropAll\s*\(", cleanup);
     }
 
-    /// <summary>A Begin read its new session back without checking the read: had the session gone in between, it
-    /// answered ok with total 0 and a dead id.</summary>
+    /// <summary>A Begin checks the read of its new session back: had the session gone in between, an unchecked read
+    /// would answer ok with total 0 and a dead id.</summary>
     [Theory]
     [InlineData("CMD_BEGIN_VALUE_SCAN", "SessionManager", "ViewWith")]
     [InlineData("CMD_BEGIN_GROUP_SCAN", "GroupSessionManager", "QueryWith")]
@@ -390,8 +390,8 @@ public sealed class PipePerProcessSourceTests
         int reply = code.IndexOf("WriteLine(*conn, response)", StringComparison.Ordinal);
         Assert.True(dispatch >= 0 && flush > dispatch && reply > flush,
             "HandleConnection must send its watch samples after DispatchCommand and before the reply");
-        // The floor is Grimoire's. No ceiling: the red asked for one because a stop had to wait out the interval,
-        // and an interruptible wait removed that reason.
+        // The floor is Grimoire's. No ceiling: one would only bound how long a stop waits out the interval, and the
+        // wait is interruptible.
         var watch = CommandBranch(code, "CMD_WATCH");
         Assert.Matches(@"Grimoire::PIPE_WATCH_INTERVAL_MIN_MS", watch);
     }
@@ -521,9 +521,9 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotMatch(@"\bPhaseName\s*\(", body);
     }
 
-    /// <summary>scan_status and rescan_status read `running` and then the result in separate steps: another client's
-    /// start in between reset the result, and the reply said "finished, nothing found". Each reads one snapshot.
-    /// rescan's "in progress" reply echoed flags the starter had not written yet.</summary>
+    /// <summary>Were scan_status and rescan_status to read `running` and then the result in separate steps, another
+    /// client's start in between could reset the result, and the reply would say "finished, nothing found". Each reads
+    /// one snapshot, and rescan's "in progress" reply never echoes flags the starter has not written yet.</summary>
     [Fact]
     public void AScanStatusIsOneSnapshot()
     {
@@ -556,8 +556,8 @@ public sealed class PipePerProcessSourceTests
         Assert.True(snapshot >= 0 && phase > snapshot, "scan_status must read the phase after the job's snapshot");
     }
 
-    /// <summary>A watch whose map insert threw left its thread detached, sampling until the process ended. The slot
-    /// goes into the map before the thread starts.</summary>
+    /// <summary>A watch whose map insert threw would leave its thread detached, sampling until the process ends. The
+    /// slot goes into the map before the thread starts.</summary>
     [Fact]
     public void AWatchIsInTheMapBeforeItsThreadStarts()
     {
@@ -929,7 +929,7 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotContain("GetGameThreadLiveness", serve);
         Assert.Contains("if (step == Voll::OwedRelease::Read) { state = UE5_GetDebugCameraState(); "
                         + "step = Voll::OwedCameraReleaseOnState(state); }", serve);
-        // Round 3: no hook re-armed and no OFF sent once a teardown began, and the OFF itself never ProcessEvent's direct
+        // No hook re-armed and no OFF sent once a teardown begins, and the OFF itself never ProcessEvent's direct
         // fallback off the game thread (marked a background worker for the call: -8 if the hook went down meanwhile).
         Assert.Contains("if (step == Voll::OwedRelease::Send) { if (!GameThreadRanWithin(kOwedSendFreshMs)) return; "
                         + "if (Tot::ShutdownRequested()) return; "
@@ -1061,9 +1061,9 @@ public sealed class PipePerProcessSourceTests
             $"{named} of {raises} raises in Frieren.cpp name a new run; {raisesElsewhere} raise(s) elsewhere");
     }
 
-    /// <summary>[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2. fly_set applies the preset first, the one setting that
-    /// can be refused, and a refused preset answers an error with nothing else changed -- it was discarded, and the reply
-    /// read as applied.</summary>
+    /// <summary>[CPP-HARDENING-2026-11-14] fly_set applies the preset first, the one setting that can be refused, and a
+    /// refused preset answers an error with nothing else changed -- its [[nodiscard]] result, discarded, would make the
+    /// reply read as applied.</summary>
     [Fact]
     public void FlySet_ARefusedPreset_AnswersAnError_BeforeAnythingElseChanges()
     {

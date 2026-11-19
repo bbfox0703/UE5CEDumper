@@ -315,7 +315,7 @@ public class LiveWalkerNavStampTests
 
     /// <summary>A re-root that FAILS after clearing the spine (a Go-box typo, an address the DLL
     /// rejects) leaves the previous rows on screen with no crumb. That is no graft risk — a drill
-    /// there re-roots at the pointee, as it always did — so it must not be refused forever.</summary>
+    /// there re-roots at the pointee, as any crumb-less drill does — so it must not be refused forever.</summary>
     [Fact]
     public async Task AFailedReRoot_LeavesTheOldRowsDrillable()
     {

@@ -957,7 +957,7 @@ public class SdkTempLeftoversTests : IDisposable
     {
         const uint FileWriteAttributes = 0x100, ShareAll = 7, OpenExisting = 3;
         const uint BackupSemantics = 0x02000000, OpenReparsePoint = 0x00200000;
-        // \\?\ so a deep %TEMP% does not take the path past MAX_PATH (a 116-character TEMP did, for a log's name).
+        // \\?\ so a deep %TEMP% (~116 characters is enough, for a log's name) does not take the path past MAX_PATH.
         using var h = CreateFileW(@"\\?\" + Path.GetFullPath(path), FileWriteAttributes, ShareAll, IntPtr.Zero, OpenExisting,
             BackupSemantics | (openReparsePoint ? OpenReparsePoint : 0), IntPtr.Zero);
         if (h.IsInvalid) return false;

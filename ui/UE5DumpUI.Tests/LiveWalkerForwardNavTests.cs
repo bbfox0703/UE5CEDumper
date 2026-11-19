@@ -1750,7 +1750,7 @@ public class LiveWalkerForwardNavTests
     }
 
     // [LEAD-DT-EXPORT-64ROWS] Copy CE Field on a container view exports the elements selected, by choice fewer than the
-    // total: the export's limit warning reported that as the container being cut short.
+    // total, and the export's limit warning must not report that as the container being cut short.
 
     [Fact]
     public async Task CopyCeField_OfOneSelectedElement_DoesNotCallTheContainerCutShort()
@@ -1942,8 +1942,8 @@ public class LiveWalkerForwardNavTests
     public async Task ARefreshThatKeepsTheRows_CountsTheMatchesOnTheRowsShown()
     {
         // [LEAD-LW-INPLACE-SEARCHCOUNT] A refresh of the same object with the same layout copies the values onto the
-        // rows shown and keeps their type label. The match count came from the fresh rows and the highlights from the
-        // kept ones, so a guessed row whose label gained its "?" counted a match nothing showed.
+        // rows shown and keeps their type label. The match count is taken from those rows, as the highlights are:
+        // counted on the fresh rows, a guessed row whose fresh label gains a "?" would count a match nothing shows.
         const string Obj = "0x96000";
         var (dump, vm, _) = OwnerWalker();
         InstanceWalkResult Walk(string type) => new()

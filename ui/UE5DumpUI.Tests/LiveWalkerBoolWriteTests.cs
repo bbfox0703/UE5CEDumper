@@ -112,7 +112,7 @@ public class LiveWalkerBoolWriteTests
     [Fact]
     public async Task PackedMask_ReadModifyWrite_KeepsTheSiblingBits()
     {
-        // The control: a single-bit mask was already right, and must stay right.
+        // The control: a single-bit mask read-modify-writes its own bit and keeps the siblings.
         var dump = new MemStub();
         dump.Mem[Addr] = 0x03;
         var vm = Vm(dump);

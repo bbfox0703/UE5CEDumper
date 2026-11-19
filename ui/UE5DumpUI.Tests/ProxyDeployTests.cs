@@ -807,10 +807,10 @@ public class ProxyDeployTests
     [Fact]
     public void ProxyImportInfo_Imports_CoversEveryProxyFlavour()
     {
-        // The analyzer tracked version/dinput8/dxgi but NOT winmm, even though ProxyType has had
-        // a Winmm member — so winmm could never be recommended, and it is the ONLY proxy that
-        // works on Octopath Traveler. Same desync class the DumperModuleDetector comment warns
-        // about. Assert every enum value is answerable, so a fifth flavour cannot repeat it.
+        // An analyzer that tracks only some ProxyType members can never recommend the others —
+        // and winmm, for one, is the ONLY proxy that works on Octopath Traveler. Same desync
+        // class the DumperModuleDetector comment warns about. Assert every enum value is
+        // answerable, so a new flavour cannot fall out of step.
         var all = new ProxyImportAnalyzer.ProxyImportInfo(true, true, true, true);
         var none = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, false);
         foreach (var t in Enum.GetValues<ProxyType>())
@@ -1625,7 +1625,7 @@ public class ProxyDeployTests
                 sw.Flush();
 
                 // NEGATIVE CONTROL — without it this test would pass against a file nothing holds
-                // open, i.e. it would assert nothing. This is the exact call that was shipped.
+                // open, i.e. it would assert nothing. This is the plain File.ReadLines call the scan must not use.
                 Assert.ThrowsAny<IOException>(() => File.ReadLines(path).ToList());
 
                 var lines = ProxyDeployService.ReadLinesShared(path).ToList();

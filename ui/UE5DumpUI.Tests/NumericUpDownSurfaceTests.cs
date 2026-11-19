@@ -10,7 +10,7 @@ namespace UE5DumpUI.Tests;
 /// The three Avalonia facts the <see cref="UE5DumpUI.Helpers.NumericInput"/> fix rests on.
 /// [SNAPINTERVAL-2026-08-20]
 ///
-/// <para>Each was measured against Avalonia 12.1.1 rather than assumed, and each is the kind of
+/// <para>Each is pinned against Avalonia 12.1.1 rather than assumed, and each is the kind of
 /// thing a version bump can change silently. If one moves, the façades stop being the right shape —
 /// so this fails here, on the next build, instead of turning back into a raw exception in a
 /// validation line under the control.</para>

@@ -116,7 +116,7 @@ public class NumericInputCoercionTests : IDisposable
     }
 
     /// <summary>
-    /// The repro, as a unit: type 30, commit it. It must not reach an int binding as null on
+    /// The user's path, as a unit: type 30, commit it. It must not reach an int binding as null on
     /// the click-away path; it is simply the floor either way.
     /// </summary>
     [Fact]

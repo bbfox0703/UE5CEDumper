@@ -190,7 +190,7 @@ public class PanelSpaceBudgetTests
         Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#4EC9B0"));
         Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#888888"));
 
-        // The state is in the tooltips now, so each dot's group must carry one.
+        // The state is in the tooltips, so each dot's group must carry one.
         var groups = dots.Select(d => d.Parent!).Distinct().ToList();
         Assert.Equal(2, groups.Count);
         Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));

@@ -156,8 +156,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         /// <summary>Source newer than target, or -- with Force Overwrite off, the default -- UpdateAllAsync's
         /// "already up to date" branch skips every game and DeployAsync is never called — which would make the two Update All
-        /// tests below pass while exercising nothing. (One of them silently did, until the
-        /// throwing test showed the loop body was unreachable.)</summary>
+        /// tests below pass while exercising nothing.</summary>
         public string? GetDllVersion(string dllPath)
             => VersionOf is { } v ? v(dllPath) : dllPath.Contains($"{Path.DirectorySeparatorChar}proxy{Path.DirectorySeparatorChar}",
                                 StringComparison.OrdinalIgnoreCase) ? "2.0.0" : "1.0.0";
@@ -390,7 +389,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task Refresh_Cancelled_IsNeutral_NotAFailure()
     {
-        // Refresh's catch(Exception) showed the user's own cancel as a red "Refresh failed".
+        // Refresh's catch(Exception) must not show the user's own cancel as a red "Refresh failed".
         var (vm, svc) = Ready();
         svc.ParkRefreshes = true;
         svc.ThrowOnCancelledRefresh = true;
@@ -524,8 +523,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [Fact]
     public async Task TheRefusedOperation_DoesNotOverwriteTheRunningOnesResultLine()
     {
-        // Both write LastOperationResult via the same SetOperationResult, so before the gate the
-        // later finisher's line replaced the earlier's and one operation's outcome vanished.
+        // Both write LastOperationResult via the same SetOperationResult, so without the gate the
+        // later finisher's line would replace the earlier's and one operation's outcome would vanish.
         var (vm, svc) = Ready();
 
         var deploy = vm.DeploySelectedCommand.ExecuteAsync(null);
@@ -1449,8 +1448,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
     // ── [UI-ELEVATED-ACCESS-DENIED]: the post-inject connect meets a refusal ──────────────────────────
     //
     // Every attempt in the post-inject window is suppressed and expected to fail while the DLL scans. A refusal is not
-    // that: Windows will refuse every attempt (the game runs elevated and this UI does not), so the loop spun the whole
-    // 45 s and then said the pipe "never opened" and to check the DLL's init log -- false, and the init log says nothing.
+    // that: Windows will refuse every attempt (the game runs elevated and this UI does not), so a loop that kept trying
+    // would spin the whole 45 s and then say the pipe "never opened" and to check the DLL's init log -- false, and the
+    // init log says nothing.
 
     [Fact]
     public async Task A_refused_post_inject_connect_stops_at_once_and_says_why()

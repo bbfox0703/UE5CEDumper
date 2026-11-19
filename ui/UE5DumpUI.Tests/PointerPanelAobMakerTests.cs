@@ -171,9 +171,9 @@ public class PointerPanelAobMakerTests
     }
 
     // ---- [AOBM-SYSTAB-ASM-SILENT] ----
-    // The ASM buttons dropped the bridge's answer, so neither a success nor a refusal said anything and CE was the only
-    // witness. They now report on this panel's two lines: success on the green one the symbol buttons use, a refusal
-    // on the red one.
+    // The ASM buttons report the bridge's answer on this panel's two lines: success on the green one the symbol
+    // buttons use, a refusal on the red one. Dropping it, neither a success nor a refusal would say anything and CE
+    // would be the only witness.
 
     private static EngineState EveryScanHit() => new()
     {
@@ -242,7 +242,7 @@ public class PointerPanelAobMakerTests
         Assert.False(rig.Vm.CanAsmGObjectsScan);
     }
 
-    // The HEX buttons beside them had the same silence.
+    // The HEX buttons beside them report the same way.
 
     private static CommunityToolkit.Mvvm.Input.IAsyncRelayCommand Hex(PointerPanelViewModel vm, string pointer)
         => pointer switch

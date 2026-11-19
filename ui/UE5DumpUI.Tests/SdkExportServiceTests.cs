@@ -677,8 +677,8 @@ public class SdkExportServiceTests
     [Fact]
     public void GenerateClassHeaderFromSchema_WithoutBoundary_KeepsTheLegacyHeuristic()
     {
-        // An older DLL sends no super_props_size. The emitter must still produce what it always
-        // did rather than dropping everything or nothing.
+        // An older DLL sends no super_props_size. The emitter must still produce the heuristic
+        // header rather than dropping everything or nothing.
         var classInfo = new ClassInfoModel
         {
             Name = "BP_Player_C",

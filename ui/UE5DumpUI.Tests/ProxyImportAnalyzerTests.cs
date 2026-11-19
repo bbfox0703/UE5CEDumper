@@ -99,7 +99,7 @@ public class ProxyImportAnalyzerTests
     // ⚠ ImportsWinmm is APPENDED TO THE RECORD WITH A DEFAULT, so
     // every test above constructs three positional args and silently asserts the
     // no-winmm case. That is why the guard below enumerates ProxyType instead of adding
-    // one more hand-written case: a FIFTH flavour added the same way would be caught.
+    // one more hand-written case: a NEW flavour added the same way would be caught.
 
     [Fact]
     public void Recommend_ImportsWinmm_OffersIt()

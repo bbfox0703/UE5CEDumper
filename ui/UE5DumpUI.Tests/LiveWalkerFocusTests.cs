@@ -4,9 +4,9 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Tests for Value Search → Live Walker focus-on-field cross-navigation
-/// (the "I found a TMap value but Live Walker doesn't show me where it is"
-/// fix). The owning property row is matched by byte offset; for container
+/// Tests for Value Search → Live Walker focus-on-field cross-navigation,
+/// which shows in Live Walker where a found value (a TMap's included)
+/// sits. The owning property row is matched by byte offset; for container
 /// hits the trailing "[N]" element index is parsed so the post-load handler
 /// can drill into the container. Here we lock the pure parser; the actual
 /// scroll/drill is exercised live (needs a running game + populated Fields).

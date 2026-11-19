@@ -5,7 +5,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// A UE property name is not a C++ identifier, and the SDK header emitted it verbatim.
+/// A UE property name is not a C++ identifier, so the SDK header must not emit it verbatim.
 ///
 /// <para>Each case below is a header <c>cl.exe</c> rejects (measured with
 /// <c>tools/verify/compile_sdk_header.py</c>): a keyword (<c>class</c>, <c>default</c>), two members

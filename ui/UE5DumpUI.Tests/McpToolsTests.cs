@@ -8,7 +8,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The MCP tool catalogue: what every tool advertises, what it sends the DLL,
+/// [PIPE-PER-PROCESS-2026-11-06] The MCP tool catalogue: what every tool advertises, what it sends the DLL,
 /// and what it hands back. A fake game records each request and answers from a script, so no pipe is involved.
 /// </summary>
 public sealed class McpToolsTests
@@ -204,7 +204,7 @@ public sealed class McpToolsTests
     [Fact]
     public void EveryWriteTool_HasAWriteRole_AndIsMarkedDestructive()
     {
-        // Whether a write is asked about is the host's decision now ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
+        // Whether a write is asked about is the host's decision ([MCP-WRITE-GRANTS-2026-11-14], McpServerTests);
         // what the catalogue fixes is each tool's role and the grant it needs.
         foreach (var t in Catalog())
         {
@@ -227,10 +227,10 @@ public sealed class McpToolsTests
         Assert.Equal(["write_force_field", "write_invoke", "write_memory"],
             Named(t => t.EffectiveRole == McpToolRole.PerCallWrite));
         Assert.Equal(["write_force_field_reset"], Named(t => t.EffectiveRole == McpToolRole.Release));
-        // [MCP-WRITE-GRANTS-2026-11-14] Phase 1b: the one tool an invoke grant covers.
+        // [MCP-WRITE-GRANTS-2026-11-14] The one tool an invoke grant covers.
         Assert.Equal([Constants.McpInvokeGrantedTool],
             Named(t => t.EffectiveRole == McpToolRole.GrantedInvoke && t.GrantKind == McpGrantKind.Invoke));
-        // Phase 2: the one tool a field grant covers.
+        // The one tool a field grant covers.
         Assert.Equal([Constants.McpFieldGrantedTool],
             Named(t => t.EffectiveRole == McpToolRole.GrantedField && t.GrantKind == McpGrantKind.Field));
         Assert.Equal(["scan_start"], Named(t => t.EffectiveRole == McpToolRole.Scan));
@@ -354,7 +354,7 @@ public sealed class McpToolsTests
         Assert.Empty(refused);
     }
 
-    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 2) ──────────────────────────────────────────
+    // ── Field grants ([MCP-WRITE-GRANTS-2026-11-14] §4.5) ─────────────────────────────────────────────
 
     private const string HolderPath = "//Script/DumperTest/DumperTestHolder";
     private const string DerivedPath = "//Script/DumperTest/DumperTestDerivedHolder";
@@ -724,8 +724,8 @@ public sealed class McpToolsTests
     public async Task WriteField_AnotherRunsGrantOnTheSubclass_DoesNotHideThisRunsGrantOnTheSuper()
     {
         // An earlier run of the same pid granted the subclass's field; this run granted the base class's. The chain walk
-        // starts at the subclass, so a target set taken from every run stopped there, and the admission (keyed on this
-        // run) then refused a write this run's grant covers.
+        // starts at the subclass, so a target set taken from every run would stop there, and the admission (keyed on
+        // this run) would then refuse a write this run's grant covers.
         var game = FieldGame();
         var earlier = new JsonObject { ["pid"] = 4242, ["process_creation_time"] = "1DB5F0A2C3E4D49" };
         Assert.NotNull(game.Grants.Grant(McpGrantKind.Field, earlier, out _, DerivedPath + ":HolderValue"));
@@ -2059,7 +2059,7 @@ public sealed class McpToolsTests
         return game;
     }
 
-    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] Phase 1b) ──────────────────────────────────────────
+    // ── Invoke grants ([MCP-WRITE-GRANTS-2026-11-14] §4.4) ──────────────────────────────────────────────
 
     private const string ActorPath = "//Script/Engine/Actor";
     private const string HiddenFull = ActorPath + ".SetActorHiddenInGame";

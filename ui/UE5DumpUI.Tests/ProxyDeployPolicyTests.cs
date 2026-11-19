@@ -77,9 +77,9 @@ public class ProxyDeployPolicyTests
     // The rest of the truth table — the capability must still work.
     // ------------------------------------------------------------------
 
-    /// <summary>Explicit foreign consent still replaces the file. The fix
-    /// re-scopes the authority; it does not remove the feature the tooltip has
-    /// always advertised.</summary>
+    /// <summary>Explicit foreign consent still replaces the file. The split
+    /// scopes the authority; it does not remove the feature the tooltip
+    /// advertises.</summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

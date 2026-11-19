@@ -9,13 +9,13 @@ namespace UE5DumpUI.Tests;
 /// [MAINWINDOW-NAVIGATE-EXACT-NAME] "A live object of this class, to show or to search from" is one question with one
 /// answer: the DLL's <c>find_live_instance</c>.
 ///
-/// <para>Ten MainWindow handlers -- the four that take a (class, member) pair to Live Walker, the six Locate in GWorld /
-/// GameEngine -- and Detect Stats' live probe asked <c>find_instances</c> for the class by EXACT name, five rows, and
-/// skipped names starting <c>Default__</c>. Name equality is not derivation: a class whose live objects are all of a
-/// subclass (a Blueprint's <c>_C</c>, a game's <c>BP_PlayerController</c>) answered none, and the navigate fell back to
-/// the class view, the Locate said "no live instance". And a template not named <c>Default__</c> -- a class default
-/// object's default subobject -- passed the skip, so Live Walker opened on a template and the path search started from
-/// one.</para>
+/// <para>The MainWindow handlers that take a (class, member) pair to Live Walker or Locate in GWorld / GameEngine, and
+/// Detect Stats' live probe, ask that question. An EXACT-name <c>find_instances</c> that skips names starting
+/// <c>Default__</c> answers another one. Name equality is not derivation: a class whose live objects are all of a
+/// subclass (a Blueprint's <c>_C</c>, a game's <c>BP_PlayerController</c>) answers none, so the navigate would fall back
+/// to the class view and the Locate say "no live instance". And a template not named <c>Default__</c> -- a class default
+/// object's default subobject -- passes the skip, so Live Walker would open on a template and the path search start
+/// from one.</para>
 ///
 /// <para>MainWindowViewModel's handlers are lambdas subscribed in its constructor, and the DLL's handler sits in a file
 /// no test target compiles, so these pin the source.</para>
@@ -68,8 +68,8 @@ public class LiveInstanceLookupTests
     [InlineData("Console.NavigateToFunction +=")]
     public void A_function_navigate_says_what_it_opened_when_the_function_is_not_selected(string subscription)
     {
-        // Review 1, MED: a function's row names the class that DECLARES it, and the object opened may be of a subclass,
-        // whose Live Walker list holds only its own functions. The line said "'Jump' not in this class" of the class
+        // A function's row names the class that DECLARES it, and the object opened may be of a subclass, whose Live
+        // Walker list holds only its own functions. A bare "'Jump' not in this class" would then be said of the class
         // that declares Jump.
         var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
         Assert.Contains("FunctionNavigateText(", body, StringComparison.Ordinal);
@@ -85,8 +85,9 @@ public class LiveInstanceLookupTests
     [InlineData("_xrefLocateHandler = async")]
     public void A_Locate_always_writes_the_top_bar_with_its_pick(string subscription)
     {
-        // Review 2: a Debug Camera's object, or an older DLL's exact-name answer, was said by no Locate. Review 3: it was
-        // written only when there was something to say, so the NEXT Locate left the previous object's warning there.
+        // Every Locate says its pick -- a Debug Camera's object, an older DLL's exact-name answer -- and writes the line
+        // even with nothing to add: written only when there is something to say, the NEXT Locate would leave the
+        // previous object's warning there.
         var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
         Assert.Contains("StatusText = LocateStatusText(live, className, ", body, StringComparison.Ordinal);
         Assert.Contains("LiveWalker.StatusText = NoLiveInstanceToLocateText(className, ", body, StringComparison.Ordinal);
@@ -99,8 +100,8 @@ public class LiveInstanceLookupTests
     [InlineData("InterestingProperties.NavigateToProperty +=", 3)]
     public void A_navigate_says_its_pick_on_every_line_it_writes(string subscription, int lines)
     {
-        // Review 3: the class-view fallback ("showing class metadata") and the class-not-found line are where a navigate's
-        // older-DLL miss is said -- no subclass was looked for -- and deleting the notes there kept every test green. The
+        // The class-view fallback ("showing class metadata") and the class-not-found line are where a navigate's
+        // older-DLL miss is said -- no subclass was looked for -- so this test counts the notes there. The
         // function navigates' hit line carries it through FunctionNavigateText; the property navigate's hit line, here.
         var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
         Assert.Equal(lines, System.Text.RegularExpressions.Regex.Matches(body, @"\+ PickNote\(live, className\)").Count);
@@ -109,8 +110,8 @@ public class LiveInstanceLookupTests
     [Fact]
     public void An_older_DLL_s_line_says_how_to_replace_it_and_that_it_may_be_a_template()
     {
-        // Review 3: "Refresh the proxy DLL" sent the user to Proxy Deploy's Refresh, which re-reads the deploy status and
-        // replaces nothing; and the line named one of the old lookup's two limits.
+        // Not "Refresh the proxy DLL": Proxy Deploy's Refresh re-reads the deploy status and replaces nothing. And the
+        // line names both of the old lookup's limits, the template one included.
         var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
         foreach (var line in new[]
                  {
@@ -130,7 +131,7 @@ public class LiveInstanceLookupTests
     [InlineData("str.Tip.IF.OpenLive")]
     public void Every_Open_in_Live_tooltip_says_a_subclass_object_may_be_opened(string key)
     {
-        // Review 2: all three function navigates can land on a subclass object now; only one tooltip said so.
+        // All three function navigates can land on a subclass object, so every one of their tooltips says so.
         var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
         int at = axaml.IndexOf($"x:Key=\"{key}\">", StringComparison.Ordinal);
         Assert.True(at > 0, key + " not found");
@@ -174,7 +175,7 @@ public class LiveInstanceLookupTests
     [Fact]
     public void The_Debug_Camera_s_own_object_is_named_as_the_Console_names_it()
     {
-        // Review 2: the note was glued on with no separator, in a third wording of the Console's own sentence.
+        // The note follows a separator, in the Console's own sentence (DebugCameraOwnedText), not a third wording of it.
         var dcc = Pick("CheatManager_1", "CheatManager", UE5DumpUI.Models.LiveInstanceResult.PickDebugCameraOwned);
         Assert.Equal("Navigated to CheatManager::Slomo (live instance 0x2A0) "
                      + UE5DumpUI.Helpers.InvokePickText.DebugCameraOwnedText("CheatManager_1", "CheatManager"),
@@ -197,7 +198,7 @@ public class LiveInstanceLookupTests
     [Fact]
     public void An_older_DLL_s_answer_says_its_limits_hit_or_miss()
     {
-        // Review 2: its miss said "no live instance of X or of a subclass", and no subclass had been looked for.
+        // An older DLL looks for no subclass, so its miss must not say "no live instance of X or of a subclass".
         var hit = Pick("PlayerController_0", "PlayerController", UE5DumpUI.Models.LiveInstanceResult.PickLegacy);
         var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
         Assert.Contains("exact class name only",
@@ -236,7 +237,7 @@ public class LiveInstanceLookupTests
         Assert.True(at > 0, "the find_live_instance handler was not found");
         int end = fern.IndexOf("\n        if (cmd == Renge::CMD_", at + 1, StringComparison.Ordinal);
         string handler = fern[at..(end > at ? end : fern.Length)];
-        // Review 1: its own walk -- an exact-class object first, no destroyed object, no partial-name fallback -- under
+        // Its own walk -- an exact-class object first, no destroyed object, no partial-name fallback -- under
         // its own name in the log, and a cancel that does not say "nothing was invoked".
         Assert.Contains("Aura::FindLiveInstanceOf(className)", handler, StringComparison.Ordinal);
         Assert.Contains("Renge::LiveInstanceLookupCancelledText(className)", handler, StringComparison.Ordinal);

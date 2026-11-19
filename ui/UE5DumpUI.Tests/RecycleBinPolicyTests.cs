@@ -6,16 +6,15 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// Whether a volume's Recycle Bin will actually accept a delete.
 ///
-/// <para>This suite exists because the shipped detector answered the question with
-/// <c>SHQueryRecycleBin(root) == S_OK</c> and that call cannot see the answer. Measured on a
-/// real fixed volume with <c>NukeOnDelete=1</c> (2026-08-12): the API returned <c>S_OK</c>,
-/// the probe therefore said the bin worked, and an <c>FOF_ALLOWUNDO</c> delete of a
-/// throwaway file returned <c>rc=0 / !aborted</c> while the bin's item count stayed put and
-/// the file was gone. The caller reported "moved to the Recycle Bin" for a permanent
-/// destruction — which is the precise outcome B13/B41 was written to prevent.</para>
+/// <para>This suite exists because <c>SHQueryRecycleBin(root) == S_OK</c> cannot see the
+/// answer. On a real fixed volume with <c>NukeOnDelete=1</c> the API returns <c>S_OK</c>, so a
+/// probe built on it says the bin works, and an <c>FOF_ALLOWUNDO</c> delete of a throwaway
+/// file returns <c>rc=0 / !aborted</c> while the bin's item count stays put and the file is
+/// gone. The caller would report "moved to the Recycle Bin" for a permanent destruction —
+/// which is the precise outcome B13/B41 was written to prevent.</para>
 ///
-/// <para>The cases below are the combinations that machine could not produce, plus the two
-/// that it did.</para>
+/// <para>The cases below are the combinations one machine cannot produce, plus the two a
+/// machine with a per-volume <c>NukeOnDelete=1</c> does.</para>
 /// </summary>
 public class RecycleBinPolicyTests
 {
@@ -37,12 +36,12 @@ public class RecycleBinPolicyTests
         Assert.False(RecycleBinPolicy.IsDisabled(0, 0, 0, 0, 0));
     }
 
-    // ── the case the old probe missed, and the reason this file exists ───────
+    // ── the case SHQueryRecycleBin cannot see, and the reason this file exists ──
 
     [Fact]
     public void PerVolumeNukeOnDelete_DisablesTheBin()
     {
-        // The measured T: / D: case. Nothing else set; only the volume flag.
+        // A real volume's case. Nothing else set; only the volume flag.
         Assert.True(RecycleBinPolicy.IsDisabled(null, null, null, null, 1));
     }
 
@@ -87,9 +86,9 @@ public class RecycleBinPolicyTests
     }
 
     // ── [A3-RECYCLE-GUID-FAILOPEN] a FAILED volume lookup is not "absent" ───────────────
-    // The docs promised a failed lookup fails closed; it failed OPEN: the caller passed null, IsDisabled tests `== 1`,
-    // null read as "bin enabled", and the verdict fell to SHQueryRecycleBin -- measured blind to NukeOnDelete. Exposure:
-    // SUBST and RAM-disk-style volumes (no fixed volume on the measuring machine fails the lookup).
+    // A failed lookup fails closed. Passed on as a bare null it would fail OPEN: IsDisabled tests `== 1`, null reads as
+    // "bin enabled", and the verdict falls to SHQueryRecycleBin, which is blind to NukeOnDelete. Exposure: SUBST and
+    // RAM-disk-style volumes (an ordinary fixed volume's lookup does not fail).
 
     [Fact]
     public void FailedVolumeLookup_WhereTheVolumeFlagWouldDecide_FailsClosed()
