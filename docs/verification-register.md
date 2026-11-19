@@ -1280,6 +1280,11 @@ reached:
    Filed as `[LIVEFUNCS-UI-SNAP-MEMORY]` in todo.md. *Was:* **The UI's memory while it loads snapshots.** The D3 line
    counts the snapshot buffer in the game's figure only. Acceptance: a full 32 MB snapshot buffer loaded in the Call
    Trace tab, and the load's memory log line.
+   ⬜ **Re-measure on 3771** (shared and capped copies, `[LIVEFUNCS-UI-SNAP-MEMORY]`): the same run -- DumperTest58
+   Shipping, the two CameraModifier functions, the 32 MB buffer, 160 s. Acceptance: ui-view-0.log's `CallTrace:
+   parameter copies --` line reports the copies kept and the decoded MB after sharing (at most 256), and the memory
+   line after the load stays within the panel's new "about ... after" figure; a late call's Parameters tab still decodes
+   DeltaTime / ViewLocation / FOV, and its "At the call" values stay in their column.
 4. ✅ **CLOSED 2026-11-17 on 3732 `[LIVEFUNCS-STEP2-UE423]`** (UE423_Flying Shipping, UE 4.23's UProperty model;
    `livefuncs_snap_live.py --label ue423 --choose "" --plain-s 20 --record-s 30`, 6/6 with 3 not run,
    `out/livefuncs-snap/ue423.json`): the 10 busiest functions with parameters chosen by name, the Start accepted with

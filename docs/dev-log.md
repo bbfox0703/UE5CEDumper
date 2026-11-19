@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-11-19 (build 3771) — Call Trace keeps a full parameter buffer in a fraction of the memory `[LIVEFUNCS-UI-SNAP-MEMORY]`
+
+- **What changes:**
+  - **Call Trace, loading parameter copies:** a decoded value that recurs from call to call (a camera's post-process
+    settings, say) is now held once and shared, and so is a raw copy that recurs. Past 256 MB of decoded values the
+    earliest calls keep only their raw bytes, and their Parameters tab says so; the Bytes tab still shows them. A full
+    32 MB buffer of a 1,984-byte struct had taken the UI from 251 MB to 1,381 MB and left 1,035 MB.
+  - **Live Funcs, the memory line:** this UI's figures now include the parameter copies it will keep (the snapshot
+    buffer, plus their decoded values up to the 256 MB budget), and the free-memory warning weighs them.
+  - **Call Trace, Parameters tab:** "At the call" and "After the call" share the room left after Name and Kind, and a
+    long struct summary wraps in its own column instead of running into the next.
+- **Tests:** each part red, then green; the keeper's sharing, its budget by call order, and 4,000 copies of an
+  unchanging 400-field struct held as one tree; the layout headless at two pane widths and with a scrolling list.
+  C# 8521 (1 skipped), headless 74, 40 gates. Not yet re-measured on a game (verification register
+  `[LIVEFUNCS-STEP2-UIMEM]`).
+- AOT UI 62,868,992 bytes (sha256 a0d8a6167f3a187b...); UE5Dumper.dll 3,858,432 bytes (sha256 2a7e3da50baf3e4e...).
+
 ## 2026-11-19 (build 3770) — The build uses MSVC whatever else is installed; the scan log names the game's linker and Wine `[MSVC-GUARD-2026-11-19]` `[SCAN-LINKER-LOG-2026-11-19]` `[IDGUARD-CANNOT-RUN-2026-11-19]`
 
 - **What changes:**
