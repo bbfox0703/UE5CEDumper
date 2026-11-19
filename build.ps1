@@ -210,17 +210,21 @@ function Repair-StaleToolchainCache([string]$Dir = $BUILD_DIR) {
         so a kept build dir then fails every configure and every build step with "is not
         a full path to an existing compiler tool" -- the C++ DLLs and the C++ tests do not
         build at all, while the C# side carries on. A tree configured from another shell
-        can name another compiler (MSYS2's g++), which CMake keeps using as well. A fresh
-        configure picks MSVC (Enter-VsDevEnvironment sets CC / CXX), so remove the dir and
-        let the caller's configure run. No-op when every recorded tool exists and both
-        compilers are cl.exe, or when nothing is configured yet. [MSVC-GUARD-2026-11-19]
+        can name another compiler (MSYS2's g++), which CMake keeps using as well -- and,
+        once the root CMakeLists refuses it, refuses on every run. The entry's type does
+        not matter: FILEPATH when CMake found the tool, STRING or UNINITIALIZED when a -D
+        named it. A fresh configure picks MSVC (Invoke-CMakeConfigure sets CC / CXX), so
+        remove the dir and let the caller's configure run. No-op when every recorded tool
+        exists and both compilers are cl.exe, or when nothing is configured yet.
+        [MSVC-GUARD-2026-11-19]
     #>
     $cache = Join-Path $Dir "CMakeCache.txt"
     if (-not (Test-Path $cache)) { return }
     $missing = @()
     $foreign = @()
     foreach ($line in [System.IO.File]::ReadAllLines($cache)) {
-        $m = [regex]::Match($line, '^(CMAKE_(?:CXX_COMPILER|C_COMPILER|LINKER|MT|RC_COMPILER)):FILEPATH=(.+)$')
+        $m = [regex]::Match($line,
+            '^(CMAKE_(?:CXX_COMPILER|C_COMPILER|LINKER|MT|RC_COMPILER)):(?:FILEPATH|STRING|UNINITIALIZED)=(.+)$')
         if (-not $m.Success) { continue }
         $toolPath = $m.Groups[2].Value.Trim()
         if ([System.IO.Path]::IsPathRooted($toolPath) -and -not (Test-Path -LiteralPath $toolPath)) {
