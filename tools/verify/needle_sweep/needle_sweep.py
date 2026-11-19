@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 
@@ -36,7 +37,11 @@ def build(label: str, header_dir: str, env: dict[str, str]) -> str:
     exe = os.path.join(OUT, f"needle_sweep_{label}.exe")
     obj_dir = os.path.join(OUT, f"obj_{label}") + os.sep
     os.makedirs(obj_dir, exist_ok=True)
-    cmd = ["cl", "/nologo", "/std:c++20", "/O2", "/EHsc", "/utf-8", f"/I{header_dir}", f"/Fo{obj_dir}", f"/Fe{exe}",
+    # By full path: Windows finds a bare program name on this process's PATH, not on the environment passed in.
+    cl = shutil.which("cl", path=env["PATH"])
+    if not cl:
+        sys.exit("cl.exe is not on the vcvars64 environment's PATH")
+    cmd = [cl, "/nologo", "/std:c++20", "/O2", "/EHsc", "/utf-8", f"/I{header_dir}", f"/Fo{obj_dir}", f"/Fe{exe}",
            os.path.join(HERE, "needle_sweep_run.cpp")]
     r = subprocess.run(cmd, cwd=OUT, env=env, capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
