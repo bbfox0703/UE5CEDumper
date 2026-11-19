@@ -304,6 +304,25 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(vm.TraceBufferMb + vm.SnapshotBufferMb, vm.TraceGameMb);
     }
 
+    /// <summary>[LIVEFUNCS-UI-SNAP-MEMORY] The UI keeps a load's parameter copies: their raw bytes (the snapshot buffer
+    /// at most) and their decoded values, some 27 times the raw bytes, up to the 256 MB decoded budget.</summary>
+    [Fact]
+    public async Task The_UI_figures_count_the_parameter_copies_while_something_is_chosen()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", new NameKey(1, 0, 9, 0)));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        int held = vm.TraceUiHeldMb, peak = vm.TraceUiPeakMb;
+        vm.ToggleSnapshotCommand.Execute(vm.Results.Single());
+        Assert.Equal(32, vm.SnapshotBufferMb);
+        Assert.Equal(held + 32 + 256, vm.TraceUiHeldMb);              // 27 x 32 is past the budget
+        Assert.Equal(peak + 32 + 256, vm.TraceUiPeakMb);
+        vm.SnapshotBufferExponent = 3;
+        Assert.Equal(held + 8 + 27 * 8, vm.TraceUiHeldMb);            // within it
+        Assert.Contains(vm.TraceUiHeldMb.ToString(), vm.TraceMemoryEstimate, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task The_estimate_turns_orange_when_the_busiest_choice_keeps_less_time_than_the_trace()
     {
