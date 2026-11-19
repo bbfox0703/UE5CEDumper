@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (build 3774) — A UE 5.8 GObjects anchor and the GObjects Cheat Engine pointer `[UE58-ADJ10-WRONG-ANCHOR]` `[CEPTR-OBJECTS-2026-11-19]`
+
+- **What changes:**
+  - **UE 5.8 GObjects:** an address 0x10 below a 5.8 FUObjectArray validated (Genau's relaxed D read its ObjObjects
+    with the count pairs swapped), so a GObjects pattern with a -0x10 adjustment that was the first to hit a 5.8 title
+    handed over that address and Aura read a wrong non-zero count. Relaxed D now refuses that shape; the 5.8 base is
+    what such a row resolves. No 5.8 title is known where those rows win today. Stock shapes are pinned unchanged.
+  - **Cheat Engine pointer for an object** (`get_ce_pointer_info`, the MCP tool `read_ce_pointer`): the chain
+    dereferenced once too often and ignored where the array's Objects field sits, so on every chunked layout a CE
+    pointer record built from it led elsewhere. It now starts at the Objects field and reads three times; the reply
+    gains `objects_offset`.
+- Both were found while mapping `[VND10-A1]` and fixed in their own sessions, then merged here.
+- **Tests:** each red, then green. dll_core_test 1906, dll_helpers_test 4417, C# 8523 (1 skipped), headless 74,
+  40 gates. The CE pointer is not checked in Cheat Engine on a running game yet (a verification-register row).
+- AOT UI 62,868,992 bytes (sha256 b98e00e135c5aab5...); UE5Dumper.dll 3,862,528 bytes (sha256 acf952c5109e4d21...).
+
 ## 2026-11-19 (build 3773) — Phantom Blade Zero's engine layout is supported, untested on the game `[VND10-A1]` `[VENDOR-AUDIT10-2026-11-19]`
 
 - **What changes:**
