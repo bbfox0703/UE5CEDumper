@@ -4158,7 +4158,8 @@ release notes -- v3649's "Hold @0" linked to someone's account -- so such text g
 counts too: it folds in commit messages, and v3654's draft listed an account named 0 among its Contributors, from
 the very commit that recorded this rule, until the prepared notes replaced it. Check each claim against its row
 before writing it, name a game only where the fix was measured on it, and say so when the previous
-release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
+release shipped a regression. **Support added for a game nobody here owns** (2026-11-19, Phantom Blade Zero) is
+named all the same, and the same sentence says it is not tested on the game. Neither the merge nor the release run wakes the session; the maintainer
 says when CI is done.
 
 **2. Keep agent fan-out small.** (2026-09-24)
