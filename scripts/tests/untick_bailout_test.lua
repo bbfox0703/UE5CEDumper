@@ -3,8 +3,8 @@
   UE5CEDumper -- executable proof for [FREEZEUNTICK-2026-08-20]
 
   WHY THIS EXISTS
-    The C# suite can assert that a generated [ENABLE] block CONTAINS an untick, and for
-    two years it did -- while every one of those unticks silently did nothing. Text
+    The C# suite can assert that a generated [ENABLE] block CONTAINS an untick, and
+    that assertion passes while the untick silently does nothing. Text
     assertions structurally cannot tell a working untick from a no-op, because the
     difference is in Cheat Engine's activation lifecycle, not in the script.
 

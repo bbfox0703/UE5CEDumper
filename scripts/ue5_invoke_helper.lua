@@ -390,8 +390,8 @@ local function writeParams(base, regionSize, params)
       writeQword(base + off, v)
     elseif t == 'lazy' then
       -- [VND584-01] Found by a GUID nothing here can make: only 0 (null) can be sent, and writeBakedParams has already
-      -- zeroed the slot. As a pointer the value went out as an address the engine read as a weak pair, while FIRE and
-      -- the CE form refused the same input.
+      -- zeroed the slot. As a pointer the value would go out as an address the engine reads as a weak pair, while FIRE
+      -- and the CE form refuse the same input.
       if v ~= 0 and v ~= nil and v ~= false then
         error(string.format("[ue5_invoke] param '%s' is a lazy pointer -- it is found by a GUID this cannot make, " ..
                             "so only value=0 (null) can be sent", tostring(p.name or '?')))

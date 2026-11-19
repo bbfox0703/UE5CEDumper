@@ -186,7 +186,7 @@ class GameAggregates:
     # Co-occurrence on OWN props only.
     # (class_token, prop_token) -> count
     class_x_prop: Counter = field(default_factory=Counter)
-    # === Function-side aggregates (Phase 2) ===
+    # === Function-side aggregates ===
     # Each function entry from the dump represents a function declared
     # on the class (WalkFunctions walks UStruct::Children at the class
     # level — doesn't recurse up the super chain). So unlike props,
@@ -260,7 +260,7 @@ def aggregate(dump: Dump, game_only: bool = True) -> GameAggregates:
                 for pt in tokens:
                     agg.class_x_prop[(ct, pt)] += 1
 
-        # === Function aggregation (Phase 2 — feeds KeywordScoringTable) ===
+        # === Function aggregation (feeds KeywordScoringTable) ===
         # cls['funcs'] holds the class's OWN functions (DLL-side
         # WalkFunctions doesn't recurse supers), so no offset / addr
         # dedup is needed. Same trivial-token / min-games filters
@@ -289,12 +289,12 @@ CHEAT_KEYWORD_HINTS = {
     # is a *category label* the analyst can sort by; the table here is
     # NOT the keyword table — it's a UI sort for the analyst.
     #
-    # Synced to mirror PropertyScoringTable.cs as of build 698 — when
-    # this drifts the report's "Existing category" column lies about
-    # which tokens are already covered, which historically made already-
-    # added build-678 keywords (Effect / Target / Radius / etc.) keep
-    # surfacing as "uncategorised" in fresh runs. Keep this list in
-    # lockstep when you touch StatsKeywords / CombatKeywords / etc.
+    # Mirrors PropertyScoringTable.cs — when this drifts the report's
+    # "Existing category" column lies about which tokens are already
+    # covered, and keywords the table already has (Effect / Target /
+    # Radius / etc.) keep surfacing as "uncategorised" in fresh runs.
+    # Keep this list in lockstep when you touch StatsKeywords /
+    # CombatKeywords / etc.
     # All entries are lowercase because tokenize() lowercases.
     "stats":     ("hp", "health", "mp", "mana", "sp", "stamina", "energy",
                   "xp", "exp", "experience", "level", "lv", "lvl",
@@ -305,7 +305,7 @@ CHEAT_KEYWORD_HINTS = {
                   "crit", "critical", "critrate", "critdamage",
                   "attack", "atk", "multiplier",
                   "weapon", "hit", "hitdamage",
-                  # Build 678 cross-game additions
+                  # cross-game keywords
                   "effect", "target", "radius", "ability", "modifier", "duration"),
     "resources": ("gold", "coin", "coins", "money", "currency", "cash",
                   "credit", "credits",
@@ -314,7 +314,7 @@ CHEAT_KEYWORD_HINTS = {
                   "ammo", "material", "materials", "resource", "resources",
                   "supply", "supplies",
                   "stack", "count", "quantity", "amount",
-                  # Build 678 cross-game additions
+                  # cross-game keywords
                   "item", "items"),
     "movement":  ("speed", "velocity", "walk", "sprint", "run",
                   "jump", "jumpheight", "jumpz",
@@ -339,7 +339,7 @@ def categorize_token(tok: str) -> str | None:
 # of class names like `BP_Player_C` → ["bp","player","c"]. Filtering
 # these out keeps the candidate-keyword report focused on signal.
 #
-# Phase 2 additions (function-side analysis): BP compilation artifacts
+# Function-side analysis: BP compilation artifacts
 # dominate UFunction names. Every BPGC has dozens of
 # `ExecuteUbergraph_Foo_K2Node_*`, `Foo__DelegateSignature`,
 # `BndEvt__Foo_K2Node_*`, etc. Without this filter the top 60 function
@@ -570,7 +570,7 @@ def report_unusual_func_locations(aggs: list[GameAggregates],
         "abilitysystem", "attributeset", "inventory", "equipment",
         "playerprofile", "localplayer", "gameviewportclient", "hud",
         "ucheatmanager", "cheatmanager",
-        "weapon", "projectile", "battle",  # build 678 adds
+        "weapon", "projectile", "battle",
     }
     cheat_tokens = set().union(*CHEAT_KEYWORD_HINTS.values())
 
@@ -714,7 +714,7 @@ def run_self_test() -> int:
         counted = prop in agg.own_prop_name_freq
         if counted == engine:
             errors.append(f"{path}: {prop} {'counted' if counted else 'not counted'} with game_only")
-    # [EXTPR-539-540-2026-10-02] D4's object index sits beside the class dump as <name>.objects.jsonl, so the
+    # [EXTPR-539-540-2026-10-02] Dump All's object index sits beside the class dump as <name>.objects.jsonl, so the
     # README's `your-dumps/*.jsonl` picks it up too: it must be skipped, not read as one more game.
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:

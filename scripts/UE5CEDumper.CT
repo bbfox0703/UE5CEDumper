@@ -105,8 +105,8 @@ end
 -- visible. This table cannot read the DLL's real build stamp here: it is not a C ABI
 -- export (only logged to init-0.log and carried on the pipe), the DLL is not injected
 -- yet at path-report time, and CE Lua has no stat-by-path API. The file SIZE is the
--- cheap signal that separates a current build (several MB) from an old one -- the
--- Feb-2026 build in CE's install folder was ~0.5 MB. See docs/todo.md
+-- cheap signal that separates a current build (several MB) from an early one
+-- (~0.5 MB). See docs/todo.md
 -- [STALEDLL-2026-08-18]. A global so both the inject [ENABLE] chunk and the startup
 -- replay (different Lua chunks) can call it.
 -- [PATH-CT-INJECT-ANSI] One path in BOTH encodings: returns ansi, utf8. injectDLL hands its string to
@@ -194,7 +194,7 @@ end
 -- The order is a CONFIDENCE ranking, because the probe takes the FIRST folder
 -- that actually contains the DLL. Slots are declared even when they have nothing
 -- to offer, so the report can tell "checked, no DLL there" apart from "there was
--- nothing to check" -- exactly the confusion that made this bug hard to read.
+-- nothing to check" -- two outcomes that read alike in a bare list of folders.
 -- ============================================================
 
 local _slots, _seen = {}, {}
@@ -650,7 +650,7 @@ function ue5_pickDllManually()
                     picked = fn
                 elseif fileExists(fn) then
                     -- [PATH-CT-INJECT-ANSI] The dialog's name is UTF-8, which fopen cannot open for a non-ASCII
-                    -- folder -- so every such pick was dropped, and the error said to pick again.
+                    -- folder -- without this branch every such pick is dropped, and the error says to pick again.
                     picked = fn
                 end
             end
@@ -818,10 +818,9 @@ function ue5_inject()
     -- 2. Wait for the auto-start thread to finish — by POLLING, not by sleeping
     --    a fixed budget.
     --
-    -- Timeline: 1s thread delay + ~2-8s AOB scan + pipe server start. The old
-    -- code slept a flat 15s and then printed "complete (or failed)" without ever
-    -- checking anything, so a normal run wasted 5-10s AND a failed run still
-    -- reported success.
+    -- Timeline: 1s thread delay + ~2-8s AOB scan + pipe server start. A flat
+    -- sleep checks nothing: it wastes seconds on a normal run AND reports
+    -- success on a failed one.
     --
     -- The readiness signal is Mimic's mailbox initState field (Mimic.h
     -- InitState). Reading it is a PURE MEMORY READ via the exported
@@ -835,12 +834,12 @@ function ue5_inject()
     local tickAvailable = (type(getTickCount) == 'function')
     local startTick     = tickAvailable and getTickCount() or 0
     local TIMEOUT_MS   = 25000           -- generous: a cold cache + big pool can
-                                         -- legitimately exceed the old 15s budget
+                                         -- legitimately exceed 15s
 
     -- Resolve the mailbox symbol INSIDE the loop, not once up-front: CE's symbol
     -- handler may not have picked up the just-injected module yet, and a single
-    -- failed getAddress would silently drop us back to the blind wait and lose
-    -- the whole point of this change.
+    -- failed getAddress would silently drop us back to a blind wait and lose
+    -- the readiness signal.
     local SYMBOL_GRACE_MS = 5000   -- give up on the symbol (not on the DLL) after this
     local mb = nil
 

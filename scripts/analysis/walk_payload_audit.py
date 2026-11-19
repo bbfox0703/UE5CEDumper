@@ -75,7 +75,7 @@ consuming line cited in KEYS below. Tags:
   unused — never read by either exporter. Pure wire weight for an export.
 
 "Read" is deliberately strict: a property that is only COPIED into a synthesized
-`LiveFieldValue` during the struct-flatten (CeXmlExportService.cs:987-1039) and
+`LiveFieldValue` during the struct-flatten (`CeXmlExportService.ResolveStructRecursiveAsync`) and
 never consumed afterwards counts as unused — copying a value is not using it.
 
 LEAN RESPONSES: the `unused` keys this script finds are what `walk_instance`'s

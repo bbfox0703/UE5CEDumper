@@ -177,9 +177,9 @@
       _ue5_freeze_handles[KEY] = nil
       showMessage('[Freeze] ' .. tostring(err))
       -- DEFERRED, and it has to be: an immediate memrec.Active = false here is a no-op
-      -- (CE's setActive early-exits while autoassemble is still running), which is
-      -- exactly how [FREEZESTUCK-2026-08-18] left a ticked row over a freeze that was
-      -- writing nothing. Byte-identical to CeLuaHygiene.DeferredUntickLua.
+      -- (CE's setActive early-exits while autoassemble is still running), which
+      -- leaves a ticked row over a freeze that is writing nothing
+      -- [FREEZESTUCK-2026-08-18]. Byte-identical to CeLuaHygiene.DeferredUntickLua.
       if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
       return
     end
@@ -488,7 +488,7 @@ end
 -- always asks for derived scope, because holding only the DECLARING class of an
 -- inherited field is the defect (`[FREEZESCOPE-2026-08-18]`). Against a contract-2
 -- DLL the flag would be ignored and the freeze would hold the wrong pool while
--- reporting success -- exactly the silent-wrong-scope failure being fixed -- so this
+-- reporting success -- exactly the silent-wrong-scope failure that tag names -- so this
 -- refuses up front and says to update the DLL.
 -- 4: the teleport pose block's flags byte (paramsData[178]). This helper does not use CMD_TELEPORT; it
 -- bakes it because every emitted script bakes the same contract
@@ -679,7 +679,7 @@ local function fetchInstancePage(className, pageIndex, derived)
   -- had long finished. So it is released the same way here: the DLL says DONE and IDLE.
   -- [R7-S3] Released on cmd 0 whatever the status: the DLL clears cmd only after SetDone / SetError, and a
   -- re-inject or re-enable (UE5_Shutdown memsets the mailbox) also leaves it 0 -- with status 0, which a DONE-only
-  -- test never saw, so the latch then outlived the session. Also released when the latched mailbox has gone
+  -- test never sees, so such a latch would outlive the session. Also released when the latched mailbox has gone
   -- (unreadable) or moved (a re-inject at a new base).
   if _ue5_invoke_busy and _ue5_invoke_stale_mb then
     local c = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
@@ -910,7 +910,7 @@ if not freezeProperty or _freezeOutdated then
     if not writer then error(werr) end
 
     -- Scope DEFAULTS TO DERIVED. A Property Search row for an inherited field is
-    -- keyed to the class that DECLARES it, so exact-class was the wrong answer for
+    -- keyed to the class that DECLARES it, so exact-class is the wrong answer for
     -- the most common way this helper is invoked, and a default that is wrong for
     -- the common case is the defect (`[FREEZESCOPE-2026-08-18]`). `derived = false`
     -- is honoured; nil means "not stated", not "off".
@@ -1024,13 +1024,13 @@ if not freezeProperty or _freezeOutdated then
     ---
     --- WHY THE RECORD AND NOT JUST A PRINT (`[FREEZESTUCK-2026-08-18]`). The print
     --- below lands in CE's Lua Engine window, which hygiene closes on a successful
-    --- enable -- so an abandoned freeze was silent, and the user was left looking at
-    --- a TICKED record (in CE a red X on the checkbox means ACTIVE, not failed) over
-    --- a freeze that had permanently stopped writing. CLAUDE.md's rule for every
-    --- stateful toggle is that a bail-out which applied nothing must untick, and a
-    --- freeze that stopped writing is applying nothing. It also makes the existing
-    --- advice -- "re-enable the record" -- possible to follow, which it was not while
-    --- the record had never been disabled.
+    --- enable -- so with a print alone an abandoned freeze is silent, and the user is
+    --- left looking at a TICKED record (in CE a red X on the checkbox means ACTIVE, not
+    --- failed) over a freeze that has permanently stopped writing. CLAUDE.md's rule
+    --- for every stateful toggle is that a bail-out which applied nothing must untick, and a
+    --- freeze that stopped writing is applying nothing. It also makes the message's
+    --- advice -- "re-enable the record" -- possible to follow, which it is not while
+    --- the record has never been disabled.
     ---
     --- WHY IT IS DEFERRED. Setting `memrec.Active = false` runs the record's
     --- [DISABLE] block synchronously, and that block calls handle.stop(), which
@@ -1085,7 +1085,7 @@ if not freezeProperty or _freezeOutdated then
         -- therefore offers a transient concurrency cause for a permanent fault, in
         -- the one place the user reads it -- and hides exactly the distinction
         -- CLAUDE.md requires ("the DLL never picked it up" vs "it took the command
-        -- and wedged"). [FREEZEFIRSTERR-2026-08-23], seen on a live suspended game.
+        -- and wedged"). [FREEZEFIRSTERR-2026-08-23]
         if handle._failStreak == 0 then handle._firstError = err end
         handle._failStreak = handle._failStreak + 1
         -- One failure is usually a transient 'mailbox busy' (a concurrent
@@ -1187,7 +1187,7 @@ if not freezeProperty or _freezeOutdated then
 
       -- The initial rescan runs BEFORE the timers exist, so an abandonment on the
       -- very first pass (MAX_FAIL_STREAK is 3, so only reachable on a restarted
-      -- handle) left them enabled. Re-apply the stop here rather than reordering
+      -- handle) leaves them enabled. Re-apply the stop here rather than reordering
       -- start(): the timers have to exist for stop() to be reachable at all.
       if handle._abandoned then
         handle._tickTimer.Enabled   = false

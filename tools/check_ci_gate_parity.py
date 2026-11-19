@@ -6,8 +6,8 @@ be in check_all -- the two lists are one list kept in two places.
     py tools/check_ci_gate_parity.py --list   # print both sequences side by side
     py tools/check_ci_gate_parity.py --selftest   # the negative controls only (every run does them first)
 
-WHY ([CI-GATE-DRIFT-2026-09-25]). check_all.py's own docstring says "ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and
-nothing enforces that" -- and a gate appended to check_all that never reaches ci.yml lets a PR break it and redden
+WHY ([CI-GATE-DRIFT-2026-09-25]). check_all.py's own docstring says "ADDING A GATE MEANS ADDING IT TO BOTH LISTS"
+-- and a gate appended to check_all that never reaches ci.yml lets a PR break it and redden
 nothing. This is the enforcement.
 
 HOW. The gates are read from check_all.GATES (imported, not parsed). A gate "is in CI" when ci.yml runs its script

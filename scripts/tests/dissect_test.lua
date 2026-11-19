@@ -136,9 +136,9 @@ function createStructureForm() end
 function inputQuery() return nil end
 
 -- CE tracks EACH registration separately and hands back a distinct id; a leaked
--- second registration (AA22) survives one unregister. The single-slot model this
--- replaced could not show that: register overwrote the slot and any unregister
--- cleared it. Here `override`/`nameLookup` keep the LATEST fn (so callable, as the
+-- second registration (AA22) survives one unregister. A single-slot model cannot
+-- show that: register would overwrite the slot and any unregister would clear
+-- it. Here `override`/`nameLookup` keep the LATEST fn (so callable, as the
 -- AA4 cases need) while the *Count fields track how many registrations are live.
 function registerStructureDissectOverride(f)
   if REGISTER_FAIL then error('registerStructureDissectOverride refused') end
@@ -487,8 +487,8 @@ end
 case('AA6: a mid-walk field failure does NOT record a duplicate of the previous field')
 do
   -- UE5_WalkClassGetField leaves the out-params untouched when it fails
-  -- (Frieren.cpp), so `success ~= 0` being true for nil made the
-  -- previous field's buffers read a second time.
+  -- (Frieren.cpp), so a check that takes nil as success (`success ~= 0`)
+  -- would read the previous field's buffers a second time.
   resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE, 1, 'nil')
   local ok = pcall(dissect.createFromClass, 0xC1A55, 'MidWalk')
   eq(ok, false, 'the walk fails rather than inventing a field')
@@ -722,7 +722,7 @@ end
 
 case('AA37: a real UClass (meta ends in "Class") STILL gets the header')
 do
-  -- The regression guard: the fix must keep the header for BlueprintGeneratedClass
+  -- The control: the struct exclusion must keep the header for BlueprintGeneratedClass
   -- and every other UClass-family meta, not just literal "Class".
   resetWorld(); dissect.clearAll(); injectDll()
   local CLS, META_BP = 0xC1A55, 0xB9C1
@@ -1313,7 +1313,7 @@ end
 -- ticked auto-assembler records WITHOUT running their [DISABLE] when it opens
 -- another process and the user agrees to disable the table's entries
 -- (disableAllWithoutExecute), and a record deleted while ticked is freed without
--- it too. Ours then stayed registered, and UETools suspended, under a record
+-- it too. Ours would then stay registered, and UETools suspended, under a record
 -- showing auto mode off. The record hands the module its memrec, and the watch
 -- turns auto mode off -- ours unregistered, UETools put back -- once that record
 -- is gone, or unticked after the watch has seen it ticked.
@@ -1800,9 +1800,9 @@ end
 -- VND584-02 -- a soft / lazy pointer leads with a weak pair, not an address
 -- ============================================================
 -- TSoftObjectPtr / TSoftClassPtr / TLazyObjectPtr start with FWeakObjectPtr { int32 ObjectIndex,
--- int32 SerialNumber } (UE 5.8 PersistentObjectPtr.h, WeakObjectPtr.h). Typed vtPointer, CE showed
--- that pair as "P->..." and expanding the row dereferenced garbage. The CE-XML (W5) and CSX (W9)
--- exports already show it as 8 hex bytes, and Weak was always vtQword here.
+-- int32 SerialNumber } (UE 5.8 PersistentObjectPtr.h, WeakObjectPtr.h). Typed vtPointer, CE shows
+-- that pair as "P->..." and expanding the row dereferences garbage. The CE-XML and CSX
+-- exports show it as 8 hex bytes, and Weak is vtQword here.
 do
   local gti = dissect._getTypeInfo
   for _, t in ipairs({ 'SoftObjectProperty', 'SoftClassProperty', 'LazyObjectProperty' }) do
@@ -1824,8 +1824,8 @@ end
 -- ============================================================
 -- AssetObjectProperty / AssetClassProperty (TAssetPtr / TAssetSubclassOf, UE <= 4.17) are
 -- TPersistentObjectPtr<FStringAssetReference>: the same leading FWeakObjectPtr as the soft pointer
--- that replaced them. Missing from TYPE_MAP they fell to the unknown-type fallback, a decimal dword
--- block the field's width, so the pair read as two unrelated numbers and the string path as more.
+-- that replaced them. Missing from TYPE_MAP they fall to the unknown-type fallback, a decimal dword
+-- block the field's width, so the pair reads as two unrelated numbers and the string path as more.
 -- CSX gives them the soft row too. CE XML adds the path as a string beside the pair, which a dissect
 -- row cannot: an element is one value at one offset.
 case('UE4-ASSETPTR-EXPORTS: an asset pointer row is the weak pair in hex, like a soft pointer')
@@ -1844,8 +1844,8 @@ end
 -- ============================================================
 -- FUtf8String and FAnsiString (Utf8StrProperty / AnsiStrProperty, UE 5.5+) come from the same template
 -- as FString (UnrealString.h.inl): a 16-byte { Data, Num, Max } whose first 8 bytes are the character
--- pointer. Missing from TYPE_MAP they fell to the unknown-type fallback, one dword row the field's
--- width, so CE showed the pointer's low 4 bytes as a decimal. From UE 5.6 every inline FSoftObjectPath
+-- pointer. Missing from TYPE_MAP they fall to the unknown-type fallback, one dword row the field's
+-- width, so CE shows the pointer's low 4 bytes as a decimal. From UE 5.6 every inline FSoftObjectPath
 -- carries one (SubPathString). RE-UE4SS fixed the same gap in its own Lua type table (8d97f47e).
 case('VND9-02: a Utf8Str / AnsiStr row is a pointer, like a StrProperty row')
 do
@@ -1875,7 +1875,7 @@ do
 end
 
 -- ============================================================
--- VND584-02 follow-up -- "8 hex bytes" needs the DisplayMethod, not just vtQword
+-- VND584-02 -- "8 hex bytes" needs the DisplayMethod, not just vtQword
 -- ============================================================
 -- vtQword alone is an UNSIGNED DECIMAL row: TStructelement.create leaves fdisplayMethod at
 -- dtUnsignedInteger (CE StructuresFrm2.pas), so a weak pair { ObjectIndex 0x1234, Serial 0x56 } read
@@ -1911,12 +1911,12 @@ do
 end
 
 -- ============================================================
--- VND584-02 follow-up -- a DelegateProperty row is its bound object's weak pair, in hex,
+-- VND584-02 -- a DelegateProperty row is its bound object's weak pair, in hex,
 -- and on a CHECKED build that pair sits behind the access detector
 -- ============================================================
 -- FScriptDelegate is { FWeakObjectPtr Object; FName FunctionName }. UE 5.3+ with DO_CHECK on puts an
 -- 8-byte FMRSWRecursiveAccessDetector in front of a STANDALONE one, so the row at the field offset
--- showed the detector, not the object. The CE-XML and CSX exports emit one 8-byte hex leaf at
+-- shows the detector, not the object. The CE-XML and CSX exports emit one 8-byte hex leaf at
 -- offset + DelegatePad; the DLL derives that pad from the ENGINE'S ElementSize
 -- (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)). The script cannot ask which FName
 -- width this build has -- 4, 8 or 12 bytes -- but the answers cannot collide: 12 / 16 / 20 are pad 0,
@@ -1961,12 +1961,12 @@ do
 end
 
 -- ============================================================
--- VND584-02 follow-up -- a multicast row is InvocationList.Data, behind the detector on a checked build
+-- VND584-02 -- a multicast row is InvocationList.Data, behind the detector on a checked build
 -- ============================================================
 -- FMulticastScriptDelegate is a bare TArray<FScriptDelegate> header: 16 bytes whatever the FName width,
--- 24 on a UE 5.3+ checked build, where the access detector comes first (Grimoire.h measured it on
--- DumperTest Development: +0x00 the detector, +0x08 Data). The dissect's pointer row sat on the
--- detector. The DLL takes the pad from ElementSize against base 16 for BOTH spellings -- UE4 <= 4.22
+-- 24 on a UE 5.3+ checked build, where the access detector comes first (Grimoire.h has the checked-build
+-- layout: +0x00 the detector, +0x08 Data). A pointer row at the unpadded field offset would sit
+-- on the detector. The DLL takes the pad from ElementSize against base 16 for BOTH spellings -- UE4 <= 4.22
 -- names the type MulticastDelegateProperty -- and the CSX export hangs its InvocationList pointer at
 -- offset + DelegatePad. 20 is a UNICAST size (case-preserving FName) and no multicast has it.
 case('VND584-02: a multicast row is its InvocationList pointer, behind the detector on a checked build')

@@ -1,6 +1,6 @@
 --[[
   freeze_enable_capped_test.lua
-  UE5CEDumper -- FREEZESCOPE step 6, the half that was filed as "needs Cheat Engine".
+  UE5CEDumper -- FREEZESCOPE step 6, the [ENABLE]-block half, run without Cheat Engine.
 
   WHAT THE ROW ASKED FOR
     With the derived instance pool driven OVER the cap, tick the generated Freeze record
@@ -19,16 +19,17 @@
   THE SEAM, stated so the two halves cannot drift
     `handleOrErr.start()` returns (ok, err, count, capped) and the block destructures it
     as `local sok, sok2, serr, scount, scapped = pcall(...)`. This file owns everything
-    AFTER that 5th value; freeze_helper_test.lua:785 owns everything before it (a real
-    LI_OUT_TRUNCATED reply -> capped == true, with an uncapped control). The seam itself
+    AFTER that 5th value; freeze_helper_test.lua's 'SCOPE: a capped pool is reported' case
+    and the UNcapped control after it own everything before it (a real LI_OUT_TRUNCATED
+    reply -> capped == true, and capped == false without one). The seam itself
     is asserted below, so a change to start()'s arity fails here rather than silently
     splitting the two.
 
   ⚠ THE TRAP THIS RIG HAD TO HANDLE, and it is not obvious
     The [ENABLE] block loads the helper ITSELF -- `local tf = findTableFile(...)` with an
-    early `return` when tf is nil (FreezeScriptGenerator.cs:243). A rig that merely
-    pre-defines freezeProperty in _G never reaches the capped arm at all: the block
-    returns at that line having printed nothing and closed nothing, which reads as
+    early `return` when tf is nil (`FreezeScriptGenerator.AppendHelperLoader`). A rig
+    that merely pre-defines freezeProperty in _G never reaches the capped arm at all: the
+    block returns at that line having printed nothing and closed nothing, which reads as
     "no CAP line, window stayed open" -- i.e. a PASS on the capped case, for the wrong
     reason. So findTableFile/createStringStream are stubbed to actually SERVE a helper,
     and the arming control below is what catches it if they ever stop working.

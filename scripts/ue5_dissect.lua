@@ -1017,7 +1017,7 @@ end
 -- CE can take a record's tick away without running its [DISABLE]: on opening
 -- another process, when the user agrees to disable the table's entries
 -- (addresslist.disableAllWithoutExecute only clears Active), and when a ticked
--- record is deleted (it is freed, not deactivated). Ours then stayed registered
+-- record is deleted (it is freed, not deactivated). Ours would then stay registered
 -- -- and UETools suspended -- under a record showing auto mode off. So the record
 -- hands enableAutoCallback its memrec, and the watch turns auto mode off once
 -- that record is gone, or unticked after the watch has seen it ticked: CE sets
@@ -1035,7 +1035,7 @@ end
 -- The latest enable names the record followed. A re-tick after CE's untick lands
 -- on the already-registered path and is followed from then on; an enable with
 -- no record (an older record, CE's Lua console) is followed by nobody, and auto
--- mode then stays on until something disables it, as before.
+-- mode then stays on until something disables it.
 -- ----------------------------------------------------------------
 local AUTO_WATCH_MS = 2000   -- UETools can finish a scan or start over, and CE can untick the record, at any time
 

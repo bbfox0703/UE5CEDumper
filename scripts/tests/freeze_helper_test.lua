@@ -142,8 +142,8 @@ end
 local function case(name) realPrint('- ' .. name) end
 
 -- Safe accessors: a failing case must report and let the run continue. Indexing
--- WRITES[n] directly raises when the fix under test wrote nothing, which aborts
--- the file and hides every later case -- the negative control found exactly that.
+-- WRITES[n] directly raises when the code under test wrote nothing, which aborts
+-- the file and hides every later case.
 local function wroteAddr(n) local w = WRITES[n]; return w and w.addr end
 local function wroteValue(n) local w = WRITES[n]; return w and w.value end
 
@@ -165,8 +165,8 @@ local function newHandle(cfg)
 end
 
 -- Indexed from the FRONT, not the back: start() creates the tick+rescan pair first,
--- and an abandonment now creates a THIRD (one-shot, deferred untick) timer. Counting
--- backwards silently re-pointed both accessors the moment that landed.
+-- and an abandonment creates a THIRD (one-shot, deferred untick) timer. Counting
+-- backwards would silently re-point both accessors whenever that one exists.
 local function tickTimer()     return TIMERS[1] end
 local function rescanTimer()   return TIMERS[2] end
 local function deferredTimer() return TIMERS[3] end
@@ -445,11 +445,11 @@ end
 -- AA12 / AA13 -- start() must report an OUTCOME, and the three
 -- outcomes must be told apart
 -- ============================================================
--- The generated script's only signal was `pcall(handle.start)`, and pcall answers
--- "did Lua raise", never "did anything get frozen". Every mailbox error is caught
--- inside fetchInstancePage's own pcall, so start() cannot raise on the shipped path
--- and the pcall always succeeded -- over a record left ticked and a Lua window
--- auto-closed. start() now returns (ok, err, count).
+-- `pcall(handle.start)` alone answers "did Lua raise", never "did anything get
+-- frozen". Every mailbox error is caught inside fetchInstancePage's own pcall,
+-- so start() cannot raise on the shipped path
+-- and a bare pcall always succeeds -- over a record left ticked and a Lua window
+-- auto-closed. So start() returns (ok, err, count).
 --
 -- The distinction that makes this non-trivial: `count == 0` is NOT a failure. A
 -- class-wide freeze armed before its instances spawn is the helper's advertised
@@ -505,8 +505,7 @@ do
 
   -- Assert the CONCRETE triple on both sides, not merely that they differ. A
   -- "they differ" check passes when the hard-failure path returns nothing at all
-  -- (nil ~= true), which is the exact regression this case exists to catch --
-  -- found by negative-controlling the two branches separately.
+  -- (nil ~= true), which is the exact shape this case exists to catch.
   eq(okFail, false, 'AA13: the hard failure reports ok=false (not nil)')
   check(type(errFail) == 'string', 'AA13: the hard failure carries a reason', tostring(errFail))
   eq(countFail, 0, 'AA13: the hard failure reports 0')
@@ -590,8 +589,8 @@ end
 
 case('AA9: the OLD sample shape (a chunk `local`) is unstoppable -- the control')
 do
-  -- The negative control for the doc itself. This is what SAMPLES 1-3 taught
-  -- before the rewrite; it must fail, or the rewrite fixed nothing.
+  -- The negative control for the doc itself: the chunk-`local` shape a sample must
+  -- not teach. It must fail, or the stoppable-sample case above proves nothing.
   resetWorld()
   installMailbox{ pages = { { 0x2000 } } }
 
@@ -665,10 +664,10 @@ end
 -- looking at, not only the class that DECLARES the field.
 --
 -- A Property Search row for an inherited field (bCanBeDamaged, bHidden,
--- bReplicates) is keyed to its DECLARING class, so the freeze was handed
--- 'Actor' and an exact-name pool returned whichever stray AActor the level
--- happened to hold -- one ChaosDebugDrawActor in the observed case -- while
--- the player's pawn and every other subclass went untouched. Solide already
+-- bReplicates) is keyed to its DECLARING class, so the freeze is handed
+-- 'Actor', and an exact-name pool would return whichever stray AActor the
+-- level happens to hold while the player's pawn and every other subclass go
+-- untouched. Solide already
 -- walks subclasses for the Force submenu on the SAME ROW.
 --
 -- The wire consequence is the part a source-level test cannot reach: a derived
@@ -717,7 +716,7 @@ end
 
 case('SCOPE: each derived entry is guarded by ITS OWN class')
 do
-  -- The reason the witness had to go per-entry: two different subclasses in one
+  -- Why the witness is per-entry: two different subclasses in one
   -- pool. A single page-wide witness would refuse whichever one it was not.
   resetWorld()
   installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0xBBB} } } }
@@ -855,7 +854,7 @@ end
 
 case('SCOPE: a contract-2 DLL is REFUSED, not silently given the old pool')
 do
-  -- The whole failure being fixed is a freeze that holds the wrong pool while
+  -- The failure this guards against is a freeze that holds the wrong pool while
   -- reporting success. An older DLL ignores the scope flag, so it must be told
   -- apart from a working one BEFORE anything is written.
   resetWorld()
@@ -886,10 +885,10 @@ end
 -- [FREEZESTUCK-2026-08-18]: an abandoned freeze must untick its record.
 --
 -- The abandonment print lands in CE's Lua Engine window, which hygiene closes on
--- a successful enable -- so the user saw a TICKED record (in CE a red X on the
--- checkbox means ACTIVE, not failed) over a freeze that had permanently stopped
--- writing, and the message's own advice ("re-enable the record") could not be
--- followed because the record had never been disabled.
+-- a successful enable -- so without the untick the user sees a TICKED record (in CE
+-- a red X on the checkbox means ACTIVE, not failed) over a freeze that has permanently
+-- stopped writing, and the message's own advice ("re-enable the record") cannot be
+-- followed because the record was never disabled.
 -- ============================================================
 
 --- A stand-in for CE's TMemoryRecord: assigning Active = false runs the record's
@@ -1046,8 +1045,8 @@ end
 
 case('STUCK: with a memrec the message states the record WAS unticked')
 do
-  -- The old wording ("Re-enable the record after fixing it") described something
-  -- the user could not do, because nothing had disabled the record.
+  -- A wording like "Re-enable the record after fixing it" describes something
+  -- the user cannot do while nothing has disabled the record.
   resetWorld()
   local rec = makeCeRecord(nil)
   local h = freezeProperty{ className = 'MyClass', propOffset = 0x20, valueType = 'int32',
@@ -1315,7 +1314,7 @@ end
 case('R7-S3: a latch on a mailbox that was RESET (re-inject / re-init) is released, not held for the session')
 do
   -- The timeout message tells the user to re-inject or re-enable the table. UE5_Shutdown memsets the mailbox,
-  -- so it then reads status 0 / cmd 0 -- never DONE -- and a DONE-only release test wedged every later rescan
+  -- so it then reads status 0 / cmd 0 -- never DONE -- and a DONE-only release test would wedge every later rescan
   -- and invoke. cmd 0 is the release condition: the DLL clears cmd only after finishing, and a reset clears it too.
   resetWorld()
   local opts = { pages = { { 0x1000 } } }

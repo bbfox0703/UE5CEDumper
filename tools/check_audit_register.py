@@ -92,7 +92,7 @@ SEVERITIES = ("HIGH", "MED", "LOW", "INFO")
 # §3b's one-line register summary. Matched loosely enough to CATCH a stale one
 # (any digits) but anchored on the exact wording, so a reworded sentence fails as
 # "missing" rather than silently degrading this gate to a no-op — the failure mode
-# extract_patterns.py --check was hardened against and the reason it works.
+# extract_patterns.py --check guards against in the same way.
 HEADLINE_RE = re.compile(
     r"\*\*Current register: \d+ open of \d+ · "
     + " · ".join(rf"\d+ {s}" for s in SEVERITIES)

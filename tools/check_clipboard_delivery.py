@@ -3,47 +3,45 @@
     py tools/check_clipboard_delivery.py [--list] [--selftest]
 
 THE DEFECT. `IPlatformService.CopyToClipboardAsync` returns whether the text actually
-reached the clipboard, and its contract (Core/IPlatformService.cs:30-49) says it NEVER
-throws for an ordinary clipboard failure -- so the returned bool is the only signal.
-The 2026-09-08 blind-spot sweep classified all 57 call sites: 55 dropped it and 29 then
-claimed success anyway. 14 of those 29 are DELIVERY copies, where the clipboard IS the
-deliverable: a generated CE script the status line tells the user to paste into Cheat
-Engine. When the write does nothing and the app says it worked, the user pastes
+reached the clipboard, and its contract (its doc comment in Core/IPlatformService.cs) says
+it NEVER throws for an ordinary clipboard failure -- so the returned bool is the only
+signal. A DELIVERY copy is one where the clipboard IS the deliverable: a generated CE
+script the status line tells the user to paste into Cheat Engine. When the write does nothing and the app says it worked, the user pastes
 WHATEVER WAS ON THE CLIPBOARD BEFORE -- an older AA script from an earlier button press
 -- into CE and runs it against a live game.
 
-WHY THIS PREDICATE AND NOT "any discarded result". Measured, not argued:
+WHY THIS PREDICATE AND NOT "any discarded result":
 
-  * "discarded" alone       55 hits, 29 defects, 26 legitimate -> 47% false positive.
-                            Its correct count is 26, i.e. a BASELINE.
-  * "discarded AND claimed" needs an allowlist of the 9 sink names the claims land in
+  * "discarded" alone       also hits every convenience copy that legitimately drops
+                            the bool, so its correct count is not 0 but a BASELINE.
+  * "discarded AND claimed" needs an allowlist of the sink names the claims land in
                             (StatusText, LookupStatusText, GroupStatusText,
                             DiffStatusText, CoordStatus, _statusLabel.Text,
                             _resultLabel.Text, _log.Info, and a colour literal
-                            #4EC9B0) -- and a tenth arrives with the next panel.
+                            #4EC9B0) -- and a new one arrives with the next panel.
   * "discarded AND the payload is a generated script/XML"
-                            14 hits, 14 defects, 0 false positives.
+                            has no legitimate population: its correct count is 0.
 
-The discriminator is real rather than lucky: all 26 legitimate drops copy an ADDRESS, a
-NAME or a CLASS NAME -- a convenience the user re-clicks -- and not one of them copies a
-script. Losing an address costs a click; losing an AA script gets the wrong script run
-against a live game.
+The discriminator is real rather than lucky: a legitimate drop copies an ADDRESS, a
+NAME or a CLASS NAME -- a convenience the user re-clicks -- and never a script. Losing
+an address costs a click; losing an AA script gets the wrong script run against a live
+game.
 
-⭐ THE RULE BOTH THIS AND GATE 17a ARE BUILT ON: pick a predicate whose LEGITIMATE
-population is EMPTY, rather than one whose legitimate population must be enumerated. The
-round-1 proposal here was an allowlist of ~25 "effect appliers"; it scored 0 of 10
-findings and repeated the failure `check_property_family.py`'s header already records
-(G12 shipped "both writers now go through here" when there were THREE). No allowlist and
-no baseline: the correct count is 0 and it stays 0, because a new export path that
-copies a script and drops the bool is a new violation by construction.
+⭐ THE RULE BOTH THIS AND check_ce_untick_placement.py ARE BUILT ON: pick a predicate whose
+LEGITIMATE population is EMPTY, rather than one whose legitimate population must be
+enumerated. An allowlist of "effect appliers" goes stale the day an applier it does not
+name is written, the same way a comment claiming "both writers go through here" goes
+stale when a third appears. No allowlist and no baseline: the correct count is 0 and it
+stays 0, because a new export path that copies a script and drops the bool is a new
+violation by construction.
 
 THE FIX at every site is `Helpers/ClipboardDelivery.TryAsync` + `FailureText`, whose own
-header carries the delivery-vs-convenience split. Do NOT route the 26 convenience copies
+header carries the delivery-vs-convenience split. Do NOT route the convenience copies
 through it -- that is exactly what would turn this check back into a waiver list.
 
-⚠ NOT FLAGGED, deliberately: a convenience copy (an address, a name), and the two
-existing correct consumers (`PropertySearchViewModel.cs:736`,
-`Views/InvokeParamDialog.cs:921`) -- they test the result, which is the whole point.
+⚠ NOT FLAGGED, deliberately: a convenience copy (an address, a name), and a call that
+tests the result (`PropertySearchViewModel.CopyOffsetAsync`,
+`InvokeParamDialog.OnCopyBakedScriptClicked`) -- testing it is the whole point.
 """
 from __future__ import annotations
 
@@ -62,15 +60,14 @@ CALL = re.compile(r"CopyToClipboardAsync\s*\(")
 DELIVERY_ARG = re.compile(
     r"\bWrapAaScriptXml\b|\bGenerate\w*Xml\b|\bCheatTableBuilder\b|\bCeXmlExportService\b"
     r"|(?<![A-Za-z0-9_])(xml|script|aaScript|ceXml"
-    # ⭐ WIDENED 2026-09-09, and only after MEASURING that the legitimate population stays
-    # empty. The shipped set was the identifiers the 14 known defects happened to use, so a
-    # future call copying a `lua`/`payload`/`snippet` would have walked straight past --
-    # "the correct count is 0 from here on" was true of those names, not of the shape.
-    # ⚠ Widening a predicate is exactly how this kind of gate turns into an allowlist, so it
-    # was tried FIRST and the tree re-run: the extra names produce **two** new hits and both
-    # are the DECLARATION and the DEFINITION of CopyToClipboardAsync itself (its parameter is
-    # named `text`). No real call site appears. Those two are excluded by DECLARATION below
-    # rather than by dropping the names again.
+    # ⭐ The names below reach past the identifiers today's call sites use, so a future call
+    # copying a `lua`/`payload`/`snippet` cannot walk straight past -- "the correct count is
+    # 0" has to be true of the shape, not of a few names.
+    # ⚠ Widening a predicate is exactly how this kind of gate turns into an allowlist, so its
+    # legitimate population must stay empty: the extra names hit only the DECLARATION and
+    # the DEFINITION of CopyToClipboardAsync itself (its parameter is named `text`), and no
+    # real call site. Those two are excluded by DECLARATION below rather than by dropping
+    # the names again.
     r"|lua|luaText|snippet|cheatTable|record|payload|body|text|code|table"
     r")(?![A-Za-z0-9_])", re.I)
 
@@ -78,20 +75,19 @@ DELIVERY_ARG = re.compile(
 # a call. A signature has the RETURN TYPE immediately in front of the name; a call
 # never does.
 # ⚠ `statement_of` returns the text BEFORE the call -- that is how CONSUMED works
-# -- so this must anchor at the END of that prefix rather than match the call itself.
-# Written the other way round first, and the selftest said so: both declaration cases
-# still reported a hit. A real call cannot collide: `Task<bool> t = _platform.Copy...`
-# has a prefix ending in `t = `, not in `>`.
+# -- so this must anchor at the END of that prefix rather than match the call itself;
+# matched the other way round, both declaration cases in the selftest would report a hit.
+# A real call cannot collide: `Task<bool> t = _platform.Copy...` has a prefix ending in
+# `t = `, not in `>`.
 DECLARATION = re.compile(r"\bTask\s*<\s*bool\s*>\s*$")
 
 # The statement CONSUMES the result if any of these appear before the call in it.
 #
 # ⚠ `if (`/`while (` count as consumption ONLY when the call sits INSIDE the condition
 # (`if (!await ...Copy...)`). A leading `if (!sentToCe)` HEAD followed by the call is the
-# opposite -- the result is dropped -- and that is the shape of 5 of the 14 real defects
-# this gate was written for. The first draft matched the head, reported CHECK OK over a
-# tree that still had them, and only the selftest case said so. working-lessons 1.2a,
-# and the same mistake gate 17a made twice; peel_heads is the same fix.
+# opposite -- the result is dropped. A check that matches the head reports CHECK OK over
+# a tree full of that shape; the "dropped inside if (!sentToCe)" selftest case pins it
+# (working-lessons 1.2a). peel_heads strips such heads before CONSUMED is tested.
 CONSUMED = re.compile(r"=|\breturn\b|\bif\s*\(|\bwhile\s*\(|&&|\|\||!await|\?|\bAssert\b")
 
 HEAD = re.compile(r"^\s*(?:\}\s*)?(?:else\s+)?(?:if|for|while|foreach)\s*\(")
@@ -133,8 +129,8 @@ def statement_of(text: str, call_at: int) -> tuple[str, int]:
     """Return (statement text, its start offset) for the statement containing call_at.
 
     Walks back to the previous `;`, `{` or `}` that is not inside brackets. Walking back
-    rather than splitting the whole file keeps multi-line calls intact -- 4 of the 14
-    real defects spanned two lines, and a line-based check saw none of them.
+    rather than splitting the whole file keeps multi-line calls intact -- a call that
+    spans two lines is invisible to a line-based check.
     """
     i, depth = call_at, 0
     while i > 0:
@@ -153,9 +149,9 @@ def scan_text(text: str):
     """Yield (offset, statement, arg) for every DELIVERY copy whose result is dropped."""
     for m in CALL.finditer(text):
         stmt, start = statement_of(text, m.start())
-        # The method's own signature is not a call. It only became reachable when the payload
-        # predicate was widened to include `text` (its parameter's name), so it is skipped
-        # here rather than by narrowing the predicate back down.
+        # The method's own signature is not a call. The payload predicate includes `text`
+        # (its parameter's name), so the signature is skipped here rather than by
+        # narrowing the predicate back down.
         if DECLARATION.search(stmt):
             continue
         if CONSUMED.search(peel_heads(stmt)):
@@ -199,7 +195,8 @@ SELFTEST = [
     ("dropped, multi-line call",
      'await _platform.CopyToClipboardAsync(\n'
      '    Services.CheatTableBuilder.WrapAaScriptXml(description, script));', 1),
-    # ⭐ THE WIDENING, and its control. Added 2026-09-09.
+    # ⭐ THE WIDER NAME SET (payload names no builder uses), and its controls: the method's
+    # own signature and a convenience copy stay unflagged.
     ("dropped, payload named lua -- outside the ORIGINAL name set",
      'var lua = Build();\nawait _platform.CopyToClipboardAsync(lua);', 1),
     ("dropped, payload named payload",

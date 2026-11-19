@@ -283,10 +283,10 @@ end
 
 case('AA16: the tokens BakedScriptGenerator emits do not abort the whole invoke')
 do
-  -- MapToHelperType can emit ftext / tarray / tmap / tset / delegate, and
-  -- writeParams accepted none of them: the error propagated out of
-  -- writeBakedParams and the ENTIRE invoke was refused, so a UFunction with (say)
-  -- one TArray input could not be called at all from an exported script.
+  -- MapToHelperType can emit ftext / tarray / tmap / tset / delegate. If
+  -- writeParams rejects one of them, the error propagates out of
+  -- writeBakedParams and the ENTIRE invoke is refused, so a UFunction with (say)
+  -- one TArray input cannot be called at all from an exported script.
   for _, t in ipairs({ 'tarray', 'tmap', 'tset', 'delegate' }) do
     resetWorld()
     local ok, e = invokeUFunction('C', 'F', 32,
@@ -335,8 +335,8 @@ end
 
 case('VND584-01: a lazy pointer is refused unless it is 0 -- the answer FIRE and the CE form give')
 do
-  -- It is found by a GUID nothing here can make. As a 'pointer' token the helper wrote the value as an address,
-  -- which the engine read as a weak pair, while FIRE and the CE form refused the same input.
+  -- It is found by a GUID nothing here can make. As a 'pointer' token the helper would write the value as an
+  -- address, which the engine reads as a weak pair, while FIRE and the CE form refuse the same input.
   resetWorld()
   local ok, e = invokeUFunction('C', 'F', 32,
                                 { { name = 'ref', type = 'lazy', offset = 0, size = 32, value = 0x1234 } })
@@ -353,7 +353,7 @@ end
 case('ASSETPTR-BAKED-TOKEN: an asset pointer is refused unless it is 0 -- its path is a string this cannot build')
 do
   -- UE 4.11-4.17's TAssetPtr: the weak pair, then the path as an FString inside the game. As the int32 default the
-  -- helper wrote a typed value over the weak index; FIRE and the CE form refuse any value but empty.
+  -- helper would write a typed value over the weak index; FIRE and the CE form refuse any value but empty.
   resetWorld()
   local ok, e = invokeUFunction('C', 'F', 32,
                                 { { name = 'map', type = 'asset', offset = 0, size = 32, value = 0x1234 } })
@@ -375,7 +375,7 @@ case('AA17: the WHOLE 1024-byte params buffer is cleared, not just parmsSize')
 do
   -- Mimic.cpp `HandleInvoke` passes sizeof(paramsData) == 1024 to UE5_CallProcessEventEx,
   -- so EnqueueInvoke copies all 1024 bytes into the request it owns. Zeroing only
-  -- the caller's parmsSize left every byte past it holding the PREVIOUS command's
+  -- the caller's parmsSize leaves every byte past it holding the PREVIOUS command's
   -- data -- and if that parmsSize is smaller than the UFunction's real ParmsSize
   -- (stale metadata, or a generator that counted only the params it knew), those
   -- stale bytes are read as live parameters.
@@ -404,8 +404,8 @@ end
 case('AA18: a timeout does NOT report the previous command\'s error message')
 do
   -- Mimic.cpp `PollingThreadBody` sets status = PROCESSING on pickup and never clears errorMsg;
-  -- nothing else zeroes it either. So the timeout branch read whatever the LAST
-  -- failure left there and presented it as this command's reason -- the guessed
+  -- nothing else zeroes it either. So a timeout branch that reads it presents whatever
+  -- the LAST failure left there as this command's reason -- the guessed
   -- diagnosis CLAUDE.md forbids.
   resetWorld()
   STR[MB + OFF_ERR] = 'Instance not found: OldClass'   -- left by an earlier command
@@ -445,8 +445,8 @@ end
 
 case('AA19: after a TIMEOUT the next invoke is refused -- the DLL still owns the mailbox')
 do
-  -- The flag was cleared unconditionally, including on the path where the DLL had
-  -- taken the command and not finished. The next invoke then overwrote className /
+  -- Clearing the flag unconditionally, including on the path where the DLL has
+  -- taken the command and not finished, lets the next invoke overwrite className /
   -- funcName / params underneath an in-flight ProcessEvent.
   resetWorld()
   DLL = function() I32[MB + OFF_STATUS] = 2 end         -- taken, wedged
@@ -482,7 +482,7 @@ end
 case('R7-S3: a latch on a RESET mailbox (re-inject memsets it: status 0, cmd 0) is released')
 do
   -- The latch's own message says "re-inject if it never does". A re-inject memsets the mailbox, which then
-  -- reads status 0 -- never DONE -- so a DONE-only release test refused every later call for the session.
+  -- reads status 0 -- never DONE -- so a DONE-only release test would refuse every later call for the session.
   resetWorld()
   DLL = function() I32[MB + OFF_STATUS] = 2 end
   eq(invokeUFunction('C', 'F', 0, nil), false, 'first times out')
@@ -687,7 +687,7 @@ end
 -- [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF (-5) does not turn the camera off on stock UE 4.18-5.7, so the
 -- [DISABLE] sample must not untick silently over a camera that stays on: it says so UNGATED (print -- an untick puts
 -- no modal over the game) and RAISES, because CE's TMemoryRecord.setActive sets fActive only when the script succeeds.
--- The generator's [DISABLE] already does; the copy-me sample still reported only a failed pcall.
+-- The generator's [DISABLE] does the same; a copy-me sample that reports only a failed pcall would not.
 case('DEBUGCAM-QUEUED-OFF-NOESCALATE: the [DISABLE] sample raises and says so on a queued OFF (-5)')
 do
   resetWorld()
@@ -894,10 +894,10 @@ end
 -- ============================================================
 -- R7-X5: an UPDATED helper must take effect on re-load; a same/older one must not.
 -- ============================================================
--- The freeze helper's AA30 contract, which this file never got: its public functions sat behind bare
--- `if not X then` guards, so a CE session that had loaded one copy kept it however often a newer copy was
--- re-loaded -- R7-S3's latch release never reached a table opened before the update. Found by R7-S3's live
--- check, whose red arms each needed a fresh CE process for exactly this reason. Versions are DERIVED from
+-- The freeze helper's AA30 contract, held here too: with public functions behind bare `if not X then`
+-- guards, a CE session that has loaded one copy keeps it however often a newer copy is re-loaded, so a
+-- fix in the helper (R7-S3's latch release, say) never reaches a table opened before the update, and a
+-- live check needs a fresh CE process per red arm. Versions are DERIVED from
 -- the file under test, never typed (the lesson freeze_helper_test.lua's AA30 block records).
 local CUR = UE5_INVOKE_HELPER_VERSION
 local function bump(v, d)

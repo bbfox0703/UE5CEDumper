@@ -101,7 +101,7 @@ function Run-FuncProps($conn, [string]$addr) {
 
 $conn = Connect-Pipe
 try {
-    # --- Step 1: validate the Script offset derivation LIVE (step-1 deliverable) ---
+    # --- Step 1: validate the Script offset derivation LIVE ---
     $off = Send-Cmd $conn "get_offsets" $null
     if ($off.ok) {
         $ps = $off.ustruct_propssize

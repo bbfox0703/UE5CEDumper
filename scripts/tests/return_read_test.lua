@@ -157,7 +157,7 @@ local FMT = '0x%X'
 
 local function readBoth(ptr)
   poke(ADDR, ptr, 8)
-  -- 'qword' is what the fix sends on the wire; 'pointer' is the spelling the
+  -- 'qword' is what the generator sends on the wire; 'pointer' is the spelling the
   -- helper does NOT recognise, so it falls through to the signed int32 default.
   return readUFunctionReturn(RET_OFF, 'qword'),
          readUFunctionReturn(RET_OFF, 'pointer')

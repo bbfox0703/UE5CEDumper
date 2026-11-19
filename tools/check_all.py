@@ -103,8 +103,8 @@ GATES = [
      "pe_version_probe.py's port of Grimoire::EngineBuildStringCode no longer gives the C++ helper test's answers",
      False),
 
-    # [SDK-METACLASS] the engine-source oracle for SDK headers: its verdicts are evidence, so every blind spot the
-    # review of 2026-09-27 found is a fixture that must keep its verdict
+    # [SDK-METACLASS] the engine-source oracle for SDK headers: its verdicts are evidence, so every known blind spot
+    # is a fixture that must keep its verdict
     ("sdk_source_oracle_selftest",
      ["tools/verify/sdk_source_oracle.py", "--selftest"],
      "the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted",
@@ -117,9 +117,9 @@ GATES = [
      "proxy_refresh.py's controls failed -- it would miss a deployed proxy, touch a DLL that is not ours, refresh "
      "one a running game maps, or lose a backup. Run 'py tools/verify/proxy_refresh.py --selftest'", False),
 
-    # [RIG-PIPE-DOUBLE-CONNECT] the pipe rigs open through PipeClient: a second connect that opened again while its
-    # first handle was held needed one more pipe instance than the UI leaves (it holds two of three), so the rig could
-    # not connect while the UI was up; and a reopened connection must start clean
+    # [RIG-PIPE-DOUBLE-CONNECT] the pipe rigs open through PipeClient: a second connect that opens again while its
+    # first handle is held needs one more pipe instance than the UI leaves (it holds two of three), so the rig cannot
+    # connect while the UI is up; and a reopened connection must start clean
     ("pipe_client_selftest",
      ["tools/verify/pipe_client.py", "--selftest"],
      "PipeClient.connect() opened again on an open client (with the UI connected, a rig then finds no free pipe "

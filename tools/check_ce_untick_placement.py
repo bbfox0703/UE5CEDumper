@@ -18,34 +18,33 @@ because by the time the timer fires, (4) has run: `state(false) != fActive(true)
 CE 7.7 and then confirmed against the 7.5 source, lives on
 `CeLuaHygiene.DeferredUntickLua`'s doc comment. [FREEZEUNTICK-2026-08-20]
 
-WHY A GATE, AND WHY THIS ONE. The 2026-09-08 blind-spot sweep found the immediate form
-still shipping in THREE places -- `scripts/UE5CEDumper.CT:879` (live code, in the
-shipped table), and the copy-me samples in `ue5_freeze_helper.lua` and
-`ue5_invoke_helper.lua` -- five weeks after the C# generators were all fixed. The C#
-half is covered by `CeMailboxBailoutTests`; nothing covered the hand-written artifacts,
-and nothing covered the samples at all.
+WHY A GATE, AND WHY THIS ONE. The C# generators' untick is covered by
+`CeMailboxBailoutTests`; the hand-written artifacts are not -- the "Inject DLL + Start
+Pipe Server" record's bail-out in `scripts/UE5CEDumper.CT` (live code, in the shipped
+table), and the copy-me samples in `ue5_freeze_helper.lua` and `ue5_invoke_helper.lua`.
+`CeMailboxBailoutTests` reads generator output, not these files, so this gate reads them.
 
-⚠ THE ROUND-1 GATE DESIGN WAS REFUTED AND THIS IS THE REPLACEMENT. The first proposal
-was an allowlist of ~25 "effect applier" functions whose returns must be consumed. It
-scored 0 of 10 findings, and worse, a hand-curated list is the exact failure this repo
-has already measured once: `check_property_family.py`'s header records that G12 shipped
-"Both writers now go through here" when there were THREE. This check needs NO curation
-and NO baseline -- the correct count outside `scripts/tests/` is 0, and it stays 0.
+⚠ NO ALLOWLIST. A hand-curated list of "effect applier" functions whose returns must be
+consumed goes stale the day a function it does not name is written, the same way a
+comment claiming "both writers go through here" goes stale when a third appears. This
+check needs NO curation and NO baseline -- the correct count outside `scripts/tests/` is
+0, and it stays 0.
 
 WHAT COUNTS AS DEFERRED (the only two shapes in this repo, both verified by hand):
   * the one-line `CeLuaHygiene.DeferredUntickLua` form -- `createTimer` on the SAME line
     as the untick (emitted as one line on purpose: it appears at 32 bail-out sites and
     six lines apiece would bury the logic);
   * lexically inside an `OnTimer = function` / `OnClose = function` body -- the shape
-    `TeleportScriptGenerator` (:220, :281), `BakedScriptGenerator` (:431),
-    `InvokeScriptGenerator` (:488) and `CoordLibraryScriptGenerator` (:645) use.
+    `TeleportScriptGenerator` (`Generate`, `GenerateClearAll`), `BakedScriptGenerator`
+    (`AppendCleanupAndClose`), `InvokeScriptGenerator` (`AppendParamForm`'s OnClose) and
+    `CoordLibraryScriptGenerator` (`AppendPickerForm`) use.
 Each of those five is a NEGATIVE CONTROL for this check: they must never be flagged,
 and `--selftest` asserts exactly that.
 
-⚠ BLOCK COMMENTS ARE IN SCOPE, deliberately -- do not "fix" this by skipping them. Two
-of the three defects live inside the leading `--[[ ]]` doc block of a helper, in a
-sample the file itself introduces with "copy this whole thing" and (falsely) as "the
-same shape UE5DumpUI's own generated scripts use". For these files the samples ARE the
+⚠ BLOCK COMMENTS ARE IN SCOPE, deliberately -- do not "fix" this by skipping them. The
+copy-me samples of both helpers live inside the helper's leading `--[[ ]]` doc block;
+the freeze helper's opens with "copy this whole thing" and calls itself the shape
+UE5DumpUI's own generated scripts use. For these files the samples ARE the
 deliverable, so a wrong sample is a shipped defect.
 
 ⚠ `[DISABLE]` blocks are NOT flagged. There the record is already going inactive, so
@@ -72,16 +71,14 @@ UNTICK_SIMPLE = re.compile(r"memrec\.Active\s*=\s*false", re.I)
 DEFER_OPEN = re.compile(r"\b(OnTimer|OnClose)\s*=\s*function\b", re.I)
 SAME_LINE_TIMER = re.compile(r"\bcreateTimer\b", re.I)
 # ⚠ A marker must be the WHOLE line once a trailing comment is stripped -- and the .CT's
-# `<AssemblerScript>[ENABLE]` prefix has to be stripped with it. Both halves were learned
-# from a failing negative control, one after the other:
-#   * a whole-line anchor missed `<AssemblerScript>[ENABLE]`, so the PREVIOUS record's
-#     `[DISABLE]` leaked across every remaining record and hid the misplaced untick in UE5CEDumper.CT -- the
-#     one live defect this gate exists for;
-#   * relaxing it to "ends with the marker" then matched
-#     the freeze helper's `_ue5_freeze_handles[KEY] = h`, a trailing comment reading `-- <-- reachable from
-#     [DISABLE]`, which hid `:170` the same way.
-# working-lessons 1.2a, three times inside one 200-line file: each fix passed the cases
-# that existed and broke on the shape nobody had written a case for yet.
+# `<AssemblerScript>[ENABLE]` prefix has to be stripped with it. Either half alone fails:
+#   * a whole-line anchor misses `<AssemblerScript>[ENABLE]`, so the PREVIOUS record's
+#     `[DISABLE]` leaks across every remaining record and hides a misplaced untick in
+#     UE5CEDumper.CT, the shipped table this gate exists for;
+#   * "ends with the marker" matches the freeze helper's `_ue5_freeze_handles[KEY] = h`, a
+#     trailing comment reading `-- <-- reachable from [DISABLE]`, which hides the untick
+#     after it the same way.
+# The selftest pins each shape (working-lessons 1.2a: one negative control validates one axis).
 MARKER = re.compile(r"^(?:<AssemblerScript>)?\s*\[(ENABLE|DISABLE)\]$")
 TRAILING_COMMENT = re.compile(r"--.*$")
 
@@ -153,16 +150,16 @@ def scan(stream) -> list[tuple[int, str, str]]:
         if text.strip().startswith("--"):
             continue
 
-        # ⛔ AND A TRAILING COMMENT IS PROSE TOO. Every pattern below used the RAW line, so a
-        # comment decided the verdict in BOTH directions:
-        #   * `memrec.Active = false  -- deferred, see createTimer above` was EXEMPTED, because
-        #     SAME_LINE_TIMER matched the word in the comment. A real immediate untick, waved
-        #     through by a sentence about one.
-        #   * `foo()  -- memrec.Active = false` would have been FLAGGED, on a line that emits
+        # ⛔ AND A TRAILING COMMENT IS PROSE TOO. Matched against the RAW line, a comment
+        # would decide the verdict in BOTH directions:
+        #   * `memrec.Active = false  -- deferred, see createTimer above` would be EXEMPTED,
+        #     because SAME_LINE_TIMER matches the word in the comment. A real immediate untick,
+        #     waved through by a sentence about one.
+        #   * `foo()  -- memrec.Active = false` would be FLAGGED, on a line that emits
         #     no untick at all.
-        # Found 2026-09-09. `marker_of` already strips trailing comments for exactly this
-        # reason one function up; the body did not. ⚠ The reported snippet stays the RAW line,
-        # so a human reading the failure still sees what is actually in the file.
+        # `marker_of` strips trailing comments for the same reason. ⚠ The reported snippet
+        # stays the RAW line, so a human reading the failure still sees what is actually in
+        # the file.
         code = TRAILING_COMMENT.sub("", text)
 
         opens_defer = bool(DEFER_OPEN.search(code))
@@ -243,8 +240,8 @@ SELFTEST = [
      "if memrec then memrec.Active = false end\n", 1),
     ("[DISABLE] is not flagged",
      "[ENABLE]\nprint('x')\n[DISABLE]\nif memrec then memrec.Active = false end\n", 0),
-    # The .CT shape, and the state leak it caused. Added AFTER the first nine cases went
-    # green over a scan that still missed the live defect -- see the ENABLE_MARK comment.
+    # The .CT shape, and the state leak it causes when the marker match misses it -- the
+    # cases above all pass over a scan that has that leak. See the MARKER comment.
     (".CT marker sharing a line with its XML tag",
      "<AssemblerScript>[ENABLE]\nif memrec then memrec.Active = false end\n", 1),
     ("a previous record's [DISABLE] must not leak",

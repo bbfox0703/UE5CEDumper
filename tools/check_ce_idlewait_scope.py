@@ -11,9 +11,8 @@ operands, clears status and stores `cmd` while another command may still be in f
 the write over an in-flight command that the emitters' own comments describe.
 
 That makes the legitimate population EMPTY by construction, which is the only kind of
-predicate worth gating here. The repo has paid for the alternative twice: proposed gate #17
-was refuted in round 1, and 17b had to be re-scoped, both because their legitimate
-population had to be ENUMERATED and the check would have decayed into an allowlist.
+predicate worth gating here. The alternative -- a predicate whose legitimate population
+has to be ENUMERATED -- decays into an allowlist.
 
 ⛔ SO THIS DELIBERATELY DOES **NOT** CHECK "every idle wait is unconditional". That version
 has a real legitimate population -- `CoordLibraryScriptGenerator` guards on `if (dll)` and
@@ -21,10 +20,9 @@ has a real legitimate population -- `CoordLibraryScriptGenerator` guards on `if 
 genuinely do not talk to the mailbox at all. Flagging them would be the allowlist failure
 all over again. The check is only ever about a guard on the ENABLE/DISABLE discriminator.
 
-FOUND BY: `[R3-SEETHRU-2026-09-10]`. `SeeThroughScriptGenerator` was the only violator in
-14 generators; its call sat between the `{` and the `else`, with the explanatory comment
-OUTDENTED to the outer level, which is exactly what made it read as unconditional to every
-reviewer -- including two audits. A brace-depth check cannot be fooled by indentation, so
+WHY BRACE DEPTH (`[R3-SEETHRU-2026-09-10]`). A call that sits between the `{` and the
+`else`, with its explanatory comment OUTDENTED to the outer level, reads as unconditional
+to a human reviewer. A brace-depth check cannot be fooled by indentation, so
 that is what this does.
 """
 from __future__ import annotations

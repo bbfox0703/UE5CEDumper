@@ -9,10 +9,9 @@
 The reasoning behind every row lives in docs/toolchain.md. This file is the mechanism.
 
 WHY PYTHON AND NOT POWERSHELL
-    An unsigned, create-heavy .ps1 is the exact shape that got six files quarantined by
-    Bitdefender ATD on this machine -- four of them unrelated to what the script did, and
-    path-blocked afterwards so even `git checkout` failed until reboot (working-lessons
-    §3.8). Every automated tool in this repo is Python for that reason; the .ps1 that
+    An unsigned, create-heavy .ps1 is the exact shape Bitdefender ATD quarantines -- and
+    it can take files unrelated to what the script did, then path-block them so even
+    `git checkout` fails until reboot (working-lessons §3.8). Every automated tool in this repo is Python for that reason; the .ps1 that
     remains (build.ps1) is invoked by hand. bootstrap.cmd is a two-line launcher, not a
     script -- .cmd is not the hazard shape.
 
@@ -466,8 +465,8 @@ def verify_gates():
     print("\n── Stage 1: gates ──────────────────────────────────────────────")
     rc, out = run([sys.executable, str(ROOT / "tools" / "check_all.py")], timeout=900)
     tail = [l for l in out.splitlines() if "gate(s) run" in l]
-    # Derive the count from the line itself. It was 4, then 12, then 13 -- a literal here
-    # would be wrong by default.
+    # Derive the count from the line itself. It grows with every gate added -- a literal
+    # here would be wrong by default.
     print("   " + (tail[-1].strip() if tail else f"(no summary line; rc={rc})"))
     return rc == 0
 

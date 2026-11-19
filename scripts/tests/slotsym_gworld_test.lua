@@ -4,13 +4,13 @@
   still release its symbol.
 
   WHY A SEPARATE FILE FROM slotsym_release_test.lua
-    That rig covers the record the defect was IN -- "Get GameEngine" on the
-    `&GEngine` SLOT path, where `unregisterSymbol` sat inside a buffer-only guard
-    and both arms were skipped. GWorld always unregistered correctly, so step 3
-    asks the opposite question: did fixing the broken one break the working one?
-    Both ends now go through the SAME shared emitters
+    That rig covers "Get GameEngine" on the `&GEngine` SLOT path, where an
+    `unregisterSymbol` placed inside a buffer-only guard would skip both arms,
+    because that path has no buffer. Step 3 asks the opposite question: does the
+    GWorld record, which has no buffer branch at all, still release its symbol?
+    Both ends go through the SAME shared emitters
     (`CeLuaHygiene.AppendSlotSymbolRegister` / `AppendSlotSymbolRelease`), which is
-    exactly why the working end has to be re-checked -- a shared emitter turns one
+    exactly why the GWorld end has to be checked too -- a shared emitter turns one
     regression into two.
 
   WHAT IT RUNS
