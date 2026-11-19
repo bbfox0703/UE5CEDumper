@@ -49,12 +49,10 @@ from mailbox_poke import Mem, pid_of  # noqa: E402
 
 LOG_ROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 # [ST1RIG-LOGPATH-STALE] Resolved in main() from the injected process's IMAGE, never
-# hardcoded. This used to read `Logs/DumperTest`, which is the DEVELOPMENT flavour's
-# folder -- a Shipping run writes to `Logs/DumperTest-Win64-Shipping`. So on the flavour
-# the house rules say to reach for FIRST, count() globbed a stale folder, both crash
-# signatures came back 0 on every run, and the gates below passed VACUOUSLY. Measured
-# 2026-09-16: Logs/DumperTest-Win64-Shipping was current while Logs/DumperTest had not
-# been written since 09-12.
+# hardcoded. `Logs/DumperTest` is the DEVELOPMENT flavour's folder -- a Shipping run
+# writes to `Logs/DumperTest-Win64-Shipping`. A hardcoded folder on the flavour the house
+# rules say to reach for FIRST would glob a stale folder, both crash signatures would come
+# back 0 on every run, and the gates below would pass VACUOUSLY.
 LOG = None
 OFF_BHIDDEN, MASK_BHIDDEN = 0x58, 0x80
 FUNC_NATIVE, FUNC_STATIC = 0x400, 0x2000

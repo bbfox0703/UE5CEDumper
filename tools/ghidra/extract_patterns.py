@@ -256,13 +256,11 @@ if CHECK:
         failures.append("header intro says %s entries, parsed %d" % (m2.group(1), len(uniq)))
 
     # ── RIP GEOMETRY — recompute (instrOffset, opcodeLen, totalLen) against the pattern's OWN
-    # bytes. Nothing else in the tree does this: the blocktest oracle covers 35 of 158 entries,
-    # and `ASSERT_TABLE_ORDER` only checks priority order, so a triple that points into the
-    # middle of its own instruction compiles, sorts, scans, matches — and resolves to garbage on
-    # every hit, silently. Four entries shipped that way (GOBJ_PS1, GOBJ_PS6, GWLD_TQ_3,
-    # GWLD_TQ_4 — audit #5 AD12/AD13/AD15/AD16); all four are caught by the rules below, and the
-    # recurring slip is a single one: writing the offset of the DISPLACEMENT where the field
-    # wants the offset of the INSTRUCTION.
+    # bytes. Nothing else in the tree does this: the blocktest oracle covers only some of the
+    # entries, and `ASSERT_TABLE_ORDER` only checks priority order, so a triple that points into
+    # the middle of its own instruction compiles, sorts, scans, matches — and resolves to garbage
+    # on every hit, silently. The rules below catch it, and the recurring slip is a single one:
+    # writing the offset of the DISPLACEMENT where the field wants the offset of the INSTRUCTION.
     #
     # The resolver is Macht::ResolveRIP(matchAddr + instrOffset, opcodeLen, totalLen): it reads a
     # disp32 at instrOffset+opcodeLen and adds it to matchAddr+instrOffset+totalLen. So:
@@ -272,8 +270,8 @@ if CHECK:
     #     disp is read from process memory, not from the pattern), but stopping 1-3 bytes INTO it
     #     means the window does not line up with where the pattern actually ends.
     # ⚠ Do NOT "simplify" this to `instrOffset + totalLen <= len(pattern)`. That is the obvious
-    # rule, it catches PS1 and PS6 — and it FALSE-POSITIVES GNAM_SAT425_1, whose triple is
-    # correct. The partial-window test is what separates the two.
+    # rule, it catches some misaligned triples — and it FALSE-POSITIVES GNAM_SAT425_1, whose
+    # triple is correct. The partial-window test is what separates the two.
     def _geom_failures(r):
         t = r["pattern"].split()
         n = len(t)

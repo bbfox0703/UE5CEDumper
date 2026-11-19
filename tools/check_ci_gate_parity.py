@@ -7,15 +7,14 @@ be in check_all -- the two lists are one list kept in two places.
     py tools/check_ci_gate_parity.py --selftest   # the negative controls only (every run does them first)
 
 WHY ([CI-GATE-DRIFT-2026-09-25]). check_all.py's own docstring says "ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and
-nothing enforces that" -- and the drift it describes (two gates absent from CI for months, closed 2026-09-06) had
-recurred: NINE gates appended to check_all after that date never reached ci.yml, so a PR could break any of them and
-redden nothing. This is the enforcement.
+nothing enforces that" -- and a gate appended to check_all that never reaches ci.yml lets a PR break it and redden
+nothing. This is the enforcement.
 
 HOW. The gates are read from check_all.GATES (imported, not parsed). A gate "is in CI" when ci.yml runs its script
 with the same arguments on an `& $py ...` line. The one post-build CI step (check_proxy_exports --artifacts, which
 needs the built DLLs) is expected in CI only. Comments in ci.yml do not count.
 
-EXIT CHECK (second review, PARITY-NO-EXITCHECK). Every such line must be followed AT ONCE (the next non-blank line)
+EXIT CHECK. Every such line must be followed AT ONCE (the next non-blank line)
 by `if ($LASTEXITCODE -ne 0) { throw ... }`: PowerShell does not stop on a failing native command, so a gate line
 without it runs, fails, and leaves the step green. The negative controls (_SELFTEST) run before every check.
 """
@@ -78,7 +77,7 @@ def analyse(gates, ci_text: str):
     return missing_in_ci, missing_here, unchecked
 
 
-# (second review, PARITY-NO-EXITCHECK) Negative controls. In PowerShell a failing native command does NOT stop the
+# Negative controls. In PowerShell a failing native command does NOT stop the
 # script: a gate line with no `if ($LASTEXITCODE -ne 0) { throw ... }` after it runs, fails, and leaves the step
 # green. So "the gate is in CI" has to mean "it runs AND its exit code is checked".
 _G = [("a", "tools/a.py"), ("b", "tools/b.py --x")]

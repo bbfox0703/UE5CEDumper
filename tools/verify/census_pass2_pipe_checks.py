@@ -1,4 +1,4 @@
-"""Live pipe checks for the DLL side of the second half of the 2026-11-02 census pass (build 3672 on).
+"""Live pipe checks for the DLL side of the second half of the [OPEN-CENSUS-2026-10-28] pass (a DLL with the three tags below).
 
     py tools/verify/census_pass2_pipe_checks.py --pad 0      # DumperTest Shipping: no access detector
     py tools/verify/census_pass2_pipe_checks.py --pad 8      # DumperTest Development: an 8-byte detector

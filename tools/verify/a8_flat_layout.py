@@ -2,17 +2,15 @@
 
     py a8_flat_layout.py            # expects a flat-array game already injected & scanned
 
-THE DEFECT (audit #5 A8). On a flat (non-chunked) `FFixedUObjectArray`, `Objects*`
-points straight at one `FUObjectItem[]` with **no chunk pointer table**. The 4-hop
-chunked chain would treat `Item[0].Object` as a chunk table at hop 3 and hand CE a
-GARBAGE address **the user can then write to**. The fix degrades to the absolute
-object address with a warning and a single hop.
+THE DEFECT (A8 in docs/audit-2026-08-13-early-code-findings.md). On a flat (non-chunked)
+`FFixedUObjectArray`, `Objects*` points straight at one `FUObjectItem[]` with **no chunk
+pointer table**. The 4-hop chunked chain would treat `Item[0].Object` as a chunk table at
+hop 3 and hand CE a GARBAGE address **the user can then write to**. The fix degrades to
+the absolute object address with a warning and a single hop.
 
-⚠ THE ROW SAYS "the degrade is only observable on a flat title (none available here)".
-**That is no longer true** — OCTOPATH TRAVELER is flat and installed:
-`ValidateGObjects: Valid at 0x… (preset Flat-Base, Num=273957, Max=6146976,
-Objects=0x… [flat])`. FF7R Intergrade / Extinction / NEKOPALIVE are the other named
-candidates.
+⚠ The degrade is only observable on a flat title. OCTOPATH TRAVELER is one: its scan log
+reads `ValidateGObjects: Valid at 0x… (preset Flat-Base, … [flat])`. FF7R Intergrade /
+Extinction / NEKOPALIVE are the other named candidates.
 
 WHAT IS ASSERTED, and why each half matters:
   * `flat_layout` is true and `packed_layout` is false — the right branch was taken;

@@ -1,4 +1,4 @@
-r"""D4b / D3b — every delegate shape must read correctly in BOTH build configurations.
+r"""[D4B-DELEGATEPAD] Every delegate shape must read correctly in BOTH build configurations.
 
     py tools/verify/d4b_delegate_pad.py            # DumperTest must be running + injected
 
@@ -8,36 +8,36 @@ r"""D4b / D3b — every delegate shape must read correctly in BOTH build configu
     py tools/verify/launch_dumpertest.py shipping  # DO_CHECK off -> pad 0
 
 The SAME assertions must pass on both, from the same fixture source. One configuration alone
-proves nothing here, because the defect was a build-dependent layout that happened to be
-correct on the side every real title is built with.
+proves nothing here, because the layout is build-dependent: offsets that are right for the side
+every real title is built with are wrong for the other.
 
-THE DEFECT (D4b, found 2026-09-09 under D4's own fix; D3b is the same root cause).
+THE LAYOUT.
 UE 5.3 gave `TScriptDelegate` and `TMulticastScriptDelegate` a base class,
 `TDelegateAccessHandlerBase<ThreadSafetyMode>`. With `DO_CHECK` on -- Debug, Development,
 DebugGame -- that base holds one `FMRSWRecursiveAccessDetector`, whose only member is a
 `std::atomic<uint64>`, so EVERY delegate payload starts 8 bytes late. With `DO_CHECK` off
-(Test/Shipping) the base is empty and EBO applies, which is why the pre-5.3 constants had
-never been caught: all ~12 titles measured in this repo are Shipping builds.
+(Test/Shipping) the base is empty and EBO applies, so on a Shipping build the pre-5.3 constants
+still read correctly, and a reader checked only against Shipping titles never shows the pad.
 
     Shipping / UE <= 5.2 : FMulticastScriptDelegate { TArray InvocationList @ +0x00 }
     Development (5.3+)   : FMulticastScriptDelegate { atomic State @ +0x00,
                                                       TArray InvocationList @ +0x08 }
 
-Measured here 2026-09-09, the bound `OnActorHit` on DumperTest Development:
+An example, the bound `OnActorHit` on DumperTest Development:
 
     +0x00  0000000000000000   atomic State
     +0x08  405CBFF5D5010000   Data = 0x1D5F5BF5C40
-    +0x10  01000000           Num  = 1     <- the subscriber, invisible at the old +0x08
+    +0x10  01000000           Num  = 1     <- the subscriber, invisible to a read at +0x08
     +0x14  04000000           Max  = 4
 
-Read at the old offsets that is `Data=0, Num=0xF5BF5C40` -- Num is the LOW HALF OF DATA, which
-is the fingerprint to recognise this by. The DLL's own WARN line carried it for a day
-(`implausible InvocationList Num=322437056`) before anyone decoded it.
+Read at the Shipping offsets that is `Data=0, Num=0xF5BF5C40` -- Num is the LOW HALF OF DATA,
+which is the fingerprint to recognise this by; the DLL's WARN line then reads
+`implausible InvocationList Num=<that number>`.
 
-⚠ WHY THE ARRAY ROW NEEDS ELEMENT [1] BOUND. `Arr_MulticastDelegates` had two EMPTY elements
-until 2026-09-09, and with both empty a 16-byte stride and a 24-byte stride read the same
-zeros and print the same `(0 bindings)`. D3b was literally unfalsifiable on that fixture.
-`BeginPlay` now binds `[1]` and leaves `[0]` empty, so a reader stuck on 16 lands inside
+⚠ WHY THE ARRAY ROW NEEDS ELEMENT [1] BOUND. With both elements of `Arr_MulticastDelegates`
+EMPTY, a 16-byte stride and a 24-byte stride read the same zeros and print the same
+`(0 bindings)`, so the stride check would be unfalsifiable on that fixture.
+`BeginPlay` binds `[1]` and leaves `[0]` empty, so a reader stuck on 16 lands inside
 element [0] and reports both as empty -- a visible, one-line difference.
 """
 from __future__ import annotations
@@ -109,7 +109,7 @@ def main() -> int:
         fails.append("ElementSize %r implies pad %r -- expected 16 (unpadded) or 24 (+detector)"
                      % (elem_size, pad))
 
-    # --- 1. sparse (D4b proper): the state D4's fix made visible must now RESOLVE ---
+    # --- 1. sparse: one live subscriber must RESOLVE, not read as unreadable or empty ---
     hit = fields["OnActorHit"].get("value", "")
     print("OnActorHit : %r" % hit)
     if HIT_PROBE not in hit:
@@ -131,7 +131,7 @@ def main() -> int:
     if PROBE not in du:
         fails.append("Del_Unicast does not name %s -- got %r" % (PROBE, du))
 
-    # --- 4. the array STRIDE (D3b) ---
+    # --- 4. the array STRIDE ---
     # [0] deliberately empty, [1] deliberately bound. A 16-byte stride in a checked build
     # reads [1] from inside [0] and reports both empty; that is the whole discriminator.
     vals = [e.get("v", "") for e in arr.get("elements", [])]
@@ -147,10 +147,9 @@ def main() -> int:
                          % (PROBE, vals[1]))
 
     # --- 5. the SIXTH site: TArray<FScriptDelegate> (ReadDelegateArrayElements) ---
-    # ⛔ [D4B-DELEGATEPAD]'s enumeration said "five readers" and missed this one. Its elements
-    # are the STANDALONE unicast type, which IS padded -- unlike a multicast's invocation-list
-    # elements. It also ignored the ElementSize its callers passed and dropped both ReadSafe
-    # returns, so it carried all three of this sweep's shapes at once. Same [0]-empty /
+    # ⛔ [D4B-DELEGATEPAD] The easy one to miss. Its elements are the STANDALONE unicast type,
+    # which IS padded -- unlike a multicast's invocation-list elements -- and it must honour the
+    # ElementSize its callers pass and check both ReadSafe returns. Same [0]-empty /
     # [1]-bound discriminator: a reader stuck on the unpadded stride reads [1] from inside [0].
     sd = fields["Arr_Delegates"]
     sd_elem = sd.get("array_elem_size")

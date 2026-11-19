@@ -2,7 +2,7 @@ r"""A11 steps 1 + 6 -- container candidates carry an element index; Direct ones 
 
     py tools/verify/a11_container_anchor.py
 
-THE CLAIM (`A11`, build 3253). A Value Search candidate that lives INSIDE a container must be
+THE CLAIM (`A11`). A Value Search candidate that lives INSIDE a container must be
 re-anchored when the container grows, instead of being silently dropped or -- worse -- left
 pointing at whatever now occupies the old address. The RULE is unit-pinned (15 assertions, two
 negative controls); the WIRING is not, because no target compiles `Aura.cpp`.
@@ -32,11 +32,10 @@ from pipe_client import PipeClient  # noqa: E402
 
 # ⚠ offsets-0.log, NOT scan-0.log. `Refine re-anchor:` is emitted from Aura.cpp, whose
 # `#define LOG_CAT "OARR"` Sein maps to LF_Offsets (Sein.cpp: { "OARR", 4, LF_Offsets }).
-# The first version of this rig grepped scan-0.log, where the line can NEVER appear — which
-# made step 6 ("expect NO re-anchor line") pass no matter what the code did. The old write-up
-# even argued it was non-vacuous, on the grounds that the refine was shown to run over real
-# candidates. That controlled for the wrong thing: it proved the STIMULUS happened, not that
-# the DETECTOR could see anything. [A11-LOGPATH-2026-08-21]
+# Grepping scan-0.log, where the line can NEVER appear, makes step 6 ("expect NO re-anchor
+# line") pass no matter what the code does. Showing that the refine runs over real candidates
+# does not make that non-vacuous: it controls for the wrong thing, proving the STIMULUS
+# happened, not that the DETECTOR can see anything. [A11-LOGPATH-2026-08-21]
 LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
 OFFSETS = LOGDIR / "offsets-0.log"
 SCAN = OFFSETS          # kept as the name the rest of the file uses

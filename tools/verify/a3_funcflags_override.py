@@ -1,25 +1,24 @@
-r"""Audit A3 — `UFunction::FunctionFlags`, WITHOUT the UE 4.21 title the row is gated on.
+r"""`UFunction::FunctionFlags` at version 421, WITHOUT the UE 4.21 title the row is gated on.
 
     py tools/verify/a3_funcflags_override.py            # any UE 4.08-4.21 host; OCTOPATH 4.18
 
-THE ROW'S PROBLEM. `1a0a656f` replaced a ladder that read `>= 421 -> 0x98` with a measured table,
-`DynOff::FunctionFlagsOffsetFor` (`Grimoire.h`): `4.08-4.21 = 0x88`, `4.22-4.24 = 0x98`,
+THE ROW'S PROBLEM. `DynOff::FunctionFlagsOffsetFor` (`Grimoire.h`) is a measured table, in place
+of a ladder that read `>= 421 -> 0x98`: `4.08-4.21 = 0x88`, `4.22-4.24 = 0x98`,
 `4.25+ = 0xB0`, `+8` under CasePreservingName. Exactly **one** producible version changes
-behaviour: **4.21**. The register gates the row on Star Wars Jedi: Fallen Order, the corpus's only
-4.21 title — which is a GHOST on both machines (folder, no executable) and is an EA-launcher title
-needing the EA client to install.
+behaviour between the two: **4.21**. The register gates the row on Star Wars Jedi: Fallen Order,
+the corpus's only 4.21 title — an EA-launcher title needing the EA client to install.
 
 ⭐ WHY A 4.18 HOST IS A VALID SUBSTITUTE, and it is not a compromise:
 
   1. The table puts **4.08-4.21 in ONE band at 0x88**. A 4.18 binary's true FunctionFlags offset
      is therefore *the same* as a 4.21 binary's. For this test they are interchangeable.
-  2. `FunctionFlagsOffsetFor` is **not latched**. Both readers (`Ubel.cpp:1432`,
-     `Aura.cpp:6041`) recompute it from `g_cachedUEVersion` on every call — unlike the soft/lazy
+  2. `FunctionFlagsOffsetFor` is **not latched**. Both readers (`Ubel.cpp`,
+     `Aura.cpp`) recompute it from `g_cachedUEVersion` on every call — unlike the soft/lazy
      envelope, which IS latched and does NOT re-derive on override. So `set_ue_version_override`
      genuinely changes this offset, immediately, with no re-scan.
 
   Therefore: override a 4.18 host to **421** and you feed the reader *exactly the input that
-  changed*. Post-fix the table says 0x88 and the reads stay sane; the pre-fix ladder said 0x98 and
+  changed*. The table says 0x88 and the reads stay sane; the `>= 421` ladder says 0x98 and
   they would be garbage. Override to **422** and the table says 0x98, which is wrong for this
   binary — reads MUST degrade. That third leg is what makes this a test rather than a tautology:
   without it, "421 looks fine" is equally true of a reader that ignores the version entirely.
@@ -111,8 +110,8 @@ def main():
         #     DELIBERATELY does not touch `g_cachedUEVersion` ("would require re-init",
         #     Fern.cpp's own comment) -- so on its own it leaves the process reading at 422 and the
         #     final survey below would report a degraded rate that is the rig's own doing.
-        # Measured 2026-09-06: an earlier run of this rig set the native version back and left
-        # exactly that residue on OCTOPATH, which is how the two-call requirement was found.
+        # Setting only the native version back leaves exactly that residue, so the restore takes
+        # both calls.
         c.request("set_ue_version_override", version=native, timeout=60)   # fix the process
         c.request("set_ue_version_override", version=0, timeout=60)        # erase the record
         back = survey(c, "restored + cleared")

@@ -135,14 +135,14 @@ def main() -> int:
     if arr_pad not in (0, 8):
         raise SystemExit("derived array pad %d is neither 0 nor 8 -- refusing to poke" % arr_pad)
 
-    # ⭐ THE CROSS-CHECK THAT FOUND THE WIRE BUG, and the reason it is asserted rather than
-    # printed. `Del_Unicast` and an `Arr_Delegates` element are the SAME C++ type -- a standalone
+    # ⭐ THE CROSS-CHECK, and the reason it is asserted rather than printed. `Del_Unicast` and an
+    # `Arr_Delegates` element are the SAME C++ type -- a standalone
     # `TScriptDelegate<FNotThreadSafeDelegateMode>` -- so on one build their pads cannot differ.
     # A wire-side `0` against a derived `8` is not a disagreement about layout; it means the key
-    # never arrived. Measured 2026-09-09 on Development: wire 0 vs derived 8, because
-    # `Fern.cpp`'s emission sat in the ARRAY branch while only SCALAR sites set the value.
+    # never arrived -- e.g. an emission in `Fern.cpp`'s ARRAY branch while only SCALAR sites set
+    # the value.
     # ⚠ Without this, the Shipping arm cannot tell "pad legitimately 0" from "key missing" --
-    # which is exactly the ambiguity that let the bug ship. Here the array side supplies the
+    # exactly the ambiguity that hides such a bug. Here the array side supplies the
     # independent answer, so the check has teeth on BOTH configurations.
     if scalar_pad != arr_pad:
         raise SystemExit(

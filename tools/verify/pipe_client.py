@@ -126,7 +126,7 @@ def process_image(pid: int) -> str:
 
 def pipe_is_busy(path: str) -> bool:
     """True when the pipe exists and every instance is taken (ERROR_PIPE_BUSY). open() reports that as EINVAL
-    (errno 22), like several other failures (measured 2026-11-10); WaitNamedPipeW tells it apart, ERROR_SEM_TIMEOUT
+    (errno 22), like several other failures; WaitNamedPipeW tells it apart, ERROR_SEM_TIMEOUT
     (121), without connecting."""
     if sys.platform != "win32":
         return False

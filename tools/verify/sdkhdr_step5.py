@@ -154,7 +154,7 @@ def main():
             for i, l in enumerate(bb):
                 m = re.match(r'^(\s*)(\w+)\s+(\w+)(\[0x[0-9A-Fa-f]+\]);(.*OptionalProperty.*)$', l)
                 if m:
-                    # pre-fix spelling: the extent baked into the TYPE, before the identifier
+                    # the spelling without the fix: the extent baked into the TYPE, before the identifier
                     bb[i] = "%s%s%s %s;%s" % (m.group(1), m.group(2), m.group(4), m.group(3), m.group(5))
                     flipped += 1
         body += bb + [""]

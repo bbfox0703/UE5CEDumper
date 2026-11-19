@@ -3,11 +3,10 @@
   UE5CEDumper -- executable tests for scripts/ue5_freeze_helper.lua
 
   WHY THIS EXISTS
-    Audit #5 recorded that the early Lua scripts have no tests at all, and three
-    HIGH findings landed in this one file (AA1 packed-bool writes, AA2 recycled-slot
-    writes, AA3 stale cache kept forever). The C# suite can only assert on the
-    helper's SOURCE TEXT -- it cannot run it -- so a fix could satisfy every string
-    assertion and still behave wrongly.
+    The helper's riskiest behaviour -- packed-bool writes, the recycled-slot guard,
+    giving up a cache that keeps failing -- lives in this one file. The C# suite can
+    only assert on the helper's SOURCE TEXT -- it cannot run it -- so a change could
+    satisfy every string assertion and still behave wrongly.
 
     This harness stubs the handful of Cheat Engine globals the helper touches
     (memory reads/writes, timers, symbol lookup) over a plain Lua table, then
@@ -19,8 +18,8 @@
 
   DELIBERATELY NOT WIRED INTO build.ps1 OR CI
     A standalone `lua` interpreter is not a declared dependency of this repo, and
-    a test step that silently skips when its tool is missing is exactly the defect
-    audit #5's AD1/AD2 just fixed in the C++ test phase. So this is a documented
+    a test step that silently skips when its tool is missing reads as a pass while
+    testing nothing. So this is a documented
     manual tool that fails loudly when run, rather than a build step that passes
     quietly when not. Run it whenever you touch ue5_freeze_helper.lua.
 ]]
@@ -51,17 +50,17 @@ local function resetWorld()
   -- or one case's timeout would refuse every later case's rescan. [R7-C-01]
   _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
   -- Non-zero default so a non-answering mailbox TIMES OUT via the tick arm rather
-  -- than hanging the rig (AA29's fix makes the iteration fallback dormant when
-  -- getTickCount is present). The AA29 case sets a sub-15ms step deliberately.
+  -- than hanging the rig (the iteration fallback is dormant when getTickCount is
+  -- present). The single-deadline case sets a sub-15ms step deliberately.
   FAKE_TICK, TICK_STEP = 0, 16
 end
 
 function readQword(a)        return MEM[a] end
 function readInteger(a, _)   return MEM[a] end
 -- Models CE's readSmallIntegerEx (LuaHandler.pas:1614): one argument means UNSIGNED, and
--- the value is pushed as `word(v)` so the range is 0..65535. The stub used to hand back
--- MEM[a] raw, which would have let a negative fixture value reach the helper and made the
--- dead sign-fixup AA35 removed look reachable. Same shape as invoke_helper_test.lua `readSmallInteger`.
+-- the value is pushed as `word(v)` so the range is 0..65535. Handing back MEM[a] raw would
+-- let a negative fixture value reach the helper and make a sign fix-up -- one the real API
+-- never needs -- look reachable. Same shape as invoke_helper_test.lua `readSmallInteger`.
 function readSmallInteger(a, signed)
   local v = MEM[a]
   if v == nil then return nil end
@@ -176,7 +175,7 @@ local function deferredTimer() return TIMERS[3] end
 -- A fake DLL on the other end of the mailbox
 -- ============================================================
 -- Mirrors dll/src/Mimic.h's MailboxData layout and HandleListInstances' reply, so
--- the SUCCESS paths (and the "valid class, nothing alive" path that AA12 turns on)
+-- the SUCCESS paths (and the "valid class, nothing alive" path start() reports)
 -- are reachable from this rig at all. Offsets duplicated from the helper on
 -- purpose: if the helper's copy drifts from Mimic.h, this rig must NOT drift with
 -- it, or the two wrongs agree and the test proves nothing.
@@ -201,7 +200,7 @@ local LAST_SCOPE = nil
 ---                      subclasses and one page witness cannot describe it.
 ---                    result (rc, default 0), classPtr/classOff (witness),
 ---                    truncated = true -> the DLL reports LI_OUT_TRUNCATED,
----                    failOnPage = n  -> that page answers rc ~= 0 (AA11's shape),
+---                    failOnPage = n  -> that page answers rc ~= 0 (a mid-pagination failure),
 ---                    deadPage   = n  -> that page never answers (waitDone timeout)
 local function installMailbox(opts)
   opts = opts or {}
@@ -214,8 +213,7 @@ local function installMailbox(opts)
   -- CMD_OFFSETS_VERDICT; 6 = FIND_INSTANCE's derivation pick; 7 = the invoke template warning; 8 = LIST_INSTANCES
   -- lists no template; 9 = FIND_INSTANCE hands over no destroyed object -- this helper uses 3 and 8, and bakes
   -- whatever every emitted script bakes). Left BEHIND the helper, every case expecting a freeze is
-  -- refused as "the DLL is older than this script" -- which is exactly what happened at the 3 -> 4 bump
-  -- (review 5 of 76f93b94).
+  -- refused as "the DLL is older than this script", so bump this default with every contract bump.
   MEM[CONTRACT_MB + 0x00] = 1127564629
   MEM[CONTRACT_MB + 0x04] = opts.contractCur or 9
   MEM[CONTRACT_MB + 0x08] = opts.contractMin or 1
@@ -262,10 +260,10 @@ local function installMailbox(opts)
     MEM[MB + OFF_OUT_FLAGS]  = opts.truncated and LI_OUT_TRUNCATED or 0
     MEM[MB + OFF_STATUS]     = 1
     -- SetDone() clears `cmd` after publishing status, and the rig has to as well:
-    -- fetchInstancePage refuses a mailbox whose cmd is still non-zero (AA10's
-    -- in-flight guard). Without this the SECOND page request was always refused as
-    -- busy, so every multi-page path -- pagination itself, and the page-budget
-    -- truncation below -- was silently unreachable from this rig. A stub blinder
+    -- fetchInstancePage refuses a mailbox whose cmd is still non-zero (the
+    -- in-flight guard). Without this the SECOND page request would always be refused
+    -- as busy, so every multi-page path -- pagination itself, and the page-budget
+    -- truncation below -- would be silently unreachable from this rig. A stub blinder
     -- than the real API hides exactly the code under test (working-lessons 2.3).
     MEM[MB + OFF_CMD]        = 0
   end
@@ -388,8 +386,8 @@ end
 case('AA2: the OLD vtable-only guard would have passed a recycled slot')
 do
   -- The negative control for the guard itself: a recycled block whose qword 0
-  -- holds an allocator free-list link is non-zero, so the pre-fix test ("vtable
-  -- non-zero") says live. Only the class check refuses it.
+  -- holds an allocator free-list link is non-zero, so a "vtable non-zero" test
+  -- says live. Only the class check refuses it.
   resetWorld()
   local h = newHandle{ className = 'C', propOffset = 0x20, valueType = 'int32', value = 99 }
   h._cache, h._classPtr, h._classOff = { 0x5000 }, 0xC1A55, 0x10
@@ -520,7 +518,7 @@ end
 -- ============================================================
 -- AA9 -- the header's own SAMPLE must actually work
 -- ============================================================
--- The samples used to hold the handle in a chunk `local`, which CE makes
+-- A sample must not hold the handle in a chunk `local`, which CE makes
 -- unreachable from [DISABLE]: each {$lua} block is compiled as its own chunk
 -- (autoassembler.pas hands the block's text to luaL_loadstring) inside ONE
 -- shared Lua state, so globals cross and locals do not. A handle parked in a
@@ -534,10 +532,9 @@ end
 
 -- Line-based and EXACT, because that is what CE does: autoassembler uppercases
 -- and trims each line and compares it to '{$LUA}' / '{$ASM}' whole. A substring
--- search is not the same thing, and the difference is not academic -- the first
--- version of this extractor used `src:gmatch('{%$lua}(.-){%$asm}')` and captured
--- the PROSE in the lifetime box above, which mentions `{$lua}` in a sentence.
--- Modelling CE faithfully is also what fixes it.
+-- search is not the same thing, and the difference is not academic -- a pattern
+-- such as `src:gmatch('{%$lua}(.-){%$asm}')` captures the PROSE in the lifetime
+-- box above, which mentions `{$lua}` in a sentence. Modelling CE faithfully avoids it.
 local function extractSampleBlocks(path)
   local blocks, body = {}, nil
   for line in io.lines(path) do
@@ -622,7 +619,7 @@ end
 -- TimeDilation / ...) write the mailbox directly and never touch it. So a
 -- generated toggle that timed out bails while `cmd` is still non-zero and the
 -- DLL still owns the mailbox -- and the next rescan tick would write over a
--- live command. Same class as AA19.
+-- live command.
 -- ============================================================
 
 case('AA10: rescan refuses a mailbox another command still owns')
@@ -760,7 +757,7 @@ end
 case('SCOPE: a derived scan with no ClassPrivate offset is an ERROR, not a blind freeze')
 do
   -- Without the offset there is no witness at all, and degrading to an unguarded
-  -- write is the AA2 defect -- so this must FAIL rather than fall back.
+  -- write is the recycled-slot defect -- so this must FAIL rather than fall back.
   resetWorld()
   installMailbox{ pages = { { {0x2000, 0xAAA} } }, classOff = 0 }
   local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99 }
@@ -1158,9 +1155,9 @@ do
   eq(ok, false, 'AA29: it times out')
   check(err and err:find('never picked this up', 1, true) ~= nil,
         'AA29: IDLE status is diagnosed as the DLL never taking the command', err)
-  -- Post-fix: the tick arm governs, so the clock reaches ~limit (5000) before the
-  -- iteration fallback (floor(5000/15)=333 iters * 10ms = 3330) could ever fire.
-  -- Pre-fix: the live iter fallback fired at 3330 while the message still said 5000ms.
+  -- The tick arm governs, so the clock reaches ~limit (5000) before the iteration
+  -- fallback (floor(5000/15)=333 iters * 10ms = 3330) could ever fire. A live iter
+  -- fallback would fire at 3330 while the message still said 5000ms.
   check(getTickCount() >= 5000,
         'AA29: waited the full tick deadline, not the iteration fallback',
         'FAKE_TICK=' .. tostring(getTickCount()))
@@ -1169,12 +1166,12 @@ end
 -- ============================================================
 -- AA30: an UPDATED helper must take effect on re-load; a same/older one must not.
 -- ============================================================
--- ⭐ The three versions below are DERIVED from the helper, never typed. They used to
--- be the literals '1.4'/'1.5', so bumping the helper to 1.5 (the [FREEZEFIRSTERR]
--- fix, which HAD to bump -- a same-version re-load is a no-op, so 1.4 residents in
--- the wild would never receive it) broke two of these cases and silently weakened
--- the third: with the file at 1.5, the "an OLDER file does not downgrade" case was
--- re-loading a SAME-version file and passing on the wrong branch entirely.
+-- ⭐ The three versions below are DERIVED from the helper, never typed. Literal
+-- versions break when the helper bumps (and a behaviour change HAS to bump -- a
+-- same-version re-load is a no-op, so older residents would never receive it): two of
+-- these cases fail, and the third silently weakens -- the "an OLDER file does not
+-- downgrade" case ends up re-loading a SAME-version file and passing on the wrong
+-- branch entirely.
 local CUR = UE5_FREEZE_HELPER_VERSION            -- whatever the file under test declares
 local function bump(v, d)                        -- same major, minor +/- d
   local a, b = v:match('^(%d+)%.(%d+)$')
@@ -1223,10 +1220,9 @@ end
 -- AA31: the abandon modal must name the FIRST failure of the streak, not the
 -- busy-guard CONSEQUENCE of it.
 -- ============================================================
--- Found closing AA3 step 5 on a live game (2026-08-23): the DLL was SUSPENDED, and
--- the modal reported `mailbox busy (concurrent invoke or rescan)` -- a TRANSIENT
--- concurrency cause offered for a PERMANENT fault, in the one place a user ever
--- reads it.
+-- [FREEZEFIRSTERR-2026-08-23] With the DLL SUSPENDED, a latest-error modal reports
+-- `mailbox busy (concurrent invoke or rescan)` -- a TRANSIENT concurrency cause
+-- offered for a PERMANENT fault, in the one place a user ever reads it.
 --
 -- The cascade is structural, not a fluke. waitDone's timeout path is
 -- `if not wok then return nil, 0, werr end` and does NOT clear OFF_CMD -- deliberately,

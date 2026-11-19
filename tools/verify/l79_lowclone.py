@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-r"""L79 `[W4-HEXSORT]`: MANUFACTURE the inverting address pair this machine never produces, for Live Walker's grids.
+r"""`[W4-HEXSORT]`: MANUFACTURE the inverting address pair natural data does not produce, for Live Walker's grids.
 
     py tools/verify/l79_lowclone.py make    --state out\l79_clone.json [--funcs]   (pipe; UI CLOSED)
     py tools/verify/l79_lowclone.py predict --state out\l79_clone.json             (pipe; UI CLOSED)
     py tools/verify/l79_lowclone.py release --state out\l79_clone.json             (no pipe; teardown)
 
-WHY MANUFACTURE IT. The fix sorts address columns numerically; the pre-fix grids sorted the hex TEXT. The two
+WHY MANUFACTURE IT. The fix sorts address columns numerically; a grid without it sorts the hex TEXT. The two
 orders differ only for a pair of different digit counts whose SHORTER address has the larger leading digit,
-e.g. 0x7A00000000 (10 digits) against 0x278671D9A00 (11). Measured 2026-09-23 on DumperTest Shipping 5.4: every
-address on every surface was 11 digits (4,100 DumperTestHolder instances, both 4,096-element pointer arrays, the
-actor's pointer fields, its 34 UFunctions, its 181 FFields, the Find Refs owners), so no grid could fail on
-natural data.
+e.g. 0x7A00000000 (10 digits) against 0x278671D9A00 (11). On DumperTest Shipping 5.4 the addresses share one
+digit count, so natural data gives no grid such a pair to fail on.
 
 `make` copies the live DumperTestActor (`props_size` bytes) into memory it allocates at a fixed LOW address
 (first free one of CANDIDATES, all 10 digits with a leading digit above 2), then overwrites ONE ObjectProperty

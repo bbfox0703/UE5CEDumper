@@ -5,8 +5,8 @@
     py tools/check_res_format.py --list   # every checked call site, exit 0
 
 [I18N-READINESS-2026-11-04] A template from the string table goes through string.Format (Res.FormatTemplate). A
-template whose placeholders do not fit the call -- "{2}" with two arguments, a stray brace -- used to throw
-FormatException out of the command setting the line; Res.FormatTemplate now degrades instead, but a degraded line is
+template whose placeholders do not fit the call -- "{2}" with two arguments, a stray brace -- would throw
+FormatException out of the command setting the line; Res.FormatTemplate degrades instead, but a degraded line is
 still a wrong line, so this gate keeps en.axaml's own templates from reaching it. Checked, per call site:
 
   * Res.Format("str.X", args...)                         -- key + argument count

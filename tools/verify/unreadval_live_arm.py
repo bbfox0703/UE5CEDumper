@@ -5,9 +5,9 @@ r"""`[UNREADVAL-2026-09-09]` — the LIVE REGRESSION arm the manufactured fixtur
 
 ⛔ WHAT THIS ARM IS FOR, AND WHAT IT CANNOT DECIDE — say both, because `[IFACEREAD]` had to.
 The fix makes three handlers REFUSE when the instance read faults: `EnumProperty`,
-`ByteProperty`-with-UEnum, and `OptionalProperty` now publish
-`"(<kind> — unreadable at +0xN, not read)"` instead of the un-set 0 they used to dress up as a
-value (hex `"00"`, the NAME of enumerator 0, `"(unset)"`).
+`ByteProperty`-with-UEnum, and `OptionalProperty` publish
+`"(<kind> — unreadable at +0xN, not read)"` instead of dressing the un-set 0 up as a value
+(hex `"00"`, the NAME of enumerator 0, `"(unset)"`).
 
 A live game cannot show that. A faulted instance read needs a PARTIAL fault, and
 `WalkInstance`'s `IsAddrReadable` gate bails on a wholly-dead pointer for a different reason —
@@ -24,9 +24,9 @@ So this arm asserts, over a broad sample of REAL live objects:
   3. the sample actually CONTAINED those families (the anti-vacuity guard — "0 refusals" is
      satisfied for free by a run that walked no enums at all).
 
-⚠ (3) IS NOT DECORATION. It is the same guard `UNREADVAL`'s extractor carries, and the same
-mistake `[IFACEREAD]`'s live arm nearly published: an assertion of the form "X is absent" is
-true of an empty run. The exit code is non-zero if any family is missing from the sample.
+⚠ (3) IS NOT DECORATION. It is the same guard `UNREADVAL`'s extractor carries: an assertion
+of the form "X is absent" is true of an empty run. The exit code is non-zero if any family is
+missing from the sample.
 
 ⚠ NOT COVERED, deliberately: this says nothing about the refusal path itself, and nothing about
 the UI's rendering of it. The refusal is `dll_core_test`'s to prove; the UI's is nobody's yet.
@@ -57,17 +57,15 @@ def main() -> int:
         print("build:", c.assert_build())
         c.ensure_scanned()
         # ⚠ The pipe's replies are FLAT -- there is no "data" envelope. Getting that wrong
-        # returned 0 objects and the anti-vacuity guard below is what caught it, which is
-        # the argument for having written it before the first run rather than after.
+        # returns 0 objects, and the anti-vacuity guard below is what catches it.
         total = c.request("get_object_count")["count"]
         print("objects in pool: %d, sampling %d" % (total, a.limit))
 
         # ① TARGETED. Ask the class tree WHICH classes declare each family, then pull their
-        #    live instances. ⛔ Without this the run is a coverage LOTTERY: the first version
-        #    strided the pool and reported ZERO OptionalProperty, because the only two classes
-        #    that declare one are DumperTestActor (2 instances in 25,231 objects) and
-        #    WorldPartitionRuntimeCellData. The anti-vacuity guard failed that run, which is
-        #    the only reason it was noticed instead of published as "no refusals anywhere".
+        #    live instances. ⛔ Without this the run is a coverage LOTTERY: a strided pool can
+        #    hold ZERO OptionalProperty, because the classes that declare one (DumperTestActor
+        #    among them) have only a handful of instances among tens of thousands of objects -- and only the anti-vacuity guard stops that run being
+        #    published as "no refusals anywhere".
         seen_addr = set()
         addrs, targeted = [], collections.Counter()
         for fam in FAMILIES:
@@ -119,17 +117,16 @@ def main() -> int:
             r = c.request("walk_instance_batch", items=items, array_limit=4, preview_limit=1)
             for res in r.get("instances", []):
                 # ⛔ A DEFINITION WALK IS A SCHEMA VIEW, NOT A VALUE VIEW, and counting it
-                #    here would have been a false alarm. When the walked object IS a UClass or
+                #    here would be a false alarm. When the walked object IS a UClass or
                 #    UScriptStruct, WalkInstance (Ubel.cpp) takes a separate branch that
                 #    emits field METADATA and deliberately reads NO values -- its own comment
                 #    says the offsets describe instances of the struct, not the metaobject's
                 #    own memory. It returns before any type handler runs, so these rows can be
                 #    neither refused nor valued, by construction.
-                #    ⚠ This cost a real detour: the first tally counted them and reported 17
-                #    fields with "neither value nor hex", which reads exactly like a walker
-                #    declining silently. 77 of 96 fields on ONE such object were valueless
-                #    across FOURTEEN type families -- of which this fix touched three -- and
-                #    that ratio is what said "branch", not "regression".
+                #    ⚠ Counted, they show up as fields with "neither value nor hex", which reads
+                #    exactly like a walker declining silently. The tell is the ratio: most fields
+                #    of ONE such object valueless, across many type families beyond the three
+                #    this fix touched, says "branch", not "regression".
                 if res.get("is_definition"):
                     definitions += 1
                     continue

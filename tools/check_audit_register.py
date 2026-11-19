@@ -4,16 +4,13 @@
 WHY THIS EXISTS
     docs/audit-2026-08-13-early-code-findings.md tracks ~277 findings as table rows,
     and its open/closed count is DERIVED from a per-row ✅ marker. A fix session
-    marks the queue's grouped row (① ② ③ …) done but has twice now forgotten to mark
-    the INDIVIDUAL finding rows the group covered — so the register kept reporting
-    findings as open that had shipped weeks earlier. The doc records the first
-    occurrence itself ("eleven findings fixed in §2's prose blocks had never been
-    ✅-marked on their table rows, so the register counted them open"); the second
-    was 2026-08-17 (AB3, AB5, A6, AA4-AA7, AA25).
+    that marks the queue's grouped row (① ② ③ …) done can forget to mark the
+    INDIVIDUAL finding rows the group covered — and the register then keeps
+    reporting findings as open that shipped weeks earlier.
 
-    Both times the marker was the ONLY thing wrong: the fix shipped, the dev-log
-    recorded it, the commit message named the finding. Nothing connected those to
-    the row, so the register silently drifted.
+    The marker is then the ONLY thing wrong: the fix shipped, the dev-log
+    recorded it, the commit message named the finding. Nothing connects those to
+    the row, so the register silently drifts.
 
 WHAT IT CHECKS
     Every finding ID that docs/dev-log.md claims is fixed must have a ✅ on its
@@ -127,10 +124,9 @@ def main() -> int:
         return 1
 
     # ── ID uniqueness: no finding ID may appear on more than one table row ──
-    # Added 2026-08-19 after AE11 and AE12 each appeared TWICE — a T1c-scan pair and
-    # a separate hand-added-while-fixing pair reused the same numbers. A duplicate ID
-    # makes every per-ID decision below ambiguous: marking one row `✅` closes BOTH in
-    # the counts this gate derives, so the register can report a finding fixed while an
+    # Rows added separately (a scan's batch, one hand-added while fixing) can reuse the
+    # same number. A duplicate ID makes every per-ID decision below ambiguous: marking
+    # one row `✅` closes BOTH in the counts this gate derives, so the register can report a finding fixed while an
     # unrelated defect under the same ID is still open. It is a hard structural error,
     # checked before anything indexes the rows by ID. Line numbers are reported so both
     # offending rows are found at once. Uses the SAME ROW_RE, so it can only see what
@@ -200,12 +196,11 @@ def main() -> int:
         return 1
 
     # ── §3b's headline sentence must agree with the rows ───────────────────
-    # Added 2026-08-17 because it drifted for the third time. The two counts it
-    # states are DERIVED from the rows this gate already parses, so a stale one is
-    # a lie the gate was standing right next to and not reading. Same model as
-    # check_derived_counts.py: on mismatch, print the exact sentence to paste,
-    # because the doc that paraphrased a generator's output is the one that went
-    # stale while the two that pasted it stayed byte-exact.
+    # The two counts it states are DERIVED from the rows this gate already parses,
+    # so a stale one is a lie the gate would be standing right next to and not
+    # reading. Same model as check_derived_counts.py: on mismatch, print the exact
+    # sentence to paste, because a doc that paraphrases a generator's output goes
+    # stale while one that pastes it stays byte-exact.
     want = (f"**Current register: {open_n} open of {total} · "
             + " · ".join(f"{open_by_sev[k]} {k}" for k in SEVERITIES) + ".**")
     m = HEADLINE_RE.search(audit)

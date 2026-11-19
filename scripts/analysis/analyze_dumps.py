@@ -195,7 +195,7 @@ class GameAggregates:
     own_func_name_freq: Counter = field(default_factory=Counter)
     own_func_token_freq: Counter = field(default_factory=Counter)
     own_func_classes: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
-    # (class_token, func_token) co-occurrence — used to surface
+    # (class_token, func_token) co-occurrence — it surfaces
     # candidate ClassLocationScorer class rules from real function names.
     class_x_func: Counter = field(default_factory=Counter)
 

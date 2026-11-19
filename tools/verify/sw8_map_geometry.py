@@ -82,9 +82,8 @@ def injected_process(max_age_s: int = 600) -> str:
     ⛔ NOT via `tasklist /m`. That works for a hand-injected `UE5Dumper.dll`, but a DEPLOYED
     PROXY is named `version` / `dinput8` / `dxgi` / `winmm`, and matching those bare names is
     worse than useless -- every D3D title loads the SYSTEM `dxgi.dll`, so the probe would
-    "find" the dumper in a process that has never heard of it. Measured on Titan Quest II,
-    2026-09-09: our code was live via the deployed `dxgi.dll` proxy and the tasklist probe
-    reported "inject first".
+    "find" the dumper in a process that has never heard of it -- and with our code live via a
+    deployed `dxgi.dll` proxy, the tasklist probe reports "inject first".
 
     The log stream settles it without guessing a module name: the DLL writes continuously, so
     the log folder touched most recently IS the process it is in. Recency is asserted, because

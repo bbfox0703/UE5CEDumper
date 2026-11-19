@@ -14,14 +14,13 @@ WHY THIS EXISTS
   non-UPROPERTY holes the Native-C scan has to find; if they ever START appearing in the
   binary's name tables, someone has added a UPROPERTY to them and that test is dead.
 
-THE SOURCE HASH, and why the first version of this file was not good enough.
-  v1 recorded `source_commit` from `git rev-parse HEAD`. That is a claim about MY working
-  tree at capture time, not about what the binary was built from -- and it read as if it
-  were the latter. On 2026-08-05 the very first packaged build was tested with a STALE
-  DumperTestActor.cpp (the live project still held 退 where the repo had 走), the record
-  said `8b812a5`, and nothing noticed. The report and the reality computed by different
-  code paths, in the tool built to prevent exactly that.
-  So the record now hashes the SOURCE FILES, and --project compares the tree the package
+THE SOURCE HASH, and why a commit id is not enough.
+  A `source_commit` from `git rev-parse HEAD` is a claim about THIS working tree at
+  capture time, not about what the binary was built from -- yet it reads as if it were
+  the latter. A package built from a STALE DumperTestActor.cpp in the UE project would
+  still carry the repo's commit id, and nothing would notice: the report and the reality
+  computed by different code paths, in the tool built to prevent exactly that.
+  So the record hashes the SOURCE FILES, and --project compares the tree the package
   was actually built from against this repo's copy. Pass it; a commit id cannot.
 
 Usage:
@@ -46,10 +45,10 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "package-identity
 # narrow strings in FPropertyParams -- so both encodings have to be searched. Checking
 # only ASCII makes every class name look missing from a Shipping build.
 #
-# ⚠ Keep the NEWEST fixture on this list. Every name above dates from the first package
-# (2026-08-05), so a package built weeks before the last addition still passed -- the exact
-# "stale package silently tests yesterday's zoo" this file exists to catch. The InvokeGate pair
-# (2026-09-15) is one UFUNCTION name and one property name, so both string tables are covered.
+# ⚠ Keep the NEWEST fixture on this list. If every name dated from the first package, a
+# package built weeks before the last addition would still pass -- the exact "stale package
+# silently tests yesterday's zoo" this file exists to catch. The InvokeGate pair is one
+# UFUNCTION name and one property name, so both string tables are covered.
 MUST_EXIST = ["DumperTestActor", "DumperTestSubsystem", "DumperTestPayload",
               "Text_Even2_TwoNull", "Opt_Int_Unset", "FrozenInt",
               "InvokeGate_TakeStructRef", "InvokeGate_LastLabelData"]
@@ -140,13 +139,12 @@ def hash_sources(src_dir):
     the repo copy arrives via `git checkout`, which rewrites EOLs whenever
     `core.autocrlf=true` and no `.gitattributes` pins them, while the UE project copy
     is usually a plain folder copy that preserves whatever bytes it was created with.
-    Hashing raw bytes therefore reported "STALE PACKAGE" for two byte-different
-    renderings of IDENTICAL content -- measured 2026-08-12, where every one of the five
-    files differed from its counterpart by exactly its own line count.
+    Hashing raw bytes would report "STALE PACKAGE" for two byte-different renderings of
+    IDENTICAL content -- each file differing from its counterpart by exactly its own
+    line count.
 
-    NOTE FOR ANYONE COMPARING AGAINST AN OLD RECORD: this changes the digest. Records
-    written before this normalisation carry the raw-bytes value and will read as drift
-    once; re-capture to settle it.
+    NOTE FOR ANYONE COMPARING AGAINST AN OLD RECORD: a record that carries a raw-bytes
+    digest reads as drift once against this one; re-capture to settle it.
     """
     h = hashlib.sha256()
     missing = []
@@ -164,16 +162,14 @@ def hash_sources(src_dir):
 def redact(text, args):
     """Replace this machine's absolute paths with placeholders before the record is written.
 
-    ⛔ WHY THIS LIVES IN THE GENERATOR. The committed record used to carry `<UEPROJECTS>`,
-    `<CORPUS>` and `<DRIVE>` placeholders — put there BY HAND during the 2026-09-06 leak sweep.
-    This tool knew nothing about them, so the very next capture wrote the raw paths straight back
-    and silently undid the redaction. That is exactly the failure `docs/todo.md` names in its own
-    words: *"After hand-editing a generated file, back-port or the next --apply is a regression."*
-    Three stale generators were found in one day by that pattern; this was the fourth.
+    ⛔ WHY THIS LIVES IN THE GENERATOR. Placeholders such as `<UEPROJECTS>`, `<CORPUS>` and
+    `<DRIVE>` put into the committed record BY HAND would be written straight back over by the
+    next capture, silently undoing the redaction. That is exactly the failure `docs/todo.md`
+    names in its own words: *"After hand-editing a generated file, back-port or the next
+    --apply is a regression."*
 
     ⚠ The placeholders are not decoration. `package-identity.json` is COMMITTED and public, and
-    an absolute path is exactly the shape the machine-name / account-name sweep spent a day
-    removing from this repo.
+    an absolute path carries the machine and account names this repo must not publish.
 
     Longest-first, so a nested root cannot be half-replaced by its parent.
     """
@@ -270,14 +266,13 @@ def main():
 
     # Police EVERY config that is actually packaged, not a hardcoded pair.
     #
-    # This loop used to read `("Development", "Shipping")`, which left **DebugGame
-    # completely unpoliced**: it could be stale, or built from different sources, or
-    # missing a fixture entirely, and nothing here would have said so. Found 2026-08-24,
-    # when all three configs were rebuilt and only two of them could be attested.
+    # A hardcoded `("Development", "Shipping")` would leave **DebugGame completely
+    # unpoliced**: it could be stale, or built from different sources, or missing a
+    # fixture entirely, and nothing here would say so.
     #
     # Discovery rather than a longer hardcoded list, because the failure mode of a list is
-    # exactly what happened: a config gets added to the packaging step and nobody thinks to
-    # add it here. `--check` already compares the stored config SET against the observed one
+    # exactly that: a config gets added to the packaging step and nobody thinks to add it
+    # here. `--check` already compares the stored config SET against the observed one
     # (`want` vs `have` below), so a config that appears or disappears is caught either way.
     #
     # The canonical two are still DEMANDED: discovery must not turn "Development vanished"
@@ -298,19 +293,16 @@ def main():
         info = probe(exe)
         # Was this exe produced AFTER the sources it claims to embody?
         #
-        # Note for anyone who remembers R8: that finding was rejected for using mtime as a
-        # proxy for CONTENT freshness, which it is not. Here the question is literally
+        # mtime is no proxy for CONTENT freshness. Here, though, the question is literally
         # temporal -- "was the binary produced after this edit?" -- and mtime is the direct
         # answer, not a stand-in for one. Different question, so the same tool is right.
         #
-        # BUT IT IS ONLY THE RIGHT ANSWER FOR THE TREE THE COMPILER READ. This check used
-        # to run against `repo_src`, and that made it fire on every machine that is not the
-        # one that did the build: `git checkout` stamps files with the CHECKOUT time and
-        # deliberately never preserves the author's mtime, while a folder copy of the
-        # package usually DOES preserve the exe's -- so a freshly cloned repo always looks
-        # "newer" than a correct older package. Measured 2026-08-12: all five repo sources
-        # carried one identical checkout stamp six days AFTER the exes, and both configs
-        # were reported STALE while the same comparison against the build tree passed.
+        # BUT IT IS ONLY THE RIGHT ANSWER FOR THE TREE THE COMPILER READ. Run against
+        # `repo_src`, it would fire on every machine that is not the one that did the
+        # build: `git checkout` stamps files with the CHECKOUT time and deliberately never
+        # preserves the author's mtime, while a folder copy of the package usually DOES
+        # preserve the exe's -- so a freshly cloned repo always looks "newer" than a
+        # correct older package.
         # So: only compare against the project tree, and when there is no project tree to
         # compare against, say the check was skipped rather than inventing a verdict.
         exe_mtime = os.path.getmtime(exe)
@@ -353,7 +345,7 @@ def main():
 
         # An ABSENT config is not a match. `drift` iterates the freshly computed configs,
         # so a root with no exes at all produces an empty dict, an empty drift list, and
-        # -- before this guard -- a cheerful "package matches the stored identity" with
+        # -- without this guard -- a cheerful "package matches the stored identity" with
         # exit 0. A typo in the path, a half-copied package or a not-yet-archived cook all
         # land there, and the caller is told the opposite of the truth. Compare the SETS
         # first, then the hashes.
@@ -375,9 +367,9 @@ def main():
             print("package DRIFT in %s -- rebuilt since the record was written" % ", ".join(drift))
             return 1
 
-        # --check computes `problems` and used to throw them away, so a package could be
-        # "matching" and unusable at the same time. Report them; they do not change the
-        # exit code, which stays a statement about identity.
+        # --check reports the `problems` it computes, because a package can be "matching"
+        # and unusable at the same time. They do not change the exit code, which stays a
+        # statement about identity.
         print("package matches the stored identity")
         for p in record["problems"]:
             print("  PROBLEM (identity still matches): %s" % p)

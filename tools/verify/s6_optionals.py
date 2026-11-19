@@ -29,8 +29,8 @@ l86: UDumperTest58OptTail is a 64-byte UObject whose LAST 8 bytes are an intrusi
 "Opt58TailName". `--spawn` calls ADumperTest58Actor::OptTail_Spawn(N, K), which keeps creating them until K end at
 an unreadable page (measured in-game with VirtualQuery). The phase then RE-MEASURES every instance out of process
 (the page after one can be committed later), scans FName Exact "Opt58TailName" over the class, and reports the
-hits among the edge instances and among the rest. The pre-fix gate read a flat 16 bytes, so an edge instance's
-read faulted and its SET optional was dropped; the fixed gate reads 4.
+hits among the edge instances and among the rest. A gate without [A2-SENTINEL-OVERREAD] reads a flat 16 bytes, so an
+edge instance's read faults and its SET optional is dropped; the gate with it reads 4.
 """
 import argparse
 import ctypes
@@ -159,10 +159,10 @@ def show_refs(tag, refs, scan, cm, cs):
 
 def l84_cold(a):
     """--cold: every lookup BEFORE any walk_instance. A walk calibrates DynOff::FARRAYPROP_INNER (0x70 -> 0x78 on 5.3+,
-    `Correcting FARRAYPROP_INNER` in walk-0.log), and the pre-c6db7cf5 collectors read an optional's value property at
-    that global and cache the class for the process. Cold, that read sits at 0x70, where FOptionalProperty keeps its
-    ValueProperty, so the pre-fix build DESCENDS -- ungated -- and a reset optional is still reported: the row's own
-    face. Offsets are the cooked constants measured by the warm run (Opt_Struct_Set at +0x300, flag at +0x320)."""
+    `Correcting FARRAYPROP_INNER` in walk-0.log), and collectors without [A2-TOPTIONAL-STRUCT-DESCENT] read an
+    optional's value property at that global and cache the class for the process. Cold, that read sits at 0x70, where
+    FOptionalProperty keeps its ValueProperty, so such a build DESCENDS -- ungated -- and a reset optional is still
+    reported: the row's own face. Offsets are the cooked constants measured by the warm run (Opt_Struct_Set at +0x300, flag at +0x320)."""
     import mutate_guard as MG
     from pipe_client import PipeClient
     walk_log = os.path.join(os.environ["LOCALAPPDATA"], "UE5CEDumper", "Logs", a.process, "walk-0.log")

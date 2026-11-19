@@ -2,14 +2,14 @@
 
     py pe_hook_survey.py
 
-Answers the question the PEHOOK finding raised: the sample's hook never fired, so
-which of the swept titles CAN carry an invoke-dependent row? The DLL logs its own
-verdict, so this needs no relaunch -- every folder under Logs\\ already holds it.
+Answers which of the swept titles CAN carry an invoke-dependent row: a title whose
+ProcessEvent hook never fires cannot. The DLL logs its own verdict, so this needs no
+relaunch -- every folder under Logs\\ already holds it.
 
-⚠ DATED PREMISE, still a useful tool. The DumperTest miss was fixed on 2026-08-18
-(SIB-tolerant pattern; true slot +0x268, not the version table's 0x220), so a
-survey of logs written by a NEWER DLL should no longer report it. Logs predating
-that build still will -- read the build stamp before drawing a conclusion.
+⚠ A LOG IS ONLY AS CURRENT AS THE DLL THAT WROTE IT. The DumperTest miss is fixed
+(SIB-tolerant pattern; true slot +0x268, not the version table's 0x220), so logs
+written by a DLL with that fix should not report it, while older logs still will --
+read the build stamp before drawing a conclusion.
 
 Reads three independent markers rather than one, because they fail differently:
   * "pattern scan missed"  -> AOB detection fell back to a version-table guess

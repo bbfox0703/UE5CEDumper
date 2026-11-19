@@ -190,7 +190,7 @@
                       ToolTip.Tip="{StaticResource str.Tip.VS.Deep}"
                       Foreground="#CCCCCC" FontSize="12"
                       VerticalAlignment="Center"/>
-            <!-- Native-C (P1, opt-in, default off): also scan unmanaged holes for
+            <!-- Native-C (opt-in, default off): also scan unmanaged holes for
                  native (non-UPROPERTY) values. Auto-enables Newest-first. -->
             <CheckBox Content="{StaticResource str.VS.NativeC}"
                       IsChecked="{Binding NativeCScan}"
@@ -212,7 +212,7 @@
                       ToolTip.Tip="{StaticResource str.Tip.VS.AutoSkipNoise}"
                       Foreground="#CCCCCC" FontSize="12"
                       VerticalAlignment="Center"/>
-            <!-- User-adjustable scan deadline (was a hard 15s). 10–90s, default 25.
+            <!-- User-adjustable scan deadline: 10–90s, default 25.
                  Threaded to the DLL as deadline_ms; shared by Single + Group modes. -->
             <TextBlock Text="{StaticResource str.VS.Timeout}"
                        Foreground="#CCCCCC" FontSize="12"
@@ -308,7 +308,7 @@
                                         Filter="{Binding ClassFilter}"/>
         </Grid>
 
-        <!-- Window paging bar: "showing N of M" + Load More (V3-C). -->
+        <!-- Window paging bar: "showing N of M" + Load More. -->
         <Grid DockPanel.Dock="Bottom" Margin="0,4,0,0" ColumnDefinitions="*,Auto">
           <TextBlock Grid.Column="0" Text="{Binding WindowStatus}"
                      Foreground="#AAB8D0" FontSize="11" VerticalAlignment="Center"
@@ -339,7 +339,7 @@
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.VS.Col.ClassField}" Binding="{Binding LocationLabel}" SortMemberPath="LocationLabel" Width="320"/>
             <DataGridTextColumn Header="{StaticResource str.VS.Col.Type}" Binding="{Binding FieldType}" SortMemberPath="FieldType" Width="120"/>
-            <!-- Native-C (P1): "Reflected" vs "Native-C (Int32)". Client-computed,
+            <!-- Origin: "Reflected" vs "Native-C (Int32)". Client-computed,
                  so NOT server-sortable (the windowed session has no Origin key). -->
             <DataGridTextColumn Header="{StaticResource str.VS.Col.Origin}" Binding="{Binding Origin}" CanUserSort="False" Width="130"/>
             <DataGridTextColumn Header="{StaticResource str.VS.Col.Value}" Binding="{Binding Value}" SortMemberPath="Value" Width="120"/>
@@ -416,8 +416,8 @@
                     <!-- Locate in GWorld: reach the owning object via the shortest
                          pointer path from GWorld. Always clickable — the DLL's path
                          search is the source of truth and reports if GWorld is
-                         unavailable (gating on the C# flag wrongly disabled it on
-                         games where GWorld was actually resolved, e.g. TQ2). -->
+                         unavailable (gating on the C# flag would disable it on
+                         games where GWorld is resolved, e.g. TQ2). -->
                     <Button Content="{StaticResource str.VS.LocateGWorld}"
                             Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).LocateCandidateInGWorldCommand}"
                             CommandParameter="{Binding}"
@@ -459,7 +459,7 @@
                 <ComboBox ItemsSource="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).GroupDataTypeOptions}"
                           SelectedItem="{Binding DataType}"
                           MinWidth="120" Padding="4,2" FontSize="12"/>
-                <!-- Per-slot predicate (P2). Prev-value types (Changed/Increased/...)
+                <!-- Per-slot predicate. Prev-value types (Changed/Increased/...)
                      compare against the previous round; the value box hides for them. -->
                 <ComboBox ItemsSource="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).GroupScanTypeOptions}"
                           SelectedItem="{Binding ScanType}"
@@ -502,14 +502,14 @@
                     ToolTip.Tip="{StaticResource str.Tip.VS.Deep}"
                     Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="12,0,0,0"/>
-          <!-- Cross-object (P4): also match groups whose values are spread across an
+          <!-- Cross-object: also match groups whose values are spread across an
                actor and the sub-objects it owns (components + GAS AttributeSets). -->
           <CheckBox Content="{StaticResource str.VS.CrossObject}"
                     IsChecked="{Binding CrossObjectScan}"
                     ToolTip.Tip="{StaticResource str.Tip.VS.CrossObject}"
                     Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="8,0,0,0"/>
-          <!-- Native-C (P2): also fold each object's unmanaged-hole leaves into its
+          <!-- Native-C: also fold each object's unmanaged-hole leaves into its
                group block, so a group including a native (non-UPROPERTY) value matches.
                Shares NativeCScan with single mode. -->
           <CheckBox Content="{StaticResource str.VS.NativeC}"
@@ -517,7 +517,7 @@
                     ToolTip.Tip="{StaticResource str.Tip.VS.NativeC.Group}"
                     Foreground="#E0A050" FontSize="12"
                     VerticalAlignment="Center" Margin="8,0,0,0"/>
-          <!-- Newest-first (P2): visible opt-in here too (shares NewestFirst with single
+          <!-- Newest-first: visible opt-in here too (shares NewestFirst with single
                mode). Auto-checked when Native-C is enabled; the user can uncheck it — e.g.
                for an operated-character value created early at game start (low index), as
                opposed to a late-spawned UI/menu panel (high index, needs newest-first). -->
@@ -545,7 +545,7 @@
                     ToolTip.Tip="{StaticResource str.Tip.VS.Rounding}"
                     MinWidth="90" Padding="4,2" FontSize="12"
                     VerticalAlignment="Center"/>
-          <!-- User-adjustable scan deadline (was a hard 15s). Shares ScanTimeoutSeconds
+          <!-- User-adjustable scan deadline. Shares ScanTimeoutSeconds
                with single mode (10–90s, default 25; threaded as deadline_ms). -->
           <TextBlock Text="{StaticResource str.VS.Timeout}"
                      Foreground="#CCCCCC" FontSize="12"
@@ -561,8 +561,8 @@
                      VerticalAlignment="Center" MinWidth="28"/>
                      <!-- Group-only leaf budget. Powers of two, not a spinner: nothing between
                           8/16/.../4096 changes behaviour, so free entry only invites a clamp.
-                          Lives in the GROUP options row - the first attempt put it in the
-                          SINGLE-mode row, where group mode never renders it. -->
+                          Lives in the GROUP options row: group mode never renders the
+                          SINGLE-mode row. -->
                      <TextBlock Text="{StaticResource str.VS.PerSlotCap}"
                                 Foreground="#CCCCCC" FontSize="12"
                                 VerticalAlignment="Center" Margin="12,0,4,0"
@@ -690,7 +690,7 @@
             <DataTemplate x:DataType="m:GroupCandidate">
               <Border Background="#252526" Padding="8,4" Margin="20,2,0,6">
                 <StackPanel>
-                  <!-- Locked-offset table (P2): the actionable summary once every
+                  <!-- Locked-offset table: the actionable summary once every
                        slot has converged to a single offset — class + each value's
                        byte offset. Export the chain itself from Live Walker. -->
                   <Border IsVisible="{Binding HasOffsetTable}"

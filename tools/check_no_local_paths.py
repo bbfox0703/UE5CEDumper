@@ -166,10 +166,9 @@ def unpushed_commit_messages():
 def tracked_files():
     out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
                          errors="replace").stdout
-    # ⚠ Everything is returned, INCLUDING this file. It used to be dropped here, which made the
-    # gate blind to a real account name sitting in one of its own docstrings (found on the public
-    # tip, not by the gate). The two REGEX branches are suppressed for it in main() instead --
-    # that is the narrow thing SKIP was ever needed for.
+    # ⚠ Everything is returned, INCLUDING this file. Dropping it here would make the gate blind
+    # to a real account name sitting in one of its own docstrings. The two REGEX branches are
+    # suppressed for it in main() instead -- that is the narrow thing SKIP is needed for.
     return [f for f in out.splitlines() if f]
 
 
@@ -194,9 +193,9 @@ def main(argv):
                     for m in (() if self_scan else PATTERN.finditer(line)):
                         if m.group(1).lower() in ALLOWED:
                             continue
-                        # ⚠ REDACT THE ACCOUNT SEGMENT. This branch used to print m.group(0) and
-                        # the raw line, i.e. it echoed the account name it had just caught -- which
-                        # is how a caught leak gets laundered into a commit message or a CI log.
+                        # ⚠ REDACT THE ACCOUNT SEGMENT. Printing m.group(0) and the raw line would
+                        # echo the account name it had just caught -- which is how a caught leak
+                        # gets laundered into a commit message or a CI log.
                         hits.append((path, n, mask_account(m), mask_account_line(line)))
                     # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
                     for m in (() if self_scan else SESSION_DIR_PATTERN.finditer(line)):

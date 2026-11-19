@@ -29,7 +29,7 @@
       </StackPanel>
     </StackPanel>
 
-    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7).
+    <!-- Failure surface — see the note in LiveWalkerPanel.axaml.
          Not gated on HasClass: a failed walk is exactly the case where there is
          no class to show, which is when the reason matters most. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"

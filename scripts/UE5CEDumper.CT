@@ -33,15 +33,15 @@ if syntaxcheck then return end
 -- table's filename. Never from a folder that merely happened to win the probe --
 -- pinning, say, a stale copy left in CE's install folder would silently load a
 -- mismatched build on every future run, which is worse than failing loudly.
--- (fourth review, R4-MRU-RELATIVE-SUBFOLDER-SHADOWS) An ABSOLUTE path: a drive (X:\ or X:/) or UNC (\\). A relative
+-- An ABSOLUTE path: a drive (X:\ or X:/) or UNC (\\). A relative
 -- one (a recent-files entry CE stored for `cheatengine.exe sub\UE5CEDumper.CT`) reads CE's CURRENT folder, which is
 -- not where that table was -- never probed, never recorded.
 function ue5_isAbsolutePath(p)
     return type(p) == "string" and (p:find("^%a:[\\/]") ~= nil or p:find("^[\\/][\\/]") ~= nil)
 end
 
--- (sixth review, R6-01 -- measured) A drive ROOT keeps its separator: stripped to a bare 'E:' it is drive-relative, and
--- every reader drops it. A legacy bare 'X:' line (both writers wrote that until this fix) is read as that root.
+-- A drive ROOT keeps its separator: stripped to a bare 'E:' it is drive-relative, and every reader drops it. A
+-- legacy bare 'X:' line, which an older writer could leave, is read as that root.
 function ue5_driveRootFix(p)
     if type(p) == "string" and p:match("^%a:$") then return p .. "\\" end
     return p
@@ -61,7 +61,7 @@ function ue5_recordDllDir(dir)
         if h then
             for line in h:lines() do
                 line = ue5_driveRootFix((line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")))
-                -- (fifth review, R5-04) An older .CT's self-heal could write a RELATIVE line: not carried forward.
+                -- A RELATIVE line (an older .CT's self-heal could write one) is not carried forward.
                 if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line)
                    and line:lower() ~= dir:lower() and #keep &lt; 3 then
                     keep[#keep + 1] = line
@@ -80,7 +80,7 @@ function ue5_recordDllDir(dir)
     end)
 end
 
--- The folders dll-path.txt records, newest first -- ABSOLUTE ones only (fifth review, R5-04): a relative line, which
+-- The folders dll-path.txt records, newest first -- ABSOLUTE ones only: a relative line, which
 -- an older .CT's self-heal could write, would be probed against CE's current folder. A function so the Lua suite can
 -- run it; any I/O error reads as an empty list.
 function ue5_readBreadcrumbs(path)
@@ -97,7 +97,7 @@ function ue5_readBreadcrumbs(path)
         end
         h:close()
     end)
-    -- (sixth review, R6-02) The count of relative lines dropped: the slot says so instead of "nothing recorded".
+    -- The count of relative lines dropped: the slot says so instead of "nothing recorded".
     return out, dropped
 end
 
@@ -131,7 +131,7 @@ end
 
 -- [PATH-CT-MRU-ZERO] reg.exe prints a REG_MULTI_SZ with the LITERAL two characters \0 between entries -- and a path
 -- holds the same two characters wherever a folder name starts with 0 (D:\0Games\...), so a blind split on every one
--- turned such an entry into 'D:' plus a RELATIVE path (measured on CE's VM). A separator is a \0 that the next
+-- would turn such an entry into 'D:' plus a RELATIVE path. A separator is a \0 that the next
 -- ABSOLUTE path follows (X:\ or \\), or the end. Entries are trimmed. A global so the Lua suite can lift it.
 function ue5_splitRegMultiSz(data)
     local out = {}
@@ -143,9 +143,9 @@ function ue5_splitRegMultiSz(data)
             local a, b = data:find("\\0", from, true)
             if not a then break end
             local rest = data:sub(b + 1)
-            -- (second review, MRU-REL-MERGE) ...or where the entry before it already ends in a table's extension:
-            -- CE can store a RELATIVE entry (started with a relative table argument, then saved), and gluing it onto
-            -- the entry before wrecked that one too.
+            -- ...or where the entry before it already ends in a table's extension: CE can store a RELATIVE entry
+            -- (started with a relative table argument, then saved), and gluing it onto the entry before would
+            -- wreck that one too.
             local before = data:sub(pos, a - 1):lower()
             if rest == "" or rest:find("^%s*%a:[\\/]") or rest:find("^%s*\\\\")
                or before:find("%.ct%s*$") or before:find("%.cetrainer%s*$") then cut = a break end
@@ -223,11 +223,10 @@ _slot("trainer folder (only set in trainer mode)", _trainerDir,
       "Cheat Engine was not launched as a trainer")
 
 -- 2/3. CE's file dialogs. Both are undocumented published components of CE's
---      main form, so both are guarded (the Save read used to be bare: a throw
---      there aborted the chunk before the log was even open).
+--      main form, so both are guarded (an unguarded read that throws aborts
+--      the chunk before the log is even open).
 --
---      MEASURED 2026-08-22 on CE 7.7.0.10568, correcting what this comment used
---      to claim. File &gt; Load Recent DOES fill both dialogs: on a freshly
+--      On CE 7.7.0.10568, File &gt; Load Recent DOES fill both dialogs: on a freshly
 --      launched CE they read "", and immediately after picking this table from
 --      Load Recent they both read its full path. So the recent-files menu is NOT
 --      a channel that leaves these empty.
@@ -261,13 +260,13 @@ pcall(function() _scriptDir = extractFilePath(getCurrentScriptPath() or "") or "
 _slot("folder of the running script", _scriptDir,
       "CE does not report a script file for a table script")
 
--- Slots 5/6 used to read CE's recent-files list here via getSettings(). MEASURED
--- DEAD on this CE build (2026-08-04): "Recent Files" is REG_MULTI_SZ, and both
+-- Slots 5/6 -- CE's recent-files list read via getSettings() -- are left out: on this
+-- CE build "Recent Files" is REG_MULTI_SZ, and both
 -- documented accessors refuse that type -- Value["Recent Files"] returns an EMPTY
 -- string and getBinaryValue("Recent Files") returns nil, even though celua.txt:3516
--- advertises it as returning a bytetable. A control read in the same session proved
--- the API itself is fine: getSettings("Plugins64").Value["00000000 A"] returned the
--- plugin path. So it is the TYPE that is unreadable, not the call.
+-- advertises it as returning a bytetable. The API itself is fine:
+-- getSettings("Plugins64").Value["00000000 A"] returns the plugin path.
+-- So it is the TYPE that is unreadable, not the call.
 --
 -- The list is still the best answer -- it records a table's absolute path however it
 -- was opened -- so it IS read, but further down and via reg.exe, after the cheap
@@ -280,7 +279,7 @@ _slot("folder of the running script", _scriptDir,
 local _appData = ""
 pcall(function() _appData = os.getenv("LOCALAPPDATA") or "" end)
 
--- (sixth review, R6-02 / R6-06) A global function so the Lua suite runs the slots themselves; called once, right
+-- A global function so the Lua suite runs the slots themselves; called once, right
 -- below. A file whose every line was dropped (relative lines an older .CT wrote) says so: "no folder recorded yet"
 -- would be false then.
 function ue5_breadcrumbSlots(appData)
@@ -361,19 +360,19 @@ _probeSlots(1)
 -- Only when everything cheap has missed, because this spawns a console window.
 -- It is the one source that records this .CT's absolute path NO MATTER HOW the
 -- table was opened -- double-click and the File &gt; Load Recent menu both update
--- it while touching no dialog, which is exactly the case that failed. CE's own
+-- it while touching no dialog, which is exactly the case the slots above miss. CE's own
 -- Settings API cannot read it (see the note at slot 5/6 above), and CE's File
 -- menu does not carry the paths either: "Load Recent" is a submenu, so the
 -- entries are not reachable as File-menu children.
 --
 -- reg.exe renders a REG_MULTI_SZ with the LITERAL two characters \0 between
 -- entries, so the split is on that, not on a real NUL.
--- A global so the Lua suite can run it (second review, T-MRU-UTF8-SELFHEAL); called once, right below.
+-- A global so the Lua suite can run it; called once, right below.
 function ue5_probeRecentFiles()
     local _mruFirst = #_slots + 1
     local _mru = {}
-    -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
-    -- a folder named Cafe-acute came back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
+    -- [PATH-CT-INJECT-ANSI] Plain reg.exe writes the console code page WITH best fit:
+    -- a folder named Cafe-acute comes back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
     -- find it (and where the OEM and ANSI code pages differ, no non-ASCII folder at all). 'chcp 65001' first makes
     -- every entry exact UTF-8, which _dllAt's fileExists branch and ue5_pathForms then handle -- and the
     -- self-heal records UTF-8, as dll-path.txt's header says it holds.
@@ -390,10 +389,10 @@ function ue5_probeRecentFiles()
 
     -- The entry whose FILENAME is this table's own name. That check is what makes
     -- the list safe to trust: it cannot bind to a stale UE5Dumper.dll sitting
-    -- beside some unrelated game's table. (Measured: this .CT has been seen at
-    -- both position 1 and position 2 of that list, so never take entry 1 blindly.)
+    -- beside some unrelated game's table. (This .CT can sit at position 1 or
+    -- position 2 of that list, so never take entry 1 blindly.)
     -- A RELATIVE entry of this name (CE started with a relative table argument) is skipped, with or without a
-    -- folder, or it shadows a later absolute one (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS; fourth review).
+    -- folder, or it shadows a later absolute one.
     local _mruSelf, _mruSelfRelative = "", false
     for i = 1, #_mru do
         local leaf = ""
@@ -401,12 +400,12 @@ function ue5_probeRecentFiles()
         if leaf == "ue5cedumper.ct" then
             local f = ""
             pcall(function() f = extractFilePath(_mru[i]) or "" end)
-            -- (fourth review) Only an ABSOLUTE folder: a relative one is CE's current folder, not the table's.
+            -- Only an ABSOLUTE folder: a relative one is CE's current folder, not the table's.
             if ue5_isAbsolutePath(f) then _mruSelf = f break end
             _mruSelfRelative = true
         end
     end
-    -- (fifth review, R5-02) A dropped relative entry says so: "has no UE5CEDumper.CT" would be false.
+    -- A dropped relative entry says so: "has no UE5CEDumper.CT" would be false.
     _slot("folder of the most recent UE5CEDumper.CT in CE's recent-files list", _mruSelf,
           (#_mru == 0) and "could not read CE's recent-files list"
           or _mruSelfRelative and "CE's recent-files entry for UE5CEDumper.CT is a relative path -- not probed (it "
@@ -456,10 +455,10 @@ for _, s in ipairs(_slots) do
     end
 end
 
--- A miss is NOT fatal here. The old code returned out of this chunk, which left
--- ue5_inject / ue5_shutdown / ue5_log undefined -- so the next tick died with
+-- A miss is NOT fatal here. Returning out of this chunk would leave
+-- ue5_inject / ue5_shutdown / ue5_log undefined -- so the next tick would die with
 -- "attempt to call a nil value (global 'ue5_inject')", turning one missing DLL
--- into a second, unrelated-looking error. Enforcement now lives in ue5_inject(),
+-- into a second, unrelated-looking error. Enforcement lives in ue5_inject(),
 -- where the DLL is actually needed and where returning false unticks the record.
 if (UE5_DEBUG or 0) ~= 0 then
     print(string.format("[UE5Dump] OpenDialog1 = '%s'", _openPath))
@@ -524,18 +523,18 @@ end
 -- DLL call wrapper
 --
 -- executeCodeEx(callmethod, timeout, address, params...) -- CE's celua.txt:
---   callmethod : 0 = stdcall, 1 = cdecl   (NOT a return type; the old comment
---                here said "retType 0=void, 1=integer" and that misreading is
---                what shipped the bug below)
+--   callmethod : 0 = stdcall, 1 = cdecl   (NOT a return type: reading it as
+--                "retType 0=void, 1=integer" is the misreading that produces
+--                the silent failure below)
 --   timeout    : milliseconds. nil / -1 = wait forever (hangs CE's UI on a
 --                stalled game thread); 0 = do not wait AND never free the call
 --                memory, i.e. a leak. Always pass a finite value.
 --   address    : the address to execute -- argument THREE.
 --
 -- Getting the slots wrong is SILENT: CE runs with address = nil and returns nil
--- without raising. Audit #4 B1 -- for a long time this called
--- executeCodeEx(retType, fn), so the address landed in the timeout slot,
--- UE5_Shutdown never actually ran, and the CE script reported a clean teardown.
+-- without raising. Called as executeCodeEx(retType, fn), the address lands in
+-- the timeout slot, UE5_Shutdown never actually runs, and the CE script reports
+-- a clean teardown.
 -- ============================================================
 
 -- ============================================================
@@ -606,7 +605,7 @@ function ue5_callDLL(funcName, retType, ...)
     -- Propagate nil: executeCodeEx returns nil when the remote call fails, and its
     -- SECOND return value names which failure -- 'Execution timeout', 'Failure
     -- launching thread', 'Wait failure', 'Failure reading the result address'.
-    -- "process alive?" used to be printed here, which is a GUESS: four of those
+    -- Printing "process alive?" here would be a GUESS: four of those
     -- reasons happen with a perfectly healthy process and send you somewhere else
     -- entirely. Report what CE already knows. docs/ce-plugin-sdk-notes.md 13.5.
     if result == nil then
@@ -672,9 +671,9 @@ end
 -- Resolve the exported mailbox symbol, trying BOTH spellings CE may present.
 -- Depending on how CE's symbol handler picked up the module, an export is reachable
 -- as the bare name or only as "&lt;module&gt;.&lt;name&gt;", and which one works is not
--- predictable from here. lessons-learned.md mandates trying both, and eight other
--- sites in this repo already do; these two were the holdouts, and a single-spelling
--- miss silently degrades the readiness poll to the old blind 15 s wait. (B33)
+-- predictable from here. lessons-learned.md mandates trying both, and a
+-- single-spelling miss would silently degrade the readiness poll to the blind
+-- 15 s wait below.
 function ue5_findMailbox()
     for _, sym in ipairs({ "g_invokeMailbox", "UE5Dumper.g_invokeMailbox" }) do
         local ok, addr = pcall(getAddress, sym)
@@ -689,9 +688,9 @@ function ue5_inject()
     -- [A3-B30-STALE-FLAG] An [ENABLE] runs only on an UNTICKED record, and an unticked record owns nothing:
     -- whatever this global says was left by a record that is no longer active. CE drops records WITHOUT
     -- running [DISABLE] on a File &gt; Open and on a process switch (disableAllWithoutExecute), so it can
-    -- be stale-true here -- and EVERY bail-out below unticks, which runs ue5_shutdown's guard. Only the
-    -- serving branch used to clear it, so the DLL-not-found and parked-restart bail-outs could still tear a
-    -- serving pipe down. Cleared at ENTRY; only the success path at the bottom claims it again.
+    -- be stale-true here -- and EVERY bail-out below unticks, which runs ue5_shutdown's guard. Cleared at
+    -- ENTRY, not only in the serving branch, so the DLL-not-found and parked-restart bail-outs cannot tear a
+    -- serving pipe down; only the success path at the bottom claims it again.
     UE5_StartedByThisRecord = false
 
     -- The folder search ran in this record's parent [ENABLE], deliberately
@@ -750,11 +749,11 @@ function ue5_inject()
         --   SERVING  — a proxy DLL deployed it, or another instance owns the pipe.
         --              Not ours. Return false so [ENABLE] unticks the record and
         --              its [DISABLE] can never run UE5_Shutdown against a pipe
-        --              this script never started (audit #4 B30).
+        --              this script never started.
         --   PARKED   — this record was ticked, then unticked, which runs
         --              UE5_Shutdown and leaves initState at IDLE. Re-ticking must
         --              revive it in place: the DLL is still mapped, so injecting
-        --              again would double-map us (audit #4 B1(b)).
+        --              again would double-map us.
         local pre = nil
         local mbNow = ue5_findMailbox()
         if mbNow then
@@ -794,7 +793,7 @@ function ue5_inject()
     -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
     if not revived then
         -- [PATH-CT-INJECT-ANSI] injectDLL copies its string into the game for LoadLibraryA, which reads ANSI bytes.
-        -- A UTF-8 path from a non-ASCII folder failed there, and CE then manual-mapped the DLL (no TLS, no .pdata).
+        -- A UTF-8 path from a non-ASCII folder fails there, and CE then manual-maps the DLL (no TLS, no .pdata).
         if not DLL_PATH_ANSI then
             ue5_logError("UE5Dumper.dll's path has no ANSI form, so injectDLL (LoadLibraryA) cannot load it: %s", DLL_PATH)
             showMessage("UE5 Dumper Error:\n\nCheat Engine cannot load UE5Dumper.dll from this folder:\n  " .. DLL_PATH ..
@@ -803,8 +802,8 @@ function ue5_inject()
                 "Move the UE5CEDumper folder to a path of plain English letters, then tick this record again and\n" ..
                 "choose UE5Dumper.dll in the file picker that opens --\n" ..
                 "or use UE5DumpUI &gt; Proxy Deploy &gt; Inject into running game, which does not go through Cheat Engine.")
-            -- (skeptic CEINJ-3) Forget this path: it came from the init record's probe, and ue5_inject re-probes
-            -- (the picker) only when DLL_PATH is nil -- otherwise every re-tick after the move refused again.
+            -- Forget this path: it came from the init record's probe, and ue5_inject re-probes
+            -- (the picker) only when DLL_PATH is nil -- otherwise every re-tick after the move would refuse again.
             DLL_PATH, DLL_PATH_ANSI = nil, nil
             return false
         end
@@ -848,14 +847,14 @@ function ue5_inject()
     ue5_log("Waiting for GObjects/GNames scan + Pipe Server (polling)...")
     local waited, state, lastLogged = 0, INIT_IDLE, -1
     -- Did the DLL ever show a sign of life? This separates two very different
-    -- outcomes that both end the loop still-not-READY (B32):
+    -- outcomes that both end the loop still-not-READY:
     --   sawProgress = true  -> it really did start and then stall. A timeout.
     --   sawProgress = false -> it never left IDLE for the whole window, which is
-    --                          also exactly what an OLD DLL looks like: offset 0x0C
-    --                          used to be an `int32_t reserved` that nothing ever
-    --                          wrote, so the symbol resolves and reads 0 forever.
-    --                          Reporting that as a timeout put a modal error on a
-    --                          perfectly healthy injection.
+    --                          also exactly what an OLD DLL looks like: there offset
+    --                          0x0C is an `int32_t reserved` that nothing ever
+    --                          writes, so the symbol resolves and reads 0 forever.
+    --                          Reporting that as a timeout would put a modal error
+    --                          on a perfectly healthy injection.
     local sawProgress = false
     while waited &lt; TIMEOUT_MS do
         if mb == nil then
@@ -885,16 +884,16 @@ function ue5_inject()
         -- MEASURE, do not accumulate. sleep(n) in CE is a floor, not an exact
         -- duration -- it rounds up to the ~15.47 ms Windows tick -- so summing the
         -- REQUESTED amount under-reports real elapsed time, and the fallback below
-        -- spends a budget it computed from that wrong number. Same class as the
-        -- iteration-counting timeout removed from every emitted script.
+        -- spends a budget it computed from that wrong number. Every emitted
+        -- script's timeout follows the same rule.
         if tickAvailable then waited = getTickCount() - startTick
         else waited = waited + POLL_MS end
     end
 
     if mb == nil then
         -- Symbol never resolved (very old DLL build, or CE's symbol handler is
-        -- not cooperating). Fall back to the historical blind wait rather than
-        -- failing outright — but only for the remainder of the old 15s budget.
+        -- not cooperating). Fall back to a blind wait rather than
+        -- failing outright — but only for the remainder of a 15 s budget.
         local remain = 15000 - waited
         ue5_log("Mailbox symbol not found — falling back to a fixed wait.")
         if remain &gt; 0 then sleep(remain) end
@@ -915,11 +914,10 @@ function ue5_inject()
         elseif not sawProgress then
             -- The symbol resolved but the field never once left IDLE. That is NOT a
             -- timeout — it is indistinguishable from an older DLL where this offset
-            -- was an `int32_t reserved` nothing ever wrote, so it reads 0 forever.
-            -- The old code called it a timeout and threw a modal error on a
-            -- perfectly healthy injection. Proceed quietly instead; the pipe is
+            -- is an `int32_t reserved` nothing ever writes, so it reads 0 forever.
+            -- Calling it a timeout would throw a modal error on a perfectly
+            -- healthy injection. Proceed quietly instead; the pipe is
             -- almost certainly up, and the UI's Connect will say so if it is not.
-            -- (B32)
             ue5_log("Readiness field never changed — this DLL predates it. " ..
                     "Proceeding; if Connect fails, check the DLL log.")
         else
@@ -954,18 +952,18 @@ function ue5_shutdown()
     -- ⛔⛔ DID *WE* START IT? THIS GUARD, NOT THE SYMBOL PROBE BELOW, IS WHAT KEEPS
     -- THE DISABLE FROM TEARING DOWN SOMEBODY ELSE'S PIPE.
     --
-    -- The probe below answers "is a DLL loaded", and the ORIGINAL B30 fix mistook
-    -- that for "did we load it". In the one case B30 was filed about — a proxy
-    -- (version/dinput8/dxgi/winmm) already loaded and serving — the probe SUCCEEDS,
-    -- because all four proxy .def files export UE5_StopPipeServer. So the quiet
-    -- no-op was skipped and UE5_Shutdown ran against a pipe this record never
-    -- started, ~50 ms after telling the user to go and connect to it.
+    -- The probe below answers "is a DLL loaded", not "did we load it". With a
+    -- proxy (version/dinput8/dxgi/winmm) already loaded and serving, the probe
+    -- SUCCEEDS, because all four proxy .def files export UE5_StopPipeServer -- so
+    -- the probe alone would skip the quiet no-op and run UE5_Shutdown against a
+    -- pipe this record never started, ~50 ms after telling the user to go and
+    -- connect to it.
     --
     -- ⚠ And the untick is what fires it: `memrec.Active = false` RUNS the disable
-    -- block (ue5_freeze_helper.lua `tick` says so in as many words), so the enable
-    -- branch that unticks "so the disable can never run UE5_Shutdown" was calling
-    -- the very thing it meant to prevent. Deferring the untick made it automatic
-    -- rather than needing the user. Measured and written up as [B30-REOPEN].
+    -- block (ue5_freeze_helper.lua `tick` says so in as many words), so an enable
+    -- branch that unticks "so the disable can never run UE5_Shutdown" calls the
+    -- very thing it means to prevent -- and the deferred untick does so without
+    -- needing the user. [B30-REOPEN].
     --
     -- The untick itself is KEPT — an un-owned record should not stay ticked — and
     -- it is now harmless, because this guard is what decides whether anything is
@@ -978,7 +976,7 @@ function ue5_shutdown()
     -- Nothing loaded? Say nothing and do nothing. [ENABLE]'s bail-outs untick the
     -- record, which makes CE run this block even though this script never injected
     -- anything — and a bare getAddress would THROW here, aborting the chunk before
-    -- the log handle is closed (audit #4 B40).
+    -- the log handle is closed.
     local okProbe, probe = pcall(getAddress, "UE5_StopPipeServer")
     if not (okProbe and probe and probe ~= 0) then
         ue5_log("Nothing loaded — nothing to shut down.")
@@ -986,8 +984,8 @@ function ue5_shutdown()
         -- UE5_Shutdown ALONE. It already calls s_pipeServer.Stop() itself, and it
         -- does so deliberately AFTER Stark::Shutdown so a pipe thread blocked in
         -- EnqueueInvoke receives its -7 and unwinds. Calling UE5_StopPipeServer
-        -- first inverted that ordering, and since the CE call times out while the
-        -- remote thread keeps running, it put two teardowns in the process at once.
+        -- first would invert that ordering, and since the CE call times out while the
+        -- remote thread keeps running, it would put two teardowns in the process at once.
         local ok = ue5_callDLL("UE5_Shutdown", "void")
         if ok == nil then
             -- Do not claim success for a call that never returned. The remote
@@ -1021,9 +1019,9 @@ registerLuaFunctionHighlight('ue5_logError')
 -- Print startup hint
 ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
 -- The folder search ran before the log existed. Replay it here: a run that could
--- not find the DLL used to bail out before ue5_logInit() and leave NOTHING in the
--- log -- and because the log opens with "w", the previous SUCCESSFUL run's log
--- survived and read as if nothing had gone wrong.
+-- not find the DLL must still leave its search in the log -- one that bailed out
+-- before ue5_logInit() would leave the previous SUCCESSFUL run's log in place
+-- (the log opens with "w"), reading as if nothing had gone wrong.
 if DLL_PATH then
     ue5_log("DLL_PATH = %s  (slot %s, size %s)", DLL_PATH, tostring(_DLL_FOUND_SLOT),
             ue5_dllSizeText(DLL_PATH))
@@ -1049,10 +1047,10 @@ if syntaxcheck then return end
 -- memrec only exists in THIS chunk, not inside ue5_inject, so the untick has to
 -- happen here. Without it CE ticks the record on every bail-out — including the
 -- "already loaded and serving" one — and unticking then runs a real UE5_Shutdown
--- against a proxy this script never injected (audit #4 B30).
+-- against a proxy this script never injected.
 -- ⚠ It MUST be the deferred form. An immediate `memrec.Active = false` here is a
 -- no-op: CE's setActive early-exits while autoassemble is still running, so the row
--- ends up ticked anyway and B30 fires regardless. [FREEZEUNTICK-2026-08-20]; pinned
+-- ends up ticked anyway and that teardown follows regardless. [FREEZEUNTICK-2026-08-20]; pinned
 -- by tools/check_ce_untick_placement.py, and byte-identical to
 -- CeLuaHygiene.DeferredUntickLua.
 if ue5_inject() == false then

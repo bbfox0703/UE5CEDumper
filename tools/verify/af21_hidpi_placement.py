@@ -4,37 +4,39 @@ one must still be reset.
     py tools/verify/af21_hidpi_placement.py            # run all three arms
     py tools/verify/af21_hidpi_placement.py --probe    # just print the machine's numbers
 
-WHAT THE FIX WAS. `MainWindow.OnOpenedValidatePlacement` asks
+THE FIX UNDER TEST. `MainWindow.OnOpenedValidatePlacement` asks
 `WindowPlacement.IsVisibleEnough(rx, ry, rw, rh, screens)` whether the restored rect is reachable.
-`IsVisibleEnough` is pure and already unit-tested; the defect was one line ABOVE it —
+`IsVisibleEnough` is pure and already unit-tested; the conversion under test is one line ABOVE it —
 
     int rw = (int)Math.Round(_normalWidth * scale);      // <- the `* scale` is the fix
 
-Without the conversion the guard measured the window at its DIP width. At this machine's 225%
-scaling that is 1,124 px against a real 2,529, so a window hanging off the LEFT could be judged
-off-screen while a third of it was plainly visible — and its saved position was then thrown away.
+Without the conversion the guard measures the window at its DIP width. At 225% scaling that is
+1,124 px against a real 2,529, so a window hanging off the LEFT can be judged off-screen while a
+third of it is plainly visible — and its saved position is then thrown away.
 
 ⭐ TWO THINGS THE ROW GETS WRONG, both re-derived here rather than inherited:
 
- 1. **"Needs a real scaling change — the one row here a script cannot do."** False. The machine is
-    already at **216 dpi = 225%**. The HiDPI condition is not something to arrange; it is the
-    standing state of this desktop. Nothing needs changing.
+ 1. **"Needs a real scaling change — the one row here a script cannot do."** False on a desktop
+    already scaled above 100% (`--probe` prints the scaling; at 100% there is no band and the
+    rig stops NOT RUNNABLE): the HiDPI condition is then not something to arrange; it is the
+    standing state of the desktop. Nothing needs changing.
 
  2. **"Move the window so roughly a third of it hangs off the RIGHT edge."** That step cannot
     expose this defect, and the arithmetic says so. Off the right, the overlap is
-    `screenW - x` post-fix and `min(x+dipW, screenW) - x` pre-fix — the pre-fix value is the
-    LARGER one, so the pre-fix code is *more* permissive there and both accept. The defect only
-    appears off the LEFT, where the width is what carries the rect back onto the screen. A tester
-    following the row would have seen a pass and learned nothing.
+    `screenW - x` with the fix and `min(x+dipW, screenW) - x` without it — the value without the
+    fix is the LARGER one, so a build without the fix is *more* permissive there and both accept.
+    The defect only appears off the LEFT, where the width is what carries the rect back onto the
+    screen. A tester following the row would see a pass and learn nothing.
 
 WHY NO WINDOW-DRAGGING. The persisted `window-state.txt` IS the input to the code under test, so
 seeding it and observing where the window opens exercises the same path a drag would, without
 `SetWindowPos` (whose result Avalonia may or may not observe) and without computer-use.
 
 THE DISCRIMINATING BAND, derived not assumed, for width W_dip at scale S on a screen 0..SW:
-    post-fix accepts while  x >= MinVisibleWidth - W_dip*S
-    pre-fix  accepts while  x >= MinVisibleWidth - W_dip
-so any x in [120 - W_dip*S, 120 - W_dip) is kept by the fixed build and discarded by the old one.
+    with the fix     accepts while  x >= MinVisibleWidth - W_dip*S
+    without the fix  accepts while  x >= MinVisibleWidth - W_dip
+so any x in [120 - W_dip*S, 120 - W_dip) is kept by a build with the fix and discarded by one
+without it.
 """
 import argparse
 import ctypes
@@ -145,7 +147,7 @@ def main():
     W_DIP, H_DIP = 1124.0, 991.1111111111111
     w_phys = round(W_DIP * s)
     band_lo = int(MIN_VISIBLE_W - w_phys)          # fixed build still accepts at/above this
-    band_hi = int(MIN_VISIBLE_W - W_DIP)           # old build stopped accepting below this
+    band_hi = int(MIN_VISIBLE_W - W_DIP)           # a build without the fix stops accepting below this
 
     print("screen width      : %d px" % sw)
     print("scaling           : %.2fx (%d dpi)" % (s, round(s * 96)))

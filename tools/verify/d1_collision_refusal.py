@@ -2,35 +2,36 @@ r"""D1 — a REFUSED collision restore must keep the record, so the restore can 
 
     py tools/verify/d1_collision_refusal.py     # DumperTest must be running + injected
 
-⚠⚠ SINCE B31 ([W3-DUNSTE-QUEUED], 2026-09-12) ARM 1 NO LONGER MEASURES A REFUSAL. Its 100 ms dispatch times
-out with -5, and -5 now means QUEUED: the restore stays queued and lands when the game thread drains, so
+⚠⚠ ARM 1 DOES NOT MEASURE A REFUSAL ([W3-DUNSTE-QUEUED] 2026-09-12). Its 100 ms dispatch times
+out with -5, and -5 means QUEUED: the restore stays queued and lands when the game thread drains, so
 the record COMMITS -- "QUEUED (rc=-5 ...)", then "Fly: DISABLED", and no "keeping the record" line. Arm 1
-asserts exactly that now. D1's responsive-but-REFUSED arm has no live trigger left: -8 cannot occur on the
-pipe thread (it is not a background worker), and -5 was the only code a live hook returned. The refused arm
+asserts exactly that. D1's responsive-but-REFUSED arm has no live trigger: -8 cannot occur on the
+pipe thread (it is not a background worker), and -5 is the only code a live hook returns. The refused arm
 stays pinned by Test_Dunste_ShouldCommitCollision (dll_helpers_test). The queued restore drains with no Dunste
-log line, so arm 1 has no log-observable self-heal; arm 2 keeps the record and self-heals exactly as before.
+log line, so arm 1 has no log-observable self-heal; arm 2 keeps the record and self-heals.
 
-THE DEFECT (blind-spot sweep, fixed 2026-09-08, fc83923e).
-`Dunste::InvokeSetCollision` returned "the setter was FOUND" as a bool and threw away the
-dispatcher's `int32_t`, so all three call sites read a REFUSAL as "collision CHANGED".
-`SetEnabled(false)` then cleared `collisionOff`/`collisionPawn` unconditionally -- leaving the
-pawn non-colliding with **nothing tracking it**, which audit #4 B8 calls *"what made the pawn
-fall through the world"*. The repair is `CollisionApply{Applied, Absent, Refused}` plus the
+THE DEFECT.
+A `Dunste::InvokeSetCollision` that returns "the setter was FOUND" as a bool and throws away the
+dispatcher's `int32_t` makes every call site read a REFUSAL as "collision CHANGED".
+`SetEnabled(false)` then clears `collisionOff`/`collisionPawn` unconditionally -- leaving the
+pawn non-colliding with **nothing tracking it**, which is what makes the pawn fall through the
+world. The repair is `CollisionApply{Applied, Absent, Refused}` plus the
 pure `ShouldCommitCollision`: **Absent** is permanent (retrying cannot conjure a setter, so it
 commits) and **Refused** is transient (it must not).
 
-⛔ WHY THIS ROW COULD NOT BE UNIT-TESTED, and what it took to reach live.
-`todo.md` recorded it as *"every D1 call-site path needs a running game with the PE hook
-down"*. The pure core is pinned by `Test_Dunste_ShouldCommitCollision`; the call sites were
-reviewed, not executed. The obstacle is that the restore site reads
+⛔ WHY THIS ROW CANNOT BE UNIT-TESTED, and what it takes to reach live.
+Every D1 call-site path needs a running game with the PE hook down. The pure core is pinned by
+`Test_Dunste_ShouldCommitCollision`; the call sites need the live game. The obstacle is that the
+restore site reads
 
     const bool responsive = Stark::IsGameThreadResponsive();
     const bool restored   = responsive && ShouldCommitCollision(InvokeSetCollision(pawn, true));
 
 so simply freezing the game leaves `responsive == false`, **short-circuits before
-InvokeSetCollision is ever called**, and exercises B8's original path instead of D1's addition.
-A rig that froze the game and watched the record survive would have proved nothing about this
-fix -- it would have re-measured a 2026-07 repair and reported it as a 2026-09 one.
+InvokeSetCollision is ever called**, and exercises the unresponsive-thread arm (`B8_CAUSE`)
+instead of D1's addition. A rig that froze the game and watched the record survive would prove
+nothing about this fix -- it would re-measure the unresponsive-thread repair and report it as
+this one.
 
 ⭐ THE WINDOW THAT SEPARATES THEM. The two conditions are measured against *different* clocks:
 `Stark::kStallThresholdMs` is **500** (time since the hook last fired) and `kMinInvokeTimeoutMs`
@@ -43,7 +44,7 @@ The DLL names which half fired, and that is the acceptance:
 
     "Fly: DISABLED but the pawn's collision is still OFF (the dispatcher REFUSED the restore)
      - keeping the record and polling to restore it"          <- D1's arm
-    "... (game thread unresponsive) ..."                      <- B8's pre-existing arm
+    "... (game thread unresponsive) ..."                      <- the unresponsive arm (B8_CAUSE)
 
 ⭐⭐ SO THE RIG RUNS BOTH ARMS AND REQUIRES THEM TO DIFFER. A short freeze must report the
 dispatcher refusal; a long one must report the unresponsive thread. Running only the short arm
@@ -53,8 +54,8 @@ the D4b rig runs two build configurations rather than one.
 
 ⭐ AND THE BEHAVIOURAL PROOF, which no log line can fake: after the thread resumes,
 `PendingRestoreLoop` restores collision **by itself**, with no further command. That can only
-happen because the record was kept. Pre-fix there was nothing left to poll for and the pawn
-stayed ghosted for the rest of the session.
+happen because the record was kept. Without the fix there is nothing left to poll for and the
+pawn stays ghosted for the rest of the session.
 
 ⚠ Freezes ONE THREAD, not the process: a whole-process suspend stops Fern too, so the DLL never
 picks the command up and the refusal under test never happens.
@@ -203,7 +204,7 @@ def arm(game_tid: int, hold_s: float, want: str, label: str) -> list[str]:
 
 
 def arm_queued(game_tid: int, label: str) -> list[str]:
-    """Arm 1 since B31: the restore's 100 ms dispatch times out (-5), which is QUEUED, not refused -- so the
+    """Arm 1 ([W3-DUNSTE-QUEUED]): the restore's 100 ms dispatch times out (-5), which is QUEUED, not refused -- so the
     record commits, and no "keeping the record" line may appear. The queued restore then drains on the game
     thread with no Dunste log line, which is why this arm has no self-heal wait."""
     fails: list[str] = []

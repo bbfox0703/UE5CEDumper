@@ -2,11 +2,9 @@
 
     py tools/verify/fixture_census.py
 
-⭐ WHY THIS EXISTS. A folder under `steamapps/common` is NOT evidence that a game is playable.
-Measured 2026-08-21: **11 of 74** folders on this machine hold no executable at all —
-FINAL FANTASY VII REBIRTH is one directory containing one empty directory, and Tower of Mask,
-Jedi Fallen Order, Monster Hunter World / Rise, PRAGMATA, Romancing SaGa 2 RotS and Civ V are the
-same. Several of those are cited in `docs/` as available fixtures, and two of them are named in
+⭐ WHY THIS EXISTS. A folder under `steamapps/common` is NOT evidence that a game is playable:
+a leftover folder can hold no executable at all (one directory containing one empty directory),
+and such a game can still be cited in `docs/` as an available fixture, or named in
 `docs/todo.md` as the requirement a verification row is waiting for.
 
 A register plan built from `ls steamapps/common` therefore sends the operator to boot a game that

@@ -8,20 +8,18 @@
 
 THE ROW. `MainWindowViewModel.InstallCeAutorunAsync` auto-places `ue5_autorun.lua` into a running
 Cheat Engine's `autorun\\`. When that write is refused it must take the MANUAL save-dialog fallback
-(`FileWriteFault.IsPlacementDenied`) instead of reporting failure - the pre-fix code skipped the
-fallback in exactly the case that needs it. The classifier is unit-tested; the LIVE denied-write
-path never was.
+(`FileWriteFault.IsPlacementDenied`) instead of reporting failure - code without the fix skips the
+fallback in exactly the case that needs it. The classifier is unit-tested; this rig drives the LIVE
+denied-write path.
 
-⭐ WHY THIS IS NOT MAINTAINER-ONLY, WHICH IS HOW IT WAS FILED.
-The register said it needs "CE installed under %ProgramFiles%, app run non-elevated, which no
-unattended session can stage". Two measurements retire that:
+⭐ WHY AN UNATTENDED SESSION CAN STAGE THIS, without "CE installed under %ProgramFiles%, app run
+non-elevated":
 
   1. `TryFindCheatEngineDirAsync` resolves CE's folder from the **running** `cheatengine*`
      process's own path - NOT from the registry, and NOT from %ProgramFiles%. So any CE we can
      start decides the target folder, and a copy we own is as real as the installed one.
-  2. On this host the installed `C:\\Program Files\\Cheat Engine\\autorun` is **writable
-     non-elevated** (measured: a probe file created and deleted). So the installed copy would NOT
-     have reproduced the denial anyway - the premise was wrong in both directions.
+  2. An installed `C:\\Program Files\\Cheat Engine\\autorun` can be **writable non-elevated**,
+     so the installed copy does not reliably reproduce the denial anyway.
 
 ⚠ NO ACL EDITS, DELIBERATELY. Denying write with `icacls` on a real install is a security-settings
 change and is not needed: the auto-place is a `File.WriteAllTextAsync` onto a FIXED file name, and

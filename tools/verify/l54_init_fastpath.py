@@ -6,9 +6,9 @@ take the cached-globals fast path.
     py tools/verify/l54_init_fastpath.py --arm B --process DumperTest-Win64-Shipping --log-dir <dir> [--dll <path>]
 
   ARM A (re-init, the WIDE window): UE5_Shutdown never clears the cached GObjects/GNames, and AutoStartWork
-        restarts the mailbox poller BEFORE UE5_Init. So during a whole re-scan a pre-fix EnsureInitialized saw
-        "cached globals present" and served the command at once. The rig calls UE5_Shutdown, then
-        UE5_AutoStart, polls initState until it reads RUNNING (1), and pokes CMD_QUERY_PTR at that instant,
+        restarts the mailbox poller BEFORE UE5_Init. So during a whole re-scan an EnsureInitialized without
+        [A3-MIMIC-INIT-FASTPATH] sees "cached globals present" and serves the command at once. The rig calls
+        UE5_Shutdown, then UE5_AutoStart, polls initState until it reads RUNNING (1), and pokes CMD_QUERY_PTR at that instant,
         then CMD_PROTECT op 2 (GET_STATE, read-only).
   ARM B (first init, the row's literal ask): the poke is fired the moment scan-0.log shows "FindAll: Complete --"
         (the globals are published AFTER FindAll; earlier windows do not discriminate). The process must

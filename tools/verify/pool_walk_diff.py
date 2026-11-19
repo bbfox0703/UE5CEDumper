@@ -6,9 +6,9 @@ r"""Whole-pool before/after diff of what `walk_class` reads through a property's
 WHY THIS EXISTS
   A change to what a SHARED reader accepts -- the struct / class / enum a property's subclass slot
   points to -- can only regress types that are rare, and a spot check of a dozen core engine classes
-  never meets them: a Blueprint struct, an interface class, a map keyed by a struct. [STRUCTPROBE-ANY-NAME]
-  added a class-chain test to every slot reader; the eleven-class walk used for the earlier rows
-  could not have shown a UserDefinedStruct it now rejected. This walks EVERY class `list_classes`
+  never meets them: a Blueprint struct, an interface class, a map keyed by a struct. A class-chain test
+  in every slot reader ([STRUCTPROBE-ANY-NAME]) is such a change, and a walk of a dozen classes could
+  not show a UserDefinedStruct it rejected. This walks EVERY class `list_classes`
   returns (game_only=false) through `walk_class_batch` and keeps, per field, every piece of type
   metadata read through the slot, so two builds on the same fixture compare row by row.
 
@@ -21,7 +21,6 @@ HOW TO USE IT
   a vacuous "0 changed". Rows present in only one capture are per-session differences in the
   loaded classes (the field LIST comes from the plain chain walk, not the slot), and should be
   explained, not ignored. Captures go to out/sdk-live/pool_<label>.json (gitignored).
-  Measured 2026-09-28, builds 3594 -> 3595: six fixtures, ~445,000 fields, 0 changed.
 """
 import collections
 import json
@@ -82,8 +81,8 @@ def capture(label):
         print("classes:", len(classes))
         addrs = [x["class_addr"] for x in classes]
         # Rows are keyed by the class PATH, not its name: two class objects can share a name (a Blueprint class and
-        # its re-instanced copy), and keyed by name the one walked last won -- a per-session difference that reads as
-        # "fields only in one capture" (measured on DQ XI S, 2026-09-28).
+        # its re-instanced copy), and keyed by name the one walked last wins -- a per-session difference that reads as
+        # "fields only in one capture".
         paths = [x.get("class_path") or x.get("class_name", "?") for x in classes]
         for i in range(0, len(addrs), 200):
             r = c.request("walk_class_batch", addrs=addrs[i:i + 200])

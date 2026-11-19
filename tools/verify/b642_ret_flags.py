@@ -9,10 +9,10 @@ places:
     params[].ret <- CPF_ReturnParm off PropertyFlags  (a bit on the parameter itself)
 
 They must agree on every function. A disagreement is detectable without any reference build, which
-matters because **there is no pre-fix binary to run** — this is a two-detector cross-check, not a
-controlled experiment, and the write-up must say so rather than claiming a negative control it
-does not have. What can be said is that a pre-fix DLL, which never set the per-param flag, would
-fail assertion (b) on every non-void function on the host.
+matters because **there is no binary without the fix to run** — this is a two-detector cross-check,
+not a controlled experiment, and the write-up must say so rather than claiming a negative control it
+does not have. What can be said is that a DLL that never sets the per-param flag would fail
+assertion (b) on every non-void function on the host.
 
 ASSERTIONS
   (a) SANITY GATE FIRST. Skip `num_parms==0 && parms_size==0 && ret_offset==0xFFFF` — that is also

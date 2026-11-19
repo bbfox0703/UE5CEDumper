@@ -10,10 +10,9 @@ script has its backslash escapes collapsed before Python sees them, and it then 
 the escape names: a `\\0` becomes a NUL, a `\\b` a backspace, a `\\v` a vertical tab, a `\\n` a line
 break in the middle of a string. The result still compiles and still reads normally in a diff.
 
-Measured: a NUL reached `Mimic.cpp` and `docs/todo.md` on 2026-08-23 (git then treated both as binary);
-and the first run of this gate, 2026-10-01, found a vertical tab that had sat in a path inside
-`ProxyOrphanScannerTests.cs` since 2026-07-30 — `Win64<VT>ersion.dll` for `Win64\\version.dll` — with
-every test passing, because no assertion read that field.
+Neither shape announces itself: a NUL makes git treat the whole file as binary, and a vertical tab in a
+path — `Win64<VT>ersion.dll` for `Win64\\version.dll` — passes every test whose assertions do not read
+that field.
 
 WHAT IT CHECKS. Every tracked file that is not a known binary kind, for any byte below 0x20 other than
 tab, LF and CR, and for DEL. It reads the working tree, so it sees an edit before it is committed.

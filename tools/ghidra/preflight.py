@@ -916,11 +916,11 @@ def main(argv: list[str]) -> int:
         elif needs_pdb is None:
             # MEASURED GAP, not a pass. The inventory probe sets needs_pdb by stat()ing
             # next to the located binary, so a row it could not locate keeps null — and
-            # null here used to fall through to "N/A" and vanish from the PDB section
-            # entirely. That is exactly backwards: UE4.27-DropIn is a SYMBOLISED oracle
-            # (sweep.sh lists it under "full PDB") that is not installed, so it is the
-            # row most in need of a PDB, and it was the one being silently dropped.
-            # "0 pdb gaps" must never mean "2 rows were never measured".
+            # null falling through to "N/A" would vanish from the PDB section entirely.
+            # That is exactly backwards: a SYMBOLISED oracle (sweep.sh lists it under
+            # "full PDB") that is not installed is the row most in need of a PDB, and it
+            # would be the one silently dropped.
+            # "0 pdb gaps" must never mean "some rows were never measured".
             pdb_state = "UNKNOWN_UNCHECKABLE"
 
         results.append({
@@ -934,10 +934,10 @@ def main(argv: list[str]) -> int:
 
     blocking = [x for x in results if x["ghidra"]["state"] in PROJECT_BLOCKING]
     ok_rows = [x for x in results if x["ghidra"]["state"] == "OK"]
-    # Detected since the first version, but it used to be reachable only via --json —
-    # i.e. invisible in the report a human actually reads, which for a pre-sweep check
-    # is the same as not detected. It is the one finding here that skews the SWEEP
-    # RESULT rather than the re-import story, so it goes directly under BLOCKING.
+    # Shown in the human report, not only via --json: invisible in the report a human
+    # actually reads is, for a pre-sweep check, the same as not detected. It is the
+    # finding here that skews the SWEEP RESULT rather than the re-import story, so it
+    # goes directly under BLOCKING.
     dup_rows = [x for x in results if x["ghidra"].get("duplicate_imports")]
 
     # ── ORPHAN .rep ──────────────────────────────────────────────────────────

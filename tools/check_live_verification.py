@@ -3,11 +3,11 @@
 tracked in docs/verification-register.md.
 
 WHY THIS EXISTS
-  The repo had SIX spellings of "shipped but not proven on a real game" scattered across
-  14 files, and the register (in todo.md until 2026-09-03, now its own file) was missing items roadmap.md had been
-  carrying a caveat for since build 796. Nothing machine-checks docs/*.md, so a register
-  is a live candidate to become the SEVENTH spelling rather than the first — a doc
-  convention that nobody enforces survives about one commit.
+  "Shipped but not proven on a real game" is easy to spell many ways across many files,
+  and a register can quietly miss items roadmap.md carries a caveat for. Nothing
+  machine-checks docs/*.md, so a register is a live candidate to become one more
+  spelling rather than the single one — a doc convention that nobody enforces survives
+  about one commit.
 
   This does not try to police prose. It enforces one narrow, mechanical invariant:
 

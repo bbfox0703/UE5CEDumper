@@ -3,11 +3,11 @@
   UE5CEDumper -- executable tests for scripts/ue5_invoke_helper.lua
 
   WHY THIS EXISTS
-    Audit #5 filed AA14-AA20 against this file, all on one path: the mailbox
-    round-trip that CE Lua uses to call a UFunction in the game. Every one of them
-    is a state the C# suite cannot reach -- it can only assert on this file's
-    SOURCE TEXT -- and several are about what gets STAMPED INTO A LIVE GAME'S
-    parameter buffer, which is the last place to be guessing.
+    The cases here sit on one path: the mailbox round-trip that CE Lua uses to
+    call a UFunction in the game. Each is a state the C# suite cannot reach -- it
+    can only assert on this file's SOURCE TEXT -- and several are about what gets
+    STAMPED INTO A LIVE GAME'S parameter buffer, which is the last place to be
+    guessing.
 
     This harness models the mailbox as plain Lua tables, stubs the CE globals the
     helper touches, and installs a fake "DLL" the test drives: it can answer
@@ -29,8 +29,8 @@
 
   DELIBERATELY NOT WIRED INTO build.ps1 OR CI
     Same reasoning as its two siblings -- a standalone `lua` is not a declared
-    dependency, and a test step that silently skips when its tool is missing is
-    the defect audit #5's AD1/AD2 fixed in the C++ test phase.
+    dependency, and a test step that silently skips when its tool is missing
+    reads as a pass that ran nothing.
 ]]
 
 local HELPER = (arg and arg[0] or ''):gsub('[^/\\]*$', '') .. '../ue5_invoke_helper.lua'
@@ -109,7 +109,7 @@ function readByte(a)   return BYTES[a] end
 function readString(a)
   -- CE reads bytes until a NUL. The helper clears the error field by writing ONE
   -- zero byte, so a stub that only consulted the string store would report a wiped
-  -- message as still present -- and the AA18 fix would look broken.
+  -- message as still present -- and the AA18 cases would fail a correct helper.
   if BYTES[a] == 0 then return '' end
   return STR[a]
 end
@@ -126,9 +126,9 @@ function writeByte(a, v)         BYTES[a] = v end
 
 -- CE does NOT raise on a nil address. lua_toaddress falls through to
 -- lua_tointeger for a non-string, and lua_tointeger(nil) is 0, so writeBytesEx
--- happily writes to address 0 (LuaHandler.pas). Modelling that as a raise -- the
--- first version of this rig did -- turns AA14's SILENT SUCCESS into a clean
--- failure and hides the defect the case exists to catch. Same for writeQword's
+-- happily writes to address 0 (LuaHandler.pas). Modelling that as a raise turns
+-- AA14's SILENT SUCCESS into a clean failure and hides the defect the case
+-- exists to catch. Same for writeQword's
 -- VALUE argument: an explicitly-passed nil occupies a stack slot, so the write
 -- proceeds with 0 rather than being skipped.
 function writeBytes(a, t)

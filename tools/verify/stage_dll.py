@@ -83,7 +83,7 @@ def main():
     if spec.get("reverse_commit"):
         paths = spec.get("paths") or ["dll/src"]
         # BYTES, never text: a text-mode pipe on Windows writes "\n" as "\r\n", and the LF hunks then fail to apply
-        # to every LF file -- measured 2026-09-22 (Radar.h / Fern.cpp refused while the CRLF files applied).
+        # to every LF file while the CRLF files still apply.
         rev_patch = subprocess.run(["git", "-C", REPO, "show", spec["reverse_commit"], "--", *paths],
                                    capture_output=True).stdout
         touched = git("show", "--name-only", "--format=", spec["reverse_commit"], "--", *paths).stdout.split()

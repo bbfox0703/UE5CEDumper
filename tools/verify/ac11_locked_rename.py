@@ -1,28 +1,26 @@
-"""AC11 half 2, at the OS level: what error does the STAGED publish raise when the
-target proxy DLL is mapped by a running game?
+"""AC11 half 2 (docs/audit-2026-08-13-early-code-findings.md), at the OS level: what error does
+the STAGED publish raise when the target proxy DLL is mapped by a running game?
 
 WHY THIS EXISTS, AND WHY IT IS NOT THE OBVIOUS TEST
-    `CopyProxyStaged` changed the publish from
+    `CopyProxyStaged` publishes by staging, not by a direct copy:
 
-        File.Copy(source, target, overwrite: true)          # opens TARGET for write
-    to
+        File.Copy(source, target, overwrite: true)          # direct: opens TARGET for write
+    versus
         File.Copy(source, target + ".ue5dump-stage", ...)   # opens a NEW file
         File.Move(stage, target, overwrite: true)           # RENAMES over the target
 
-    Those two hit a locked target through completely different kernel paths, and the
-    register row assumes they surface the same way -- "the rename now raises the sharing
-    violation the direct copy used to; the message must not change". That assumption is
-    the thing under test, because `DeployAsync` only reports
+    Those two hit a locked target through completely different kernel paths, so they do
+    NOT surface the same way, and the register row's requirement -- the user's message
+    must not change -- is the thing under test, because `DeployAsync` only reports
 
         "File locked (game running?)"
 
-    from `catch (IOException ex) when (ex.HResult == 0x80070020 /* SHARING_VIOLATION */
-                                    || ex.Message.Contains("being used"))`.
+    from `catch (Exception ex) when (IsTargetUnreplaceable(ex))`.
 
     A file carrying an IMAGE section (what a loaded DLL is) refuses deletion with
     STATUS_CANNOT_DELETE, which surfaces as ERROR_ACCESS_DENIED (5), not
     ERROR_SHARING_VIOLATION (32). .NET turns 5 into UnauthorizedAccessException -- not an
-    IOException at all -- so it would miss BOTH arms of that filter and fall through to
+    IOException at all -- so an IOException-only filter would miss it and fall through to
     the generic handler as "Access to the path ... is denied". Same failure, different
     words, and the words are what the row is about.
 
@@ -39,24 +37,15 @@ WHAT IT MEASURES
 
     Nothing here touches a game folder: the whole rig runs in out/ac11/.
 
-WHAT IT MEASURED, 2026-08-20 (build 3263)
+WHAT TO EXPECT, AND WHAT PASS / FAIL MEAN
     A  both shapes succeed, no residue                         -- the control holds
-    B  OLD direct File.Copy  -> ERROR_SHARING_VIOLATION (32)
-       NEW staged publish    -> ERROR_ACCESS_DENIED     (5)    <-- they DISAGREE
+    B  direct File.Copy  -> ERROR_SHARING_VIOLATION (32)
+       staged publish    -> ERROR_ACCESS_DENIED     (5)    <-- they DISAGREE, an OS fact
 
-    Confirmed one level up, by calling the real `ProxyDeployService.CopyProxyStaged`
-    from a throwaway xunit test with the target mapped in-process:
-
-       System.UnauthorizedAccessException, HResult 0x80070005
-       Message "Access to the path is denied."   (it does not even name the path)
-       DeployAsync's "File locked" filter catches it?  False
-       stage file left behind?  False        target intact?  yes
-
-    So the residue and rollback halves of the row are fine; the CLASSIFICATION is not.
-    `UndeployAsync` and the orphan sweep already carry an explicit
-    `catch (UnauthorizedAccessException)` arm -- `DeployAsync` is the only one of the
-    three without it, and the only one whose write became a rename. Tracked as
-    [STAGELOCK-2026-08-20]. This rig FAILS while the defect stands: it is a reproducer.
+    PASS: each shape's error is one `IsTargetUnreplaceable` maps to the locked arm, and no
+    .ue5dump-stage survives the failed publish. FAIL: an error the filter does not
+    recognise (the user would get a generic ErrorOther), a staged publish that SUCCEEDS
+    over a mapped image, or staging residue. [STAGELOCK-2026-08-20]
 
     py tools/verify/ac11_locked_rename.py
 """
@@ -195,18 +184,14 @@ def main():
 
     # ---------------- the verdict ---------------------------------------------
     #
-    # UPDATED 2026-08-23. This block used to model the PRE-FIX filter
-    #   catch (IOException ex) when (HResult == 0x80070020 || Message.Contains('being used'))
-    # and therefore FAILED whenever the two publish shapes produced DIFFERENT OS errors --
-    # which they always do, and always will: a direct copy opens the target (SHARING_VIOLATION)
-    # while a rename must first delete it (ACCESS_DENIED). That disagreement is an OS fact, not
-    # a defect, and the fix accepted it instead of trying to remove it: ProxyDeployService now
-    # catches `Exception ex when (IsTargetUnreplaceable(ex))`, which maps
+    # The two publish shapes ALWAYS produce DIFFERENT OS errors: a direct copy opens the target
+    # (SHARING_VIOLATION) while a rename must first delete it (ACCESS_DENIED). That disagreement
+    # is an OS fact, not a defect, and ProxyDeployService accepts it rather than removing it:
+    # it catches `Exception ex when (IsTargetUnreplaceable(ex))`, which maps
     # UnauthorizedAccessException AND the sharing-violation IOException to the same locked arm.
     #
-    # So the question is no longer 'do the two shapes agree' but 'is each shape's error one the
-    # filter recognises'. Left unchanged, this rig reported a permanent false FAIL against code
-    # that was already fixed.
+    # So the question is not 'do the two shapes agree' but 'is each shape's error one the
+    # filter recognises'. Asking the first gives a permanent false FAIL against correct code.
     say('')
     say('-- what DeployAsync reports NOW (IsTargetUnreplaceable, ProxyDeployService.cs:1007) --')
     CAUGHT = {ERROR_SHARING_VIOLATION: 'IOException (sharing violation)',

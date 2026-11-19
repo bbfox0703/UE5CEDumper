@@ -1,18 +1,18 @@
-r"""Audit A7 — the empty-base struct fix, on the only fixture that can produce the shape.
+r"""A7 — the empty-base struct fix, on the only fixture that can produce the shape.
 
     py tools/verify/a7_emptybase.py
 
 THE QUESTION. UE reports an **empty** native `USTRUCT`'s `PropertiesSize` as **1** (a zero-size
 struct is not addressable in C++). The SDK emitter splits own from inherited fields on
-`Offset >= superPropsSize`, so with `superPropsSize == 1` a derived struct's **offset-0** field fell
-BELOW the floor, was dropped, and the trailing-pad pass wrote padding in its place. `57251ef7`
-lowers the floor via a new wire field, `own_props_start`, and emits the empty base empty so EBO
+`Offset >= superPropsSize`, so with `superPropsSize == 1` a derived struct's **offset-0** field
+falls BELOW the floor, is dropped, and the trailing-pad pass writes padding in its place. The fix
+lowers the floor via a wire field, `own_props_start`, and emits the empty base empty so EBO
 applies.
 
-⛔ WHY THIS NEEDED A FIXTURE, against the row's own "rides along on any live session". Measured
-2026-09-05: **zero** structs with `PropertiesSize == 1` in EVERSPACE 2's 3,808 loaded classes, and
-none among DumperTest's reachable structs before this fixture existed. Two structural reasons, both
-worth knowing before someone repeats the hunt:
+⛔ WHY THIS NEEDS A FIXTURE, against the row's own "rides along on any live session": structs with
+`PropertiesSize == 1` are rare to absent in a real game's loaded classes, and DumperTest has none
+reachable without this fixture. Two structural reasons, both worth knowing before someone repeats
+the hunt:
 
   * `list_classes` returns **UClass** objects only — a `UScriptStruct` is not enumerable through it
     at all. Struct addresses have to be harvested from `walk_instance` **field rows**

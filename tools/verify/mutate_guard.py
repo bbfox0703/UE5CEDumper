@@ -3,9 +3,8 @@ r"""Shared harness for every register step that must MUTATE a live game to obser
     from mutate_guard import Mutation, assert_channel_carries
 
 A11 steps 2-5 and A12 steps 2-4 all have the same shape: read some bytes, write different bytes,
-issue one pipe command, assert what changed, and put the original bytes back. Six near-identical
-rigs written six times is how build 2743's three defects reached all seven copies of the mailbox
-wait at once, so the risky parts live here once.
+issue one pipe command, assert what changed, and put the original bytes back. Near-identical rigs
+written one by one carry a defect into every copy at once, so the risky parts live here once.
 
 WHAT THIS GUARANTEES, and why each guarantee exists:
 

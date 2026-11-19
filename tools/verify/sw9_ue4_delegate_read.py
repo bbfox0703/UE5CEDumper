@@ -3,11 +3,11 @@ r"""SW9 — a delegate's BINDINGS, read on UE4, off an actor the ENGINE spawned 
     py tools/verify/sw9_ue4_delegate_read.py --engine 427
     py tools/verify/sw9_ue4_delegate_read.py --engine 423
 
-THE ROW. `[D4B-DELEGATEPAD]` changed how every delegate reader derives its layout, and
-`d4b_pad_survey.py` has run on UE 4.23 and 4.27 — but that rig walks CLASS FIELD TABLES, which a
-UCLASS provides at module load without ever being spawned. So on UE4 the repo had measured
-ElementSize RECOGNITION and nothing else: `walk_instance`, `find_instances` and `invoke_function`
-appear in ZERO UE4 log. No UE4 run has ever READ A BINDING.
+THE ROW. `[D4B-DELEGATEPAD]` sets how every delegate reader derives its layout, and
+`d4b_pad_survey.py` checks it on UE 4.23 and 4.27 — but that rig walks CLASS FIELD TABLES, which a
+UCLASS provides at module load without ever being spawned. So on UE4 it measures ElementSize
+RECOGNITION and nothing else: no `walk_instance`, `find_instances` or `invoke_function`. This rig
+is the one that READS A BINDING on UE4.
 
 ⭐ WHY A SPAWNED ACTOR, AND NOT A POKED ONE. SW7 manufactures a delegate state by writing memory;
 that is the right tool there, because the STATE is what is under test. Here the READ is under
@@ -21,7 +21,7 @@ standalone package satisfies.
 
 ⛔ TRAP 1 — THE CDO SPAWNS NOTHING AND REPORTS SUCCESS. `invoke_function`'s `class_name` shortcut
 goes through `UE5_FindInstanceOfClass`, which falls back to the **Class Default Object** with only
-a LOG_WARN (`Frieren.cpp:1038-1044`). On the CDO `GetOuterAPlayerController()` is null, so Summon
+a LOG_WARN (Frieren.cpp). On the CDO `GetOuterAPlayerController()` is null, so Summon
 does nothing at all — while ProcessEvent still returns `result=0` and the response still says OK.
 This rig therefore resolves a non-`Default__` CheatManager itself and passes `instance_addr`.
 
@@ -122,7 +122,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default="427", choices=sorted(ENGINES))
     # UE4 creates the CheatManager in Shipping too (AddCheats gated only on AllowCheats; UE5's
-    # UE_WITH_CHEAT_MANAGER gate does not exist on 4.23). Measured on UE423_Flying Shipping, L46.
+    # UE_WITH_CHEAT_MANAGER gate does not exist on 4.23).
     ap.add_argument("--config", default="Development", choices=("Development", "Shipping"),
                     help="package config; the CheatManager route works on both on UE4")
     ap.add_argument("--wait", type=int, default=70, help="seconds to let the package load")

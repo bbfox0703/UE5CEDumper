@@ -2,10 +2,10 @@
 
     py tools/verify/v1a_container_realloc.py
 
-THE ROW, and why its wording needed re-deriving before it could be judged.
+THE ROW, and why its wording needs re-deriving before it can be judged.
 The row says the candidate must be "discarded (an SEH-safe read failure eliminates
-it)" and must not report a wrong hit address. That was written before audit #5's A11
-re-anchor landed. What the code does NOW is richer, and better:
+it)" and must not report a wrong hit address. That wording predates the container
+re-anchor. What the code does is richer, and better:
 
     Radar.h  RefineContainerAnchor(...)
       2. if (elementIndex < 0 || numAtScan < 0 || !dataAtScan || !nowData) KeepAddress

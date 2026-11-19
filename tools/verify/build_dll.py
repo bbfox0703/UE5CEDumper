@@ -208,10 +208,9 @@ EMPTY_TU_MAX_BYTES = 2048
 def deps_health(env, verbose=False):
     """Return (bad_objects, total_cxx_objects). Bad = a NON-EMPTY C++ object with #deps 0.
 
-    ⚠ `#deps 0` alone is NOT the broken state, which is what [PROXYDEPS-2026-08-19] filed and
-    what this function used to report. CLAUDE.md names two legitimate exceptions (`.rc.res`,
-    `.asm.obj`); there is a **third**, and it is the one that produced that whole finding: a
-    translation unit that preprocessed to nothing. Every `Lugner*.cpp` is wrapped head-to-toe
+    ⚠ `#deps 0` alone is NOT the broken state ([PROXYDEPS-2026-08-19]). `.rc.res` and `.asm.obj`
+    legitimately have none; there is a **third** exception, and it is the easy one to mistake for
+    breakage: a translation unit that preprocessed to nothing. Every `Lugner*.cpp` is wrapped head-to-toe
     in `#ifdef UE5_PROXY_<FLAVOUR>_BUILD` with its `#include`s INSIDE the guard, and all four
     are compiled into all four proxy targets. In the three targets that do not define a given
     flavour the file is empty, `/showIncludes` prints nothing, and ninja records zero deps —
@@ -340,11 +339,10 @@ def main(argv=None):
 
     bad, total = deps_health(env, verbose=True)
     if bad:
-        # Now a hard FAIL, not a warning. It used to warn because six proxy objects sat at
-        # #deps 0 and hard-failing would have blocked every build — but those six were
-        # measured to be EMPTY translation units, not broken deps, and deps_health no longer
-        # counts them. A permanent warning is worse than either verdict: it is the state in
-        # which a real breakage arrives and reads as the noise everyone already ignores.
+        # A hard FAIL, not a warning. The proxy objects at #deps 0 are EMPTY translation
+        # units, not broken deps, and deps_health does not count them, so what remains is
+        # real. A permanent warning is worse than either verdict: it is the state in which a
+        # real breakage arrives and reads as the noise everyone already ignores.
         print(f"build_dll: FAILED -- {len(bad)} C++ object(s) with real content record NO "
               f"header deps. A .h edit will not rebuild these, so a green build measures "
               f"nothing (CLAUDE.md: msvc_deps_prefix). Re-configure via build.ps1:")

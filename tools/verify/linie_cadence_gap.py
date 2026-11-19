@@ -15,29 +15,24 @@ fire count are computed by different paths and disagree — and the user reading
 cooldown timer believes the Period.
 
 ⭐ THE CONTROL IS FREE AND IT IS THE POINT. DumperTest's six recorded functions split into four that
-fire ONCE per frame and two (`CameraModifier::BlueprintModify*`) that fire TWICE. If a discrepancy
-showed up on all six, the cause would be the window measurement or the clock, and the theory below
-would be refuted. It shows up on exactly the two, which no clock error can produce.
+fire ONCE per frame and two (`CameraModifier::BlueprintModify*`) that fire TWICE. A discrepancy on
+all six would point at the window measurement or the clock, and refute the cause below. A
+discrepancy on exactly the two is one no clock error can produce.
 
-WHAT IT FOUND (2026-08-22, dist build 3309, DumperTest, 10.00 s window):
+WHAT A BUILD WITHOUT [CADENCEGAP-2026-08-22] SHOWS (DumperTest, t.MaxFPS 60, a 10 s window): the
+two doubled functions read ~2x (a reported period of one frame, ~16.6 ms, against an implied
+~8.3 ms), the four once-per-frame ones 1.00x.
 
-    t.MaxFPS 60                                 count   gaps   reported   implied   ratio
-    CameraModifier::BlueprintModifyCamera        1202    602      16.61      8.33   1.99x
-    CameraModifier::BlueprintModifyPostProcess   1202    602      16.61      8.33   1.99x
-    ABP_Manny_C::BlueprintUpdateAnimation         600    599      16.67     16.70   1.00x
-    AnimInstance::BlueprintThreadSafeUpdate...    600    599      16.67     16.70   1.00x
-    ABP_Manny_C::EvaluateGraphExposedInputs...    600    599      16.67     16.70   1.00x
-    AnimInstance::BlueprintPostEvaluateAnim...    600    599      16.67     16.70   1.00x
+`gap_samples` is the tell. It must be `count - 1`; for the two doubled functions on such a build it
+is `count / 2`.
 
-`gap_samples` is the tell. It must be `count - 1`; for the two doubled functions it is `count / 2`.
+THE CAUSE. `nowMs` is a `steady_clock` reading truncated to MILLISECONDS (Stark.cpp
+`NowMs`), so two fires inside the same millisecond compare EQUAL. A Welford guard of
+`nowMs > s.lastMs` drops that gap and leaves `s.lastMs` pointing at the first of the pair — so the
+next gap spans both fires and reads as a full frame. `Linie::RecordCall` guards on `>=`.
 
-THE CAUSE. `Linie::RecordCall` guards the Welford update on `nowMs > s.lastMs`, and `nowMs` is a
-`steady_clock` reading truncated to MILLISECONDS (`Stark.cpp:103-107`). Two fires inside the same
-millisecond therefore compare EQUAL, the gap is dropped, and `s.lastMs` is left pointing at the
-first of the pair — so the next gap spans both fires and reads as a full frame.
-
-⚠ THE GUARD IS DELIBERATE, AND THAT IS WHY THIS IS EASY TO MISREAD. It is the prescribed fix for
-audit #3 finding L5 (`docs/audit-2026-07-14-findings.md:343`), which is about REORDERED timestamps:
+⚠ THE GUARD IS DELIBERATE, AND THAT IS WHY THIS IS EASY TO MISREAD. It answers finding L5 of
+docs/audit-2026-07-14-findings.md, which is about REORDERED timestamps:
 `nowMs` is stamped before `RecordCall` takes the lock, so multi-thread PE can deliver two fires out
 of order, and an unsigned `nowMs - s.lastMs` would underflow to a ~1.8e19 gap that poisons the mean
 for the rest of the window. That hazard is real. But a reorder is `nowMs < s.lastMs`; `nowMs ==

@@ -113,10 +113,9 @@ def main():
           f"first launch at or above it)\n")
 
     if SELFTEST:
-        # ⚠ It must corrupt a record of a SPANNING game. The first version of this
-        # control picked the first game with any post-boundary record and hit
-        # Avowed — post-only, so it never enters the comparison and the verdict
-        # stayed SAME. A control that cannot fire proves nothing, and it looked
+        # ⚠ It must corrupt a record of a SPANNING game. A game with post-boundary
+        # records only never enters the comparison, so corrupting it leaves the
+        # verdict SAME. A control that cannot fire proves nothing, and it looks
         # exactly like a passing control.
         done = False
         for game in sorted(games):

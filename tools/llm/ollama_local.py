@@ -223,8 +223,8 @@ COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s=(),;:|<>`]+)" + EXE_TAIL + r"\b", re.I
 # DumperTest51, ...). A machine adds its own with `install --exempt PREFIX` (config `exempt_prefixes`).
 DEFAULT_EXEMPT_PREFIXES = ("dumpertest",)
 # UE-shaped helper processes that are never the game. EOSOverlayRenderer is the Epic Online Services
-# overlay: measured 2026-09-26 running under the Epic Games Launcher with NO game open, which made the
-# guard refuse the LLM for as long as the launcher was up. An EOS game still has its own shipping exe
+# overlay: it runs under the Epic Games Launcher with NO game open, and counted as a game it would make
+# the guard refuse the LLM for as long as the launcher is up. An EOS game still has its own shipping exe
 # alive beside it, so excluding the helper loses nothing.
 NON_GAME_STEMS = frozenset({"eosoverlayrenderer"})
 # DumperTest is never a Steam app, so any Steam launch is a commercial one. `[\\"']*` and not `["']?`:
@@ -577,8 +577,8 @@ def settings_text(data: dict) -> str:
 def newline_of(original) -> str:
     """The line ending to write a file back with: the one it already has (LF for a new file).
 
-    Path.write_text translates "\\n" to os.linesep on Windows, which rewrote an LF settings.json
-    as CRLF -- a one-hook edit that diffed as a whole-file rewrite (measured 2026-09-26)."""
+    Path.write_text translates "\\n" to os.linesep on Windows, which rewrites an LF settings.json
+    as CRLF -- a one-hook edit that diffs as a whole-file rewrite."""
     return "\r\n" if original and b"\r\n" in original else "\n"
 
 
@@ -599,10 +599,10 @@ def http_json(url: str, payload=None, timeout: float = PROBE_TIMEOUT):
 
 
 def _toolhelp_processes() -> list[tuple[int, str]]:
-    """(pid, image) from a Toolhelp32 snapshot -- milliseconds, where `tasklist` took ~1.6 s.
+    """(pid, image) from a Toolhelp32 snapshot -- milliseconds, where `tasklist` takes ~1.6 s.
 
-    The hook runs before EVERY Bash call while the model is loaded, so the spawn cost was paid on each
-    one (measured 2026-09-25). ctypes, not PowerShell: see the AMSI note in working-lessons §2.2."""
+    The hook runs before EVERY Bash call while the model is loaded, so a spawn cost would be paid on
+    each one. ctypes, not PowerShell: see the AMSI note in working-lessons §2.2."""
     import ctypes
     from ctypes import wintypes
 
@@ -639,9 +639,9 @@ def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sl
     """POST once more after an HTTP 500, never after anything else -- and never when `precheck` (the guard)
     now refuses: a game may have started during the delay, and the retry would load the model beside it.
 
-    Measured 2026-09-26: a model load returned 500 because llama-server died on "CUDA error: shared
-    object initialization failed" (0xc0000409) -- a laptop dGPU waking from idle -- and the next
-    request loaded normally. A 400 is the request's own fault (e.g. an over-window prompt) and a
+    A model load can return 500 because llama-server died on "CUDA error: shared object
+    initialization failed" (0xc0000409) -- a laptop dGPU waking from idle -- and the next request
+    then loads normally. A 400 is the request's own fault (e.g. an over-window prompt) and a
     second 500 is a real failure; both propagate."""
     post = post or http_json
     try:
@@ -1100,9 +1100,9 @@ class Probe:
     def unload(self, wait_s: float = UNLOAD_WAIT_S, deadline=None) -> str:
         """unloaded | pending | failed. keep_alive 0, then watch /api/ps (never trust size_vram).
 
-        ⚠ `pending` is NOT a failure. Measured 2026-09-26: Ollama DEFERS the unload until any request
-        in flight -- another session's -- has finished, then frees the model within ~0.5 s. The old
-        code reported that as "STILL LOADED"."""
+        ⚠ `pending` is NOT a failure, and never reported as "STILL LOADED": Ollama DEFERS the unload
+        until any request in flight -- another session's -- has finished, then frees the model within
+        ~0.5 s."""
         post_timeout = UNLOAD_TIMEOUT if deadline is None else max(0.5, min(UNLOAD_TIMEOUT, deadline - time.monotonic()))
         try:
             http_json(self.url + "/api/generate", {"model": self.name, "keep_alive": 0}, timeout=post_timeout)
@@ -1991,7 +1991,7 @@ def _selftest_cooperative(ok) -> None:
 
 
 def _selftest_review(ok) -> None:
-    """wf_b18865b3-513's findings (runtime + cooperative) and the VRAM estimate, each as a control. The world is
+    """The runtime and cooperative-mode behaviours and the VRAM estimate, each as a control. The world is
     faked in-process: a temp state dir and settings file, a fake Ollama, a fake process list."""
     import contextlib
     import tempfile

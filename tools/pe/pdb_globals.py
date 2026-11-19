@@ -230,7 +230,7 @@ def main():
     if gobj is None:
         # Pre-4.11 the array is a FUNCTION-LOCAL STATIC, so it has no public symbol at all and
         # "NOT FOUND" is correct rather than a decoder bug. Point at the recovery route instead of
-        # leaving a dead end — measured on UE 4.10.4, where the guarded init inside GetUObjectArray
+        # leaving a dead end: on UE 4.10.4 the guarded init inside GetUObjectArray
         # does `lea rbx,[rip+X]`, passes rbx as `this` to the ctor and returns rbx.
         gua = find(syms, "?GetUObjectArray@@YAAEAVFUObjectArray@@XZ")[1]
         if gua is not None:

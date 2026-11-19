@@ -1,4 +1,4 @@
-"""Live pipe checks for the DLL side of the 2026-11-02 census pass (build 3671 on).
+"""Live pipe checks for the DLL side of three census-pass changes (a DLL that carries the three tags below).
 
     py tools/verify/census_pass_pipe_checks.py                 # DumperTestActor, K2_GetActorLocation
 
@@ -7,8 +7,8 @@ Headless, through the pipe (the UI must NOT be connected). Three checks:
 1. [LEAD-CONSOLE-PIN-EXPECT-CLASS] An invoke by class name names the class it read at the address it used
    (instance_class_addr), equal to that object's class_addr; sending it back as expect_class_addr with the address
    runs the call, as the Console's pinned run does. Pick a function that only reads: it is called twice.
-2. [CEXPORT-ENUMNAMES-NOTE] A walk carries enum_addr on every field that has a UEnum. With enum names read (every
-   fixture so far), each such field still carries its entries, so nothing an export shows changes; the reply carries
+2. [CEXPORT-ENUMNAMES-NOTE] A walk carries enum_addr on every field that has a UEnum. With enum names read (the
+   usual case on a fixture), each such field still carries its entries, so nothing an export shows changes; the reply carries
    no enum_names_failed. The latched case needs a build where UEnum::Names is not found, which no fixture is.
 3. [LEAD-DT-EXPORT-64ROWS] Each live DataTable's row count against the rows one page returns, so a table larger than
    the page shows what the export warning now says.

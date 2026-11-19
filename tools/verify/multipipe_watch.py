@@ -3,10 +3,9 @@
     py tools/verify/multipipe_watch.py            # DumperTest must be running + injected
 
 THE ROW (todo.md, "Multi-pipe Phase 1 — residual verification: only the WATCH item is left"):
-items 1-5 shipped and were verified in-game 2026-06-28; the lane-drop edge closed on Elliot
-2026-07-23. **(6) watch-event delivery to the interactive lane** — "still pushes correctly while
-the bulk lane is busy" — was left "verify opportunistically", which since 2026-06-28 has meant
-not at all.
+**(6) watch-event delivery to the interactive lane** — "still pushes correctly while the bulk
+lane is busy". Left to "verify opportunistically", it is never verified, so this rig checks it
+on demand.
 
 ⭐ WHY THIS IS DONE WITH TWO PIPE CLIENTS AND NO UI. The UI's two lanes are just two
 connections (`LaneRoutingPipeClient` opens an interactive "I" and a bulk "B"), and the DLL side is
@@ -34,10 +33,9 @@ THE CONTROLS, because a push count on its own proves very little:
 ⚠⚠ THE ABSOLUTE PUSH COUNTS ARE HARVEST-LIMITED, AND ONLY THE RATIO IS MEANINGFUL. Events are
 collected as a side effect of polling, so this rig samples at its own poll rate, not the watch's.
 At the 0.2 s poll below that reads ~2.5 events/sec even though the watch is pushing 4/sec. That
-gap looked like a defect ("asked for interval_ms=250, got ~1000 ms apart") until it was measured
-properly: polling every 0.05 s instead returns **48 events in 12.0 s = 4.00/sec**, with
-DLL-stamped inter-arrival gaps of **median 254 ms** (min 252, max 301) against the 250 requested.
-The cadence is correct; the earlier number was the measuring instrument. ⭐ Because the poll
+gap reads like a defect ("asked for interval_ms=250, got ~1000 ms apart") but is the measuring
+instrument: polling every 0.05 s instead returns about **4 events/sec**, with DLL-stamped
+inter-arrival gaps close to the 250 ms requested. ⭐ Because the poll
 cadence is IDENTICAL in the idle and busy windows, the busy/idle ratio is unaffected by this —
 which is exactly why the verdict is a ratio and not a rate.
 """
@@ -62,11 +60,11 @@ WATCH_MS = 250
 def drain(c, seconds):
     """Collect watch events for `seconds` by POLLING with a cheap request.
 
-    ⛔ DO NOT "SIMPLIFY" THIS BACK TO A RAW `c._f.read()` LOOP. The first version did exactly
-    that and HUNG the whole rig before the busy window ever started -- a blocking read on a
-    handle that is also the request/response channel, with no deadline the OS respects. It
-    produced a 0-byte output file and looked indistinguishable from "no events are being
-    delivered", which is the very defect this rig exists to detect. A rig that cannot tell its
+    ⛔ DO NOT "SIMPLIFY" THIS TO A RAW `c._f.read()` LOOP. That HANGS the whole rig before the
+    busy window ever starts -- a blocking read on a handle that is also the request/response
+    channel, with no deadline the OS respects. It produces a 0-byte output file and looks
+    indistinguishable from "no events are being delivered", which is the very defect this rig
+    exists to detect. A rig that cannot tell its
     own hang from its subject's failure is worse than no rig.
 
     `PipeClient.request()` harvests any interleaved event into `c.events` as a side effect and

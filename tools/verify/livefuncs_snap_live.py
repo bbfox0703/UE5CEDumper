@@ -46,17 +46,17 @@ rate and 1.5x above SnapProbe_Call's, leaving SnapProbe_Call 1.5x its rate in th
 bounds (a fixture at about 30 fps calls SnapProbe_PerFrame about 30 times a second); the choice and why are printed
 and kept in the output. The wire is the
 design's section 3 (docs/live-funcs-step3-design.md). Each check is named after the ledger's:
-  S0  the Start echoes the choices: names.stacks (absent on a DLL without step 3, the review's M3), trace.stack's
+  S0  the Start echoes the choices: names.stacks (absent on a DLL without step 3), trace.stack's
       rings, depth and budgets, K with the stack terms; the Stop's names[] carry `stack`; an altered stack key alone
       refuses the Start; a stacks-only Start (no ticks, funcs []) is snap_only with no parameter ring, refuses its
       altered second key by name, and records lone SnapProbe_Call calls flagged 4|32 and nothing else
   S1  every entry flagged 32 has exactly one slot in its function's ring by entry_seq and every slot one such entry;
       no orphans; no slot Partial / Fault / BadSp / LowStack / NoCapturer; 3 frames or more
-  S2  frame 0 is in the game's exe: by name ignoring case (the review's L11), inside the image psapi reads, and through
+  S2  frame 0 is in the game's exe: by name ignoring case, inside the image psapi reads, and through
       the CE text `"module"+RVA` added back on psapi's base; every site's module_base + rva and fn add up
   S3  in-scope stacks hold known:"process_event" and after it an `own` frame (the outer hook); lone ones neither;
-      every known frame names one function, and no stack holds two. The known halves fail since S3-M3 follows a
-      chained fragment to ProcessEvent's start (the review's M4). The stack total is one total, admitted in call
+      every known frame names one function, and no stack holds two. The known halves are checks, as S3-M3 follows a
+      chained fragment to ProcessEvent's start. The stack total is one total, admitted in call
       order each second, so a --stack-total that leaves the other choices no room beside what SnapProbe_PerFrame may
       keep can refuse in-scope stacks on a correct DLL. The plain rates predict it (printed, and S5's window is not
       run on it); the two in-scope checks are reported not run only where the main recording shows it -- no in-scope
@@ -79,7 +79,7 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
-      separate invocation (cut 4, which the review's H1 took)
+      separate invocation (cut 4)
 --stacks --pdb [DIR] (the ledger's S3-R2) then names the stacks' function starts against the game's PDB, once the main
 trace is released: dbghelp in a private session reads the exe whose path the game's process gives, at the base psapi
 reads, and the PDB that matches it in DIR, else beside the exe (the fixture ships it there). Never the game's memory.
@@ -820,7 +820,7 @@ def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=ti
     names_l = [CANON.get(p["name"].lower(), p["name"]) for p in lay.get("params", [])]
     kinds = {n: p.get("kind") for n, p in zip(names_l, lay.get("params", []))}
     out["call_kinds"] = kinds
-    # What UHT emits, measured 2026-10-07: a const TArray& carries CPF_OutParm | CPF_ConstParm (const_ref); a const
+    # What UHT emits: a const TArray& carries CPF_OutParm | CPF_ConstParm (const_ref); a const
     # FString& carries neither and is a plain input.
     check("F5 kinds as UHT emits them: Values const_ref, Label in, OutTwice out, InOut in_out, ReturnValue return",
           kinds.get("Values") == "const_ref" and kinds.get("Label") == "in" and kinds.get("OutTwice") == "out" and
@@ -982,7 +982,7 @@ def budget_echo(v: int) -> int:
 
 
 def stack_echo_state(trace: dict, asked: int) -> str:
-    """What a Start reply says about its stack choices (the review's M3): "old" when names.stacks is absent (a DLL
+    """What a Start reply says about its stack choices: "old" when names.stacks is absent (a DLL
     without step 3 ignores the stacks object), "refused" when it names fewer than were asked, "ok". trace.stack alone
     cannot tell the first two apart: the DLL sends it only when a stack ring exists."""
     names = trace.get("names")
@@ -1034,8 +1034,8 @@ def resolve_stack_page(d: dict) -> tuple[list[dict], list[tuple]]:
 
 def page_stack_ring(fetch, ring: int) -> dict:
     """Every slot of one stack ring, read page by page through `fetch(from)`, which returns one reply's data. The read
-    ends when a page does not move `next` past where it began, or reaches the ring's end -- never on an empty page
-    (the review's M1): orphans and out-of-turn slots are skipped without being listed, so a page can be empty in the
+    ends when a page does not move `next` past where it began, or reaches the ring's end -- never on an empty page:
+    orphans and out-of-turn slots are skipped without being listed, so a page can be empty in the
     middle of a ring that has more. The ring's window comes from the first reply's `rings`."""
     out: dict = {"slots": [], "bad_refs": [], "orphans": 0, "ring": {}, "problems": [], "pages": 0}
     frm, end = 0, None
@@ -1120,7 +1120,7 @@ def ce_text(site: dict) -> str:
 
 def ce_text_addr(text: str, bases: dict[str, int]) -> int | None:
     """Where CE puts `"module"+RVA`, given each module's base. Module names compare without case, as Windows compares
-    them (the review's L11)."""
+    them."""
     m = re.fullmatch(r'"([^"]+)"\+([0-9A-Fa-f]+)', text)
     if not m:
         return None
@@ -1631,8 +1631,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
               f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}{unexplained}")
     check("S3 no lone stack holds an own frame", lone != [] and all(o is None for _, o in ns_lone),
           f"{sum(1 for _, o in ns_lone if o is not None)} of {len(lone)} do")
-    # The known halves are checks since S3-M3: DescribeCode follows a chained fragment to its primary function, so a
-    # ProcessEvent call site in a hot/cold or shrink-wrapped fragment is still labelled (the review's M4).
+    # The known halves are checks (S3-M3): DescribeCode follows a chained fragment to its primary function, so a
+    # ProcessEvent call site in a hot/cold or shrink-wrapped fragment is still labelled.
     with_known = sum(1 for n in ns_in if known_before_own(n))
     if starved:
         check.not_run(S3_KNOWN_IN, starved)
@@ -3598,7 +3598,7 @@ def self_test() -> int:
            common_offset([[0x148], []], [0x160, 0x160]) is None and
            common_offset([[0x148], []], [0x160, 0x14C]) == 0x148 and common_offset([[0x148], []], [0x160, 0x150]) is None
            and common_offset([[], []], [0xE0, 0xC8]) is None)
-    # [SNAPRIG-NAMES] The round-3 review's LOW: Aura's EnsureUFunctionFuncOffset tries Func at +0x80..+0x158 only, so
+    # [SNAPRIG-NAMES] Aura's EnsureUFunctionFuncOffset tries Func at +0x80..+0x158 only, so
     # a copy of fn outside that window is a decoy by construction, and NAMES_READ is the window's end.
     expect("A1: only offsets inside the DLL's window (0x80..0x158) are candidates: a copy below or past it never is, "
            "so with one entry read the decoy below the window loses to Func; NAMES_READ ends the window",
@@ -3619,7 +3619,7 @@ def self_test() -> int:
            lambda: (lambda r: (r[1]["names"]["asked"], r[1]["names"]["unchecked"]) == (2, 0) and
                     not any("left unchecked" in g for n, _, g in r[0].items if n.startswith("A1")))(names_run()))
     # N is the entries judged -- held, or a slot that holds something else -- and the number asked is said beside it,
-    # so a line with entries gone since they were named does not read as that many failures (the second review's N).
+    # so a line with entries gone since they were named does not read as that many failures.
     expect("dry run --names: Func at the one offset both entries share, never at a decoy, 'in 2 of 2 read (2 asked)'",
            lambda: names_run()[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
            any(f"Func at +0x{ScriptedDll.FUNC_AT:X} in 2 of 2 read (2 asked)" in g
@@ -3636,9 +3636,9 @@ def self_test() -> int:
 
     def read_sizes(asked: list, addr: str) -> list[int]:
         return [p["size"] for cmd, p in asked if cmd == "read_mem" and p["addr"] == addr]
-    # [SNAPRIG-NAMES] MED-1: read_mem is one copy, all or nothing, and a UFunction (0xC8 to 0xE0 bytes) is smaller than
+    # [SNAPRIG-NAMES] read_mem is one copy, all or nothing, and a UFunction (0xC8 to 0xE0 bytes) is smaller than
     # the window. An object that ends a block whose next page cannot be read fails a read of the whole window.
-    # The second review's LOW: the DLL named every frame by reading its UFunction's slot, so once the offset is known an
+    # The DLL names every frame by reading its UFunction's slot, so once the offset is known an
     # entry read short of it (the retries jump from 0x160 to 0x100, past a slot in between) has that slot read alone.
     interp_slot = f"{ScriptedDll.INTERP + ScriptedDll.FUNC_AT:X}"
     expect("dry run --names: a UFunction that ends right after Func, before a page that cannot be read: the window "
@@ -3664,7 +3664,7 @@ def self_test() -> int:
 
     def object_asks(asked: list) -> list[str]:
         return [p["addr"] for cmd, p in asked if cmd == "get_object"]
-    # [SNAPRIG-NAMES] The round-3 review's LOW: the DLL read each UFunction's slot when it built its index, and named
+    # [SNAPRIG-NAMES] The DLL read each UFunction's slot when it built its index, and named
     # the frame from it, so a slot that cannot be read now is an object freed since -- unless get_object, asked
     # again, still names the same function there. Then the slot never held fn: the entry is absent, not gone.
     caught(("names_fn_nowhere_edge",), NAMES_AT, game=True, argv=names_argv)
@@ -3705,7 +3705,7 @@ def self_test() -> int:
                     [n for n, why in r[0].skipped if "could be read" in why] == [NAMES_AT])(
                names_run("names_unreadable")))
     exercised.update(("names_read_edge", "names_read_failed", "names_unreadable"))
-    # [SNAPRIG-NAMES] The second review's MED-B: a real UE5 game's layout, Func at 0xD8 in a UFunction of about 0xE0
+    # [SNAPRIG-NAMES] A real UE5 game's layout, Func at 0xD8 in a UFunction of about 0xE0
     # bytes, where a read retried at 0xE0 after the window failed still reaches the slot. Such an entry holds fn: it
     # is never read short, nor left out of the offset, and asks for nothing past its own reads.
     exercised.update(("names_func_low", "names_read_edge_all"))
@@ -3723,7 +3723,7 @@ def self_test() -> int:
            lambda: (lambda r: low_layout(r) and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] ==
                     read_sizes(r[2], "1000"))(names_run("names_func_low", "names_read_edge_all")))
     # The defensive branch: no offset common to the reads, and the one entry read short of its slot with no copy of
-    # fn in what it read, says nothing either way (the second review's U4).
+    # fn in what it read, says nothing either way.
     exercised.add("names_short_only")
     expect("dry run --names: with no offset common to the reads and the only readable entry read short of its slot, "
            "holding no copy of fn, the offset check is not run ('no read reached'), and nothing fails",
@@ -3731,21 +3731,21 @@ def self_test() -> int:
                     [n for n, why in r[0].skipped if "no read reached" in why] == [NAMES_AT])(
                names_run("names_short_only")))
     # A named frame without fn has nothing to look for, and the DLL names a frame by its fn: it is wrong, never
-    # skipped (the second review's U2 / U3); with no named frame carrying fn, the check fails, it is not stood down
-    # as if nothing could be read (U8).
+    # skipped; with no named frame carrying fn, the check fails, it is not stood down
+    # as if nothing could be read.
     caught(("names_no_fn",), NAMES_AT, game=True, argv=names_argv)
     caught(("names_no_fn_all",), NAMES_AT, game=True, argv=names_argv)
     caught(("names_object_error",), NAMES_IS, game=True, argv=names_argv)
     expect("dry run --names: a get_object that answers an error lists the entry as wrong, the DLL's error the reason",
            lambda: any(n == NAMES_IS and not ok and "get_object failed" in g and "names_object_error" in g
                        for n, ok, g in names_run("names_object_error")[0].items))
-    # The review's LOW-3: a name read that gives nothing gives "" on the frame and "" from get_object, which agree.
+    # A name read that gives nothing gives "" on the frame and "" from get_object, which agree.
     caught(("names_empty",), NAMES_IS, game=True, argv=names_argv)
     expect("dry run --names: an entry named \"\" (class and func) is wrong whatever get_object answers, 'named empty' "
            "the reason",
            lambda: any(n == NAMES_IS and not ok and "named empty" in g
                        for n, ok, g in names_run("names_empty")[0].items))
-    # Either half read empty is enough (the second review's E1 / E2): '' == '' must not pass for the other half.
+    # Either half read empty is enough: '' == '' must not pass for the other half.
     caught(("names_empty_class",), NAMES_IS, game=True, argv=names_argv)
     caught(("names_empty_func",), NAMES_IS, game=True, argv=names_argv)
     expect("dry run --names: an entry with only its class, or only its func, named \"\" is wrong, 'named empty' the "
@@ -3860,7 +3860,7 @@ def self_test() -> int:
            lambda: pick(30, 8, given=20) == (20, True) and pick(30, 8, given=21) == (21, False) and
            pick(30, 8, given=30) == (30, False) and pick(178, 8, given=100) == (100, True) and per_frame_budget(
                {"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 20, FIXTURE_STACK_TOTAL)["given"] is True)
-    # The review's LOW-2: the total is one total for every stack choice, admitted in call order each second, so a total
+    # The total is one total for every stack choice, admitted in call order each second, so a total
     # that leaves the others no room beside SnapProbe_PerFrame's share may starve SnapProbe_Call on a correct DLL.
     expect("S5 rate: a total under SnapProbe_PerFrame's share plus 1.5x the others' rates starves them: said in why, "
            "the share and the room summed (40 of 45 a second may take, beside 12: 52), and S5 not run "
@@ -3875,7 +3875,7 @@ def self_test() -> int:
            lambda: pick(60, 8, total=35) == (16, True) and pick(60, 2, total=40) == (30, True) and
            pick(60, 8, total=20) == (30, False) and
            per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, None, 35)["starves"] is False)
-    # The starve rule's two terms, pinned (the second review's T2 / T3): SnapProbe_PerFrame keeps no more of the total
+    # The starve rule's two terms, pinned: SnapProbe_PerFrame keeps no more of the total
     # than its budget, and no more than 1.5x its rate -- a second's calls run over the average as a frame rate
     # wobbles, and Linie's StackAdmit takes every call of a second up to the budget [SNAPRIG-ROUND5] -- so only a
     # budget above that leaves the rest of the total free; and the room is every other choice's rate, summed, not the
@@ -3888,7 +3888,7 @@ def self_test() -> int:
            lambda: per_frame_budget({"A": 8, "B": 8, "SnapProbe_PerFrame": 60}, 30, 50)["starves"] is True)
     expect("S5 rate: when no budget fits, the total may still starve the others (5 a second against 60 and 2)",
            lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, None, 5)["starves"] is True)
-    # The main-rate rule holds at exactly 1.5x, as bites() does (the second review's P1).
+    # The main-rate rule holds at exactly 1.5x, as bites() does.
     expect("S5 rate: the main recording at exactly 1.5x the budget lets the check run; just under it does not",
            lambda: main_rate_problem(45.0, 30, 60.0) is None and main_rate_problem(44.9, 30, 60.0) is not None)
     # S3's stand-down from the main recording: measured refusals, every one, and a total that explains them.
@@ -3905,7 +3905,7 @@ def self_test() -> int:
            and starved_in_scope([], 0, plain_rates, 60.0, 30, 5) is None and
            starved_in_scope(refused_in, 0, plain_rates, 60.0, 30, 200) is None and
            starved_in_scope(refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), None, 100, 10) is None)
-    # Refusals judged apart from the stacks kept (the round-3 review's LOW): counted only beyond both budgets.
+    # Refusals judged apart from the stacks kept: counted only beyond both budgets.
     slow_pf = dict(plain_rates, SnapProbe_PerFrame=4.0)
     expect("S3 unexplained: in-scope refusals with the per-function budget 1.5x above SnapProbe_Call's 2 a second "
            "(3 or more) and a total that starves nothing are counted; none refused counts none",
@@ -3917,7 +3917,7 @@ def self_test() -> int:
     expect("S3 unexplained: a per-function budget under 1.5x SnapProbe_Call's rate explains them (2 against 2 a "
            "second)",
            lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 2, 200) == 0)
-    # [SNAPRIG-ROUND5] The round-4 review's (2): StackAdmit lets SnapProbe_PerFrame take every call of a second the
+    # [SNAPRIG-ROUND5] StackAdmit lets SnapProbe_PerFrame take every call of a second the
     # ring allows, and a second's calls run over the average, so its share of the total is weighed at 1.5x its rate
     # (up to its budget), as the others' room is. At its average alone, per 100 and a total of 40 beside a probe at 30
     # a second left 7 free for SnapProbe_Call's 3, and a refusal a correct DLL can make failed S3.
@@ -3977,7 +3977,7 @@ def self_test() -> int:
                     int_or(r[1]["stack_rings"][1].get("dropped_budget"), 0) > 0 and
                     len(s5_skipped(r[0])) == 1 and "30.0/s" in s5_skipped(r[0])[0] and
                     s5_params(r[0]) == ([True], []))(s5_run(30, ("--stack-per-ring", "25"))))
-    # [SNAPRIG-S5-RATE] The second review's MED-A: a nonzero parameter counter is a defect whether or not the window
+    # [SNAPRIG-S5-RATE] A nonzero parameter counter is a defect whether or not the window
     # runs, and the stack budget refuses calls on paths where the window cannot: those refusals are what a DLL counts
     # in the wrong place.
     expect("dry run: the same with a DLL that counts the ring's refusals as parameter skips: the counter check fails, "
@@ -4007,7 +4007,7 @@ def self_test() -> int:
            lambda: (lambda r: fail_set(r[0], f"S5 {MAIN_TABLE}") and s5_params(r[0]) == ([True], []))(
                s5_run(30, ("--stack-per-ring", "25"), faults=("main_rows_lost",))))
     # The plain recording chooses the budget; the main recording is the one S5 reads, and its own rate decides whether
-    # the budget bit there (the review's LOW-1).
+    # the budget bit there.
     expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's window not "
            "run, both rates in the reason, the counters not run as nothing was refused, nothing failed",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_vacuous(r[0]) and
@@ -4016,7 +4016,7 @@ def self_test() -> int:
     expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and len(s5_ran(r[0])) == 1 and
                     S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
-    # The second review's LOW: a reply that cannot give the main rate -- an error, no window, no row for the probe --
+    # A reply that cannot give the main rate -- an error, no window, no row for the probe --
     # is not a slow probe. Its own check fails, and S5's window runs from the trace ring, as it did before the main
     # rate was read, rather than standing down at "0.0/s".
     s5_main, main_faults = f"S5 {MAIN_TABLE}", ("main_get_error", "main_window0", "main_rows_lost")
@@ -4026,7 +4026,7 @@ def self_test() -> int:
            "and holds, never stood down",
            lambda: all((lambda r: fail_set(r[0], s5_main) and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [])(
                s5_run(faults=(fault,))) for fault in main_faults))
-    # The round-3 review's LOW: a main table can give a rate that is plausible and wrong -- a count too low, a window
+    # A main table can give a rate that is plausible and wrong -- a count too low, a window
     # too long -- under 1.5x the 30 sent though the probe ran at 60 a second. The probe's own ring counts every lone
     # call it wrote or dropped, so its rate is never above the truth, and it shows the budget bit.
     under_faults = ("main_pf_under", "main_window_long")
@@ -4068,7 +4068,7 @@ def self_test() -> int:
         return [p for p in s3_in_scope if any(n.startswith(p) and all(w in why for w in words)
                                               for n, why in ch.skipped)] == list(s3_in_scope) and \
             not any(n.startswith(s3_in_scope) for n in ran(ch))
-    # The second review's LOW: the total is one total, admitted in call order each second, so what SnapProbe_PerFrame
+    # The total is one total, admitted in call order each second, so what SnapProbe_PerFrame
     # has spent of it grows through the second, and SnapProbe_Call called early in a second still keeps its stack.
     # Whether the total starves the in-scope stacks is the main recording's to say, not the plain rates' prediction.
     expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: the total, predicted to "
@@ -4082,7 +4082,7 @@ def self_test() -> int:
                     all(any(n.startswith(p) and ok and g.startswith("2 of 2") for n, ok, g in r[0].items)
                         for p in s3_in_scope))(
                s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
-    # Without a given budget (the second review's T4 / T5): none fits, the fallback is sent, and SnapProbe_PerFrame
+    # Without a given budget: none fits, the fallback is sent, and SnapProbe_PerFrame
     # spends the total before every round, so every in-scope stack is refused and the checks stand down on that.
     expect("dry run: --stack-total 5 with no --stack-per-ring and the probe at 60 a second: no budget fits, the total "
            "is predicted to starve the others and does, every in-scope SnapProbe_Call entry flagged 64; S3's two "
@@ -4122,9 +4122,9 @@ def self_test() -> int:
                for faults in ((), ("main_pf_under",))))
     # Refusals no total explains are the DLL's: the checks run, and fail on the stacks it did not keep.
     caught(("call_refused",), *s3_in_scope)
-    # The round-3 review's LOW: where some in-scope stacks were kept, the checks ran over those alone, and a stack
-    # refused with both budgets' room left -- the per-function budget 1.5x above SnapProbe_Call's rate, a total that
-    # starves nothing -- passed unjudged.
+    # Where some in-scope stacks are kept, checks run over those alone would let a stack refused with both budgets'
+    # room left -- the per-function budget 1.5x above SnapProbe_Call's rate, a total that starves nothing -- pass
+    # unjudged.
     caught(("call_refused_some",), *s3_in_scope)
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],

@@ -50,9 +50,9 @@ THE MODES, and what each one is for
              A/B below would be vacuous.
   promote    the inverse of `degrade`, driven by a second mapping: a bare ByteProperty inner
              is promoted to `[26][0][E]` when the truth mapping names that same
-             `Struct.Prop` as an enum inner. Use it to ask whether a PRE-fix mapping actually
-             misread a title's content. Only enum names already in the target's name table are
-             used, so the table is never rewritten.
+             `Struct.Prop` as an enum inner. Use it to ask whether a mapping written without
+             the fix actually misread a title's content. Only enum names already in the
+             target's name table are used, so the table is never rewritten.
 
 Input compression 0 or 3 (ZStandard) is accepted; output is always written uncompressed.
 """

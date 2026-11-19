@@ -7,19 +7,15 @@ STDLIB ONLY, ON PURPOSE. Building the index needs numpy and the 200 GB corpus; q
 neither, so this CAN run on a bare second machine and in CI. That portability is the entire point —
 see docs/aob-block-library-eval.md §6.
 
-✅ WIRED INTO CI AS A BLOCKING GATE (`6f594fa`, 2026-08-01). `.github/workflows/ci.yml` runs
+✅ WIRED INTO CI AS A BLOCKING GATE. `.github/workflows/ci.yml` runs
 `--tsv out/sweep/patterns.tsv --baseline tools/pe/aob-specificity-baseline.tsv --check` and throws on
 a non-zero exit. **So `--update-baseline` is not a routine step.** The golden file exists to force a
 human to notice when a pattern's upper bound RISES — i.e. when a pattern got noisier — and
 regenerating it to make CI green discards exactly the signal the gate was built to deliver. Read the
 diff first; if the rise is intended, say why in the commit.
 
-(This paragraph used to say the opposite — "NOT ACTUALLY WIRED INTO CI, AND NOTHING ELSE READS IT
-EITHER" — written three days before the gate landed and never updated. A maintainer reading it would
-have concluded the baseline was scratch. Audit #4 R7.)
-
-Still true, and the reason the claim was plausible: there are no callers in `dll/`, `ui/`, `scripts/`
-or `build.ps1`. The invocation paths are CI and a human typing the command above. Step 5 of the
+There are no callers in `dll/`, `ui/`, `scripts/` or `build.ps1`, which does NOT make the baseline
+scratch: the invocation paths are CI and a human typing the command above. Step 5 of the
 eval's build order ("gate authoring on it: a candidate clears the pre-filter before it earns a
 sweep") is still unbuilt — the gate guards REGRESSIONS in shipped patterns, it does not yet gate new
 ones.
@@ -29,31 +25,24 @@ windows, so the frequency of the RAREST window is an UPPER BOUND on the pattern'
 code the index was built from*. Deliberately loose — wildcards constrain far more than literal runs
 do — so read it as "at most this many", never as an estimate.
 
-⚠ THE BOUND IS A PROOF ONLY ON THE INDEX'S OWN SOURCES, AND A PRIOR EVERYWHERE ELSE. Measured
-2026-10-01, for the index built that day (126 binaries, 9,641 MB of code, every build config):
+⚠ THE BOUND IS A PROOF ONLY ON THE INDEX'S OWN SOURCES, AND A PRIOR EVERYWHERE ELSE.
 
-    on its own sources      0 violations / 14,490 pairs, CLEAR 0 / 4,032      (proof)
-        `py tools/pe/verify_ngram_bound.py`; a pair is (scoreable pattern x source binary), 115 x 126.
+    on its own sources      0 violations expected                              (proof)
+        `py tools/pe/verify_ngram_bound.py`; a pair is (scoreable pattern x source binary).
 
     on programs it has NOT seen — `tools/pe/ngram_corpus_eval.py`, each developer's titles judged by
-    an index built without them; a pair is (pattern, developer group), 153 patterns x 30 groups:
+    an index built without them; a pair is (pattern, developer group). A small fraction of pairs
+    exceeds the bound, CLEAR ones included; the rates per source set are in
+    docs/aob-block-library-eval.md §8.
 
-        index built from                                    exceeded        of which CLEAR
-        11 self-built Shipping templates (until 2026-10-01)  20 / 3,105  0.64%   4 / 1,296  0.31%
-        every self-built build config                        21 / 3,450  0.61%   1 / 1,320  0.08%
-        + the other programs, one group held out              8 / 3,450  0.23%   1 /   968  0.10%
-
-The failures were never a version problem — a 4.27-only index bounds a 5.4 binary with 0 violations
-in 113. They are a CODE-COVERAGE problem: an index built from content-free engine templates has
-seen engine code and no game code, while a shipped title adds 100+ MB of studio code. That is why
-the index is now built from every UE program the build machine has, and why the rate fell: the old
-index certified GNAM_UD2 at <= 15 where one game takes 932 hits, and GOBJ_AV2 at <= 15 where another
-takes 510; both are bounded now. The rate does not reach zero, and it was still falling when the
-corpus ran out: a program whose code resembles nothing indexed is bounded badly until it is a source.
+The failures are not a version problem — a 4.27-only index bounds a 5.4 binary. They are a
+CODE-COVERAGE problem: an index built from content-free engine templates has seen engine code and no
+game code, while a shipped title adds 100+ MB of studio code. That is why the index is built from
+every UE program the build machine has. The rate does not reach zero: a program whose code resembles
+nothing indexed is bounded badly until it is a source.
 
 ⚠ The patterns were authored on, and swept against, most of those same programs, and only the
-survivors are scored — so every out-of-sample figure above flatters a genuinely new game. On the
-five groups no sweep ever covered the same comparison reads 5 -> 3 of 575.
+survivors are scored — so every out-of-sample figure flatters a genuinely new game.
 
 WHAT IT CANNOT TELL YOU: whether the pattern hits the RIGHT address. `GNAM_XX_1` bounds at a clean
 57 and is DECOY-ONLY. This is a PRE-FILTER, not an acceptance gate — `Himmel.h` rule 5 keeps meaning
@@ -245,16 +234,16 @@ def main():
         return 2
     idx = Index(idxpath)
     if "source_files" in idx.meta:
-        # An index built since 2026-10-01 does not list its sources (build_ngram_index.py says
-        # why): it records how many, how much code, and where the builder looked.
+        # An index that records `source_files` does not list its sources (build_ngram_index.py
+        # says why): it records how many, how much code, and where the builder looked.
         print(f"index: {os.path.basename(idxpath)}  threshold {idx.threshold}  n={idx.ns}  "
               f"{idx.meta['source_files']} source binaries, "
               f"{idx.meta.get('source_exec_mb', 0):,.0f} MB of code")
     src = idx.meta.get("sources", [])
-    # An index from before 2026-10-01 lists its sources, and listed one twice: the builder globbed
-    # `**/*.exe` and the same build sat in two folders. DISTINCT, not len(src), is the number of
-    # binaries. The data is unaffected: merge_max() takes the MAX bucket per key, so a repeat is a
-    # no-op. (The builder deduplicates by content now.)
+    # An older index lists its sources, and can list one twice: a `**/*.exe` glob finds the same
+    # build in two folders. DISTINCT, not len(src), is the number of binaries. The data is
+    # unaffected: merge_max() takes the MAX bucket per key, so a repeat is a no-op. (The builder
+    # deduplicates by content.)
     distinct = {(s.get("binary"), s.get("engine"), s.get("config"), s.get("exec_mb")) for s in src}
     dupes = len(src) - len(distinct)
     if "source_files" not in idx.meta:

@@ -1,4 +1,4 @@
-"""Live check of the Teleport tab's holder chips (build 3716+): hold features as other programs while the UE5DumpUI
+"""Live check of the Teleport tab's holder chips: hold features as other programs while the UE5DumpUI
 window is connected, so its cards can be looked at, then let go.
 
 [MCP-WRITE-GRANTS-2026-11-14] §4.10. The window labels a gameplay card from get_holds every 2 s. This rig plays the
@@ -20,7 +20,7 @@ What it does, printing get_holds after each step (exit 0 when every step answere
   5. the foreground client resets its jump and leaves.
 A step the window took over in the meantime (its OFF or Reset) is reported, not failed: that is the chip's promise.
 
-Needs a game running a DLL of build 3704 or later (get_holds); DumperTest Shipping is the fixture.
+Needs a game running a DLL that answers get_holds ([PIPE-PER-PROCESS-2026-11-06]); DumperTest Shipping is the fixture.
 
     py tools/verify/holder_chips_live.py --experimental [--pid N] [--seconds 60]
 

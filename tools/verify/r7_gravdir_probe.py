@@ -3,14 +3,14 @@
     py tools/verify/r7_gravdir_probe.py --out out/r7live/x7/ue53
     py tools/verify/r7_gravdir_probe.py --out out/r7live/x7/ue54 --jump
 
-For the Review 7 skeptic's X4-adjacent note: the Gravity Direction card (Laufen) gates on the reflected
-`GravityDirection` property and its text says "UE5.4+", but stock UE 5.3 reflects that property too (R7-X4). Whether
-a 5.3 CMC ever reads it decides whether the card works there or reports a success that changes nothing.
+The Gravity Direction card (Laufen) gates on the reflected `GravityDirection` property and its text says "UE5.4+",
+but stock UE 5.3 reflects that property too. Whether a 5.3 CMC ever reads it decides whether the card works there or
+reports a success that changes nothing.
 
 It reads `get_movement_params` (the gravity_direction block) and the pawn's location (`teleport_get_pose`), sets the
 direction with `set_gravity_direction`, samples the location every --gap seconds for --seconds, resets it with
 `reset_gravity_direction`, and samples again. ⚠ An IDLE grounded pawn does not move either way --
-measured on stock 5.3 AND on DumperTest 5.4 (the CMC does not re-test an unmoving floor) -- so --jump makes it move:
+on stock 5.3 AND on DumperTest 5.4 (the CMC does not re-test an unmoving floor) -- so --jump makes it move:
 under a honoured (0,0,1) the jump never comes down (Z keeps rising); an ignored one lands back where it started. Writes only the one field, and resets it. Needs the DLL injected.
 """
 import argparse

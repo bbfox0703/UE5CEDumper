@@ -4,11 +4,10 @@ discarded `ReadSafe`.
     py tools/verify/claims_readsafe_outparam.py            # rank the population
     py tools/verify/claims_readsafe_outparam.py --list     # every hit, with its line
 
-WHY THIS EXISTS. The blind-spot sweep filed 209 claims across three rounds and skepticised 43;
-the other ~166 were never adjudicated and were never written down as a list, so they cannot be
-walked one by one. What CAN be walked is the POPULATION they were drawn from, and `todo.md`'s own
-plan already splits it: of the qualified-call statements whose return is discarded, ~165 are
-`Macht::ReadSafe`.
+WHY THIS EXISTS. The blind-spot sweep's unadjudicated claims are not written down as a list, so
+they cannot be walked one by one. What CAN be walked is the POPULATION they were drawn from, and
+`todo.md`'s own plan already splits it: of the qualified-call statements whose return is
+discarded, ~165 are `Macht::ReadSafe`.
 
 ⛔ AND FOR THOSE, "the bool was discarded" IS NOT THE QUESTION. The discard is the documented
 idiom — the identical `ReadPtrAt` body appears verbatim in `Edel.cpp`, `Solide.cpp`, `Solitar.cpp`
@@ -24,7 +23,7 @@ affirmative downstream:
     element is published as "(unbound)" — an affirmative claim that nothing was ever bound;
   * `GetMapPairLayout`: the struct addr stays 0, the alignment is guessed, and every pair after
     the first is strided to a wrong address;
-  * `WalkInstance`'s two inlined map copies: the same, and silently, until 2026-09-09;
+  * `WalkInstance`'s two inlined map copies: the same, and silently;
   * `Fern`'s `delegate_pad`: set but never emitted, so a CE record pointed at address 0.
 
 ⚠ THIS IS A RANKER, NOT A VERDICT. It reports where the question is worth asking, ordered by how

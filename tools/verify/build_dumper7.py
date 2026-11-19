@@ -38,9 +38,9 @@ import shutil
 import subprocess
 import sys
 
-# ⚠ MSVC speaks the console codepage, and this box is cp950: one undecodable byte in a
-# compiler diagnostic crashed the whole script with UnicodeEncodeError AFTER a successful
-# build, which reads exactly like a build failure. Measured 2026-09-17.
+# ⚠ MSVC speaks the console codepage, which may be cp950: one undecodable byte in a
+# compiler diagnostic would crash the whole script with UnicodeEncodeError AFTER a successful
+# build, which reads exactly like a build failure.
 try:
     sys.stdout.reconfigure(errors="replace")
     sys.stderr.reconfigure(errors="replace")

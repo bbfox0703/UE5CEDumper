@@ -220,16 +220,16 @@ def clean():
 
 
 def b19():
-    r"""B19: an UNDELETABLE file must cost that file, not the rest of the sweep.
+    r"""An UNDELETABLE file must cost that file, not the rest of the sweep.
 
-    The defect (build 2603): PruneAgedLogs shared ONE std::error_code between the
-    directory iteration and the per-file fs::remove, so a failed remove set `ec`, the
-    loop's `if (ec) break` ended the sweep -- and because NTFS enumeration order is
-    stable, it ended it at the same file on every launch.
+    The defect it guards against: PruneAgedLogs sharing ONE std::error_code between the
+    directory iteration and the per-file fs::remove, so a failed remove sets `ec`, the
+    loop's `if (ec) break` ends the sweep -- and because NTFS enumeration order is
+    stable, it ends it at the same file on every launch.
 
     ⚠ ORDER IS THE WHOLE TEST. The held file must be enumerated BEFORE the deletable
-    one, or the old code would have deleted the deletable one first and the run would
-    pass on a broken build. Hence the aaa-/zzz- names, and hence this is a separate verb:
+    one, or a broken build would delete the deletable one first and the run would
+    pass. Hence the aaa-/zzz- names, and hence this is a separate verb:
     it has to hold a handle open ACROSS the sweep, which `plant` + `check` as two
     processes cannot do.
 
@@ -542,9 +542,8 @@ def logsvc():
         if not ok:
             fails.append("%s: wanted %s (%s)" % (path.name, "gone" if must_die else "present", why))
 
-    # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did -- and the
-    # line is recent: it used to dereference a null logger and was never once written,
-    # so the folders were deleted silently (LoggingService.cs).
+    # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did
+    # (LoggingService.cs) -- a sweep that writes no line deletes the folders silently.
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
     hits = []
     for lg in ui.glob("init-*.log"):

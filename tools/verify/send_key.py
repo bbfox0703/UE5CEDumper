@@ -5,14 +5,14 @@ r"""Send one virtual key to the FOREGROUND window through SendInput, from Python
     py tools/verify/send_key.py --post UE5DumpUI --seq end back*20 text=777 enter
                                                # a sequence: keys, key*N, and text=... (typed as WM_CHAR)
 
-WHY. L6 step 2 (edit, Escape, reopen, Enter) was recorded NOT RUN on 2026-09-12 because the
-computer-use `key` action's Escape never reached the Live Walker cell editor. The editor stayed open,
-still holding the typed text, with the caret verifiably inside it. This sends the same key as a
-plain SendInput keyboard event from this process instead, so the row does not need a human at the
-keyboard. It prints the foreground window's title before and after, so a key that went to the wrong
-window shows up in the output rather than as a silent no-op.
+WHY. The computer-use `key` action's Escape can fail to reach the Live Walker cell editor: the
+editor stays open, still holding the typed text, with the caret inside it. This sends the same key
+as a plain SendInput keyboard event from this process instead, so a register row that needs one
+(edit, Escape, reopen, Enter) does not need a human at the keyboard. It prints the foreground
+window's title before and after, so a key that went to the wrong window shows up in the output
+rather than as a silent no-op.
 
-EDITING A LIVE WALKER CELL (measured 2026-09-27): a computer-use double-click opens the editor but
+EDITING A LIVE WALKER CELL: a computer-use double-click opens the editor but
 leaves keyboard focus on the DataGrid, so every key -- this tool's included -- goes to the grid
 (text is ignored, Enter moves to the next row). Click INSIDE the opened box first, then send. Prefer
 --post: a SendInput key hands the foreground to the NVIDIA overlay, after which computer-use refuses

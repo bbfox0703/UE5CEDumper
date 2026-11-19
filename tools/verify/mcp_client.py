@@ -65,10 +65,11 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         the clean-up undoes what the run changed and destroys the spawned holders.
     py tools/verify/mcp_client.py olddll --exe dist/UE5DumpUI.exe [--pid N]
         Register item 24, the old DLL: DumperTest Shipping freshly injected with out/stageA/copy3695/UE5Dumper.dll
-        (build 3695: the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
-        3705; 3706 for write_memory, write_invoke, write_debug_camera; 3717 for write_invoke_granted_function; 3718 for
-        write_field) before anything is sent, and the 3695 pipe log
-        shows none of their commands since the start. Keep the UI closed: 3695 serves three connections.
+        (the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
+        MCP_MIN_WRITES; MCP_MIN_RAW_WRITES for write_memory, write_invoke, write_debug_camera; MCP_MIN_INVOKE_GRANTS
+        for write_invoke_granted_function; MCP_MIN_FIELD_WRITES for write_field) before anything is sent, and that
+        DLL's pipe log shows none of their commands since the start. Keep the UI closed: that DLL serves three
+        connections.
     py tools/verify/mcp_client.py invokeparams --exe dist/UE5DumpUI.exe [--pid N]
         Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
         (K) K2_SetActorLocation moves the pawn 100 uu along its facing through a Vector struct and back, and returns
@@ -516,7 +517,7 @@ def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
     ck.check(not r.get("isError"), "read_status", st)
 
     # Another client, standing in for a UE5DumpUI window: a value-scan session of its own, begun before the server's
-    # work and read back after it (the maintainer, 2026-11-11: an AI beside the UI must not disturb what the UI does).
+    # work and read back after it: an AI beside the UI must not disturb what the UI does.
     other = other_sid = other_total = None
     if st.get("scanned"):
         sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -2107,8 +2108,8 @@ def run_holds_more(exe: str, pid: int | None) -> int:
         back = misses({a: ai_value(a) for a in held_set + decoys}, baseline)
         ck.check(not back, "FF: every instance is back at its OWN baseline value", back)
 
-        # A job the stand-in holds: the AI's reset is refused, naming it, and the job stays. Since build 3714 the
-        # server refuses it from get_holds before sending ([MCP-WRITE-GRANTS-2026-11-14]): the DLL never sees it.
+        # A job the stand-in holds: the AI's reset is refused, naming it, and the job stays. The server refuses it
+        # from get_holds before sending ([MCP-WRITE-GRANTS-2026-11-14]): the DLL never sees it.
         since = _now()
         u = ui.request("force_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG, kind="bool", on=True)
         ck.check(bool(u.get("ok")) and u.get("held", 0) > 0, f"FF: the stand-in's own job on {FIXTURE_FLAG} (held > 0)",

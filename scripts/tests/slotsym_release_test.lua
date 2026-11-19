@@ -14,10 +14,10 @@
 
   THE THREE CASES
     1  enable -> disable            the symbol must be GONE after one disable,
-                                    with no manual unregisterSymbol. This is the
-                                    defect: the old code skipped both arms when
-                                    there was no buffer, left the symbol alive,
-                                    and printed "unregistered" anyway.
+                                    with no manual unregisterSymbol. The defect
+                                    this catches: both arms skipped when there
+                                    is no buffer, the symbol left alive, and
+                                    "unregistered" printed anyway.
     2  enable, enable -> disable    a second still-ticked record must KEEP the
                                     symbol (refcount), and say so.
        ...then disable again        now the last holder releases it.

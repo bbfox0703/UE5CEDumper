@@ -126,10 +126,10 @@ def close_and_time(pid, hwnd, deadline=DEADLINE):
 def run(poke=False, hold=True):
     """hold=False is the BASELINE: an identical close with NO hold armed.
 
-    ⚠ It exists because "sub-second exit" turned out to be an assumption about UE, not
-    about our DLL. The first run measured 1.970s with a hold active, which reads as a
-    failure against the register's wording -- but a UE game tears down rendering, audio
-    and the engine on a normal close, and none of that is ours. The only number that can
+    ⚠ It exists because "sub-second exit" is an assumption about UE, not about our DLL.
+    A close with a hold active can take about two seconds, which reads as a failure
+    against the register's wording -- but a UE game tears down rendering, audio and the
+    engine on a normal close, and none of that is ours. The only number that can
     accuse the DLL is the DIFFERENCE between hold and no-hold on the same host, so both
     are measured and the delta is what gets reported.
     """

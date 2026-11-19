@@ -5,13 +5,8 @@
     py proxy_refresh.py report --dist <dir>     # compare against another checkout's dist/proxy
     py proxy_refresh.py --selftest              # discovery, guards and refresh on temp trees only
 
-WHY THIS EXISTS. The maintainer's standing warning is that a game may already have an
-OLD build of ours mapped. Measured 2026-08-19: **every** deployed proxy on this machine
-was stale — six titles, all pre-3263:
-
-    EVERSPACE 2 / EVERSPACE / Lushfoil / Manor Lords : version.dll  2,860,544
-    OCTOPATH TRAVELER                                : winmm.dll    2,867,712
-    Elliot                                           : dxgi.dll     2,855,936
+WHY THIS EXISTS. A game may already have an OLD build of ours mapped: a deployed proxy
+does not follow a rebuild, so it goes stale without a sign.
 
 A proxy auto-loads at game start and OWNS THE PIPE, so a later `inject.py` of the
 current DLL is a no-op (it finds its own process already serving the pipe and starts
@@ -110,14 +105,14 @@ def deployed(libs=None, owner=product_name):
 
     The folder is found the way the loader finds the proxy: Windows looks for a DLL in the directory of the exe
     that loads it first, so a deployment is a folder holding one of our four DLLs, whatever the exe beside it is
-    called. This used to find a game only through a `*-Win64-Shipping.exe`, so the proxies beside `Extinction.exe`,
-    `Nekopara.exe` or `DRAGON QUEST XI S.exe` were neither reported nor refreshed -- Extinction ran build 3645 after
-    this tool said every stale proxy was refreshed. [PROXYREFRESH-NONSHIPPING-EXE]
+    called. A search through `*-Win64-Shipping.exe` alone would miss the proxies beside `Extinction.exe`,
+    `Nekopara.exe` or `DRAGON QUEST XI S.exe`, which would then be neither reported nor refreshed.
+    [PROXYREFRESH-NONSHIPPING-EXE]
 
-    "Ours" is the ownership predicate, so a folder holding only third-party wrappers is no deployment. Measured
-    2026-10-13 on the maintainer's two libraries: 25 files under our four names, 11 of them someone else's (ReShade,
-    DXVK, mod loaders) and none beside a Shipping exe, so a search by name alone would have listed all eleven. A
-    foreign file BESIDE one of ours is still yielded, so report and refresh can name it and leave it alone."""
+    "Ours" is the ownership predicate, so a folder holding only third-party wrappers is no deployment: a file under
+    one of our four names is often someone else's (ReShade, DXVK, mod loaders), and a search by name alone would list
+    every one of them. A foreign file BESIDE one of ours is still yielded, so report and refresh can name it and leave
+    it alone."""
     out = []
     for lib in (LIBS if libs is None else [pathlib.Path(x) for x in libs]):
         if not lib.is_dir():
@@ -171,10 +166,10 @@ def report(libs=None, dist=None, owner=product_name):
     for d, exes, q in rows:
         # Ownership BEFORE freshness, and for the same reason `refresh()` gates on it
         # ([PROXYREFRESHOWNER-2026-08-24]): `deployed()` yields every file under one of our four
-        # names in a folder of ours, and a third-party wrapper can legitimately own one of them. This line used to be missing here,
-        # so OCTOPATH's real ReShade `dxgi.dll` was reported as "*** STALE ***" -- a word that
-        # means "run refresh on it", i.e. the report ADVISED the destruction the refresh gate
-        # exists to prevent. A foreign DLL is not out of date; it is not ours to date.
+        # names in a folder of ours, and a third-party wrapper can legitimately own one of them.
+        # Without this line a real ReShade `dxgi.dll` would be reported as "*** STALE ***" -- a word
+        # that means "run refresh on it", i.e. the report would ADVISE the destruction the refresh
+        # gate exists to prevent. A foreign DLL is not out of date; it is not ours to date.
         if not is_ours(q, owner):
             foreign += 1
             say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
@@ -234,13 +229,11 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
         # ⛔ OWNERSHIP GATE — [PROXYREFRESHOWNER-2026-08-24]. Everything above this line
         # decides by FILENAME for this file (its folder qualified through a SIBLING of ours), and a
         # game folder can legitimately hold a third-party DLL under one of our four names: ReShade ships `dxgi.dll`, and so do SpecialK and
-        # Ultimate ASI Loader. Without this check the "refresh" DESTROYS it — measured on
-        # 2026-08-24, when this rig overwrote OCTOPATH TRAVELER's real ReShade `dxgi.dll`
-        # (5,255,448 B, ProductName "ReShade") with our 2,893,824 B proxy. It was
-        # recoverable only because of the backup two lines below, which is luck, not design.
+        # Ultimate ASI Loader. Without this check the "refresh" DESTROYS it, and the backup
+        # below would make that recoverable only by luck, not design.
         #
         # This is the same predicate `Methode.cpp`'s `IsOurModule` uses and the same helper
-        # `inject.py` now imports, so the three cannot drift.
+        # `inject.py` imports, so the three cannot drift.
         if not is_ours(q, owner):
             say(f"  ⛔ SKIPPED {d.name}: {q.name} is NOT ours "
                 f"(ProductName={owner(str(q))!r}) — a third-party wrapper, left untouched")

@@ -32,8 +32,8 @@ nothing this fixture does can reach the maintainer's own ReShade install.
 (`Methode.cpp:291` / `:388`), the **CE plugin Type-5 menu callback**, and `Methode.cpp` is compiled
 into `UE5Dumper.dll` itself. So reading it requires **registering our DLL as a Cheat Engine plugin** —
 a persistent change to CE's configuration, and one that re-creates the very
-`UE5Dumper.dll`-under-CE's-folder condition `[STALEDLL-2026-08-18]`(a) was closed by *deleting*, which
-had blocked the `.CT DLL discovery` row until 2026-08-22. That is a maintainer decision, not a
+`UE5Dumper.dll`-under-CE's-folder condition `[STALEDLL-2026-08-18]`(a) was closed by *deleting*, a
+condition that blocks the `.CT DLL discovery` row. That is a maintainer decision, not a
 side effect of a verification run. This rig stops at the fixture and says so.
 """
 from __future__ import annotations

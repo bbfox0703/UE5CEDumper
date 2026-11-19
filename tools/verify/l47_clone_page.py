@@ -12,9 +12,9 @@ text -- never "no longer readable". So the freed object is built: `make` copies 
 DumperTestPayload that the live DumperTestActor's `Payload` points at, `props_size` bytes) into a fresh page the
 game never references, and `free` DECOMMITS that page. dll_core_test's "reserved, uncommitted page" shape, live.
 
-⚠ DECOMMIT, NEVER RELEASE, until the check is done (measured 2026-09-23). A MEM_RELEASE hands the 64 KB region
-back, and a running game re-committed it within ~25 s: the next Refresh then walked a recycled ZERO page (header
-all zeros, ClassPrivate 0), which reads as a silent blank 'None' walk -- not the freed-object branch under test.
+⚠ DECOMMIT, NEVER RELEASE, until the check is done. A MEM_RELEASE hands the 64 KB region back, and a running
+game can re-commit it within seconds: the next Refresh then walks a recycled ZERO page (header all zeros,
+ClassPrivate 0), which reads as a silent blank 'None' walk -- not the freed-object branch under test.
 MEM_DECOMMIT keeps the address RESERVED, so nothing else can be placed there, and the header reads MEM_RESERVE.
 `release` frees the reservation afterwards.
 

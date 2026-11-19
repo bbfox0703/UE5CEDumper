@@ -1,4 +1,4 @@
-"""A/B the Genau RIP-decode fix on one host: pre-fix DLL vs post-fix DLL.
+"""A/B the Genau RIP-decode fix on one host: a DLL without the fix vs a DLL with it.
 
     py genau_rip_ab.py run            # both sides, then the comparison
     py genau_rip_ab.py compare        # re-print the comparison from saved logs
@@ -29,8 +29,8 @@ the "addresses unchanged" half is trivially satisfied (nothing resolves), so thi
 rig measures the COUNT half. The address half needs the separate DumperTest run.
 
 BOTH SIDES ARE BUILT IN THE SAME SESSION FROM THE SAME TREE by the same toolset,
-differing ONLY in the two-line predicate -- not "current dist vs a checkout of
-build 2544", which would differ in ~700 builds of unrelated ways.
+differing ONLY in the two-line predicate -- not "current dist vs an old checkout",
+which would differ in many unrelated ways.
 
 The per-PE-hash hint entry is deleted before EACH side: a cached result changes how
 many patterns are even attempted, which is precisely the quantity being compared.

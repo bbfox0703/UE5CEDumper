@@ -4,20 +4,19 @@ r"""`[SLICEB-FLY-2026-09-09]` — the probe that shows the FR_ERR_WRITE arm is N
 
 ⛔ THIS IS A NULL RESULT, AND IT IS SHIPPED BECAUSE A NEGATIVE CLAIM NEEDS EVIDENCE TOO.
 `sliceb_fly_arm.py` says the failure path "is not reachable from outside the process". That
-is a strong claim to make about one's own unverified code, so it was MEASURED rather than
-asserted. `Macht::WriteBytes` returns false only when `VirtualProtect` is refused, i.e. the
-target page is MEM_FREE or MEM_RESERVE. There are exactly two ways to arrange that, and both
-were tried:
+is a strong claim to make about one's own unverified code, so this probe MEASURES it rather
+than asserting it. `Macht::WriteBytes` returns false only when `VirtualProtect` is refused, i.e.
+the target page is MEM_FREE or MEM_RESERVE. There are exactly two ways to arrange that:
 
-  (a) DECOMMIT the page holding `cmc + modeOff`. ⛔ MEASURED DEAD, not guessed:
-      `cmc = 0x2A3948CF010` and `modeOff = 513`, so `cmc + 0x10` and `cmc + modeOff` are on the
-      SAME page. `ResolveCtx` reads `cmc + 0x10` (via `Ubel::GetClass`), so any page trick makes
-      it return `FR_ERR_REFLECT` FIRST — a different arm, and a false green if mistaken for one.
+  (a) DECOMMIT the page holding `cmc + modeOff`. ⛔ DEAD, not guessed: `modeOff` is 513, so
+      `cmc + 0x10` and `cmc + modeOff` normally share a page. `ResolveCtx` reads `cmc + 0x10`
+      (via `Ubel::GetClass`), so any page trick makes it return `FR_ERR_REFLECT` FIRST — a
+      different arm, and a false green if mistaken for one.
 
   (b) POINT `modeOff` ITSELF at unmapped memory, by patching `FPROPERTY_OFFSET` on the
       MovementMode FField. `ResolveCtx` never reads the instance at `modeOff` — it resolves it
       by reflection — so it would still return `FR_OK` and the WRITE would be the first thing
-      to fail. THIS PROBE. Measured 2026-09-09:
+      to fail. THIS PROBE. What a run shows:
 
           patched to 4194304 (read-back 4194304)
           walk_instance sees offset=513 value='MOVE_Walking'      <- the CACHED layout
@@ -26,16 +25,15 @@ were tried:
 
 ⭐⭐ THE NULL RESULT IS THE POINT: it reproduces `[CLASSCACHE-FRONTED-2026-09-09]` from a
 SECOND, unrelated experiment. `FindField` -> `WalkClass` is memoised in a 2048-entry LRU that
-nothing invalidates, and `CharacterMovementComponent` was already in it, so a patched FField is
-invisible to both `Dunste` and the walker. That note predicted this would block "that whole
-family of layout experiments" and named only the two scalar delegate-refusal arms; it now also
-blocks the Fly write arm and a live `ByteProperty` refusal arm. The `--force` / debug-only
-`invalidate_class_cache` it proposes would unblock all four at once.
+nothing invalidates, and `CharacterMovementComponent` is already in it, so a patched FField is
+invisible to both `Dunste` and the walker. That cache blocks the whole family of layout
+experiments, among them the two scalar delegate-refusal arms, the Fly write arm and a live
+`ByteProperty` refusal arm. A `--force` / debug-only `invalidate_class_cache` would unblock all four at once.
 
 ⚠ `FPROPERTY_OFFSET` IS 0x44 HERE, NOT `Grimoire.h`'s 0x4C. The header value is a
-compile-time DEFAULT; Genau derives the real one per title (`get_offsets` -> 68). The first run
-read 675 at `FField+0x4C` and the sanity guard below REFUSED to write — which is the only reason
-a wild 4-byte write did not go into a live game object. Keep that guard.
+compile-time DEFAULT; Genau derives the real one per title (`get_offsets` -> 68). Reading at
+`FField+0x4C` yields a value that is no offset, and the sanity guard below REFUSES to write —
+the only thing between that and a wild 4-byte write into a live game object. Keep that guard.
 
 ⚠ ADDRESSES ARE PER-RUN. `FFIELD` is a heap address from one DumperTest session; re-derive it
 with `search_properties` (`field_addr` for MovementMode on CharacterMovementComponent) before

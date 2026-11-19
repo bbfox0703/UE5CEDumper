@@ -38,8 +38,8 @@ def existing_ancestor(p: pathlib.Path) -> pathlib.Path:
 
 
 def make(bin_dir: str, exe: str, shape: str):
-    # (ninth review, R9-05) Resolve first, as path_shape_folders.host does: an unresolved relative path has no drive
-    # letter, so the old letter comparison refused every relative path with a false "not one volume". And compare the
+    # Resolve first, as path_shape_folders.host does: an unresolved relative path has no drive letter, so a letter
+    # comparison would refuse every relative path with a false "not one volume". And compare the
     # VOLUME (st_dev is the volume serial on Windows), not the letter -- a mounted folder shares a letter, not a volume.
     src = (pathlib.Path(bin_dir) / exe).resolve()
     if not src.is_file():

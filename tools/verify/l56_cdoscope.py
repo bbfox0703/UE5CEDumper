@@ -6,12 +6,12 @@ r"""L56 `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]`: Property Sear
   ANCESTOR  search_properties "EyeHeight" (game_only off) returns Pawn.BaseEyeHeight AND
             Character.CrouchedEyeHeight. The Pawn row's preview must end " (subclass instance)", never
             "(CDO default)". ⚠ The query must match a field on a NEARER class too: with Pawn the only
-            preview class, the pre-fix walk credited Pawn anyway, so `BaseEyeHeight` alone cannot fail.
+            preview class, a walk without the fix credits Pawn anyway, so `BaseEyeHeight` alone cannot fail.
             Then Force the Pawn field to the value it already holds: `held` is the instance count the
             row's "Freeze reports the same instances" compares against. Released and verified empty.
   NESTED    search_properties "Num" (game_only, deep): direct DumperTestActor InvokeGate_*Num rows carry a
-            `preview`; the nested `Arr_StrRows[].Num` row (is_nested) carries NONE. Pre-fix it previewed
-            the int at instance+0x10 -- the low dword of UObject::ClassPrivate, a large garbage number.
+            `preview`; the nested `Arr_StrRows[].Num` row (is_nested) carries NONE. Without the fix it
+            previews the int at instance+0x10 -- the low dword of UObject::ClassPrivate, a large garbage number.
 
 Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 """
@@ -70,11 +70,11 @@ def main():
                 if left:
                     fails.append("cleanup: fields still held")
 
-        # ⭐ THE ANCESTOR DISCRIMINATOR ON THIS FIXTURE (found 2026-09-22 with the pre-fix DLL). `EyeHeight` cannot
-        # fail here: a live SpectatorPawn derives from Pawn but not Character, so even the pre-fix walk credited Pawn.
+        # ⭐ THE ANCESTOR DISCRIMINATOR ON THIS FIXTURE. `EyeHeight` cannot fail here: a live SpectatorPawn derives
+        # from Pawn but not Character, so even a walk without the fix credits Pawn.
         # `Jump` matches Character (bPressedJump, JumpKeyHoldTime, ...) AND the template's nearer
         # DumperTestCharacter.JumpAction, and the only live Character is the BP subclass of DumperTestCharacter --
-        # so pre-fix every Character row read "(CDO default)" (measured), and post-fix none may.
+        # so without the fix every Character row reads "(CDO default)", and with it none may.
         print("\n== ANCESTOR, discriminating: search_properties 'Jump' (game_only off) ==")
         rs = rows_of(c.request("search_properties", query="Jump", game_only=False, limit=300))
         chars = [x for x in rs if x.get("class_name") == "Character"]

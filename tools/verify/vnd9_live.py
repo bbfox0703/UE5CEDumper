@@ -6,7 +6,7 @@ r"""[VND9-01] [VND9-03] live: a soft pointer's sub-path, and Pipe FIRE's returne
 The fixture is running with dist\UE5Dumper.dll injected, and no UI. The first argument names the folder under
 %LOCALAPPDATA%\UE5CEDumper\Logs\ that holds the DLL's log: the PROCESS name, so a Shipping fixture's folder is
 `<Name>-Win64-Shipping`. `DumperTest` alone is the Development flavour's folder, and a stale one answers with an
-old line (measured: the first run read a 2026-11-02 line from it and failed P1 against a correct probe).
+old line -- which fails P1 against a correct probe.
 
 WHAT IT CHECKS, and the evidence each check needs:
 
@@ -24,10 +24,10 @@ WHAT IT CHECKS, and the evidence each check needs:
       ⚠ A synthetic header, not the engine assigning one: it proves the live reader finds and decodes the sub-path
       at the measured offset and width, not that a game's actor reference looks like this.
   P4  [VND9-03] FIRE `KismetStringLibrary::Conv_IntToString(42)` (static, on its class default object): the reply's
-      `str_results` holds ReturnValue = "42", read. Before the fix the reply had only result_hex, whose 16 bytes
+      `str_results` holds ReturnValue = "42", read. Without the fix the reply has only result_hex, whose 16 bytes
       for the return are a header pointing into the game's heap.
   P5  [VND9-04] DumperTest only: a struct array's FString member shows its TEXT -- `Arr_StrRows[0]`'s `Text`
-      reads "RowStrAlpha", where it said "(str)". `Note` (an FText) is the control.
+      reads "RowStrAlpha", not "(str)". `Note` (an FText) is the control.
   P6  [VND9-04] DumperTest only, a NO-REGRESSION check: an FString value search still finds a direct field
       (`Str_Even2_OneNull`, CJK text; `PayloadString` is empty at rest), an array element (`Arr_Str[1]`) and a struct-array member (`Arr_StrRows[0].Text`), and a
       next scan keeps each. These are the four string readers the fix rerouted through the type's own width; no

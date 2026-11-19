@@ -243,7 +243,7 @@
     <sys:String x:Key="str.Tip.VS.FirstScan">Walk every UPROPERTY field of the chosen type across all UObject instances (including TArray elements of that type), apply the predicate, and start a session for Next Scan refines. For strings use Contains / StartsWith / EndsWith. For vectors enter "X,Y,Z".</sys:String>
     <sys:String x:Key="str.Tip.VS.NextScan">Re-read each candidate and prune by the new predicate. Changed / Unchanged / Increased / Decreased compare against the previous round.</sys:String>
     <sys:String x:Key="str.Tip.VS.NewScan">End the current session and reset for a fresh scan.</sys:String>
-    <!-- Multiple values group scan (build 1276) -->
+    <!-- Multiple values group scan -->
     <sys:String x:Key="str.VS.Mode.Single">Single value</sys:String>
     <sys:String x:Key="str.VS.Mode.Group">Multiple values (group)</sys:String>
     <sys:String x:Key="str.VS.Group.Hint">Find objects that hold ALL of these values at once (e.g. Str + Def + Dex + Int in the same stats object). Order doesn't matter; far more selective than searching one value. Enter 2–4 values.</sys:String>
@@ -455,9 +455,8 @@
     <sys:String x:Key="str.Pointers.VersionLowConfidenceBadge">&#x26A0; Low Confidence</sys:String>
     <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via a fragile fallback — a bare pattern match or a publisher bias — so this version may be wrong. If values, exports or function calls look wrong, set the right version with Override above; its tooltip says what that changes.</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
-    <!-- [UE-OVERRIDE-HINT-AUTO] The maintainer asked (2026-10-09) whether the override is only a label. It is not:
-         say what it changes, what it risks, and when each part takes effect. Keep it in step with what the DLL's
-         set_ue_version_override handler does. -->
+    <!-- [UE-OVERRIDE-HINT-AUTO] The override is not only a label: say what it changes, what it risks, and when each
+         part takes effect. Keep it in step with what the DLL's set_ue_version_override handler does. -->
     <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Not just a label: it changes how the DLL reads this game. GObjects, GNames and the property offsets are measured from the game and stay as they are; what cannot be measured follows this version, including UE4 property fields, soft and lazy pointers, sets and maps, the CE export layout, and UFunction parameters until a scan has measured them. A wrong version misreads those, and a write or function call built on a misread can crash the game. Use it only when detection is wrong. Saved per game and applied at every launch, where it also skips the too-old check; that check and the sparse-delegate scan follow a change only at the next launch. Auto returns to the detected version at once, or at the next launch if none is on record.</sys:String>
     <sys:String x:Key="str.Pointers.VersionAutoPendingText">Auto applies at the next launch: there is no detection of this game on record that this session can return to, so the overridden version above stays in force until the game restarts.</sys:String>
     <!-- [OVERRIDE-REVIEW2-LOWS] The DLL refuses an override the game's UFunctions contradict, but only once a scan has
@@ -519,7 +518,7 @@
 
     <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
          Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
-         chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+         chose a log LEVEL would make the two states identical on screen. -->
     <sys:String x:Key="str.Pointers.Symbol.RegisteredFromExport">Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
@@ -1099,9 +1098,9 @@
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
 
     <!-- Value prompt (FreezeValueDialog). ONE dialog serves two actions, so every string
-         that names the action has a Freeze and a Force variant (audit #5 AF22: the Force
-         flow reused the Freeze dialog verbatim, so the button the user clicked to write
-         and HOLD a live field said "Create freeze script"). -->
+         that names the action has a Freeze and a Force variant: reusing the Freeze text
+         verbatim would label the button that writes and HOLDS a live field
+         "Create freeze script". -->
     <sys:String x:Key="str.ValuePrompt.Freeze.Title">Freeze property value</sys:String>
     <sys:String x:Key="str.ValuePrompt.Freeze.ValueLabel">Freeze value ({0}):</sys:String>
     <sys:String x:Key="str.ValuePrompt.Freeze.Ok">Create freeze script</sys:String>
@@ -1578,7 +1577,8 @@
     <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
     <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
     <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object. Only a DLL
-         from builds 3676-3681 says so: a newer one refuses that ON (str.DbgCam.NoLiveCheatManager). -->
+         with this tag but without [DEBUGCAM-FORCEON-CDO] says so: one with [DEBUGCAM-FORCEON-CDO] refuses that ON
+         (str.DbgCam.NoLiveCheatManager). -->
     <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), and a toggle there does nothing.</sys:String>
     <!-- [DEBUGCAM-FORCEON-CDO] the DLL's -17: a Force ON not sent, because no CheatManager is live; -1 is a failure,
          never that case, and a state that reads -1 is a read that failed. -->

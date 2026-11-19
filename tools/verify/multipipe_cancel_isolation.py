@@ -4,53 +4,45 @@
 
 THE ROW. multipipe-eval 9.6 item 5: "Disconnect only ONE lane (edge) -- the other keeps
 working; a bulk scan isn't wrongly cancelled by an interactive disconnect (the 9.3.5
-caveat)". todo.md recorded that item as closed on the strength of an Elliot 2026-07-23
-run, but that run closed the whole GAME mid-snapshot, so BOTH lanes died together and
-the router tore both down. That is the opposite observation: a whole-process death
-cannot show that one lane surviving the other's drop keeps working, and it says nothing
-at all about the cancellation clause. Found by an audit of the todo queue, 2026-09-07.
+caveat)". Closing the whole GAME mid-command does not test it: BOTH lanes die together
+and the router tears both down, so a whole-process death cannot show that one lane
+surviving the other's drop keeps working, and it says nothing at all about the
+cancellation clause.
 
-WHAT THE CODE ACTUALLY DOES. 9.3 proposed tripping the per-command cancel ONLY for a
-broken HEAVY connection. That mitigation never shipped -- `inFlightHeavy` exists nowhere
-in the tree. `Fern::MonitorLoop` (Fern.cpp ~861) calls `Tot::RequestPerCommand()`
-UNCONDITIONALLY for any broken in-flight connection, and `Tot::g_perCommand` (Tot.h:45)
-is a single process-wide atomic OR-ed into every `Tot::Requested()`. So the cancel is
-global by construction. The code's own comment carries the reason it was thought safe:
+THE DEFECT IT DETECTS. `Fern::MonitorLoop` raises the per-command cancel
+(`Tot::RequestPerCommand()`) for a broken in-flight connection. If that cancel is one
+process-wide flag OR-ed into every `Tot::Requested()`, it is global by construction, and
+the only argument that it is safe is a TIMING one:
 
-    // only the bulk lane runs cancellable scans, and a fast light command finishes
-    // before a 200ms peek catches it in-flight, so in practice this only ever fires
-    // for a broken bulk scan.
+    only the bulk lane runs cancellable scans, and a fast light command finishes
+    before a 200ms peek catches it in-flight, so in practice this only ever fires
+    for a broken bulk scan.
 
-That is a TIMING argument, and it had never been measured. This rig measures it.
+This rig measures that argument instead of trusting it.
 
 ⚠ WHY THIS NEEDS A SLOW COMMAND, AND WHY THE FIXTURE NORMALLY CANNOT PROVIDE ONE.
 MonitorLoop peeks every 200 ms and only inspects connections whose `inFlight` is set, so
 reproducing the edge needs a command that occupies its connection for LONGER than 200 ms.
-Measured on DumperTest (25,227 objects) every candidate is far below that:
-
-    snapshot_chunk 0.00s · get_object_list 0.00s · find_instances 0.01s
-    list_classes 0.04s · list_enums 0.09s · list_all_functions 0.15s
-    trigger_scan / rescan return immediately (they are async, "started": true)
-
-So on this fixture the monitor can essentially never catch a command in flight, which is
-exactly the condition the comment assumes -- and exactly why the edge stayed untested.
+On DumperTest every candidate command finishes far below that (trigger_scan / rescan
+return immediately: they are async, "started": true), so on this fixture the monitor can
+essentially never catch a command in flight -- exactly the condition the timing argument
+assumes.
 
 THE LEVER. The sample's own `-DumperTestMaxFPS=N` makes a frame arbitrarily long, and
 `invoke_function` dispatches to the GAME THREAD and blocks until a tick, so the doomed
 client can be held in-flight for as long as you like.
 ⛔ RUN THE HOST AT `-DumperTestMaxFPS=1`. `launch_dumpertest.py` hardcodes 15 (67 ms a
-frame) which is nowhere near enough, and -- measured, not assumed -- **2 FPS is ALSO not
-enough**: at 2 FPS the invoke really does take ~0.50 s (0.536 / 0.499 / 0.501) which is
-over the 200 ms poll, yet the run came back INCONCLUSIVE with zero `client gone
-mid-command` lines. The kill was seen by the doomed connection's OWN read/write path
-first and logged as an ordinary `PipeServer: Client disconnected`, so the monitor never
-peeked a broken pipe. One in-flight window has to span SEVERAL polls, not just one.
-At 1 FPS (~1 s per invoke, ~5 polls per window) it reproduces every time.
+frame), which is nowhere near enough, and **2 FPS is ALSO not enough**: the invoke then
+takes ~0.5 s, over the 200 ms poll, yet the kill is seen by the doomed connection's OWN
+read/write path first and logged as an ordinary `PipeServer: Client disconnected`, so the
+monitor never peeks a broken pipe and the run is INCONCLUSIVE, with zero `client gone
+mid-command` lines. One in-flight window has to span SEVERAL polls, not just one: at
+1 FPS (~1 s per invoke, ~5 polls per window) it reproduces.
 ⚠ That near-miss is the reason this rig fails loudly on `observed == 0` instead of
-reporting a pass: at 2 FPS it produced a clean, plausible, completely meaningless green.
+reporting a pass: at 2 FPS it gives a clean, plausible, completely meaningless green.
 
 THE VICTIM must run a command that actually polls the flag, or a leaked cancel is
-invisible. `list_enums` does (Fern.cpp:2229, `if ((i & 0xFFF) == 0 && Tot::Requested())`)
+invisible. `list_enums` does (`if ((i & 0xFFF) == 0 && Tot::Requested())` in Fern.cpp)
 and returns ~720 KB, so a truncated reply is obvious by size alone.
 
 READING THE RESULT. The victim's replies are sized before and after the kill:
@@ -61,53 +53,33 @@ READING THE RESULT. The victim's replies are sized before and after the kill:
 in-flight and the run measured NOTHING -- it is not a pass. The rig says so rather than
 reporting a green.
 
-MEASURED 2026-09-07, DumperTest Development at 1 FPS, build 3405 -- REPRODUCED twice:
+⭐ THE PARALLEL HALF NEEDS A REAL TITLE. `list_enums` walks inline on the connection's own
+thread, so a fixture run only ever proves the thread that SERVES a command. Aura's heavy
+scans run through ParallelGObjectsScan, whose workers are spawned std::threads inheriting
+no thread_local. The fixture cannot reach that: none of its scans occupies a connection
+for the 200 ms the monitor needs, and -DumperTestMaxFPS does not help because it
+lengthens a GAME-THREAD dispatch and these scans never touch the game thread.
 
-    baseline list_enums            720,793 bytes (5 samples, spread 0)
-    'client gone mid-command' new  1
-    victim replies after the kill  5,264   of which 5,157 short
-    truncated sizes                77 / 78 / 79 bytes
-    blast radius                   0.14s -> 0.71s  (~0.57 s degraded)
-    recovered afterwards           yes, 105 full-size replies
-
-⭐ THE PARALLEL HALF, MEASURED ON A REAL TITLE 2026-09-07 -- BEFORE AND AFTER.
-`list_enums` walks inline on the connection's own thread, so the fixture run above only
-ever proves the thread that SERVES a command. Aura's heavy scans run through
-ParallelGObjectsScan, whose workers are spawned std::threads inheriting no thread_local.
-The fixture cannot reach that: nothing on 25,227 objects occupies a connection for the
-200 ms the monitor needs (find_property_xrefs 0.00s, find_by_address 0.05s,
-find_refs_to_uobject 0.20s at max_results=20000), and -DumperTestMaxFPS does not help
-because it lengthens a GAME-THREAD dispatch and these scans never touch the game thread.
-
-So it was run on OCTOPATH TRAVELER -- UE 4.18, 406,060 objects -- where the host's own
+On a large title such as OCTOPATH TRAVELER (UE 4.18, ~400k objects) the host's own
 commands are slow enough and no lever is needed. Victim `begin_value_scan`
-(-> Radar/ScanForValue -> ParallelGObjectsScan), doomed `list_all_functions` (0.53 s,
-comfortably over the poll). The game already carried a WINMM.dll proxy from an older
-session, which made a genuine before/after possible on ONE host:
-
-    BEFORE (build 3380, pre-fix)      AFTER (build 3415)
-      baseline   339,122 bytes          baseline   339,233 bytes
-      truncated  10 of 125              truncated  0 of 115, THREE runs
-      sizes      238 / 239 bytes        --
-      ok:true    10 / 10, unflagged     --
-      observed   1                      observed   1, every run
-
-Both runs logged `client gone mid-command` exactly once, so the monitor genuinely fired
-in each -- the AFTER is a real negative, not a missed trigger.
+(-> Radar/ScanForValue -> ParallelGObjectsScan), doomed `list_all_functions`
+(comfortably over the poll). A build without the fix there gives short `ok: true`
+replies; a run counts as a negative only when it logged `client gone mid-command`, so
+the monitor genuinely fired -- not a missed trigger:
 
     py multipipe_cancel_isolation.py --process Octopath_Traveler-Win64-Shipping        --victim begin_value_scan        --victim-args '{"data_type":"Int32","scan_type":"Exact","value":"1",
                        "game_only":false,"max_results":50000}'        --doomed list_all_functions --doomed-args '{}'
 
 ⚠ Pick the victim for a STABLE reply size, not just a big one: value-scan replies on a
-live game varied by 4-29 bytes in 339 KB across runs, which is why "short" is a RATIO of
-the baseline and not an equality test. A cancelled scan collapses by three orders of
+live game vary by a few bytes across runs, which is why "short" is a RATIO of the
+baseline and not an equality test. A cancelled scan collapses by three orders of
 magnitude; nothing else comes close to half.
 
-⛔ THE SEVERITY IS NOT THE TRUNCATION, IT IS THAT ALL 5,157 TRUNCATED REPLIES SAID
-`ok: true`. A caller gets 77 bytes where 720 KB was due and cannot tell it from a
-complete answer. The window is bounded (~0.6 s) because audit #5's
-`ReevaluatePerCommandCancel` clears the latch once no raiser is live -- so this is silent
-partial data loss in a narrow window, not a wedge.
+⛔ THE SEVERITY IS NOT THE TRUNCATION, IT IS THAT THE TRUNCATED REPLIES SAY `ok: true`.
+A caller gets a few dozen bytes where 720 KB was due and cannot tell it from a complete
+answer. The window is bounded because `ReevaluatePerCommandCancel` clears the latch once
+no raiser is live -- so the defect is silent partial data loss in a narrow window, not a
+wedge.
 """
 import json
 import os
@@ -292,11 +264,10 @@ def main():
         observed = len(marks) - marks_before
 
         # ⚠ RATIO, not "< baseline". On a live game a victim command's reply wobbles by a
-        # few bytes run to run (measured on Octopath: 30 bytes of spread in 339,122, 0.0%),
-        # and an exact-equality test would call that truncation. A CANCELLED scan does not
-        # come back 1% short -- it collapses by orders of magnitude (fixture: 77 bytes
-        # against a 720,793-byte baseline). Half the baseline separates the two cleanly and
-        # leaves no room for variance to masquerade as a defect.
+        # few bytes run to run, and an exact-equality test would call that truncation. A
+        # CANCELLED scan does not come back 1% short -- it collapses by orders of magnitude
+        # (tens of bytes against a ~720 KB baseline). Half the baseline separates the two cleanly
+        # and leaves no room for variance to masquerade as a defect.
         short = [a for a in after if a[1] < baseline * 0.5 or not a[2]]
         print()
         print(f"victim replies after the kill : {len(after)}")

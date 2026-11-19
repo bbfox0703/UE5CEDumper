@@ -20,7 +20,7 @@ byte-narrowed second pass that runs only when the first found nothing; the sweep
 adds a match. The paragraph below is the [PEHOOK-2026-08-17] change this rig was written for.
 
 The change under test relaxes pattern 1 to tolerate a mandatory SIB byte. Relaxing a
-pattern can only do two things: find a slot it used to miss (the fix), or find an
+pattern can only do two things: find a slot the strict pattern misses (the fix), or find an
 EARLIER slot on a binary it already got right (a regression -- the detector returns
 the FIRST match ascending). This measures the second on every UE binary on disk.
 

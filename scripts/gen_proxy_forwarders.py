@@ -51,11 +51,11 @@ def read_exports(path):
     machine = struct.unpack_from("<H", d, pe + 4)[0]
     # Refuse a 32-bit source outright. This function happily parses PE32, and the
     # generated files would build and link clean — but they would be WRONG in a way
-    # nothing downstream can detect. Measured on this machine: System32 winmm.dll has
-    # 180 named exports, SysWOW64 has 192; 12 are x86-only, and 174 shared names sit at
-    # DIFFERENT ordinals. A 32-bit Python run therefore emits 12 permanently-null lazy
-    # thunks (each one a `jmp rax` with rax==0 — see Lugner_Winmm.asm) plus a
-    # wholesale-wrong @ordinal map, and the build stays internally consistent. (B48)
+    # nothing downstream can detect. The SysWOW64 winmm.dll has x86-only exports the
+    # System32 one lacks, and most names they share sit at DIFFERENT ordinals. A 32-bit
+    # Python run would therefore emit permanently-null lazy thunks (each one a
+    # `jmp rax` with rax==0 — see Lugner_Winmm.asm) plus a wholesale-wrong @ordinal
+    # map, and the build would stay internally consistent.
     if magic != 0x20B or machine != 0x8664:
         raise RuntimeError(
             f"{path} is not a 64-bit PE (magic=0x{magic:X}, machine=0x{machine:04X}); "
@@ -451,7 +451,7 @@ def main():
     # is the documented escape hatch that reaches the REAL 64-bit System32 from a
     # 32-bit process; it does not exist for 64-bit processes, hence the conditional.
     # read_exports asserts the result anyway — this just makes the common case work
-    # instead of only failing loudly. (B48)
+    # instead of only failing loudly.
     sysroot = os.environ.get("SystemRoot", r"C:\Windows")
     sysdir = "Sysnative" if sys.maxsize < 2 ** 32 else "System32"
     real = os.path.join(sysroot, sysdir, dll)

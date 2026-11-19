@@ -2,7 +2,7 @@
 """Fail the build when the CE Lua <-> DLL mailbox CONTRACT changes without a version bump.
 
 WHY THIS EXISTS
-  The contract check shipped in build 2744 is only as good as someone remembering to
+  The runtime contract check is only as good as someone remembering to
   bump `Mimic::MAILBOX_CONTRACT` when they move a field. Nothing enforces that, and a
   forgotten bump is WORSE than no versioning at all: every script then asserts it is
   compatible while writing to the wrong offsets, and the check that was supposed to
@@ -24,15 +24,15 @@ WHAT IS IN THE HASH (matches the rule in dll/src/Mimic.h)
   DLL's `MAILBOX_CONTRACT`, because that constant is what gets baked into every emitted
   script. A mismatch there means scripts claim a contract the DLL does not implement.
 
-WHAT ELSE MIRRORS THE LAYOUT (audit #5 AA36)
+WHAT ELSE MIRRORS THE LAYOUT
   `CeMailboxLayout.cs` is NOT the only hand-copy. The two standalone CE helpers
   (`scripts/ue5_invoke_helper.lua`, `scripts/ue5_freeze_helper.lua`), the shipped table
   `scripts/UE5CEDumper.CT`, and the two offline Lua test rigs each re-declare the
-  offsets and enum values as their own literals. Until AA36 this file could not see any
-  of them, so they could drift out of agreement with Mimic.h in total silence — and a
-  gate with a hole in it is worse than a known-absent gate, because it reads as covered.
+  offsets and enum values as their own literals. Unchecked, they could drift out of
+  agreement with Mimic.h in total silence — and a gate with a hole in it is worse than a
+  known-absent gate, because it reads as covered.
 
-  So `check_lua_mirrors` now compares every one of those literals against Mimic.h:
+  So `check_lua_mirrors` compares every one of those literals against Mimic.h:
     * offsets are COMPUTED from the packed struct (`#pragma pack(1)`, so an offset is
       just the sum of the preceding field sizes) rather than read from the `// 0xNNN:`
       comments — which also validates those comments, since the Lua copies were made
@@ -71,7 +71,7 @@ import sys
 
 # (contract_version, sha256 of the surface). Update BOTH together, never one.
 #
-# NOTE on version 2 (build 2926, audit #5 AA2/AA3): the version moved while the HASH
+# NOTE on version 2: the version moved while the HASH
 # did NOT, and that is correct rather than an oversight. The surface hash covers field
 # names, types, declared offsets and enum VALUES — the LAYOUT. Version 2 changed a
 # field's MEANING: CMD_LIST_INSTANCES now publishes the enumerated UClass* in
@@ -151,7 +151,7 @@ CONTRACT_ENUMS = ("Cmd", "TeleportOp", "FlyOp", "ForegroundOp",
                   "InvokeOutFlag", "Status", "InitState")
 
 # ---------------------------------------------------------------------------
-# Hand-copied layout mirrors outside Mimic.h / CeMailboxLayout.cs (AA36)
+# Hand-copied layout mirrors outside Mimic.h / CeMailboxLayout.cs
 # ---------------------------------------------------------------------------
 
 # Every file that re-declares mailbox offsets or contract enum values as literals.
@@ -346,8 +346,8 @@ def lua_int_consts(text):
 def check_lua_mirrors(root, mimic, offsets, cur, lo):
     """Every hand-copied mailbox literal outside Mimic.h must agree with Mimic.h.
 
-    Returns (problems, checked_count). See the AA36 note in the module docstring for
-    why the registry is closed rather than best-effort.
+    Returns (problems, checked_count). See WHAT ELSE MIRRORS THE LAYOUT in the module
+    docstring for why the registry is closed rather than best-effort.
     """
     problems, checked = [], 0
 
@@ -491,7 +491,7 @@ def main():
               "  no reason. Revert the bump, or update GOLDEN_VERSION if it was deliberate.")
         return 1
 
-    # ---- the hand-copied Lua/CT mirrors (AA36) -----------------------------
+    # ---- the hand-copied Lua/CT mirrors -----------------------------------
     # Comments are stripped for anything PARSED (an enum's `0xFF` would otherwise be
     # read out of the prose beside it) but kept for the declared-offset audit below,
     # which is entirely about whether those comments are still true.

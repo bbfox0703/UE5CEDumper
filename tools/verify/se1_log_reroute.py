@@ -2,13 +2,14 @@
 
     py se1_log_reroute.py
 
-THE FIX (audit L4, build 3263). If a category's log file could not be opened, that
-category was **dead for the whole process with nothing logged anywhere**, and its
-buffered early lines were destroyed. A later grep for one of those lines then read as
+THE DEFECT. If a category whose log file cannot be opened is simply dropped, that
+category is **dead for the whole process with nothing logged anywhere**, and its
+buffered early lines are destroyed. A later grep for one of those lines then reads as
 "that code path never ran" — an absence caused by the logger, indistinguishable from
 an absence caused by the code.
 
-⚠ `Sein.cpp` is compiled by NO test target, so this has never executed.
+⚠ `Sein.cpp` is compiled by NO test target, so no unit test runs this path; a live run like
+this one is the check.
 
 HOW THE EXCLUSIVE HANDLE IS TAKEN. Python's `open()` uses the CRT, which shares the
 file — the DLL would open it happily and nothing would be tested. This calls

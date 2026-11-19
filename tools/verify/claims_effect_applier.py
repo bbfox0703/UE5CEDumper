@@ -1,40 +1,37 @@
-r"""Slice B of the ~166 unadjudicated sweep claims — and the SCORE that refuses to build a gate.
+r"""Slice B of the unadjudicated sweep claims — and the SCORE that refuses to build a gate.
 
     py tools/verify/claims_effect_applier.py           # the population, adjudicated
     py tools/verify/claims_effect_applier.py --list    # every hit with its line
 
 ⛔ THIS IS A MEASUREMENT, NOT A GATE, AND IT IS THE ONE THING HERE WORTH KEEPING.
-`docs/todo.md` contained a contradiction: its round-2 section says *"Gate #17 as proposed in
-round 1 is REFUTED — do not build it"*, and `tools/check_clipboard_delivery.py`'s header
-repeats the verdict ("the round-1 proposal here was an allowlist of ~25 effect-appliers; it
-scored 0 of 10 findings"). The Slice B paragraph, written a day later off round 1's plan,
-re-proposed the same allowlist as *"the work — not scanning"*. Rather than pick a side by
-reading, the list was built ONCE and scored. This file is that score, kept so the next
-person to propose the allowlist can re-run it instead of re-arguing it.
+`docs/todo.md`'s round-2 section says *"Gate #17 as proposed in round 1 is REFUTED — do not
+build it"*, and `tools/check_clipboard_delivery.py`'s header repeats the verdict. The proposal
+is a curated allowlist of effect-appliers plus a gate over their discarded returns. Rather
+than settle a re-proposal of that allowlist by reading, this file builds the list and scores
+it, so the next person to propose the allowlist can re-run it instead of re-arguing it.
 
-WHAT THE SCORE SAYS, at build 3508:
+WHAT THE SCORE SAYS:
 
-  * 33 appliers, derived from the module HEADERS (every public entry point whose return says
-    whether an EFFECT landed), readers and param-buffer packers excluded by name exactly as
-    round 1's design specified.
-  * **7 discarded call sites**, not the 23 round 1 predicted — a list a human walks in an
-    afternoon. Buying a curated TSV plus a baseline file plus a gate, for seven sites, is the
-    trade round 2 already refused.
-  * Adjudicated by hand 2026-09-09: **2 DEFECT, 1 hygiene, 4 CLEAN**. A gate would therefore
-    open with four waivers — 57% false positive — the same shape that killed the design.
+  * the appliers are derived from the module HEADERS (every public entry point whose return
+    says whether an EFFECT landed), readers and param-buffer packers excluded by name exactly
+    as round 1's design specified.
+  * the discarded call sites are a handful — a list a human walks in an afternoon. Buying a
+    curated TSV plus a baseline file plus a gate, for that few, is the trade round 2 already
+    refused.
+  * adjudicated by hand (the VERDICTS table below), most of them are CLEAN, so a gate would
+    open with that many waivers — mostly false positives, the same shape that killed the design.
 
-⛔ ONE OF THE THREE WAS A RE-RAISE, AND THAT IS THE OTHER LESSON THIS FILE CARRIES. The
+⛔ A SCORER RE-RAISES REFUTED ROWS, AND THAT IS THE OTHER LESSON THIS FILE CARRIES. The
 `Wirbel.cpp` hit is on round 2's `Refuted (8) -- do not re-raise` list (as `:619`; line numbers
 move). A mechanical scorer surfaces refuted rows as fresh hits by construction, because the
 refutation lives in prose while the code still matches the pattern -- so the VERDICTS table below
 is not bookkeeping, it is the only thing standing between this script and re-opening settled rows.
 
-⚠ RE-RUN IT TODAY AND IT PRINTS **4**, NOT 7. That is the script working: the three sites
-were repaired, so their returns are now consumed and they left the population by construction.
-The four that remain are the four waivers a gate would have opened with — which is the whole
-argument, standing on its own without needing the original seven.
+⚠ A REPAIRED SITE LEAVES THE POPULATION. Once its return is consumed it no longer matches, so
+the count this prints shrinks as sites are repaired; that is the script working. What remains
+are the waivers a gate would open with — which is the whole argument, standing on its own.
 
-⭐ AND THE FOUR CLEAN ONES ARE WHY A BLANKET RULE CANNOT WORK. Three of them are in ONE
+⭐ AND THE FOUR CLEAN VERDICTS ARE WHY A BLANKET RULE CANNOT WORK. Three of them are in ONE
 handler, `Fern.cpp`'s `fly_set`: it drops `SetSpeed` / `SetPreset` / `SetNoclip` and is
 correct anyway, because the next thing it does is `Dunste::GetStatus(st)` and it answers from
 `st`. That is this repo's actual rule — *report the EFFECT, not the ATTEMPT* — and a checker

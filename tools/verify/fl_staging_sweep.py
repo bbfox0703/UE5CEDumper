@@ -2,9 +2,9 @@
 
     py fl_staging_sweep.py
 
-THE FIX (audit L4, build 3263, `Flamme.cpp:139-168`). A failed hint-cache write used
-to leak `<cache>.tmp.<pid>` forever. The cache now sweeps its OWN `"<name>.tmp."`
-prefix -- never a folder wildcard -- and only files older than **1 hour**.
+THE SWEEP (`Flamme.cpp`). A failed hint-cache write leaves `<cache>.tmp.<pid>`
+behind. The cache sweeps its OWN `"<name>.tmp."` prefix -- never a folder wildcard --
+and only files older than **1 hour**.
 
 WHY THE AGE GUARD IS THE WHOLE POINT, AND WHY THIS RIG PLANTS TWO FILES. The UI writes
 its own `<file>.tmp.<pid>` concurrently (`AobUsageService.cs:139`). A sweep without the

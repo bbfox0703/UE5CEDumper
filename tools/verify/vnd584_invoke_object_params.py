@@ -6,12 +6,12 @@ r"""[VND584-01] A picked object passed into a weak / soft parameter must reach t
 
 Exits 1 while the defect stands, so it doubles as the regression test.
 
-THE MECHANISM. Every invoke path wrote the picked object's ADDRESS into a TWeakObjectPtr / TSoftObjectPtr /
-TSoftClassPtr parameter. The engine reads FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } there (a soft
-pointer leads with one), resolved it to null, and ProcessEvent reported OK. Since VND584-01 the DLL swaps the address
-for the engine's own value (KismetSystemLibrary::Conv_ObjectToSoftObjectReference) before the call.
+THE MECHANISM. The picked object's ADDRESS written into a TWeakObjectPtr / TSoftObjectPtr / TSoftClassPtr
+parameter fails silently: the engine reads FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } there (a soft
+pointer leads with one), resolves it to null, and ProcessEvent reports OK. With [VND584-01] the DLL swaps the
+address for the engine's own value (KismetSystemLibrary::Conv_ObjectToSoftObjectReference) before the call.
 
-THE CASES. Each starred case asks the ENGINE what it received, so a pre-fix DLL fails it and a fixed one passes:
+THE CASES. Each starred case asks the ENGINE what it received, so a DLL without the fix fails it and one with it passes:
   * KismetSystemLibrary::Conv_SoftObjectReferenceToObject(picked actor) must return the actor, routed direct
     (static native) and through the game-thread queue;
   * KismetSystemLibrary::IsValidSoftObjectReference(picked actor) must return true -- the PATH, not only the weak half;

@@ -1,37 +1,36 @@
-"""D3 — an UNREADABLE multicast-delegate array element must render "???", not "(0 bindings)".
+"""An UNREADABLE multicast-delegate array element must render "???", not "(0 bindings)".
 
     py tools/verify/d3_delegate_array_unread.py     # DumperTest must be running + injected
 
-THE DEFECT (blind-spot sweep, fixed 2026-09-08, c45c7ce8).
-`Ubel::ReadMulticastDelegateArrayElements` dropped both `Macht::ReadSafe` returns for the
-element's inner `TArray<FScriptDelegate>` header. On a faulted read `innerData`/`innerCount`
-stay 0, so the element was published as the AFFIRMATIVE `"(0 bindings)"` and counted in
+THE DEFECT. If `Ubel::ReadMulticastDelegateArrayElements` drops the `Macht::ReadSafe` returns for
+the element's inner `TArray<FScriptDelegate>` header, a faulted read leaves `innerData`/`innerCount`
+at 0, so the element is published as the AFFIRMATIVE `"(0 bindings)"` and counted in
 `readCount` — an assertion that a delegate provably has NO subscribers, made over memory
 nobody could read. `Macht::ReadTArray` validates only Count and Max and never probes Data
 (Macht.h:287-297), so a freed buffer reaches the element loop with a sane-looking header.
 
-⚠ THE FIXTURE FOR THIS DID NOT EXIST UNTIL 2026-09-08. `DumperTestActor` carried 16
-`ArrayProperty` and not one had a `Multicast*` inner, so this reader had no host at all and
-its unread arm could only be reached by a synthetic in-process TArray. `Arr_MulticastDelegates`
-was added for exactly this row; see `tools/ue-sample/README.md`.
+⚠ THE FIXTURE. `Arr_MulticastDelegates` exists for exactly this row (see
+`tools/ue-sample/README.md`): a `DumperTestActor` ArrayProperty with a `Multicast*` inner.
+Without it this reader has no host at all and its unread arm can only be reached by a
+synthetic in-process TArray.
 
 Same manufacture-and-restore technique as `d5_lazyguid_unread.py`, and the same reason: on a
 healthy process every element reads fine, so the fault arm cannot be observed by looking.
 The WRITE is its own negative control — the walk must change, and must come back.
 
 WHAT A PASS LOOKS LIKE
-  1. baseline   [0] "(0 bindings)", [1] bound   <- READ. [1] is bound on purpose (2026-09-09):
-                                                   with both elements empty, a 16-byte and a
-                                                   24-byte stride print the SAME string, so
-                                                   D3b was unfalsifiable here.
-  2. corrupted  2 elements, both "???"            <- the fix. Pre-fix: "(0 bindings)",
+  1. baseline   [0] "(0 bindings)", [1] bound   <- READ. [1] is bound on purpose: with both
+                                                   elements empty, a 16-byte and a 24-byte
+                                                   stride print the SAME string, so the
+                                                   stride would be unfalsifiable here.
+  2. corrupted  2 elements, both "???"            <- the fix. Without it: "(0 bindings)",
                                                      i.e. identical to (1) — which is the
-                                                     whole point: the two states were
+                                                     whole point: the two states are
                                                      INDISTINGUISHABLE
   3. restored   identical to (1)
-⭐ (1) is not decoration here. Unlike the lazy-GUID row, the pre-fix bug rendered the SAME
-string as the healthy case, so a rig that only checked (2) could not tell a working fix from
-a broken walk.
+⭐ (1) is not decoration here. Unlike the lazy-GUID row, the defect renders the SAME string
+as the healthy case, so a rig that only checked (2) could not tell a working fix from a
+broken walk.
 """
 from __future__ import annotations
 
@@ -104,13 +103,11 @@ def main() -> int:
 
     base_vals = values(base)
     print("baseline   : %s" % base_vals)
-    # ⛔ THIS ASSERTION WAS STALE FROM 2026-09-09 UNTIL IT WAS FIXED. It read
-    # `all(v == "(0 bindings)")`, which was right when both fixture elements were empty --
-    # and D4b's own work then bound element [1] (to make the element STRIDE observable, see
-    # d4b_delegate_pad.py) without touching this rig. The rig would have FAILED on its
-    # baseline, i.e. a fixture change silently broke a passing verification and nothing
-    # caught it: no gate reads these rigs, and a rig is only run when someone remembers the
-    # row. Assert the SHAPE the fixture actually guarantees instead of a frozen literal.
+    # ⛔ ASSERT THE SHAPE, NOT A FROZEN LITERAL. `all(v == "(0 bindings)")` holds only while
+    # both fixture elements are empty, and element [1] is bound (to make the element STRIDE
+    # observable, see d4b_delegate_pad.py). A fixture change can silently break a passing
+    # verification and nothing catches it: no gate reads these rigs, and a rig is only run
+    # when someone remembers the row. So assert what the fixture actually guarantees.
     ok_base = (len(base_vals) == 2
                and base_vals[0] == "(0 bindings)"
                and PROBE in base_vals[1])

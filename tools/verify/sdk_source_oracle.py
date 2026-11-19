@@ -523,7 +523,7 @@ def run(header: pathlib.Path, engine: pathlib.Path, show: int = 25, json_path: s
 
 
 # ---------------------------------------------------------------------------------------------
-# --selftest: every blind spot the review of 2026-09-27 (wf_63e981ac-5e4) found, as a fixture
+# --selftest: the parser's known blind spots, each as a fixture
 # ---------------------------------------------------------------------------------------------
 
 SELFTEST_SOURCE = r'''

@@ -10,14 +10,14 @@ A title that falls through but has no needle detects nothing (Elliot, Echoes of 
 a title with a needle that resolves at Tier 0 never looks (every stock UE5 title).
 
 ⚠ Walks every `Binaries\Win64` directory rather than globbing a fixed depth -- a
-fixed-depth glob silently skipped installed titles and an absence claim built on a
+fixed-depth glob silently skips installed titles and an absence claim built on a
 silent skip is worthless.
 
 Fact 1 reads through pe_version_probe.read_resource, the one offline port of Genau's reader (every
-translation, the engine build strings; its --selftest is a gate). This file kept its own copy until
-the [VER-410-GATE] second review, and that copy knew only '++UEn+Release-': a 4.10-4.17 exe carrying
-its engine build string read "FALLS THROUGH" here while the DLL took it at Tier 0, which is the
-mis-planned row this survey exists to prevent.
+translation, the engine build strings; its --selftest is a gate) -- [VER-410-GATE]. A private copy
+here drifts: one that knows only '++UEn+Release-' reads a 4.10-4.17 exe carrying its engine build
+string as "FALLS THROUGH" while the DLL takes it at Tier 0, which is the mis-planned row this survey
+exists to prevent.
 """
 import os, pathlib, re, sys
 

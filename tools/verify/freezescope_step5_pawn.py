@@ -4,8 +4,8 @@ r"""FREEZESCOPE step 5, headless -- does the derived sweep reach THE PLAYER PAWN
 
 WHAT STEP 5 ASKS, AND WHY IT IS NOT RUN AS WRITTEN
   The register's step 5 is: "with bCanBeDamaged frozen to false, take damage on the
-  player pawn -> the pawn is unharmed. Pre-fix the freeze held one incidental
-  ChaosDebugDrawActor and the pawn died normally -- that is the whole finding."
+  player pawn -> the pawn is unharmed." Without the fix the freeze holds one incidental
+  ChaosDebugDrawActor and the pawn dies normally -- that is the whole finding.
 
   Taking damage needs a game with combat, a human to trigger it, and a human to judge
   "unharmed". Worse, it is verified in the installed UE 5.4 source that
@@ -17,8 +17,8 @@ WHAT STEP 5 ASKS, AND WHY IT IS NOT RUN AS WRITTEN
 
 WHAT THIS RIG MEASURES INSTEAD
   The finding's actual mechanism, one layer below the damage: IS THE PAWN IN THE HELD
-  SET AT ALL? Pre-fix the derived sweep held a single incidental actor and never wrote
-  the pawn's byte. So read the pawn's OWN bCanBeDamaged bit out of the process with
+  SET AT ALL? Without the fix the derived sweep holds a single incidental actor and never
+  writes the pawn's byte. So read the pawn's OWN bCanBeDamaged bit out of the process with
   ReadProcessMemory -- before arming, while armed, and after release.
 
   This is an independent witness, not a re-reading of what the DLL reported: the address
@@ -29,7 +29,7 @@ WHAT THIS RIG MEASURES INSTEAD
 FREE BONUS -- THE 7 NEIGHBOUR BITS
   bCanBeDamaged is an FBoolProperty BIT (mask 0x04 on this build), so the write is a
   read-modify-write on a shared byte. The rig records all 8 bits, so a fix that clobbers
-  the neighbours is visible rather than assumed -- the same concern AA1 raised.
+  the neighbours is visible rather than assumed.
 
 SAFETY
   The force is released in the same run (reset_field then reset_all_fields) and the rig
@@ -139,8 +139,8 @@ def main():
             % (b1 if b1 is not None else 0, bits(b1), FIELD,
                None if b1 is None else bool(b1 & mask)))
 
-        # THE FINDING. Pre-fix the derived sweep held one incidental ChaosDebugDrawActor,
-        # so the PAWN's bit stayed set no matter what `held` reported.
+        # THE FINDING. A derived sweep that holds one incidental ChaosDebugDrawActor (the
+        # shape without the fix) leaves the PAWN's bit set no matter what `held` reports.
         if b1 is None or (b1 & mask):
             fails.append("*** STEP 5 FAILS: the pawn's own %s bit is STILL SET while the "
                          "derived force is armed (held=%s). The sweep is not reaching the "
@@ -148,7 +148,7 @@ def main():
         else:
             say("         OK: the PAWN's own bit was cleared -- the derived sweep reached it")
 
-        # the 7 neighbours must be untouched (AA1's concern, free here)
+        # the 7 neighbours must be untouched (the shared-byte write, checked for free here)
         if b1 is not None:
             if (b0 & ~mask & 0xFF) != (b1 & ~mask & 0xFF):
                 fails.append("neighbour bits moved: 0x%02X -> 0x%02X outside mask 0x%02X"
@@ -180,9 +180,9 @@ def main():
         # class the pawn does NOT derive from must leave the pawn's bit SET.
         #
         # StaticMeshActor is the one that matters: it resolves and holds ~30 REAL objects,
-        # so it proves a NON-ZERO `held` does not imply the pawn is covered -- which is
-        # the mistake the original finding was hiding behind. ChaosDebugDrawActor is here
-        # by name because it is the incidental class the pre-fix freeze actually held.
+        # so it proves a NON-ZERO `held` does not imply the pawn is covered -- the mistake
+        # a non-zero count invites. ChaosDebugDrawActor is here by name because it is the
+        # incidental class a freeze without the fix holds.
         say("")
         say("negative controls -- arming the same field on classes the pawn is NOT under:")
         for cls in ("StaticMeshActor", "ChaosDebugDrawActor", "WorldSettings"):

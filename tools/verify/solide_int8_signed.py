@@ -3,9 +3,9 @@ does not fit.
 
     py tools/verify/solide_int8_signed.py     (DumperTest running + injected, no UI)
 
-THE DEFECT. `int8` was read back through an unsigned path, so a held **-5** was reported as **251**.
-The re-assert worker compares what it reads against what it wants, so every tick saw a mismatch,
-rewrote the same byte, and the UI showed permanent drift on a field that was in fact correct.
+THE DEFECT. An `int8` read back through an unsigned path reports a held **-5** as **251**. The
+re-assert worker compares what it reads against what it wants, so every tick sees a mismatch,
+rewrites the same byte, and the UI shows permanent drift on a field that is in fact correct.
 
 TWO STEPS, and the second is the one that makes the first mean something:
   1. force a negative value and read it back — must be the negative, not its unsigned image.
@@ -15,10 +15,9 @@ TWO STEPS, and the second is the one that makes the first mean something:
 through a signed path that happens to have no bounds. Only the out-of-range case separates "reads
 back correctly" from "reads back correctly AND knows what an int8 is".
 
-⚠ RE-VERIFICATION, and why: the maintainer marked both of these ✅ on 2026-08-21 at 10:08, on a
-copy of the checklist held outside the repo (`Y:\`). The marks never reached git and the rows read
-as untested. Rather than transcribe a tick with no evidence behind it, this re-runs them and
-records what it actually saw. [ZHTW-MARKS-2026-08-21]
+⚠ RE-VERIFICATION, and why: a tick held only in a copy of the checklist outside the repo has no
+evidence behind it in git. Rather than transcribe such a tick, this re-runs both steps and records
+what it actually saw. [ZHTW-MARKS-2026-08-21]
 """
 import pathlib
 import sys

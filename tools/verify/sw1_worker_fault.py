@@ -2,11 +2,11 @@ r"""SW1 — a scan worker that FAULTS must not let the run report a complete res
 
     py tools/verify/sw1_worker_fault.py            # DumperTest must be running + injected
 
-THE ROW (D2, `e6360903`). `ParallelGObjectsScan` wraps each worker in a `try` and, on a throw,
-sets `workerFaulted` so `incomplete()` becomes true and every caller reports a PARTIAL result
-rather than a complete one. Nothing on the 99-command pipe surface can make a worker throw, and
-`dll_core_test` pins only the pure result struct — so the flag had never been set in a live
-process, and the branch that consumes it had never run.
+THE ROW. `ParallelGObjectsScan` wraps each worker in a `try` and, on a throw, sets
+`workerFaulted` so `incomplete()` becomes true and every caller reports a PARTIAL result rather
+than a complete one. Nothing on the pipe command surface can make a worker throw, and
+`dll_core_test` pins only the pure result struct — so this rig is what sets the flag in a live
+process and runs the branch that consumes it.
 
 ⭐ HOW IT IS REACHED. The DLL is built `/EHa` (`dll/CMakeLists.txt:155,186`), so the `catch (...)`
 at `Aura.cpp:278` catches a hardware ACCESS VIOLATION as well as a C++ throw. `Aura::DecryptObjectPtr`
@@ -52,42 +52,38 @@ or a capped result):
     `Custom decryption function SET` and `CLEARED (identity)` lines this rig itself writes.
 
 =============================================================================================
-WHAT THIS RIG MEASURED — 2026-09-09
+WHAT A PASSING RUN LOOKS LIKE
 =============================================================================================
 
-⭐ CLOSED, with a genuinely PARTIAL result. EVERSPACE 2 at the main menu (79,675 objects),
-`parallel=true`, armed 0.2 s into a 656 ms scan and held 150 ms:
+⭐ A genuinely PARTIAL result, `parallel=true`, armed part-way into the scan and held briefly:
 
     control :  total=4115  scanned_objects=79675  duration_ms=656  deadline_hit=False
     armed   :  total=1649  scanned_objects=71213  duration_ms=253  deadline_hit=True
     offsets-0.log: worker tid=5  [24950,29940) faulted — that index range was NOT walked...
                    worker tid=13 [64870,69860) faulted — ...
 
-`total` is 1649: **greater than zero and smaller than the control's 4115**. Some workers faulted
-and others finished, which is what makes the set PARTIAL rather than empty — the distinction the
-register said the all-workers variant could never show. `scanned_objects` dropped by 8,462, and
-`deadline_hit` flipped false → true.
+`total` is **greater than zero and smaller than the control's**. Some workers faulted and others
+finished, which is what makes the set PARTIAL rather than empty — the distinction an all-workers
+variant can never show. `scanned_objects` drops, and `deadline_hit` flips false → true.
 
-⛔ AND THE ARMED SCAN MUST BE THE PROCESS'S FIRST, which is what `--control-from` is for.
-Measured, in this order:
-  * a FIRST parallel scan in a fresh process: 656 ms, and arming inside it faults workers;
-  * a SECOND scan in the same process: 303 ms — twice as fast — and four separate armed runs
-    across it produced 4 SET/CLEARED pairs and NOT ONE fault, even when armed across the ENTIRE
-    scan (0.0 s in, 900 ms hold against a 458 ms run).
+⛔ AND THE ARMED SCAN MUST BE THE PROCESS'S FIRST, which is what `--control-from` is for:
+  * a FIRST parallel scan in a fresh process faults workers when armed inside it;
+  * a SECOND scan in the same process runs about twice as fast and does not fault, even when
+    armed across the ENTIRE scan.
 So a first scan establishes something a later scan then reuses instead of re-walking. ⚠ That is
 an OBSERVATION, not a mechanism: `Aura.h:1741` refers to "ScanForValue's index builder", which
-fits, but a `--serial` second scan on DumperTest DID fault, so the two forms do not behave the
-same way and nothing here identifies why. Do not write the index down as the cause.
+fits, but a `--serial` second scan can still fault, so the two forms do not behave the same way
+and nothing here identifies why. Do not write the index down as the cause.
 
 ⚠ THE SERIAL FORM CANNOT PRODUCE A PARTIAL RESULT AT ALL, and that is structural rather than a
 timing failure. `parallel=false` is ONE chunk covering the whole array, so the unwind discards the
-entire walk: on ES2 with a save loaded it returned `total=0 scanned_objects=0 deadline_hit=True`
-even with the arm landing mid-scan. `--serial` is kept because measuring that is what proves the
-parallel form is the one that shows PARTIAL.
+entire walk: it returns `total=0 scanned_objects=0 deadline_hit=True` even with the arm landing
+mid-scan. `--serial` is kept because measuring that is what proves the parallel form is the one
+that shows PARTIAL.
 
-⭐ The log line quoted above was CORRECTED as part of this work. It used to end "results are
-partial" — a claim about the whole scan that one worker cannot make, and one the serial run showed
-to be false (total=0).
+⭐ The worker log line says which index range was NOT walked rather than "results are partial":
+one worker cannot make a claim about the whole scan, and the serial form's total=0 shows such a
+claim false.
 """
 from __future__ import annotations
 
@@ -112,14 +108,14 @@ EXPORT = "UE5_SetObjectDecryption"
 CANDIDATE_MODULES = ["UE5Dumper.dll", "dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll"]
 BAD_PTR = 0x1000        # permanently reserved low 64 KiB -> AV on instruction fetch
 
-# The scan shape, tuned on Titan Quest II (~460k objects, save loaded) 2026-09-09. It must
-# satisfy three things at once and they pull against each other: the walk has to be LONG enough
-# to arm inside (so not a narrow object set), the match count has to stay well UNDER max_results
-# (a cap hit forces deadline_hit all on its own -- TRAP 1), and matches have to be SPREAD across
-# the array so a mid-scan fault leaves a smaller but NON-EMPTY set (TRAP 2). Measured on TQ2:
-#   Bigger -1e30  -> total 2,000,000 = the cap. Unusable: the control itself reports deadline_hit.
-#   Exact  1      -> total 1,556,780. Under the cap but uncomfortably near it.
-#   Bigger 1e6    -> total    17,912 over 460,829 objects in 1,724 ms, deadline_hit False.  <-- used
+# The scan shape, sized for a game of ~460k objects with a save loaded. It must satisfy three
+# things at once and they pull against each other: the walk has to be LONG enough to arm inside
+# (so not a narrow object set), the match count has to stay well UNDER max_results (a cap hit
+# forces deadline_hit all on its own -- TRAP 1), and matches have to be SPREAD across the array so
+# a mid-scan fault leaves a smaller but NON-EMPTY set (TRAP 2). At that size:
+#   Bigger -1e30  -> reaches the cap. Unusable: the control itself reports deadline_hit.
+#   Exact  1      -> under the cap but uncomfortably near it.
+#   Bigger 1e6    -> well under the cap, spread across the array, deadline_hit False.  <-- used
 PARALLEL = True
 SCAN_TYPE = "Bigger"
 SCAN_VALUE = "1000000"
@@ -142,10 +138,10 @@ def pid_of(name: str) -> int:
 
 def true_path(hproc, hmod) -> str:
     """⛔ TOOLHELP32's szExePath LOSES NON-ANSI CHARACTERS, even from the W entry point.
-    Measured 2026-09-09: EVERSPACE 2 installs to `...\\EVERSPACE™ 2\\...` and
-    `MODULEENTRY32W.szExePath` came back as `EVERSPACE? 2` — a literal '?', not a console
-    artefact (`os.path.isfile` on it is False), so the path could not be opened. `inject.py`
-    carries the identical struct and never noticed, because it only ever compares NAMES.
+    A module under `...\\EVERSPACE™ 2\\...` comes back in `MODULEENTRY32W.szExePath` as
+    `EVERSPACE? 2` — a literal '?', not a console artefact (`os.path.isfile` on it is False),
+    so the path cannot be opened. `inject.py` carries the identical struct and is unaffected,
+    because it only ever compares NAMES.
     `GetModuleFileNameExW` returns the real path. This is the same class of damage
     `Heiter.cpp`'s own comment records for `GetModuleFileNameA`."""
     psapi = ctypes.WinDLL("psapi", use_last_error=True)
@@ -295,14 +291,14 @@ def main() -> int:
     proc = a.image[:-4]
     # ⛔ PICK BY EXPORT, NOT BY NAME. Every D3D title loads the SYSTEM C:\WINDOWS\SYSTEM32\
     # dxgi.dll, so a name-ordered search finds that one first and would then add our RVA to
-    # Microsoft's module. Measured on EVERSPACE 2, 2026-09-09 -- the same "the system owns that
-    # filename too" trap that bit the SW8 process probe. The only sound test is whether the file
-    # actually mapped at that base exports the function.
+    # Microsoft's module -- the same "the system owns that filename too" trap as the SW8 process
+    # probe. The only sound test is whether the file actually mapped at that base exports the
+    # function.
     # ⛔ AND DO NOT KEY BY MODULE NAME EITHER. A proxy FORWARDS to the system library of the
     # same name, so both are mapped at once and a name-keyed dict silently keeps whichever the
-    # enumeration saw last. Measured on EVERSPACE 2, 2026-09-09: our proxy at
-    # ...\ES2\Binaries\Win64\VERSION.dll was displaced by C:\WINDOWS\system32\version.dll and
-    # the rig concluded no module exported the function at all. Keep EVERY match and test each.
+    # enumeration saw last: our proxy at <game>\Binaries\Win64\VERSION.dll can be displaced by
+    # C:\WINDOWS\system32\version.dll, and the rig then concludes no module exports the function
+    # at all. Keep EVERY match and test each.
     cands = [(n, b, p) for n, b, p in modules(pid)
              if n.lower() in [c.lower() for c in CANDIDATE_MODULES]]
     mod = base = path = rva = None

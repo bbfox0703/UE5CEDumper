@@ -4,15 +4,16 @@
     py f5_envelope.py step2        # interleave control: watch events vs ordinary commands
     py f5_envelope.py all
 
-WHAT F5 CHANGED (audit L11, build 3263). `Fern::WriteLine` no longer materialises a
-`line + "\\n"` copy: the payload and the terminator now go out as TWO `WriteFile`
-calls under the same `writeMutex` on a BYTE-MODE pipe. And `MakeResponse`/`MakeEvent`
-assign envelope keys individually instead of splicing with nlohmann's `merge_patch`,
-so a payload can no longer delete an envelope key or replace the whole object.
+WHAT IT CHECKS (F5 in docs/audit-2026-08-13-early-code-findings.md). `Fern::WriteLine`
+does not materialise a `line + "\\n"` copy: the payload and the terminator go out as TWO
+`WriteFile` calls under the same `writeMutex` on a BYTE-MODE pipe. And
+`MakeResponse`/`MakeEvent` assign envelope keys individually instead of splicing with
+nlohmann's `merge_patch`, so a payload cannot delete an envelope key or replace the whole
+object.
 
-WHY IT NEEDS A LIVE CHECK AT ALL. `Renge::ApplyPayload` is pinned by 16 assertions in
+WHY IT NEEDS A LIVE CHECK AT ALL. `Renge::ApplyPayload` is unit-pinned in
 `dll_helpers_test` because that header IS compiled there -- but **no test target
-compiles `Fern.cpp`**, so the two-write split has never executed anywhere. If a
+compiles `Fern.cpp`**, so the two-write split executes only in a live DLL. If a
 reader can observe the gap between the two writes, or another thread's write can land
 between them, the failure is a TRUNCATED or INTERLEAVED line.
 
@@ -106,9 +107,9 @@ class RawClient(PipeClient):
                 if obj is not None and obj.get("id") == rid:
                     return obj
                 if obj is not None:
-                    # Keep it, exactly as the base class does. Dropping this line was a
-                    # rig bug that made the interleave control report "0 events" while
-                    # 186,463 event lines had in fact arrived.
+                    # Keep it, exactly as the base class does. Dropping it makes the
+                    # interleave control report "0 events" while event lines have in
+                    # fact arrived.
                     self.events.append(obj)
         raise RuntimeError(f"timed out waiting for id={rid} ({cmd})")
 

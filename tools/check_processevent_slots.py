@@ -4,10 +4,9 @@
     py tools/check_processevent_slots.py --list
 
 WHY THIS EXISTS. `dll/src/Grimoire.h` carries a per-UE-version ProcessEvent vtable slot table,
-added by audit A2 from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`. It was a hand-transcribed
-table over a vendored source -- the exact shape CLAUDE.md says to derive and never hand-edit -- and
-nothing checked it. Meanwhile the register spent effort planning how to obtain the **5.2** figure
-(a Ghidra/pdb pass over the Satisfactory UE5.2.1 depot), when 5.2 was already in the table.
+transcribed from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`. A hand-transcribed table over a
+vendored source is the exact shape CLAUDE.md says to derive and never hand-edit, and without this
+gate nothing checks it.
 
 ⭐ THE DERIVATION, and it reproduces ALL TEN entries exactly:
 

@@ -64,8 +64,8 @@ def discriminating(a, b):
     ⚠ A DISPLAY TIE IS NOT A DISAGREEMENT. 66.65 and 66.749 are different floats that both
     render "66.7 ms"; the naive `(a < b) != (sa < sb)` calls that pair discriminating, because the
     numbers order and the equal strings do not. It is the exact opposite: two rows that LOOK
-    identical can never show you which comparer ran. The first version of this rig had that bug and
-    reported "9 discriminating pairs, PASS" over six values that were all 66.7 ms.
+    identical can never show you which comparer ran: counting them reports discriminating pairs,
+    and a PASS, over values that all render the same.
     """
     sa, sb = fmt(a), fmt(b)
     if sa == sb or a == b:

@@ -1,4 +1,4 @@
-"""A4 half 2 -- make the 507 and 508 raise rungs actually FIRE, and read them off a live log.
+"""[A4-508MARKER-2026-09-06] half 2 -- make the 507 and 508 raise rungs actually FIRE, and read them off a live log.
 
     py tools/verify/a4_raise_ladder.py                 # dev58 (32-byte FUObjectItem)
     py tools/verify/a4_raise_ladder.py --flavour shipping58
@@ -7,9 +7,9 @@
 
 THE ROW. `UE5_Init` runs a raise-ONLY ladder every init: 503 (tagged FFieldVariant) -> 504
 (CMC::SetGravityDirection) -> 505 (UEnum::EnumPackage) -> 506 (UStruct::StructStateFlags) -> 507
-(reordered FUObjectItem) -> 508 (virtual ~FFieldClass). The 507 and 508 rungs had never been
-observed firing, because they only run when the *cached* version is BELOW them -- and on a genuine
-5.8 binary detection already answers 508, so the ladder has nothing to raise.
+(reordered FUObjectItem) -> 508 (virtual ~FFieldClass). The 507 and 508 rungs only run when the
+*cached* version is BELOW them -- and on a genuine 5.8 binary detection already answers 508, so the
+ladder has nothing to raise.
 
 From a 504 seed on a 5.8 binary the 506 rung fires first [VER-MARKERS-PAST-504]: 5.8 keeps 5.6's
 StructStateFlags. The 505 rung stays silent there by design -- 5.7 replaced UEnum::Names with
@@ -18,23 +18,22 @@ FNameData, which has no EnumPackage slot behind it, so its probe logs that it sk
 ⭐ WHY NO REBUILD AND NO REPACKAGE. The input is data. Seed the hint cache with `ueVersion: 504`
 for this game and the ladder has somewhere to climb from. This is legitimate rather than a lie the
 code could detect: 504 is exactly what a stale cache from an older detection rev WOULD contain, and
-audit A4 already established the ladder never writes back (it runs AFTER Flamme::SaveResults), so
-the seed cannot be laundered into a persistent wrong answer.
+the ladder never writes back (it runs AFTER Flamme::SaveResults), so the seed cannot be laundered
+into a persistent wrong answer.
 
 THREE THINGS THAT WOULD SILENTLY MEASURE NOTHING, each guarded below:
 
   1. **The rev stamp must be current.** `Genau.cpp` honours a cached version only when
      `hints.versionDetectRev == kVersionDetectLogicRev`; otherwise it re-detects and re-stamps,
      the seed is discarded, detection answers 508, and the ladder has nothing to do -- a PASS-shaped
-     nothing. The stamp is READ FROM `dll/src/Genau.h` at run time, never typed in: it was 5, then
-     6, then 7 within two days.
+     nothing. The stamp is READ FROM `dll/src/Genau.h` at run time, never typed in: it moves.
   2. **The entry must NOT carry a user override.** `Genau.cpp`'s `hints.hasUserOverride` branch is
      checked FIRST and wins outright, skipping the cached-version branch entirely.
   3. **The DLL must be the one that has the rungs.** `inject.py` already refuses a stale
      `dist/UE5Dumper.dll` unless --allow-stale.
 
 ⚠ RESTORES THE CACHE BYTE-FOR-BYTE in a finally, and verifies the bytes came back. That file holds
-45 games' scan hints; corrupting it would silently re-scan every one of them.
+other games' scan hints too; corrupting it would silently re-scan every one of them.
 """
 import argparse
 import json

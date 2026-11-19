@@ -1,7 +1,8 @@
 r"""D4 -- get_object_list's include_index on a running game: the index must BE the GObjects slot.
 
     py tools/verify/d4_object_index.py [--label NAME] [--pages 3] [--samples 200]
-    (a host running and injected with a DLL from build 3625 or later; never while the UI holds the pipe)
+    (a host running and injected with a DLL whose get_object_list takes include_index;
+     never while the UI holds the pipe)
 
 WHY A SECOND READ. The object index writes each object's slot so two files can be matched by it (Dumper-7's
 lesson). The handler skips null and unnamed slots, so the slot is NOT a row's position in the page -- which is

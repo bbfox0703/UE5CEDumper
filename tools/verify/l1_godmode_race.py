@@ -63,11 +63,11 @@ def _sizes():
 def log_since(mark):
     """Text appended to the live logs since a _sizes() snapshot.
 
-    This used to concatenate sorted(LOGDIR.glob("*.log")) and slice by TOTAL length. Two
-    things break that: the directory keeps every past session archive, and name-sorting
-    puts the live walk-0.log BEFORE walk-2026..., so slicing by length cut inside an
-    archive and returned a PREVIOUS process lines. That is how the first run of this rig
-    read a dead pawn address and then reported the worker broken."""
+    Per live file, not a concatenation of sorted(LOGDIR.glob("*.log")) sliced by TOTAL
+    length. Two things break that: the directory keeps every past session archive, and
+    name-sorting puts the live walk-0.log BEFORE walk-2026..., so slicing by length cuts
+    inside an archive and returns a PREVIOUS process's lines -- a dead pawn address, and
+    then a worker reported broken."""
     out = []
     for f in LOGDIR.glob("*-0.log"):
         try:

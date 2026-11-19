@@ -196,12 +196,12 @@ def main():
 
         # Wait for the pipe rather than assuming the boot budget was enough. When it
         # never appears, print init-0.log's tail: it says WHY, and the reason is often
-        # not "the game is slow". Measured on OCTOPATH, which relaunches itself --
-        # instance A opened the pipe, instance B logged `UE5_StartPipeServer: pipe
-        # already exists (another instance running) — skipping`, then A exited and took
-        # the pipe with it, leaving a live game with no server at all.
+        # not "the game is slow". A game that relaunches itself (OCTOPATH does) can have
+        # instance A open the pipe, instance B log `UE5_StartPipeServer: pipe already
+        # exists (another instance running) — skipping`, then A exit and take the pipe
+        # with it, leaving a live game with no server at all.
         # [PIPE-PER-PROCESS-2026-11-06] The game's pipe is UE5DumpBfx_<pid>. Wait for one to be LISTED, which opens
-        # nothing: opening it took a pipe instance and showed the DLL a client that left at once.
+        # nothing: opening it would take a pipe instance and show the DLL a client that left at once.
         deadline = time.time() + 120
         while time.time() < deadline:
             pids, legacy = list_dumper_pipes()

@@ -1,20 +1,20 @@
-"""AF1 - a malformed UEnum NumValues must be REFUSED, not turned into a negative count.
+"""A malformed UEnum NumValues must be REFUSED, not turned into a negative count.
 
     py tools/verify/af1_enum_count.py --target EInterpCurveMode --control ETextGender
 
-THE DEFECT (audit #5 AF1), quoted from the fix's own comment in `Neu.h`:
+THE DEFECT. A guard of the shape
 
-    `static_cast<int32_t>(numNew) > maxCount` let the whole upper half of the uint32 range
+    `static_cast<int32_t>(numNew) > maxCount` lets the whole upper half of the uint32 range
     through: 0x80000000 casts to -2147483648, which is not greater than maxCount, so the
-    guard passed and `out.count` below became NEGATIVE.
+    guard passes and `out.count` becomes NEGATIVE.
 
-The fix keeps `numNew` UNSIGNED and widens both sides to int64, so 0x80000000 compares as
-2147483648 and is rejected.
+The guard in `Neu.h` keeps `numNew` UNSIGNED and widens both sides to int64, so 0x80000000
+compares as 2147483648 and is rejected.
 
-⚠ IT ONLY EXISTS ON THE UE5.6+ `FNameData` LAYOUT. The Legacy branch never had the bug -
-its `num <= 0` test catches the wrapped value, while this branch only tested `== 0`. So
+⚠ IT CAN ONLY SHOW ON THE UE5.6+ `FNameData` LAYOUT. The Legacy branch's `num <= 0` test
+catches the wrapped value, so the defect can only live in the FNameData branch, and
 DumperTest (5.4, Legacy) can NEVER reach it. This rig needs a 5.6+ host; StackOBot 5.8
-Shipping is the one on disk, and its log confirms the layout:
+Shipping is one, and its log confirms the layout:
 `UEnum::Names detected at UEnum+0x40 (UE5.6+ FNameData, verified with 'ENetRole', count=5)`.
 
 ⭐ WHY A FRESH PROCESS IS MANDATORY. `s_enumCache` in `Ubel.cpp` is a static map that is
@@ -41,7 +41,7 @@ from pipe_client import PipeClient          # noqa: E402
 
 UENUM_NAMES = 0x40          # from the DYNO:Enum log line; NOT published by get_offsets
 NUMVALUES_OFF = 0x10        # FNameData57: +0x00 FName*, +0x08 int64*, +0x10 int32 NumValues
-BOGUS = 0x80000000          # the exact value the pre-fix cast turned into -2147483648
+BOGUS = 0x80000000          # the exact value an int32 cast turns into -2147483648
 
 
 def find_enum(c, name):
@@ -78,8 +78,8 @@ def main(argv=None):
         print("[1] this process: %s @0x%X  %s @0x%X   poking 0x%X"
               % (a.target, ta, a.control, ca, tgt))
 
-        # read_mem replies carry `bytes`, not `hex` -- checking only `hex` made the read-back
-        # silently empty, so the first run could not attribute the refusal to its own poke.
+        # read_mem replies carry `bytes`, not `hex` -- checking only `hex` leaves the read-back
+        # silently empty, and the run then cannot attribute the refusal to its own poke.
         def rd4(addr):
             rr = c.request("read_mem", addr="0x%X" % addr, size=4)
             return rr.get("bytes") or rr.get("hex") or ""

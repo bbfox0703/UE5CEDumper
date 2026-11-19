@@ -3,37 +3,35 @@ r"""Assert every Proxy*.def forwards the real DLL's full export surface, at the 
 
 WHY THIS EXISTS
   A proxy DLL is a name AND an ordinal map. Getting either half wrong is silent at build
-  time and catastrophic at load time, and audit PX1 measured both halves wrong on two of
-  the four proxies at once:
+  time and catastrophic at load time:
 
-    * A MISSING NAME kills the game before we exist. `dinput8.dll` really exports six
-      functions; ProxyDinput8.def listed five. A by-name static import of the sixth fails
-      process creation with STATUS_ENTRYPOINT_NOT_FOUND -- before DllMain, before Sein has
-      a log file, with no diagnostic anywhere.
+    * A MISSING NAME kills the game before we exist. A by-name static import of a function
+      the real DLL exports and the .def omits fails process creation with
+      STATUS_ENTRYPOINT_NOT_FOUND -- before DllMain, before Sein has a log file, with no
+      diagnostic anywhere.
 
     * A STOLEN ORDINAL is worse, because it "works". link.exe hands UNPINNED exports out
-      in name-sorted order starting at (highest PINNED ordinal + 1). Neither hand-written
-      .def pinned anything, so our UE5_* block started at @6 on dinput8 and @10 on version
-      -- exactly on top of GetdfDIJoystick and of VerFindFileA..VerQueryValueW. An ordinal
-      import there does not fail; it CALLS UE5_AutoStart and gets `true` back where an
-      LPCDIDATAFORMAT is expected, then dereferences address 1.
+      in name-sorted order starting at (highest PINNED ordinal + 1). A .def that pins
+      nothing puts our UE5_* block at @6 on dinput8 and @10 on version -- exactly on top of
+      GetdfDIJoystick and of VerFindFileA..VerQueryValueW. An ordinal import there does not
+      fail; it CALLS UE5_AutoStart and gets `true` back where an LPCDIDATAFORMAT is
+      expected, then dereferences address 1.
 
-  The two GENERATED .def files (dxgi, winmm -- scripts/gen_proxy_forwarders.py) were
-  correct; the two HAND-WRITTEN ones were both wrong, in the same way, for the same
-  reason. That is the exact failure family tools/check_derived_counts.py and
-  tools/check_mailbox_contract.py exist for: a fact stated by hand that nothing
-  re-derives. `ProxyDinput8.def:4` said "Maps the 5 dinput8 exports" and that wrong number
-  was then copied into three more comments, which made it look verified.
+  A .def generated from the real DLL (dxgi, winmm -- scripts/gen_proxy_forwarders.py)
+  derives both halves; a HAND-WRITTEN one is the exact failure family
+  tools/check_derived_counts.py and tools/check_mailbox_contract.py exist for: a fact
+  stated by hand that nothing re-derives. A wrong export count in one gets copied into
+  more comments, which makes it look verified.
 
 WHY A COMMITTED BASELINE RATHER THAN READING System32 IN CI
-  The pinned ordinals are a machine-local fact (PX1 residual risk #2). Reading System32 in
+  The pinned ordinals are a machine-local fact. Reading System32 in
   CI would make an unrelated PR go red whenever the runner's Windows build exports a
   different set than the maintainer's -- and `dxgi.dll` genuinely does vary by build. So
   the measured tables are committed to tools/pe/proxy-export-baseline.tsv (same pattern as
   tools/pe/aob-specificity-baseline.tsv, which CI already compares byte-wise), the default
   check is .def <-> baseline and needs no System32 at all, and re-measuring is an explicit
   opt-in. This also makes the baked ordinal map a recorded, re-derivable artifact instead
-  of a number nobody can re-check -- which was the residual risk itself.
+  of a number nobody can re-check.
 
 WHAT IS CHECKED (default mode, deterministic, stdlib-only, <1s)
   1. every named export in the baseline has a .def entry           (missing name -> FAIL)
@@ -44,25 +42,25 @@ WHAT IS CHECKED (default mode, deterministic, stdlib-only, <1s)
   Tolerated and merely reported: a .def entry the baseline does not know (a newer Windows,
   or a deliberate extra), and real NONAME ordinals with no .def entry (winmm has one).
 
-  Rule 4 is the one that is easy to miss and is why "pin the new export only" would have
-  been worse than the bug: the UE5_* block is deliberately unpinned, so it lands at
+  Rule 4 is the one that is easy to miss and is why "pin the new export only" would be
+  worse than pinning nothing: the UE5_* block is deliberately unpinned, so it lands at
   (max pinned + 1). Keeping max-pinned at the top of the real range is what structurally
   guarantees our exports can never occupy a real slot -- no per-symbol check required.
 
-NEGATIVE CONTROLS -- all six were run and observed to FAIL, on temp copies of the .def
-(a --root pointing at a scratch tree, so the real tree was never mutated):
+NEGATIVE CONTROLS -- each of the six must FAIL, on temp copies of the .def (a --root
+pointing at a scratch tree, so the real tree is never mutated):
     0. UNMODIFIED tree                     -> passes, 0 errors  (control for the controls)
     1. GetdfDIJoystick line deleted        -> 2 errors (rules 1, 4)
     2. all six @N pins stripped            -> 7 errors (rules 2 x6, 4)
     3. only @6 pinned, @1..@5 left bare    -> 5 errors (rule 2 x5)
     4. @5 duplicated onto GetdfDIJoystick  -> 3 errors (rules 2, 3, 4)
     5. an @2 entry added to ProxyWinmm.def -> 1 error  (rule 5, the NONAME slot)
-    6. ProxyVersion.def pins reverted      -> 18 errors (rules 2 x17, 4)  <- the shipped bug
-  Case 6 is the one that matters: it reproduces PX1's version.dll half exactly, so this
-  check is known to catch the defect it was written for and not merely something like it.
-  And the control that matters next: dxgi and winmm PASS unmodified, with no edits -- so
-  the check distinguished the two broken .defs from the two correct ones rather than
-  failing on everything, which is the only way to tell a real gate from a noisy one.
+    6. ProxyVersion.def pins stripped      -> 18 errors (rules 2 x17, 4)  <- the unpinned shape
+  Case 6 is the one that matters: it is the unpinned version.dll shape exactly, so this
+  check catches the defect it was written for and not merely something like it. And the
+  control that matters next: dxgi and winmm PASS unmodified, with no edits -- so the check
+  tells a broken .def from a correct one rather than failing on everything, which is the
+  only way to tell a real gate from a noisy one.
 
 Usage:
   py tools/check_proxy_exports.py                  # .def <-> baseline (what CI runs)

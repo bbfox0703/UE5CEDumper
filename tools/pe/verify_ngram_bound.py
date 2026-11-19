@@ -4,36 +4,34 @@
     py tools/pe/verify_ngram_bound.py
     py tools/pe/verify_ngram_bound.py --tsv out/pe-sweep/patterns.tsv --roots D:/UE_Analyze_data
 
-WHICH FILES ARE "ITS OWN SOURCES". An index built since 2026-10-01 does not name them
+WHICH FILES ARE "ITS OWN SOURCES". A current index does not name them
 (`build_ngram_index.py` says why). It records the roots the builder walked and ONE digest of the
 whole set, so this walks the same roots with the builder's own `find_sources` and compares
 digests. Equal: these are the sources, and a violation means the index is broken (exit 1).
 Different: the corpus changed since the build — a file added there was never indexed, so a
 violation on it is expected and proves nothing; the run says so and exits 2 instead of 1. An older
-index that lists its sources is still resolved by name and code size, as before.
+index that lists its sources is resolved by name and code size.
 
 WHY THIS EXISTS. `aob_specificity.py`'s docstring carries two measured claims — "0 violations /
 1,017 pairs on the source binaries" and a worst-hits distribution per verdict. Both were measured
 BY HAND once, and a hand-measured number in a docstring is a number that goes stale silently. This
 re-derives them, so the next person can check instead of believe.
 
-IT ALSO SETTLED A COUNTING BUG, in the index that listed its sources (before 2026-10-01). It
-recorded **12 source entries but only 11 distinct binaries**: one build sat in two folders and the
-builder globbed `**/*.exe`, so it was indexed twice. `aob_specificity.py` printed `len(sources)` =
-12 while the docstring said 11 — the DOCSTRING was right. The duplicate did not corrupt the index:
-`merge_max` takes the MAX bucket per key, so adding a binary twice is a no-op on the data. The
-builder deduplicates by content now.
+DUPLICATE SOURCES. An older index that lists its sources can name one binary twice (one build in
+two folders, both matched by a `**/*.exe` glob), so its entry count is not its count of distinct
+binaries. The duplicate does not corrupt the index: `merge_max` takes the MAX bucket per key, so
+adding a binary twice is a no-op on the data. The builder deduplicates by content.
 
 WHAT A VIOLATION IS. Every occurrence of the whole pattern must contain each of its literal
 windows, so the frequency of the RAREST window upper-bounds the pattern's hit count in the code the
 index was built from. A violation is `actual_hits > bound` on a source binary — which should be
 impossible, and if it ever fires the index is broken rather than merely loose.
 
-PAIRS ARE COUNTED EXPLICITLY, because the original 1,017 could not be reproduced from any obvious
-product (151 patterns x 11 binaries = 1,661) and the definition behind it was never written down.
+PAIRS ARE COUNTED EXPLICITLY, because `aob_specificity.py`'s 1,017 is no obvious product of
+patterns x binaries and the definition behind it is not written down there.
 A pair here is (scoreable pattern, distinct source binary): scoreable = the pattern has a literal
 run of at least 4 bytes AND the index can size at least one of its windows. That is stated rather
-than inferred, so this number stays checkable even if it disagrees with the old one.
+than inferred, so this number stays checkable even if it disagrees with that docstring's.
 """
 import argparse
 import collections

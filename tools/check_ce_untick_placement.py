@@ -258,9 +258,9 @@ SELFTEST = [
      "[DISABLE]\n-- an immediate untick in [ENABLE] does nothing, see the header\n"
      "if memrec then memrec.Active = false end\n", 0),
 
-    # ⭐ THE TWO A TRAILING COMMENT USED TO DECIDE, one per direction. Added 2026-09-09 after
-    # the gate was measured: it stripped whole-line comments but not trailing ones, so a
-    # sentence could both exempt a real untick and manufacture a fake one.
+    # ⭐ THE TWO A TRAILING COMMENT COULD DECIDE, one per direction: a gate that strips
+    # whole-line comments but not trailing ones lets a sentence both exempt a real untick
+    # and manufacture a fake one.
     ("a trailing comment saying createTimer does NOT exempt an immediate untick",
      "[ENABLE]\nif memrec then memrec.Active = false end  -- deferred via createTimer above\n",
      1),

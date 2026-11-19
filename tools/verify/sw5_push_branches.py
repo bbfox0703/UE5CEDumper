@@ -16,14 +16,15 @@ branches on the pair (`:501-519`):
                                       table. Is Cheat Engine still open with the AOBMaker
                                       plugin loaded?"
 
-Only GREEN had ever been seen; before the fix all three produced the same green label.
+A normal push reaches GREEN only; this harness forces the other two. A build without the fix gives
+all three the same green label.
 
 ⛔ AND "JUST CLOSE CHEAT ENGINE" DOES NOT PRODUCE RED — verified in source, and it is why this
 harness exists rather than a taskkill. `_btnDisasm` is enabled only while
 `SharedAobMaker?.IsAvailable == true` (`:387`) and the handler re-reads that cached flag (`:471`),
 so with CE gone the button is dead. (`IsAvailable` is refreshed only by user-triggered probes and
-this dialog is MODAL, so a stale `true` is reachable — killing CE with the dialog open. That gap
-was a finding of its own and the handler now REPORTS it, but with a different message: "Cheat
+this dialog is MODAL, so a stale `true` is reachable — killing CE with the dialog open. The
+handler REPORTS that gap, but with a different message: "Cheat
 Engine is not reachable — nothing was pushed", which is NOT the RED branch under test.)
 
 ⭐ THE MECHANISM. Both plugin handlers run their work through CE's plain Lua global

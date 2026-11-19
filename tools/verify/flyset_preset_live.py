@@ -1,8 +1,8 @@
-"""Live check (build 3720+): fly_set refuses a preset out of range, and changes nothing else in that request.
+"""Live check (a DLL with [CPP-HARDENING-2026-11-14]): fly_set refuses a preset out of range, and changes nothing else in that request.
 
-[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2 found fly_set dropping Dunste::SetPreset's refusal: a preset of 7
-was ignored and the reply read as applied. The handler now applies the preset first, and a refused one answers an
-error with nothing changed. This rig drives it through the pipe, with no UI and no Fly ON:
+[CPP-HARDENING-2026-11-14] fly_set must not drop Dunste::SetPreset's refusal: a preset of 7 ignored with a reply
+that reads as applied is the defect. The handler applies the preset first, and a refused one answers an error
+with nothing changed. This rig drives it through the pipe, with no UI and no Fly ON:
 
     py tools/verify/flyset_preset_live.py [--pid N]
 

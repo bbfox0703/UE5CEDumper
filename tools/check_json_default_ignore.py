@@ -2,11 +2,10 @@
 
     py tools/check_json_default_ignore.py [--list] [--selftest]
 
-STATUS: REGISTERED in check_all.py (fix pass, 2026-09-10), in the same commit that repaired the two
-instances it was written against: [W1-QUOTA-UNLIMITED] (ExperimentalSettings' context dropped
-WhenWritingDefault) and the benign AobUsageFile.Version (now [JsonIgnore(Condition = Never)]). It was
-built during the finding phase and deliberately left unregistered, red by design, until then. The
-repair's red-before-green test is ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip.
+STATUS: REGISTERED in check_all.py. The two instances it was written against are repaired:
+[W1-QUOTA-UNLIMITED] (ExperimentalSettings' context does not use WhenWritingDefault) and the benign
+AobUsageFile.Version ([JsonIgnore(Condition = Never)]). The repair's red-before-green test is
+ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip.
 
 WHAT IT REFUSES. A VALUE-TYPE property whose initializer differs from `default(T)`, serialized under
 `JsonIgnoreCondition.WhenWritingDefault` -- set on a source-generated context's
@@ -16,17 +15,15 @@ WHAT IT REFUSES. A VALUE-TYPE property whose initializer differs from `default(T
 is set back to `default(T)` the key is OMITTED from the file, and the next load re-runs the
 initializer. The value the user chose silently reverts.
 
-That is `[W1-QUOTA-UNLIMITED]`, and it was MEASURED, not argued: `SnapshotQuotaMb = 1024` under a
-`WhenWritingDefault` context; "Unlimited" is 0; the file came out as `{ "enabled": true }`, the reload
-came back as 1024, and `SnapshotStore` then FIFO-deleted the snapshots the user had opted to keep.
-It had a second entrance needing no user action at all -- `ApplyAutoQuota` sets 0 itself once the
-retained set outgrows the 5 GB preset. The rule was already written down
-(`docs/teleport-coord-library-spec.md:618`: DefaultIgnoreCondition "MUST NOT be WhenWritingDefault")
-and five files named the trap; nothing enforced it.
+That is `[W1-QUOTA-UNLIMITED]`: `SnapshotQuotaMb = 1024` under a `WhenWritingDefault` context, with
+"Unlimited" = 0, writes the file as `{ "enabled": true }`, reloads as 1024, and `SnapshotStore` then
+FIFO-deletes the snapshots the user opted to keep. It has a second entrance needing no user action at
+all -- `ApplyAutoQuota` sets 0 itself once the retained set outgrows the 5 GB preset. The rule is
+written down (`docs/teleport-coord-library-spec.md`: DefaultIgnoreCondition "MUST NOT be
+WhenWritingDefault"); a written rule enforces nothing, which is why this gate exists.
 
 ⭐ THE PREDICATE'S LEGITIMATE POPULATION IS EMPTY BY CONSTRUCTION -- the only kind worth gating in this
-repo (proposed gate #17 was refuted, and 17b re-scoped, for failing exactly that). A property that
-genuinely never takes `default(T)` -- a schema `Version` -- says so with
+repo. A property that genuinely never takes `default(T)` -- a schema `Version` -- says so with
 `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]`, which costs nothing and states the intent.
 There is no baseline and no allowlist.
 
@@ -53,12 +50,10 @@ PRIMITIVES = {'bool', 'byte', 'sbyte', 'short', 'ushort', 'int', 'uint', 'long',
 DEFAULT_LIT = re.compile(r'^(?:0+(?:\.0*)?[fFdDmMuUlL]*|0x0+|false|default(?:\([^)]*\))?|null)$')
 NEVER = re.compile(r'JsonIgnore\s*\(\s*Condition\s*=\s*JsonIgnoreCondition\.Never\s*\)')
 WWD_PROP = re.compile(r'JsonIgnore\s*\(\s*Condition\s*=\s*JsonIgnoreCondition\.WhenWritingDefault')
-# UNANCHORED, because it runs under finditer over a whole class body. ⚠ The first attempt at the
-# multi-declaration fix kept this pattern's `^...$` anchors from the old per-line design, and with
-# no re.M they can only ever match a ONE-LINE class body: the selftest failed three cases and the
-# TREE RUN WENT GREEN with the known positive missing. Read on its own, that exit 0 would have
-# recorded P2 as clean. The initializer stops at the first `;` -- a value-type initializer never
-# contains one.
+# UNANCHORED, because it runs under finditer over a whole class body. ⚠ `^...$` anchors with no re.M
+# can only ever match a ONE-LINE class body: the selftest then fails, but the TREE RUN GOES GREEN with
+# the known positive missing, and read on its own that exit 0 records P2 as clean. The initializer
+# stops at the first `;` -- a value-type initializer never contains one.
 PROP = re.compile(r'public\s+(?:required\s+)?([\w<>\[\],.?\s]+?)\s+(\w+)\s*\{\s*get;[^}]*\}'
                   r'(?:\s*=\s*([^;{}]+?)\s*;)?')
 
@@ -130,12 +125,11 @@ def parse(sources: dict) -> tuple:
             body_start = m.end() - 1
             body = brace_body(src, body_start)
             base_line = src.count('\n', 0, body_start) + 1
-            # ⚠ Declarations are matched ANYWHERE in the body, not one per line. The first draft
-            # anchored a per-line regex with `$`, and its own selftest caught the result: two
-            # properties on one line merged into ONE property whose "initializer" ran to the last
-            # `;` -- it flagged the default-valued one and never saw the other. Attributes are taken
-            # only from the span AFTER the previous `;` or `}`, so a method's attributes can never
-            # leak onto the next property.
+            # ⚠ Declarations are matched ANYWHERE in the body, not one per line. A per-line regex
+            # anchored with `$` merges two properties on one line into ONE property whose
+            # "initializer" runs to the last `;` -- it flags the default-valued one and never sees
+            # the other (a selftest case). Attributes are taken only from the span AFTER the
+            # previous `;` or `}`, so a method's attributes can never leak onto the next property.
             props, prev = [], 0
             for pm in PROP.finditer(body):
                 span = body[prev:pm.start()]
@@ -212,8 +206,8 @@ def load_tree() -> dict:
     return srcs
 
 
-# The pre-fix ExperimentalSettings shape, VERBATIM in the parts that matter -- the selftest must not
-# depend on the real file, which the fix changes.
+# The ExperimentalSettings shape without the fix (the one the gate must flag), VERBATIM in the parts
+# that matter -- the selftest must not depend on the real file, which the fix changes.
 PREFIX_SHAPE = '''
 public sealed class ExperimentalSettings
 {

@@ -5,12 +5,12 @@ r"""Author `Content/UsmapProbe/BP_UsmapProbe` -- the COOKED witness L30 and L39 
     py tools/ue-sample/make_usmap_probe.py --engine 5.4 --project DumperTest --verify-only
 
 WHY THIS EXISTS
-  L30 (`[A4-USMAP-ENUM-UNDERLYING]`) and L39 (`[A4-USMAP-CONTAINER-ENUM]`) were both stuck on
-  the same missing object, not on any defect: a **cooked .uasset** carrying
+  L30 (`[A4-USMAP-ENUM-UNDERLYING]`) and L39 (`[A4-USMAP-CONTAINER-ENUM]`) both need the same
+  object, which no other fixture provides: a **cooked .uasset** carrying
 
     * a non-1-byte enum UPROPERTY            (L30 -- a 1-byte TEnumAsByte is byte-identical
-                                              either side of the fix e07d957b, so it cannot
-                                              test the row at all), and
+                                              with or without the fix, so it cannot test
+                                              the row at all), and
     * a `TArray<TEnumAsByte<E>>` UPROPERTY   (L39).
 
   DumperTest has both shapes in C++, and neither reaches an asset: ADumperTestActor is
@@ -250,8 +250,8 @@ def main():
         print("  " + ln.split("USMAPPROBE:", 1)[1].strip())
 
     # ⚠ A Python exception inside the commandlet prints to LogPython and then exits -1.
-    # Without this the run looks like it stopped mid-way for no reason -- measured: a
-    # single unexposed API call cost two blind re-runs before these lines were shown.
+    # Without this the run looks like it stopped mid-way for no reason, and a single
+    # unexposed API call costs blind re-runs to find.
     errs = [ln for ln in proc.stdout.splitlines()
             if "LogPython: Error" in ln or "Traceback" in ln or "TypeError" in ln
             or "AttributeError" in ln]

@@ -3,9 +3,9 @@
   UE5CEDumper -- [PATH-CT-MRU-ZERO] UE5CEDumper.CT splits reg.exe's REG_MULTI_SZ output correctly.
 
   WHY
-    reg.exe prints a REG_MULTI_SZ with the LITERAL two characters \0 between entries. The .CT split on every "\0",
-    which a path also contains wherever a folder name starts with the digit 0 (D:\0Games\...): measured on CE's VM,
-    one entry became {'D:', 'Games\UE5CEDumper\UE5CEDumper.CT'} -- a relative path, and a drive-root probe.
+    reg.exe prints a REG_MULTI_SZ with the LITERAL two characters \0 between entries. A split on every "\0" also
+    cuts a path wherever a folder name starts with the digit 0 (D:\0Games\...): one entry would become
+    {'D:', 'Games\UE5CEDumper\UE5CEDumper.CT'} -- a relative path, and a drive-root probe.
     A separator is a "\0" that is followed by the next ABSOLUTE path (X:\ or \\) or by the end.
 
   HOW
@@ -53,15 +53,15 @@ if src then
   check("entries are trimmed, inner spaces kept", same(t, { "D:\\a b.CT", "D:\\c.CT" }), show(t))
   t = ue5_splitRegMultiSz("")
   check("empty in, nothing out", #t == 0, show(t))
-  -- (second review, MRU-REL-MERGE) CE can store a RELATIVE entry (started with a relative table argument, then
-  -- saved): it must not be glued onto the entry before it, which the old blind split kept whole.
+  -- CE can store a RELATIVE entry (started with a relative table argument, then saved): it must not be glued onto
+  -- the entry before it.
   t = ue5_splitRegMultiSz("D:\\T\\UE5CEDumper.CT" .. S .. "rel.ct" .. S .. "E:\\y.CT")
   check("a relative entry after a table is its own entry",
         same(t, { "D:\\T\\UE5CEDumper.CT", "rel.ct", "E:\\y.CT" }), show(t))
   t = ue5_splitRegMultiSz("D:\\0Games\\x.CT")
   check("still: a 0-folder is not a separator", same(t, { "D:\\0Games\\x.CT" }), show(t))
-  -- (third review, T3-MRU-NEGCTRL-DUPLICATE) The extension rule stays narrow: the text before the separator must END in
-  -- '.ct' / '.cetrainer' -- dot included, anchored -- and '.cetrainer' counts too.
+  -- The extension rule stays narrow: the text before the separator must END in '.ct' / '.cetrainer' -- dot
+  -- included, anchored -- and '.cetrainer' counts too.
   t = ue5_splitRegMultiSz("D:\\Project\\0Games\\x.CT")
   check("a folder ending in 'ct' before a 0-folder is not a table", same(t, { "D:\\Project\\0Games\\x.CT" }), show(t))
   t = ue5_splitRegMultiSz("D:\\a.ct.old\\0x\\y.CT")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""L69 step 3 `[W5-OFFSETS-UNMEASURED]`: watch the offsets verdict ACROSS a CE Disable / Enable, from outside CE.
+r"""`[W5-OFFSETS-UNMEASURED]` step 3: watch the offsets verdict ACROSS a CE Disable / Enable, from outside CE.
 
     py tools/verify/l69_verdict_watch.py [--process DumperTest-Win64-Shipping] [--seconds 90]
 
@@ -9,10 +9,10 @@ dispatch path; the command is init-exempt, and the poller thread is restarted be
 prints one line each time (initState, result, reason) CHANGES, with a timestamp. Start it after READY, then untick
 and re-tick the hidden child `Inject DLL + Start Pipe Server` in CE -- on a record that INJECTED the DLL itself: one
 that found it already loaded and serving does not own it, and its untick tears nothing down (the B30 guard).
-Measured 2026-09-23 on a fixed DLL: 1/'' (READY) -> `no answer` after the Disable (it STOPS the mailbox poller, so
+What a DLL with the fix shows: 1/'' (READY) -> `no answer` after the Disable (it STOPS the mailbox poller, so
 the verdict is readable only through the C ABI, which says 0/'probe-not-run') -> 0/'probe-not-run' once the poller
 restarts at the re-Enable -> 1/'' as soon as the re-scan's offset probe publishes, which is while initState is still
-1, about 225 ms BEFORE READY (the deferred &GEngine scan runs after it) -> 1/'' at READY. A DLL whose Disable does
+1, shortly BEFORE READY (the deferred &GEngine scan runs after it) -> 1/'' at READY. A DLL whose Disable does
 not reset the verdict answers 1/'' at every poll, the re-scan's pre-probe polls included: a stale TRUE. `no answer`
 is not treated as a failure. It never writes anything but the mailbox's own command fields.
 """

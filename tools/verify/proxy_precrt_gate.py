@@ -25,11 +25,12 @@ the window the fix closes.
   real machine code — not against source text.
 
   DOES NOT PROVE: that the *allocation* would have been the thing to fault. Under
-  DONT_RESOLVE_DLL_REFERENCES the IAT is not snapped either, so a pre-fix binary faults on
-  its first imported call (`AcquireSRWLockExclusive`) rather than on `HeapAlloc(NULL, ...)`.
-  Same place in OUR code, earlier instruction. The negative control below therefore shows
-  "the old binary dies inside the resolver, the new one never enters it" — which is the
-  fix — and NOT a byte-for-byte replay of the game crash. Only the game proves that.
+  DONT_RESOLVE_DLL_REFERENCES the IAT is not snapped either, so a binary without the fix
+  faults on its first imported call (`AcquireSRWLockExclusive`) rather than on
+  `HeapAlloc(NULL, ...)`. Same place in OUR code, earlier instruction. The negative control
+  below therefore shows "the binary without the fix dies inside the resolver, the one with it
+  never enters it" — which is the fix — and NOT a byte-for-byte replay of the game crash.
+  Only the game proves that.
 
 Each load+call runs in a CHILD PROCESS so that a fault is a reportable exit code rather than
 the death of this script. That is the whole reason for the --child plumbing.

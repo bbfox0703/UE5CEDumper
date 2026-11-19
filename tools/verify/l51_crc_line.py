@@ -1,14 +1,14 @@
-r"""L51 [A2-CRC-PATH-LS]: read a scan log AS BYTES and judge the CrashReportClient line.
+r"""[A2-CRC-PATH-LS]: read a scan log AS BYTES and judge the CrashReportClient line.
 
     py tools/verify/l51_crc_line.py                       # Logs\ES2-Win64-Shipping\scan-0.log
     py tools/verify/l51_crc_line.py <scan log path>       # any other file (a copy, an archive)
 
 WHY BYTES. The fix is about what Sein writes for a wide path with a character above 0xFF
-(EVERSPACE(TM) 2's U+2122). The cp950 console mangles that character, and a text-mode read
+(EVERSPACE(TM) 2's U+2122). A cp950 console mangles that character, and a text-mode read
 with the wrong codec "fixes" or hides exactly the bytes under test. So the verdict comes from
 the raw bytes: the CrashReportClient line must carry the path as UTF-8 (TM = E2 84 A2), and
-no `[SCAN:Ver] ` record may be EMPTY -- the pre-fix shape, where `%ls` in a narrow formatter
-emptied the whole record (ES2 scan-20260909-171715.log:9).
+no `[SCAN:Ver] ` record may be EMPTY -- the defect's shape, where `%ls` in a narrow formatter
+empties the whole record.
 
 WHY THE HINT LINE IS CHECKED. A current-rev cached version skips DetectVersion entirely
 (`FindAll: UE Version = … (cached, rev=…) — skipped DetectVersion`), and then the absence of an

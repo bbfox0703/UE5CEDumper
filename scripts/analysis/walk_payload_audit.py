@@ -6,7 +6,7 @@ actually read?
 WHY
 ---
 `docs/multipipe-eval.md` §10.4 measured a Copy CE XML as **59-73% pure IPC**, and
-build 2329 collapsed the round-trips by batching. What batching does NOT change is
+batching collapses the round-trips. What batching does NOT change is
 the number of BYTES on the wire: every batched instance still carries the full
 `walk_instance` object — every field's raw `hex`, its decoded `value`, resolved
 pointer NAMES, per-instance `name`/`class`/`outer_*`, and so on.
@@ -53,14 +53,10 @@ age-based retention window, so the WHOLE export is captured as complete,
 untruncated payloads. `--coverage` reports how much of the sampled payload the
 cap hid.
 
-  Corrected 2026-08-04. This used to promise "log rotation (4 x 8 MiB) keeps the
-  LAST ~32 MiB ... an unbiased one". Neither half was true: the sink was
-  configured with a size limit but no roll point, so it did not rotate at all —
-  it stopped writing at the first 8 MiB, and this script silently measured the
-  export's OPENING PREFIX, reintroducing exactly the bias the flag exists to
-  remove. Fixed in build 2585 (audit #4 B31); there is also no 4-file cap now,
-  because a generation COUNT limit is the retention policy this project
-  deliberately replaced with an age-based one.
+  There is no file-COUNT cap on those parts: retention is by age. A sink that
+  stopped writing at the first 8 MiB instead of rolling would leave this script
+  only the export's OPENING PREFIX to measure, which is exactly the bias the flag
+  exists to remove.
 
 The `per scope` table is the reading to trust under truncation: sampling within
 one scope is uniform, so `field`'s used/unused ratio is sound even at 6% overall
@@ -82,12 +78,12 @@ consuming line cited in KEYS below. Tags:
 `LiveFieldValue` during the struct-flatten (CeXmlExportService.cs:987-1039) and
 never consumed afterwards counts as unused — copying a value is not using it.
 
-ACTED ON (build 2351): the `unused` keys this script found are what
-`walk_instance`'s `lean: true` flag now omits for the CE XML export path (drop
-list in docs/pipe-protocol.md). Re-running the audit on a CURRENT log therefore
-reports a much smaller unused share for lean responses — that is the fix working,
-not the measurement changing. To re-measure the FULL shape, sample a CSX export or
-a Live Walker session, both of which still request full payloads.
+LEAN RESPONSES: the `unused` keys this script finds are what `walk_instance`'s
+`lean: true` flag omits for the CE XML export path (drop list in
+docs/pipe-protocol.md). A CURRENT log therefore reports a much smaller unused
+share for lean responses — that is the flag working, not the measurement
+changing. To measure the FULL shape, sample a CSX export or a Live Walker
+session, both of which request full payloads.
 """
 
 from __future__ import annotations

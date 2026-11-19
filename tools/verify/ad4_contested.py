@@ -31,10 +31,10 @@ rare flicker real combat produces.
       UE 5.4's Misc/Exec.h defines UE_ALLOW_EXEC_COMMANDS as
       UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING when (UE_BUILD_SHIPPING && !WITH_EDITOR),
       and UnrealBuildTool sets that to 0 unless the Target.cs opts in
-      (UEBuildTarget.cs:5147/5151). Measured on Shipping 2026-08-23: 59.8 Hz, which
-      predicts a ~94% contested duty and 97.8% was observed. This rig therefore
-      REPORTS the rate it measured rather than quoting a configured one -- a number
-      without its conditions is not a measurement.
+      (UEBuildTarget.cs:5147/5151), so Shipping runs uncapped and the contested
+      duty is correspondingly higher. This rig therefore REPORTS the rate it measured
+      rather than quoting a configured one -- a number without its conditions is not a
+      measurement.
 
   ==> That asymmetry is the honest caveat on this evidence and it is printed with the
       result: this shows the state is REAL and the detector SEES it. It does not

@@ -5,10 +5,10 @@
     py tools/verify/ce_lua53_host.py --probe              # print the VM's version/behaviour probe only
     py tools/verify/ce_lua53_host.py --ce-dir "E:/Tools/Cheat Engine"
 
-WHY THIS EXISTS. scripts/tests/*.lua run under whatever `lua` is on the machine -- here a stock 5.4.6 -- while the
+WHY THIS EXISTS. scripts/tests/*.lua run under whatever `lua` is on the machine -- often a stock 5.4 -- while the
 scripts they test run inside CE's Lua 5.3 (lua53-64.dll). The two differ in ways that can make a test PASS on 5.4
 and the script FAIL in CE: 5.4-only syntax (<const>, <close>), 5.4-only functions (warn, coroutine.close), and
-behaviours that changed. --probe measured one on 2026-09-25: string arithmetic yields a FLOAT on CE's VM ("10"+1 is
+behaviours that changed. --probe shows one: string arithmetic yields a FLOAT on CE's VM ("10"+1 is
 11.0, on 5.4 it is 11). The shipped DLL has NO 5.1/5.2 compat functions (bit32, math.pow, unpack, loadstring are
 nil), although the source tree's Makefile says LUA_COMPAT_5_2. Running the same suites on CE's VM removes the
 question instead of arguing it.
@@ -16,8 +16,8 @@ question instead of arguing it.
 HOW. It compiles ce_lua53_host.c -- a small driver of our own that declares the Lua C API functions it uses -- and
 links it against an import library generated from the INSTALLED lua53-64.dll's export table (dumpbin), then copies
 that DLL beside it. So the interpreter that runs the tests is the exact binary CE loads. It needs a Cheat Engine
-INSTALL and MSVC, and nothing else: until 2026-10-01 it compiled lua.c from a clone of CE's source tree, which a
-second machine with CE installed did not have, and there the C# tests that use the host skipped.
+INSTALL and MSVC, and nothing else -- not a clone of CE's source tree, which a machine with CE installed may not
+have (the C# tests that use the host would skip there).
 MSVC comes from vcvars64.bat, the same way build_dll.py gets it: no PowerShell. Output goes to out/ce_lua53/
 (gitignored scratch).
 

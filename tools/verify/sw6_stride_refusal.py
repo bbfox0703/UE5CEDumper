@@ -3,20 +3,20 @@ r"""SW6 — the delegate-stride REFUSAL, on the two arms that can actually reach
     py tools/verify/sw6_stride_refusal.py        # DumperTest must be running + injected
 
 THE ROW. `[D4B-DELEGATEPAD]` gave four readers a refusal: rather than guess a stride from an
-ElementSize that is neither *base* nor its padded size (*base+8*, rounded up to 8), they decline. ⭐ A refusal is a NEW FAILURE MODE
-the fix introduced — pre-fix the reader simply read the field — so if it ever fires wrongly it
-blanks working data. It had never fired at all: 5.4 / 5.7 / 5.8 and UE 4.23 / 4.27 all report one
-of the two legal sizes across 600 classes each, and the register recorded the arms as reachable
-"only on an engine whose delegate ElementSize is neither" — i.e. never.
+ElementSize that is neither *base* nor its padded size (*base+8*, rounded up to 8), they decline. ⭐ A refusal is a FAILURE MODE
+of its own — a reader without it simply reads the field — so if it ever fires wrongly it blanks
+working data. No measured engine reaches it: 5.4 / 5.7 / 5.8 and UE 4.23 / 4.27 report one of the
+two legal sizes, and the register records the arms as reachable "only on an engine whose delegate
+ElementSize is neither" — i.e. never, without help.
 
 ⭐ BUT THE HOUSE TECHNIQUE REACHES IT. The size the array readers validate is the engine's own
 `FProperty::ElementSize` on the ArrayProperty's **Inner** property, read LIVE on every walk
 (`Ubel.cpp:4370-4372`), and the wire already hands us that Inner's address as `array_inner_addr`
 (`Fern.cpp:1538`, non-lean). One 4-byte write makes 28 — a size no build has for either reader,
 whatever the FName width (the multicast is 16 / 24; the unicast 12 / 16 / 20, or 24 / 32 behind the
-detector) — and both array readers must refuse. (The runs recorded before 2026-10-27 poked 32, which a
-12-byte-FName checked build has since [DELEGATE-PAD-ALIGN].) The refusal itself is unit-pinned
-(`Test_Delegate_AccessDetectorPad` in dll_helpers_test); what had never happened is a CALL SITE reaching it.
+detector) — and both array readers must refuse. (Not 32: a 12-byte-FName checked build has that size
+with [DELEGATE-PAD-ALIGN].) The refusal itself is unit-pinned (`Test_Delegate_AccessDetectorPad` in
+dll_helpers_test); what this rig adds is a CALL SITE reaching it.
 
 ⛔ THE SCALAR ARMS ARE NOT REACHABLE, and `--scalar` exists to MEASURE that rather than to assume
 it. `Ubel.cpp:5499` / `:5996` validate `fi.Size`, which `EnumerateFields` reads ONCE
@@ -25,15 +25,15 @@ LRU with **no invalidation command anywhere in the DLL**. `WalkInstance` iterate
 (`Ubel.cpp:4100`), so a poke landing after the class has been walked is invisible, and so is its
 restore.
 
-Evicting the LRU looked like the way in. It is not, and the reason is worth recording because it
-is not obvious from either cache's own comments. Measured on a COLD process, 2026-09-09:
+Evicting the LRU looks like the way in. It is not, and the reason is not obvious from either
+cache's own comments. On a COLD process:
 
     at start                                entries=0     fields=0
     after walk_instance (DumperTestActor)   entries=10    fields=194
     after walk_class_batch x600             entries=2048  fields=29251
     after walk_class_batch ALL (3946)       entries=2048  fields=29251   <- IDENTICAL
 
-The second half of that pass changed nothing at all. `walk_class_batch` goes through
+The second half of that pass changes nothing at all. `walk_class_batch` goes through
 `Ubel::WalkClassEx` (`Aura.cpp` WalkClassesBatch), which consults the **separate, UNBOUNDED**
 `s_walkClassExCache` (`Ubel.cpp:1200`) and only calls `WalkClass` on a MISS (`Ubel.cpp:1211-1214`).
 Once that front cache is warm — which 600 classes achieve, because each walk pulls in super chains
@@ -45,17 +45,15 @@ builds and the UI prints verbatim — a render echo. The array arms change the S
 payload: `array_elem_size` becomes the poked value and the `elements` key disappears where two
 elements stood. That is a structural observable, not an echo of a string.
 
-⭐ THIS RIG FOUND AN ASYMMETRY THAT HAS SINCE BEEN FIXED, and both halves are worth keeping in
-mind because the register's acceptance text was written against the broken shape:
-  * the two ARRAY sites warned but were SILENT on the wire's value side — `Ubel.cpp:4515-4522`
-    moved the reader's `elements` only on success and DISCARDED `delResult.error`, and an
-    ArrayProperty never sets `typedValue`, so a refused array reached the UI as a bare header
-    with no elements: indistinguishable from an empty array;
-  * the two SCALAR sites rendered their string but emitted NO LOG LINE AT ALL, so "DLL side: the
-    WALK warning naming the size" was unsatisfiable there.
-Neither arm could satisfy the row's two-sided acceptance on its own. Both were fixed on
-2026-09-09 after this rig measured it: the array refusal now lands in `typedValue`, and all four
-sites warn. The assertions below check BOTH sides on the array arm, which is what closes the row.
+⭐ BOTH SIDES ON ONE ARM. Each half can regress on its own, so keep both in mind:
+  * an ARRAY site that warns but is SILENT on the wire's value side — moving the reader's
+    `elements` only on success and discarding `delResult.error`, where an ArrayProperty never
+    sets `typedValue` — sends a refused array to the UI as a bare header with no elements:
+    indistinguishable from an empty array;
+  * a SCALAR site that renders its string but emits NO LOG LINE leaves "DLL side: the WALK
+    warning naming the size" unsatisfiable there.
+The array refusal lands in `typedValue`, and all four sites warn. The assertions below check BOTH
+sides on the array arm, which is what closes the row.
 
 ⚠ BLAST RADIUS, and why the window is kept short. The Inner FProperty is per-CLASS, so the poked
 size is what the ENGINE would use too (`FScriptArrayHelper`, `CopyCompleteValue`). Nothing may
@@ -182,10 +180,10 @@ def evict_class_cache(skip_addr: str, want: int = 0) -> int:
     so would its restore be. The cache is a 2048-entry LRU (Ubel.h:204), so ageing our class out
     and letting the next walk re-read memory is possible -- but only with enough pressure.
 
-    ⛔ 2200 CLASSES IS NOT ENOUGH, measured 2026-09-09. Eviction runs ONLY on an INSERT --
+    ⛔ 2200 CLASSES IS NOT ENOUGH. Eviction runs ONLY on an INSERT --
     `PublishWalkClass` returns early on a cache HIT (Ubel.cpp:906), and walking an
-    already-cached class merely touches it. After 2200 others our class was still inside the
-    2048 most-recent, so it was never at the back when an insert popped one, and the wire kept
+    already-cached class merely touches it. After 2200 others our class can still be inside the
+    2048 most-recent, so it is never at the back when an insert pops one, and the wire keeps
     reporting the STALE size. Walking EVERY other class makes it the oldest entry by
     construction. Verified empirically by the field's own `size` on the wire, never assumed:
     the caller treats an unchanged `size` as "this arm measured nothing", NOT as a refusal that
@@ -353,10 +351,9 @@ def main() -> int:
             if poked_size != a.poke:
                 fails.append("%s: the wire still reports elem_size=%r after the poke"
                              % (name, poked_size))
-            # ⭐ ADDED 2026-09-09 AFTER THE FIX. Ubel.cpp used to DISCARD the array reader's
-            # `error`, so a refused array reached the UI as a bare header -- indistinguishable
-            # from an empty array. It now lands in `typedValue`, which is what the UI renders,
-            # so this arm is two-sided like the scalar ones.
+            # ⭐ The array reader's `error` lands in `typedValue`, which is what the UI renders,
+            # so this arm is two-sided like the scalar ones. A DLL that discards it sends a
+            # refused array to the UI as a bare header -- indistinguishable from an empty array.
             poked_val = f2.get("value")
             print("  value      : %r" % poked_val)
             if not poked_val or "not read" not in poked_val:

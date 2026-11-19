@@ -2,8 +2,8 @@ r"""[LEAD-SECOND-UI-CRASHLOG] Launch the UI twice and check that the second laun
 
     py tools/verify/second_instance_crashlog.py <path to UE5DumpUI.exe>
 
-Before the fix, a second launch found the single-instance mutex taken inside Avalonia's start-up, shut the lifetime
-down, and the lifetime then threw "the Dispatcher shut down" into Program.Main's catch, which overwrote crash.log
+Without the fix, a second launch finds the single-instance mutex taken inside Avalonia's start-up, shuts the lifetime
+down, and the lifetime then throws "the Dispatcher shut down" into Program.Main's catch, which overwrites crash.log
 (the first instance's real one included). Pass: the second process exits with 1, quickly, and crash.log's bytes and
 modification time are what they were before it ran.
 

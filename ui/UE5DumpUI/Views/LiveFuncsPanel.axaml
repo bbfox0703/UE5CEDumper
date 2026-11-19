@@ -486,7 +486,7 @@
                            IsVisible="{Binding IsPerFrame}"
                            ToolTip.Tip="{StaticResource str.Tip.LF.PerFrame.Marker}"
                            Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                <!-- Review DLL-3: the address held another function during the recording; the count is both. -->
+                <!-- The address held another function during the recording; the count is both. -->
                 <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
                            IsVisible="{Binding IsReused}"
                            ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"

@@ -1,4 +1,4 @@
-"""Live pipe check for [USMAP-ENUM-SIGNEDNESS] (build 3674 on): walk_class's `enum_underlying`.
+"""Live pipe check for [USMAP-ENUM-SIGNEDNESS] (a DLL with that tag): walk_class's `enum_underlying`.
 
     py tools/verify/enum_underlying_pipe_check.py
 

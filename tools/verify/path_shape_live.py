@@ -6,7 +6,7 @@
 
 WHAT `run` CHECKS, per exe-name shape (one game at a time; each is killed before the next starts):
   * the DLL answering is dist's build (pipe_client.assert_build -- a stale proxy serves a confident wrong answer);
-  * `module_name` is the exe's REAL name, UTF-8 ([PATH-MODULE-NAME-UTF8]; it used to be '?' for every char >= 128);
+  * `module_name` is the exe's REAL name, UTF-8 ([PATH-MODULE-NAME-UTF8]; not '?' for every char >= 128);
   * `get_ce_pointer_info`'s `ce_base` names the module as CE does -- the ANSI Module32First view: narrowed to the
     system code page ('?' for a character it lacks) and cut after the LAST 0x5C byte (Big5 功 = A5 5C, so
     功夫-… is 夫-… to CE) ([PATH-CE-MODULE-VIEW] / MODVIEW-5C-TRAIL);

@@ -3,15 +3,15 @@ r"""[WALKCLASS-NOT-STRUCT] walk_class walks a class, a struct or a function, and
 
     py tools/verify/walkclass_kind_live.py --pid <game pid>
 
-Review wf_1b9e937b-a0d DLL-3: walk_class's liveness gate let ANY live object through, so a class freed by a level
-travel whose address now holds an actor was walked as a class (an empty or made-up class, answered ok), and the
-Class/Struct panel's Enum rows were walked as structs the same way. On DumperTest (Shipping by default):
+A liveness gate alone lets ANY live object through: a class freed by a level travel whose address now holds an actor
+would be walked as a class (an empty or made-up class, answered ok), and the Class/Struct panel's Enum rows would be
+walked as structs the same way. On DumperTest (Shipping by default):
 
   controls   a class (DumperTestActor's), a script struct (/Script/CoreUObject.Vector) and a UFunction of the class
-             walk as before: ok, with the class's own name.
+             walk: ok, with the class's own name.
   refusals   a live DumperTestActor INSTANCE (what a freed class's address can hold) and an enum are refused with
              "Not a class or struct at <addr> -- it holds <name> (<class>)".
-  liveness   an address that is no object at all still gets the older "Not a live class" refusal.
+  liveness   an address that is no object at all still gets the liveness refusal, "Not a live class".
 
 The game and its pid are arguments; nothing is written to the game.
 """

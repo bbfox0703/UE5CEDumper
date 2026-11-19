@@ -1,4 +1,4 @@
-r"""[DYNOFF-LATCH-STALE] live regression check: the epoch-keyed calibration latch walks a fixture the way it used to.
+r"""[DYNOFF-LATCH-STALE] live regression check: with the epoch-keyed calibration latch, a fixture still walks unchanged.
 
     py tools/verify/latch_regression_live.py --pid 1234
     py tools/verify/latch_regression_live.py --pid 1234 --max-deltas 0 --class /Script/DumperTest.DumperTestActor

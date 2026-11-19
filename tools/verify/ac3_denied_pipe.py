@@ -1,21 +1,20 @@
-r"""AC3 -- the WARN arm: a bridge pipe that EXISTS but refuses us.
+r"""The bridge-reconnect WARN arm: a bridge pipe that EXISTS but refuses us.
 
     py tools/verify/ac3_denied_pipe.py [--seconds N]
 
 WHY THIS RIG EXISTS
-  `AobMakerBridgeService.ReconnectAsync` splits its failures on purpose (audit #5 AC3). Its own
-  doc comment lists five outcomes that a bare `catch` had collapsed into one blank
-  "AOBMaker not connected":
+  `AobMakerBridgeService.ReconnectAsync` splits its failures on purpose. Its own doc comment
+  lists five outcomes that a bare `catch` would collapse into one blank "AOBMaker not connected":
 
       OperationCanceledException  -> Debug "cancelled by caller"
       TimeoutException            -> Debug "no server on \\.\pipe\AOBMakerCEBridge within 2000 ms"
       anything else               -> WARN  "connect to '...' failed ({ExceptionTypeName}): {msg}"
       success                     -> Info  "AOBMaker CE Plugin bridge: available"
 
-  A survey of all 107 UI `init-*.log` files found the Debug no-server line 211 times and the Info
-  line 145 times, so those two arms are richly evidenced by ordinary use. **The WARN arm has never
-  fired** -- and it is the one that carries the whole point of the fix, because it is what tells a
-  user "CE is up, something ELSE is wrong" instead of the useless "start Cheat Engine".
+  The Debug no-server line and the Info line turn up in ordinary use, so those two arms are
+  evidenced by the UI's own `init-*.log` files. **The WARN arm does not fire in ordinary use** --
+  and it is the one that carries the whole point of the split, because it is what tells a user
+  "CE is up, something ELSE is wrong" instead of the useless "start Cheat Engine".
 
   It cannot be staged by starting or stopping CE, and it cannot be staged by saturating the pipe:
   the try block holds only `ConnectAsync`, and a server at capacity makes ConnectAsync WAIT, which

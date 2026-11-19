@@ -12,10 +12,9 @@ UnrealHeaderTool decides whether to re-run by comparing each header against the 
 `Intermediate/Build/.../UHT/Timestamp` -- which any earlier build in the same session has already
 pushed forward. A file copied in with an older mtime is invisible to UHT: it regenerates nothing,
 UBT compiles against the PREVIOUS reflection data, and the build reports **BUILD SUCCESSFUL**.
-Measured 2026-09-09 on DumperTest: two new UPROPERTYs and a UFUNCTION were packaged away, the game
-booted normally, and the fields were simply absent from `walk_instance`. The only tell was a
-`.generated.h` still carrying the previous day's timestamp. `repackage.py --sync-mirror` carries
-the same stamp for the same reason.
+New UPROPERTYs and UFUNCTIONs are then packaged away, the game boots normally, and the fields are
+simply absent from `walk_instance`. The only tell is a `.generated.h` still carrying an older
+timestamp. `repackage.py --sync-mirror` carries the same stamp for the same reason.
 
 ⚠ WHAT IT DOES NOT DO. It does not place the actor in a level. `tools/verify/d4b_pad_survey.py`
 needs only the CLASS -- a UCLASS in a game module is registered in GObjects at module load -- so
@@ -67,7 +66,7 @@ def pch_mode(mod: Path):
     ⛔ TWO OPPOSITE RULES, AND `Build.cs` SAYS WHICH ONE APPLIES -- the engine version does not.
     Module-wide PCH (no `PCHUsage`, UE 4.15's template) wants the MODULE header first; IWYU
     (`UseExplicitOrSharedPCHs`, the 4.18/4.23/4.27 templates) wants the file's OWN header first.
-    ⚠ Measured 2026-09-09: prepending unconditionally fixed 4.15 and BROKE 4.18.
+    ⚠ Prepending unconditionally builds on 4.15 and BREAKS 4.18.
     """
     pch = mod.name + ".h"
     build_cs = mod / (mod.name + ".Build.cs")
@@ -150,7 +149,7 @@ def main() -> int:
     #   * IWYU (`PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs`, 4.16+ and every template from
     #     4.18 on): the file's OWN header must be first -- "Expected DelegatePadFixture.h to be
     #     first header included."
-    # ⚠ Measured 2026-09-09: prepending unconditionally fixed 4.15 and BROKE 4.18. The engine
+    # ⚠ Prepending unconditionally builds on 4.15 and BREAKS 4.18. The engine
     # version is the wrong discriminator anyway -- 4.18 supports both and the template picks one.
     # Read Build.cs instead, which is where the answer actually lives.
     pch, iwyu, has_pch = pch_mode(mod)

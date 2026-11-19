@@ -284,16 +284,15 @@ def find_duplicate_copies(target, want_md5, roots=None, name_hint=None, size_pre
     binary is missing is exactly the one where a surviving copy matters most.
 
     ⚠ `size_prefilter` MUST be False unless the file at `target` IS the corpus build. The md5 test
-    below has always compared against `want_md5` (Ghidra's import-time hash = the corpus build), so
-    the comparison was never the problem — but the prefilter sized candidates against the file
-    *currently* at `target`, which on a DRIFTED row is the build that REPLACED the corpus one. The
-    surviving corpus copy has the old size, so it was skipped before its md5 was ever computed.
-    Measured 2026-07-29: Palworld reported `duplicate_copies: []` and the note "the .rep is the
-    last copy" while TWO byte-identical copies sat in `Game Binary backup`. That is worse than a
-    nulled field — a null reads as *unknown*, this was a positive false claim, and it fired only on
-    drifted rows, i.e. exactly the rows the field exists to protect. Classic shape: an optimisation
-    correct only under an assumption ("the file on disk is the corpus build") that is precisely
-    false where it matters."""
+    below compares against `want_md5` (Ghidra's import-time hash = the corpus build), but the
+    prefilter sizes candidates against the file *currently* at `target`, which on a DRIFTED row is
+    the build that REPLACED the corpus one. The surviving corpus copy has the old size, so it would
+    be skipped before its md5 was ever computed, and the row would report `duplicate_copies: []`
+    and "the .rep is the last copy" while byte-identical copies exist. That is worse than a nulled
+    field — a null reads as *unknown*, this is a positive false claim, and it fires only on drifted
+    rows, i.e. exactly the rows the field exists to protect. Classic shape: an optimisation correct
+    only under an assumption ("the file on disk is the corpus build") that is precisely false where
+    it matters."""
     if not want_md5:
         return []
     base = os.path.basename(name_hint or target or '').lower()
@@ -493,11 +492,9 @@ def main():
                     m, sha = hashes(probe)
                     state = 'MATCH' if m == rec['exe_md5'] else 'DRIFTED'
             # Search EVERY row, including STEAM and including GONE ones.
-            # Both old guards were wrong. "A Steam row's second copy is the store" is false
-            # whenever the store has moved on — measured on ES2-0517, whose live file no longer
-            # matches the md5 Ghidra imported. And skipping GONE rows meant the search was
-            # skipped precisely when a surviving copy matters most: all six GONE rows turned out
-            # to have md5-identical twins under "D:\UE_Analyze_Data\Game Binary backup".
+            # "A Steam row's second copy is the store" is false whenever the store has moved on
+            # and the live file no longer matches the md5 Ghidra imported. And skipping GONE rows
+            # would skip the search precisely when a surviving copy matters most.
             # size_prefilter ONLY when today's file IS the corpus build. On DRIFTED/GONE it would
             # size candidates against the wrong build and hide the surviving copy — see the
             # warning in find_duplicate_copies.

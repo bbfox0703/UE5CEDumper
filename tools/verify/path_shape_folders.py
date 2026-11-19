@@ -8,11 +8,11 @@
     py tools/verify/path_shape_folders.py clean                # remove out/pathshape/ (refuses while a fixture is hosted)
     py tools/verify/path_shape_folders.py list                 # the shapes and their code points
 
-WHY. The maintainer's rule (2026-09-25): a path shape used for a check is made by a committed script inside the repo,
+WHY. The maintainer's rule: a path shape used for a check is made by a committed script inside the repo,
 not a folder someone created by hand somewhere else -- so it can be rebuilt on the other PC, and nobody has to guess
 which code points a name held. Every name here is spelled with escapes: the source stays ASCII, and a Windows input
-method cannot normalise it (it turned the maintainer's typed U+2126 OHM / U+212A KELVIN / U+212B ANGSTROM signs into
-U+03A9 / U+004B / U+00C5 on disk -- measured -- so BOTH spellings are shapes).
+method cannot normalise it (one can turn typed U+2126 OHM / U+212A KELVIN / U+212B ANGSTROM signs into
+U+03A9 / U+004B / U+00C5 on disk, so BOTH spellings are shapes).
 
 WHAT `probe` SAYS, per shape (the ACP and the volume's 8.3 setting are this machine's):
   * the order WindowsSystemCodePage.AnsiPathBytes / Methode::NarrowForAnsiLoad take for <shape>\\UE5CEDumper\\UE5Dumper.dll

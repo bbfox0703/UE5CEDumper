@@ -65,11 +65,10 @@
 
     <!-- [PROPSEARCH-STATUS-CLIPPED] The status line has a row of its own and wraps there. This
          panel puts a status's qualifier at its END (a capped count, a hold armed on nothing). As
-         the search row's fill child it got what the controls left — measured on build 3682 in
-         a 1389-px window, a Force armed on nothing ended "... CheatManager or..." — and its
-         tooltip ([FORCESTATUSCLIP-2026-08-22]) made the tail recoverable only by a hover nobody
-         knows to make. Beside the controls, wrapping would instead grow the search row. Not the
-         outer DockPanel's last child, which would fill and ignore its Dock. -->
+         the search row's fill child it would get only what the controls leave and lose that
+         tail, which a tooltip ([FORCESTATUSCLIP-2026-08-22]) makes recoverable only by a hover
+         nobody knows to make. Beside the controls, wrapping would instead grow the search row.
+         Not the outer DockPanel's last child, which would fill and ignore its Dock. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#AAB8D0" FontSize="13" FontFamily="Consolas, Menlo, monospace"
                TextWrapping="Wrap" Margin="0,0,0,6"

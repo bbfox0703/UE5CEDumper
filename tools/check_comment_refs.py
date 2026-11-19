@@ -6,9 +6,9 @@
     py tools/check_comment_refs.py --selftest # the negative controls only (every run does them first)
 
 WHY ([COMMENT-INTEGRITY-2026-09-26], docs/comment-integrity-eval.md). Comments are not compiled, so nothing tells
-the author when what they describe moves. Measured on build 3560: 97 of 141 in-repo `File.cpp:NNN` references
-in comments pointed at a line that had moved since the comment was written, "no test target compiles X.cpp"
-was false in at least 9 places, and 18 references named a .md file that does not exist. Four checks, over
+the author when what they describe moves: an in-repo `File.cpp:NNN` reference goes stale with the next edit above
+it, "no test target compiles X.cpp" goes false when a test target starts including the file, and a .md name
+outlives the file (the eval has the counts). Four checks, over
 the comment text of every tracked code file under dll/ ui/ scripts/ tools/ (// /* */ /// -- #; NOT Python
 docstrings, which are prose the scripts print):
 
@@ -141,7 +141,7 @@ def scan_line(path, n, c, ctx, prior=""):
             inrepo = above[-1].group(1).lower() in by_base if above else True   # none anywhere = this file
         if inrepo and not line_history:
             out.append(("LINE", path, n, m.group(1)))
-    # --- TESTTARGET (history -- "until now", "used to", a claim quoted as someone's belief -- is not a claim)
+    # --- TESTTARGET (a past-tense line -- what HISTORY matches -- or a claim quoted as someone's belief is not a claim)
     for m in TESTCLAIM.finditer(c):
         stem = m.group(1) or m.group(2)
         quoted = c[:m.start()].count('"') % 2 == 1

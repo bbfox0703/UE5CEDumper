@@ -5,8 +5,8 @@
     py stage_synth.py clean
 
 Why synthetic rather than Light Maze (plan §4.1's own preference): "restore" here
-means delete a tree we created, so the destructive case the review flagged cannot
-arise at all -- there is no original file anywhere in it to lose.
+means delete a tree we created, so the destructive case cannot arise at all --
+there is no original file anywhere in it to lose.
 
 Two deliberate risk reductions over the plan's fallback:
   * The "-Win64-Shipping.exe" is a text stub, not a copied system binary. The

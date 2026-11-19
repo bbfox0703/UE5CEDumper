@@ -19,7 +19,7 @@ Checks, in order (each printed ok / FAIL; exit 0 only when all pass):
      is untouched;
   8. clean-up: the foreground client turns god mode off, and nothing is left held.
 
-Needs a game running a DLL of build 3704 or later (get_holds); DumperTest Shipping is the fixture.
+Needs a game running a DLL that answers get_holds; DumperTest Shipping is the fixture.
 """
 
 from __future__ import annotations

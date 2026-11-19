@@ -101,7 +101,7 @@ def random_pattern(rnd, length):
 
 
 def materialize(rnd, s):
-    """A byte string that satisfies the pattern — used to PLANT matches."""
+    """A byte string that satisfies the pattern — the selftest PLANTS matches with it."""
     out = bytearray()
     for k in range(len(s.bytes)):
         m = s.mask[k]

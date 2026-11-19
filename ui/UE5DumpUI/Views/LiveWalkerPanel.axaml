@@ -207,8 +207,8 @@
               Foreground="#C586C0"
               Padding="8,4"/>
       <!-- Consolidated export options: memory-record Description format (+Offset /
-           +Type) plus the AOB / Collapse chain / Guess? toggles that used to be inline
-           checkboxes. The AOB item keeps its IsEnabled=CanUseAobSymbol gray-out and the
+           +Type) plus the AOB / Collapse chain / Guess? toggles, in one drop-down rather
+           than inline checkboxes. The AOB item keeps its IsEnabled=CanUseAobSymbol gray-out and the
            Guess? item keeps reflecting the VM's auto-check (SetFillGapsSilently). -->
       <DropDownButton Content="{StaticResource str.LiveWalker.ExportOptions}"
                       IsVisible="{Binding HasData}"
@@ -520,11 +520,11 @@
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#AAB8D0" FontSize="11" Margin="4,0,0,2"
                IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-    <!-- Failure surface. This panel's VM calls SetError 28 times — including the
-         refresh path's 10 s hard timeout — and NOTHING rendered ErrorMessage, so a
-         dead refresh was pixel-identical to a live one while stale values kept
-         showing. ClearStatus() had already blanked StatusText above, so there was
-         not even a leftover line to contradict. (audit #5 U1/V7) -->
+    <!-- Failure surface. This panel's VM calls SetError on many paths — the
+         refresh path's 10 s hard timeout among them — and without this TextBlock a
+         dead refresh would be pixel-identical to a live one while stale values kept
+         showing. ClearStatus() blanks StatusText above, so there would not even be
+         a leftover line to contradict. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
                Foreground="#F48771" FontSize="11.5" TextWrapping="Wrap"
                Margin="4,0,4,2"
@@ -902,10 +902,9 @@
                   ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncFilterClear}"/>
           <TextBlock VerticalAlignment="Center" Foreground="#888" FontSize="11"
                      Text="{Binding Functions.Count, StringFormat='{}{0} shown'}"/>
-          <!-- AOBMaker availability indicator — single place (build 688).
-               Previously this lived in a Notes column repeated per-row,
-               which was pure noise. Visible only when the plugin isn't
-               reachable. -->
+          <!-- AOBMaker availability indicator — in one place, not in a Notes
+               column repeated per row, which is pure noise. Visible only when
+               the plugin isn't reachable. -->
           <TextBlock Text="{Binding AobMakerNote}"
                      IsVisible="{Binding AobMakerNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                      Foreground="#E0A050"

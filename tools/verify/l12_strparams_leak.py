@@ -2,12 +2,11 @@
 
     py tools/verify/l12_strparams_leak.py
 
-THE FIX UNDER TEST (7f3898ff, "DLL LOW batch - L1/L5/L8/L10/L12"): Fern's
-invoke_function parses `str_params` in a loop, `malloc`ing one buffer per element and
-pushing it to `strAllocs`. A malformed element throws a nlohmann `type_error` mid-loop,
-which used to unwind PAST the free loop at the bottom - so every buffer an EARLIER
-iteration allocated leaked. The fix wraps the loop in try/catch, frees `strAllocs` and
-rethrows (Fern.cpp:5356 / :5403-5409).
+THE FIX UNDER TEST: Fern's invoke_function parses `str_params` in a loop, `malloc`ing one
+buffer per element and pushing it to `strAllocs`. A malformed element throws a nlohmann
+`type_error` mid-loop, which, unguarded, unwinds PAST the free loop at the bottom - so every
+buffer an EARLIER iteration allocated leaks. The fix wraps the loop in try/catch, frees
+`strAllocs` and rethrows (Fern.cpp:5356 / :5403-5409).
 
 THE DISCRIMINATING INPUT, and it is the whole design. The throw must land AFTER at least
 one successful allocation, or there is nothing to leak and the test is vacuous either way:
@@ -120,11 +119,10 @@ def main(argv=None):
 
         # ⛔ `instance_addr`, NOT `addr`. Fern reads `instance_addr` / `class_name`
         # (Fern.cpp's invoke_function handler) and refuses when neither is present -- well
-        # BEFORE the str_params marshalling loop that this rig exists to test.
-        # This call said `addr=` until 2026-09-09, so every one of its requests was
-        # rejected at the instance guard and the leak path was NEVER ENTERED. The shared
-        # helper two phases above (`ad4_contested.invoke`) had it right all along, which
-        # is why the CONTROL worked and only the measurement was hollow.
+        # BEFORE the str_params marshalling loop that this rig exists to test. With
+        # `addr=` every request is rejected at the instance guard and the leak path is
+        # NEVER ENTERED, while the CONTROL (through the shared `ad4_contested.invoke`
+        # helper two phases above) still works -- so only the measurement goes hollow.
         errs = 0
         wrong_err = 0
         for i in range(a.n):
@@ -155,13 +153,12 @@ def main(argv=None):
         print("[4] after %d malformed invokes: %.1f MB  (delta %+.1f MB); %d error replies"
               % (a.n, end, grew, errs))
 
-        # ANTI-VACUITY. ⛔ THIS USED TO COUNT **ANY** ERROR REPLY, and that is precisely
-        # how it stayed green over a rig that measured nothing: with the wrong parameter
-        # name every request was refused at the instance guard, so `errs == a.n` and the
-        # check was satisfied BY THE VERY ERROR THAT PROVED THE RUN WAS VACUOUS. A guard
-        # firing on the wrong condition is worse than no guard. It now counts only the
-        # "Internal error" replies -- a throw from inside the marshalling loop -- and
-        # refuses outright if any request failed for a different reason.
+        # ANTI-VACUITY. ⛔ COUNTING **ANY** ERROR REPLY WOULD STAY GREEN over a rig that
+        # measures nothing: with a wrong parameter name every request is refused at the
+        # instance guard, so `errs == a.n` and the check is satisfied BY THE VERY ERROR
+        # THAT PROVES THE RUN VACUOUS. A guard firing on the wrong condition is worse than
+        # no guard. It counts only the "Internal error" replies -- a throw from inside the
+        # marshalling loop -- and refuses outright if any request failed for a different reason.
         if wrong_err:
             fails.append("4: %d of %d requests failed BEFORE the str_params loop (first one "
                          "printed above). The marshalling code this rig tests was never "

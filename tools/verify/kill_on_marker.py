@@ -3,11 +3,11 @@
     py kill_on_marker.py <logfile> "<marker>" <process-name> [--after-ms 700] [--timeout-s 120]
     py kill_on_marker.py <logfile> "<marker>" --touch <flagfile> [--after-ms 0]
 
-Exists for the B4-shaped rows, where the whole test is "the client dies while
+Exists for the rows where the whole test is "the client dies while
 ONE call is still running". Those cannot be staged by hand: the window here is a
 3.3 s startup scan, a GUI click lands somewhere unknowable inside a couple of
 seconds, and a fixed sleep either fires before the command starts or after it
-finished -- both were observed on 2026-08-18 and both prove nothing.
+has finished -- and either proves nothing.
 
 Watching the DLL's own log removes the guess: the kill is triggered BY the
 evidence that the command began, then delayed a little so it lands mid-flight

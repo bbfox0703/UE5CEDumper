@@ -4,11 +4,10 @@
 
 WHY. UFunction::ParmsSize is read from the UFunction's tail, and where the tail sits depends on the UE version: a
 version from the wrong side of 4.18 reads the field next door (ReturnValueOffset, or NumParms). A buffer sized from
-that number ended where the return value starts, and ProcessEvent wrote past it in the game's heap -- the
-[UE-OVERRIDE-411] review's MED. Every buffer is now sized by `Ubel::ParamBufferSize` (or
-`DynOff::ProcessEventBufferBytes`), which never answers less than where the function's own parameter chain ends. The
-second review found the call sites themselves unpinned: they live in files no test target compiles, so the next
-feature that writes `std::vector<uint8_t> buf(fi.parmsSize, 0)` the way every caller once did would stay green.
+that number ends where the return value starts, and ProcessEvent writes past it in the game's heap. Every buffer is
+sized by `Ubel::ParamBufferSize` (or `DynOff::ProcessEventBufferBytes`), which never answers less than where the
+function's own parameter chain ends. The call sites live in files no test target compiles, so without this gate the
+next feature that writes `std::vector<uint8_t> buf(fi.parmsSize, 0)` would stay green.
 
 WHAT IT REFUSES, in dll/src after comments and string literals are blanked:
   1. An allocation -- `std::vector<..>` construction, `.resize` / `.assign`, `new T[..]`, the malloc family,

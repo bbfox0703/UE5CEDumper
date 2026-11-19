@@ -125,8 +125,8 @@ def main() -> int:
     def params(count: int) -> str:
         return count.to_bytes(4, "little").hex() + "00" * (ps - 4)
 
-    # One timed call: on DumperTest Shipping even 8,000,000 entries run about 0.4 s (measured 2026-11-12), and a larger
-    # count only grows the fixture's memory, so the freeze is timed into the first call instead (--freeze-after).
+    # One timed call: on DumperTest Shipping even 8,000,000 entries run in well under a second, and a larger count
+    # only grows the fixture's memory, so the freeze is timed into the first call instead (--freeze-after).
     count = a.count
     t0 = time.monotonic()
     r = c0.request("invoke_function", func_name=FN, instance_addr=act["addr"], parms_size=ps, params_hex=params(count))
@@ -149,7 +149,7 @@ def main() -> int:
             replies[i] = f"error: {e}"
 
     # The freeze is made in this process, on a handle opened beforehand: suspend.py starts a Python and runs tasklist,
-    # about a second, longer than the whole call (measured 2026-11-12: the freeze landed after all three had run).
+    # about a second, longer than the whole call, so a freeze made that way lands after all three have run.
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.OpenThread.restype = ctypes.c_void_p
     k32.SuspendThread.restype = ctypes.c_uint32

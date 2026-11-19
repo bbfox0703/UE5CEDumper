@@ -2,20 +2,20 @@ r"""[VND584-04] Interfaces: a by-name lookup reaches an interface's function, an
 interface half.
 
     py tools/verify/vnd584_interfaces.py                        # pipe + mailbox, the injected DumperTest
-    py tools/verify/vnd584_interfaces.py --any-build            # skip the dist build check (the pre-fix red run)
+    py tools/verify/vnd584_interfaces.py --any-build            # skip the dist build check (a run against a build without the fix)
 
 Exits 1 while the defect stands, so it doubles as the regression test.
 
-THE MECHANISM. Our by-name lookup climbed the class's SuperStructs only; UClass::FindFunctionByName also walks the
-class's implemented interfaces (UClass::Interfaces). And every invoke path wrote an interface parameter's object
-half only, so FScriptInterface::InterfacePointer stayed 0 and a native callee read the parameter as null. Both need
-UClass::Interfaces, which the DLL now measures (DetectClassInterfaces in the init log).
+THE MECHANISM. A by-name lookup that climbs the class's SuperStructs only misses what UClass::FindFunctionByName
+finds: it also walks the class's implemented interfaces (UClass::Interfaces). And an invoke path that writes an
+interface parameter's object half only leaves FScriptInterface::InterfacePointer 0, so a native callee reads the
+parameter as null. Both need UClass::Interfaces, which the DLL measures (DetectClassInterfaces in the init log).
 
-THE CASES (DumperTest's VND584-04 fixtures; tools/ue-sample/README.md):
-  * pipe: IDumperTestIface::Vnd584_IfaceMagic invoked BY NAME on Vnd584_IfaceActor returns 584 (pre-fix: not found);
-  * pipe: Vnd584_CallIface(Target = Vnd584_IfaceActor) returns 584 (pre-fix: -1, the interface half was null);
-  * mailbox: CMD_INVOKE of the interface's own UFunction on Vnd584_IfaceActor returns 584 (pre-fix: -15 since
-    VND584-06, which did not yet count an implemented interface as the class's).
+THE CASES (DumperTest's [VND584-04] fixtures; tools/ue-sample/README.md):
+  * pipe: IDumperTestIface::Vnd584_IfaceMagic invoked BY NAME on Vnd584_IfaceActor returns 584 (without the fix: not found);
+  * pipe: Vnd584_CallIface(Target = Vnd584_IfaceActor) returns 584 (without the fix: -1, the interface half is null);
+  * mailbox: CMD_INVOKE of the interface's own UFunction on Vnd584_IfaceActor returns 584 (without the fix: -15,
+    [VND584-06]'s ownership refusal, which then does not count an implemented interface as the class's).
 Control: Vnd584_CallIface(Target = the DumperTestActor, which implements nothing) is refused, never sent.
 """
 import argparse

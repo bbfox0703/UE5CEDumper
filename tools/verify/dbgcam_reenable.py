@@ -11,15 +11,16 @@ Ends with the camera OFF.
 WHAT IT MEASURES. The first ON spawns a DebugCameraController, and ADebugCameraController::AddCheats forces a
 CheatManager onto it in non-Shipping builds, so two CheatManagers are live afterwards. GObjects hands out freed slots
 before new ones, so a GC between the player's CheatManager being created and the first ON lets the DCC's take a LOWER
-index. Before the fix, the Debug Camera picked the lowest-index CheatManager, landed on the DCC's, and on UE 5.8 a
+index. A Debug Camera that picks the lowest-index CheatManager lands on the DCC's, and on UE 5.8 a
 ToggleDebugCamera there never enables the camera (FDebugCameraManager::EnableDebugCamera returns at once -- the DCC
-has no Player): the second ON stayed 0. The GC is requested through UKismetSystemLibrary::CollectGarbage, which
+has no Player): the second ON stays 0. The GC is requested through UKismetSystemLibrary::CollectGarbage, which
 takes no parameters. The script prints both CheatManagers' indices after each step -- the DCC's below the player's
 is the condition -- and says whether the second ON worked.
 
-Measured 2026-10-29 on DumperTest58 Development: DCC's CheatManager 34955 against the player's 35796; build 3662
-gave ON/OFF/ON = 1, 0, 0, build 3663 gave 1, 0, 1. A -1 (SEH -4 in the DLL log, with the game's own log showing an
-`IsInGameThread` assertion) is the separate [STARK-DRAIN-OFF-GAME-THREAD] lead, not this bug.
+The result to read is "second ON worked" (ON/OFF/ON = 1, 0, 1) with the condition MET; a build without
+[DBGCAM-58-REENABLE] gives 1, 0, 0 under that condition. The exit code is 0 either way. A -1 (SEH -4 in the DLL
+log, with the game's own log showing an `IsInGameThread` assertion) is the separate [STARK-DRAIN-OFF-GAME-THREAD]
+lead, not this bug.
 """
 import argparse
 import pathlib

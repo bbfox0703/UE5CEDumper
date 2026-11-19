@@ -3,12 +3,11 @@
   UE5CEDumper -- executable tests for scripts/ue5_dissect.lua
 
   WHY THIS EXISTS
-    Audit #5 filed AA4-AA7 against this file and rated them all "not re-derived
-    by hand". Two of the four premises turned out to be wrong, and the one that
-    mattered most was wrong in the direction that would have made a "fix" delete
-    working code. The C# suite can only assert on this file's SOURCE TEXT
-    (CeExecuteCodeExArityTests.cs) -- it cannot run it -- so a change could
-    satisfy every string assertion and still behave wrongly.
+    A premise about this file reasoned out by reading alone can be wrong, and
+    wrong in the direction that makes a "fix" delete working code. The C# suite
+    can only assert on this file's SOURCE TEXT (CeExecuteCodeExArityTests.cs) --
+    it cannot run it -- so a change could satisfy every string assertion and
+    still behave wrongly.
 
     This harness stubs the Cheat Engine globals the script touches over plain Lua
     tables, then exercises the real functions and checks what actually happened.
@@ -32,8 +31,8 @@
   DELIBERATELY NOT WIRED INTO build.ps1 OR CI
     Same reasoning as freeze_helper_test.lua: a standalone `lua` is not a
     declared dependency of this repo, and a test step that silently skips when
-    its tool is missing is the defect audit #5's AD1/AD2 just fixed in the C++
-    test phase. Run it whenever you touch ue5_dissect.lua.
+    its tool is missing reads as a pass that ran nothing. Run it whenever you
+    touch ue5_dissect.lua.
 ]]
 
 local HELPER = (arg and arg[0] or ''):gsub('[^/\\]*$', '') .. '../ue5_dissect.lua'
@@ -471,9 +470,9 @@ end
 
 case('AA5: the failure does not surface as "attempt to compare nil with number"')
 do
-  -- The pre-fix shape. createFromClass:360-362 probes with UE5_WalkClassBegin
-  -- and then tests `testCount <= 0`, so a nil return raised a Lua type error
-  -- naming a line number instead of the DLL call that actually failed.
+  -- The shape this case refuses: createFromClass probes with UE5_WalkClassBegin
+  -- and then tests `testCount <= 0`, so an unchecked nil return raises a Lua
+  -- type error naming a line number instead of the DLL call that failed.
   resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
   RESULTS['UE5_WalkClassBegin'] = function() return nil, 'Failure launching thread' end
   local _, e = pcall(dissect.createFromClass, 0xC1A55, 'Compare')
@@ -508,10 +507,10 @@ end
 
 case('AA6: a TOTAL DLL failure must not register a structure that is silently garbage')
 do
-  -- The worst shape, and the one the fix is judged against: with every
-  -- GetField call failing, the old code built a full-size structure whose every
-  -- walked field had an empty Name and Offset 0 (`name or ""`, `offset or 0`),
-  -- registered it with CE, cached it, and logged "Struct created".
+  -- The worst shape: with every GetField call failing, a walk that defaults
+  -- the out-params (`name or ""`, `offset or 0`) builds a full-size structure
+  -- whose every walked field has an empty Name and Offset 0, registers it with
+  -- CE, caches it, and logs "Struct created".
   resetWorld(); dissect.clearAll(); injectDll()
   local many = {}
   for i = 1, 40 do many[i] = { name = 'F' .. i, typeName = 'IntProperty', offset = i * 4, size = 4 } end
@@ -527,9 +526,10 @@ end
 
 case('AA6: a total failure reports ONCE, not once per field')
 do
-  -- callDLL used to warn() -- ungated, by design -- on every nil return, and
-  -- the walk calls it once per FIELD. 40 fields meant 40 lines over CE's Lua
-  -- Engine window, which is the hygiene rule's whole concern.
+  -- A warn() -- ungated, by design -- on every nil return of callDLL would
+  -- fire once per FIELD, since the walk calls it per field: 40 fields would be
+  -- 40 lines over CE's Lua Engine window, which is the hygiene rule's whole
+  -- concern.
   resetWorld(); dissect.clearAll(); injectDll()
   local many = {}
   for i = 1, 40 do many[i] = { name = 'F' .. i, typeName = 'IntProperty', offset = i * 4, size = 4 } end
@@ -593,8 +593,8 @@ end
 --
 -- On a WITH_CASE_PRESERVING_NAME build FName is 12 bytes rather than 8, so
 -- OuterPrivate pads out to +0x28. The DLL detects that (DynOff::UOBJECT_OUTER);
--- this script used to assert a flat 0x20, which labels the FName's
--- DisplayIndex/Number pair as an 8-byte "Outer" pointer and omits the real one.
+-- a flat 0x20 would label the FName's DisplayIndex/Number pair as an 8-byte
+-- "Outer" pointer and omit the real one.
 --
 -- The probe asks the DLL for THIS object's Outer and finds which slot agrees,
 -- so the two can never drift the way a second copy of the detection would.
@@ -904,8 +904,7 @@ end
 -- [AOBM-DISSECT-UETOOLS] CE 7.7's own UE dissector answers Define new structure
 -- before ours is asked, so while auto dissect is enabled its two hooks are
 -- suspended through its OWN functions, and disable puts back what was taken.
--- Measured on DumperTest, CE 7.7: with UETools' hooks on, our override was never
--- called.
+-- With UETools' hooks on, our override is never called.
 -- ============================================================
 
 local ST_ = function() return _ue5_dissect_state end

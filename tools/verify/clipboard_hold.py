@@ -8,7 +8,7 @@ process (`OpenClipboard` without `CloseClipboard`)").
 
 Windows allows ONE owner at a time: while this process holds it, another app's
 `OpenClipboard` returns FALSE with `ERROR_ACCESS_DENIED` (5), which is what drives
-Avalonia's clipboard task to fault. That fault used to terminate the UI.
+Avalonia's clipboard task to fault -- a fault the UI must survive.
 
 FAILS LOUDLY: if `OpenClipboard` does not succeed here, nothing is being held and any
 downstream "the UI survived" result would be meaningless -- so that is an error, not a

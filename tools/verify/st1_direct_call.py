@@ -2,13 +2,13 @@ r"""ST1 steps 1 + 2 (and PEHOOK step 8's invoke gate) over the pipe, with no UI.
 
     py tools/verify/st1_direct_call.py
 
-THE CLAIM (`ST1`, build 3205). Our own direct calls must stop re-entering our own
-ProcessEvent detour. The two predicates are unit-pinned; the ROUTING is not, and cannot be —
-nothing offline can observe which address a live vtable holds, and no test target compiles
-`Stark.cpp` or `Frieren.cpp`.
+THE CLAIM (ST1 in docs/audit-2026-08-13-early-code-findings.md). Our own direct calls must not
+re-enter our own ProcessEvent detour. The two predicates are unit-pinned; the ROUTING is not, and
+cannot be — nothing offline can observe which address a live vtable holds, and no test target
+compiles `Stark.cpp` or `Frieren.cpp`.
 
 The row names the cheapest decisive evidence itself: **grep by FORMAT STRING**, never line
-number — `via trampoline — not re-entering our hook` (the new path) versus the older
+number — `via trampoline — not re-entering our hook` (the trampoline path) versus
 `(caller-asserted safe)` (the fail-open path, which step 5 wants on an overriding class).
 
 WHAT THIS CHECKS
@@ -46,7 +46,7 @@ def say(s):
 
 def find_fn(c, cls, fn):
     # game_only defaults to TRUE and KismetMathLibrary is an ENGINE class, so the
-    # obvious call silently returns 3,142 of 9,806 functions and Add_IntInt is not
+    # obvious call silently returns only part of the functions and Add_IntInt is not
     # among them -- which reads as "this host has no invoke target".
     r = c.request("list_all_functions", limit=20000, game_only=False)
     for f in (r.get("data", r).get("functions") or []):
@@ -57,8 +57,8 @@ def find_fn(c, cls, fn):
 
 def fire_count(c):
     # get_diagnostics, NOT get_stats -- get_stats returns {ok:false,error} here and its
-    # missing game_thread block silently reads as None, which made a first version of
-    # this rig print PASS for step 2 having measured nothing at all.
+    # missing game_thread block silently reads as None, which would let this rig
+    # print PASS for step 2 having measured nothing at all.
     r = c.request("get_diagnostics")
     d = r.get("data", r)
     gt = d.get("game_thread") or {}

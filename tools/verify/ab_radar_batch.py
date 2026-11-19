@@ -5,16 +5,16 @@
 AB14 -- enum-backed fields must be visible to a value scan.
   The resolution is unit-tested; whether **Aura's meta scan actually emits enum
   candidates** is only observable live. A `NumericAll` scan must return candidates
-  whose declared type is a byte/enum property. Before the fix they read as 1 byte and
-  were invisible to every value scan.
+  whose declared type is a byte/enum property. Without the fix they read as 1 byte and
+  are invisible to every value scan.
 
 AB16 -- the results filter must match on the ORIGIN column.
   `FormatCandidateOrigin` (Radar.cpp:1091) yields exactly `"Reflected"`,
   `"Native-C"`, or `"Native-C (<guessedType>)"`, and `MatchesCandidate` feeds that
   string to the same case-insensitive needle test as every other column
-  (Radar.cpp:1176). Before the fix the server-side filter ignored Origin and typing
-  `native` returned zero. This drives the SERVER-SIDE filter over the pipe, which is
-  where the defect was -- the UI textbox is only its front end.
+  (Radar.cpp:1176). A server-side filter that ignores Origin returns zero for
+  `native`. This drives the SERVER-SIDE filter over the pipe, which is where that
+  defect lives -- the UI textbox is only its front end.
 
 ⚠ AB16 REQUIRES `native_c=true` ON THE SCAN. With it off, every candidate is
 `Reflected` by construction, so `filter=native` legitimately returns 0 and the row

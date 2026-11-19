@@ -15,7 +15,7 @@
 
   <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="16" Spacing="16">
-    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7).
+    <!-- Failure surface — see the "Failure surface" note in LiveWalkerPanel.axaml.
          First in the StackPanel so it is visible with or without HasData: a
          failed pointer refresh leaves the cards showing the PREVIOUS scan. -->
     <TextBlock Text="{Binding ErrorMessage}"
@@ -23,9 +23,8 @@
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
     <!-- "Register symbol" success, and a CE view move's ([AOBM-SYSTAB-ASM-SILENT]). A FAILURE
-         goes to ErrorMessage above; before audit #5 V11 neither state was bound at all and
-         the bool only picked a log level, so a symbol CE never created looked exactly like
-         one it did. -->
+         goes to ErrorMessage above. Both states are bound so that a symbol CE never created
+         cannot look exactly like one it did. -->
     <TextBlock Text="{Binding SymbolStatusText}"
                Foreground="#4EC9B0" FontSize="12.5" TextWrapping="Wrap"
                IsVisible="{Binding SymbolStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
@@ -133,7 +132,7 @@
           <!-- Dynamic offsets not fully MEASURED. Amber, not red: unlike the two refusals
                above the dumper still works, but every value it shows and every export it
                writes is derived from at least one UE-version guess. The text is built in the
-               VM because it names WHICH probe fell back. (audit #5 U3/X3) -->
+               VM because it names WHICH probe fell back. -->
           <Border Background="#3A3323" BorderBrush="#E6A817" BorderThickness="1"
                   CornerRadius="4" Padding="10,8" Margin="0,6,0,0"
                   IsVisible="{Binding ShowOffsetsUnvalidatedWarning}">

@@ -87,7 +87,7 @@ def sizes():
 
 def since(mark):
     # Slice BYTES: the marks are st_size byte counts, and walk-0.log carries multi-byte UTF-8, so slicing the decoded
-    # text by them started past the new lines and read a warning that fired as absent (measured 2026-11-17, build 3732).
+    # text by them starts past the new lines and reads a warning that fired as absent.
     out = []
     for f in LOG.glob("*-0.log"):
         try:

@@ -5,9 +5,9 @@
   WHY
     CE's injectDLL copies its string into the game and calls LoadLibraryA; Lua's io.open is fopen. Both read the
     ANSI code page. The .CT's path sources are UTF-8 (the dll-path.txt breadcrumb, CE's dialogs, getCheatEngineDir),
-    accepted by the fileExists fallback, and went to injectDLL unconverted: from a non-ASCII folder LoadLibraryA
-    failed and CE manual-mapped the DLL instead. The size readout ([STALEDLL]) read "unknown", and the last-resort
-    file picker dropped every non-ASCII pick.
+    accepted by the fileExists fallback. Handed to injectDLL unconverted, a non-ASCII folder makes LoadLibraryA
+    fail and CE manual-map the DLL instead; the size readout ([STALEDLL]) reads "unknown", and the last-resort
+    file picker drops every non-ASCII pick.
 
   HOW
     The functions are lifted verbatim from scripts/UE5CEDumper.CT (XML entities unescaped) and run against stubs:
@@ -129,7 +129,7 @@ check("every probe hit sets both forms", body:find("DLL_PATH_ANSI, DLL_PATH = ue
 check("a picked path gets its ANSI form",
       body:find("DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)", 1, true) ~= nil)
 
--- ---- the skeptic review (wf_6ba4bc83-14d) ------------------------------------------------------------------
+-- ---- the probes: which form each hit sets, and the recent-files slot ----------------------------------------
 
 print("-- (T4) _dllAt says which probe found the file --")
 local okA, errA = lift("(local function _dllAt.-\nend)", "_dllAt")
@@ -171,8 +171,8 @@ if probeSrc ~= "" then
 end
 
 print("-- (CEINJ-1) the recent-files slot reads reg.exe as UTF-8 --")
--- Measured 2026-09-25 through a pipe: plain reg.exe gave the console code page with best fit (Cafe for Cafe-acute,
--- '?' for TM) -- lossy; after 'chcp 65001' every entry came back as exact UTF-8.
+-- Through a pipe, plain reg.exe gives the console code page with best fit (Cafe for Cafe-acute, '?' for TM) --
+-- lossy; after 'chcp 65001' every entry comes back as exact UTF-8.
 local popen = body:match("io%.popen%('([^']*)'%)")
 check("the MRU popen switches the console to UTF-8 first", popen ~= nil and popen:find("chcp 65001", 1, true) ~= nil, popen)
 
@@ -194,14 +194,14 @@ local function liftLocal(name)
 end
 local okMru = ct:match("(function%s+ue5_probeRecentFiles.-\nend)") ~= nil
 check("ue5_probeRecentFiles is in the .CT", okMru)
--- (third review, T3-MRU-PROBE-CALL-UNPINNED) The suite calls the probe itself, so it must also pin that the .CT still
--- does: exactly one call OUTSIDE the function's own body, guarded by `if not DLL_PATH`, after the first slot probe.
+-- The suite calls the probe itself, so it must also pin that the .CT still does: exactly one call OUTSIDE the
+-- function's own body, guarded by `if not DLL_PATH`, after the first slot probe.
 do
   local body = unxml(ct)
   local def = body:match("(function%s+ue5_probeRecentFiles.-\nend)") or ""
   local outside = body:gsub(def:gsub("%p", "%%%0"), "", 1)
-  -- (fourth review, R4-MRU-PROBE-PIN-SURVIVES-COMMENT-OUT) Comments out, block then line: a commented-out call (the
-  -- probe opens a console window, so commenting it out is a realistic edit) is not a call.
+  -- Comments out, block then line: a commented-out call (the probe opens a console window, so commenting it out is
+  -- a realistic edit) is not a call.
   outside = outside:gsub("%-%-%[(=*)%[.-%]%1%]", ""):gsub("%-%-[^\n]*", "")
   local calls = select(2, outside:gsub("ue5_probeRecentFiles%(%)", ""))
   check("the .CT calls ue5_probeRecentFiles() exactly once", calls == 1, calls)
@@ -210,8 +210,8 @@ do
   local first = outside:find("\n_probeSlots(1)", 1, true)
   check("  ...after the first slot probe", at ~= nil and first ~= nil and first < at, tostring(first) .. " / " .. tostring(at))
 end
--- (third review, T3-MRU-LIFT-SILENT-SKIP) Each lift is a check of its own: folded into the `if`, a renamed helper
--- dropped the end-to-end checks below and the suite still passed.
+-- Each lift is a check of its own: folded into the `if`, a renamed helper would drop the end-to-end checks below
+-- and the suite would still pass.
 local lifted = true
 for _, name in ipairs({ "_slot", "_dllAt", "_probeSlots" }) do
   local ok = liftLocal(name)
@@ -244,9 +244,9 @@ if okMru and lifted then
   check("  ...and the self-heal records the folder as UTF-8",
         recorded == "D:\\" .. U_GONGJU .. "\\UE5CEDumper\\", recorded)
 
-  -- (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS) A RELATIVE "UE5CEDumper.CT" entry (CE started with a relative
-  -- table argument) is its own entry since MRU-REL-MERGE. Matched first, its folder is empty -- a later ABSOLUTE
-  -- entry of the same name must still be the one probed.
+  -- A RELATIVE "UE5CEDumper.CT" entry (CE started with a relative table argument) is an entry of its own
+  -- (ct_mru_split_test.lua). Matched first, its folder is empty -- a later ABSOLUTE entry of the same name must
+  -- still be the one probed.
   _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""
   DLL_PATH, DLL_PATH_ANSI, recorded = nil, nil, nil
   mruLine = "    Recent Files    REG_MULTI_SZ    D:\\Games\\Other.CT\\0UE5CEDumper.CT\\0D:\\" .. U_GONGJU
@@ -257,8 +257,8 @@ if okMru and lifted then
   io.open, io.popen = realOpen, realPopen
   check("a relative self-match does not shadow a later absolute one", DLL_PATH == P_UTF8, DLL_PATH)
 
-  -- (fourth review, R4-MRU-RELATIVE-SUBFOLDER-SHADOWS / R4-MRU-SELF-NO-BREAK-PASSES) A folder counts only when it is
-  -- ABSOLUTE: 'sub\UE5CEDumper.CT' (CE started as `cheatengine.exe sub\UE5CEDumper.CT`) has a folder, but a relative
+  -- A folder counts only when it is ABSOLUTE: 'sub\UE5CEDumper.CT' (CE started as
+  -- `cheatengine.exe sub\UE5CEDumper.CT`) has a folder, but a relative
   -- one -- probing it reads CE's current folder, and a hit would self-heal a relative path into dll-path.txt. And the
   -- NEWEST self entry wins: the loop stops at the first absolute match.
   local function probe(line, exists)
@@ -284,8 +284,8 @@ if okMru and lifted then
   probe("D:\\A\\UE5CEDumper.CT" .. S0 .. "UE5CEDumper.CT", function(q) return q == "D:\\A\\UE5Dumper.dll" end)
   check("  ...and an older relative entry does not undo it", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
 
-  -- (fifth review, R5-02) A dropped relative entry gets its OWN reason in the failure dialog / log -- not "the list has
-  -- no UE5CEDumper.CT" / "CE reported no recent files", which are false then.
+  -- A dropped relative entry gets its OWN reason in the failure dialog / log -- not "the list has no UE5CEDumper.CT"
+  -- / "CE reported no recent files", which are false then.
   local function why(labelPart)
     for _, sl in ipairs(_slots) do if sl.label:find(labelPart, 1, true) then return sl.why or "" end end
     return "(no slot)"
@@ -300,11 +300,11 @@ if okMru and lifted then
   check("an empty list still says so", why("most recently opened cheat table"):find("no recent files", 1, true) ~= nil,
         why("most recently opened cheat table"))
 
-  -- (fifth review, R5-T-MRU-TOP-SLOT-POSITIVE-UNTESTED) The top slot's reason to exist: a RENAMED table, absolute.
+  -- The top slot's reason to exist: a RENAMED table, absolute.
   probe("D:\\R\\MyGame.CT" .. S0 .. "E:\\other.CT", function(q) return q == "D:\\R\\UE5Dumper.dll" end)
   check("a renamed table's folder (the top slot) is still probed", DLL_PATH == "D:\\R\\UE5Dumper.dll", DLL_PATH)
   check("  ...but not self-healed: it is not name-matched", recorded == nil, recorded)
-  -- (sixth review, R6-04) ...and a list with NO UE5CEDumper.CT in it keeps that reason (not "relative").
+  -- ...and a list with NO UE5CEDumper.CT in it keeps that reason (not "relative").
   local noSelf = why("most recent UE5CEDumper.CT")
   check("a list with no UE5CEDumper.CT says so", noSelf:find("has no UE5CEDumper.CT", 1, true) ~= nil, noSelf)
   check("  ...and not 'relative'", noSelf:find("relative", 1, true) == nil, noSelf)
@@ -317,11 +317,10 @@ if okMru and lifted then
   end
 end
 
--- (fifth review, R5-04 / R5-T-WRITER-GUARD-PIN-SURVIVES-COMMENT-OUT) dll-path.txt, by BEHAVIOUR, not by its text: the
--- writer refuses a relative folder and drops a relative line an older .CT wrote; the reader never returns one (it would
--- be probed against CE's current folder).
+-- dll-path.txt, by BEHAVIOUR, not by its text: the writer refuses a relative folder and drops a relative line an
+-- older .CT wrote; the reader never returns one (it would be probed against CE's current folder).
 print("-- (fifth review) dll-path.txt: no relative folder is written, carried forward, or read --")
--- its dependency (sixth review, R6-01): a drive root keeps its separator
+-- its dependency: a drive root keeps its separator
 local dsrc = ct:match("(function%s+ue5_driveRootFix%(.-\nend)")
 check("lifted ue5_driveRootFix", dsrc ~= nil)
 if dsrc then assert(load(unxml(dsrc), "ue5_driveRootFix"))() end
@@ -364,8 +363,8 @@ if rsrc then
         type(got) == "table" and #got == 2 and got[1] == "D:\\old" and got[2] == "\\\\srv\\share\\ce",
         type(got) == "table" and table.concat(got, " | ") or tostring(got))
 
-  -- (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: the writer stripped 'E:\\' to a bare 'E:', which
-  -- every reader then dropped as relative. It keeps the root separator, and a legacy bare 'E:' reads as 'E:\\'.
+  -- A DLL folder at a DRIVE ROOT: 'E:\\' stripped to a bare 'E:' would be dropped by every reader as relative. The
+  -- writer keeps the root separator, and a legacy bare 'E:' reads as 'E:\\'.
   local w3 = withFile(nil, function() ue5_recordDllDir("E:\\") end)
   check("a drive root is written as 'E:\\', not a bare 'E:'", (w3 or ""):find("\nE:\\\n", 1, true) ~= nil, w3)
   local _, r3 = withFile({ "E:\\", "D:\\old" }, function() return ue5_readBreadcrumbs("x") end)
@@ -375,7 +374,7 @@ if rsrc then
         type(r4) == "table" and r4[1] == "E:\\" and r4[2] == "D:\\old", type(r4) == "table" and table.concat(r4, " | ") or "")
   local w4 = withFile({ "E:", "D:\\old" }, function() ue5_recordDllDir("F:\\x\\") end)
   check("  ...and is carried forward as 'E:\\'", (w4 or ""):find("\nE:\\\n", 1, true) ~= nil, w4)
-  -- (seventh review, R7-04) Lower case, as the C# DriveRootFix: 'e:\\' written as is, a legacy 'e:' read as 'e:\\'.
+  -- Lower case, as the C# DriveRootFix: 'e:\\' written as is, a legacy 'e:' read as 'e:\\'.
   local w5 = withFile(nil, function() ue5_recordDllDir("e:\\") end)
   check("a lower-case root is written as 'e:\\'", (w5 or ""):find("\ne:\\\n", 1, true) ~= nil, w5)
   local _, r5 = withFile({ "e:" }, function() return ue5_readBreadcrumbs("x") end)
@@ -383,9 +382,9 @@ if rsrc then
         type(r5) == "table" and table.concat(r5, " | ") or "")
 end
 
--- (sixth review, R6-02 / R6-06) The breadcrumb SLOT, run: a folder read from dll-path.txt becomes the slot (the chunk's
--- own call is what runs, not a substring of it), and a file whose every line was dropped says so -- not "no folder
--- recorded yet", which is false then.
+-- The breadcrumb SLOT, run: a folder read from dll-path.txt becomes the slot (the chunk's own call is what runs, not a
+-- substring of it), and a file whose every line was dropped says so -- not "no folder recorded yet", which is false
+-- then.
 local bsrc = ct:match("(function%s+ue5_breadcrumbSlots%(.-\nend)")
 check("the breadcrumb slots are a function the suite can run", bsrc ~= nil)
 if bsrc and rsrc then
@@ -407,8 +406,8 @@ if bsrc and rsrc then
   local s3 = slotFor(nil)
   check("no file: 'no folder recorded yet'", (s3.why or ""):find("no folder recorded yet", 1, true) ~= nil, s3.why)
 
-  -- (seventh review, R7-02) An OLDER entry is its own slot (the loop over them), and a file of only comment lines is
-  -- "no folder recorded yet" -- a comment is not a dropped relative folder.
+  -- An OLDER entry is its own slot (the loop over them), and a file of only comment lines is "no folder recorded yet"
+  -- -- a comment is not a dropped relative folder.
   _slots, _seen = {}, {}
   withFile({ "# header", "D:\\new", "D:\\old" }, function() ue5_breadcrumbSlots("X:\\AD") end)
   local older
@@ -419,9 +418,9 @@ if bsrc and rsrc then
         (s4.why or ""):find("no folder recorded yet", 1, true) ~= nil, s4.why)
 end
 
--- (seventh review, R7-01) The chunk's own CALL, pinned like the recent-files probe's: comments out (block, then line)
--- and the definition out, exactly one call, before the CE-install slot. The suite runs the body itself, so without this
--- a commented-out call passed.
+-- The chunk's own CALL, pinned like the recent-files probe's: comments out (block, then line) and the definition out,
+-- exactly one call, before the CE-install slot. The suite runs the body itself, so without this a commented-out call
+-- would pass.
 do
   local body = unxml(ct)
   local def = body:match("(function%s+ue5_breadcrumbSlots%(.-\nend)") or ""
