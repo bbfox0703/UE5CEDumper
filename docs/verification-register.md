@@ -6170,6 +6170,15 @@ Still without one: 5.2 (no 5.2 host is installed) and the 4.x rows other than 4.
 refreshed to 3776, `trigger_scan`, 200,569 objects) `DetectProcessEvent (pattern): match at vtable+0x1D0` -- the
 table's `case 415: return 0x1D0` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 2160 times in 1500ms`, 0
 fallback and 0 VALIDATION FAILED lines (the rig's one FAIL is again only its 500-508 table).
+⚠ **4.18 on DQ XI S, 2026-11-20 on 3776 — the pattern and the table DISAGREE, and the pattern is right there.**
+DQ XI S (Steam, UE 4.18 by `'++UE4+Release-4.18'`, publisher Square Enix, injected, 293,050 objects):
+`DetectProcessEvent (pattern): match at vtable+0x210`, Add_IntInt(3,4) = 7, `validation OK — hook fired 810 times in
+1500ms`, 0 fallback, 0 VALIDATION FAILED. The table's `case 417: case 418: case 419: return 0x1F8` is the STOCK
+4.18 slot; this licensee build has 0x18 more (three virtuals) before ProcessEvent. So it is NOT a witness for the 4.18
+row, and it is not a table error either: the pattern is the primary path and answered correctly. What it shows is
+that on this title the fallback row would be wrong, and only the hook validation (which ACTS since
+`[PEHOOK-2026-08-17]`) would catch it. A stock 4.18 witness is still owed (OCTOPATH is also Square Enix; EVERSPACE is
+4.20).
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
