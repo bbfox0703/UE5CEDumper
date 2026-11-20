@@ -408,9 +408,11 @@ Open work only. **Read this when deciding what to do next.**
   PIVOT-ARRAY-LOADID (a race, possibly only unit-provable).
 - The 2026-10-13/14 pass: SNAPSHOT-CRASH-PARTIAL, CT-FLOOR-208, OVERRIDE-REVIEW2-LOWS, INT8-PREVIEW, UE4-USTRUCT-GIVEUP,
   AOB-SKIP-OWN-DLL.
-- `[STARK-DRAIN-OFF-GAME-THREAD]` (MED, build 3664): (1) the **main-thread fallback**, on a game whose game thread
-  carries no OS thread name (a UE4 game is the likely case), where the DLL log should read `the main thread (no thread
-  is named GameThread)` and the validator line should say `kept`; (2) one **worker-thread
+- `[STARK-DRAIN-OFF-GAME-THREAD]` (MED, build 3664): ✅ (1) the **main-thread fallback** -- **CLOSED 2026-11-20**
+  `[LIVEPASS-2026-11-20]` on UE423_Flying Shipping (UE 4.23, 39,225 objects, DLL 3776, injected; no UI):
+  `stark_game_thread_drain.py UE423_Flying-Win64-Shipping --gc 20` read `GameThreadDispatch: game thread 41652, the
+  main thread (no thread is named GameThread) (176 threads walked)`, then `… kept: 930 hook fires on it in the window,
+  0 on other threads`; 20 of 20 `CollectGarbage` invokes answered (returned 0), 0 SEH. (2) one **worker-thread
   skip** seen live, `left N queued request(s) for the game thread`, followed by the request answering as asked.
   Rig: `tools/verify/stark_game_thread_drain.py`. ⏸ (2) **not reached 2026-11-20** `[LIVEPASS-2026-11-20]` on
   DumperTest58 Development (DLL 3776, UE 508, GameThread named by the engine, validator `kept`, 44 worker-thread hook
@@ -510,6 +512,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[L3-AD10-2026-08-20]` step 1 (2026-11-20, headless: `GWLD_TQ_4`'s one win checked exact against the PDB; step 3 re-swept, 0 hits).
 - `[LIVEFUNCS-TIMELINE-2026-10-04]`'s load log line (2026-11-20, DumperTest58 Development; the low-memory load stays open).
 - `[A4-508MARKER-2026-09-06]`'s UI badge leg on a raised run (2026-11-20, DumperTest58 Shipping; verification-register.md).
+- `[STARK-DRAIN-OFF-GAME-THREAD]` (1), the main-thread fallback (2026-11-20, UE423_Flying Shipping).
 
 **Measured not producible here** (the row says what would close it):
 
