@@ -488,6 +488,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[WIKI-TIPS-B2]` (2026-11-20, AOT 3776: five hovered, the two per-row buttons witnessed in the binary).
 - `[LW-SEARCH-TIP]` (2026-11-20, AOT 3776, DumperTest Shipping).
 - `[FABRICATE-DEFAULT-UNSEEDED]` (MED; 2026-11-20, AOT 3776, DumperTest Shipping).
+- `[A1-ENVELOPE-2026-09-05]`'s CE-XML leg (2026-11-20, DumperTest Shipping `Arr_SoftMesh`; verification-register.md).
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 

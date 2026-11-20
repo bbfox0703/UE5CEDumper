@@ -1699,6 +1699,17 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > **CLOSED on the verification PC, build 3371**, on the row's own terms: the DLL and Live Walker
 > legs closed independently, the CE leg recorded as **not exercised** (this row's own instruction —
 > *"If no such array exists, record the CE leg as not exercised … Do not synthesise one."*).
+>
+> ✅ **The CE-XML leg CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` on DumperTest Shipping (UE 504, DLL and AOT UI
+> 3776), on `DumperTestActor_0.Arr_SoftMesh` (`TArray<TSoftObjectPtr<UStaticMesh>>` at +0x930, added to the fixture
+> 2026-09-06, after this row closed). Live Walker → **Copy CE XML** of the whole actor (50 objects, 11,937 XML lines):
+> every element's `PackageName (8)` leaf carries `<Address>+8</Address>` and **no `<Offsets>`**, `AssetName (10)` sits
+> at +10, elements step by 0x28. The DropDownList keys `100180` / `92409` / `104649` (labels Cube / Sphere / Cone)
+> are exactly the 4-byte values read over the pipe at element +0x08 of `[0]` / `[1]` / `[2]`; the values at +0x10
+> (`100247` / `272` / `93518`) differ, so the keys come from the PackageName slot the leaf points at. The same
+> process's `offsets-0.log` reads `TSoftObjectPtr payload envelope measured: +0x08 (ElementSize 0x28 - payload 0x20,
+> UEver=504)` and the lazy sibling `+0x08 (ElementSize 0x18 - payload 0x10, UEver=504)`. Not covered: CE itself
+> rendering the dropdown (CE was not used).
 > Rig: [`tools/verify/a1_softlazy_envelope.py`](../tools/verify/a1_softlazy_envelope.py) — takes the
 > log-folder name and **derives** the expectation from the reported UE version, so the same command
 > scores a 5.6 host and a 4.18 control without being told which is which.
