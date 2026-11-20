@@ -2,8 +2,8 @@
 the original minus some lines; (2) those removed lines, in order, are exactly the archive body minus the table header
 triplets it added; (3) no removed line is a changed line (every new-doc line is an original line, in order).
 argv[1] = path in repo (e.g. docs/todo.md), argv[2] = the archive file, argv[3] = the pointer marker text
-(e.g. "> 📦 **Archived 2026-11-20:**"), argv[4] = the approved units JSON. Run it BEFORE committing the move:
-it compares against git's HEAD copy."""
+(a substring of this pass's `> 📦` pointer lines; the archive file's name when an earlier pass of the same day left
+pointers too), argv[4] = the approved units JSON. Run it BEFORE committing the move: it compares against git's HEAD."""
 import subprocess
 import sys
 
@@ -14,7 +14,7 @@ new = open(doc, encoding="utf-8").read().replace("\r\n", "\n").split("\n")
 kept = []
 i = 0
 while i < len(new):
-    if new[i].startswith(marker):
+    if new[i].startswith("> 📦") and marker in new[i]:
         i += 1
         while i < len(new) and new[i].startswith(">"):   # a wrapped pointer
             i += 1
