@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — Live checks on build 3776: 39 rows closed, three findings filed `[LIVEPASS-2026-11-20]`
+
+- **What this is:** the maintainer's "run the live checks this PC can run" pass on the released build 3776,
+  with MCP checks left for later and Cheat Engine left to the session using it. Each closed row carries its own
+  record and was its own commit; the list, what is left and why, is the `[LIVEPASS-2026-11-20]` section of todo.md.
+- **On the fixtures:** DumperTest Shipping (UI text, Fabricate, Live Walker, snapshots, Stealth, Fly export, the
+  SDK pad rule, a parent-relative pose, no-pawn libraries, a dead game's stale status), the staged decoy (Extra
+  Scan's result and its cancel), DumperTest58 (the 508 badge on a raised run, the Call Trace load line),
+  UE423_Flying (the main-thread fallback) and DumperTest Development (a close while moving with See-through on).
+- **On installed games:** ProcessEvent slots witnessed at 4.15 (Extinction), 4.18 (OCTOPATH) and 4.20 (EVERSPACE);
+  DQ XI S's licensee build keeps it at 0x210, not the 4.18 row's 0x1F8 (the pattern path answers it). Avowed's scan
+  log names the lld linker; NumericAll's volume measured there; a persisted contradicted override cleared by Auto
+  on DQ XI S; EVERSPACE 2's UI legs and a capture killed mid-way; NEKOPALIVE's void-function return offsets; a DQ7R
+  USMAP with named TSet enum inners.
+- **Findings:** `[LW-REFRESH-STATUS-DUP]` and `[POINTERS-DISCONNECT-STALE-ERROR]` (LOW, census Table A), and a
+  tools trap in `call_export.py`'s `--process` matching.
+- **Tools:** `tools/verify/a4_raise_ladder.py --hold` keeps the game up after the log is read, for the UI leg.
+- Proxies refreshed to 3776 in IS Defense, Extinction, EVERSPACE, Avowed, OCTOPATH and DQ7R; every game was closed
+  afterwards. One test snapshot (about 206 MB) is left in EVERSPACE 2's snapshot database.
+
 ## 2026-11-20 (build 3776) — Extra Scan's follow-ups: a recovered array's code site, the MCP server during an apply `[INIT-RECOVERY-SCANADDR]` `[MCP-READY-DURING-APPLY]` `[RESCAN-STATIC-LAYOUT]`
 
 - **What changes:**

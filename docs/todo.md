@@ -533,6 +533,19 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[AOB-SKIP-OWN-DLL]`: IS Defense (4.10) skips the scan since `[UE410-2026-10-08]`, so its Pass 2 no longer runs;
   Extinction's proxy scan (4.15) resolved in Pass 1. Needs a proxy title whose scan falls to Pass 2.
 
+**Not run yet, and why** (as of the end of 2026-11-20's session):
+
+- Runnable here, not reached: `[CT-FLOOR-208]`'s window-size steps (resize the UI window through the API and read the
+  list's width); `[A3-FUNCFLAGS-2026-09-05]`'s `Mimic: FIND_FUNCTION` leg on OCTOPATH (headless, through a
+  WriteProcessMemory mailbox rig that has to be written); `[VND9-01]` / `[VND9-04]` (pipe hunts on the 5.5+ / 5.6+
+  titles); `[W3-XREF-CAP]` (L31, a >200-function field survey); L46 `[P1-UPROP-DELEGATE]` (a survey of the <4.25
+  titles); L28 `[W5-CEXML-FSTRING]`'s XML half (a survey for an FString-valued TMap).
+- Waits for the maintainer: `[LIVEFUNCS-STEP2]` item 2 and Locate in GWorld via the level list (Elliot) need gameplay
+  from a loaded save, which can autosave over the maintainer's progress; B28 needs Star Trek Voyager's language set to
+  Chinese; L66 `[W1-PARTIAL-MARK]` leaves inflated snapshots whose deletion is the maintainer's call.
+- Not triaged in this pass: census Table B's `INV-TOOLTIP-CLIPBOARD`, `QUERYPTR-LOG-ABSENT-LABEL`,
+  `METHODE-STALE-LOGPATH`, `PIVOT-ARRAY-LOADID`.
+
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
 - `[LW-REFRESH-STATUS-DUP]` (LOW, 2026-11-20, while closing `[WALK-REFRESH-SCALAR-SHRINK]`): overlapping Live Walker
