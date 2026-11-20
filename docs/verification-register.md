@@ -2012,6 +2012,19 @@ process: `walk_class` gives `AnimDataModelNotifPayload` props_size 16 with 0 fie
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A3-FUNCFLAGS-2026-09-05]` — audit A3: closed on a **4.18** host, without the 4.21 title the row was gated on
 
+✅ **The `Mimic: FIND_FUNCTION` leg, run 2026-11-20** `[LIVEPASS-2026-11-20]`, headless -- the mailbox written by
+WriteProcessMemory as CE's script writes it (`invoke_template_live.py`'s `cmd()`), no CE. OCTOPATH (UE 4.18, winmm
+proxy 3776, `trigger_scan`, 273,956 objects), on the live PlayerController, at native 418, then
+`set_ue_version_override` **421** and **422** (`persist:false`), then 0 (Auto): every round logged the same
+`Mailbox: FIND_FUNCTION` lines -- `K2_DestroyActor` **parmsSize=0 numParms=0** flags=0x4020400 (Native | Public |
+BlueprintCallable), `K2_GetActorLocation` 12 / 1 flags=0x54820401, `K2_SetActorLocation` 154 / 5 flags=0x4C20401.
+421 is sane, as the row requires. ⚠ **The 422 negative control no longer degrades, and that is by design now:**
+FunctionFlags is no longer re-derived from the version on each read -- `DetectFunctionFlags` votes it from sampled
+UFunctions and latches it (*"64 UFunction samples -> FunctionFlags=+0x88 tailExtra=+0 (64/64 votes; measured primary
++0x88, version table +0x88)"*), and an override moves only what is keyed to the version. So the premise of this row's
+override A/B ("not latched; recomputed per call") is out of date; the discriminating half lives in that vote, which
+dll_core_test pins. The hint cache kept no override afterwards.
+
 > **CLOSED on the verification PC, build 3372.** Rig:
 > [`tools/verify/a3_funcflags_override.py`](../tools/verify/a3_funcflags_override.py).
 >

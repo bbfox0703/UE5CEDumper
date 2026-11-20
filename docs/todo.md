@@ -531,6 +531,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[PEHOOK-2026-08-17]`'s 4.18 ProcessEvent-slot witness (2026-11-20, OCTOPATH through its winmm proxy; verification-register.md).
 - `[FIXPASS-2026-09-10]` L39 `[A4-USMAP-CONTAINER-ENUM]`'s Set arm (2026-11-20, a DQ7R USMAP export: 3 named Set enum inners).
 - B28, the Star Trek Voyager UTF-8 FText counter-check (2026-11-20: `版本` reads as CJK; verification-register.md).
+- `[A3-FUNCFLAGS-2026-09-05]`'s `Mimic: FIND_FUNCTION` leg (2026-11-20, OCTOPATH, a headless mailbox; 422 no longer degrades -- the offset is voted; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
