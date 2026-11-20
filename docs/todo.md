@@ -408,8 +408,8 @@ Open work only. **Read this when deciding what to do next.**
 - `[FIXPASS-2026-10-27]` batch 1: INV-TOOLTIP-CLIPBOARD,
   QUERYPTR-LOG-ABSENT-LABEL, METHODE-STALE-LOGPATH,
   PIVOT-ARRAY-LOADID (a race, possibly only unit-provable).
-- The 2026-10-13/14 pass: CT-FLOOR-208, INT8-PREVIEW, UE4-USTRUCT-GIVEUP,
-  AOB-SKIP-OWN-DLL.
+- The 2026-10-13/14 pass: ~~CT-FLOOR-208~~ (closed 2026-11-20 `[LIVEPASS-2026-11-20]`), INT8-PREVIEW,
+  UE4-USTRUCT-GIVEUP, AOB-SKIP-OWN-DLL.
 - `[STARK-DRAIN-OFF-GAME-THREAD]` (MED, build 3664): ✅ (1) the **main-thread fallback** -- **CLOSED 2026-11-20**
   `[LIVEPASS-2026-11-20]` on UE423_Flying Shipping (UE 4.23, 39,225 objects, DLL 3776, injected; no UI):
   `stark_game_thread_drain.py UE423_Flying-Win64-Shipping --gc 20` read `GameThreadDispatch: game thread 41652, the
@@ -532,6 +532,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[FIXPASS-2026-09-10]` L39 `[A4-USMAP-CONTAINER-ENUM]`'s Set arm (2026-11-20, a DQ7R USMAP export: 3 named Set enum inners).
 - B28, the Star Trek Voyager UTF-8 FText counter-check (2026-11-20: `版本` reads as CJK; verification-register.md).
 - `[A3-FUNCFLAGS-2026-09-05]`'s `Mimic: FIND_FUNCTION` leg (2026-11-20, OCTOPATH, a headless mailbox; 422 no longer degrades -- the offset is voted; verification-register.md).
+- `[CT-FLOOR-208]`'s window-size steps (2026-11-20, DumperTest58 Shipping: the list holds 208 at 1000, 1400 and 800).
 
 **Measured not producible here** (the row says what would close it):
 
@@ -543,10 +544,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 
 **Not run yet, and why** (as of the end of 2026-11-20's session):
 
-- Runnable here, not reached: `[CT-FLOOR-208]`'s window-size steps (resize the UI window through the API and read the
-  list's width); `[A3-FUNCFLAGS-2026-09-05]`'s `Mimic: FIND_FUNCTION` leg on OCTOPATH (headless, through a
-  WriteProcessMemory mailbox rig that has to be written); `[VND9-01]` / `[VND9-04]` (pipe hunts on the 5.5+ / 5.6+
-  titles); `[W3-XREF-CAP]` (L31, a >200-function field survey); L46 `[P1-UPROP-DELEGATE]` (a survey of the <4.25
+- Runnable here, not reached: `[W3-XREF-CAP]` (L31, a >200-function field survey); L46 `[P1-UPROP-DELEGATE]` (a survey of the <4.25
   titles); L28 `[W5-CEXML-FSTRING]`'s XML half (a survey for an FString-valued TMap).
 - Waits for the maintainer: `[LIVEFUNCS-STEP2]` item 2 and Locate in GWorld via the level list (Elliot) need gameplay
   from a loaded save, which can autosave over the maintainer's progress; B28 needs Star Trek Voyager's language set to
@@ -1514,7 +1512,17 @@ source and editor are installed for when they are needed.
   splitter right narrows the pane to nothing while the list keeps 208. ✅ **Live smoke 2026-10-14 (3648), DumperTest
   Shipping, the default window:** dragging the pane's edge far left stopped the list at its floor (Time and Duration
   whole, the start of Thread's header only), and a second drag into that floor rewrote nothing (ui-options.json's
-  value and time unchanged). The window-size steps were not run: nothing here resizes the UI's window. **Decided 2026-10-14 (the maintainer: keep -- nobody
+  value and time unchanged). The window-size steps were not run then: nothing here resized the UI's window.
+  ✅ **The window-size steps CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest58 Shipping, UE 508,
+  DLL 3776 injected; a 10 s traced recording of 2,931 calls; `callTrace.detailPaneWidth` set to 766 first, the
+  maintainer's value put back afterwards). The window was sized with `SetWindowPos` to a client width in DIPs and every
+  edge read off a screen capture at 2 px per DIP. At **1000**: the list ran 366-574 (**208**), the pane 582-988 (406 =
+  614 - 208), and a click selected a row and filled the pane; a press-and-release on the handle and a drag into the
+  floor left `ui-options.json` as it was (766, same write time). At **1400**: the pane opened at 766 (list 248);
+  dragged far left it stopped at **806** (582-1388, list 208) and remembered 806, and its Call stack (TraceNest_Leaf
+  ticked for a stack) showed Frame / Address / Copy-ASM / Where side by side, Where cut in its cell. At the **800**
+  minimum: list 208, pane 206; dragging the object tree's splitter right took the pane to 57, then 3, then nothing
+  (list 571-779, the handle to 787) while the list kept 208, and the remembered 806 was not rewritten. **Decided 2026-10-14 (the maintainer: keep -- nobody
   narrows it that far in practice, and anyone who does will widen the window):** the list can still drop below 208 when the whole Call Trace panel is narrower than 232 (MainWindow's ContentGrid `*` column has no
   MinWidth -- only with the object tree dragged very wide); once the list has taken the pane below 200, the pane's
   handle moves neither way (round 1's choice, kept).
