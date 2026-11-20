@@ -496,6 +496,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[FIXPASS-2026-09-10]` L58 `[A4-STEALTH-PRIME]`'s optional M9 check (2026-11-20, the gate-off releases a Holding card).
 - `[FLY-EXPORT-EXPERIMENTAL]` (2026-11-20, Save .CT with the switch on and off, read as text).
 - `[WIKI-TIPS-B3]` (2026-11-20, AOT 3776: the Teleport tooltips hovered, every item witnessed in the binary).
+- `[A7-EMPTYBASE-2026-09-05]`'s negative control 2, narrowness (2026-11-20, a fresh SDK export; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 

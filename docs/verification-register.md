@@ -1987,6 +1987,15 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 **Negative controls, two, both free in the same export run**: (1) **the W2 guard** — a class with a **non-empty** super must still split at `superPropsSize` and must **not** re-emit the inherited chain (`SdkExportService.cs:443-447`; this is the failure the fix could *cause*, and is the load-bearing one); (2) **narrowness** — an opaque field-less struct with `PropertiesSize > 1` must still receive its `Pad_0000[…]`, proving the `emptyBase` suppression (`:495`, `own.Count == 0 && ownStart == 0 && propsSize == 1`) stayed narrow.
 
+✅ **Negative control 2 (narrowness) recorded 2026-11-20** `[LIVEPASS-2026-11-20]` (DumperTest Shipping, UE 504, DLL and
+AOT UI 3776): Export → **SDK Header (.h)**, 7,691 types, 3,387,877 bytes. Every base-less type with no member and a
+`Size` above 0x0001 -- **175** of them -- carries `uint8_t Pad_0000[0x00NN]` for its whole size (`Object` 0x28,
+`AnimDataModelNotifPayload` 0x10, `BranchingPointNotifyPayload` 0x20, `ScriptTypedElementHandle` 0x08, …); **0**
+lack it. The positive in the same file: `DumperTestEmptyBase` is emitted empty at `// Size: 0x0001`, and
+`DumperTestBracketPayload : public DumperTestEmptyBase` starts its `FString Description` at 0x0000. DLL side, same
+process: `walk_class` gives `AnimDataModelNotifPayload` props_size 16 with 0 fields, `DumperTestEmptyBase` props_size
+1 with 0 fields. The suppression fires only on the `propsSize == 1` case.
+
 -----
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A3-FUNCFLAGS-2026-09-05]` — audit A3: closed on a **4.18** host, without the 4.21 title the row was gated on
