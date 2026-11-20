@@ -376,19 +376,25 @@ class PipeClient:
         return got
 
     def ensure_scanned(self, timeout: float = 180.0, poll: float = 2.0) -> dict:
-        """Trap 2. Proxy mode starts the pipe only; `init` returns ok and scans nothing."""
-        p = self.request("get_pointers")
-        if p.get("gobjects_method") not in (None, "", "not_found"):
-            return p
-        self.request("trigger_scan")
+        """Trap 2. Proxy mode starts the pipe only; `init` returns ok and scans nothing.
+
+        Returns once the scan is OVER (scan_settled), not once GObjects is published: that is the start of init's
+        tail -- the offsets probe, the ladder, the GWorld check -- and a command sent there races it, or is refused
+        ("A scan is still running")."""
         deadline = time.time() + timeout
-        while time.time() < deadline:
+        p = self.request("get_pointers")
+        if p.get("gobjects_method") in (None, "", "not_found"):
+            self.request("trigger_scan")
+        while True:
+            if scan_settled(self.request("scan_status")):
+                p = self.request("get_pointers")
+                if p.get("gobjects_method") not in (None, "", "not_found"):
+                    return p
+            if time.time() >= deadline:
+                break
             time.sleep(poll)
-            p = self.request("get_pointers")
-            if p.get("gobjects_method") not in (None, "", "not_found"):
-                return p
         raise PipeError(
-            f"pointers still unresolved {timeout}s after trigger_scan; last reply: {p}"
+            f"pointers still unresolved, or the scan still running, {timeout}s after trigger_scan; last reply: {p}"
         )
 
     @staticmethod
@@ -402,6 +408,32 @@ class PipeClient:
                     "that something is absent (working-lessons 1.6 / 2.6)."
                 )
         return reply
+
+
+def scan_settled(status: dict) -> bool:
+    """scan_status says no scan runs and init finished (phase 7): the test McpGameLink makes. A reply with no `phase`
+    (a DLL that predates it) says nothing either way, and counts as settled, as ensure_scanned always treated it."""
+    if "phase" not in status:
+        return True
+    return not status.get("running") and int(status.get("phase") or 0) >= 7
+
+
+def selftest_settled() -> int:
+    """scan_settled over replies shaped as scan_status sends them."""
+    cases = [
+        ({"running": False, "phase": 7}, True),
+        ({"running": True, "phase": 7}, False),     # a later scan running
+        ({"running": False, "phase": 6}, False),    # init's tail: GObjects published, offsets not probed
+        ({"running": False, "phase": 0}, False),    # proxy mode, nothing scanned
+        ({"ok": True}, True),                         # an older DLL
+    ]
+    bad = 0
+    for status, want in cases:
+        got = scan_settled(status)
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  scan_settled({status}) = {got}, want {want}")
+    return bad
 
 
 def selftest() -> int:
@@ -575,10 +607,13 @@ def selftest_resolve() -> int:
 def main() -> int:
     if sys.argv[1:] == ["--selftest"]:
         resolve_bad = selftest_resolve()
+        settled_bad = selftest_settled()
         rc = selftest()
         if resolve_bad:
             print(f"RESULT: FAIL ({resolve_bad} resolution case(s))")
-        return 1 if (rc or resolve_bad) else 0
+        if settled_bad:
+            print(f"RESULT: FAIL ({settled_bad} scan_settled case(s))")
+        return 1 if (rc or resolve_bad or settled_bad) else 0
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cmd")
     ap.add_argument("--args", default="{}", help="JSON object of extra request fields")

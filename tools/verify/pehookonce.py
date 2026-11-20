@@ -29,7 +29,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient                        # noqa: E402
+from pipe_client import PipeClient, scan_settled          # noqa: E402
 
 LOGROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 
@@ -75,8 +75,12 @@ def main(stem):
 
         say("\n=== step 2 !! THE ONE THAT MATTERS: scan -> invoke -> start again ===")
         c.request("trigger_scan")
+        p = {}
         for _ in range(60):
             time.sleep(5)
+            # Over, not merely published: init's tail still runs once GObjects is (pipe_client.scan_settled).
+            if not scan_settled(c.request("scan_status")):
+                continue
             p = c.request("get_pointers")
             if p.get("gobjects_method") not in (None, "", "not_found"):
                 break
