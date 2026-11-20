@@ -422,7 +422,8 @@ Open work only. **Read this when deciding what to do next.**
   main thread (no thread is named GameThread) (176 threads walked)`, then `… kept: 930 hook fires on it in the window,
   0 on other threads`; 20 of 20 `CollectGarbage` invokes answered (returned 0), 0 SEH. (2) one **worker-thread
   skip** seen live, `left N queued request(s) for the game thread`, followed by the request answering as asked.
-  Rig: `tools/verify/stark_game_thread_drain.py`. ⏸ (2) **not reached 2026-11-20** `[LIVEPASS-2026-11-20]` on
+  Rig: `tools/verify/stark_game_thread_drain.py`; `tools/verify/stark_drain_suspend.py` freezes only the game
+  thread while a Debug Camera ON waits, which forces the worker-thread case (2) instead of waiting for it. ⏸ (2) **not reached 2026-11-20** `[LIVEPASS-2026-11-20]` on
   DumperTest58 Development (DLL 3776, UE 508, GameThread named by the engine, validator `kept`, 44 worker-thread hook
   fires in the install window): 1,000 Debug Camera ON/OFF pairs (`--pairs 200`, then `--pairs 800`), 2,000 of 2,000
   invokes answered as asked, 0 SEH -- and no worker-thread ProcessEvent ever coincided with a queued request
@@ -3494,7 +3495,7 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   on a container view is otherwise right -- it sends only the address, the owner's since the fix above.
 - ✅ `UE4-ASSETPTR-EXPORTS`, **a GAME-FILLED TArray<TAssetPtr> with more than one element** -- the fixture exists, in
   a level. Census in CE over the flat GUObjectArray (24-byte items; class chain followed through
-  `UStruct::SuperStruct` at +0x30, checked against UObject's class; `out/live3660b/census_maps.lua`): at the **main
+  `UStruct::SuperStruct` at +0x30, checked against UObject's class; `tools/verify/ce/census_maps.lua`): at the **main
   menu** every holder is empty (BlinkMapSettings and subclasses: 54 instances, `Maps` all 0; BlinkMapGenerator and
   subclasses: 1, the native CDO, all four arrays 0). In **Game Modes → Skirmish → Play** (a random battleground,
   paused; 312,312 objects): 4 BlinkMapGenerator-derived instances, 3 non-empty -- **CentralCity_01_MapGen_C**
@@ -3519,7 +3520,7 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   through SoundCue nodes); in the level, all 32 LevelStreaming `WorldAsset` (+0x30), both BlinkMapSegment-derived
   `FixedOverride` (+0x3A8), BC_BlinkGameInstance's `PreGameWorld` (+0x100, `{-1,0}`) and the 60 map-generator
   elements above; at the menu, the 19 DT_LevelSelectData rows' `World` and `PreviewImage`. This game reaches its soft
-  references by path and never through `Get()`, so nothing stores a weak pair (`out/live3660b/census_weak.lua`). Not
+  references by path and never through `Get()`, so nothing stores a weak pair (`tools/verify/ce/census_weak.lua`). Not
   tried: a FULLY synthetic source (a CE-allocated FAssetPtr whose weak pair is copied from a live object's GUObjectArray
   item) -- that tests the label path against a pair we wrote, not one the engine resolved. The control half ran
   naturally: 60 unloaded elements labelled `[i]` alone in the CSX push above. The 3657 → 3658 fix stays covered by its
