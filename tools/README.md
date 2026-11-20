@@ -49,6 +49,12 @@ The periodic archive pass ([docs/archive/README.md](../docs/archive/README.md) i
    rebuilds both files from git's HEAD copy, independently of the move.
 7. A row in `docs/archive/README.md`, `py tools/check_md_links.py`, the gates, one commit per doc.
 
+`docs/dev-log.md` is split differently -- whole days off its old end, past the 400 KB trigger:
+`split_devlog.py split docs/dev-log.md <cut YYYY-MM-DD> docs/archive/dev-log-<YYYY-MM>-pre-build-<first kept>.md
+<header file> --dry-run`, then without `--dry-run`; edit the live header's archived-builds list and its
+`## Older entries` pointer to name the new file; then `split_devlog.py verify docs/dev-log.md <archive file>` before
+committing.
+
 ## `ghidra/` — Ghidra scripts
 
 Run headless via `support/analyzeHeadless.bat` (or in the Script Manager GUI).
