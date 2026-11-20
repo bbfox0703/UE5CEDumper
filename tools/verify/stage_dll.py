@@ -107,7 +107,10 @@ def main():
         if rev_patch is not None:
             r = subprocess.run(["git", "-C", REPO, "apply", "-R", "-"], input=rev_patch, capture_output=True)
             if r.returncode != 0:
-                raise SystemExit("REFUSED: `git apply -R` of %s failed:\n%s"
+                # A reverse is a red arm of its day: once later commits edit the same hunks it stops applying.
+                raise SystemExit("REFUSED: `git apply -R` of %s failed:\n%s\nLater commits edited those hunks. If this "
+                                 "row needs its red arm again, re-express the reverse as subs at HEAD (as "
+                                 "l41-step2-prefix-stall.json was)."
                                  % (spec["reverse_commit"], r.stderr.decode("utf-8", "replace")[-800:]))
             print("reversed %s under %s" % (spec["reverse_commit"], spec.get("paths") or ["dll/src"]))
             # the subs below then see the reversed text
