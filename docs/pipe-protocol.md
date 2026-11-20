@@ -286,8 +286,9 @@ command holds the lock for a moment ("The engine state is being settled by anoth
   distinct addresses instead of stopping at the first. `rescan_status` adds `gobjects_candidates` (how many) and
   `replacing`; `gobjects_addr` stays the first hit, which a replace need not keep.
 - **`apply_rescan`** finishes once begun (a client that drops mid-apply does not cut it short; shutdown does). Under the
-  init fence it scores the published pointer and the candidates as UE5_Init's heap fallback does -- the largest array
-  whose first slots resolve at least two names -- and, when one qualifies, re-runs what the decoy's session derived from
+  init fence it scores the published pointer and the candidates -- the largest array whose first slots resolve at
+  least two names, densely (at most two non-null slots read per name: a master's head is its CoreUObject core) -- and,
+  when one qualifies, re-runs what the decoy's session derived from
   an empty pool, in UE5_Init's order: the offsets probe (from the version before init's structural climb), the GEngine
   second pass, the version ladder, with the pool-sampled detections reset (FunctionFlags vote, UFunction::Func, UEnum
   names, the validated layout probes, compact sets, the soft / lazy envelopes, UClass::Interfaces). After the fence it

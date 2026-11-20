@@ -432,9 +432,8 @@ bool DetectUEnumNames(bool latchFailure = true);
 uintptr_t ExtraScanGObjects();
 
 // [RESCAN-DECOY-REINIT] A published GObjects that Aura reads no objects from is a decoy every recovery missed. Extra
-// Scan then collects candidates instead of stopping at the first, and apply_rescan picks among them as UE5_Init's heap
-// fallback does (the largest array whose head resolves names) and re-runs what the decoy's session derived from an empty
-// pool. These are the pieces a test target compiles; Fern / Frieren hold the wiring.
+// Scan then collects candidates instead of stopping at the first, and apply_rescan picks the largest array whose head
+// resolves names densely (QualifiesAsObjectArray) and re-runs what the decoy's session derived from an empty pool. These are the pieces a test target compiles; Fern / Frieren hold the wiring.
 
 // Most distinct addresses one replace sweep collects. One array validates at several anchors and is pointed to from
 // several slots, so this counts anchors, not arrays.
@@ -516,12 +515,22 @@ size_t ExtraScanGObjectsCandidates(uintptr_t avoid, size_t max, std::vector<uint
 // One candidate as Aura reads it: its count, and how many names its head resolved among the slots read.
 struct GObjectsCandidateScore { uintptr_t addr = 0; int32_t count = 0; int resolved = 0; int scanned = 0; };
 
-// UE5_Init's heap-fallback rule: a real array (count > 0, at least kMinResolvedNames names) with the largest count; the
-// first of equal counts. -1 when none qualifies.
+// Non-null head slots read per name resolved, at most, for a real array. A master's head is its CoreUObject core, named
+// slot after slot; a whole-.data sweep also meets structures Aura reads with a large count and a few real objects
+// among slots that name nothing (DumperTest: 8 names in 1,009 slots, 524,312 "objects").
+inline constexpr int kMaxHeadSlotsPerName = 2;
+
+// A real object array: it reads objects, its head resolves at least kMinResolvedNames names (UE5_Init's heap-fallback
+// rule), and densely.
+inline bool QualifiesAsObjectArray(const GObjectsCandidateScore& s) {
+    return s.count > 0 && s.resolved >= kMinResolvedNames && s.scanned <= kMaxHeadSlotsPerName * s.resolved;
+}
+
+// The qualifying candidate with the largest count; the first of equal counts. -1 when none qualifies.
 inline int PickLargestNamedCandidate(const GObjectsCandidateScore* s, size_t n) {
     int best = -1;
     for (size_t i = 0; i < n; ++i) {
-        if (s[i].count <= 0 || s[i].resolved < kMinResolvedNames) continue;
+        if (!QualifiesAsObjectArray(s[i])) continue;
         if (best < 0 || s[i].count > s[best].count) best = static_cast<int>(i);
     }
     return best;

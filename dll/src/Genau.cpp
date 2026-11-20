@@ -5158,7 +5158,7 @@ GObjectsCandidateScore ChooseGObjectsCandidate(uintptr_t published, const std::v
         Sein::Info("SCAN:GObj", "Rescan: candidate 0x%llX%s Count=%d, names %d resolved (scanned %d of the first %d)",
                    (unsigned long long)s.addr, s.addr == published ? " (published)" : "", s.count, s.resolved,
                    s.scanned, s.count < nameSampleSlots ? s.count : nameSampleSlots);
-        if (s.count > 0 && s.resolved >= kMinResolvedNames) return s;   // Aura is on it
+        if (QualifiesAsObjectArray(s)) return s;   // Aura is on it
     }
     Aura::Init(published);
     return {};
