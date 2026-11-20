@@ -2139,6 +2139,9 @@ static void EnsureFunctionFlagsOffset() {
     if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
     if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_relaxed)) return;
+    // [RESCAN-DECOY-REINIT] Again under the lock: a GObjects replacement resets the verdict, then this vote under the same
+    // lock, and a caller that passed the check above before the reset must not vote over the new pool's unmeasured offsets.
+    if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
 
     const unsigned ver = g_cachedUEVersion;
     const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
@@ -2205,9 +2208,25 @@ int FunctionFlagsOffset() {
     return DynOff::UFUNCTION_FLAGS;
 }
 
-void ResetFunctionFlagsVote() {}
+void ResetFunctionFlagsVote() {
+    std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
+    DynOff::UFUNCTION_FLAGS = 0;
+    DynOff::UFUNCTION_TAIL_EXTRA = 0;
+    DynOff::UFUNCTION_TAIL_MEASURED.store(-1, std::memory_order_relaxed);
+    DynOff::bUFunctionFlagsDetected.store(false, std::memory_order_release);
+}
 
-void ResetValidatedLayoutProbes() {}
+void ResetValidatedLayoutProbes() {
+    DynOff::FNAME_SIZE_MEASURED.store(0, std::memory_order_release);
+    DynOff::bFNameSizeProbed.store(false, std::memory_order_release);
+    DynOff::FNAME_ALIGN_MEASURED.store(0, std::memory_order_release);
+    DynOff::bFNameAlignProbed.store(false, std::memory_order_release);
+    DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(-1, std::memory_order_release);
+    DynOff::SOFTPATH_SIZE_MEASURED.store(0, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_OFFSET.store(-1, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_WIDTH.store(-1, std::memory_order_release);
+    DynOff::bSoftPathProbed.store(false, std::memory_order_release);
+}
 
 // Where FunctionFlags sits when `ver` is judged: a decided offset stays latched across an override; undecided, it starts
 // from `ver`'s own primary (ReadFuncFlagsAndParams). One rule for the override's refusal and for the published

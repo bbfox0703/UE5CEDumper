@@ -7052,10 +7052,11 @@ static const char* ScopeForOpcode(uint8_t op) {
 // (FirstPropertyToInit / Outer / Class are heap objects), so the first offset
 // in range where every sampled UFunction holds a LooksLikeCodePointer IS Func.
 // Detected once on first Path-2 use; 0 = not found → native analysis disabled.
+// The detection and ResetUFunctionFuncDetection share one lock, so a reset never interleaves with a latch.
+static std::mutex s_funcDetectMutex;
 static void EnsureUFunctionFuncOffset() {
     if (DynOff::bUFunctionFuncDetected.load(std::memory_order_acquire)) return;
-    static std::mutex s_detectMutex;
-    std::lock_guard<std::mutex> lk(s_detectMutex);
+    std::lock_guard<std::mutex> lk(s_funcDetectMutex);
     if (DynOff::bUFunctionFuncDetected.load(std::memory_order_relaxed)) return;
 
     constexpr int kWant = 32;
@@ -7091,7 +7092,11 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
-void ResetUFunctionFuncDetection() {}
+void ResetUFunctionFuncDetection() {
+    std::lock_guard<std::mutex> lk(s_funcDetectMutex);
+    DynOff::UFUNCTION_FUNC = 0;
+    DynOff::bUFunctionFuncDetected.store(false, std::memory_order_release);
+}
 
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.

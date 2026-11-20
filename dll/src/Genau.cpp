@@ -14,6 +14,7 @@
 #include "Himmel.h"
 #include "Aura.h"
 #include "Serie.h"
+#include "Ubel.h"    // the FunctionFlags vote and the validated layout probes a GObjects replacement resets
 #include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded
 #include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby
@@ -5007,10 +5008,21 @@ static std::vector<ScanRange> WritableDataSections() {
 size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_t avoid, size_t max,
                                   std::vector<uintptr_t>& out, bool* outCancelled) {
     if (outCancelled) *outCancelled = false;
-    (void)avoid; (void)max;
     const size_t before = out.size();
+    if (max == 0) return 0;
     int candidatesTested = 0;
     g_validationDbgCount = 0;  // Reset throttle for validators
+
+    // A hit already collected (several .data slots can point at one struct) is not offered or logged twice.
+    auto seen = [&](uintptr_t a) {
+        return std::find(out.begin() + static_cast<std::ptrdiff_t>(before), out.end(), a) != out.end();
+    };
+    // Collect a new hit; true once `max` are collected.
+    auto take = [&](uintptr_t a) {
+        out.push_back(a);
+        return out.size() - before >= max;
+    };
+    auto collected = [&] { return out.size() - before; };
 
     for (const ScanRange& sec : ranges) {
         Sein::Debug("SCAN:GObj", "ExtraScanGObjects: Scanning [0x%llX-0x%llX] (%zu bytes)",
@@ -5022,24 +5034,32 @@ size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_
                 Sein::Warn("SCAN:GObj", "ExtraScanGObjects: cancelled (%d candidates tested)",
                            candidatesTested);
                 if (outCancelled) *outCancelled = true;
-                return out.size() - before;
+                return collected();
             }
             // Mode 1: Inline — the FUObjectArray struct starts at addr
-            if (ValidateGObjects(addr)) {
+            if (addr != avoid && !seen(addr) && ValidateGObjects(addr)) {
                 Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found inline FUObjectArray at 0x%llX (%d candidates tested)",
                          (unsigned long long)addr, candidatesTested);
-                out.push_back(addr);
-                return out.size() - before;
+                if (take(addr)) {
+                    if (max > 1)
+                        Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected the cap of %zu candidate(s) -- the rest of "
+                                   ".data is not searched (%d candidates tested)", max, candidatesTested);
+                    return collected();
+                }
             }
 
             // Mode 2: Pointer — addr holds a pointer to FUObjectArray
             uintptr_t ptrVal = 0;
-            if (Macht::ReadSafe(addr, ptrVal) && ptrVal && LooksLikeDataPtr(ptrVal)) {
+            if (Macht::ReadSafe(addr, ptrVal) && ptrVal && ptrVal != avoid && !seen(ptrVal) && LooksLikeDataPtr(ptrVal)) {
                 if (ValidateGObjects(ptrVal)) {
                     Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found pointed FUObjectArray at 0x%llX (ptr@0x%llX, %d candidates tested)",
                              (unsigned long long)ptrVal, (unsigned long long)addr, candidatesTested);
-                    out.push_back(ptrVal);
-                    return out.size() - before;
+                    if (take(ptrVal)) {
+                        if (max > 1)
+                            Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected the cap of %zu candidate(s) -- the "
+                                       "rest of .data is not searched (%d candidates tested)", max, candidatesTested);
+                        return collected();
+                    }
                 }
             }
 
@@ -5050,8 +5070,12 @@ size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_
         }
     }
 
-    Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
-    return out.size() - before;
+    if (collected() == 0)
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
+    else
+        Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected %zu candidate(s) (%d candidates tested)", collected(),
+                   candidatesTested);
+    return collected();
 }
 
 size_t ExtraScanGObjectsCandidates(uintptr_t avoid, size_t max, std::vector<uintptr_t>& out, bool* outCancelled) {
@@ -5107,21 +5131,123 @@ GObjectsCandidateScore ScoreGObjectsCandidate(uintptr_t addr, int maxSlots) {
 
 GObjectsCandidateScore ChooseGObjectsCandidate(uintptr_t published, const std::vector<uintptr_t>& candidates,
                                                int nameSampleSlots, size_t* outSampled, bool* outAborted) {
-    (void)candidates; (void)nameSampleSlots;
     if (outSampled) *outSampled = 0;
     if (outAborted) *outAborted = false;
+    std::vector<uintptr_t> cands;
+    if (published) cands.push_back(published);
+    for (uintptr_t c : candidates)
+        if (c && std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c);
+    auto abort = [&] {
+        Aura::Init(published);
+        if (outAborted) *outAborted = true;
+        return GObjectsCandidateScore{};
+    };
+
+    // What Aura reads from each: its layout and item size, no object reads past their probes.
+    std::vector<int32_t> counts(cands.size(), 0);
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (Tot::Requested()) return abort();
+        Aura::Init(cands[i]);
+        counts[i] = Aura::GetCount();
+    }
+    // Names, largest first: the first that qualifies is PickLargestNamedCandidate's answer.
+    for (size_t i : NameSampleOrder(counts.data(), counts.size())) {
+        if (Tot::Requested()) return abort();
+        const GObjectsCandidateScore s = ScoreGObjectsCandidate(cands[i], nameSampleSlots);
+        if (outSampled) ++*outSampled;
+        Sein::Info("SCAN:GObj", "Rescan: candidate 0x%llX%s Count=%d, names %d resolved (scanned %d of the first %d)",
+                   (unsigned long long)s.addr, s.addr == published ? " (published)" : "", s.count, s.resolved,
+                   s.scanned, s.count < nameSampleSlots ? s.count : nameSampleSlots);
+        if (s.count > 0 && s.resolved >= kMinResolvedNames) return s;   // Aura is on it
+    }
     Aura::Init(published);
     return {};
 }
 
 ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHooks& hooks) {
-    (void)hooks;
+    // Begun, it finishes: a caller whose connection drops must not leave a replaced GObjects over a probe its walks cut
+    // short. Shutdown still aborts.
+    const Tot::CancelContextScope immune{Tot::CancelContext{nullptr, true}};
+    auto step = [&](ReplaceStep s) { if (hooks.onStep) hooks.onStep(s); };
     ReplaceResult r;
-    Aura::Init(in.published);
+    bool aborted = false;
+    r.winner = ChooseGObjectsCandidate(in.published, in.candidates, in.nameSampleSlots, &r.scored, &aborted);
+    if (aborted) {
+        r.outcome = ReplaceOutcome::Aborted;
+        Sein::Warn("SCAN:GObj", "Rescan: the choice was cut short by shutdown -- GObjects stays 0x%llX",
+                   (unsigned long long)in.published);
+        return r;
+    }
+    if (!r.winner.addr) {
+        r.outcome = ReplaceOutcome::NoneQualified;
+        Sein::Warn("SCAN:GObj", "Rescan: none of %zu candidate(s) reads objects whose head resolves names -- GObjects "
+                   "stays 0x%llX", in.candidates.size(), (unsigned long long)in.published);
+        return r;
+    }
+    const bool inPlace = r.winner.addr == in.published;
+    Sein::Info("SCAN:GObj", "Rescan: GObjects 0x%llX -> 0x%llX%s (Count=%d, %d names resolved in the first %d slots)",
+               (unsigned long long)in.published, (unsigned long long)r.winner.addr, inPlace ? " (in place)" : "",
+               r.winner.count, r.winner.resolved, r.winner.scanned);
+    step(ReplaceStep::Chosen);
+
+    // The decoy's verdict says the probe ran, so what waits on it (the FunctionFlags vote, the GEngine second pass, an
+    // override's tail check) would act on unmeasured offsets. The vote goes with it, to be taken again where UE5_Init
+    // takes it: after this probe, under the pre-ladder version.
+    DynOff::ResetOffsetsVerdict();
+    Ubel::ResetFunctionFlagsVote();
+    step(ReplaceStep::VerdictReset);
+
+    Aura::Init(r.winner.addr);
+    SetModuleAnchor(r.winner.addr);
+    step(ReplaceStep::AuraOnWinner);
+
+    // The probe and everything after it read the session's version; the decoy's ladder may have raised it from the
+    // decoy's item layout, and the ladder only raises.
+    g_cachedUEVersion = in.preLadderVersion;
+    if (hooks.publish) hooks.publish(r.winner.addr, inPlace);
+    step(ReplaceStep::Published);
+
+    // Offset-independent, or gated on the validated verdict just reset: safe before the probe.
+    Aura::ResetUFunctionFuncDetection();
+    Ubel::ResetValidatedLayoutProbes();
+    step(ReplaceStep::LatchesReset);
+
+    ValidateAndFixOffsets(in.preLadderVersion);
+    step(ReplaceStep::Probed);
+    if (hooks.resolveGEngine) hooks.resolveGEngine();
+    step(ReplaceStep::GEngine);
+    // After the probe re-measured the FName width DetectUEnumNames reads, before the ladder's EnumPackage rung asks it.
+    ResetUEnumNamesDetection();
+    step(ReplaceStep::UEnumReset);
+    if (hooks.climbVersion) hooks.climbVersion();
+    step(ReplaceStep::Climbed);
+
+    // The version may have moved, and what walks cached between the probe's own retire and the climb took the old one.
+    // The envelopes are version-derived (set_ue_version_override drops them for the same reason); compact sets and the
+    // Interfaces search latch from walks under the offsets the probe has just replaced.
+    DynOff::RetireFamilyEpoch();
+    DynOff::bCompactSets.store(false, std::memory_order_release);
+    DynOff::SOFTPTR_PATH = -1;
+    DynOff::LAZYPTR_GUID = -1;
+    DynOff::UCLASS_INTERFACES.store(0, std::memory_order_release);
+    step(ReplaceStep::WalkLatchesReset);
+
+    r.outcome = inPlace ? ReplaceOutcome::ReinitInPlace : ReplaceOutcome::Replaced;
     return r;
 }
 
-void ResetUEnumNamesDetection() {}
+// One lock for DetectUEnumNames and its reset, so a reset never interleaves with a latch.
+static std::mutex s_enumNamesMutex;
+
+void ResetUEnumNamesDetection() {
+    std::lock_guard<std::mutex> lk(s_enumNamesMutex);
+    DynOff::bUEnumNamesDetected.store(false, std::memory_order_release);
+    DynOff::bUEnumNamesFailed.store(false, std::memory_order_release);
+    DynOff::UENUM_NAMES = 0x40;
+    DynOff::UENUM_VALUE_SIZE = 8;
+    DynOff::UENUM_PAIR_STRIDE = 0;
+    DynOff::bEnumNamesNewContainer = false;
+}
 
 // ============================================================
 // ExtraScanGWorld — Dumper-7-style instance scan
@@ -6075,6 +6201,11 @@ bool DetectUEnumNames(bool latchFailure) {
     // Already detected?
     if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         return true;
+    // [RESCAN-DECOY-REINIT] One search at a time, and never across ResetUEnumNamesDetection: a search that began on the
+    // pool a GObjects replacement retired latches before the reset clears it, or starts after on the new pool.
+    std::lock_guard<std::mutex> enumLock(s_enumNamesMutex);
+    if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return true;
 
     Sein::Info("DYNO:Enum", "DetectUEnumNames: Searching for known enums in GObjects...");
 
@@ -6199,6 +6330,7 @@ bool DetectUEnumNames(bool latchFailure) {
                 DynOff::bEnumNamesNewContainer = !legacy;
                 DynOff::UENUM_VALUE_SIZE  = legacy ? layout.valueSize : 8;
                 DynOff::UENUM_PAIR_STRIDE = legacy ? layout.legacyStride : 0;
+                DynOff::bUEnumNamesFailed.store(false, std::memory_order_release);
                 DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
 
                 Sein::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "

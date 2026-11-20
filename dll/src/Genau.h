@@ -462,12 +462,11 @@ struct RescanPlan {
 // objects, the only pool ExtraScanGWorld can search.
 constexpr RescanPlan PlanRescan(uintptr_t gobjects, uintptr_t gnames, uintptr_t gworld, int32_t objectCount) {
     RescanPlan p;
-    p.replace       = false;
-    p.seekGObjects  = gobjects == 0;
-    p.avoid         = 0;
-    p.maxCandidates = p.seekGObjects ? 1 : 0;
-    p.seekGWorld    = gworld == 0 && gobjects != 0 && gnames != 0;
-    (void)objectCount;
+    p.replace       = gobjects != 0 && gnames != 0 && objectCount <= 0;
+    p.seekGObjects  = gobjects == 0 || p.replace;
+    p.avoid         = p.replace ? gobjects : 0;
+    p.maxCandidates = !p.seekGObjects ? 0 : p.replace ? kRescanMaxCandidates : 1;
+    p.seekGWorld    = gworld == 0 && gobjects != 0 && gnames != 0 && objectCount > 0;
     return p;
 }
 
@@ -484,8 +483,11 @@ enum class RescanApply {
 constexpr RescanApply PlanRescanApply(uintptr_t published, int32_t publishedCount, uintptr_t gnames, bool jobReplace,
                                       uintptr_t jobAvoid, size_t candidates, bool cancelled, bool consumed) {
     if (published == 0) return candidates > 0 ? RescanApply::Fill : RescanApply::NotSought;
-    (void)publishedCount; (void)gnames; (void)jobReplace; (void)jobAvoid; (void)cancelled; (void)consumed;
-    return RescanApply::NotSought;
+    if (!jobReplace || candidates == 0) return RescanApply::NotSought;
+    if (consumed) return RescanApply::AlreadyApplied;
+    if (cancelled) return RescanApply::Cancelled;
+    if (published != jobAvoid || publishedCount > 0 || gnames == 0) return RescanApply::Changed;
+    return RescanApply::Replace;
 }
 
 // The pipe word for each RescanApply that did not act ("filled" and the Replace outcomes are named apart).
