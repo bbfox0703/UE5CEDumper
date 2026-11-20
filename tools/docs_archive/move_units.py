@@ -3,9 +3,11 @@ group, by the docs-archiving convention (docs/archive/README.md; the newest todo
 
     py tools/docs_archive/move_units.py <doc> <units json> <archive file> <header file> <date> [--dry-run]
 
-units.json: [{"start": n, "end": n, "kind": "section"|"row", "tableHeaderLine": n|0, "firstLine": "...", "tag": "..."}]
-with 1-based line numbers of the CURRENT doc. A section unit must match a non-blockquote heading's full unit range
-(the heading through the line before the next heading of the same or a higher level). A row unit is one table line.
+units.json: [{"start": n, "end": n, "kind": "section"|"row"|"bullet", "tableHeaderLine": n|0, "firstLine": "...",
+"tag": "..."}] with 1-based line numbers of the CURRENT doc. A section unit must match a non-blockquote heading's full
+unit range (the heading through the line before the next heading of the same or a higher level). A row unit is one
+table line plus its continuation lines. A bullet unit is one top-level `- ` list item plus its indented continuation
+lines; adjacent bullets share one pointer, as adjacent sections do.
 
 Asserts before writing anything:
   * no unit overlaps another; each start line begins with its firstLine; sections are whole units;
@@ -72,6 +74,11 @@ for u in units:
         assert heading_level(lines[s - 1]) and s not in code, f"{s} is not a heading"
         ue = unit_end(s)
         assert e == ue or (e < ue and only_old_pointer(e + 1, ue)), f"{s}: end {e} is not the unit's end {ue}"
+    elif u["kind"] == "bullet":
+        # A list item: its `- ` line plus the indented, non-blank continuation lines under it.
+        assert lines[s - 1].startswith("- "), f"{s} is not a top-level bullet"
+        assert all(lines[k - 1].startswith("  ") and lines[k - 1].strip() for k in range(s + 1, e + 1)), f"{s}-{e} spans more than one bullet"
+        assert e == LAST or not (lines[e].startswith("  ") and lines[e].strip()), f"{s}-{e} stops inside a bullet"
     else:
         h = u["tableHeaderLine"]
         # A row is one `|` line plus any continuation lines this file writes under it (`1. …`), up to the next row.
