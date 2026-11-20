@@ -500,7 +500,7 @@ public interface IDumpService
     // --- Extra Scan (user-triggered aggressive fallback) ---
     Task<RescanStartResult> StartRescanAsync(CancellationToken ct = default);
     Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default);
-    Task<EngineState> ApplyRescanAsync(CancellationToken ct = default);
+    Task<ApplyRescanResult> ApplyRescanAsync(CancellationToken ct = default);
 
     // --- Trigger Scan (proxy DLL deferred scan) ---
     /// <summary>

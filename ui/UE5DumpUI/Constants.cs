@@ -42,6 +42,19 @@ public static class Constants
     public const string HoldKindNone = "none";
     /// <summary>The first DLL build that answers get_holds, which says who holds each hold.</summary>
     public const int HoldsMinDllBuild = 3704;
+    /// <summary>[RESCAN-DECOY-REINIT] The first DLL build whose Extra Scan replaces a published GObjects that reads no
+    /// objects. An older one answers "all pointers found", so the panel does not offer it there.</summary>
+    public const int RescanReplaceMinDllBuild = 3775;
+
+    // ── apply_rescan's gobjects_outcome (Genau::RescanApplyName / ReplaceOutcomeName) ── ⛔ DO NOT LOCALIZE ──────────
+    /// <summary>GObjects was 0 and the job's first hit is published.</summary>
+    public const string RescanOutcomeFilled = "filled";
+    /// <summary>A GObjects that read no objects was replaced by the largest named candidate.</summary>
+    public const string RescanOutcomeReplaced = "replaced";
+    /// <summary>The published GObjects reads objects now; it was re-initialised where it is.</summary>
+    public const string RescanOutcomeReinitInPlace = "reinit_in_place";
+    /// <summary>No candidate reads objects whose head resolves names: GObjects is unchanged.</summary>
+    public const string RescanOutcomeNoneQualified = "none_qualified";
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
     // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04]

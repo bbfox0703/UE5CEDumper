@@ -518,6 +518,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool CanExtraScan => HasData && !IsScanning && !IsVersionTooOld
         && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
 
+    /// <summary>The Extra Scan section: offered, or showing the result of the scan that just ran.</summary>
+    public bool ShowExtraScanSection => CanExtraScan;
+
     // --- AOBMaker button enable state ---
     /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data), or
     /// [AOBM-EXPORT-GWORLD-AOB] from the export it was found through.</summary>
@@ -1071,18 +1074,17 @@ public partial class PointerPanelViewModel : ViewModelBase
                     if (status.FoundGObjects || status.FoundGWorld)
                     {
                         ScanStatusText = Res.Get("str.Pointers.Scan.Applying");
-                        var newState = await _dump.ApplyRescanAsync();
+                        var applied = await _dump.ApplyRescanAsync();
 
-                        var parts = new List<string>();
-                        if (status.FoundGObjects) parts.Add($"GObjects: {status.GObjectsAddr}");
-                        if (status.FoundGWorld) parts.Add($"GWorld: {status.GWorldAddr}");
-                        ScanResultText = $"Found: {string.Join(", ", parts)}";
-                        ScanStatusText = Res.Get("str.Pointers.Scan.Applied");
+                        var report = ExtraScanReport.Describe(status, applied);
+                        ScanResultText = report.ResultText;
+                        ScanStatusText = report.StatusText;
 
-                        _log?.Info(Constants.LogCatInit, $"Extra Scan complete: {ScanResultText}");
+                        _log?.Info(Constants.LogCatInit,
+                            $"Extra Scan complete: {ScanResultText} (gobjects_outcome '{applied.GObjectsOutcome}')");
 
                         // Notify MainWindowVM to refresh all panels
-                        RescanApplied?.Invoke();
+                        if (report.Applied) RescanApplied?.Invoke();
                     }
                     else
                     {

@@ -134,7 +134,7 @@ public class StubDumpService : IDumpService
     public virtual Task<SnapshotChunkResult> SnapshotChunkAsync(string dataType, bool gameOnly, int offset, int limit, bool nativeC = false, bool autoSkipNoise = true, string numericFamily = "Any", CancellationToken ct = default) => throw new NotImplementedException();
     public Task<RescanStartResult> StartRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<EngineState> ApplyRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<ApplyRescanResult> ApplyRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task TriggerScanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ScanStatusResult> GetScanStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, bool directCall = false, IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null, CancellationToken ct = default) => throw new NotImplementedException();

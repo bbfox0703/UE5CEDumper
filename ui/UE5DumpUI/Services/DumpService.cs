@@ -3641,14 +3641,18 @@ public sealed class DumpService : IDumpService
         };
     }
 
-    public async Task<EngineState> ApplyRescanAsync(CancellationToken ct = default)
+    public async Task<ApplyRescanResult> ApplyRescanAsync(CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "apply_rescan" };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
         // apply_rescan returns refreshed pointer data — build EngineState from it
-        return BuildEngineState(res);
+        return new ApplyRescanResult
+        {
+            State = BuildEngineState(res),
+            GObjectsOutcome = res["gobjects_outcome"]?.GetValue<string>() ?? "",
+        };
     }
 
     public async Task TriggerScanAsync(CancellationToken ct = default)
