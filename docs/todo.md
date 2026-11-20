@@ -273,16 +273,22 @@ Open work only. **Read this when deciding what to do next.**
 > was asked to leave out are `[AOBM-CEXML-PUSH]`, `[AOBM-CT-PUSH]`, `[AOBM-GWORLD-GENAOB]` and FIXPASS L64(b) (UX).
 >
 > **Result: 0 HIGH, 0 MED open defects** (2026-10-28) — **still 0 HIGH / 0 MED: the one MED found since,
-> `[STARK-DRAIN-OFF-GAME-THREAD]` (2026-10-29), is fixed (build 3664), and Table A's rows marked ✅ are fixed in place.** Table A is every open defect and UX item (37), B the live checks owed on
-> shipped fixes, C the feature ideas, D what stays open by a recorded decision.
+> `[STARK-DRAIN-OFF-GAME-THREAD]` (2026-10-29), is fixed (build 3664).** Table A is every open defect and UX item, B
+> the live checks owed on shipped fixes, C the feature ideas, D what stays open by a recorded decision.
+>
+> 📦 **A done item leaves the census** (the maintainer, 2026-11-20): its row or bullet moves byte-identical to
+> `docs/archive/` at the next archive pass (`tools/docs_archive/`, the rule in `docs/archive/README.md`), and an item
+> not done stays here. A fixed item whose live check is still owed may move once Table B names the check. The first
+> pass moved 76 items to `archive/todo-census-closed-2026-11-20-build-3776.md`.
 >
 > ⛔ **Keep it current — that is the whole point.** A commit that opens, fixes or re-scopes any item edits its row
-> here in the same commit (✅ + the commit, or a new row). A `⬜` elsewhere in this file whose tag is not below was
-> classified closed; grep the tag before trusting either. Rows the census found with no tag of their own got one
+> here in the same commit (✅ + the commit, or a new row); a ✅ row stays until an archive pass moves it, so a tag
+> missing from here may be closed in `docs/archive/` -- grep the whole tree. A `⬜` elsewhere in this file whose tag
+> is not below was classified closed; grep the tag before trusting either. Rows the census found with no tag of their own got one
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, three LOW found by the MCP approval evaluation (2026-11-14), two LOW found by the DynOff analysis (2026-11-15), one LOW found by the ASan build (2026-11-15) two LOW leads from Stage D's review, filed as rows 2026-11-20, and six rows from the Stage C review notes (five leads and a comment fix), filed the same day
+### A. Open defects and UX — LOW or unrated; each row says where it was found, and a done row moves to the archive
 
 > 📦 **Archived 2026-11-20:** 73 closed row(s) of the table below moved byte-identical to [archive/todo-census-closed-2026-11-20-build-3776.md](archive/todo-census-closed-2026-11-20-build-3776.md): `[DBGCAM-58-REENABLE]`, `[STARK-DRAIN-OFF-GAME-THREAD]`, `[LEAD-CONSOLE-PIN-EXPECT-CLASS]`, `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]`, `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]`, `[LEAD-LW-NULLROW-HEX]`, `[FINDINSTANCE-SUBSTRING-USERFACING]`, `[DUMPER-SECOND-COPY-AUTOSTART]`, `[GROUP-DEEP-INDEX-TWICE]`, `[LINIE-THREADS-FLAKE]`, `[LIVEFUNCS-UI-SNAP-MEMORY]`, `[WALKCLASS-STALE-OK]` and 61 more. Grep the tag; tags resolve across files.
 
