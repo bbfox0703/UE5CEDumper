@@ -12413,8 +12413,8 @@ Phase 1 (the "Related" tab: given an actor, list Self/Class/Outer + Controller�
   (verify only) · Risk: low.
   ✅ **The drill to HP through the recovery CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (the maintainer cleared
   loading a save; The Adventures of Elliot through its dxgi proxy, refreshed to 3776, `trigger_scan`; UE 506; the
-  autosave at Weizen's west gate, `MainField_A2`, 353-356k objects; AOT UI 3776). **No enemy here is unreachable
-  at the default depth:** all five live `CharacterAttributeSet`s answered `find_path_from_gworld` (target = object
+  autosave labelled Weizen's west gate, `MainField_A2`, 353-356k objects; AOT UI 3776). **No live enemy
+  AttributeSet here is unreachable at the default depth (7):** all five live `CharacterAttributeSet`s answered `find_path_from_gworld` (target = object
   = the set, depth 7, shallow and deep) with `status: ok` -- the player's in 5 hops (`GameState > PlayerArray[0] >
   PawnPrivate > AbilitySystemComponent > SpawnedAttributes[2]`), each enemy's in 6 (`AISystem >
   BehaviorTreeManager > ActiveComponents[k] > AIOwner > CachedGameplayTasksComponent > SpawnedAttributes[0]`). So
@@ -12422,7 +12422,7 @@ Phase 1 (the "Related" tab: given an actor, list Self/Class/Outer + Controller�
   UI warns first; *Proceed anyway*). Headless: `status: ok_via_level`, hops `Levels` (`WorldLevel`, -1, -1) →
   `PersistentLevel`, `Actors` (`LevelActor`, -1, -1) → **`BP_ENM110_C_2147468650`**, then the tail BFS's real
   edges `AbilitySystemComponent` (+0x7E0) → `LSAbilitySystemComponent` and `SpawnedAttributes[0]` (+0x10A8) → the
-  set, shallow and deep alike. **UI** (Instance Finder, `CharacterAttributeSet`, the enemy's row, 🌍 Locate):
+  set, shallow and deep alike (the UI's identical deep request logs the same list in its pipe log). **UI** (Instance Finder, `CharacterAttributeSet`, the enemy's row, 🌍 Locate):
   breadcrumb `MainField_A2 > PersistentLevel > BP_ENM110_C_2147468650 > AbilitySystemComponent > SpawnedAttributes
   > [0]`, status *"Located via GWorld — 4 hop(s) to CharacterAttributeSet_2147468638 (CharacterAttributeSet). (via
   the world's level list — streaming/WP actor; the world→level hop is a back-reference, not a static pointer)"*;
@@ -12432,8 +12432,8 @@ Phase 1 (the "Related" tab: given an actor, list Self/Class/Outer + Controller�
   `LocateInGWorld: reach mode, 4 hop(s), visited 2830, 0ms | BC=…`, its spine (one line, split here):
   `GWorld(P,0x0,48A0) > (world level)(S,none,6280) > (level actor)(S,none,60A0) >`
   `AbilitySystemComponent(P,0x7E0,C4F0) > SpawnedAttributes(C,0x10A8,C4F0) > [0](P,0x0,CFE0)`. ⚠ Not shown: an
-  enemy the forward BFS misses at full depth (a just-spawned or streamed-in one) -- the BehaviorTreeManager reaches
-  every AI-run enemy here. `ui-options.json`'s depth (14) was put back.
+  enemy the forward BFS misses at full depth (a just-spawned or streamed-in one) -- the BehaviorTreeManager reached
+  all four live enemy AttributeSets here. `ui-options.json`'s depth (14) was put back.
   ✅ **Corrected 2026-09-27:** this row called the recovery itself
   unverified, but it has fired on a real game. `Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log`
   shows a 🌍 spine `(world level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`, and the
