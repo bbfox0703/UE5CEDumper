@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (build 3775) — Extra Scan replaces a GObjects that reads no objects `[RESCAN-DECOY-REINIT]`
+
+- **What changes:**
+  - **Extra Scan** now helps when GObjects was found but reads **no objects** and both of init's recoveries missed
+    (before, it answered "All scannable pointers already found"). It sweeps the game's .data for candidates, keeps
+    the largest array whose first objects are named, and re-runs what that session had measured over an empty
+    pool: the property offsets, the GEngine pointer, the UE version check, and the detections that sample objects
+    once (UFunction flags and code pointer, enum names, FName and soft-path layouts). It then checks GWorld, as init
+    does, and the scan cache stops pointing the next launch at the wrong match.
+  - The **Pointers panel** offers Extra Scan in that case (with DLL 3775 or later), keeps the result line in view
+    after the scan hides the button, and says what happened: replaced (with the object count), no candidate
+    qualified, or why nothing was applied. The panels refresh after every apply.
+  - Extra Scan on a GObjects of 0 picks the same address as before; it now also resets the two detections an empty
+    pool latched, and checks GWorld afterwards.
+  - While an apply re-measures, God Mode / movement / time / fly / See-through skip their re-assert ticks, a UE
+    version override and a new Extra Scan wait ("A scan is still running"), and ProcessEvent detection waits while
+    a recovery moves between candidates. God Mode re-reads its targets after any offsets re-measure.
+- **Found by the live check, not the unit tests:** the first staged run on DumperTest kept a heap structure that read
+  as 524,312 objects with 8 named ones among its first 1,009 slots. A candidate's first slots must now be named
+  densely (at most two slots per name); the re-run picked the real array.
+- **Tests:** red, then green, throughout; a design critique (3 lenses) and a code review (4 lenses, 13 LOW findings,
+  all fixed); 12 mutations caught. dll_core_test 1971, dll_helpers_test 4456, C# 8543 (1 skipped), headless 74,
+  40 gates. **Live:** staged on DumperTest Shipping (`rescan_decoy_live.py`, `RESULT: PASS`: the decoy replaced by
+  the real FUObjectArray, 24,530 objects, offsets validated); stock control on DumperTest with this build: 24,530
+  objects, offsets validated, Extra Scan has nothing to look for, a game-thread invoke answers. No shipped title is
+  known to reach the replace (a verification-register row).
+- AOT UI 62,882,304 bytes (sha256 c9c7a36f6e38972e...); UE5Dumper.dll 3,882,496 bytes (sha256 eff53902e43e6304...).
+
 ## 2026-11-20 (build 3774) — A UE 5.8 GObjects anchor and the GObjects Cheat Engine pointer `[UE58-ADJ10-WRONG-ANCHOR]` `[CEPTR-OBJECTS-2026-11-19]`
 
 - **What changes:**

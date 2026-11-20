@@ -1185,6 +1185,28 @@ opened on a running game.
 2. ⬜ **An array published at ObjObjects** (a title whose scan log latches the Default row, `objects_offset: 0`).
    Same acceptance. A PBZ or MindsEye array is not installed here; dll_core_test holds those rows.
 
+### ⬜ Extra Scan replaces a GObjects that reads no objects (build 3775) — `[RESCAN-DECOY-REINIT]`
+
+A published GObjects that Aura reads no objects from, after both UE5_Init recoveries missed: Extra Scan sweeps the
+game's .data for candidates, apply_rescan keeps the largest array whose head resolves names densely and re-runs the
+offsets probe, the GEngine pass and the version ladder over it. Unit tests: dll_core_test `RESCAN-DECOY-REINIT`
+(the sweep, the choice over every stock shape and a sparse structure, the re-init's order and resets),
+dll_helpers_test `RESCANPLAN` / `RESCANAPPLY` / `NAMEORDER`, `RescanReinitSourceTests`, `ExtraScanReplaceTests`;
+12 mutations caught. No shipped title is known to reach it.
+
+1. ✅ **Staged on DumperTest Shipping** (2026-11-20; `tools/verify/staging/rescan-decoy-reinit.json`, staged DLL sha
+   `c9a925745206904a` from `6eb08999`; `py tools/verify/rescan_decoy_live.py --process DumperTest-Win64-Shipping`).
+   Init published a decoy built from the real FUObjectArray (`Objects=0`, probe `no-guid-or-vector-struct`); rescan
+   replaced, 13 candidates in 13.5 s; apply `replaced` with the real array `0x7FF634EEA450`, 24,530 objects, offsets
+   validated, UE 504, exactly one more `ValidateAndFixOffsets: Starting`, the scan log's `Rescan: GObjects` line; a
+   second apply `already_applied`, a second rescan "All scannable pointers already found". `RESULT: PASS`. The first
+   run, before the density rule, kept a heap structure read as 524,312 objects with 8 names in 1,009 head slots and
+   the probe gave up again; that is what `QualifiesAsObjectArray` came from.
+2. ⬜ **A real title whose GObjects reads no objects after both recoveries** (a user's log). Acceptance: the Pointers
+   panel offers Extra Scan; `scan-*.log` shows `Rescan: candidate ...` lines and `Rescan: GObjects 0x... -> 0x...`;
+   `init-*.log` `apply_rescan: GObjects=0x... (data_heuristic) Objects=<large>, ... offsets measured`; the object tree
+   fills. A `none_qualified` answer with the log's candidate lines is the case to reopen.
+
 ### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
 
 A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
@@ -1488,7 +1510,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
