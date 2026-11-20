@@ -1100,8 +1100,10 @@ public partial class PointerPanelViewModel : ViewModelBase
                         _log?.Info(Constants.LogCatInit,
                             $"Extra Scan complete: {ScanResultText} (gobjects_outcome '{applied.GObjectsOutcome}')");
 
-                        // Notify MainWindowVM to refresh all panels
-                        if (report.Applied) RescanApplied?.Invoke();
+                        // Notify MainWindowVM to refresh all panels -- after every apply: one that published nothing
+                        // can still find the DLL moved under the panel (the pool reads objects now, another
+                        // client applied), and the refresh is one get_pointers.
+                        RescanApplied?.Invoke();
                     }
                     else
                     {

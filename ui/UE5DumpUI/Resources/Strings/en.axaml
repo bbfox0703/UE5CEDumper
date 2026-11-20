@@ -508,12 +508,13 @@
     <sys:String x:Key="str.Pointers.Scan.CompleteNoResults">Scan complete — no results.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.Error">Scan error: {0}</sys:String>
     <!-- [RESCAN-DECOY-REINIT] The result line after apply_rescan ({0} = an address; FoundGObjects / FoundGWorld are joined
-         by ", " into Found's {0}). Replaced: {0} = the GObjects apply chose, {1} = its object count. NotApplied: {0} = the
-         DLL's gobjects_outcome word, shown as sent. -->
+         by ", " into Found's {0}). Replaced / ReinitInPlace: {0} = the GObjects in force after the apply, {1} = its object
+         count. NotApplied: {0} = the DLL's gobjects_outcome word, shown as sent. -->
     <sys:String x:Key="str.Pointers.Scan.Found">Found: {0}</sys:String>
     <sys:String x:Key="str.Pointers.Scan.FoundGObjects">GObjects: {0}</sys:String>
     <sys:String x:Key="str.Pointers.Scan.FoundGWorld">GWorld: {0}</sys:String>
-    <sys:String x:Key="str.Pointers.Scan.Replaced">GObjects replaced: {0} ({1:N0} objects). Offsets and version were re-measured.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Replaced">GObjects replaced: {0} ({1:N0} objects). The offsets probe and the version check ran again.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.ReinitInPlace">GObjects reads objects now: {0} ({1:N0} objects). The offsets probe and the version check ran again.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.NoneQualified">No candidate reads objects whose names resolve — GObjects is unchanged.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.NotApplied">GObjects was not replaced ({0}).</sys:String>
 

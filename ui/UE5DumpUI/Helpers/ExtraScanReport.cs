@@ -12,15 +12,19 @@ public static class ExtraScanReport
 {
     /// <param name="ResultText">The result line.</param>
     /// <param name="StatusText">The status line.</param>
-    /// <param name="Applied">Something changed: the panels refresh.</param>
+    /// <param name="Applied">The apply published something (the status line says so).</param>
     public readonly record struct Report(string ResultText, string StatusText, bool Applied);
 
     public static Report Describe(RescanStatusResult status, ApplyRescanResult applied)
     {
         string outcome = applied.GObjectsOutcome;
         string addr = applied.State.GObjectsAddr;
-        if (status.FoundGObjects && (outcome == Constants.RescanOutcomeReplaced || outcome == Constants.RescanOutcomeReinitInPlace))
+        if (status.FoundGObjects && outcome == Constants.RescanOutcomeReplaced)
             return new Report(Res.Format("str.Pointers.Scan.Replaced", addr, applied.State.ObjectCount),
+                              Res.Get("str.Pointers.Scan.Applied"), true);
+        // The published GObjects was kept: it reads objects now (the engine was not up when init ran).
+        if (status.FoundGObjects && outcome == Constants.RescanOutcomeReinitInPlace)
+            return new Report(Res.Format("str.Pointers.Scan.ReinitInPlace", addr, applied.State.ObjectCount),
                               Res.Get("str.Pointers.Scan.Applied"), true);
 
         // A fill publishes the job's first hit; a DLL that predates the outcome key only ever filled.
