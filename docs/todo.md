@@ -412,12 +412,16 @@ Open work only. **Read this when deciding what to do next.**
   carries no OS thread name (a UE4 game is the likely case), where the DLL log should read `the main thread (no thread
   is named GameThread)` and the validator line should say `kept`; (2) one **worker-thread
   skip** seen live, `left N queued request(s) for the game thread`, followed by the request answering as asked.
-  Rig: `tools/verify/stark_game_thread_drain.py`.
+  Rig: `tools/verify/stark_game_thread_drain.py`. ⏸ (2) **not reached 2026-11-20** `[LIVEPASS-2026-11-20]` on
+  DumperTest58 Development (DLL 3776, UE 508, GameThread named by the engine, validator `kept`, 44 worker-thread hook
+  fires in the install window): 1,000 Debug Camera ON/OFF pairs (`--pairs 200`, then `--pairs 800`), 2,000 of 2,000
+  invokes answered as asked, 0 SEH -- and no worker-thread ProcessEvent ever coincided with a queued request
+  (`worker-thread entries that left queued work`: 0, no `left N queued` line).
 - `[BOOL-NATIVE-SEARCH]` (MED): a Freeze from Property Search / Interesting Properties must not write a whole byte
   around a bool. Step 1 closed 2026-11-17 and step 2's Interesting Properties half 2026-11-18 (verification-register.md);
   left: step 2's Property Search -> Freeze half (it needs the AOBMaker bridge, on hold) and step 3 (no host whose
   probe misses: neither stock 5.4 nor DQ XI S).
-- Live Funcs: LIVEFUNCS-TIMELINE (the load log line; a load with little memory free), LIVEFUNCS-STEP2 (UI memory with
+- Live Funcs: LIVEFUNCS-TIMELINE (a load with little memory free; the load log line was seen 2026-11-20), LIVEFUNCS-STEP2 (UI memory with
   a full buffer; budgets on a busier game), LIVEFUNCS-STEP3 (a frame-time hitch trace; the rig's mutations on a real DLL).
 - Teleport: TPREL-ZEROPOSE / FP2 (a relative teleport whose
   landing cannot be re-read says "landing unknown"; hard to stage).
@@ -504,10 +508,12 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - audit L11 V10, Extra Scan's result survives its own refresh (2026-11-20, the staged decoy; verification-register.md).
 - B18, Extra Scan cancelled by `UE5_Shutdown` mid-sweep (2026-11-20, the staged decoy, a 4 ms join; verification-register.md).
 - `[L3-AD10-2026-08-20]` step 1 (2026-11-20, headless: `GWLD_TQ_4`'s one win checked exact against the PDB; step 3 re-swept, 0 hits).
+- `[LIVEFUNCS-TIMELINE-2026-10-04]`'s load log line (2026-11-20, DumperTest58 Development; the low-memory load stays open).
 
 **Measured not producible here** (the row says what would close it):
 
 - `[INT8-PREVIEW]`: no live struct on DumperTest Shipping holds an Int8 member (needs a fixture member and a repackage).
+- `[STARK-DRAIN-OFF-GAME-THREAD]` (2): no worker-thread skip in 1,000 Debug Camera pairs on DumperTest58 Development.
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
@@ -1791,8 +1797,12 @@ source and editor are installed for when they are needed.
     with a warning (never a refusal) above the free memory. Since 3638 the load collects more often as the free
     memory runs low.
   - The "1 calls began" wording is fixed, and 512 MB stays.
-  - ⬜ Live, still open: 3638's load log line (its collections' time and shortest period) on the next trace load, and
-    a load with little memory free. `[TRACE-UI-READ-SPEED]`: about 19 MB/s against the rig's 31–36.
+  - ✅ 3638's load log line, **seen 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest58 Development, UE
+    508): a 10 s Live Funcs trace (2,568 records, 1,284 calls, 9 functions) opened in Call Trace logged *"CallTrace:
+    memory -- at the load's start heap 133 MB, working set 436 MB; working set at its peak (sampled per page) 436 MB,
+    1 collections while it read (96 ms in all, as often as every 16 page(s) by the free memory); after it heap
+    130->129 MB, working set 431->314 MB (after the compacting collection)"*. ⬜ Live, still open: a load with little
+    memory free. `[TRACE-UI-READ-SPEED]`: about 19 MB/s against the rig's 31–36.
 
   Folded into step 2 (maintainer, 2026-10-07): the Call Trace list's columns and detail pane resizable, the
   detail pane's addresses labelled as object addresses with the function's native entry as a CE address, and
