@@ -636,6 +636,9 @@ bool UE5_Init() {
         // count: the master GObjects (~millions) dwarfs partial lists (~thousands).
         // STRICTLY ADDITIVE: runs only when Count==0, so titles that already
         // resolve objects are never affected. See docs/avowed-gobjects-fix.md.
+        // [RESCAN-DECOY-REINIT] Both recoveries move Aura from candidate to candidate (Aura::PoolInFlux); raised only
+        // when they run.
+        Aura::PoolInFluxScope recovering(Aura::GetCount() == 0);
         if (Aura::GetCount() == 0) {
             LOG_WARN("UE5_Init: GObjects=0x%llX produced 0 objects — likely a decoy match; "
                      "attempting recovery...",
@@ -736,6 +739,7 @@ bool UE5_Init() {
                 Aura::Init(ptrs.GObjects);  // keep state consistent (Count stays 0)
             }
         }
+        recovering.End();
 
         // Dynamically detect FField/FProperty/UStruct offsets
         // Must be called AFTER FNamePool + ObjectArray are initialized
@@ -2355,8 +2359,8 @@ static std::atomic<int>      s_peValidationFailures{0};
 static std::atomic<bool>     s_peOffsetDistrusted{false};
 
 /// The one and only detection entry point. Serialized, bounded and rate-limited.
-/// No-op (and cheap) when the offset is already usable or terminally failed, and a no-op that spends nothing while an
-/// init or an apply_rescan settles the object array.
+/// No-op (and cheap) when the offset is already usable or terminally failed, and a no-op that spends nothing while a
+/// recovery moves Aura from candidate to candidate (Aura::PoolInFlux).
 static void RunPeDetection(bool force) {
     // HOT-PATH FAST OUT. Every ordinary invoke walks this, so once the offset is
     // known (or terminally unknown) the whole function must cost one relaxed load
@@ -2381,9 +2385,9 @@ static void RunPeDetection(bool force) {
                                        force)) {
         return;
     }
-    // [RESCAN-DECOY-REINIT] Not while an init or an apply_rescan moves Aura from array to array: a candidate's slots read
-    // as vtables could name no slot, and that failure is terminal. Nothing is spent or stamped; the next call detects.
-    if (g_initInProgress.load(std::memory_order_acquire)) return;
+    // [RESCAN-DECOY-REINIT] Not while a recovery moves Aura from candidate to candidate: a candidate's slots read as
+    // vtables could name no slot, and that failure is terminal. Nothing is spent or stamped; the next call detects.
+    if (Aura::PoolInFlux()) return;
     s_lastPeDetectMs.store(GetTickCount64(), std::memory_order_relaxed);
 
     bool fromTable = false;
@@ -2422,9 +2426,9 @@ static void RunPeDetection(bool force) {
 // retry is cheap; the automatic lazy path stays bounded.
 static void TryInstallGameThreadHook(bool force = false) {
     if (Stark::IsHookActive()) return;
-    // [RESCAN-DECOY-REINIT] ResolveProcessEventAddr reads Aura's objects, which an init or an apply_rescan moves from
-    // array to array. Nothing is spent or stamped; the next call installs.
-    if (g_initInProgress.load(std::memory_order_acquire)) return;
+    // [RESCAN-DECOY-REINIT] ResolveProcessEventAddr reads Aura's objects, which a recovery moves from candidate to
+    // candidate. Nothing is spent or stamped; the next call installs.
+    if (Aura::PoolInFlux()) return;
 
     int attempts = s_hookAttempts.load(std::memory_order_relaxed);
     if (!force && attempts >= kMaxHookAttempts) return;

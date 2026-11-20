@@ -7092,9 +7092,16 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
-bool PoolInFlux() { return false; }
-PoolInFluxScope::PoolInFluxScope(bool on) : on_(on) {}
-void PoolInFluxScope::End() { on_ = false; }
+// A count, so nested scopes (a recovery inside an init, a choice inside an apply) lower it only when the last ends.
+static std::atomic<int> s_poolInFlux{0};
+bool PoolInFlux() { return s_poolInFlux.load(std::memory_order_acquire) > 0; }
+PoolInFluxScope::PoolInFluxScope(bool on) : on_(on) {
+    if (on_) s_poolInFlux.fetch_add(1, std::memory_order_acq_rel);
+}
+void PoolInFluxScope::End() {
+    if (on_) s_poolInFlux.fetch_sub(1, std::memory_order_acq_rel);
+    on_ = false;
+}
 
 void ResetUFunctionFuncDetection() {
     std::lock_guard<std::mutex> lk(s_funcDetectMutex);

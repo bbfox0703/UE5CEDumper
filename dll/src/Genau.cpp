@@ -5171,6 +5171,8 @@ ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHoo
     auto step = [&](ReplaceStep s) { if (hooks.onStep) hooks.onStep(s); };
     ReplaceResult r;
     bool aborted = false;
+    // Until Aura sits on the winner it reads one candidate after another (Aura::PoolInFlux).
+    Aura::PoolInFluxScope choosing(true);
     r.winner = ChooseGObjectsCandidate(in.published, in.candidates, in.nameSampleSlots, &r.scored, &aborted);
     if (aborted) {
         r.outcome = ReplaceOutcome::Aborted;
@@ -5199,6 +5201,7 @@ ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHoo
 
     Aura::Init(r.winner.addr);
     SetModuleAnchor(r.winner.addr);
+    choosing.End();
     step(ReplaceStep::AuraOnWinner);
 
     // The probe and everything after it read the session's version; the decoy's ladder may have raised it from the
