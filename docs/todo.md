@@ -431,8 +431,8 @@ Open work only. **Read this when deciding what to do next.**
   landing cannot be re-read says "landing unknown"; hard to stage).
 - `verification-register.md` batches: L1 A9 (deep group-scan budget); L2 AB12
   (more than 1,024 modules) and AB13 (a non-ASCII CE plugin path); L8 Z8 (probably exercised by L60, never recorded);
-  the b719 freeze on respawning NPCs; FreezeOutcome step 4; Locate in GWorld's drill to HP through level-list
-  recovery; the dinput8 proxy in a game.
+  the b719 freeze on respawning NPCs; FreezeOutcome step 4; ~~Locate in GWorld's drill to HP through level-list
+  recovery~~ (closed 2026-11-20 `[LIVEPASS-2026-11-20]`); the dinput8 proxy in a game.
 - Never registered at all: audit #3's 10 UI fixes and about 25 audit #4 fixes rest on unit tests alone.
 - `[VENDOR-AUDIT9-2026-11-05]` (build 3687): `[VND9-01]` a REAL soft reference to an actor on UE 5.6+ reads
   `…:PersistentLevel.<actor>` (the width is measured live on 5.6 / 5.8, the display only through a synthetic
@@ -534,6 +534,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[A3-FUNCFLAGS-2026-09-05]`'s `Mimic: FIND_FUNCTION` leg (2026-11-20, OCTOPATH, a headless mailbox; 422 no longer degrades -- the offset is voted; verification-register.md).
 - `[CT-FLOOR-208]`'s window-size steps (2026-11-20, DumperTest58 Shipping: the list holds 208 at 1000, 1400 and 800).
 - `[FIXPASS-2026-09-10]` L46 `[P1-UPROP-DELEGATE]` Phase J (2026-11-20, DQ XI S in gameplay: the minimap requester's unicast list read, poked to 20, refused and restored).
+- Locate in GWorld's drill to HP through the level-list recovery (2026-11-20, Elliot in gameplay, at depth 5: an enemy's AttributeSet, then HealthPoint).
 - `[FIXPASS-2026-09-10]` L28 `[W5-CEXML-FSTRING]`'s FString-valued map (2026-11-20, Avowed: two live maps; the CE chain followed through the pipe; the record-flatten key branch has no host).
 
 **Measured not producible here** (the row says what would close it):
@@ -548,9 +549,9 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 
 **Not run yet, and why** (as of the end of 2026-11-20's session):
 
-- Waits for the maintainer: Locate in GWorld via the level list (Elliot), and the gameplay hosts the surveys point at
-  (`[W3-XREF-CAP]`), need a loaded save, which can autosave over the maintainer's progress.
-  (`[LIVEFUNCS-STEP2]` item 2 and B28 were run once the maintainer cleared them.) ⚠ Corrected: L66 `[W1-PARTIAL-MARK]`
+- Waits for the maintainer: the gameplay host the survey points at (`[W3-XREF-CAP]`) needs a loaded save, which can autosave over the maintainer's progress.
+  (`[LIVEFUNCS-STEP2]` item 2, B28, L46 Phase J on DQ XI S and Elliot's Locate were run once the maintainer cleared
+  them.) ⚠ Corrected: L66 `[W1-PARTIAL-MARK]`
   leaves nothing to delete -- its four inflated snapshots went on 2026-09-23 at the maintainer's request (the row
   records it), and no DB of that build's PE remains under `Snapshots\`; listing it here was a stale copy.
 - Triaged, not run: census Table B's `INV-TOOLTIP-CLIPBOARD` and `QUERYPTR-LOG-ABSENT-LABEL` are AOBMaker rows (on
@@ -12407,8 +12408,32 @@ Phase 1 (the "Related" tab: given an actor, list Self/Class/Outer + Controller�
   such a game motivates it. *Original note:* Built + unit-tested + AOT-green but unproven live. Verify on a **lock-on / soft-target action title** (the target lives in a `UPROPERTY` object field): click 🎯 Detect target → confirm the top candidate IS the focused enemy and its AttributeSet/HP shows in the grid; confirm the 🌍 Locate-in-GWorld now resolves for that target (it should — the player references it). On the named JP/CN test games (TQ2/SEED/DQ7R, mostly no target `UPROPERTY`) confirm the **graceful fallback** fires (note = "no clear target / weak guesses", nothing auto-loaded) rather than feeding a wrong actor. Tune the score constants / keyword tables only if a real game motivates it. *Parent: Edel shipped build 1400, dev-log 2026-06-20.*
 
 - **Locate in GWorld — streaming / World-Partition actors — the `ok_via_level` recovery FIRES live
-  (Titan Quest II); the drill from the recovered actor to its HP is still unchecked** — Effort: **0**
-  (verify only) · Risk: low. ✅ **Corrected 2026-09-27:** this row called the recovery itself
+  (Titan Quest II); the drill from the recovered actor to its HP ✅ closed 2026-11-20 on Elliot** — Effort: **0**
+  (verify only) · Risk: low.
+  ✅ **The drill to HP through the recovery CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (the maintainer cleared
+  loading a save; The Adventures of Elliot through its dxgi proxy, refreshed to 3776, `trigger_scan`; UE 506; the
+  autosave at Weizen's west gate, `MainField_A2`, 353-356k objects; AOT UI 3776). **No enemy here is unreachable
+  at the default depth:** all five live `CharacterAttributeSet`s answered `find_path_from_gworld` (target = object
+  = the set, depth 7, shallow and deep) with `status: ok` -- the player's in 5 hops (`GameState > PlayerArray[0] >
+  PawnPrivate > AbilitySystemComponent > SpawnedAttributes[2]`), each enemy's in 6 (`AISystem >
+  BehaviorTreeManager > ActiveComponents[k] > AIOwner > CachedGameplayTasksComponent > SpawnedAttributes[0]`). So
+  the recovery was reached the other way the DLL takes it, a depth-capped miss: **'Locate in GWorld depth' 5** (the
+  UI warns first; *Proceed anyway*). Headless: `status: ok_via_level`, hops `Levels` (`WorldLevel`, -1, -1) →
+  `PersistentLevel`, `Actors` (`LevelActor`, -1, -1) → **`BP_ENM110_C_2147468650`**, then the tail BFS's real
+  edges `AbilitySystemComponent` (+0x7E0) → `LSAbilitySystemComponent` and `SpawnedAttributes[0]` (+0x10A8) → the
+  set, shallow and deep alike. **UI** (Instance Finder, `CharacterAttributeSet`, the enemy's row, 🌍 Locate):
+  breadcrumb `MainField_A2 > PersistentLevel > BP_ENM110_C_2147468650 > AbilitySystemComponent > SpawnedAttributes
+  > [0]`, status *"Located via GWorld — 4 hop(s) to CharacterAttributeSet_2147468638 (CharacterAttributeSet). (via
+  the world's level list — streaming/WP actor; the world→level hop is a back-reference, not a static pointer)"*;
+  drilling `HealthPoint` gave `… > [0] > HealthPoint (GameplayAttributeData)`, BaseValue (0x8) 20 and CurrentValue
+  (0xC) 20. Logs: `[OARR] FindObjectGraphPath: root=0x3A5448A0 target=0x29787CFE0 maxDepth=5 deep=1`, then
+  `FindObjectGraphPath: recovered via world-level back-reference (4 step(s))`; ui-view
+  `LocateInGWorld: reach mode, 4 hop(s), visited 2830, 0ms | BC=…`, its spine (one line, split here):
+  `GWorld(P,0x0,48A0) > (world level)(S,none,6280) > (level actor)(S,none,60A0) >`
+  `AbilitySystemComponent(P,0x7E0,C4F0) > SpawnedAttributes(C,0x10A8,C4F0) > [0](P,0x0,CFE0)`. ⚠ Not shown: an
+  enemy the forward BFS misses at full depth (a just-spawned or streamed-in one) -- the BehaviorTreeManager reaches
+  every AI-run enemy here. `ui-options.json`'s depth (14) was put back.
+  ✅ **Corrected 2026-09-27:** this row called the recovery itself
   unverified, but it has fired on a real game. `Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log`
   shows a 🌍 spine `(world level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`, and the
   re-run on **build 3361** (Titan Quest II, UE507, 279,587 objects; `Actor` → 🌍 Locate) produced
