@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — Live checks on build 3776, in gameplay: L46 Phase J and Locate's drill to HP `[LIVEPASS-2026-11-20]`
+
+- **What this is:** the rows the maintainer cleared for a loaded save (DRAGON QUEST XI S and The Adventures of
+  Elliot, each from its autosave). One commit per row, then one per correction after an adversarial check of each
+  record against its rig output and logs.
+- **L46 `[P1-UPROP-DELEGATE]` Phase J, reached live for the first time:** DQ XI S (UE 4.18, UProperty mode) has a
+  unicast delegate array that is non-empty only for a moment while a map widget loads. A scratch rig caught it and,
+  inside that moment, read the element (`WBP_Hud_MiniMap_000_C_1::AsyncLoadFinished`), poked the inner
+  ElementSize to 20 and got the refusal string and its WALK warning, then restored it and read the element again.
+- **Locate in GWorld's drill to HP through the level-list recovery:** on Elliot, at a Locate depth the forward
+  search cannot meet, an enemy's AttributeSet was located through the world's level list and the tail search, and
+  HealthPoint drilled from it. At the default depth every live enemy AttributeSet is reachable directly, so the
+  record says so.
+- **Surveys:** neither title is a `[W3-XREF-CAP]` host in gameplay either (5,474 and 3,771 scripted functions).
+- **Corrected:** L66 `[W1-PARTIAL-MARK]` leaves nothing to delete; its snapshots went on 2026-09-23, and the
+  earlier entry's list carried a stale copy.
+- Elliot's dxgi proxy was refreshed to 3776; `ui-options.json` was put back after the depth change; both games and
+  the UI were closed.
+
+-----
+
 ## 2026-11-20 (no build change) — Live checks on build 3776, continued: four more rows closed, three host surveys `[LIVEPASS-2026-11-20]`
 
 - **What this is:** the rest of the day's pass, after the maintainer cleared gameplay on Avowed, Star Trek
