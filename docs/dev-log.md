@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (build 3776) — Extra Scan's follow-ups: a recovered array's code site, the MCP server during an apply `[INIT-RECOVERY-SCANADDR]` `[MCP-READY-DURING-APPLY]` `[RESCAN-STATIC-LAYOUT]`
+
+- **What changes:**
+  - **A GObjects init recovered** (its static-struct or heap fallback) no longer leaves the wrong match's code site
+    behind: the Pointers panel's Asm / SYM buttons stop pointing at it, as after Extra Scan's replace. The
+    static-struct recovery's method reads "static struct recovery", not its raw name.
+  - **The MCP server** no longer treats a game as scanned while an Extra Scan apply is choosing among candidates:
+    `scan_status` says `applying` then, and the AI is told the scan is still running.
+- **Checked, nothing to change:** Extra Scan's replace reads every static array shape init's static recovery knows
+  (Obsidian's packed 20-byte item among them) the same way init does; a test now pins it.
+- **Not done, by decision:** running Extra Scan's whole-.data search inside init (`[RESCAN-INIT-THIRD-RECOVERY]`).
+- **Tests:** red, then green, for the two fixes. dll_core_test 1981, dll_helpers_test 4456, C# 8547 (1 skipped),
+  headless 74, 40 gates. Stock control on DumperTest Shipping with this build: 24,530 objects, offsets validated,
+  `applying` false, Extra Scan has nothing to look for, a game-thread invoke answers.
+- AOT UI 62,882,304 bytes (sha256 cab59503ae5050a1...); UE5Dumper.dll 3,882,496 bytes (sha256 a445e371311bc29d...).
+
 ## 2026-11-20 (no build change) — Three staging recipes stage again `[STAGING-STALE-RECIPES]`
 
 - **What changes:** `l41-step2-prefix-stall`, `l45-giveup-mutant` and `l55-denken-before` (the red arms of the closed
