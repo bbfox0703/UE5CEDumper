@@ -493,6 +493,10 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[PARAMSSORT-2026-08-22]`'s Live Walker Params column (2026-11-20, AOT 3776; verification-register.md).
 - `[Y11-2026-08-20]`'s FText half and FIRE's container half (2026-11-20, stock `Conv_TextToString` / `JoinStringArray`; verification-register.md).
 
+**Measured not producible here** (the row says what would close it):
+
+- `[INT8-PREVIEW]`: no live struct on DumperTest Shipping holds an Int8 member (needs a fixture member and a repackage).
+
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
 - none yet.
@@ -1956,7 +1960,12 @@ source and editor are installed for when they are needed.
   `PreviewScalarValue` reads an Int8Property as int8_t (ByteProperty stays unsigned), and the snapshot decoder's own
   signed branch folded back into it. Live check owed on DumperTest: a struct preview whose Int8 member is negative --
   Live Walker's `{...}` on a StructProperty row, or a struct TMap key / value -- shows -N, not 256-N (Live Funcs read
-  Int8 signed before and after, so it is only the control).
+  Int8 signed before and after, so it is only the control). ⏸ **Not producible on DumperTest Shipping as packaged**
+  (measured 2026-11-20 `[LIVEPASS-2026-11-20]`): its 3,822 script structs hold 16 Int8 members in 6 structs
+  (`NetFaultState`, `EscalationState`, `RPCDoSState`, `RPCDoSStateConfig`, `EnumInt8NetSerializerConfig` /
+  `Int8RangeNetSerializerConfig`, `StructSerializerNumericTestStruct`), and no class's StructProperty / Array / Map
+  field (2,529 / 1,047 / 145 searched) is typed by any of them, so no live object carries one. Closing it needs a
+  fixture member -- an Int8 inside a USTRUCT on `DumperTestActor` -- which means a repackage.
   ✅ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed; **live 2026-10-09**, build 3645
   on DumperTest58 Shipping: with T, P and S ticked and the settings folded, Clear T/P/S on the header emptied all three
   columns and the summary went to "ticked 0, parameters 0, stacks 0", its orange gone): the table's
