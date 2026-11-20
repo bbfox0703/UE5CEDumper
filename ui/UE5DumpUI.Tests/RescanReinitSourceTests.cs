@@ -160,6 +160,15 @@ public sealed class RescanReinitSourceTests
     }
 
     [Fact]
+    public void ScanStatus_SaysWhenAnApplyIsSettlingThePool()
+    {
+        // [MCP-READY-DURING-APPLY] Additive: an init or an apply_rescan holds g_initInProgress outside a scan job, and the
+        // MCP server must not read that pool as scanned (McpGameLink.StateFrom).
+        var status = Between(DllSrc("Fern.cpp"), "if (cmd == Renge::CMD_SCAN_STATUS) {", "return Renge::MakeResponse(id, data).dump();");
+        Assert.Matches(@"data\[""applying""\]\s*=\s*!running && g_initInProgress\.load\(std::memory_order_acquire\);", status);
+    }
+
+    [Fact]
     public void InitsRecoveries_ClearTheDecoysScanAddress()
     {
         // [INIT-RECOVERY-SCANADDR] A recovered array is no AOB's: the scan address is the decoy's code site, and the
