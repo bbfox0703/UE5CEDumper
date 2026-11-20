@@ -1564,6 +1564,22 @@ uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
 // Aura reads now. An empty pool latches "not found" for the process.
 void ResetUFunctionFuncDetection();
 
+// [RESCAN-DECOY-REINIT] True while a recovery moves Aura from candidate array to candidate array (UE5_Init's Count == 0
+// recoveries, apply_rescan's choice): what Aura reads then is a candidate, not the session's pool, and a one-shot
+// detection must not take it for one.
+bool PoolInFlux();
+// Raises PoolInFlux for its life, or until End(), when constructed with `on`; nests.
+class PoolInFluxScope {
+public:
+    explicit PoolInFluxScope(bool on);
+    ~PoolInFluxScope() { End(); }
+    void End();
+    PoolInFluxScope(const PoolInFluxScope&) = delete;
+    PoolInFluxScope& operator=(const PoolInFluxScope&) = delete;
+private:
+    bool on_;
+};
+
 // [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
 // interpreter. A zero is flags not found, which is no verdict either way. Pure.
 bool IsScriptFunctionFlags(uint32_t flags);

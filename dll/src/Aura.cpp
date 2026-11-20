@@ -7092,6 +7092,10 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
+bool PoolInFlux() { return false; }
+PoolInFluxScope::PoolInFluxScope(bool on) : on_(on) {}
+void PoolInFluxScope::End() { on_ = false; }
+
 void ResetUFunctionFuncDetection() {
     std::lock_guard<std::mutex> lk(s_funcDetectMutex);
     DynOff::UFUNCTION_FUNC = 0;

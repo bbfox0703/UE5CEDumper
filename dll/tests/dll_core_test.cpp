@@ -15719,7 +15719,8 @@ int main() {
                 DynOff::UCLASS_INTERFACES.store(-1);
                 retiresAtClimb = DynOff::g_offsetValidations.load();
             };
-            hooks.onStep = [&](Step s) { steps.push_back(s); };
+            std::vector<bool> fluxAt;
+            hooks.onStep = [&](Step s) { steps.push_back(s); fluxAt.push_back(Aura::PoolInFlux()); };
             Genau::ReplaceInput in;
             in.published = D;
             in.candidates = avoidD;
@@ -15734,6 +15735,9 @@ int main() {
                                              Step::Climbed, Step::WalkLatchesReset };
             check("RESCAN ⭐: the re-init runs UE5_Init's order", steps == want,
                   ("steps " + std::to_string(steps.size())).c_str());
+            check("RESCAN ⭐: the pool is in flux while the choice moves Aura, and settled once it sits on the winner",
+                  fluxAt.size() == want.size() && fluxAt[0] && fluxAt[1] && !fluxAt[2] && !fluxAt.back()
+                  && !Aura::PoolInFlux());
             check("RESCAN ⭐: the decoy's verdict and vote are gone before the winner is published",
                   !probeRanAtPublish && !voteAtPublish);
             check("RESCAN ⭐: the offsets probe runs again over the winner, before the GEngine second pass",
@@ -15800,6 +15804,19 @@ int main() {
             check("RESCAN: shutdown aborts the choice, back on the decoy",
                   rr.outcome == Genau::ReplaceOutcome::Aborted && Aura::GetCount() <= 0);
 
+            {
+                Aura::PoolInFluxScope off(false);
+                check("RESCAN control: a flux scope built off raises nothing (UE5_Init's, over a pool that reads objects)",
+                      !Aura::PoolInFlux());
+                Aura::PoolInFluxScope outer(true);
+                {
+                    Aura::PoolInFluxScope inner(true);
+                    inner.End();
+                    check("RESCAN: flux scopes nest", Aura::PoolInFlux());
+                }
+                outer.End();
+                check("RESCAN: ...and End() lowers it before the scope ends", !Aura::PoolInFlux());
+            }
             // The resets on their own.
             DynOff::bUEnumNamesDetected.store(true); DynOff::bUEnumNamesFailed.store(true);
             DynOff::UENUM_NAMES = 0x58; DynOff::UENUM_VALUE_SIZE = 1; DynOff::UENUM_PAIR_STRIDE = 0x10;

@@ -135,10 +135,18 @@ public sealed class RescanReinitSourceTests
         // While an init or an apply moves Aura candidate by candidate, a detection would read a candidate's objects as
         // vtables and could latch the terminal failure; neither may spend its budget or stamp its cooldown then.
         var frieren = DllSrc("Frieren.cpp");
+        // Only then: a stock title's init tail sits on its final array and detects as before.
         var detect = Between(frieren, "static void RunPeDetection(bool force) {", "\n}\n");
-        InOrder(detect, "g_initInProgress.load(", "s_lastPeDetectMs.store(");
+        InOrder(detect, "if (Aura::PoolInFlux()) return;", "s_lastPeDetectMs.store(");
+        Assert.DoesNotContain("g_initInProgress", detect);
         var install = Between(frieren, "static void TryInstallGameThreadHook(bool force = false) {", "\n}\n");
-        InOrder(install, "g_initInProgress.load(", "s_hookAttempts.fetch_add(");
+        InOrder(install, "if (Aura::PoolInFlux()) return;", "s_hookAttempts.fetch_add(");
+        Assert.DoesNotContain("g_initInProgress", install);
+        // UE5_Init raises it over its two Count == 0 recoveries, only when they run.
+        var init = Between(frieren, "bool UE5_Init() {", "\n}\n");
+        InOrder(init, "Aura::PoolInFluxScope recovering(Aura::GetCount() == 0);",
+                "Genau::FindGObjectsStaticStruct(", "Genau::CollectGObjectsCandidates(", "recovering.End();",
+                "Genau::ValidateAndFixOffsets(ptrs.UEVersion)");
     }
 
     [Fact]
