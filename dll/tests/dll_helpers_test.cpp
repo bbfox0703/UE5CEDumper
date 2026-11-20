@@ -1801,7 +1801,7 @@ static void Test_Genau_NameSampleOrder() {
         std::vector<int32_t> counts;
         for (const S& c : s) counts.push_back(c.count);
         for (size_t i : Genau::NameSampleOrder(counts.data(), counts.size()))
-            if (s[i].resolved >= Genau::kMinResolvedNames) return static_cast<int>(i);
+            if (Genau::PickLargestNamedCandidate(&s[i], 1) == 0) return static_cast<int>(i);
         return -1;
     };
     const std::vector<std::vector<S>> cases = {
@@ -1812,6 +1812,7 @@ static void Test_Genau_NameSampleOrder() {
         { { 1, -1, 8 }, { 2, 0, 8 } },                                  // nothing reads objects
         {},
         { { 1, 0x40, 2 } },                                             // exactly kMinResolvedNames
+        { { 1, 524312, 8, 1009 }, { 2, 0x4000, 8, 8 } },                // a sparse head's larger count (DumperTest)
     };
     for (size_t k = 0; k < cases.size(); ++k) {
         const std::vector<S>& c = cases[k];
@@ -1823,6 +1824,10 @@ static void Test_Genau_NameSampleOrder() {
     EXPECT("NAMEORDER: equal counts keep the first", Genau::PickLargestNamedCandidate(cases[2].data(), 3) == 0);
     EXPECT("NAMEORDER: one name is not an array",
            Genau::PickLargestNamedCandidate(cases[1].data(), 1) == -1);
+    EXPECT("NAMEORDER ⭐: a head that names 8 objects in 1,009 slots is no object array",
+           Genau::PickLargestNamedCandidate(cases[7].data(), 2) == 1);
+    const Genau::GObjectsCandidateScore exact{ 1, 3, 3, 6 };
+    EXPECT("NAMEORDER: two slots read per name resolved is dense enough", Genau::PickLargestNamedCandidate(&exact, 1) == 0);
     const int32_t counts[] = { 5, 0, 9, -3, 9, 1 };
     const std::vector<size_t> order = Genau::NameSampleOrder(counts, 6);
     EXPECT("NAMEORDER: only arrays that read objects, largest first, equal counts in scan order",

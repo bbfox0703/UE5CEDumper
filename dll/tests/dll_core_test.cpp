@@ -15621,6 +15621,34 @@ int main() {
             won = Genau::ChooseGObjectsCandidate(D, { D, D2 }, Genau::kRescanNameSampleSlots, &sampled);
             check("RESCAN ⭐: no candidate that reads objects -> none, and Aura goes back to the published decoy",
                   won.addr == 0 && Aura::GetCount() <= 0);
+            // Found live (DumperTest, rescan_decoy_live.py): the sweep met a heap structure Aura read with 524,312
+            // objects whose head named 8 objects among 1,009 non-null slots -- a sparse head, where the master's is
+            // its CoreUObject core, named slot after slot. The larger count must not win on 8 names.
+            {
+                std::vector<uint8_t> nothing(0x40, 0);   // a readable object that names nothing (index 0, "None")
+                std::vector<uint8_t> spChunk(1024 * 24, 0);
+                for (int i = 0; i < 1024; ++i) {
+                    const uintptr_t o = i % 128 == 0 ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
+                                                     : reinterpret_cast<uintptr_t>(nothing.data());
+                    memcpy(spChunk.data() + static_cast<size_t>(i) * 24, &o, 8);
+                }
+                std::vector<uintptr_t> spTable(6, reinterpret_cast<uintptr_t>(spChunk.data()));
+                alignas(16) static uint8_t sp[0x80] = {};
+                putStock(sp, reinterpret_cast<uintptr_t>(spTable.data()), 6, 4, 0x30000);
+                const uintptr_t S = reinterpret_cast<uintptr_t>(sp);
+                Aura::Init(S);
+                check("RESCAN setup: the sparse structure reads a larger count than the master", Aura::GetCount() == 0x30000,
+                      std::to_string(Aura::GetCount()).c_str());
+                const Genau::GObjectsCandidateScore sparse = Genau::ScoreGObjectsCandidate(S, Genau::kRescanNameSampleSlots);
+                check("RESCAN setup: ...and its head names objects only here and there",
+                      sparse.resolved >= Genau::kMinResolvedNames && sparse.scanned > 4 * sparse.resolved,
+                      (std::to_string(sparse.resolved) + " of " + std::to_string(sparse.scanned)).c_str());
+                won = Genau::ChooseGObjectsCandidate(D, { S, P, M }, Genau::kRescanNameSampleSlots);
+                check("RESCAN ⭐: a sparse head's larger count does not beat the master's densely named head",
+                      won.addr == M && won.count == kMaster, listText({ won.addr }).c_str());
+                won = Genau::ChooseGObjectsCandidate(D, { S }, Genau::kRescanNameSampleSlots);
+                check("RESCAN ⭐: ...and alone it does not qualify", won.addr == 0 && Aura::GetCount() <= 0);
+            }
             // A published pointer that reads objects now is its own winner (the engine was not up when init ran).
             won = Genau::ChooseGObjectsCandidate(M, { P }, Genau::kRescanNameSampleSlots);
             check("RESCAN: a published GObjects that reads objects now is kept", won.addr == M && Aura::GetCount() == kMaster);
