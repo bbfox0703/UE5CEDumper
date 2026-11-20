@@ -523,6 +523,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - Value Search NumericAll's result-volume half (2026-11-20, Avowed: 1 floods to the cap in 1.3 s, 255 gives 679; verification-register.md).
 - `[A2-ES2-506-2026-09-05]`'s UI legs (2026-11-20, EVERSPACE 2 injected; verification-register.md).
 - `[SNAPSHOT-CRASH-PARTIAL]` (2026-11-20, EVERSPACE 2: the UI killed mid-capture; the orphan hidden, then removed).
+- `[PEHOOK-2026-08-17]`'s 4.18 ProcessEvent-slot witness (2026-11-20, OCTOPATH through its winmm proxy; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 

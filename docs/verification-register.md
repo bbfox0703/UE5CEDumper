@@ -6196,6 +6196,11 @@ version.dll proxy refreshed to 3776, `trigger_scan`, 187,712 objects) `DetectPro
 vtable+0x208` -- the table's `case 420: return 0x208` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 63443
 times in 1500ms`, 0 fallback, 0 VALIDATION FAILED. Still without a live witness: 5.2 and the 4.x rows other than
 4.15, 4.20, 4.23 and 4.27.
+✅ **4.18 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: OCTOPATH TRAVELER (Steam, UE 4.18, publisher Square
+Enix, its winmm.dll proxy refreshed to 3776, `trigger_scan`, 273,956 objects) `DetectProcessEvent (pattern): match at
+vtable+0x1F8` -- the table's 4.17-4.19 row -- Add_IntInt(3,4) = 7, `validation OK — hook fired 5400 times in
+1500ms`, 0 fallback, 0 VALIDATION FAILED. So the 4.18 row holds on a shipped title, and DQ XI S's 0x210 above is that
+build's own fork. Still without a live witness: 5.2 and the 4.x rows other than 4.15, 4.18, 4.20, 4.23 and 4.27.
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
