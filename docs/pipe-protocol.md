@@ -253,7 +253,7 @@ disconnects. A second `watch` of the same address on the same connection replace
 // Query rescan progress
 { "id": 25, "cmd": "rescan_status" }
 
-// Apply rescanned pointers (replaces current GObjects/GNames/GWorld)
+// Apply rescanned pointers (fills a GObjects / GWorld of 0, or replaces a GObjects that reads no objects)
 { "id": 26, "cmd": "apply_rescan" }
 
 // Trigger full re-initialization (proxy DLL deferred scan)
@@ -274,6 +274,33 @@ disconnects. A second `watch` of the same address on the same connection replace
   scan has not finished publishing.
 - `rescan_status` adds `cancelled` (additive) once the run is over: true when Stop cut the sweep short, so its
   "not found" is unknown rather than a result.
+
+**What `rescan` looks for** ([RESCAN-DECOY-REINIT], `Genau::PlanRescan`): a GObjects of 0 (the first .data hit, as
+before); a GObjects that is published but reads no objects (0 or negative count), when GNames is up -- reply
+`"replacing": true`; a GWorld of 0, only over a pool that reads objects. Nothing to look for answers
+`"message": "All scannable pointers already found"`. The decision and the job's start take the init lock: `rescan`
+refuses while a scan or an apply runs ("A scan is still running -- wait for it to finish"), and while another
+command holds the lock for a moment ("The engine state is being settled by another command -- try again").
+
+- A **replace** sweep never offers the published GObjects (inline or through a pointer) and collects up to 64
+  distinct addresses instead of stopping at the first. `rescan_status` adds `gobjects_candidates` (how many) and
+  `replacing`; `gobjects_addr` stays the first hit, which a replace need not keep.
+- **`apply_rescan`** finishes once begun (a client that drops mid-apply does not cut it short; shutdown does). Under the
+  init fence it scores the published pointer and the candidates as UE5_Init's heap fallback does -- the largest array
+  whose first slots resolve at least two names -- and, when one qualifies, re-runs what the decoy's session derived from
+  an empty pool, in UE5_Init's order: the offsets probe (from the version before init's structural climb), the GEngine
+  second pass, the version ladder, with the pool-sampled detections reset (FunctionFlags vote, UFunction::Func, UEnum
+  names, the validated layout probes, compact sets, the soft / lazy envelopes, UClass::Interfaces). After the fence it
+  runs init's GWorld check -- also after a fill that made the pool readable, which init skipped the same way -- and,
+  after a replacement, points the hint cache's GObjects method at `data_heuristic`. A fill resets UFunction::Func and
+  UEnum names too (an empty pool latched them). A job's candidates are used once. The apply can hold the CE mailbox
+  for the scoring and the probe.
+- Reply keys added (additive): `gobjects_outcome` -- `filled`, `replaced`, `reinit_in_place` (the published pointer
+  reads objects now), `none_qualified`, `aborted` (shutdown), `already_applied`, `changed` (GObjects moved or reads
+  objects since the job), `cancelled` (a cut-short sweep), `not_sought`; `gobjects_method`, `gworld_method`,
+  `gobjects_candidates_scored` (replace only: how many candidates' names were sampled), `gworld_recovered`.
+- `set_ue_version_override` also refuses while an init or an apply holds the init lock ("A scan is still running --
+  wait for it to finish", or the "being settled" text when another command holds it for a moment).
 
 ### CE Export
 
